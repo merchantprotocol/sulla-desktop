@@ -88,8 +88,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
-import { idTime } from '../../messages/lineTime';
-import { workSteps, workTitle } from '../../messages/workSteps';
+import { LineTimes } from '../../messages/lineTime';
+import { WorkSteps } from '../../messages/workSteps';
 import ToolCall from '../tool/ToolCall.vue';
 import WorkBlock from '../transcript/WorkBlock.vue';
 
@@ -97,11 +97,11 @@ import type { ThinkingMessage, ToolMessage } from '../../models/Message';
 
 const props = defineProps<{ messages: readonly (ThinkingMessage | ToolMessage)[]; lineId?: string }>();
 
-const steps = computed(() => workSteps(props.messages));
+const steps = computed(() => WorkSteps.workSteps(props.messages));
 const completed = computed(() => props.messages.every(message =>
   message.kind === 'thinking' ? message.completed : message.status !== 'running'));
 const summary = computed(() => props.messages.find((message): message is ThinkingMessage => message.kind === 'thinking' && !!message.summary)?.summary);
-const title = computed(() => workTitle(steps.value, completed.value, summary.value));
+const title = computed(() => WorkSteps.workTitle(steps.value, completed.value, summary.value));
 const by = computed(() => props.messages.find(message => message.by)?.by);
 
 /** Every entry exactly as recorded, fillers included. */
@@ -132,7 +132,7 @@ onBeforeUnmount(stopTicking);
  * them rather than their real start in the id.
  */
 const endKnown = computed(() => !completed.value || props.messages.some(message => message.kind === 'thinking' && !!message.completedAt &&
-  Math.abs((idTime(message.id) ?? message.startedAt) - message.startedAt) < 5_000));
+  Math.abs((LineTimes.idTime(message.id) ?? message.startedAt) - message.startedAt) < 5_000));
 const elapsedLabel = computed(() => {
   if (!endKnown.value) return '';
   const end = completed.value ? completedAt.value : Date.now() + tick.value * 0;

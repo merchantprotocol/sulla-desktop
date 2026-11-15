@@ -9,16 +9,20 @@
  */
 export interface KeptDraft<L, N> { base: string; lanes: L; never: N }
 
-let kept: KeptDraft<unknown, unknown> | null = null;
+/** Holds at most one kept draft for the page; one shared instance lives as long as the window. */
+export class LedgerDrafts {
+  static readonly shared = new LedgerDrafts();
+  private kept: KeptDraft<unknown, unknown> | null = null;
 
-export function keepDraft<L, N>(draft: KeptDraft<L, N>): void { kept = draft }
+  keep<L, N>(draft: KeptDraft<L, N>): void { this.kept = draft }
 
-/** The kept draft when it was made against `base`; taking it clears it either way. */
-export function takeDraft<L, N>(base: string): KeptDraft<L, N> | null {
-  const found = kept?.base === base ? kept as KeptDraft<L, N> : null;
-  kept = null;
-  return found;
+  /** The kept draft when it was made against `base`; taking it clears it either way. */
+  take<L, N>(base: string): KeptDraft<L, N> | null {
+    const found = this.kept?.base === base ? this.kept as KeptDraft<L, N> : null;
+    this.kept = null;
+    return found;
+  }
+
+  /** Forget any kept draft (after a save, and between tests). */
+  clear(): void { this.kept = null }
 }
-
-/** Forget any kept draft (after a save, and between tests). */
-export function clearDraft(): void { kept = null }

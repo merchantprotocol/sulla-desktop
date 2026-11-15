@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { returnCoveredByCard } from '@pkg/pages/chat/messages/handoffCover';
-import { idTime, lineTimes, shortTime } from '@pkg/pages/chat/messages/lineTime';
+import { LineTimes } from '@pkg/pages/chat/messages/lineTime';
 import { reportTail } from '@pkg/shared/agentResults/AgentResultCard';
 
 const now = new Date(2026, 10, 15, 14, 40).getTime();
@@ -15,17 +15,17 @@ const at = (h: number, m: number, s = 0, day = 15) => new Date(2026, 10, day, h,
 describe('when each transcript line happened', () => {
   // risk: blocks, handoffs and result cards carried no date or time at all
   it('labels each line, once per minute, with the date before today', () => {
-    const times = lineTimes([
+    const times = LineTimes.lineTimes([
       { id: 'a', at: at(14, 28, 5) },
       { id: 'b', at: at(14, 28, 40) },
       { id: 'c', at: at(14, 31) },
       { id: 'old', at: at(9, 5, 0, 14) },
     ], now);
 
-    expect(times.get('a')!.label).toBe(shortTime(at(14, 28), now));
+    expect(times.get('a')!.label).toBe(LineTimes.shortTime(at(14, 28), now));
     expect(times.get('b')!.label).toBe('');
     expect(times.get('b')!.full).not.toBe('');
-    expect(times.get('c')!.label).toBe(shortTime(at(14, 31), now));
+    expect(times.get('c')!.label).toBe(LineTimes.shortTime(at(14, 31), now));
     expect(times.get('old')!.label).toMatch(/Nov 14/);
   });
 });
@@ -33,9 +33,9 @@ describe('when each transcript line happened', () => {
 describe('the real time of a saved line', () => {
   // risk: older saves dated lines by when the window first saw them, often a restart
   it('comes from the backend id when it carries one', () => {
-    expect(idTime('1794757208708_ws_sub_agent_exchange_job', now + 10 ** 12)).toBe(1794757208708);
-    expect(idTime('thinking-group:1794757208708_ws_thinking', now + 10 ** 12)).toBe(1794757208708);
-    expect(idTime('restored_abc')).toBeUndefined();
+    expect(LineTimes.idTime('1794757208708_ws_sub_agent_exchange_job', now + 10 ** 12)).toBe(1794757208708);
+    expect(LineTimes.idTime('thinking-group:1794757208708_ws_thinking', now + 10 ** 12)).toBe(1794757208708);
+    expect(LineTimes.idTime('restored_abc')).toBeUndefined();
   });
 });
 

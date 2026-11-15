@@ -63,8 +63,8 @@ import { computed, inject, ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 import { resultCardFor, returnCoveredByCard } from '../../messages/handoffCover';
-import { parseLegacyAgentNotice } from '../../messages/legacyAgentNotice';
-import { useLineTime } from '../../messages/lineTime';
+import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
+import { LineTimes } from '../../messages/lineTime';
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
@@ -78,7 +78,7 @@ let controller: ReturnType<typeof useChatController> | undefined;
 try { controller = useChatController() } catch { /* outside a chat page */ }
 
 const showDetail = ref(false);
-const lineTime = useLineTime();
+const lineTime = LineTimes.useLineTime();
 const when = computed(() => lineTime(props.msg.id));
 
 const sameTask = (jobId?: string, taskIndex?: number) => !!props.msg.jobId && jobId === props.msg.jobId && (props.msg.taskIndex ?? 0) === (taskIndex ?? 0);
@@ -109,7 +109,7 @@ const status = computed(() => {
   // A job that finished before result cards existed: its old text notice says how it ended.
   for (const message of controller?.messages.value ?? []) {
     if (message.kind !== 'proactive' || (message).result) continue;
-    const notice = parseLegacyAgentNotice((message).headline, (message).body);
+    const notice = LegacyAgentNotices.parseLegacyAgentNotice((message).headline, (message).body);
     if (notice?.jobId && notice.jobId === props.msg.jobId) return { text: notice.verdict, tone: CARD_TONE[notice.tone] ?? 'dim' };
   }
   if (props.msg.status === 'running') return props.msg.direction === 'to_agent' ? { text: 'Started', tone: 'run' } : STATE.working;

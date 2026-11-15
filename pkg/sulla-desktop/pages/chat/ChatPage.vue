@@ -170,7 +170,7 @@ import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
 import SideDock          from './components/sidedock/SideDock.vue';
 import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
-import { useDockPosition } from './composables/useDockPosition';
+import { DockPositions } from './composables/useDockPosition';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 
@@ -194,7 +194,7 @@ import { usePushToTalk }         from './composables/usePushToTalk';
 import { useResizeSync }         from './composables/useResizeSync';
 
 import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
-import { RESUME_KEY }            from './messages/shelfNote';
+import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
 import type { Thread }   from './models/Thread';
@@ -747,7 +747,7 @@ const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
 // ─── Dock position: bottom of the chat, or the right-hand side column ───
-const { position: dockPosition, sideRatio } = useDockPosition();
+const { position: dockPosition, sideRatio } = DockPositions.use();
 const dockSide = computed(() => dockPosition.value === 'side');
 const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
 const sideBox = computed(() => sideDock.value?.boxEl ?? null);
@@ -814,8 +814,8 @@ function startShelfResume(): void {
   if (!props.tabId) return;
   let pending: { prompt?: string; agentId?: string | null; fileId?: string } | null = null;
   try {
-    const raw = localStorage.getItem(RESUME_KEY(props.tabId));
-    if (raw) { localStorage.removeItem(RESUME_KEY(props.tabId)); pending = JSON.parse(raw) }
+    const raw = localStorage.getItem(ShelfNotes.RESUME_KEY(props.tabId));
+    if (raw) { localStorage.removeItem(ShelfNotes.RESUME_KEY(props.tabId)); pending = JSON.parse(raw) }
   } catch { pending = null }
   if (!pending?.prompt) return;
   if (pending.agentId) controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, pending.agentId);

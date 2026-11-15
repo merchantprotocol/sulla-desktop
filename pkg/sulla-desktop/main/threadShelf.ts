@@ -8,7 +8,7 @@ import { hostname } from 'os';
 import { ipcMain } from 'electron';
 
 import { filesContainerRequest } from '@pkg/agent/files/containerClient';
-import { buildNote, goalLine, markResumed, parseNote, SHELF_FOLDER, uniqueSlug, type ShelfEntry, type ShelfMeta } from '@pkg/pages/chat/messages/shelfNote';
+import { SHELF_FOLDER, type ShelfEntry, type ShelfMeta, ShelfNotes } from '@pkg/pages/chat/messages/shelfNote';
 
 /** One Files request: service-relative path in, parsed JSON (or undefined for 204) out. */
 export type ShelfFilesRequest = (path: string, init?: RequestInit) => Promise<any>;
@@ -44,10 +44,10 @@ export class ThreadShelfStore {
     const notes = files.filter(file => typeof file.path === 'string' && file.path.startsWith(`${ SHELF_FOLDER }/`) && file.path.endsWith('.md') && !file.path.slice(SHELF_FOLDER.length + 1).includes('/'));
     const entries = await Promise.all(notes.map(async(file): Promise<ShelfEntry | null> => {
       try {
-        const parsed = parseNote((await this.read(file.id)).text);
+        const parsed = ShelfNotes.parseNote((await this.read(file.id)).text);
         if (!parsed) return null;
         const slug = file.path.slice(SHELF_FOLDER.length + 1, -3);
-        return { fileId: file.id, slug, path: file.path, meta: parsed.meta, goal: goalLine(parsed.body) };
+        return { fileId: file.id, slug, path: file.path, meta: parsed.meta, goal: ShelfNotes.goalLine(parsed.body) };
       } catch { return null }
     }));
     return entries.filter((entry): entry is ShelfEntry => entry !== null);
@@ -58,11 +58,11 @@ export class ThreadShelfStore {
     const collectionId = await this.collectionId();
     const existing = await this.request(`/v1/files?collectionId=${ encodeURIComponent(collectionId) }&path=${ encodeURIComponent(SHELF_FOLDER) }`) as any[];
     const taken = existing.map(file => String(file.path ?? '')).filter(path => path.endsWith('.md')).map(path => path.slice(SHELF_FOLDER.length + 1, -3));
-    const slug = uniqueSlug(meta.name, taken);
+    const slug = ShelfNotes.uniqueSlug(meta.name, taken);
     const path = `${ SHELF_FOLDER }/${ slug }.md`;
     const written = await this.request('/v1/agent-files', {
       method: 'POST',
-      body:   JSON.stringify({ collectionId, path, content: buildNote(meta, body), mime: 'text/markdown', message: `Shelve ${ meta.name }` }),
+      body:   JSON.stringify({ collectionId, path, content: ShelfNotes.buildNote(meta, body), mime: 'text/markdown', message: `Shelve ${ meta.name }` }),
     });
     return { fileId: written.fileId, slug, path };
   }
@@ -72,7 +72,7 @@ export class ThreadShelfStore {
     const { text, versionId, path } = await this.read(fileId);
     await this.request('/v1/agent-files', {
       method: 'POST',
-      body:   JSON.stringify({ collectionId, path, fileId, expectedVersionId: versionId, content: markResumed(text, resumedThreadId, new Date()), mime: 'text/markdown', message: 'Resume shelved thread' }),
+      body:   JSON.stringify({ collectionId, path, fileId, expectedVersionId: versionId, content: ShelfNotes.markResumed(text, resumedThreadId, new Date()), mime: 'text/markdown', message: 'Resume shelved thread' }),
     });
   }
 

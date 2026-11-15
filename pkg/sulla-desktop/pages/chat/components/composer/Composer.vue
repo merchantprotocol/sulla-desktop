@@ -243,7 +243,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
 import ComposerInput      from './ComposerInput.vue';
-import { useDockPosition } from '../../composables/useDockPosition';
+import { DockPositions } from '../../composables/useDockPosition';
 import ComposerMic        from './ComposerMic.vue';
 import ComposerAttach     from './ComposerAttach.vue';
 import ComposerVoicePanel from './ComposerVoicePanel.vue';
@@ -260,7 +260,7 @@ import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
-import { parseShelfCommand, type ShelfRequest } from '../../messages/shelfNote';
+import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
@@ -332,7 +332,7 @@ const usagePercent = computed(() => {
 });
 
 // ─── Dock position (bottom or side column) ─────────────────────────
-const { position: dockPosition, setPosition } = useDockPosition();
+const { position: dockPosition, setPosition } = DockPositions.use();
 const side = computed(() => dockPosition.value === 'side');
 
 // ─── Voice state bridge ────────────────────────────────────────────
@@ -496,7 +496,7 @@ function onSend(text: string): void {
   }
 
   // "/shelve name", "/shelve delete name", "/resume name" carry an argument.
-  const shelf = parseShelfCommand(trimmed);
+  const shelf = ShelfNotes.parseShelfCommand(trimmed);
   if (shelf) {
     shelfRequest.value = shelf.kind === 'delete' ? { mode: 'delete', name: shelf.name } : { mode: shelf.kind, name: shelf.name };
     draft.value = '';

@@ -12,7 +12,7 @@ import AgentResultCard from '@pkg/pages/chat/components/proactive/AgentResultCar
 import ProactiveCard from '@pkg/pages/chat/components/proactive/ProactiveCard.vue';
 import SubAgentExchange from '@pkg/pages/chat/components/subagent/SubAgentExchange.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
-import { parseLegacyAgentNotice } from '@pkg/pages/chat/messages/legacyAgentNotice';
+import { LegacyAgentNotices } from '@pkg/pages/chat/messages/legacyAgentNotice';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
 const job = 'agent-job-1794718661746-9';
@@ -131,11 +131,11 @@ describe('old "Background agents finished" notices', () => {
   const body = `Task "Lane 0 · golden dataset seeder (staging + QBO sandbox)" is ready. Check \`check_agent_jobs("${ job }")\` for the full result.`;
 
   it('reads the status, task and job back out of the text', () => {
-    expect(parseLegacyAgentNotice('Background agents finished — 0 done, 1 blocked, 0 failed, 0 stopped', body))
+    expect(LegacyAgentNotices.parseLegacyAgentNotice('Background agents finished — 0 done, 1 blocked, 0 failed, 0 stopped', body))
       .toEqual({ verdict: 'Blocked', tone: 'warn', label: 'Lane 0 · golden dataset seeder (staging + QBO sandbox)', jobId: job });
-    expect(parseLegacyAgentNotice('Background agents finished — 2/2 complete', 'Tasks: A, B. Check `check_agent_jobs("agent-job-1")` for results.'))
+    expect(LegacyAgentNotices.parseLegacyAgentNotice('Background agents finished — 2/2 complete', 'Tasks: A, B. Check `check_agent_jobs("agent-job-1")` for results.'))
       .toEqual({ verdict: 'Done', tone: 'ok', label: 'A, B', jobId: 'agent-job-1' });
-    expect(parseLegacyAgentNotice('Heartbeat insight', 'anything')).toBeUndefined();
+    expect(LegacyAgentNotices.parseLegacyAgentNotice('Heartbeat insight', 'anything')).toBeUndefined();
   });
 
   it('shrinks to one line, and disappears when a result card covers the same job', () => {

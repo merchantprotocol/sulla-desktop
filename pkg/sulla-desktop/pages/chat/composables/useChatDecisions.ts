@@ -15,7 +15,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
  * question cards already use and kept current from its change events.
  * Read only: answering still happens on the card itself.
  */
-export function useChatDecisions(): { decisions: Ref<DecisionRecord[]>; openCount: Ref<number> } {
+function useChatDecisions(): { decisions: Ref<DecisionRecord[]>; openCount: Ref<number> } {
   const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
   const records = ref(new Map<string, DecisionRecord>());
 
@@ -36,4 +36,9 @@ export function useChatDecisions(): { decisions: Ref<DecisionRecord[]>; openCoun
   const decisions = computed(() => chatDecisions([...records.value.values()], [context.backendThreadId.value]));
   const openCount = computed(() => decisions.value.filter(isOpenDecision).length);
   return { decisions, openCount };
+}
+
+/** This chat's decisions from the decisions store, and how many are open. */
+export class ChatDecisions {
+  static readonly useChatDecisions = useChatDecisions;
 }

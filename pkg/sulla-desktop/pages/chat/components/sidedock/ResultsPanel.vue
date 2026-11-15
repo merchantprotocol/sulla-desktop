@@ -61,8 +61,8 @@
       >
         <span class="rs-t">{{ entry.item.label }}</span>
         <span class="rs-m">
-          <template v-if="section.key === 'needsAction'">{{ plainToolNames(shortenHashes(problemOf(entry.item))) }}</template>
-          <template v-else>{{ entry.item.verdict }} · {{ plainToolNames(shortenHashes(entry.item.outcome)) }}</template>
+          <template v-if="section.key === 'needsAction'">{{ WorkSteps.plainToolNames(shortenHashes(problemOf(entry.item))) }}</template>
+          <template v-else>{{ entry.item.verdict }} · {{ WorkSteps.plainToolNames(shortenHashes(entry.item.outcome)) }}</template>
         </span>
         <div class="rs-foot">
           <span
@@ -111,10 +111,10 @@
 <script setup lang="ts">
 import { computed, inject } from 'vue';
 
-import { useAgentResultActions } from '../../composables/useAgentResultActions';
+import { AgentResultActions } from '../../composables/useAgentResultActions';
 import { useChatController } from '../../controller/useChatController';
 import { ciStateOf, environmentsOf, groupResults, shortenHashes } from '../../messages/sideDock';
-import { plainToolNames } from '../../messages/workSteps';
+import { WorkSteps } from '../../messages/workSteps';
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { findProblem, isSystemNote } from '@pkg/shared/agentResults/AgentResultCard';
@@ -127,7 +127,7 @@ function ciOf(item: AgentResultItem) {
   if (item.merges?.length) return null;
   return ciStateOf(item, client?.snapshot.value.rows ?? []);
 }
-const resultActions = useAgentResultActions();
+const resultActions = AgentResultActions.useAgentResultActions();
 
 const groups = computed(() => groupResults(controller.messages.value));
 const sections = computed(() => [

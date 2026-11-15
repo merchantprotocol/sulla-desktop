@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { blockedDetail, parkedActivity, runningDetail, waitTarget } from './threadActivity';
-import { plainToolNames } from './workSteps';
+import { WorkSteps } from './workSteps';
 
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -95,23 +95,23 @@ export function environmentsOf(item: AgentResultItem): { name: string; state: st
   return (item.environments ?? []).map(env => ({ name: env.name, state: env.state }));
 }
 
-const OPEN_DECISION = new Set<DecisionRecord['status']>(['pending', 'deferred']);
+const OPEN_DECISION: readonly DecisionRecord['status'][] = ['pending', 'deferred'];
 
 /** This chat's decisions, open ones first, then newest first. */
 export function chatDecisions(records: readonly DecisionRecord[], conversationIds: readonly (string | undefined)[]): DecisionRecord[] {
   const ids = new Set(conversationIds.filter(Boolean));
   return records
     .filter(record => ids.has(record.conversationId))
-    .sort((a, b) => Number(OPEN_DECISION.has(b.status)) - Number(OPEN_DECISION.has(a.status)) || b.createdAt - a.createdAt);
+    .sort((a, b) => Number(OPEN_DECISION.includes(b.status)) - Number(OPEN_DECISION.includes(a.status)) || b.createdAt - a.createdAt);
 }
 
-export function isOpenDecision(record: DecisionRecord): boolean { return OPEN_DECISION.has(record.status) }
+export function isOpenDecision(record: DecisionRecord): boolean { return OPEN_DECISION.includes(record.status) }
 
 /** Full commit hashes swamp a one-line summary; seven characters identify a commit. */
 export function shortenHashes(text: string): string { return text.replace(/\b([0-9a-f]{7})[0-9a-f]{33}\b/g, '$1') }
 
 /** The one line a lane shows under the agent's name: what it is doing right now. */
-export function laneStep(row: AgentStateRow, now: number): string { return plainToolNames(shortenHashes(laneStepRaw(row, now))) }
+export function laneStep(row: AgentStateRow, now: number): string { return WorkSteps.plainToolNames(shortenHashes(laneStepRaw(row, now))) }
 
 function laneStepRaw(row: AgentStateRow, now: number): string {
   // A lane tags GitHub waits itself and shows the next check as its time: give just the agent's reason.

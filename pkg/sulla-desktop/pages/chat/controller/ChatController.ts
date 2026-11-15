@@ -113,7 +113,7 @@ export interface ThreadPersister {
 
 // ─── Controller ───────────────────────────────────────────────────
 /** Work blocks that show which agent and model produced them. */
-const STAMPED_KINDS = new Set<Message['kind']>(['thinking', 'tool', 'patch', 'error']);
+const STAMPED_KINDS: readonly Message['kind'][] = ['thinking', 'tool', 'patch', 'error'];
 
 export class ChatController {
   // ─── Reactive state — THE SINGLE SOURCE OF TRUTH ───────────────
@@ -388,7 +388,7 @@ export class ChatController {
    * stamped: history restored on load keeps whatever it was saved with.
    */
   private stampAuthor(m: Message): Message {
-    if (m.by || !STAMPED_KINDS.has(m.kind) || Math.abs(Date.now() - m.createdAt) > 2 * 60_000) return m;
+    if (m.by || !STAMPED_KINDS.includes(m.kind) || Math.abs(Date.now() - m.createdAt) > 2 * 60_000) return m;
     const agent = this.thread.value.agentId ?? undefined;
     // An empty model id means the picker shows "Default"/"Auto", a label and
     // not a model: use the agent's own configured model, else leave it out.

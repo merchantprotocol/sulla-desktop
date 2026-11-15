@@ -14,7 +14,7 @@ import type { OpenSubAgentConversation } from '../components/subagent/subAgentCo
  * behalf: it opens the agent's conversation, opens a link in Sulla's
  * browser, copies text, or drafts a message into this chat's composer.
  */
-export function useAgentResultActions() {
+function useAgentResultActions() {
   const openConversation = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
   let threadId: string | undefined;
   try { threadId = useChatController().thread.value.id } catch { /* outside a chat page */ }
@@ -43,4 +43,9 @@ export function useAgentResultActions() {
       if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener');
     },
   };
+}
+
+/** The actions a result card offers (retry, resolve with Sulla, jump to). */
+export class AgentResultActions {
+  static readonly useAgentResultActions = useAgentResultActions;
 }

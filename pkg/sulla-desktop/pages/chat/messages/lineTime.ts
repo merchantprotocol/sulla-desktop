@@ -16,20 +16,20 @@ export const LineTimeKey: InjectionKey<(id: string) => LineTime | undefined> = S
  * Older saves stored the time the window first saw a message (often a
  * restart), so the id is the more truthful source when it has one.
  */
-export function idTime(id: string, now = Date.now()): number | undefined {
+function idTime(id: string, now = Date.now()): number | undefined {
   const at = Number(/^(?:thinking-group:)?(\d{13})_/.exec(id)?.[1]);
   return at > 1_500_000_000_000 && at <= now + 60_000 ? at : undefined;
 }
 
 /** "2:28 PM" today, "Nov 14, 2:28 PM" before today. */
-export function shortTime(at: number, now = Date.now()): string {
+function shortTime(at: number, now = Date.now()): string {
   const date = new Date(at);
   const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   if (new Date(now).toDateString() === date.toDateString()) return time;
   return `${ date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }, ${ time }`;
 }
 
-export function fullTime(at: number): string {
+function fullTime(at: number): string {
   return new Date(at).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'long' });
 }
 
@@ -37,7 +37,7 @@ export function fullTime(at: number): string {
  * A time for each line, shown only when its minute differs from the line
  * above, so a run of blocks in the same minute doesn't repeat "2:28 PM".
  */
-export function lineTimes(lines: readonly { id: string; at: number }[], now = Date.now()): Map<string, LineTime> {
+function lineTimes(lines: readonly { id: string; at: number }[], now = Date.now()): Map<string, LineTime> {
   const out = new Map<string, LineTime>();
   let previous = '';
   for (const line of lines) {
@@ -50,6 +50,15 @@ export function lineTimes(lines: readonly { id: string; at: number }[], now = Da
 }
 
 /** The time for one line, from the transcript around it. */
-export function useLineTime(): (id: string) => LineTime | undefined {
+function useLineTime(): (id: string) => LineTime | undefined {
   return inject(LineTimeKey, () => undefined);
+}
+
+/** When a transcript line happened: times from ids and stamps, and the per-line lookup. */
+export class LineTimes {
+  static readonly idTime = idTime;
+  static readonly shortTime = shortTime;
+  static readonly fullTime = fullTime;
+  static readonly lineTimes = lineTimes;
+  static readonly useLineTime = useLineTime;
 }

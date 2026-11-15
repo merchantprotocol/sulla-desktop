@@ -68,7 +68,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
-import { useChatDecisions } from '../../composables/useChatDecisions';
+import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
 import { allResults, groupResults } from '../../messages/sideDock';
 
@@ -87,7 +87,7 @@ const emit = defineEmits<{
 }>();
 
 const controller = useChatController();
-const { decisions } = useChatDecisions();
+const { decisions } = ChatDecisions.useChatDecisions();
 const query = ref('');
 const active = ref(0);
 const inputEl = ref<HTMLInputElement | null>(null);

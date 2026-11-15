@@ -17,7 +17,7 @@ export interface LegacyAgentNotice {
   jobId?:  string;
 }
 
-export function parseLegacyAgentNotice(headline: string, body: string): LegacyAgentNotice | undefined {
+function parseLegacyAgentNotice(headline: string, body: string): LegacyAgentNotice | undefined {
   if (!/^Background agents? (finished|failed|stopped)/i.test(headline)) return undefined;
   const jobId = /\b(agent-job-[\w-]+)/.exec(body)?.[1];
   const label = /Task "([^"]+)"/.exec(body)?.[1] ?? /Tasks: (.+?)\.\s*Check/.exec(body)?.[1] ?? 'Background agents';
@@ -31,4 +31,9 @@ export function parseLegacyAgentNotice(headline: string, body: string): LegacyAg
   if (count('stopped')) return { verdict: 'Stopped', tone: 'dim', label, jobId };
 
   return { verdict: 'Done', tone: 'ok', label, jobId };
+}
+
+/** Reads old plain-text agent notices into their parts. */
+export class LegacyAgentNotices {
+  static readonly parseLegacyAgentNotice = parseLegacyAgentNotice;
 }

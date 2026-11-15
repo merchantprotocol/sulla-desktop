@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 
 import RoleLedger from '@pkg/components/settings/sections/modelRouting/RoleLedger.vue';
-import { clearDraft } from '@pkg/components/settings/sections/modelRouting/ledgerDraft';
+import { LedgerDrafts } from '@pkg/components/settings/sections/modelRouting/ledgerDraft';
 
 function state(): any {
   const codexModels = [{ id: 'gpt-6-sol', label: 'GPT-6 Sol', efforts: [{ id: 'low' }, { id: 'high' }], defaultEffort: 'low' }, { id: 'gpt-6-luna', label: 'GPT-6 Luna', efforts: [{ id: 'low' }, { id: 'high' }] }];
@@ -30,7 +30,7 @@ function state(): any {
 const mountLedger = (s = state()) => mount(RoleLedger, { props: { state: s, now: Date.now(), refreshing: false }, attachTo: document.body });
 const bar = () => document.body.querySelector('.ld-bar');
 
-afterEach(() => { document.body.innerHTML = ''; clearDraft() });
+afterEach(() => { document.body.innerHTML = ''; LedgerDrafts.shared.clear() });
 
 describe('unsaved model choices are visible and survive leaving the page', () => {
   // risk: a change made without a visible Save is silently lost

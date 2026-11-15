@@ -61,7 +61,7 @@
 import { computed, inject, ref } from 'vue';
 
 import { ModelSelectorKey } from '../../controller/useChatController';
-import { useLineTime } from '../../messages/lineTime';
+import { LineTimes } from '../../messages/lineTime';
 
 const props = withDefaults(defineProps<{
   icon:         string;
@@ -84,7 +84,7 @@ const authorName = computed(() => {
 
 /** "Default" and "Auto" are picker labels, not models; older blocks were stamped with them. */
 const model = computed(() => (props.by?.model && !/^(default|auto)$/i.test(props.by.model) ? props.by.model : ''));
-const lineTime = useLineTime();
+const lineTime = LineTimes.useLineTime();
 const when = computed(() => (props.lineId ? lineTime(props.lineId) : undefined));
 
 defineExpose({ open });

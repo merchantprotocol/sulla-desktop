@@ -48,7 +48,7 @@ import { computed, inject } from 'vue';
 
 import AgentResultCard from './AgentResultCard.vue';
 import { useChatController } from '../../controller/useChatController';
-import { parseLegacyAgentNotice } from '../../messages/legacyAgentNotice';
+import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 
 import type { ProactiveMessage, SubAgentExchangeMessage } from '../../models/Message';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
@@ -58,7 +58,7 @@ const open = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-co
 let controller: ReturnType<typeof useChatController> | undefined;
 try { controller = useChatController() } catch { /* outside a chat page */ }
 
-const legacy = computed(() => (props.msg.result ? undefined : parseLegacyAgentNotice(props.msg.headline, props.msg.body)));
+const legacy = computed(() => (props.msg.result ? undefined : LegacyAgentNotices.parseLegacyAgentNotice(props.msg.headline, props.msg.body)));
 const others = computed(() => controller?.messages.value ?? []);
 /** A result card for the same job already says everything this notice did. */
 const legacyCovered = computed(() => !!legacy.value?.jobId && others.value.some(message =>

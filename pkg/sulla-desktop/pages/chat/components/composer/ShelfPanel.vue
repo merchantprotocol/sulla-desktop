@@ -231,10 +231,9 @@
 import { computed, inject, onMounted, reactive, ref, type Ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
-import {
-  extractHandoff, findEntry, handoffRequest, pickerEntries, RESUME_KEY, resumePrompt, slugify, type ShelfEntry, type ShelfMeta, type ShelfRequest,
-} from '../../messages/shelfNote';
-import { isLive, stopSummary, stopThreadAgents } from '../../messages/shelfStop';
+import { type ShelfEntry, type ShelfMeta, ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
+import { ShelfStop } from '../../messages/shelfStop';
+import { ShelfPanelSupport } from '../../services/ShelfPanelSupport';
 import { restoreChatFromHistory } from '../../services/historyRestore';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
@@ -247,20 +246,15 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const props = defineProps<{ request: ShelfRequest }>();
 const emit = defineEmits<{ close: [] }>();
 
-const REPLY_TIMEOUT_MS = 5 * 60_000;
-
 const controller = useChatController();
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
 const context = inject<{ tabId?: string; backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 const { createTab, closeTab } = useBrowserTabs();
-
-async function shelfIpc<T>(channel: string, ...args: unknown[]): Promise<T> {
-  const result = await ipcRenderer.invoke(channel as any, ...args) as { ok: boolean; value?: T; error?: string };
-  if (!result?.ok) throw new Error(result?.error || 'Sulla Files did not respond');
-  return result.value as T;
-}
+const support = new ShelfPanelSupport(controller);
+const shelfIpc = ShelfPanelSupport.ipc;
+const shelvedWhen = ShelfPanelSupport.shelvedWhen;
 
 // ── Shelve ───────────────────────────────────────────────────────
 const name = ref(props.request.name || controller.thread.value.title || 'thread');
@@ -268,24 +262,10 @@ const step = ref<'confirm' | 'working' | 'failed' | 'done'>('confirm');
 const progress = ref('');
 const busy = ref(false);
 const keepOpen = ref(false);
-const previewSlug = computed(() => slugify(name.value));
+const previewSlug = computed(() => ShelfNotes.slugify(name.value));
 const threadRows = (threadId?: string) => (threadId ? new AgentTreeBuilder(client.snapshot.value.rows).flatten(new AgentTreeBuilder(client.snapshot.value.rows).forThread(threadId)).map(node => node.row) : []);
-const liveRows = computed(() => threadRows(context.backendThreadId.value).filter(isLive));
+const liveRows = computed(() => threadRows(context.backendThreadId.value).filter(ShelfStop.isLive));
 const heartbeatOn = computed(() => controller.heartbeat.value.intervalMinutes !== null);
-const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
-
-async function waitForReply(after: number): Promise<string> {
-  const deadline = Date.now() + REPLY_TIMEOUT_MS;
-  await sleep(500);
-  while (Date.now() < deadline) {
-    if (!controller.isRunning.value) {
-      const reply = [...controller.messages.value].reverse().find(msg => msg.kind === 'sulla' && msg.createdAt >= after);
-      if (reply?.kind === 'sulla' && reply.text.trim()) return reply.text;
-    }
-    await sleep(1_000);
-  }
-  throw new Error('Sulla did not write the handoff note within 5 minutes.');
-}
 
 async function shelve(): Promise<void> {
   if (busy.value || controller.isRunning.value) return;
@@ -293,11 +273,11 @@ async function shelve(): Promise<void> {
   step.value = 'working';
   try {
     progress.value = 'Asking agents to save their work…';
-    const stopped = await stopThreadAgents({
+    const stopped = await ShelfStop.stopThreadAgents({
       rows:     () => threadRows(context.backendThreadId.value),
       message:  (row, text) => actions.message(row, text),
       stop:     row => actions.stop(row),
-      sleep,
+      sleep:    ShelfPanelSupport.sleep,
       now:      () => Date.now(),
       progress: text => { progress.value = `${ text }…` },
     });
@@ -310,8 +290,8 @@ async function shelve(): Promise<void> {
     }
     progress.value = 'Sulla is writing the handoff note…';
     const sentAt = Date.now();
-    controller.send(handoffRequest(name.value.trim(), stopSummary(stopped, hadHeartbeat)));
-    const body = extractHandoff(await waitForReply(sentAt));
+    controller.send(ShelfNotes.handoffRequest(name.value.trim(), ShelfStop.stopSummary(stopped, hadHeartbeat)));
+    const body = ShelfNotes.extractHandoff(await support.waitForReply(sentAt));
     progress.value = 'Saving the note…';
     const meta: ShelfMeta = {
       name:            name.value.trim(),
@@ -343,12 +323,7 @@ const confirmDelete = ref('');
 const alsoConversation = ref(false);
 const rowNotice = reactive<Record<string, string>>({});
 const focusId = ref('');
-const visible = computed(() => pickerEntries(entries.value, showResumed.value));
-
-function shelvedWhen(entry: ShelfEntry): string {
-  const d = new Date(entry.meta.shelvedAt);
-  return Number.isNaN(d.getTime()) ? '' : `shelved ${ d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) } ${ d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) }`;
-}
+const visible = computed(() => ShelfNotes.pickerEntries(entries.value, showResumed.value));
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -366,7 +341,7 @@ function openTab(title: string) {
 
 function resumeFresh(entry: ShelfEntry): void {
   const tab = openTab(entry.meta.name);
-  try { localStorage.setItem(RESUME_KEY(tab.id), JSON.stringify({ prompt: resumePrompt(entry), agentId: entry.meta.agentId ?? null, fileId: entry.fileId })) } catch { /* the new tab just opens empty */ }
+  try { localStorage.setItem(ShelfNotes.RESUME_KEY(tab.id), JSON.stringify({ prompt: ShelfNotes.resumePrompt(entry), agentId: entry.meta.agentId ?? null, fileId: entry.fileId })) } catch { /* the new tab just opens empty */ }
   emit('close');
 }
 
@@ -383,7 +358,7 @@ async function reopen(entry: ShelfEntry): Promise<void> {
 
 function askDelete(entry: ShelfEntry): void {
   delete rowNotice[entry.fileId];
-  const live = threadRows(entry.meta.backendThreadId).filter(isLive);
+  const live = threadRows(entry.meta.backendThreadId).filter(ShelfStop.isLive);
   if (live.length) {
     rowNotice[entry.fileId] = `Stop ${ live.map(row => row.label).join(', ') } first; it is still running.`;
     return;
@@ -408,7 +383,7 @@ onMounted(async() => {
   if (props.request.mode === 'shelve') return;
   await load();
   if (!props.request.name) return;
-  const hit = findEntry(entries.value, props.request.name);
+  const hit = ShelfNotes.findEntry(entries.value, props.request.name);
   if (!hit) { loadError.value = `No shelved thread named "${ props.request.name }".`; return }
   showResumed.value = hit.meta.status === 'resumed';
   focusId.value = hit.fileId;
@@ -418,52 +393,4 @@ onMounted(async() => {
 
 </script>
 
-<style scoped>
-.sp {
-  margin-bottom: 8px; border: 1px solid var(--border-default); border-radius: 10px;
-  background: var(--bg-surface); color: var(--text-secondary); font-size: 13px;
-}
-.sp-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-default); }
-.sp-head b { color: var(--text-primary); font-weight: 600; }
-.sp-gap { flex: 1; }
-.sp-body { padding: 10px 12px 12px; max-height: min(50vh, 440px); overflow: auto; }
-.sp-body p { margin: 0 0 8px; }
-.sp-muted { color: var(--text-muted); }
-.sp-warn { color: var(--status-error); }
-.sp-label { color: var(--text-primary); }
-.sp-field { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.sp-field span { color: var(--text-muted); min-width: 44px; }
-.sp-field input {
-  flex: 1; height: 30px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 7px;
-  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary); font: inherit;
-}
-.sp-field input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
-.sp-list { margin: 0 0 10px; padding-left: 18px; }
-.sp-list li { margin: 3px 0; }
-.sp-list b { color: var(--text-primary); font-weight: 600; }
-.sp-list code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
-.sp-actions { display: flex; gap: 6px; }
-.sp-btn {
-  display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border: 1px solid var(--border-default);
-  border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer;
-}
-.sp-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
-.sp-btn:disabled { opacity: .45; cursor: default; }
-.sp-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.sp-pri { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent, var(--bg-page)); font-weight: 600; }
-.sp-pri:hover:not(:disabled) { color: var(--text-on-accent, var(--bg-page)); }
-.sp-danger:hover:not(:disabled) { color: var(--status-error); border-color: var(--status-error); }
-.sp-danger-solid { background: var(--status-error); border-color: var(--status-error); color: var(--text-on-accent, var(--bg-page)); font-weight: 600; }
-.sp-rows { list-style: none; margin: 0; padding: 0; }
-.sp-row { padding: 9px 0; border-top: 1px solid var(--border-default); }
-.sp-row:first-child { border-top: 0; padding-top: 0; }
-.sp-row.sp-hit .sp-row-main b { color: var(--accent); }
-.sp-row-main { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; margin-bottom: 6px; }
-.sp-row-main b { color: var(--text-primary); font-weight: 600; }
-.sp-when { color: var(--text-muted); font: 12px var(--font-mono, ui-monospace, monospace); }
-.sp-goal { grid-column: 1 / -1; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sp-row-acts { display: flex; gap: 6px; flex-wrap: wrap; }
-.sp-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.sp-confirm label, .sp-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
-.sp-toggle { margin-top: 8px; font-size: 12px; }
-</style>
+<style scoped src="../../styles/shelf-panel.css"></style>

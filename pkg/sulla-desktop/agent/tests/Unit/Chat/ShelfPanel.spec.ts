@@ -20,7 +20,7 @@ vi.mock('@pkg/composables/useBrowserTabs', () => ({ useBrowserTabs: () => ({ cre
 
 import ShelfPanel from '@pkg/pages/chat/components/composer/ShelfPanel.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
-import { RESUME_KEY } from '@pkg/pages/chat/messages/shelfNote';
+import { ShelfNotes } from '@pkg/pages/chat/messages/shelfNote';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
 const liveRow = { key: 'j:0', jobId: 'j', taskIndex: 0, parentJobId: null, parentTaskIndex: null, rootThreadId: 'thread-1', threadId: null, depth: 0, label: 'Billing manager', state: 'working', canMessage: true, canStop: true, lastActivityAt: '' };
@@ -71,7 +71,7 @@ describe('/resume and delete', () => {
     const w = mountPanel({ mode: 'resume' });
     await flushPromises();
     await w.findAll('button').find(b => b.text() === 'Resume')!.trigger('click');
-    const pending = JSON.parse(localStorage.getItem(RESUME_KEY('new-tab'))!);
+    const pending = JSON.parse(localStorage.getItem(ShelfNotes.RESUME_KEY('new-tab'))!);
     expect(pending).toMatchObject({ agentId: 'product-owner', fileId: 'f1' });
     expect(pending.prompt).toContain('/mnt/sulla-files/Projects/Shelf/rc-billing.md');
   });

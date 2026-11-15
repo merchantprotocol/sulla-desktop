@@ -77,9 +77,9 @@ export const PURPOSE_LABEL: Record<AgentResultPurpose, string> = {
   other:  'Finished',
 };
 
-const PURPOSE_SET = new Set(Object.keys(PURPOSE_LABEL));
-const TONE_SET = new Set(['ok', 'warn', 'bad', 'info', 'dim']);
-const STATUS_SET = new Set(['completed', 'blocked', 'error', 'stopped']);
+const PURPOSES: readonly string[] = Object.keys(PURPOSE_LABEL);
+const TONES: readonly string[] = ['ok', 'warn', 'bad', 'info', 'dim'];
+const STATUSES: readonly string[] = ['completed', 'blocked', 'error', 'stopped'];
 
 /**
  * Accept card data from a message only when each item has the fields the
@@ -91,7 +91,7 @@ export function readAgentResultCard(value: unknown): AgentResultCardData | undef
   const valid = items.filter((item): item is AgentResultItem => !!item && typeof item === 'object' &&
     typeof item.jobId === 'string' && Number.isInteger(item.taskIndex) &&
     typeof item.label === 'string' && typeof item.verdict === 'string' && typeof item.outcome === 'string' &&
-    typeof item.report === 'string' && PURPOSE_SET.has(item.purpose) && TONE_SET.has(item.tone) && STATUS_SET.has(item.status));
+    typeof item.report === 'string' && PURPOSES.includes(item.purpose) && TONES.includes(item.tone) && STATUSES.includes(item.status));
 
   return valid.length === items.length ? { items: valid } : undefined;
 }

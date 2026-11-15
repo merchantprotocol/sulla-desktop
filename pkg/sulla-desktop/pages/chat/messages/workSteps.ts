@@ -20,7 +20,7 @@ const FILLER = /^(running a shell command|running a command|preparing your turn(
 const THOUGHT = /^💭\s*/;
 const COMMAND = /^\$\s+/;
 
-export function workSteps(messages: readonly (ThinkingMessage | ToolMessage)[]): WorkStep[] {
+function workSteps(messages: readonly (ThinkingMessage | ToolMessage)[]): WorkStep[] {
   const steps: WorkStep[] = [];
   for (const message of messages) {
     if (message.kind === 'tool') {
@@ -97,7 +97,7 @@ function toolAction(namespace: string, tool: string): string {
  * Agents' own words, with Sulla's tool names said plainly:
  * "sulla github/git_push and git_fetch fail" → "GitHub push and fetch fail".
  */
-export function plainToolNames(text: string): string {
+function plainToolNames(text: string): string {
   return text
     .replace(/\b(?:sulla\s+)?([a-z]+)\/([a-z][\w-]*)/g, (all, ns: string, tool: string) => NAMESPACE[ns] ? `${ NAMESPACE[ns] } ${ toolAction(ns, tool) }` : all)
     .replace(/\b[a-z]+(?:_[a-z]+)+\b/g, word => ACTIONS[word] ?? word)
@@ -114,7 +114,7 @@ function unwrap(command: string): string {
   return out;
 }
 
-export function summariseCommand(raw: string): { title: string; short?: string; detail: string } {
+function summariseCommand(raw: string): { title: string; short?: string; detail: string } {
   const command = unwrap(raw);
   const sulla = /^sulla\s+([\w-]+)\/([\w-]+)\s*(?:'([^]*?)'?)?\s*(?:2>&1.*)?$/.exec(command);
   if (sulla) {
@@ -201,7 +201,7 @@ function parseArgs(text: string | undefined): Record<string, unknown> {
  * The one-line title. Live: what it is doing now. Finished: the summary Sulla
  * recorded, else the commands it ran, else its first thought.
  */
-export function workTitle(steps: readonly WorkStep[], completed: boolean, summary?: string): { lead: string; rest: string } {
+function workTitle(steps: readonly WorkStep[], completed: boolean, summary?: string): { lead: string; rest: string } {
   const runs = steps.filter((step): step is Extract<WorkStep, { kind: 'run' }> => step.kind === 'run');
   if (!completed) {
     const latest = steps[steps.length - 1];
@@ -222,4 +222,12 @@ export function workTitle(steps: readonly WorkStep[], completed: boolean, summar
 function uniqueTitles(runs: readonly { title: string; short?: string }[]): string {
   const names = [...new Set(runs.map(run => run.short ?? run.title))];
   return names.length > 4 ? `${ names.slice(0, 4).join(', ') }, +${ names.length - 4 }` : names.join(', ');
+}
+
+/** Work steps: reading a block's tool calls and thoughts as steps, titles and plain names. */
+export class WorkSteps {
+  static readonly workSteps = workSteps;
+  static readonly plainToolNames = plainToolNames;
+  static readonly summariseCommand = summariseCommand;
+  static readonly workTitle = workTitle;
 }

@@ -68,7 +68,7 @@ import { groupTranscriptThinking } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { returnCoveredByCard } from '../../messages/handoffCover';
-import { LineTimeKey, idTime, lineTimes } from '../../messages/lineTime';
+import { LineTimeKey, LineTimes } from '../../messages/lineTime';
 import { waitingOn } from '../../messages/waitingStatus';
 import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
@@ -80,10 +80,10 @@ const transcriptEntries = computed(() => groupTranscriptThinking(controller.mess
 
 // Each line's time, shown once per minute (see lineTime.ts). Lines that are
 // not shown don't count, or they would take the minute from the line below.
-const times = computed(() => lineTimes(transcriptEntries.value.filter(entry =>
+const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(entry =>
   !(entry.kind === 'subagent_exchange' && returnCoveredByCard(entry, controller.messages.value))).map(entry => ({
   id: entry.id,
-  at: idTime(entry.id) ?? (entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt),
+  at: LineTimes.idTime(entry.id) ?? (entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt),
 }))));
 provide(LineTimeKey, id => times.value.get(id));
 

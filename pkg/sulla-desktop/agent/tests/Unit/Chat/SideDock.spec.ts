@@ -11,7 +11,7 @@ import { computed, ref } from 'vue';
 import AgentLanes from '@pkg/pages/chat/components/sidedock/AgentLanes.vue';
 import DecisionsPanel from '@pkg/pages/chat/components/sidedock/DecisionsPanel.vue';
 import SideDock from '@pkg/pages/chat/components/sidedock/SideDock.vue';
-import { DOCK_POSITION_KEY, SIDE_RATIO_DEFAULT, SIDE_RATIO_KEY, resetDockPositionForTests, useDockPosition } from '@pkg/pages/chat/composables/useDockPosition';
+import { DOCK_POSITION_KEY, DockPositions, SIDE_RATIO_DEFAULT, SIDE_RATIO_KEY } from '@pkg/pages/chat/composables/useDockPosition';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
 import { activityBins, ActivityTrail, chatDecisions, ciStateOf, groupResults, laneStep } from '@pkg/pages/chat/messages/sideDock';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
@@ -70,31 +70,31 @@ function mountWith(component: any, { rows = [] as any[], messages = [] as any[],
   });
 }
 
-beforeEach(() => { localStorage.clear(); resetDockPositionForTests() });
+beforeEach(() => { localStorage.clear(); DockPositions.resetForTests() });
 afterEach(() => { document.body.innerHTML = ''; invoke.mockClear() });
 
 describe('where the dock lives', () => {
   // risk: the choice must hold for every chat and survive a restart
   it('defaults to the bottom and remembers a move to the side', () => {
-    expect(useDockPosition().position.value).toBe('bottom');
-    useDockPosition().setPosition('side');
+    expect(DockPositions.use().position.value).toBe('bottom');
+    DockPositions.use().setPosition('side');
     expect(localStorage.getItem(DOCK_POSITION_KEY)).toBe('side');
-    resetDockPositionForTests();
-    expect(useDockPosition().position.value).toBe('side');
+    DockPositions.resetForTests();
+    expect(DockPositions.use().position.value).toBe('side');
   });
 
   it('moves back to the bottom from the tab row', async() => {
-    useDockPosition().setPosition('side');
+    DockPositions.use().setPosition('side');
     const dock = mountWith(SideDock);
     await dock.find('.sdk-move').trigger('click');
-    expect(useDockPosition().position.value).toBe('bottom');
+    expect(DockPositions.use().position.value).toBe('bottom');
   });
 });
 
 describe('resizing the side column', () => {
   // risk: the column had a fixed width; the user wants to drag its edge and keep the size
   it('follows a drag on its edge, saves the share on release, and keeps it after a restart', async() => {
-    useDockPosition().setPosition('side');
+    DockPositions.use().setPosition('side');
     const dock = mountWith(SideDock);
     const root = dock.element as HTMLElement;
     Object.defineProperty(root, 'offsetParent', { value: { getBoundingClientRect: () => ({ right: 1000, width: 1000 }) } });
@@ -102,21 +102,21 @@ describe('resizing the side column', () => {
 
     await handle.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 680 });
     handle.element.dispatchEvent(Object.assign(new Event('pointermove'), { clientX: 600, pointerId: 1 }));
-    expect(useDockPosition().sideRatio.value).toBeCloseTo(0.4);
+    expect(DockPositions.use().sideRatio.value).toBeCloseTo(0.4);
     expect(localStorage.getItem(SIDE_RATIO_KEY)).toBeNull();
     handle.element.dispatchEvent(Object.assign(new Event('pointerup'), { clientX: 600, pointerId: 1 }));
     expect(localStorage.getItem(SIDE_RATIO_KEY)).toBe('0.4');
 
-    resetDockPositionForTests();
-    expect(useDockPosition().sideRatio.value).toBeCloseTo(0.4);
+    DockPositions.resetForTests();
+    expect(DockPositions.use().sideRatio.value).toBeCloseTo(0.4);
   });
 
   it('never goes past its limits, and a double-click resets it', async() => {
     const dock = mountWith(SideDock);
-    useDockPosition().setSideRatio(5);
-    expect(useDockPosition().sideRatio.value).toBe(0.7);
+    DockPositions.use().setSideRatio(5);
+    expect(DockPositions.use().sideRatio.value).toBe(0.7);
     await dock.find('.sdk-resize').trigger('dblclick');
-    expect(useDockPosition().sideRatio.value).toBe(SIDE_RATIO_DEFAULT);
+    expect(DockPositions.use().sideRatio.value).toBe(SIDE_RATIO_DEFAULT);
   });
 });
 

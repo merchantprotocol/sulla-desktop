@@ -78,7 +78,7 @@
 import { computed } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
-import { shortTime } from '../../messages/lineTime';
+import { LineTimes } from '../../messages/lineTime';
 import { isOpenDecision } from '../../messages/sideDock';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
@@ -105,7 +105,7 @@ const TAG: Record<DecisionRecord['status'], { label: string; tone: string }> = {
 };
 function tagOf(record: DecisionRecord) { return TAG[record.status] ?? TAG.expired }
 function whenOf(record: DecisionRecord): string {
-  const asked = `${ record.kind === 'approval' ? 'asked to approve' : 'asked' } ${ shortTime(record.createdAt) }`;
+  const asked = `${ record.kind === 'approval' ? 'asked to approve' : 'asked' } ${ LineTimes.shortTime(record.createdAt) }`;
   if (!isOpenDecision(record)) return asked;
   const left = Math.round((record.expiresAt - Date.now()) / 60_000);
   return left > 0 ? `${ asked } · expires in ${ left }m` : asked;

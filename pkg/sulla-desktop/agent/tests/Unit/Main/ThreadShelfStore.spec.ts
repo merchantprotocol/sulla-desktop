@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() }, app: { getPath: () => '/tmp', getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
-import { buildNote, parseNote } from '@pkg/pages/chat/messages/shelfNote';
+import { ShelfNotes } from '@pkg/pages/chat/messages/shelfNote';
 import { ThreadShelfStore } from '@pkg/main/threadShelf';
 
 const meta = { name: 'RC billing', status: 'shelved' as const, shelvedAt: '2026-11-14T22:00:00.000Z', chatThreadId: 't_abc' };
@@ -66,7 +66,7 @@ describe('shelf notes in Sulla Files', () => {
   it('ignores unrelated files in the folder', async() => {
     const { files, request } = fakeFiles();
     files.set('x', { path: 'Projects/Shelf/readme.md', text: '# not a note', version: 1, trashed: false });
-    files.set('y', { path: 'Projects/Shelf/old/a.md', text: buildNote(meta, 'x'), version: 1, trashed: false });
+    files.set('y', { path: 'Projects/Shelf/old/a.md', text: ShelfNotes.buildNote(meta, 'x'), version: 1, trashed: false });
     expect(await new ThreadShelfStore(request).list()).toEqual([]);
   });
 
@@ -75,7 +75,7 @@ describe('shelf notes in Sulla Files', () => {
     const store = new ThreadShelfStore(request);
     const { fileId } = await store.save(meta, '## Goal\nShip.');
     await store.markResumed(fileId, 't_new');
-    expect(parseNote(files.get(fileId)!.text)!.meta).toMatchObject({ status: 'resumed', resumedThreadId: 't_new' });
+    expect(ShelfNotes.parseNote(files.get(fileId)!.text)!.meta).toMatchObject({ status: 'resumed', resumedThreadId: 't_new' });
   });
 
   it('deletes by moving the note to the trash', async() => {

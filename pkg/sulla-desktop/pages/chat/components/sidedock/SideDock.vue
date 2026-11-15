@@ -114,8 +114,8 @@ import { computed, inject, ref, watch, type Ref } from 'vue';
 import AgentLanes from './AgentLanes.vue';
 import DecisionsPanel from './DecisionsPanel.vue';
 import ResultsPanel from './ResultsPanel.vue';
-import { useChatDecisions } from '../../composables/useChatDecisions';
-import { SIDE_RATIO_DEFAULT, useDockPosition } from '../../composables/useDockPosition';
+import { ChatDecisions } from '../../composables/useChatDecisions';
+import { DockPositions, SIDE_RATIO_DEFAULT } from '../../composables/useDockPosition';
 import { useChatController } from '../../controller/useChatController';
 import { groupResults } from '../../messages/sideDock';
 
@@ -125,7 +125,7 @@ import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
 type TabId = 'sulla' | 'results' | 'decisions' | 'files' | 'artifacts';
 
 const controller = useChatController();
-const { setPosition, sideRatio, setSideRatio } = useDockPosition();
+const { setPosition, sideRatio, setSideRatio } = DockPositions.use();
 const rootEl = ref<HTMLElement | null>(null);
 const dragging = ref(false);
 
@@ -155,7 +155,7 @@ function startDrag(event: PointerEvent): void {
   handle.addEventListener('pointercancel', end);
 }
 function nudge(delta: number): void { setSideRatio(sideRatio.value + delta) }
-const { decisions, openCount } = useChatDecisions();
+const { decisions, openCount } = ChatDecisions.useChatDecisions();
 const client = inject(AGENT_STATE_CLIENT_KEY, null);
 const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
