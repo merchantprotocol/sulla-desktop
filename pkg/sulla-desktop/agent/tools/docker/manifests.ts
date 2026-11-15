@@ -40,6 +40,7 @@ export const dockerToolManifests: ToolManifest[] = [
     name:        'docker_exec',
     description: 'Execute a command in a running Docker container.',
     category:    'docker',
+    executionTarget: 'desktop-local',
     schemaDef:   {
       container: { type: 'string', description: 'Container name or ID' },
       command:   { type: 'string', description: 'Command to execute in the container' },
