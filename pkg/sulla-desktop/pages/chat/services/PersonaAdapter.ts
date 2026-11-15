@@ -897,6 +897,7 @@ export class PersonaAdapter {
         createdAt,
         headline: b.proactive.headline,
         body:     b.proactive.body,
+        ...(b.proactive.result ? { result: b.proactive.result } : {}),
       } satisfies ProactiveMessage;
     }
 

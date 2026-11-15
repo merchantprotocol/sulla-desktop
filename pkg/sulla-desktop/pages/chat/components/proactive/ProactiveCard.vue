@@ -6,13 +6,22 @@
 -->
 <!-- Sulla reaching out unprompted (build done, brief ready, etc.) -->
 <template>
-  <div class="proactive">
+  <AgentResultCard
+    v-if="msg.result"
+    :data="msg.result"
+  />
+  <div
+    v-else
+    class="proactive"
+  >
     <div class="head">Sulla · proactive</div>
     <div class="body"><strong>{{ msg.headline }}</strong> {{ msg.body }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
+import AgentResultCard from './AgentResultCard.vue';
+
 import type { ProactiveMessage } from '../../models/Message';
 defineProps<{ msg: ProactiveMessage }>();
 </script>

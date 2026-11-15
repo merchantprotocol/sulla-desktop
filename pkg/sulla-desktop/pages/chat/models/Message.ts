@@ -12,6 +12,7 @@
 //   3. Done. TypeScript will force you to handle it everywhere that matters.
 
 import type { ArtifactId, AttachmentId, MessageId } from '../types/chat';
+import type { AgentResultCardData } from '@pkg/shared/agentResults/AgentResultCard';
 
 export type MessageKind =
   | 'user'
@@ -229,6 +230,8 @@ export interface ProactiveMessage extends MessageBase {
   kind:     'proactive';
   headline: string;
   body:     string;         // markdown-ish
+  /** Finished background agents: drawn as a result card instead of the text. */
+  result?:  AgentResultCardData;
 }
 
 export interface HeartbeatMessage extends MessageBase {

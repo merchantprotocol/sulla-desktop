@@ -630,6 +630,7 @@ function stopVoice(commit: boolean): void {
 onBeforeUnmount(() => {
   voiceAdapter.dispose();
   window.removeEventListener('chat:reply', onReplyFromTurn as EventListener);
+  window.removeEventListener('chat:draft', onDraftFromCard as EventListener);
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
   ipcRenderer.removeListener('capture-studio:recording-state', onScreenRecordingState);
 });
@@ -644,6 +645,20 @@ function onReplyFromTurn(ev: Event): void {
   const detail = (ev as CustomEvent<{ threadId?: string; excerpt?: string }>).detail;
   if (!detail?.excerpt || detail.threadId !== controller.thread.value.id) return;
   replyTo.value = replyExcerpt(detail.excerpt);
+  setTimeout(() => {
+    const ta = taRef.value;
+    if (!ta) return;
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+  }, 0);
+}
+// ─── Drafted next step from a result card ────────────────────────
+// Puts the text in the message box (after anything already typed) for the
+// user to edit and send. Nothing is sent from here.
+function onDraftFromCard(ev: Event): void {
+  const detail = (ev as CustomEvent<{ threadId?: string; text?: string }>).detail;
+  if (!detail?.text?.trim() || detail.threadId !== controller.thread.value.id) return;
+  draft.value = draft.value.trim() ? `${ draft.value.trimEnd() }\n\n${ detail.text }` : detail.text;
   setTimeout(() => {
     const ta = taRef.value;
     if (!ta) return;
@@ -675,6 +690,7 @@ async function prefillFirstRunStarter(): Promise<void> {
 onMounted(() => {
   ipcRenderer.on('capture-studio:recording-state', onScreenRecordingState);
   window.addEventListener('chat:reply', onReplyFromTurn as EventListener);
+  window.addEventListener('chat:draft', onDraftFromCard as EventListener);
   window.addEventListener('chat:attach-files', onAttachShortcut as EventListener);
   prefillFirstRunStarter().catch(() => { /* logged inside */ });
   // Warm the artifact mention cache so the first `@` keystroke has data.
