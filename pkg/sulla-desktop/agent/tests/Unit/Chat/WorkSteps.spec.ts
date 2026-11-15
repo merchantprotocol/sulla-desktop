@@ -104,3 +104,11 @@ describe('a shell step\'s detail', () => {
     expect(WorkSteps.summariseCommand('cat /mnt/data/sulla/runtime/conversations/2a2adf720e26f71b68de1266fd018c75/plan.md').detail).toBe('cat …/plan.md');
   });
 });
+
+describe('a loop that polls a Sulla tool', () => {
+  // risk: a live block read "seq · for i in $(seq 1 40); do r=$(timeout 60 sulla … '{"" with raw JSON
+  it('is titled by the tool and shows its arguments, not the shell', () => {
+    const step = WorkSteps.summariseCommand('for i in $(seq 1 40); do r=$(timeout 60 sulla github/check_runs \'{"repo":"ripple","sha":"c020bfcd1234"}\'); echo "$r" | grep -q completed && break; sleep 30; done');
+    expect(step).toMatchObject({ title: 'GitHub · CI checks', short: 'CI checks', detail: 'ripple · c020bfc · in a loop' });
+  });
+});

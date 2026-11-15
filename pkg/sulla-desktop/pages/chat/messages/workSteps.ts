@@ -118,23 +118,30 @@ function summariseCommand(raw: string): { title: string; short?: string; detail:
   const command = unwrap(raw);
   const sulla = /^sulla\s+([\w-]+)\/([\w-]+)\s*(?:'([^]*?)'?)?\s*(?:2>&1.*)?$/.exec(command);
   if (sulla) {
-    const args = parseArgs(sulla[3]);
-    const pr = args.pull_number ?? args.number ?? args.pr;
-    const parts = [
-      typeof args.repo === 'string' ? `${ args.repo }${ pr ? ` #${ pr }` : '' }` : pr ? `#${ pr }` : '',
-      typeof args.sha === 'string' ? args.sha.slice(0, 7) : '',
-      typeof args.query === 'string' ? `"${ args.query.slice(0, 60) }"` : '',
-      typeof args.path === 'string' ? args.path : '',
-    ].filter(Boolean);
     const action = toolAction(sulla[1], sulla[2]);
-    return { title: `${ NAMESPACE[sulla[1]] ?? sulla[1] } · ${ action }`, short: action, detail: parts.join(' · ') };
+    return { title: `${ NAMESPACE[sulla[1]] ?? sulla[1] } · ${ action }`, short: action, detail: argsDetail(sulla[3]) };
   }
   const words = command.replace(/\s+/g, ' ').trim();
   const title = commandName(words);
   const shown = plainPaths(words);
-  // A Sulla tool inside a loop: "GitHub · read PR" titles it; "read PR" names it in a list.
+  // A Sulla tool inside a loop: "GitHub · read PR" titles it; "read PR" names it in a list;
+  // its arguments, not the loop's raw shell and JSON, are the detail.
   const short = title.includes(' · ') ? title.split(' · ').pop() : undefined;
-  return { title, ...(short ? { short } : {}), detail: shown.length > 90 ? `${ shown.slice(0, 89) }…` : shown };
+  const inner = short ? /sulla\s+[\w-]+\/[\w-]+\s*'([^']*)'/.exec(command) : null;
+  const detail = inner ? `${ argsDetail(inner[1]) || 'repeated' } · in a loop` : shown.length > 90 ? `${ shown.slice(0, 89) }…` : shown;
+  return { title, ...(short ? { short } : {}), detail };
+}
+
+/** A Sulla tool call's arguments as a short line: "repo #4352 · ee7ae6f". */
+function argsDetail(json: string | undefined): string {
+  const args = parseArgs(json);
+  const pr = args.pull_number ?? args.number ?? args.pr;
+  return [
+    typeof args.repo === 'string' ? `${ args.repo }${ pr ? ` #${ pr }` : '' }` : pr ? `#${ pr }` : '',
+    typeof args.sha === 'string' ? args.sha.slice(0, 7) : '',
+    typeof args.query === 'string' ? `"${ args.query.slice(0, 60) }"` : '',
+    typeof args.path === 'string' ? args.path : '',
+  ].filter(Boolean).join(' · ');
 }
 
 /**
@@ -151,7 +158,7 @@ function plainPaths(text: string): string {
 }
 
 /** Steps that only set the stage (`cd x &&`, `echo ---;`, loop keywords), never the point of a command. */
-const SETUP = /^(cd|echo|printf|export|set|true|sleep|source|\.|clear|:)$/;
+const SETUP = /^(cd|echo|printf|export|set|true|sleep|source|\.|clear|:|seq)$/;
 const KEYWORDS = /^(for|while|until|if|then|else|elif|do|done|fi|case|esac|in|time|sudo|env|nohup|exec)$/;
 /** Tools whose first argument says what they do (`git status`, `gh pr`). */
 const SUBCOMMANDED = /^(git|gh|npm|pnpm|yarn|npx|docker|kubectl|wrangler|uv|cargo|go|brew|psql|sulla|codex|claude)$/;
