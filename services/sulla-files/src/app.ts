@@ -475,29 +475,58 @@ export function createApp(
     await visibleVersion(request,file,file.current_version_id);
     live.peer(file.id,request.params.peerId,liveOwner(request));return file;
   }
-  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{const client=await db.connect();try{
-    await client.query('BEGIN');let file=await requireFile(request,request.params.id,'view',client);await lockStoredNamespace(client,file.collection_id);file=await requireFile(request,file.id,'view',client);
+  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{try{
+    // Load and build the document first; the transaction only re-checks the version and saves it.
+    const file=await requireFile(request,request.params.id,'view');
     await visibleVersion(request,file,file.current_version_id);
-    let editable=true;try{await requireFile(request,file.id,'edit',client)}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
+    let editable=true;try{await requireFile(request,file.id,'edit')}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
     const actor=identity(request);
     if(editable)liveWriters.set(file.id,request);
     if(!live.has(file.id)){
       const loaded=await loadFileContent(db,config,store,file.id,file.current_version_id);const text=loaded&&utf8Text(loaded.buffer);
       if(typeof text!=='string'||loaded!.buffer.length>8*1024*1024)throw new HttpError(415,'Live editing requires UTF-8 text up to 8 MiB');
-      const saved=await currentAutomergeDocument(client,file.id,file.current_version_id);
-      const document=saved??newTextDocument(text);await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      const saved=await currentAutomergeDocument(db as unknown as pg.PoolClient,file.id,file.current_version_id);
+      const document=saved??newTextDocument(text);
+      await transactions.run('live-open',async client=>{
+        await lockStoredNamespace(client,file.collection_id,file.path);
+        const current=await requireFile(request,file.id,'view',client);
+        if(current.current_version_id!==file.current_version_id||current.path!==file.path) throw new HttpError(409,'Files changed concurrently or are busy; retry');
+        await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      });
       // Reauthorize on each durable write; revoked rights and protected paths fail closed.
-      live.open(file.id,document,async snapshot=>{const request=liveWriters.get(file.id);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);const tx=await db.connect();try{await tx.query('BEGIN');let current=await requireFile(request,file.id,'edit',tx);await lockStoredNamespace(tx,current.collection_id);current=await requireFile(request,file.id,'edit',tx);
-        const latest=(await tx.query('SELECT document FROM file_automerge_docs WHERE file_id=$1',[file.id])).rows[0];
-        if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
-        const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,file.id,current.current_version_id);
-        if(!existing?.buffer.equals(bytes)){const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,actor,message:'Live document edit',baseVersionId:current.current_version_id});await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);await tx.query('COMMIT');await audit(request,'live-edit',result,{versionId:result.current_version_id});}
-        else {await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[current.id,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);await tx.query('COMMIT');}
-      }catch(error){await tx.query('ROLLBACK');throw error}finally{tx.release()}});
+      if(!live.has(file.id)) live.open(file.id,document,snapshot=>flushLiveDocument(file.id,snapshot));
     }
-    await client.query('COMMIT');const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
+    const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
     response.json({...peer,versionId:file.current_version_id,events:`${liveBase(file.id)}/${peer.peerId}/events`});
-  }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()}});
+  }catch(error){next(error)}});
+  /**
+   * Persist a live document. Merging, reading the current version and encrypting run outside any
+   * transaction; the transaction re-checks the version and the stored document under the path lock
+   * and records the result. A concurrent writer in between makes the snapshot stale: redo (bounded).
+   */
+  async function flushLiveDocument(fileId:string,snapshot:Automerge.Doc<TextDocument>):Promise<void>{
+    const request=liveWriters.get(fileId);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);
+    for(let attempt=1;;attempt++){
+      const current=await requireFile(request,fileId,'edit');
+      const latest=(await db.query('SELECT document,updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0];
+      if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
+      const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,fileId,current.current_version_id);
+      const changed=!existing?.buffer.equals(bytes);
+      const staged=changed?await stageVersionContent(current.collection_id,bytes):undefined;
+      const outcome=await transactions.run('live-flush',async tx=>{
+        await lockStoredNamespace(tx,current.collection_id,current.path);
+        const locked=await requireFile(request,fileId,'edit',tx);
+        const stamp=(await tx.query('SELECT updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0]?.stamp;
+        if(locked.current_version_id!==current.current_version_id||locked.path!==current.path||stamp!==latest?.stamp) return undefined;
+        if(!changed){await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[fileId,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);return {};}
+        const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged,actor,message:'Live document edit',baseVersionId:current.current_version_id});
+        await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);
+        return {result};
+      });
+      if(outcome){if(outcome.result)await audit(request,'live-edit',outcome.result,{versionId:outcome.result.current_version_id});return;}
+      if(attempt>=4)throw new HttpError(409,'Files changed concurrently or are busy; retry');
+    }
+  }
   app.post('/v1/files/:id/live/:peerId/sync',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);const p=live.peer(request.params.id,request.params.peerId);const message=request.body?.message;if(typeof message!=='string'||message.length>12*1024*1024)throw new HttpError(400,'Invalid sync message');
     // Live versions are attributed to the last peer that actually sent changes, not the last one to sync.
     if(p.editable&&Automerge.decodeSyncMessage(Buffer.from(message,'base64')).changes.length){await requireFile(request,request.params.id,'edit');liveWriters.set(request.params.id,request);}response.json({message:live.receive(request.params.id,request.params.peerId,Buffer.from(message,'base64'),p.editable)});}catch(error){next(error)}});
