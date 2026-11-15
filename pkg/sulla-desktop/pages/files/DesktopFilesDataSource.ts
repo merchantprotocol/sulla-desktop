@@ -113,6 +113,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private folderListeners = new Set<(files:FilesItem[])=>void>();
   private statsCache:{ collectionId:string; at:number; value:CollectionStats }|null = null;
   static readonly statsMaxAgeMs = 30_000;
+  private summaryCache = new Map<string,{ at:number; value:FilesFolderSummary[] }>();
   private watching = false;
   private watchedCollectionId = '';
   private collectionId = '';
@@ -335,7 +336,12 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   async folderSummaries(path:string):Promise<FilesFolderSummary[]> {
     if(!this.collectionId) return [];
-    return await ipcRenderer.invoke('sulla-files:folder-summary',{collectionId:this.collectionId,path}) as FilesFolderSummary[];
+    // Root summaries scan the whole collection, so the 12-second refresh reuses them until a change event arrives.
+    const key=`${ this.collectionId }\n${ path }`; const cached=this.summaryCache.get(key);
+    if(cached && Date.now()-cached.at<DesktopFilesDataSource.statsMaxAgeMs) return cached.value;
+    const value=await ipcRenderer.invoke('sulla-files:folder-summary',{collectionId:this.collectionId,path}) as FilesFolderSummary[];
+    this.summaryCache.set(key,{at:Date.now(),value});
+    return value;
   }
 
   private async pageAll(input:{ path:string; children:boolean }):Promise<FilesItem[]> {
@@ -464,7 +470,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   onFolderFilesChanged(listener:(files:FilesItem[])=>void):()=>void { this.folderListeners.add(listener); return ()=>this.folderListeners.delete(listener) }
 
   onFilesChanged(listener:(change:{ collectionId:string; seq:string; paths:string[] }) => void):() => void {
-    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => { if (this.statsCache?.collectionId === change.collectionId) this.statsCache = null; listener(change) };
+    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => { if (this.statsCache?.collectionId === change.collectionId) this.statsCache = null; this.summaryCache.clear(); listener(change) };
     this.watching = true;
     ipcRenderer.on('files-ui:changed', wrapped);
     if (this.collectionId) {

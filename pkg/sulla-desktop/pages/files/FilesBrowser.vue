@@ -114,7 +114,7 @@
           class="bar"
         >
           <i :style="{ width: `${storagePercent}%` }" />
-        </div><span>{{ activeFiles.length.toLocaleString() }} file{{ activeFiles.length === 1 ? '' : 's' }}<template v-if="snapshot?.collection.keptBytes !== undefined"> · {{ formatBytes(snapshot.collection.keptBytes) }} kept on this Mac</template></span>
+        </div><span>{{ collectionFileCount.toLocaleString() }} file{{ collectionFileCount === 1 ? '' : 's' }}<template v-if="snapshot?.collection.keptBytes !== undefined"> · {{ formatBytes(snapshot.collection.keptBytes) }} kept on this Mac</template></span>
       </div>
       <button
         v-if="dataSource.capabilities.nativeFilesystem"
@@ -698,7 +698,7 @@
                 @keydown.enter.prevent="commitRename(entry)"
                 @keydown.escape.prevent="cancelRename"
                 @blur="commitRename(entry)"
-              ><b v-else>{{ entry.name }}</b><small>{{ entry.folder ? `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}` : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
+              ><b v-else>{{ entry.name }}</b><small>{{ entry.folder ? (entry.childCount < 0 ? 'Folder' : `${entry.childCount} file${entry.childCount === 1 ? '' : 's'}`) : formatBytes(entry.size) }} · {{ formatShort(entry.updatedAt) }}</small>
             </div>
           </div>
           <div v-if="gridBottomSpacer" class="grid-spacer" :style="{ height: `${gridBottomSpacer}px` }" />
@@ -845,7 +845,7 @@
     </div>
     <dialog v-if="folderDetails" ref="folderDialog" class="folder-details" aria-labelledby="folder-details-title" @close="folderDetails = null" @click="onFolderBackdrop">
       <h2 id="folder-details-title">{{ folderDetails.name }}</h2>
-      <dl><dt>Type</dt><dd>Folder</dd><dt>Location</dt><dd>{{ folderDetails.path }}</dd><dt>Files</dt><dd>{{ folderDetails.childCount }}</dd><dt>Size</dt><dd>{{ formatBytes(folderDetails.size) }}</dd><dt>Modified</dt><dd>{{ formatDate(folderDetails.updatedAt, true) }}</dd></dl>
+      <dl><dt>Type</dt><dd>Folder</dd><dt>Location</dt><dd>{{ folderDetails.path }}</dd><dt>Files</dt><dd>{{ folderDetails.childCount < 0 ? '…' : folderDetails.childCount }}</dd><dt>Size</dt><dd>{{ formatBytes(folderDetails.size) }}</dd><dt>Modified</dt><dd>{{ formatDate(folderDetails.updatedAt, true) }}</dd></dl>
       <p v-if="folderDetails.folderState?.needsDescription" class="folder-guidance-warning">Needs description</p>
       <label class="folder-guidance-field">Description<textarea v-model="folderDescription" :disabled="busy" maxlength="2000" placeholder="What belongs in this folder?" /></label>
       <label class="folder-guidance-field">Naming hint<input v-model="folderNamingHint" :disabled="busy" maxlength="500" placeholder="Example: project-YYYY-MM-DD.md" /></label>
@@ -884,6 +884,7 @@ import FileDetail from './FileDetail.vue';
 import ShareSheet from './ShareSheet.vue';
 import { supportsDocumentEditor } from './editor/editorTypes';
 import { aggregateFolderChildren, fileNameCollator, type FolderAggregate } from './fileAggregation';
+import { FilesSectionSource, FolderSummaryIndex } from './FilesCrossFolderViews';
 import SharedByMe from './SharedByMe.vue';
 import { useFilesExplorerInteractions } from './composables/useFilesExplorerInteractions';
 import { useFilesOperationQueue } from './composables/useFilesOperationQueue';
@@ -1019,7 +1020,14 @@ const shareTarget = ref<{ id:string; name:string; folder:boolean; path:string; c
 
 const activeFiles = computed(() => snapshot.value?.files.filter(file => !file.deletedAt && file.path.split('/').at(-1) !== '_folder-metadata.yaml') ?? []);
 const trashItems = computed(() => snapshot.value?.trash ?? []);
-const totalBytes = computed(() => activeFiles.value.reduce((sum, file) => sum + file.size, 0));
+// The open folder's rows are only that folder; collection-wide figures and cross-folder views have their own server sources.
+const sectionSource = computed(() => new FilesSectionSource(props.dataSource));
+const sectionFiles = ref<FilesItem[] | null>(null);
+const folderSummaries = ref(new FolderSummaryIndex(typeof props.dataSource.folderSummaries === 'function'));
+const expandedFolderFiles = ref(new Map<string, FilesItem[]>());
+const refreshCount = ref(0);
+const collectionFileCount = computed(() => snapshot.value?.collection.fileCount ?? activeFiles.value.length);
+const totalBytes = computed(() => snapshot.value?.collection.totalBytes ?? activeFiles.value.reduce((sum, file) => sum + file.size, 0));
 const quotaBytes = computed(() => snapshot.value?.collection.storageQuota);
 const storagePercent = computed(() => quotaBytes.value ? Math.min(100, Math.max(1, totalBytes.value / quotaBytes.value * 100)) : 0);
 const storageWhere = computed(() => snapshot.value?.status.serverConfigured ? 'on server' : 'on this Mac');
@@ -1082,7 +1090,7 @@ const accountLine = computed(() => {
   return desktops === undefined ? role : `${ role } · ${ desktops } desktop${ desktops === 1 ? '' : 's' }`;
 });
 // One badge per agent run that left files behind, matching the mockup's "Agent files 2".
-const agentCount = computed(() => new Set(activeFiles.value.filter(file => file.createdByType === 'agent-run').map(file => file.createdById)).size);
+const agentCount = computed(() => snapshot.value?.collection.agentRunCount ?? new Set(activeFiles.value.filter(file => file.createdByType === 'agent-run').map(file => file.createdById)).size);
 const sections = computed(() => [
   { id: 'files' as Section, label: 'My Files', icon: icons.folderLine, count: 0, warn: false },
   { id: 'shared' as Section, label: 'Shared with me', icon: icons.users, count: sharedFolders.value.length, warn: false },
@@ -1158,8 +1166,9 @@ function folderEntry(prefix:string, aggregate:FolderAggregate, folderState?:File
   const agent = aggregate.count > 0 && aggregate.allAgent;
   const state = aggregate.hasConflict ? 'conflict' : aggregate.hasSyncing ? 'syncing' : aggregate.count > 0 && aggregate.allOnlineOnly ? 'online-only' : 'synced';
   const where = agent ? 'made by an agent' : state === 'online-only' ? 'online only' : 'stored in Sulla';
+  const countLabel = aggregate.count < 0 ? 'Folder' : `${ aggregate.count } file${ aggregate.count === 1 ? '' : 's' }`;
 
-  return { id: `folder:${ prefix }${ aggregate.name }`, key: `folder:${ prefix }${ aggregate.name }`, path: `${ prefix }${ aggregate.name }`, name:aggregate.name, folder: true, folderState, agent, childCount: aggregate.count, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ aggregate.count } file${ aggregate.count === 1 ? '' : 's' } · ${ where }`, mime: 'inode/directory', size:aggregate.size, updatedAt: newest?.updatedAt ?? '', sortTimestamp:aggregate.newestTimestamp, currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
+  return { id: `folder:${ prefix }${ aggregate.name }`, key: `folder:${ prefix }${ aggregate.name }`, path: `${ prefix }${ aggregate.name }`, name:aggregate.name, folder: true, folderState, agent, childCount: aggregate.count, kindClass: agent ? 'folder agent' : 'folder', icon: agent ? icons.agent : icons.folder, subtitle: `${ countLabel } · ${ where }`, mime: 'inode/directory', size:Math.max(0, aggregate.size), updatedAt: newest?.updatedAt ?? '', sortTimestamp:aggregate.newestTimestamp, currentVersionId: '', versionCount: 0, createdByType: newest?.createdByType ?? 'user', createdById: newest?.createdById ?? '', ownerDisplayName: newest?.ownerDisplayName, ownerAvatarUrl: newest?.ownerAvatarUrl, syncState: state as FilesItem['syncState'], indexStatus: 'indexed', indexReason: 'Folder indexing is reported per file.' };
 }
 function compareEntries(a:DisplayEntry, b:DisplayEntry) {
   if (a.folder !== b.folder) return a.folder ? -1 : 1;
@@ -1179,13 +1188,15 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
     const search = query.value.trim().toLowerCase();
     return trashItems.value.filter(item => item.path.split('/').at(-1) !== '_folder-metadata.yaml' && (!search || item.path.toLowerCase().includes(search))).map(toTrashDisplay).sort(compareEntries);
   }
-  let files = searchResults.value ?? activeFiles.value;
+  const search = query.value.trim().toLowerCase();
+  const crossFolder = !searchResults.value && sectionSource.value.supports(section.value);
+  if (section.value === 'shared' && !search && folderSummaries.value.serverBacked) return sharedFolderEntries();
+  let files = searchResults.value ?? (crossFolder ? sectionFiles.value ?? [] : activeFiles.value);
   if (section.value === 'agent') files = files.filter(file => file.createdByType === 'agent-run');
   if (section.value === 'starred') files = files.filter(file => starred.value.has(file.id));
   if (section.value === 'recent') { const timestamps=new Map(files.map(file=>[file.id,Date.parse(file.updatedAt||'0')])); files = [...files].sort((a, b) => timestamps.get(b.id)! - timestamps.get(a.id)!).slice(0, 50); }
   if (section.value === 'shared') files = files.filter(file => sharedFolders.value.some(folder => file.path.startsWith(`${ folder }/`)));
-  const search = query.value.trim().toLowerCase();
-  const flat = Boolean(search) || ['recent', 'starred', 'trash'].includes(section.value);
+  const flat = Boolean(search) || ['recent', 'starred', 'trash'].includes(section.value) || (crossFolder && section.value === 'agent');
   const prefix = currentPath.value && section.value === 'files' ? `${ currentPath.value }/` : '';
   const entries:DisplayEntry[] = [];
   const aggregation = aggregateFolderChildren(files, prefix);
@@ -1203,14 +1214,15 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
         if (!aggregation.folders.has(name)) aggregation.folders.set(name, { name, path:displayedPath, count:0, size:0, newestTimestamp:Date.parse('0'), allAgent:true, hasConflict:false, hasSyncing:false, allOnlineOnly:true });
       }
     }
-    for (const aggregate of aggregation.folders.values()) entries.push(folderEntry(prefix, aggregate, folderStates.get(aggregate.name)));
+    const summarized = section.value === 'files' ? folderSummaries.value.apply(aggregation, prefix) : aggregation;
+    for (const aggregate of summarized.folders.values()) entries.push(folderEntry(prefix, aggregate, folderStates.get(aggregate.name)));
   }
   if (section.value === 'starred') {
     for (const key of starred.value) {
       if (!key.startsWith('folder:')) continue;
       const path = key.slice('folder:'.length); const parent = path.split('/').slice(0, -1).join('/'); const parentPrefix = `${ parent }${ parent ? '/' : '' }`;
-      const aggregate = aggregateFolderChildren(activeFiles.value, parentPrefix).folders.get(path.split('/').at(-1)!);
-      if (aggregate?.count) {
+      const aggregate = starredFolderAggregate(path, parentPrefix);
+      if (aggregate && aggregate.count !== 0) {
         const state = snapshot.value?.folders?.find(folder => typeof folder !== 'string' && folder.path === path);
         entries.push(folderEntry(parentPrefix, aggregate, typeof state === 'string' ? undefined : state));
       }
@@ -1218,8 +1230,26 @@ const visibleEntries = computed<DisplayEntry[]>(() => {
   }
   return entries.filter(entry => !(section.value === 'files' && !currentPath.value && entry.name === '_folder-metadata.yaml')).filter(entry => (!activeFilters.value.type || kindLabel(entry.mime, entry.path) === activeFilters.value.type) && (!activeFilters.value.person || ownerName(entry) === activeFilters.value.person) && (!activeFilters.value.folder || entry.path.split('/')[0] === activeFilters.value.folder) && (!activeFilters.value.date || dateBucket(entry.updatedAt) === activeFilters.value.date)).sort(compareEntries);
 });
+function starredFolderAggregate(path:string, parentPrefix:string):FolderAggregate | undefined {
+  const name = path.split('/').at(-1)!;
+  const aggregation = aggregateFolderChildren(activeFiles.value, parentPrefix);
+  if (!folderSummaries.value.serverBacked) return aggregation.folders.get(name);
+  const known = (snapshot.value?.folders ?? []).some(folder => (typeof folder === 'string' ? folder : folder.path) === path);
+  if (!aggregation.folders.has(name)) aggregation.folders.set(name, { name, path, count:0, size:0, newestTimestamp:Date.parse('0'), allAgent:false, hasConflict:false, hasSyncing:false, allOnlineOnly:false });
+  const aggregate = folderSummaries.value.apply(aggregation, parentPrefix).folders.get(name);
+  // A starred folder with a folder record but no files still shows (as empty), unlike the old loaded-rows check.
+  return aggregate && (aggregate.count !== 0 || known) ? { ...aggregate, count: aggregate.count === 0 && known ? 0 : aggregate.count } : undefined;
+}
+function sharedFolderEntries():DisplayEntry[] {
+  return sharedFolders.value.map(path => {
+    const parent = path.split('/').slice(0, -1).join('/'); const prefix = parent ? `${ parent }/` : ''; const name = path.split('/').at(-1) ?? path;
+    const aggregate = folderSummaries.value.apply({ directFiles: [], timestamps: new Map(), folders: new Map([[name, { name, path, count:0, size:0, newestTimestamp:Date.parse('0'), allAgent:false, hasConflict:false, hasSyncing:false, allOnlineOnly:false }]]) }, prefix).folders.get(name)!;
+    const state = snapshot.value?.folders?.find(folder => typeof folder !== 'string' && folder.path === path);
+    return folderEntry(prefix, aggregate, typeof state === 'string' ? undefined : state);
+  }).sort(compareEntries);
+}
 function childrenForFolder(folder:DisplayEntry, depth:number):DisplayEntry[] {
-  const prefix = `${ folder.path }/`; const aggregation = aggregateFolderChildren(activeFiles.value, prefix); const states = new Map<string, FilesFolderState | undefined>();
+  const prefix = `${ folder.path }/`; const aggregation = aggregateFolderChildren(props.dataSource.listFolderChildren ? expandedFolderFiles.value.get(folder.path) ?? [] : activeFiles.value, prefix); const states = new Map<string, FilesFolderState | undefined>();
   for (const item of snapshot.value?.folders ?? []) {
     const folderPath = typeof item === 'string' ? item : item.path;
     if (!folderPath.startsWith(prefix) || folderPath === folder.path) continue;
@@ -1227,7 +1257,7 @@ function childrenForFolder(folder:DisplayEntry, depth:number):DisplayEntry[] {
     if (!states.has(name) || folderPath === direct) states.set(name, typeof item === 'string' ? undefined : item);
     if (!aggregation.folders.has(name)) aggregation.folders.set(name, { name, path:direct, count:0, size:0, newestTimestamp:Date.parse('0'), allAgent:true, hasConflict:false, hasSyncing:false, allOnlineOnly:true });
   }
-  const entries = [...aggregation.folders.values()].map(item => ({ ...folderEntry(prefix, item, states.get(item.name)), depth }));
+  const entries = [...folderSummaries.value.apply(aggregation, prefix).folders.values()].map(item => ({ ...folderEntry(prefix, item, states.get(item.name)), depth }));
   entries.push(...aggregation.directFiles.map(file => ({ ...toDisplay(file, aggregation.timestamps.get(file.id) ?? Date.parse(file.updatedAt || '0')), depth })));
   const sorted = entries.sort((a, b) => a.folder === b.folder ? fileNameCollator.compare(a.name, b.name) : a.folder ? -1 : 1);
   return sorted.flatMap(entry => entry.folder && expandedFolders.value.has(entry.path) ? [entry, ...childrenForFolder(entry, depth + 1)] : [entry]);
@@ -1275,7 +1305,7 @@ async function refresh(silent = false, afterMutation = false) {
     if (!isCurrent()) return;
     const [stars, sources] = await Promise.all([source.listStars(loaded.collection.id), source.listNativeSources?.() ?? Promise.resolve([])]);
     if (!isCurrent()) return;
-    nativeSources.value = sources; snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = '';
+    nativeSources.value = sources; snapshot.value = loaded; starred.value = new Set(stars.map(star => star.fileId ?? `folder:${ star.folderPath }`)); error.value = ''; refreshCount.value++;
     await operations.restore(loaded.collection.id);
     if (!isCurrent()) return;
     selectedKeys.value = new Set([...selectedKeys.value].filter(key => displayedEntryKeys.value.has(key)));
@@ -1904,7 +1934,8 @@ async function trashSelected() {
   }
   const files = new Map<string, FilesItem>();
   if (selectedEntries.value.some(entry => entry.folder)) operationNotice.value = 'Trash applies to the selected folders’ files. Empty folder metadata is retained; folder Trash is unavailable.';
-  for (const entry of selectedEntries.value) { if (!entry.folder) files.set(entry.id, entry); else for (const file of activeFiles.value.filter(file => file.path === entry.path || file.path.startsWith(`${ entry.path }/`))) files.set(file.id, file) }
+  try { for (const entry of selectedEntries.value) { if (!entry.folder) files.set(entry.id, entry); else for (const file of props.dataSource.listFolderTree ? await props.dataSource.listFolderTree(entry.path) : activeFiles.value.filter(file => file.path === entry.path || file.path.startsWith(`${ entry.path }/`))) if (!file.deletedAt) files.set(file.id, file) } }
+  catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause); return }
   if (!files.size) return;
   if (operations.supported() && selectedEntries.value.every(entry => !entry.folder)) {
     await submitReceiptItems([...files.values()].map(file => ({ itemId: crypto.randomUUID(), kind: 'file', action: 'trash', fileId: file.id, expectedVersionId: file.currentVersionId, expectedRevision: file.operationRevision })));
@@ -2135,6 +2166,45 @@ function onFilesChanged(change:{ paths:string[] }) { markActivity(change.paths);
 function refreshVisibleFiles() { if (document.visibilityState !== 'hidden') scheduleFilesRefresh() }
 watch([busy, loading], ([mutating, fetching]) => { if (!mutating && !fetching && pendingChange) scheduleFilesRefresh() });
 watch(currentPath, async path => { if(section.value!=='files'||!snapshot.value||!props.dataSource.loadFolder)return; try { const files=await props.dataSource.loadFolder(path); if(section.value==='files'&&currentPath.value===path&&snapshot.value)snapshot.value={...snapshot.value,files:[...files]}; } catch(error) { if(currentPath.value===path) operationError.value=error instanceof Error?error.message:String(error); } });
+let sectionGeneration = 0; let sectionFilesFor = '';
+async function loadSectionFiles() {
+  const requested = section.value; const generation = ++sectionGeneration; const source = sectionSource.value; const collectionId = snapshot.value?.collection.id ?? '';
+  const key = `${ collectionId }:${ requested }`; if (key !== sectionFilesFor) { sectionFilesFor = key; sectionFiles.value = null }
+  if (!collectionId || !source.supports(requested)) return;
+  try { const files = await source.load(requested, starred.value); if (generation === sectionGeneration && section.value === requested && snapshot.value?.collection.id === collectionId) sectionFiles.value = files }
+  catch (cause) { if (generation === sectionGeneration && section.value === requested) { sectionFiles.value = []; operationError.value = cause instanceof Error ? cause.message : String(cause) } }
+}
+watch([section, refreshCount, starred], () => { void loadSectionFiles() });
+let summaryGeneration = 0;
+async function loadFolderSummaries() {
+  const source = props.dataSource; const collectionId = snapshot.value?.collection.id; if (!source.folderSummaries || !collectionId) return;
+  const generation = ++summaryGeneration; const parents = new Set<string>(); const parentOf = (path:string) => path.split('/').slice(0, -1).join('/');
+  if (section.value === 'files') { parents.add(currentPath.value); for (const path of expandedFolders.value) parents.add(path) }
+  if (section.value === 'shared') for (const path of sharedFolders.value) parents.add(parentOf(path));
+  if (section.value === 'starred') for (const key of starred.value) if (key.startsWith('folder:')) parents.add(parentOf(key.slice('folder:'.length)));
+  const results = await Promise.all([...parents].map(async parent => [parent, await source.folderSummaries!(parent).catch(() => null)] as const));
+  if (generation !== summaryGeneration || snapshot.value?.collection.id !== collectionId) return;
+  let next = folderSummaries.value; for (const [parent, rows] of results) if (rows) next = next.set(parent, rows);
+  folderSummaries.value = next;
+}
+watch([section, currentPath, refreshCount, expandedFolders, starred], () => { void loadFolderSummaries() });
+let expandedLoading = false;
+async function loadExpandedFolders(reload:boolean) {
+  const source = props.dataSource; const collectionId = snapshot.value?.collection.id; if (!source.listFolderChildren || !collectionId || (reload && expandedLoading)) return;
+  expandedLoading = true;
+  try {
+    for (const path of expandedFolders.value) {
+      if (!reload && expandedFolderFiles.value.has(path)) continue;
+      const files = await source.listFolderChildren(path);
+      if (snapshot.value?.collection.id !== collectionId || !expandedFolders.value.has(path)) continue;
+      const next = new Map(expandedFolderFiles.value); next.set(path, files); expandedFolderFiles.value = next;
+    }
+  } catch (cause) { operationError.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { expandedLoading = false }
+}
+watch(expandedFolders, () => { void loadExpandedFolders(false) });
+watch(refreshCount, () => { void loadExpandedFolders(true) });
+watch(() => snapshot.value?.collection.id, () => { folderSummaries.value = new FolderSummaryIndex(typeof props.dataSource.folderSummaries === 'function'); expandedFolderFiles.value = new Map() });
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
 let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
