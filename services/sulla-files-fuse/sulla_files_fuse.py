@@ -17,9 +17,8 @@ import random
 import stat
 import tempfile
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
+import urllib3
 import logging
 import contextvars
 import re
@@ -43,7 +42,7 @@ MAX_CACHED_NODES = 50_000
 DIRECTORY_PAGE_SIZE = 500
 # Methods whose outcome doesn't depend on how many times they're applied, so
 # retrying a transient 409 from Files' own SERIALIZABLE-conflict retry loop is safe.
-IDEMPOTENT_RETRY_METHODS = ("DELETE", "PUT")
+IDEMPOTENT_RETRY_METHODS = ("DELETE", "GET", "HEAD", "PUT")
 MAX_CONFLICT_RETRIES = 3
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
@@ -185,6 +184,7 @@ class FilesApi:
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
         self.actor_resolver = actor_resolver
+        self.http = urllib3.PoolManager(num_pools=4, maxsize=64, block=True)
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -212,12 +212,17 @@ class FilesApi:
                     return result
                 except OSError as error:
                     detail = getattr(error, "detail", None) or {}
-                    transient = getattr(error, "status", None) == 409 and "concurrently or are busy" in detail.get("error", "")
-                    if method not in IDEMPOTENT_RETRY_METHODS or not transient:
+                    transient_conflict = getattr(error, "status", None) == 409 and (
+                        "concurrently or are busy" in detail.get("error", "").lower()
+                        or "serialization failure" in detail.get("error", "").lower()
+                    )
+                    transient_transport = getattr(error, "transient", False)
+                    transient_status = getattr(error, "status", None) in (502, 503, 504)
+                    if not transient_conflict and (method not in IDEMPOTENT_RETRY_METHODS or not (transient_transport or transient_status)):
                         raise
                     if attempt < MAX_CONFLICT_RETRIES:
                         attempt += 1
-                        time.sleep(0.05 * attempt + random.uniform(0, 0.05))
+                        time.sleep(min(0.4, 0.05 * (2 ** (attempt - 1))) + random.uniform(0, 0.05))
                         continue
                     # Files' own SERIALIZABLE-conflict retries were exhausted too: this is
                     # still transient DB contention, not a permission denial, so give agents
@@ -228,8 +233,10 @@ class FilesApi:
         except OSError as error:
             stats["requestErrors"] += 1
             outcome["status"] = getattr(error, "status", None)
-            outcome["error"] = str(error)
+            outcome["error"] = True
             outcome["code"] = (getattr(error, "detail", None) or {}).get("code")
+            outcome["errno"] = error.errno
+            outcome["failure"] = type(error).__name__
             raise
         finally:
             elapsed = time.monotonic() - started
@@ -239,15 +246,27 @@ class FilesApi:
             if log.isEnabledFor(level):
                 emit("files-request", level, method=method, path=path.split("?", 1)[0], status=outcome["status"],
                      ms=round(elapsed * 1000, 1), sent=len(body) if body is not None else 0, received=outcome["bytes"], actor=request_actor.get(),
-                     slow=slow or None, error=outcome["error"], code=outcome.get("code"))
+                     slow=slow or None, failure=outcome.get("failure"), errno=outcome.get("errno"), code=outcome.get("code"))
 
     def _send(self, path, method, body, headers):
-        request = urllib.request.Request(
-            f"{self.base_url}{path}", method=method, data=body,
-            headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=120 if method == "PUT" else 15) as response:
+            response = self.http.request(
+                method, f"{self.base_url}{path}", body=body,
+                headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
+                timeout=urllib3.Timeout(connect=5.0, read=120.0 if method == "PUT" else 15.0),
+                retries=False, preload_content=False,
+            )
+            try:
+                if response.status >= 400 and response.status != 304:
+                    payload = response.read(MAX_RESPONSE_BYTES + 1)
+                    try:
+                        detail = json.loads(payload or b"{}")
+                    except json.JSONDecodeError:
+                        detail = {}
+                    failure = OSError(errno.EFBIG if response.status == 413 else errno.EROFS if detail.get("code") in ("EROFS", "FILE_LOCKED") or response.status == 423 else errno.EPERM if response.status == 409 else errno.EACCES if response.status == 403 else errno.EIO, detail.get("error", f"Files HTTP {response.status}"))
+                    failure.status = response.status
+                    failure.detail = detail
+                    raise failure
                 length = response.headers.get("Content-Length")
                 if length and int(length) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
@@ -255,20 +274,14 @@ class FilesApi:
                 if len(payload) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
                 return response.status, dict(response.headers), payload
-        except urllib.error.HTTPError as error:
-            if error.code == 304:
-                return 304, dict(error.headers), b""
-            payload = error.read(MAX_RESPONSE_BYTES + 1)
-            try:
-                detail = json.loads(payload or b"{}")
-            except json.JSONDecodeError:
-                detail = {}
-            failure = OSError(errno.EFBIG if error.code == 413 else errno.EROFS if detail.get("code") in ("EROFS", "FILE_LOCKED") or error.code == 423 else errno.EPERM if error.code == 409 else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
-            failure.status = error.code
-            failure.detail = detail
+            finally:
+                response.release_conn()
+        except OSError:
+            raise
+        except urllib3.exceptions.HTTPError as error:
+            failure = OSError(errno.EIO, "Files service unavailable")
+            failure.transient = isinstance(error, (urllib3.exceptions.TimeoutError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.ProtocolError))
             raise failure from error
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-            raise OSError(errno.EIO, f"Files service unavailable: {error}") from error
 
     async def directory_page(self, collection_id, path, cursor=None, etag=None):
         query = {"path": path, "limit": DIRECTORY_PAGE_SIZE}

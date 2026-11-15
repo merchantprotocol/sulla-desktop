@@ -23,8 +23,26 @@ function creator(actor:FilesIdentity):[string, string] {
  * file-versus-folder prefix invariant as a normal unique constraint, so the
  * shared lock is the serialization point for checking and changing paths.
  */
-export async function lockStoredNamespace(client:pg.PoolClient, collectionId:string):Promise<void> {
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`stored-namespace:${ collectionId }`]);
+export async function lockStoredNamespace(client:pg.PoolClient, collectionId:string, scopedPath?:string):Promise<void> {
+  const collectionKey = `stored-namespace:${ collectionId }`;
+  if (scopedPath === undefined) {
+    // Broad namespace edits (rename/move/delete, sync reconciliation) retain the
+    // exclusive gate and therefore exclude every path-scoped create below.
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [collectionKey]);
+    return;
+  }
+  // A scoped create shares the collection gate with other creates, but excludes
+  // broad namespace mutations. Ancestor file slots are shared; the target slot
+  // is exclusive. This catches exact-path and file-vs-folder prefix races even
+  // for deep paths, while allowing siblings in one directory to proceed together.
+  // Every transaction acquires the same sorted set of ancestor/target keys.
+  await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [collectionKey]);
+  const ancestors = new Set(storedParentPaths(scopedPath));
+  const paths = [...new Set([...ancestors, scopedPath])].sort();
+  for (const path of paths) {
+    const acquire = path === scopedPath ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
+    await client.query(`SELECT ${ acquire }(hashtextextended($1,0))`, [`stored-namespace-path:${ collectionId }:${ path }`]);
+  }
 }
 
 export async function assertStoredFilePath(
