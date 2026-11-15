@@ -34,6 +34,14 @@
             :msg="entry"
           />
         </template>
+        <TurnWaiting
+          v-if="waiting"
+          :key="waiting.since"
+          :since="waiting.since"
+          :can-resend="!waiting.message.attachments?.length"
+          @stop="controller.stop()"
+          @resend="resend"
+        />
       </div>
     </div>
 
@@ -54,9 +62,11 @@ import { computed, ref } from 'vue';
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
+import TurnWaiting from './TurnWaiting.vue';
 import { groupTranscriptThinking } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
+import { waitingOn } from '../../messages/waitingStatus';
 import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
 const controller = useChatController();
@@ -64,6 +74,14 @@ const scroller = ref<HTMLElement | null>(null);
 
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
 const transcriptEntries = computed(() => groupTranscriptThinking(controller.messages.value));
+
+// Sent but nothing back yet: show a live "working" row instead of nothing.
+const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
+function resend(): void {
+  const text = waiting.value?.message.text;
+  controller.stop();
+  if (text) controller.send(text);
+}
 
 const showTodayMarker = computed(() => controller.messages.value.length > 0);
 const todayLabel = computed(() => {

@@ -432,13 +432,13 @@ export class BackendGraphWebSocketService {
   private initialize(): void {
     this.wsService.connect(SULLA_DESKTOP_CHANNEL_ID);
     const sullaUnsub = this.wsService.onMessage(SULLA_DESKTOP_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(SULLA_DESKTOP_CHANNEL_ID, 'sulla-desktop', msg);
+      this.handleChannelMessageSafely(SULLA_DESKTOP_CHANNEL_ID, 'sulla-desktop', msg);
     });
     if (sullaUnsub) this.unsubscribes.push(sullaUnsub);
 
     this.wsService.connect(HEARTBEAT_CHANNEL_ID);
     const heartbeatUnsub = this.wsService.onMessage(HEARTBEAT_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(HEARTBEAT_CHANNEL_ID, 'heartbeat', msg);
+      this.handleChannelMessageSafely(HEARTBEAT_CHANNEL_ID, 'heartbeat', msg);
     });
     if (heartbeatUnsub) this.unsubscribes.push(heartbeatUnsub);
 
@@ -448,7 +448,7 @@ export class BackendGraphWebSocketService {
     // wrappers, tool execution, memory recall, etc. all apply uniformly.
     this.wsService.connect(MOBILE_RELAY_CHANNEL_ID);
     const mobileRelayUnsub = this.wsService.onMessage(MOBILE_RELAY_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(MOBILE_RELAY_CHANNEL_ID, 'sulla-desktop', msg);
+      this.handleChannelMessageSafely(MOBILE_RELAY_CHANNEL_ID, 'sulla-desktop', msg);
     });
     if (mobileRelayUnsub) this.unsubscribes.push(mobileRelayUnsub);
 
@@ -512,7 +512,7 @@ export class BackendGraphWebSocketService {
     if (this.subscribedChannels.has(channelId)) return;
     this.wsService.connect(channelId);
     const unsub = this.wsService.onMessage(channelId, (msg) => {
-      this.handleChannelMessage(channelId, 'sulla-desktop', msg);
+      this.handleChannelMessageSafely(channelId, 'sulla-desktop', msg);
     });
     if (unsub) this.unsubscribes.push(unsub);
     this.subscribedChannels.add(channelId);
@@ -533,6 +533,36 @@ export class BackendGraphWebSocketService {
   // ------------------------------------------------------------------
   // Unified channel message handling — dispatches to default agent via GraphRegistry
   // ------------------------------------------------------------------
+
+  /**
+   * A turn can fail before dispatchToAgent's own error handling starts (for
+   * example a database read while resolving the route). Without this the
+   * rejection went nowhere: the window never heard the turn ended and showed
+   * "working" forever. Report it on the thread and end the run state.
+   */
+  private async handleChannelMessageSafely(
+    channelId: string,
+    triggerType: 'sulla-desktop' | 'heartbeat',
+    msg: WebSocketMessage,
+  ): Promise<void> {
+    try {
+      await this.handleChannelMessage(channelId, triggerType, msg);
+    } catch (err: any) {
+      console.error(`[BackendGraphWS] ${ msg.type } on ${ channelId } failed before the agent started:`, err);
+      if (msg.type !== 'user_message' && msg.type !== 'inject_message') return;
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const threadId = typeof data?.threadId === 'string' ? data.threadId : undefined;
+      this.emitMessage(channelId, 'assistant_message', {
+        content:   `Agent error: ${ err?.message || String(err) }`,
+        role:      'assistant',
+        kind:      'error',
+        thread_id: threadId,
+      });
+      this.emitMessage(channelId, 'transfer_data', {
+        role: 'system', content: 'graph_execution_complete', stopReason: 'error', waitingForUser: false, thread_id: threadId,
+      });
+    }
+  }
 
   private async handleChannelMessage(
     channelId: string,
