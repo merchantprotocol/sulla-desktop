@@ -129,7 +129,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 .chat-turn:hover > .tact,
 .chat-turn:focus-within > .tact,
 .tact:hover, .tact:focus-within, .tact.tact-latest {
-  opacity: 1; visibility: visible;
+  /* inherit, not visible: a chat tab in the background is visibility:hidden, and
+     "visible" here would paint these buttons over whatever page is in front. */
+  opacity: 1; visibility: inherit;
   transition-delay: 0s, 0s;
 }
 

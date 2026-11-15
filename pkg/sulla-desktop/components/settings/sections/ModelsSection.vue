@@ -499,7 +499,7 @@ onBeforeUnmount(() => {
   .mr-ddi b { display: block; font-weight: 600; }
   .mr-ddi small { display: block; color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
   .mr-ddi > .mr-i { width: 14px; height: 14px; margin-top: 3px; color: var(--accent-2); visibility: hidden; }
-  .mr-ddi[aria-selected="true"] > .mr-i { visibility: visible; }
+  .mr-ddi[aria-selected="true"] > .mr-i { visibility: inherit; }
   .mr-ddi:hover, .mr-ddi:focus-visible { outline: 0; box-shadow: none; background: var(--accent-soft); }
   .mr-ddi:hover b, .mr-ddi:focus-visible b { color: var(--accent-2); }
   .mr-ddsep { height: 1px; margin: 4px 0; background: var(--line); }
