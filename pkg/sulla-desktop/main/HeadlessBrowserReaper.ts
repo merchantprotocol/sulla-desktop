@@ -8,6 +8,7 @@ import {
   decideHeadlessProcessReap,
   isHeadlessBrowser,
   isProtectedProcess,
+  isSullaOwnedHostBrowser,
   parseProcessCpuTime,
 } from './HeadlessBrowserReaperPolicy';
 
@@ -102,8 +103,10 @@ export class HeadlessBrowserReaper {
       const parentExists = byPid.has(root.ppid);
       const orphaned = !parentExists || root.ppid === 1;
       const idleForMs = sampledAt - unchangedSince;
+      const owned = target === 'vm' || isSullaOwnedHostBrowser(root, this.descendsFrom(root, process.pid, byPid));
       const decision = decideHeadlessProcessReap({
         candidate: true,
+        owned,
         protectedProcess: isProtectedProcess(root),
         orphaned,
         idleForMs,
@@ -121,6 +124,17 @@ export class HeadlessBrowserReaper {
       const command = /^"([^"]+)"|^(\S+)/.exec(args)?.slice(1).find(Boolean) ?? '';
       return [{ pid: Number(pidText), ppid: Number(ppidText), cpuSeconds: parseProcessCpuTime(cpuTime), startedAt: startedAt.replace(/\s+/g, ' ').trim(), command, args }];
     });
+  }
+
+  private descendsFrom(proc: ProcessRecord, ancestorPid: number, byPid: Map<number, ProcessRecord>): boolean {
+    let current: ProcessRecord | undefined = proc;
+    const visited = new Set<number>();
+    while (current && !visited.has(current.pid)) {
+      if (current.ppid === ancestorPid) return true;
+      visited.add(current.pid);
+      current = byPid.get(current.ppid);
+    }
+    return false;
   }
 
   private hasHeadlessAncestor(process: ProcessRecord, byPid: Map<number, ProcessRecord>): boolean {

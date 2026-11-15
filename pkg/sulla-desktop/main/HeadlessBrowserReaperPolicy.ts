@@ -36,8 +36,20 @@ export function isHeadlessBrowser(candidate: HeadlessProcessCandidate): boolean 
   return chromiumExecutable && /(?:^|\s)--headless(?:=|\s|$)/.test(candidate.args);
 }
 
+/**
+ * The Mac is the human's machine, not Sulla's sandbox: on the host only reap
+ * browsers Sulla started (descended from the Desktop process, or launched from
+ * a Sulla-owned path). Inside the Sulla runtime VM every headless browser is ours.
+ */
+export function isSullaOwnedHostBrowser(candidate: HeadlessProcessCandidate, descendsFromSulla: boolean): boolean {
+  if (descendsFromSulla) return true;
+  return /(?:[/\\]sulla[/\\]|Sulla Desktop|sulla-desktop)/i.test(`${ candidate.command } ${ candidate.args }`);
+}
+
 export interface ReapDecisionInput {
   candidate: boolean;
+  /** False when the browser belongs to someone else (e.g. the human's own tools on the Mac host). */
+  owned?: boolean;
   protectedProcess: boolean;
   orphaned: boolean;
   idleForMs: number;
@@ -50,6 +62,6 @@ export interface ReapDecision {
 
 /** Pure decision function: the caller measures tree CPU idle time and ownership. */
 export function decideHeadlessProcessReap(input: ReapDecisionInput): ReapDecision {
-  if (!input.candidate || input.protectedProcess || input.idleForMs < HEADLESS_BROWSER_IDLE_MS) return { reap: false };
+  if (!input.candidate || input.owned === false || input.protectedProcess || input.idleForMs < HEADLESS_BROWSER_IDLE_MS) return { reap: false };
   return { reap: true, reason: input.orphaned ? 'orphaned-idle' : 'idle' };
 }

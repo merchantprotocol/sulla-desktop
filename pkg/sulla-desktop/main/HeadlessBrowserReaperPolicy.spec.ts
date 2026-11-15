@@ -6,6 +6,7 @@ import {
   HEADLESS_BROWSER_IDLE_MS,
   isHeadlessBrowser,
   isProtectedProcess,
+  isSullaOwnedHostBrowser,
   parseProcessCpuTime,
 } from './HeadlessBrowserReaperPolicy.ts';
 
@@ -48,4 +49,21 @@ test('process CPU time parser handles macOS and Linux ps formats', () => {
   assert.equal(parseProcessCpuTime('02:03.50'), 123.5);
   assert.equal(parseProcessCpuTime('01:02:03'), 3723);
   assert.equal(parseProcessCpuTime('1-02:03:04'), 93_784);
+});
+
+test('host: the human\'s own idle headless Chrome is never reaped', () => {
+  // risk: host safety — the Mac is the human's machine; only Sulla-started browsers may be killed there.
+  const proc = { command: '/opt/homebrew/bin/chromium', args: '/opt/homebrew/bin/chromium --headless=new --user-data-dir=/Users/me/Sites/app/.cache' };
+  const owned = isSullaOwnedHostBrowser(proc, false);
+  assert.equal(owned, false);
+  assert.deepEqual(decideHeadlessProcessReap({ candidate: isHeadlessBrowser(proc), owned, protectedProcess: isProtectedProcess(proc), orphaned: true, idleForMs: HEADLESS_BROWSER_IDLE_MS * 3 }), { reap: false });
+});
+
+test('host: idle headless Chrome started by Sulla is reaped', () => {
+  // risk: process safety — Sulla-descended or Sulla-path browsers on the host are still reclaimed.
+  const child = { command: 'chrome-headless-shell', args: 'chrome-headless-shell --remote-debugging-pipe' };
+  assert.equal(isSullaOwnedHostBrowser(child, true), true);
+  const pathOwned = { command: '/Users/me/sulla/browsers/chrome-headless-shell', args: '/Users/me/sulla/browsers/chrome-headless-shell --headless' };
+  assert.equal(isSullaOwnedHostBrowser(pathOwned, false), true);
+  assert.deepEqual(decideHeadlessProcessReap({ candidate: isHeadlessBrowser(pathOwned), owned: true, protectedProcess: isProtectedProcess(pathOwned), orphaned: true, idleForMs: HEADLESS_BROWSER_IDLE_MS }), { reap: true, reason: 'orphaned-idle' });
 });
