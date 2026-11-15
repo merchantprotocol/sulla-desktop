@@ -263,10 +263,12 @@ export class AgentStateService {
   private withDerivedStatus(job: AgentJob): AgentJob {
     if (job.status === 'stopped' || job.tasks.length === 0) return job;
     const statuses = job.tasks.map(task => task.status); let status: AgentJob['status'];
-    if (job.tasks.some(task => task.status === 'error' && task.completion?.status !== 'completed')) status = 'failed';
     // A task that already returned a blocked result is settled; only an open blocker keeps the job running.
-    else if (job.tasks.some(task => ['queued', 'running'].includes(task.status) || isOpenBlocker(task))) status = 'running';
+    // Live and parked tasks win over a sibling's error: 'failed' is terminal (never woken or
+    // reclaimed), so one errored task must not strand healthy siblings that are still working.
+    if (job.tasks.some(task => ['queued', 'running'].includes(task.status) || isOpenBlocker(task))) status = 'running';
     else if (statuses.some(value => value === 'parked')) status = 'parked';
+    else if (job.tasks.some(task => task.status === 'error' && task.completion?.status !== 'completed')) status = 'failed';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';
     else status = 'completed';
     return status === job.status ? job : { ...job, status };

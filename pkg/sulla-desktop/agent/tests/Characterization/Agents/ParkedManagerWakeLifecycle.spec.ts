@@ -618,6 +618,29 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect((await registry.getJob(manager.jobId))?.status).toBe('parked');
   });
 
+  it('p) one task erroring does not strand a parked sibling manager: the job stays wakeable until every task settles', async() => {
+    // risk: a sibling's error rolled the whole job to 'failed' (terminal), so a healthy
+    // parked manager in the same job could never be woken or messaged again (2026-11-14 incident).
+    const managerThreadId = 'rollup-o-manager-thread';
+    const job = await registry.createJob(
+      [
+        { agentId: 'codex-sol-worker', label: 'billing', prompt: 'build', status: 'running', threadId: 'rollup-o-billing-thread', depth: 1 },
+        { agentId: 'coding-manager-sol', label: 'qbo manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 },
+      ],
+      'sulla-desktop', 'rollup-o-root-thread',
+    );
+    await registry.parkJobTask(job.jobId, 1, 1);
+    await registry.recordTaskCompletion(job.jobId, 0, { label: 'billing', status: 'error', output: 'container secrets failed', threadId: 'rollup-o-billing-thread' });
+
+    expect((await registry.getJob(job.jobId))?.status).toBe('parked');
+    const rehydrator = new ParkedAgentRehydrator(agentJobProvider.jobs, definitions, registry.failJob, () => {});
+    expect(await rehydrator.resolve(managerThreadId)).not.toBeNull();
+
+    // Once the manager settles too, the earlier error makes the job failed (terminal) as before.
+    await registry.recordTaskCompletion(job.jobId, 1, { label: 'qbo manager', status: 'completed', output: 'done', threadId: managerThreadId });
+    expect((await registry.getJob(job.jobId))?.status).toBe('failed');
+  });
+
   it('n) atomically deduplicates concurrent orphan delivery for a later task', async() => {
     // risk: two recovery/live settlement paths race their orphan check and
     // both wake the higher parent with the same irreversible result.
