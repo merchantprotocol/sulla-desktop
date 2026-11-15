@@ -63,6 +63,8 @@ import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepositor
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 import { ListingPage } from './ListingPage.js';
+import { DatabaseFailureClassifier, RetryableDatabaseError, TransactionRunner } from './FilesTransaction.js';
+import { VersionContentStager, type StagedVersionContent } from './VersionContentStager.js';
 import { FileListingQuery } from './FileListingQuery.js';
 import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
@@ -161,7 +163,7 @@ export function createApp(
   chunkStore?:Store,
   cloudSync?:CloudSyncService,
 ) {
-  const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }); const transactions = new TransactionRunner(db); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
   const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
@@ -247,7 +249,7 @@ export function createApp(
     const content=await loadFileContent(db,config,store,id,versionId);
     if (!content) throw new Error('Audit log content unavailable');
     return content.buffer;
-  }, (client,collectionId,path,bytes,fileId) => insertVersion(client,{collectionId,path,bytes,fileId,mime:'application/x-ndjson',
+  }, (collectionId,bytes) => stageVersionContent(collectionId,bytes), (client,collectionId,path,bytes,staged,fileId) => insertVersion(client,{collectionId,path,bytes,staged,fileId,mime:'application/x-ndjson',
     actor:{userId:config.userId,deviceId:config.deviceId,kind:'capability'},createdByType:'user',createdById:'sulla-files',message:'Append audit event'}));
   app.locals.auditWriter=auditWriter;
   app.post('/v1/system/audit-events',async(request,response,next)=>{try {
@@ -368,7 +370,11 @@ export function createApp(
     for (let offset = 0; offset < Math.max(1, bytes.length); offset += CHUNK_BYTES) chunkIds.push(chunkId(bytes.subarray(offset, Math.min(bytes.length, offset + CHUNK_BYTES)), dedupKey));
     return createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: bytes.length })).digest('hex');
   }
-  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null }) {
+  /** Encrypts and durably writes a version's chunks. Call this before opening the transaction that commits it. */
+  async function stageVersionContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
+    return contentStager.stage(collectionId, bytes);
+  }
+  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null; staged?: StagedVersionContent }) {
     input = { ...input, mime: resolveMime(input.path, input.mime) };
     const agentWrite = input.createdByType === 'agent-run' || input.createdByType === 'agent' || Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
     const collection = await collectionRow(input.collectionId, client);
@@ -377,9 +383,12 @@ export function createApp(
     const publicationStatus = new PublicationLifecyclePolicy().statusForWrite({ collection, path:input.path, createdByType });
     await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
     await ensureStoredFileParents(client, input.collectionId, input.path, input.actor);
-    const { data: dataKey, dedup: dedupKey } = await config.keyring!.keys(input.collectionId); const chunkIds:string[] = []; const chunks:{ id: string; size: number; storedSize: number }[] = [];
-    for (let offset = 0; offset < Math.max(1, input.bytes.length); offset += CHUNK_BYTES) { const plain = input.bytes.subarray(offset, Math.min(input.bytes.length, offset + CHUNK_BYTES)); const id = chunkId(plain, dedupKey); chunkIds.push(id); if (!await store.has(input.collectionId, id)) { const encrypted = await encryptChunk(plain, dataKey, id); await store.put(input.collectionId, id, encrypted); chunks.push({ id, size: plain.length, storedSize: encrypted.length }) } }
-    const manifestHash = createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: input.bytes.length })).digest('hex'); await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
+    // Callers that still pass only bytes stage here (inside their transaction); the Files mount,
+    // audit and live-edit paths stage first so their transactions hold only DB statements.
+    const staged = input.staged ?? await contentStager.stage(input.collectionId, input.bytes);
+    if (staged.collectionId !== input.collectionId || staged.size !== input.bytes.length) throw new Error('staged content does not match the version being written');
+    const chunkIds = [...staged.chunkIds]; const chunks = staged.chunks; const manifestHash = staged.manifestHash;
+    await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
     for (const chunk of chunks) await client.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING`, [input.collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ input.collectionId }/${ chunk.id }`]);
     let file:any;
     if (input.fileId) {
@@ -397,7 +406,12 @@ export function createApp(
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$4,$11) RETURNING *`, [input.versionId ?? randomUUID(), file.id, input.collectionId, parent, manifestHash, input.bytes.length, createdByType, createdById, input.message, input.actor.jobId || input.actor.deviceId || config.deviceId, publicationStatus])).rows[0];
     await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
     if (version.publication_status === 'draft') await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'draft-write',$6)`, [agentWrite?'agent-or-device':'user',createdById,input.actor.deviceId||null,file.id,version.id,{path:input.path,message:input.message}]);
-    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status:version.publication_status };
+    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]);
+    // Chunk GC takes a table lock on file_versions, so once the version row above is in, no GC that
+    // could still delete these chunks is running. One that finished between staging and now could
+    // have reclaimed a deduplicated chunk: check the blobs (a local stat each) before committing.
+    for (const chunk of chunks) if (!await store.has(input.collectionId, chunk.id)) throw Object.assign(new HttpError(503, 'Files storage changed while saving; retry the request'), { code: 'FILES_DB_RETRYABLE' });
+    await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status:version.publication_status };
   }
 
   async function saveAutomergeVersion(client:pg.PoolClient,fileId:string,versionId:string,document:Automerge.Doc<TextDocument>):Promise<void> {
@@ -461,29 +475,58 @@ export function createApp(
     await visibleVersion(request,file,file.current_version_id);
     live.peer(file.id,request.params.peerId,liveOwner(request));return file;
   }
-  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{const client=await db.connect();try{
-    await client.query('BEGIN');let file=await requireFile(request,request.params.id,'view',client);await lockStoredNamespace(client,file.collection_id);file=await requireFile(request,file.id,'view',client);
+  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{try{
+    // Load and build the document first; the transaction only re-checks the version and saves it.
+    const file=await requireFile(request,request.params.id,'view');
     await visibleVersion(request,file,file.current_version_id);
-    let editable=true;try{await requireFile(request,file.id,'edit',client)}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
+    let editable=true;try{await requireFile(request,file.id,'edit')}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
     const actor=identity(request);
     if(editable)liveWriters.set(file.id,request);
     if(!live.has(file.id)){
       const loaded=await loadFileContent(db,config,store,file.id,file.current_version_id);const text=loaded&&utf8Text(loaded.buffer);
       if(typeof text!=='string'||loaded!.buffer.length>8*1024*1024)throw new HttpError(415,'Live editing requires UTF-8 text up to 8 MiB');
-      const saved=await currentAutomergeDocument(client,file.id,file.current_version_id);
-      const document=saved??newTextDocument(text);await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      const saved=await currentAutomergeDocument(db as unknown as pg.PoolClient,file.id,file.current_version_id);
+      const document=saved??newTextDocument(text);
+      await transactions.run('live-open',async client=>{
+        await lockStoredNamespace(client,file.collection_id,file.path);
+        const current=await requireFile(request,file.id,'view',client);
+        if(current.current_version_id!==file.current_version_id||current.path!==file.path) throw new HttpError(409,'Files changed concurrently or are busy; retry');
+        await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      });
       // Reauthorize on each durable write; revoked rights and protected paths fail closed.
-      live.open(file.id,document,async snapshot=>{const request=liveWriters.get(file.id);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);const tx=await db.connect();try{await tx.query('BEGIN');let current=await requireFile(request,file.id,'edit',tx);await lockStoredNamespace(tx,current.collection_id);current=await requireFile(request,file.id,'edit',tx);
-        const latest=(await tx.query('SELECT document FROM file_automerge_docs WHERE file_id=$1',[file.id])).rows[0];
-        if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
-        const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,file.id,current.current_version_id);
-        if(!existing?.buffer.equals(bytes)){const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,actor,message:'Live document edit',baseVersionId:current.current_version_id});await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);await tx.query('COMMIT');await audit(request,'live-edit',result,{versionId:result.current_version_id});}
-        else {await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[current.id,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);await tx.query('COMMIT');}
-      }catch(error){await tx.query('ROLLBACK');throw error}finally{tx.release()}});
+      if(!live.has(file.id)) live.open(file.id,document,snapshot=>flushLiveDocument(file.id,snapshot));
     }
-    await client.query('COMMIT');const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
+    const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
     response.json({...peer,versionId:file.current_version_id,events:`${liveBase(file.id)}/${peer.peerId}/events`});
-  }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()}});
+  }catch(error){next(error)}});
+  /**
+   * Persist a live document. Merging, reading the current version and encrypting run outside any
+   * transaction; the transaction re-checks the version and the stored document under the path lock
+   * and records the result. A concurrent writer in between makes the snapshot stale: redo (bounded).
+   */
+  async function flushLiveDocument(fileId:string,snapshot:Automerge.Doc<TextDocument>):Promise<void>{
+    const request=liveWriters.get(fileId);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);
+    for(let attempt=1;;attempt++){
+      const current=await requireFile(request,fileId,'edit');
+      const latest=(await db.query('SELECT document,updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0];
+      if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
+      const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,fileId,current.current_version_id);
+      const changed=!existing?.buffer.equals(bytes);
+      const staged=changed?await stageVersionContent(current.collection_id,bytes):undefined;
+      const outcome=await transactions.run('live-flush',async tx=>{
+        await lockStoredNamespace(tx,current.collection_id,current.path);
+        const locked=await requireFile(request,fileId,'edit',tx);
+        const stamp=(await tx.query('SELECT updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0]?.stamp;
+        if(locked.current_version_id!==current.current_version_id||locked.path!==current.path||stamp!==latest?.stamp) return undefined;
+        if(!changed){await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[fileId,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);return {};}
+        const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged,actor,message:'Live document edit',baseVersionId:current.current_version_id});
+        await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);
+        return {result};
+      });
+      if(outcome){if(outcome.result)await audit(request,'live-edit',outcome.result,{versionId:outcome.result.current_version_id});return;}
+      if(attempt>=4)throw new HttpError(409,'Files changed concurrently or are busy; retry');
+    }
+  }
   app.post('/v1/files/:id/live/:peerId/sync',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);const p=live.peer(request.params.id,request.params.peerId);const message=request.body?.message;if(typeof message!=='string'||message.length>12*1024*1024)throw new HttpError(400,'Invalid sync message');
     // Live versions are attributed to the last peer that actually sent changes, not the last one to sync.
     if(p.editable&&Automerge.decodeSyncMessage(Buffer.from(message,'base64')).changes.length){await requireFile(request,request.params.id,'edit');liveWriters.set(request.params.id,request);}response.json({message:live.receive(request.params.id,request.params.peerId,Buffer.from(message,'base64'),p.editable)});}catch(error){next(error)}});
@@ -878,23 +921,26 @@ export function createApp(
     response.setHeader('ETag', `"${ area || 'home' }:${ snapshot.revision }"`);
     response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
-  app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
-    const client = await db.connect(); try {
-      const collectionId = String(request.query.collectionId ?? '');
-      const filePath = cleanPath(String(request.query.path ?? ''), false);
-      const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
-      await requireCollection(request, collectionId, 'edit');
-      await client.query('BEGIN'); await lockStoredNamespace(client, collectionId, filePath);
+  app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? '');
+    const filePath = cleanPath(String(request.query.path ?? ''), false);
+    const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
+    await requireCollection(request, collectionId, 'edit');
+    const bytes = Buffer.from(request.body as Buffer);
+    // Encrypt and fsync the chunks first; the transaction below holds only DB statements.
+    const staged = await stageVersionContent(collectionId, bytes);
+    const file = await transactions.run('fuse-create', async client => {
+      await lockStoredNamespace(client, collectionId, filePath);
       // A trashed file keeps its (collection_id, path) row, so a plain INSERT hit the unique index and
       // creating a file where one was deleted failed with 'A file already occupies ...'. Revive the
       // trashed row instead (insertVersion un-deletes it and appends a version; history is kept).
       const trashed = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NOT NULL FOR UPDATE', [collectionId, filePath])).rows[0];
-      const file = await insertVersion(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
-        mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor,
+      return insertVersion(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
+        mime: request.header('content-type') ?? 'application/octet-stream', bytes, staged, actor,
         createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
-      await client.query('COMMIT'); await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
-    } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
-  });
+    });
+    await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
+  } catch (error) { next(error) } });
   app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await fileRow(request.params.id); const nextPath = cleanPath(request.body.path, false);
     const targetCollectionId=String(request.body.targetCollectionId??file.collection_id);
@@ -914,14 +960,16 @@ export function createApp(
     const file = await fileRow(request.params.id); mountIdentity(request, 'delete', { collectionId:file.collection_id,fileId:file.id,path:file.path });
     await trashFileWithoutReceipt(db, file.id, identity(request), operationAccess(request)); response.status(204).end();
   } catch (error) { next(error) } });
-  app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { const client=await db.connect(); try {
+  app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
     const actor=mountIdentity(request,'create',{collectionId,path:folderPath}); await requireCollection(request, collectionId, 'edit');
-    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
     const createdDescription=`Created by ${actor.agentId??actor.jobId??'agent'} on ${new Date().toISOString().slice(0,10)} — needs description`;
-    await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
-    await client.query('COMMIT'); await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+    await transactions.run('fuse-mkdir', async client => {
+      await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
+      await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
+    });
+    await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
+  } catch(error){next(error)} });
   app.patch('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
     const targetCollectionId=String(request.body.targetCollectionId??collectionId); const targetPath=cleanPath(request.body.targetPath,false);
@@ -938,14 +986,17 @@ export function createApp(
     if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Folder move did not complete');
     response.json(result.items[0]?.after);
   } catch(error){next(error)} });
-  app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+  app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.query.collectionId??''); const folderPath=cleanPath(String(request.query.path??''),false);
-    mountIdentity(request,'delete',{collectionId,path:folderPath}); await requirePath(request,collectionId,folderPath,'edit'); await client.query('BEGIN'); await lockStoredNamespace(client,collectionId);
-    const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[collectionId,folderPath]);
-    if(occupied.rowCount) throw new HttpError(409,'folder is not empty');
-    await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
-    await client.query('COMMIT'); response.status(204).end();
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+    mountIdentity(request,'delete',{collectionId,path:folderPath}); await requirePath(request,collectionId,folderPath,'edit');
+    await transactions.run('fuse-rmdir', async client => {
+      await lockStoredNamespace(client,collectionId);
+      const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[collectionId,folderPath]);
+      if(occupied.rowCount) throw new HttpError(409,'folder is not empty');
+      await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
+    });
+    response.status(204).end();
+  } catch(error){next(error)} });
   app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => {
     const controller = new AbortController(); const abort = () => controller.abort();
     request.once('aborted', abort); response.once('close', abort);
@@ -967,9 +1018,9 @@ export function createApp(
     } finally { request.off('aborted',abort); response.off('close',abort) }
   });
   app.put('/v1/fuse/files/:id/content/stream', async(request:RequestWithIdentity, response, next) => {
-    const client=await db.connect(); const uploadId=randomUUID();
+    const uploadId=randomUUID();
     try {
-      let file=await requireFile(request,request.params.id,'edit');
+      const file=await requireFile(request,request.params.id,'edit');
       const match=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
       const sourceHash=request.header('x-sulla-source-hash');
       const declaredBytes=Number(request.header('content-length'));
@@ -977,76 +1028,128 @@ export function createApp(
       if(!Number.isSafeInteger(declaredBytes)||declaredBytes<0) throw new HttpError(400,'valid content-length is required');
       if(declaredBytes>FUSE_MAX_FILE_BYTES) throw new HttpError(413,'Files mount writes are limited to 64 MiB');
       const actor=identity(request);
-      await beginUploadIntent(db,uploadId,file.collection_id);
-      await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
-      file=await requireFile(request,file.id,'edit',client);
-      if(match!==file.current_version_id) throw new HttpError(409,'Files mount version changed');
+      const contentHash=request.header('x-sulla-content-hash')?.toLowerCase();
+      if(match!==file.current_version_id) {
+        // A retried upload whose first attempt committed: the current version already holds this content.
+        if(contentHash&&/^[0-9a-f]{64}$/.test(contentHash)&&Number(file.size)===declaredBytes) {
+          const current=await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,new AbortController().signal);
+          const currentHash=createHash('sha256'); if(current) for await (const part of current.body) currentHash.update(part);
+          if(current&&currentHash.digest('hex')===contentHash) {
+            request.resume();
+            response.setHeader('ETag',`"${file.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',contentHash);
+            return response.json({id:file.id,collectionId:file.collection_id,path:file.path,mime:file.mime,size:Number(file.size),versionId:file.current_version_id,sourceHash:contentHash,mtimeMs:Date.now()});
+          }
+        }
+        throw new HttpError(409,'Files mount version changed');
+      }
       const baseContent=await streamFileContent(db,config,store,file.id,match,undefined,new AbortController().signal);
       if(!baseContent) throw new HttpError(409,'Files mount version changed');
       const baseHash=createHash('sha256');
       for await (const part of baseContent.body) baseHash.update(part);
       if(sourceHash.toLowerCase()!==baseHash.digest('hex')) throw new HttpError(409,'Files mount version changed');
-      const result=await insertStreamingUpload(client,config,store,{uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,
-        expectedBytes:declaredBytes,actor,body:request,intentDb:db,existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'});
-      await client.query('COMMIT');
+      // Phase 1 (no transaction): read the body, encrypt and publish chunks under an upload intent.
+      await beginUploadIntent(db,uploadId,file.collection_id);
+      const uploadInput={uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,expectedBytes:declaredBytes,actor,body:request,intentDb:db,
+        existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'};
+      const streamed=await streamUploadChunks(config,store,uploadInput);
+      // Phase 2: a short transaction that only re-checks the version and records metadata.
+      const result=await transactions.run('fuse-write-stream',async client=>{
+        await lockStoredNamespace(client,file.collection_id,file.path);
+        const current=await requireFile(request,file.id,'edit',client);
+        if(current.current_version_id!==file.current_version_id||current.path!==file.path||current.collection_id!==file.collection_id) throw new HttpError(409,'Files mount version changed');
+        return commitStreamedUpload(client,uploadInput,streamed);
+      });
       await completeUploadIntent(db,uploadId).catch(()=>undefined);
       const hash=result.source_hash;
       await audit(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status});
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',hash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:hash,mtimeMs:Date.now()});
-    } catch(error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
+    } catch(error) { next(error) }
   });
   app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
-    let file = await requireFile(request, request.params.id, 'edit');
     const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
     const sourceHash = request.header('x-sulla-source-hash');
     if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
-    const manager = requireFuseExperiment();
-    const actor=identity(request); const client=await db.connect();
-    try {
-      await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
-      file=await requireFile(request,file.id,'edit',client);
-      const currentBytes=await manager.readStoredVersion(file.id,file.current_version_id);
-      const baseVersion=(await client.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted',[match,file.id])).rows[0];
-      if(!baseVersion) throw new HttpError(409,'Files mount version changed');
-      const baseBytes=match===file.current_version_id?currentBytes:await manager.readStoredVersion(file.id,match);
-      if(sourceHash.toLowerCase()!==createHash('sha256').update(baseBytes).digest('hex')) throw new HttpError(409,'Files mount version changed');
-      const saved=await textSave(client,file,match,Buffer.from(request.body as Buffer),currentBytes);
-      const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,
-        bytes:saved.bytes,actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,
-        message:'Updated through the Files mount',baseVersionId:file.current_version_id});
-      if(saved.document) await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document);
-      await client.query('COMMIT'); if(saved.document)adoptLive(request,file.id,saved.document); const nextHash=createHash('sha256').update(saved.bytes).digest('hex');
-      await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
-      if(saved.merged) response.setHeader('X-Sulla-Merged','1');
-      response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
-      response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
-    } catch(error){await client.query('ROLLBACK');throw error} finally{client.release()}
+    const written = await fuseContentWrite(request, request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer));
+    const result = written.result;
+    if (!written.replayed) await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
+    if(written.merged) response.setHeader('X-Sulla-Merged','1');
+    response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',written.sourceHash);
+    response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:written.sourceHash,mtimeMs:Date.now()});
   } catch (error) { next(error) } });
-  app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+  /**
+   * A small mount write. Reads, hashing, text merging and chunk encryption run against a
+   * snapshot of the file outside any transaction; the transaction then only re-checks that
+   * snapshot under the path lock and records the version. A concurrent writer that moved the
+   * file on in between makes the snapshot stale, and the whole write is redone (bounded).
+   * A retried request whose content is already the current version is answered from that
+   * version instead of writing a duplicate (the first attempt committed, its reply was lost).
+   */
+  async function fuseContentWrite(request:RequestWithIdentity, fileId:string, match:string, sourceHash:string, submitted:Buffer) {
+    const manager = requireFuseExperiment(); const actor = identity(request);
+    const sha256 = (bytes:Buffer) => createHash('sha256').update(bytes).digest('hex');
+    const submittedHash = sha256(submitted);
+    for (let attempt = 1; ; attempt++) {
+      const file = await requireFile(request, fileId, 'edit');
+      const currentBytes = await manager.readStoredVersion(file.id, file.current_version_id);
+      const baseVersion = (await db.query('SELECT id,parent_version_id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [match, file.id])).rows[0];
+      if (!baseVersion) throw new HttpError(409, 'Files mount version changed');
+      if (match !== file.current_version_id && sha256(currentBytes) === submittedHash) {
+        return { result: file, sourceHash: submittedHash, merged: false, replayed: true };
+      }
+      const baseBytes = match === file.current_version_id ? currentBytes : await manager.readStoredVersion(file.id, match);
+      if (sourceHash !== sha256(baseBytes)) throw new HttpError(409, 'Files mount version changed');
+      const saved = await textSave(db as unknown as pg.PoolClient, file, match, submitted, currentBytes);
+      const staged = await stageVersionContent(file.collection_id, saved.bytes);
+      const outcome = await transactions.run('fuse-write', async client => {
+        await lockStoredNamespace(client, file.collection_id, file.path);
+        const current = await requireFile(request, file.id, 'edit', client);
+        if (current.current_version_id !== file.current_version_id || current.path !== file.path || current.collection_id !== file.collection_id) return undefined;
+        const result = await insertVersion(client, { collectionId: file.collection_id, fileId: file.id, path: file.path, mime: file.mime,
+          bytes: saved.bytes, staged, actor, createdByType: actor.agentId ? 'agent' : 'agent-run', createdById: actor.agentId ?? actor.jobId ?? actor.userId,
+          message: 'Updated through the Files mount', baseVersionId: file.current_version_id });
+        if (saved.document) await saveAutomergeVersion(client, file.id, result.current_version_id, saved.document);
+        return result;
+      });
+      if (outcome) {
+        if (saved.document) adoptLive(request, file.id, saved.document);
+        return { result: outcome, sourceHash: staged.sourceHash, merged: saved.merged, replayed: false };
+      }
+      if (attempt >= 4) throw new HttpError(409, 'Files changed concurrently or are busy; retry the write');
+    }
+  }
+  app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ try {
     const actor=identity(request); const sourceFileId=String(request.body.sourceFileId??'');
     if(!sourceFileId) throw new HttpError(400,'sourceFileId is required');
     if(sourceFileId===request.params.id) throw new HttpError(400,'replacement source must differ from target');
-    await client.query('BEGIN');
-    let target=await requireFile(request,request.params.id,'edit',client); const source=await requireFile(request,sourceFileId,'edit',client);
+    const manager=requireFuseExperiment();
+    // Read, merge and encrypt from a snapshot first; the transaction only re-checks it and records the version.
+    const target=await requireFile(request,request.params.id,'edit'); const source=await requireFile(request,sourceFileId,'edit');
     if(target.collection_id!==source.collection_id) throw new HttpError(400,'replacement source must be in the target collection');
-    await lockStoredNamespace(client,target.collection_id); target=await requireFile(request,target.id,'edit',client);
-    const bytes=await requireFuseExperiment().readStoredVersion(source.id,source.current_version_id);
+    const bytes=await manager.readStoredVersion(source.id,source.current_version_id);
     const baseHeader=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1]??target.current_version_id;
-    const currentBytes=await requireFuseExperiment().readStoredVersion(target.id,target.current_version_id);
-    const saved=await textSave(client,target,baseHeader,bytes,currentBytes).catch(error=>{
+    const currentBytes=await manager.readStoredVersion(target.id,target.current_version_id);
+    const saved=await textSave(db as unknown as pg.PoolClient,target,baseHeader,bytes,currentBytes).catch(error=>{
       if(baseHeader!==target.current_version_id) throw error;
       return {bytes,document:undefined,merged:false};
     });
-    const result=await insertVersion(client,{collectionId:target.collection_id,fileId:target.id,path:target.path,mime:source.mime,bytes:saved.bytes,
-      actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
-    if(saved.document) await saveAutomergeVersion(client,target.id,result.current_version_id,saved.document);
-    await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[source.id]);
-    await client.query('COMMIT'); if(saved.document)adoptLive(request,target.id,saved.document);
-    const nextHash=createHash('sha256').update(saved.bytes).digest('hex'); await audit(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
+    const staged=await stageVersionContent(target.collection_id,saved.bytes);
+    const result=await transactions.run('fuse-replace',async client=>{
+      await lockStoredNamespace(client,target.collection_id);
+      const lockedTarget=await requireFile(request,target.id,'edit',client); const lockedSource=await requireFile(request,source.id,'edit',client);
+      if(lockedTarget.current_version_id!==target.current_version_id||lockedTarget.path!==target.path||lockedSource.current_version_id!==source.current_version_id||lockedSource.deleted_at)
+        throw new HttpError(409,'Files changed concurrently or are busy; retry the replace');
+      const result=await insertVersion(client,{collectionId:target.collection_id,fileId:target.id,path:target.path,mime:source.mime,bytes:saved.bytes,staged,
+        actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
+      if(saved.document) await saveAutomergeVersion(client,target.id,result.current_version_id,saved.document);
+      await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[source.id]);
+      return result;
+    });
+    if(saved.document)adoptLive(request,target.id,saved.document);
+    const nextHash=staged.sourceHash; await audit(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
     if(saved.merged) response.setHeader('X-Sulla-Merged','1'); response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
     response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+  } catch(error){next(error)} });
   const metadataValue=(row:any,folder:boolean):Record<string,unknown>=>{
     const value={...(row.metadata??{})};
     if(folder&&row.description!==null) value.description=row.description;
@@ -1329,7 +1432,7 @@ export function createApp(
       next(error);
     }
   });
-  app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
     if (collection.system_area === 'sulla' && !isSullaWritablePath(path)) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts, durable Memory and Projects');
@@ -1352,7 +1455,10 @@ export function createApp(
       ? [...new Set<string>(request.body.derivedFrom.filter((value:unknown):value is string => typeof value === 'string'))].sort()
       : [];
 
-    await client.query('BEGIN');
+    // Authorize sources and encrypt the content before the transaction; it then holds only DB statements.
+    for (const sourceId of derived) await requireFile(request, sourceId, 'view');
+    const staged = await stageVersionContent(collection.id, bytes);
+    const outcome = await transactions.run('agent-put', async client => {
     await lockStoredNamespace(client, collection.id);
     const pathFile = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collection.id, path])).rows[0];
     const requestedFile = requestedFileId ? (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [requestedFileId])).rows[0] : undefined;
@@ -1378,18 +1484,24 @@ export function createApp(
         if (prior.message !== message) throw new HttpError(409, 'idempotencyKey was already used with a different message');
         const priorEdges = (await client.query("SELECT dst_id FROM edges WHERE src_type='file' AND src_id=$1 AND kind='derived_from' ORDER BY dst_id", [prior.file_id])).rows.map(row => row.dst_id);
         if (priorEdges.length !== derived.length || priorEdges.some((id, index) => id !== derived[index])) throw new HttpError(409, 'idempotencyKey was already used with different artifact sources');
-        const content = await loadFileContent(db, config, store, prior.file_id, prior.id);
-        if (!content?.buffer.equals(bytes)) throw new HttpError(409, 'idempotencyKey was already used for different content');
-        await client.query('COMMIT');
-        return response.status(200).json({ fileId: prior.file_id, versionId: prior.id, collectionId: collection.id, path });
+        return { prior: { fileId: prior.file_id as string, versionId: prior.id as string } };
       }
     }
-    const file = await insertVersion(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, actor, createdByType: 'agent-run', createdById: creatorId, message });
+    const file = await insertVersion(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, staged, actor, createdByType: 'agent-run', createdById: creatorId, message });
     await client.query("DELETE FROM edges WHERE src_type='file' AND src_id=$1 AND kind='derived_from'", [file.id]);
-    for (const sourceId of derived) { const source = await requireFile(request, sourceId, 'view'); await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,'derived_from',$3) ON CONFLICT DO NOTHING`, [file.id, source.id, actor.jobId ?? actor.agentId!]) }
-    await client.query('COMMIT'); await audit(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
+    for (const sourceId of derived) { const source = await fileRow(sourceId, client); await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,'derived_from',$3) ON CONFLICT DO NOTHING`, [file.id, source.id, actor.jobId ?? actor.agentId!]) }
+    return { file };
+    });
+    if ('prior' in outcome && outcome.prior) {
+      // Idempotent replay: compare content outside the transaction (it reads chunks through the pool).
+      const content = await loadFileContent(db, config, store, outcome.prior.fileId, outcome.prior.versionId);
+      if (!content?.buffer.equals(bytes)) throw new HttpError(409, 'idempotencyKey was already used for different content');
+      return response.status(200).json({ fileId: outcome.prior.fileId, versionId: outcome.prior.versionId, collectionId: collection.id, path });
+    }
+    const file = (outcome as { file:any }).file;
+    await audit(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
     response.status(201).json({ fileId: file.id, versionId: file.current_version_id, collectionId: collection.id, path: file.path });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
   app.post('/v1/agent-files/ensure', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });
@@ -2100,6 +2212,15 @@ export function createApp(
   app.use('/v1/database-file-operations', (error:any, _request:any, response:any, _next:any) => {
     const status = error.status ?? (error.code === '23505' ? 409 : 500);
     response.status(status).json({ error: status < 500 ? error.message : 'Database operation failed', code: error.code ?? 'operation-failed' });
+  });
+  // A lost database connection is transient: answer 503 + Retry-After with a stable code so the
+  // mount and other clients retry, instead of an opaque 500 that surfaces to agents as EIO.
+  const databaseFailures = new DatabaseFailureClassifier();
+  app.use((error:any, _request:any, response:any, next:any) => {
+    if (!(error instanceof RetryableDatabaseError) && error?.code !== 'FILES_DB_RETRYABLE' && !databaseFailures.isConnectionLoss(error)) return next(error);
+    console.warn('[SullaFiles] request failed on a lost database connection; client may retry', { path: _request.path, error: String(error?.cause?.message ?? error?.message ?? error) });
+    response.setHeader('Retry-After', '1');
+    return response.status(503).json({ error: error instanceof RetryableDatabaseError || error?.code === 'FILES_DB_RETRYABLE' ? error.message : 'Files lost its database connection; retry the request', code: 'FILES_DB_RETRYABLE', retryable: true });
   });
   app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : error.code === '55000' ? 423 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error', ...((error.status === 423 || error.code === '55000') ? {code:'FILE_LOCKED'} : error.code === 'EROFS' ? {code:'EROFS'} : error.code === 'FILE_OFFLINE' ? {code:'FILE_OFFLINE'} : {}), ...(error.conflictPath ? { conflictPath: error.conflictPath } : {}) })); return app;
 }
