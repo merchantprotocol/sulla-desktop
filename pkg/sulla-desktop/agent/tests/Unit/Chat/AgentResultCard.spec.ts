@@ -43,18 +43,18 @@ const review: AgentResultItem = {
   report:    'Review report.',
 };
 
-function render(msg: Record<string, unknown>, openConversation = vi.fn()) {
+function render(msg: Record<string, unknown>, openConversation = vi.fn(), chat: { messages?: any[]; running?: boolean } = {}) {
   return {
     openConversation,
     card: mount(ProactiveCard, {
       attachTo: document.body,
       props:    { msg: { id: 'p1', kind: 'proactive', createdAt: 1, headline: 'Background agents finished', body: 'Task ready.', ...msg } as any },
-      global:   { provide: { [ChatControllerKey as symbol]: { thread: computed(() => ({ id: 'thread-1' })) }, 'chat:open-subagent-conversation': openConversation } },
+      global:   { provide: { [ChatControllerKey as symbol]: { thread: computed(() => ({ id: 'thread-1' })), messages: computed(() => chat.messages ?? []), isRunning: computed(() => !!chat.running) }, 'chat:open-subagent-conversation': openConversation } },
     }),
   };
 }
 
-afterEach(() => { document.body.innerHTML = '' });
+afterEach(() => { document.body.innerHTML = ''; localStorage.clear() });
 
 describe('a finished background agent in the chat', () => {
   // risk: the notice told the user to run check_agent_jobs(...) and never said what happened
@@ -98,5 +98,67 @@ describe('a finished background agent in the chat', () => {
   it('keeps the plain notice when there is no usable result', () => {
     expect(render({}).card.text()).toContain('Task ready.');
     expect(readAgentResultCard({ items: [{ ...merge, tone: 'rainbow' }] })).toBeUndefined();
+  });
+
+  // risk: a blocked agent's card led with its progress ("Both review-fix commits are pushed.")
+  // and hid what was blocking it, with nothing to act on
+  describe('blocked and failed agents', () => {
+    const blocked: AgentResultItem = {
+      jobId:     'j3',
+      taskIndex: 0,
+      label:     'Fix · Fable/Opus findings',
+      status:    'blocked',
+      purpose:   'other',
+      verdict:   'Blocked',
+      tone:      'warn',
+      outcome:   'Both review-fix commits are pushed.',
+      report:    'Both review-fix commits are pushed.\nCI is green on #4329.\nBLOCKER: #4330 needs an owner sign-off on 25 catalog routes before merge.',
+    };
+
+    it('leads with the blocker, keeps progress secondary, and shows the end of the report', () => {
+      const { card } = render({ result: { items: [blocked] } });
+
+      expect(card.find('.ar-problem').text()).toBe('Blocked: #4330 needs an owner sign-off on 25 catalog routes before merge.');
+      expect(card.find('.ar-outcome').classes()).toContain('ar-secondary');
+      expect(card.find('.ar-tail').text()).toContain('CI is green on #4329.');
+    });
+
+    it('drafts a resolve message for a blocked agent and a retry for a failed one', async() => {
+      const drafts: string[] = [];
+      window.addEventListener('chat:draft', e => drafts.push((e as CustomEvent).detail.text));
+      const failed = { ...blocked, jobId: 'j4', status: 'error' as const, verdict: 'Failed', tone: 'bad' as const, report: 'Tests could not run: the container lost its workspace.' };
+
+      const one = render({ result: { items: [blocked] } }).card;
+      await one.findAll('button').find(b => b.text() === 'Resolve with Sulla')!.trigger('click');
+      const two = render({ result: { items: [failed] } }).card;
+      expect(two.findAll('button').map(b => b.text())).toEqual(expect.arrayContaining(['Ask why it failed', 'Retry']));
+      await two.findAll('button').find(b => b.text() === 'Retry')!.trigger('click');
+
+      expect(drafts[0]).toBe('Unblock "Fix · Fable/Opus findings": #4330 needs an owner sign-off on 25 catalog routes before merge. What are my options?');
+      expect(drafts[1]).toBe('Relaunch "Fix · Fable/Opus findings" with the same task, and handle this first: Tests could not run: the container lost its workspace.');
+    });
+
+    it('says whose move it is from what follows the card', () => {
+      const card = { id: 'card-1', kind: 'proactive' };
+      const question = { id: 'q1', kind: 'tool_question', status: 'pending' };
+      const reply = { id: 's1', kind: 'sulla' };
+      const at = (messages: any[], running = false) => render({ id: 'card-1', result: { items: [blocked] } }, vi.fn(), { messages, running }).card.find('.ar-whonext').text();
+
+      expect(at([card, reply, question])).toBe('Needs your decision: answer the question below.');
+      expect(at([card], true)).toBe('Sulla is working on it now.');
+      expect(at([card, reply])).toMatch(/^Sulla replied below/);
+      expect(at([card])).toMatch(/^Waiting on you/);
+    });
+
+    it('collapses to one line when marked handled, and can be undone', async() => {
+      const { card } = render({ result: { items: [blocked] } });
+
+      await card.findAll('button').find(b => b.text() === 'Mark handled')!.trigger('click');
+      expect(card.find('.ar-handled').text()).toContain('Handled');
+      expect(card.find('.ar-problem').exists()).toBe(false);
+
+      await card.find('.ar-handled button').trigger('click');
+      expect(card.find('.ar-problem').exists()).toBe(true);
+    });
   });
 });

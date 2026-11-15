@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentResultGrounding } from './AgentResultGrounding';
+import { findProblem } from '../../../shared/agentResults/AgentResultCard';
 
 import type {
   AgentResultCardData, AgentResultEnvironment, AgentResultFinding, AgentResultItem, AgentResultPurpose, AgentResultStatus, AgentResultTone,
@@ -41,7 +42,8 @@ Purposes: merge = merged PRs or deployed; qa = ran tests or acceptance checks; r
 fix = changed code (a PR or branch); other = anything else. Include only the fields that fit the purpose and only facts stated in the report.
 Never invent PR numbers, SHAs, files or numbers. Add an environment only if the report names it. Verdict examples: Merged, 2 failed, Passed,
 Changes needed, Approved, PR open, Done. Tone: ok = succeeded, warn = needs the user's attention, bad = failed, info = waiting on review, dim = neutral.
-Outcome: one sentence a busy developer reads first; no agent names, no "the agent". next: only when an obvious next step exists; it is only
+Outcome: one sentence a busy developer reads first; no agent names, no "the agent".
+For a blocked or failed item also give "problem": one sentence saying exactly what blocks it or what failed, and what is needed to unblock it. next: only when an obvious next step exists; it is only
 drafted for the user, never run. Omit next for anything risky the report says is not ready.`;
 
 /**
@@ -98,6 +100,7 @@ export class AgentResultCardBuilder {
       purpose:    'other',
       ...STATUS_CHIP[status],
       outcome:    this.firstSentence(report) || `${ STATUS_CHIP[status].verdict }.`,
+      ...(status !== 'completed' ? { problem: findProblem(report) } : {}),
       report,
     };
   }
@@ -173,6 +176,7 @@ export class AgentResultCardBuilder {
       verdict:      (succeeded && text(entry.verdict, 28)) || item.verdict,
       tone:         succeeded ? modelTone : item.tone,
       outcome:      text(entry.outcome, 280) ?? item.outcome,
+      problem:      succeeded ? undefined : (text(entry.problem, 280) ?? item.problem),
       merges:       nonEmpty(list(entry.merges, 40, merge => (text(merge?.pr, 12) ? { pr: text(merge.pr, 12)!, title: text(merge.title, 120), sha: text(merge.sha, 40) } : undefined))),
       environments: nonEmpty(list(entry.environments, 6, env => (text(env?.name, 40) && ENV_STATES.includes(env.state)
         ? { name: text(env.name, 40)!, detail: text(env.detail, 120), state: env.state }

@@ -9,6 +9,7 @@
   <AgentResultCard
     v-if="msg.result"
     :data="msg.result"
+    :message-id="msg.id"
   />
   <div
     v-else

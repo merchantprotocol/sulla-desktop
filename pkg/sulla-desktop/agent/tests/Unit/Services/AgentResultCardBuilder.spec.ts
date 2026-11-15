@@ -86,6 +86,13 @@ describe('the finished-agent card', () => {
     }
   });
 
+  it('records what blocks a blocked agent even without a model', async() => {
+    const report = 'Both review-fix commits are pushed. BLOCKER: #4330 needs an owner sign-off on 25 routes.';
+    const [item] = (await new AgentResultCardBuilder(undefined, 20, undefined, { info: () => {}, warn: () => {} }).build(job, [{ ...result, status: 'blocked', output: report }])).items;
+
+    expect(item.problem).toBe('BLOCKER: #4330 needs an owner sign-off on 25 routes.');
+  });
+
   it('builds a card without any model at all', async() => {
     const [item] = (await new AgentResultCardBuilder(undefined).build(job, [{ ...result, status: 'blocked', output: 'Need the QA account password.' }])).items;
 

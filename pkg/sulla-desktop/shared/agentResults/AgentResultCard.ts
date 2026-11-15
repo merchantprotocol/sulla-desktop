@@ -44,6 +44,8 @@ export interface AgentResultItem {
   tone:          AgentResultTone;
   /** One plain sentence saying what happened. */
   outcome:       string;
+  /** For a blocked or failed agent: what blocks it or what failed, in one sentence. */
+  problem?:      string;
   merges?:       AgentResultMerge[];
   environments?: AgentResultEnvironment[];
   tally?:        { passed?: number; failed?: number; skipped?: number };
@@ -86,4 +88,31 @@ export function readAgentResultCard(value: unknown): AgentResultCardData | undef
     typeof item.report === 'string' && PURPOSE_SET.has(item.purpose) && TONE_SET.has(item.tone) && STATUS_SET.has(item.status));
 
   return valid.length === items.length ? { items: valid } : undefined;
+}
+
+const PROBLEM = /\b(blocker|blocked|blocking|failed|failure|error|cannot|can't|could not|couldn't|unable|needs? (?:a |an |the )?(?:human|owner|approval|sign-off|decision))\b/i;
+
+/**
+ * The sentence in an agent's report that says what blocks it or what failed,
+ * found in plain code: the last sentence naming a blocker, failure or need.
+ * Used for blocked and failed cards, including ones built before the model
+ * step could supply it.
+ */
+export function findProblem(report: string): string | undefined {
+  const sentences = report
+    .split(/\n+|(?<=[.!?])\s+(?=[A-Z])/)
+    .map(part => part.replace(/^[#>*\-\s]+/, '').trim())
+    .filter(part => part.length >= 12);
+  const hit = [...sentences].reverse().find(sentence => PROBLEM.test(sentence));
+  if (!hit) return undefined;
+
+  return hit.length > 260 ? `${ hit.slice(0, 257) }…` : hit;
+}
+
+/** The last few lines of a report, where agents usually state where they ended up. */
+export function reportTail(report: string, outcome: string, lines = 3): string[] {
+  const all = report.split('\n').map(line => line.trim()).filter(Boolean);
+  if (all.length <= 1) return [];
+
+  return all.slice(-lines).filter(line => line !== outcome).map(line => (line.length > 220 ? `${ line.slice(0, 217) }…` : line));
 }

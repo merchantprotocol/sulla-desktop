@@ -29,6 +29,21 @@
       :class="{ 'ar-open': isOpen(index) }"
     >
       <div
+        v-if="isHandled(item)"
+        class="ar-handled"
+      >
+        <span class="ar-chip ar-dim">Handled</span>
+        <span class="ar-handled-title">{{ item.label }}</span>
+        <button
+          type="button"
+          class="ar-btn ar-quiet"
+          @click="setHandled(item, false)"
+        >
+          Undo
+        </button>
+      </div>
+      <div
+        v-else
         class="ar-head"
         :role="items.length > 1 ? 'button' : undefined"
         :tabindex="items.length > 1 ? 0 : undefined"
@@ -45,7 +60,11 @@
           <b>{{ item.label }}</b>
           <span>{{ byline(item) }}</span>
         </span>
-        <span class="ar-kind">{{ PURPOSE_LABEL[item.purpose] }}</span>
+        <!-- "Finished" would contradict a Blocked or Failed chip. -->
+        <span
+          v-if="item.purpose !== 'other' || item.status === 'completed'"
+          class="ar-kind"
+        >{{ PURPOSE_LABEL[item.purpose] }}</span>
         <span
           v-if="items.length > 1"
           class="ar-chev"
@@ -53,10 +72,41 @@
         >⌄</span>
       </div>
 
-      <template v-if="isOpen(index)">
-        <p class="ar-outcome">
+      <template v-if="isOpen(index) && !isHandled(item)">
+        <!-- 1 · Blocked or failed: the problem leads; progress is secondary. -->
+        <p
+          v-if="problemOf(item)"
+          class="ar-problem"
+          :class="{ 'ar-failed': item.status !== 'blocked' }"
+        >
+          <b>{{ item.status === 'blocked' ? 'Blocked' : 'Failed' }}:</b> {{ problemOf(item) }}
+        </p>
+        <p
+          class="ar-outcome"
+          :class="{ 'ar-secondary': problemOf(item) }"
+        >
           {{ item.outcome }}
         </p>
+        <!-- 2 · Whose move it is. -->
+        <p
+          v-if="needsAttention(item)"
+          class="ar-whonext"
+        >
+          {{ whoNext }}
+        </p>
+        <!-- 5 · Where the agent ended up. -->
+        <ul
+          v-if="tailOf(item).length"
+          class="ar-tail"
+          aria-label="End of the agent's report"
+        >
+          <li
+            v-for="(line, li) in tailOf(item)"
+            :key="li"
+          >
+            {{ line }}
+          </li>
+        </ul>
 
         <div
           v-if="hasBody(item)"
@@ -210,15 +260,25 @@
           >
             {{ copied === itemKey(item) ? 'Copied' : 'Copy report' }}
           </button>
+          <button
+            v-if="needsAttention(item)"
+            type="button"
+            class="ar-btn ar-quiet"
+            @click="setHandled(item, true)"
+          >
+            Mark handled
+          </button>
           <span class="ar-sp" />
           <button
-            v-if="item.next"
+            v-for="step in stepsFor(item)"
+            :key="step.label"
             type="button"
-            class="ar-btn ar-pri"
-            :title="`Puts this in the message box for you to send: ${item.next.prompt}`"
-            @click="actions.draft(item.next.prompt)"
+            class="ar-btn"
+            :class="{ 'ar-pri': step.primary }"
+            :title="`Puts this in the message box for you to send: ${step.prompt}`"
+            @click="actions.draft(step.prompt)"
           >
-            {{ item.next.label }}
+            {{ step.label }}
           </button>
         </div>
         <p
@@ -245,12 +305,15 @@
 import { computed, reactive, ref } from 'vue';
 
 import { useAgentResultActions } from '../../composables/useAgentResultActions';
+import { useChatController } from '../../controller/useChatController';
 
-import { PURPOSE_LABEL } from '@pkg/shared/agentResults/AgentResultCard';
+import { PURPOSE_LABEL, findProblem, reportTail } from '@pkg/shared/agentResults/AgentResultCard';
 import type { AgentResultCardData, AgentResultEnvironment, AgentResultFinding, AgentResultItem, AgentResultTone } from '@pkg/shared/agentResults/AgentResultCard';
 
-const props = defineProps<{ data: AgentResultCardData }>();
+const props = defineProps<{ data: AgentResultCardData; messageId?: string }>();
 const actions = useAgentResultActions();
+let controller: ReturnType<typeof useChatController> | undefined;
+try { controller = useChatController() } catch { /* outside a chat page */ }
 
 const ENV_TONE: Record<AgentResultEnvironment['state'], AgentResultTone> = { deployed: 'ok', failed: 'bad', pending: 'info', held: 'dim' };
 const ENV_LABEL: Record<AgentResultEnvironment['state'], string> = { deployed: 'Deployed', failed: 'Failed', pending: 'In progress', held: 'Not released' };
@@ -302,6 +365,66 @@ function duration(ms: number): string {
   if (minutes < 1) return `${ Math.max(1, Math.round(ms / 1000)) }s`;
   if (minutes < 60) return `${ minutes }m`;
   return `${ Math.floor(minutes / 60) }h ${ minutes % 60 }m`;
+}
+
+// ── 1 · The problem, from the card or, for older cards, the report ──
+function problemOf(item: AgentResultItem): string | undefined {
+  if (item.status === 'completed') return undefined;
+  // The card already labels it "Blocked:" or "Failed:"; drop the agent's own label.
+  return (item.problem || findProblem(item.report))?.replace(/^(blocker|blocked|error|failed)\s*[:\-–]\s*/i, '');
+}
+/** A sentence ready to sit inside a drafted message: no trailing full stop. */
+function clause(text: string | undefined): string {
+  return (text ?? '').replace(/[\s.!?…]+$/, '');
+}
+function needsAttention(item: AgentResultItem): boolean {
+  return item.status !== 'completed' || ATTENTION.includes(item.tone);
+}
+
+// ── 2 · Whose move: read from what came after this card in the chat ──
+const whoNext = computed(() => {
+  const messages = controller?.messages.value ?? [];
+  const at = props.messageId ? messages.findIndex(message => message.id === props.messageId) : -1;
+  const later = at >= 0 ? messages.slice(at + 1) : [];
+  if (later.some(message => (message.kind === 'tool_question' && message.status === 'pending') || (message.kind === 'tool_approval' && message.decision === 'pending'))) {
+    return 'Needs your decision: answer the question below.';
+  }
+  if (controller?.isRunning.value && later.every(message => message.kind !== 'sulla')) return 'Sulla is working on it now.';
+  if (later.some(message => message.kind === 'sulla')) return 'Sulla replied below. If it is still open, resolve it with Sulla or mark it handled.';
+  return 'Waiting on you: resolve it with Sulla, or mark it handled.';
+});
+
+// ── 3 · Main buttons by state; each only drafts a message ──
+function stepsFor(item: AgentResultItem): { label: string; prompt: string; primary: boolean }[] {
+  const problem = clause(problemOf(item));
+  if (item.status === 'blocked') {
+    return [{ label: 'Resolve with Sulla', primary: true, prompt: `Unblock "${ item.label }"${ problem ? `: ${ problem }` : '' }. What are my options?` }];
+  }
+  if (item.status === 'error' || item.status === 'stopped') {
+    return [
+      { label: 'Ask why it failed', primary: false, prompt: `Why did "${ item.label }" fail?${ problem ? ` It reported: ${ problem }` : '' } What should we do next?` },
+      { label: 'Retry', primary: true, prompt: `Relaunch "${ item.label }" with the same task${ problem ? `, and handle this first: ${ problem }` : '' }.` },
+    ];
+  }
+  return item.next ? [{ label: item.next.label, primary: true, prompt: item.next.prompt }] : [];
+}
+
+// ── 4 · Mark handled: a per-viewer note in this browser, never sent to Sulla ──
+const HANDLED_KEY = 'sulla.agentResults.handled';
+const handled = reactive(new Set<string>(readHandled()));
+function readHandled(): string[] {
+  try { return JSON.parse(localStorage.getItem(HANDLED_KEY) || '[]') } catch { return [] }
+}
+function isHandled(item: AgentResultItem): boolean { return handled.has(itemKey(item)) }
+function setHandled(item: AgentResultItem, value: boolean): void {
+  if (value) handled.add(itemKey(item)); else handled.delete(itemKey(item));
+  try { localStorage.setItem(HANDLED_KEY, JSON.stringify([...handled].slice(-500))) } catch { /* convenience only */ }
+}
+
+// ── 5 · The end of the report, where agents state where they stopped ──
+function tailOf(item: AgentResultItem): string[] {
+  const shownAbove = [item.outcome, problemOf(item)].filter(Boolean) as string[];
+  return reportTail(item.report, item.outcome).filter(line => !shownAbove.some(text => line.includes(text.replace(/…$/, ''))));
 }
 
 function openAgent(item: AgentResultItem): void {
@@ -363,6 +486,20 @@ function flash(item: AgentResultItem, text: string): void {
 .ar-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ar-ink-3); }
 .ar-kind { font-size: 12px; color: var(--ar-ink-3); white-space: nowrap; }
 .ar-outcome { max-width: 68ch; margin: 10px 16px 0; font-size: 15px; line-height: 1.5; }
+.ar-outcome.ar-secondary { margin-top: 6px; font-size: 13.5px; color: var(--ar-ink-2); }
+.ar-problem {
+  max-width: 72ch; margin: 10px 16px 0; padding: 9px 12px; border-radius: 9px; font-size: 14.5px; line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--status-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+}
+.ar-problem b { color: var(--status-warning); font-weight: 650; }
+.ar-problem.ar-failed { border-color: color-mix(in srgb, var(--status-error) 35%, transparent); background: color-mix(in srgb, var(--status-error) 8%, transparent); }
+.ar-problem.ar-failed b { color: var(--status-error); }
+.ar-whonext { margin: 8px 16px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.ar-tail { margin: 10px 16px 0; padding: 8px 12px; list-style: none; border-radius: 8px; background: var(--ar-raised); font: 12.5px/1.55 var(--font-mono, ui-monospace, monospace); color: var(--ar-ink-2); }
+.ar-tail li { overflow-wrap: anywhere; }
+.ar-handled { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 13px; color: var(--ar-ink-3); }
+.ar-handled-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ar-body { margin: 12px 16px 0; }
 .ar-label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--ar-ink-3); }
 .ar-label:first-child { margin-top: 0; }
