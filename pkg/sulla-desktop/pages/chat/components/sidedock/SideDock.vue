@@ -46,7 +46,7 @@
         role="tab"
         class="sdk-tab"
         :aria-selected="current === tab.id"
-        @click="current = tab.id"
+        @click="pick(tab.id, $event)"
       >
         {{ tab.label }}<span
           v-if="tab.badge"
@@ -183,6 +183,11 @@ const tabs = computed(() => [
 watch(artifactCount, count => { if (!count && current.value === 'artifacts') current.value = 'sulla'; });
 
 function selectTab(tab: TabId): void { current.value = tab }
+/** A clicked tab hands the cursor back to the message box; keyboard users stay on the tabs. */
+function pick(tab: TabId, event: MouseEvent): void {
+  current.value = tab;
+  if (event.detail > 0) boxEl.value?.querySelector('textarea')?.focus();
+}
 defineExpose({ boxEl, selectTab });
 </script>
 

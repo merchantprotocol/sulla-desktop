@@ -113,7 +113,10 @@
 
         </div>
 
-        <div :class="['composer', { recording: isRecording }]">
+        <div
+          :class="['composer', { recording: isRecording }]"
+          @mousedown="focusFromBar"
+        >
           <span class="glyph">—</span>
 
           <div v-if="useCases.open.value" class="usecase-strip">
@@ -367,6 +370,15 @@ const recLevel     = computed(() => controller.voice.value.phase === 'recording'
 const recSpeaking  = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.speaking : false);
 const recPtt       = computed(() => controller.voice.value.phase === 'recording' && !!controller.voice.value.ptt);
 const recFinishing = computed(() => controller.voice.value.phase === 'recording' && !!controller.voice.value.finishing);
+
+/** A click anywhere on the message bar that isn't a control puts the cursor in the box. */
+function focusFromBar(event: MouseEvent): void {
+  if (isRecording.value || (event.target as Element).closest('button, a, input, textarea, select, label, [role="button"], [role="option"], [role="listbox"]')) return;
+  event.preventDefault();
+  inputRef.value?.focus();
+}
+// Moved to the side or back: the box is where you type next.
+watch(dockPosition, async() => { await nextTick(); inputRef.value?.focus() });
 
 // The textarea unmounts while recording; hand focus back when a spoken turn ends
 // so the next Space press or typed message works without a click.
@@ -1098,3 +1110,4 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .cw-side .hints { display: none; }
 .cw-side .hints.hints-contextual { display: flex; margin: 0 0 6px; }
 </style>
+<style scoped src="../../styles/composer-field.css"></style>
