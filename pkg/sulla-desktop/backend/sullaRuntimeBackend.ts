@@ -17,6 +17,7 @@ import merge from 'lodash/merge';
 import omit from 'lodash/omit';
 import yaml from 'yaml';
 
+import { SULLA_FILES_FUSE_HEALTHCHECK, SULLA_FILES_HEALTHCHECK } from './sullaFilesHealthchecks';
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import {
@@ -1664,12 +1665,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       restart: 'unless-stopped',
       // 1g OOM-killed Files every ~90s on 2026-11-13: steady state is ~1.2g (512 MiB heap plus ~700 MiB native: Potion table, chunk buffers).
       mem_limit: '2g',
+      // BusyBox wget against Files' loopback-only plain-HTTP /healthz: no Node runtime and no TLS
+      // per tick (the old `node -e` https probe cost ~35% of a CPU on a busy 3-vCPU VM and timed
+      // out under load). The node probe remains only as a fallback for an image that predates the
+      // loopback listener. 10s x 6 = a minute of failures before Docker says unhealthy, then the
+      // heal planner still needs UNHEALTHY_TICKS_BEFORE_RESTART one-minute observations.
       healthcheck: {
-        test: [
-          'CMD', 'node', '-e',
-          "const fs=require('fs'),https=require('https');const r=https.get({hostname:'127.0.0.1',port:8792,path:'/healthz',ca:fs.readFileSync('/run/sulla-files-tls/tls.crt')},x=>{x.resume();process.exit(x.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2500,()=>r.destroy())",
-        ],
-        interval: '5s', timeout: '3s', retries: 10, start_period: '10m',
+        test: ['CMD-SHELL', SULLA_FILES_HEALTHCHECK],
+        interval: '10s', timeout: '5s', retries: 6, start_period: '10m',
       },
     };
 
@@ -1717,12 +1720,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         cpus:         0.5,
         depends_on:   { sulla_files: { condition: 'service_healthy' } },
         restart:      'unless-stopped',
+        // The adapter is healthy while its FUSE mount is live and its event loop keeps rewriting
+        // the status file (every 5 s). It no longer starts Python and a TLS round trip to Files
+        // each tick, and a slow Files no longer gets the mount restarted (which would break every
+        // open handle with ENOTCONN); the adapter retries Files itself.
         healthcheck: {
-          test: [
-            'CMD', 'python3', '-c',
-            "import os,ssl,urllib.request; assert os.path.ismount('/mnt/sulla-files'); urllib.request.urlopen('https://sulla_files:8792/healthz', context=ssl.create_default_context(cafile='/run/sulla-files-ca/tls.crt'), timeout=2).read(1)",
-          ],
-          interval: '5s', timeout: '3s', retries: 10,
+          test: ['CMD-SHELL', SULLA_FILES_FUSE_HEALTHCHECK],
+          interval: '10s', timeout: '5s', retries: 6, start_period: '2m',
         },
       };
     }

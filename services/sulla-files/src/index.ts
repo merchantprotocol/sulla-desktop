@@ -14,6 +14,7 @@ import { installAuditContext } from './auditContext.js';
 import { ensureSystemAreas } from './systemAreas.js';
 import { migrateSullaCollection, trashStrayDocs } from './sullaCollectionMigration.js';
 import { createApp } from './app.js';
+import { LoopbackHealthListener } from './LoopbackHealthListener.js';
 import { backup, nightlyBackups, restore } from './backup.js';
 import { FilesBootstrapAuthority } from './bootstrapAuthority.js';
 import { loadConfig } from './config.js';
@@ -61,6 +62,7 @@ const server = tlsEnabled
     (request, response) => requestHandler(request, response)).listen(config.port, '0.0.0.0', listening)
   : http.createServer((request, response) => requestHandler(request, response)).listen(config.port, '0.0.0.0', listening);
 function listening() { console.log(`[SullaFiles] ${ config.mode } liveness listening on ${ config.port }`); }
+new LoopbackHealthListener(() => requestHandler, Number(process.env.SULLA_FILES_HEALTH_PORT ?? 8793)).listen();
 
 const db = await connect(config.databaseUrl); await migrate(db);
 installAuditContext(db);
