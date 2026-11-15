@@ -24,6 +24,12 @@
     <div class="composer-inner">
       <RunControls />
       <CommandPopover @choose="choosePopoverItem" />
+      <ShelfPanel
+        v-if="shelfRequest"
+        :key="`${shelfRequest.mode}:${shelfRequest.name ?? ''}`"
+        :request="shelfRequest"
+        @close="shelfRequest = null"
+      />
       <ThreadStatusLine />
 
       <div class="composer-card">
@@ -208,11 +214,13 @@ import RunControls        from './RunControls.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import CommandPopover     from './CommandPopover.vue';
 import ThreadStatusLine   from './ThreadStatusLine.vue';
+import ShelfPanel         from './ShelfPanel.vue';
 import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
+import { parseShelfCommand, type ShelfRequest } from '../../messages/shelfNote';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
@@ -337,8 +345,17 @@ useCommandPopover(taRef, mentionSource);
 // instead of shipping the text downstream.
 
 /** Returns true if the command was handled (and the caller should skip the normal send). */
+// /shelve and /resume open a panel above the message box instead of sending text.
+const shelfRequest = ref<ShelfRequest | null>(null);
+
 function tryRunSlashAction(cmd: SlashCommand): boolean {
   switch (cmd.action) {
+    case 'shelve':
+      shelfRequest.value = { mode: 'shelve' };
+      return true;
+    case 'resume':
+      shelfRequest.value = { mode: 'resume' };
+      return true;
     case 'clear':
       // ChatController has no reset hook today — emit a window event for
       // ChatPage / ThreadRegistry to pick up. Follow-up agent will wire.
@@ -427,6 +444,15 @@ function onSend(text: string): void {
   if (navigateUrl && looksLikeUrl(trimmed) && !trimmed.includes(' ') && !controller.staged.value.length && controller.messages.value.length === 0) {
     navigateUrl(trimmed);
     draft.value = '';
+    return;
+  }
+
+  // "/shelve name", "/shelve delete name", "/resume name" carry an argument.
+  const shelf = parseShelfCommand(trimmed);
+  if (shelf) {
+    shelfRequest.value = shelf.kind === 'delete' ? { mode: 'delete', name: shelf.name } : { mode: shelf.kind, name: shelf.name };
+    draft.value = '';
+    controller.hidePopover();
     return;
   }
 

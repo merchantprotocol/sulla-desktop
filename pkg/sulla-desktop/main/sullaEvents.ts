@@ -49,6 +49,7 @@ import { initExtensionUiIpc } from './extensionUiIpc';
 import { initIntegrationGrantIpc } from './integrationGrantIpc';
 import { initSupportSessionIpc } from './supportSessionIpc';
 import { initDebugErrorReporting } from './DebugErrorService';
+import { initThreadShelfIpc } from './threadShelf';
 
 import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -98,6 +99,7 @@ export function initSullaEvents(): void {
   initModelRoutingIpc();
   initModelDefaultsIpc();
   initConversationHistoryIpc();
+  initThreadShelfIpc();
   initBookmarksIpc();
   initChatMessagesIpc();
   initConversationMessagesIpc();

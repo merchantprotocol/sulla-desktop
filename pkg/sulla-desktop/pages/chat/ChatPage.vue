@@ -148,6 +148,7 @@ import { usePushToTalk }         from './composables/usePushToTalk';
 import { useResizeSync }         from './composables/useResizeSync';
 
 import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
+import { RESUME_KEY }            from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
 import type { Thread }   from './models/Thread';
@@ -745,7 +746,29 @@ watch(() => props.isActive, (active) => {
   if (active) window.dispatchEvent(new CustomEvent('sulla:chat-files-state-changed', { detail: { open: chatFilesOpen.value } }));
 });
 
+// A tab opened by /resume carries a one-time handoff: start on the shelved
+// note with the same persona, then mark the note resumed.
+function startShelfResume(): void {
+  if (!props.tabId) return;
+  let pending: { prompt?: string; agentId?: string | null; fileId?: string } | null = null;
+  try {
+    const raw = localStorage.getItem(RESUME_KEY(props.tabId));
+    if (raw) { localStorage.removeItem(RESUME_KEY(props.tabId)); pending = JSON.parse(raw) }
+  } catch { pending = null }
+  if (!pending?.prompt) return;
+  if (pending.agentId) controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, pending.agentId);
+  const { prompt, fileId } = pending;
+  setTimeout(() => {
+    controller.send(prompt);
+    if (fileId) {
+      ipcRenderer.invoke('thread-shelf:mark-resumed' as any, fileId, controller.thread.value.id)
+        .catch((error: unknown) => console.warn('[ChatPage] Could not mark the shelf note resumed:', error));
+    }
+  }, 600);
+}
+
 onMounted(() => {
+  startShelfResume();
   window.addEventListener('chat:new-chat',          onNewChatEvent);
   window.addEventListener('chat:fork',              onForkEvent);
   window.addEventListener('chat:artifact-expand',   onArtifactExpand);
