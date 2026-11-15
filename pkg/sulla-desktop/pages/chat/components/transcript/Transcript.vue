@@ -118,6 +118,10 @@ defineExpose({ scroller, scrollToBottom });
   overflow-y: auto; overflow-x: hidden;
   padding: 96px 12% var(--scroller-pad-b, 240px);
   scroll-behavior: smooth;
+  /* Messages fade out just above the message box instead of running up
+     against (or behind) it. --composer-h is the box's live height. */
+  --tr-fade-end: calc(var(--composer-h, 140px) - 4px);
+  mask-image: linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
 }
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }

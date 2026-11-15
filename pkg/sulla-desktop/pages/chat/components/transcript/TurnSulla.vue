@@ -61,6 +61,7 @@
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
+      :latest="isLatest"
       @copy="copy"
       @regenerate="onRegenerate"
       @quote="onQuote"
@@ -104,6 +105,8 @@ defineEmits<{
 }>();
 
 const controller = useChatController();
+/** The newest Sulla reply keeps its actions in view without hovering. */
+const isLatest = computed(() => controller.messages.value.findLast(message => message.kind === 'sulla')?.id === props.msg.id);
 const ctxMenu = ref<InstanceType<typeof ChatContextMenu> | null>(null);
 
 const timeLabel = computed(() => {

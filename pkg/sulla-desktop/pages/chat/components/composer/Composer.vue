@@ -6,6 +6,7 @@
 -->
 <!--
   Composer — the only container in the bottom region. Orchestrates:
+    • Thread status line and its details, docked at the top of the card
     • Queue strip (visible only when queued messages exist)
     • Attachment tray (visible when staged attachments exist)
     • Command popover (slash / mention autocomplete)
@@ -30,9 +31,12 @@
         :request="shelfRequest"
         @close="shelfRequest = null"
       />
-      <ThreadStatusLine />
-
+      <!--
+        One dock: the status line and its details are the top of the message
+        box, one solid surface with no gaps for the transcript to show through.
+      -->
       <div class="composer-card">
+        <ThreadStatusLine />
         <div class="composer-top">
           <div
             v-if="replyTo"
@@ -757,6 +761,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 
 /* Noir is a visual skin over the existing controller and keyboard behavior. */
+/* The dock is solid: see-through glass let transcript text show behind the status details. */
 .composer-wrap {
   bottom: 0;
   left: 0;
@@ -785,9 +790,11 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
     0 20px 56px var(--bg-page);
 }
 .composer-card {
-  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  background: var(--bg-surface);
   box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float);
 }
+/* The "you can type here" ring is for the message box, not for clicks in the status details. */
+.composer-card:focus-within:not(:has(.composer:focus-within)) { transform: none; box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float); }
 .composer-card:focus-within {
   /* Clear "you can type here" ring: solid accent edge plus a visible halo. */
   box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent), var(--elev-float);

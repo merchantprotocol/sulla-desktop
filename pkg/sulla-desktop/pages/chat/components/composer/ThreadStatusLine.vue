@@ -454,12 +454,13 @@ onBeforeUnmount(() => {
   --ta-well: var(--bg-page);
   --ta-well-raised: color-mix(in srgb, var(--bg-surface) 60%, var(--bg-page));
   --ta-cols: 104px minmax(0, 1.3fr) minmax(0, 1.5fr) 40px 92px;
-  margin-bottom: 8px;
+  /* Docked as the top of the message box: no border or gap of its own, a divider below. */
+  border-bottom: 1px solid var(--border-default);
 }
 .ta-line {
-  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px;
-  padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 10px;
-  background: var(--ta-well); color: var(--ta-ink-2); font: inherit; font-size: 13px;
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px;
+  padding: 0 16px; border: 0; border-radius: 22px 22px 0 0;
+  background: transparent; color: var(--ta-ink-2); font: inherit; font-size: 13px;
   text-align: left; cursor: pointer; transition: background-color .18s cubic-bezier(.22,1,.36,1), border-color .18s cubic-bezier(.22,1,.36,1);
 }
 .ta-line:hover:not(:disabled) { background: var(--ta-well-raised); }
@@ -471,13 +472,13 @@ onBeforeUnmount(() => {
 .ta-age { margin-left: auto; color: var(--ta-ink-2); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
 .ta-chev { color: var(--ta-ink-2); transition: transform .2s cubic-bezier(.22,1,.36,1); }
 .ta-line[aria-expanded="true"] .ta-chev { transform: rotate(180deg); }
-.ta-line.ta-working { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--ta-well)); color: var(--text-primary); }
-.ta-line.ta-you { border-color: color-mix(in srgb, var(--status-warning) 55%, transparent); background: color-mix(in srgb, var(--status-warning) 10%, var(--ta-well)); }
+.ta-line.ta-working { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text-primary); }
+.ta-line.ta-you { background: color-mix(in srgb, var(--status-warning) 10%, transparent); }
 .ta-line.ta-you .ta-lead { color: var(--status-warning); }
-.ta-line.ta-stalled { border-color: color-mix(in srgb, var(--status-error) 55%, transparent); background: color-mix(in srgb, var(--status-error) 10%, var(--ta-well)); }
+.ta-line.ta-stalled { background: color-mix(in srgb, var(--status-error) 10%, transparent); }
 .ta-line.ta-stalled .ta-lead { color: var(--status-error); }
-/* Quieter than active states but still solid: the line sits over scrolling messages. */
-.ta-line.ta-idle { background: var(--ta-well); border-color: var(--border-default); color: var(--ta-ink-3); }
+/* Quieter than active states. */
+.ta-line.ta-idle { background: transparent; color: var(--ta-ink-3); }
 .ta-line.ta-idle .ta-lead { color: var(--ta-ink-2); font-weight: 500; }
 
 .ta-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
@@ -495,9 +496,8 @@ onBeforeUnmount(() => {
 
 .ta-tray {
   container-type: inline-size;
-  margin-top: 6px; max-height: min(52vh, 460px); overflow: auto;
-  border: 1px solid var(--border-strong); border-radius: 12px; background: var(--ta-well);
-  box-shadow: 0 18px 40px -20px rgba(0, 0, 0, .55);
+  max-height: min(52vh, 460px); overflow: auto;
+  border-top: 1px solid var(--border-default); background: var(--ta-well);
 }
 .ta-trayhead {
   display: flex; align-items: center; gap: 8px; padding: 8px 14px;
