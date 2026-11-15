@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { lineTimes, shortTime } from '@pkg/pages/chat/messages/lineTime';
+import { returnCoveredByCard } from '@pkg/pages/chat/messages/handoffCover';
+import { idTime, lineTimes, shortTime } from '@pkg/pages/chat/messages/lineTime';
 import { reportTail } from '@pkg/shared/agentResults/AgentResultCard';
 
 const now = new Date(2026, 10, 15, 14, 40).getTime();
@@ -26,6 +27,26 @@ describe('when each transcript line happened', () => {
     expect(times.get('b')!.full).not.toBe('');
     expect(times.get('c')!.label).toBe(shortTime(at(14, 31), now));
     expect(times.get('old')!.label).toMatch(/Nov 14/);
+  });
+});
+
+describe('the real time of a saved line', () => {
+  // risk: older saves dated lines by when the window first saw them, often a restart
+  it('comes from the backend id when it carries one', () => {
+    expect(idTime('1794757208708_ws_sub_agent_exchange_job', now + 10 ** 12)).toBe(1794757208708);
+    expect(idTime('thinking-group:1794757208708_ws_thinking', now + 10 ** 12)).toBe(1794757208708);
+    expect(idTime('restored_abc')).toBeUndefined();
+  });
+});
+
+describe('lines that are not shown', () => {
+  // risk: a hidden "Returned from" line took the minute, so the line below showed no time
+  it('a return covered by a result card is hidden; a send never is', () => {
+    const card = { id: 'c', kind: 'proactive', createdAt: 0, result: { items: [{ jobId: 'job-1', taskIndex: 0 }] } } as any;
+    const back = { id: 'r', kind: 'subagent_exchange', createdAt: 0, direction: 'from_agent', jobId: 'job-1', taskIndex: 0 } as any;
+    expect(returnCoveredByCard(back, [back, card])).toBe(true);
+    expect(returnCoveredByCard({ ...back, direction: 'to_agent' }, [back, card])).toBe(false);
+    expect(returnCoveredByCard(back, [back])).toBe(false);
   });
 });
 

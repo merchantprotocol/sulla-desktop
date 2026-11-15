@@ -88,6 +88,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
+import { idTime } from '../../messages/lineTime';
 import { workSteps, workTitle } from '../../messages/workSteps';
 import ToolCall from '../tool/ToolCall.vue';
 import WorkBlock from '../transcript/WorkBlock.vue';
@@ -125,12 +126,18 @@ onMounted(() => { if (!completed.value) startTicking(); });
 watch(completed, done => (done ? stopTicking() : startTicking()));
 onBeforeUnmount(stopTicking);
 
-/** Unknown for a block replayed already finished: no end time was seen. */
-const endKnown = computed(() => !completed.value || props.messages.some(message => message.kind === 'thinking' && message.completedAt));
+/**
+ * Unknown for a block replayed already finished (no end time was seen), and
+ * for blocks saved by older builds, whose start is when the window first saw
+ * them rather than their real start in the id.
+ */
+const endKnown = computed(() => !completed.value || props.messages.some(message => message.kind === 'thinking' && !!message.completedAt &&
+  Math.abs((idTime(message.id) ?? message.startedAt) - message.startedAt) < 5_000));
 const elapsedLabel = computed(() => {
   if (!endKnown.value) return '';
   const end = completed.value ? completedAt.value : Date.now() + tick.value * 0;
   const seconds = Math.max(0, Math.round((end - startedAt.value) / 1000));
+  if (completed.value && seconds === 0) return ''; // "0s" says nothing
   return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m ${ seconds % 60 }s`;
 });
 </script>

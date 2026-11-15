@@ -62,6 +62,7 @@
 import { computed, inject, ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
+import { resultCardFor, returnCoveredByCard } from '../../messages/handoffCover';
 import { parseLegacyAgentNotice } from '../../messages/legacyAgentNotice';
 import { useLineTime } from '../../messages/lineTime';
 
@@ -83,16 +84,9 @@ const when = computed(() => lineTime(props.msg.id));
 const sameTask = (jobId?: string, taskIndex?: number) => !!props.msg.jobId && jobId === props.msg.jobId && (props.msg.taskIndex ?? 0) === (taskIndex ?? 0);
 
 /** The result card for this job, if one is in the chat. */
-const card = computed(() => {
-  for (const message of controller?.messages.value ?? []) {
-    if (message.kind !== 'proactive') continue;
-    const item = (message).result?.items.find(entry => sameTask(entry.jobId, entry.taskIndex));
-    if (item) return item;
-  }
-  return undefined;
-});
+const card = computed(() => resultCardFor(props.msg, controller?.messages.value ?? []));
 
-const coveredByCard = computed(() => props.msg.direction === 'from_agent' && !!card.value);
+const coveredByCard = computed(() => returnCoveredByCard(props.msg, controller?.messages.value ?? []));
 
 const STATE: Record<string, { text: string; tone: string }> = {
   queued:  { text: 'Starting', tone: 'run' },

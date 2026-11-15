@@ -67,7 +67,8 @@ import TurnWaiting from './TurnWaiting.vue';
 import { groupTranscriptThinking } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
-import { LineTimeKey, lineTimes } from '../../messages/lineTime';
+import { returnCoveredByCard } from '../../messages/handoffCover';
+import { LineTimeKey, idTime, lineTimes } from '../../messages/lineTime';
 import { waitingOn } from '../../messages/waitingStatus';
 import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
@@ -77,10 +78,12 @@ const scroller = ref<HTMLElement | null>(null);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
 const transcriptEntries = computed(() => groupTranscriptThinking(controller.messages.value));
 
-// Each line's time, shown once per minute (see lineTime.ts).
-const times = computed(() => lineTimes(transcriptEntries.value.map(entry => ({
+// Each line's time, shown once per minute (see lineTime.ts). Lines that are
+// not shown don't count, or they would take the minute from the line below.
+const times = computed(() => lineTimes(transcriptEntries.value.filter(entry =>
+  !(entry.kind === 'subagent_exchange' && returnCoveredByCard(entry, controller.messages.value))).map(entry => ({
   id: entry.id,
-  at: entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt,
+  at: idTime(entry.id) ?? (entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt),
 }))));
 provide(LineTimeKey, id => times.value.get(id));
 
