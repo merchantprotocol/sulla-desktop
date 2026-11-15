@@ -58,6 +58,17 @@ services:
       - idle_in_transaction_session_timeout=60s
       - -c
       - random_page_cost=1.1
+      # Stale planner statistics turned cheap index plans into whole-table scans after bursts of
+      # inserts/deletes (Postgres sat at 130-160% CPU until a manual ANALYZE). Analyze and vacuum
+      # small, hot tables much sooner than the 10%/20% defaults.
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_naptime=30s
+      - -c
+      - autovacuum_vacuum_cost_limit=1000
       - -c
       - shared_preload_libraries=pg_stat_statements
     restart: unless-stopped

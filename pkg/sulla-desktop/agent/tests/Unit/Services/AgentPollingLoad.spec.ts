@@ -47,6 +47,25 @@ describe('agent polling load', () => {
     expect(store.lineageForParentThread).toHaveBeenCalledTimes(2);
   });
 
+  it('lets a tolerant poll reuse a read across writes while a strict read still sees the write', async() => {
+    const { store, states, advance } = stateHarness([job('w', [task({ threadId: 't' })], { parentThreadId: 'p' })]);
+    await states.descendants('p', { maxStaleMs: 4_000 });
+    for (let i = 0; i < 5; i++) {
+      await states.transition('w', 0, { status: i % 2 ? 'parked' : 'running' }); // agents keep writing
+      advance(500);
+      await states.descendants('p', { maxStaleMs: 4_000 });
+    }
+    expect(store.lineageForParentThread).toHaveBeenCalledTimes(1); // UI polls ride the cache despite writes
+    await states.descendants('p'); // a strict caller (kill, fleet) must not accept the overtaken read
+    expect(store.lineageForParentThread).toHaveBeenCalledTimes(2);
+    advance(4_001);
+    await states.descendants('p', { maxStaleMs: 4_000 });
+    expect(store.lineageForParentThread).toHaveBeenCalledTimes(2); // strict read refreshed the cache just now
+    advance(4_001);
+    await states.descendants('p', { maxStaleMs: 4_000 });
+    expect(store.lineageForParentThread).toHaveBeenCalledTimes(3); // staleness bound enforced
+  });
+
   it('expires the lineage cache after its ceiling', async() => {
     const { store, states, advance } = stateHarness([job('w', [], { parentThreadId: 'p' })]);
     await states.descendants('p'); advance(6_001); await states.descendants('p');
