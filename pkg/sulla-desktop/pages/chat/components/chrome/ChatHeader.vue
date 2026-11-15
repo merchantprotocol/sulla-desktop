@@ -5,31 +5,16 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  Chat header: the active agent on the left, the editable chat title centred,
+  Chat header: the editable chat title centred (the agent picker lives in the
+  message box, so the header does not repeat it),
   and sub-agents, files and history toggles on the right. Replaces the centred italic
   SessionMark and the StatusBadges pills (connection status now lives as a
   dot in the app's top bar).
 -->
 <template>
   <header class="chat-header">
-    <div class="ch-left">
-      <button
-        class="ch-agent"
-        type="button"
-        :title="selectionTitle"
-        @click="controller.openModal('model')"
-      >
-        <span
-          class="ch-avatar"
-          aria-hidden="true"
-        >{{ initial }}</span>
-        <span class="ch-agent-name">{{ selectionLabel }}</span>
-        <svg
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        ><path d="M6 9l6 6 6-6" /></svg>
-      </button>
-    </div>
+    <!-- Empty left column keeps the title centred. -->
+    <div class="ch-left" />
 
     <div class="ch-center">
       <span
@@ -111,7 +96,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
-import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { useChatController } from '../../controller/useChatController';
 
 defineProps<{
@@ -122,9 +106,7 @@ defineProps<{
 const emit = defineEmits<{ (e: 'toggle-subagents'): void; (e: 'toggle-files'): void }>();
 
 const controller = useChatController();
-const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const titleEl = ref<HTMLElement | null>(null);
-const initial = computed(() => (selectionLabel.value || 'S').trim().charAt(0).toUpperCase());
 const historyOpen = computed(() => controller.sidebar.value.historyOpen);
 
 function commitTitle(): void {
@@ -161,20 +143,6 @@ function cancelTitle(): void {
 }
 .ch-title:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
 .ch-title:focus { text-overflow: clip; background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--accent); }
-.ch-agent {
-  display: inline-flex; align-items: center; gap: 7px; flex: none;
-  height: 28px; padding: 0 10px 0 4px; border-radius: 999px; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--text-primary); font: 500 12.5px var(--font-body);
-}
-.ch-agent:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.ch-avatar {
-  display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--accent); color: var(--text-on-accent, #fff); font: 700 11px var(--font-body);
-}
-.ch-agent svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; opacity: .7; }
-.ch-agent-name { max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ch-actions { display: flex; align-items: center; gap: 6px; justify-self: end; }
 .ch-btn {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
@@ -192,6 +160,5 @@ function cancelTitle(): void {
 .ch-none { font-size: 11px; color: var(--text-muted); }
 @media (max-width: 760px) {
   .ch-btn { padding: 0 8px; }
-  .ch-agent-name { max-width: 120px; }
 }
 </style>
