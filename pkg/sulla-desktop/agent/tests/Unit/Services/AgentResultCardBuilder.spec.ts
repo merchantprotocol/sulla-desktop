@@ -64,6 +64,28 @@ describe('the finished-agent card', () => {
     }
   });
 
+  // risk: the card silently fell back to plain in the live app and nobody could tell why
+  it('logs why a card fell back to plain, and logs a successful classification', async() => {
+    const lines: string[] = [];
+    const log = { info: (m: string) => lines.push(`info ${ m }`), warn: (m: string) => lines.push(`warn ${ m }`) };
+    const slow = vi.fn((_s: string, _u: string, signal: AbortSignal) => new Promise<string>((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')))));
+    const cases: [any, RegExp][] = [
+      [undefined, /plain card \(no model configured\)/],
+      [vi.fn(() => Promise.resolve('Sorry, I cannot.')), /plain card \(unreadable reply: "Sorry, I cannot\."\)/],
+      [vi.fn(() => Promise.resolve(null)), /plain card \(model returned nothing\)/],
+      [vi.fn(() => Promise.reject(new Error('401 from grok'))), /plain card \(model error: 401 from grok\)/],
+      [slow, /plain card \((timed out at 20ms|model error: aborted)\)/],
+      [reply({ items: [{ index: 0, purpose: 'merge', verdict: 'Merged', tone: 'ok', outcome: 'Merged.' }] }), /classified merge in \d+ms/],
+    ];
+
+    for (const [model, expected] of cases) {
+      lines.length = 0;
+      await new AgentResultCardBuilder(model, 20, undefined, log).build(job, [result]);
+      expect(lines.join('\n')).toMatch(expected);
+      expect(lines[0]).toContain('agent-job-1');
+    }
+  });
+
   it('builds a card without any model at all', async() => {
     const [item] = (await new AgentResultCardBuilder(undefined).build(job, [{ ...result, status: 'blocked', output: 'Need the QA account password.' }])).items;
 

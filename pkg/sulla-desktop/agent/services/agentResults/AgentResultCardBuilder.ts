@@ -13,6 +13,11 @@ import type { AgentJob, AgentJobResult, AgentJobTask } from '../../tools/agents/
 /** Sends one prompt to a small model and returns its raw text, or null. */
 export type ResultClassifierModel = (system: string, user: string, signal: AbortSignal) => Promise<string | null>;
 
+/** Where the builder reports whether the model step worked; the card itself never fails. */
+export interface ResultCardLog { info(message: string): void; warn(message: string): void }
+
+type Classified = { items: AgentResultItem[] } | { fallback: string };
+
 const PURPOSES: AgentResultPurpose[] = ['merge', 'qa', 'review', 'fix', 'other'];
 const TONES: AgentResultTone[] = ['ok', 'warn', 'bad', 'info', 'dim'];
 const ENV_STATES: AgentResultEnvironment['state'][] = ['deployed', 'failed', 'pending', 'held'];
@@ -51,13 +56,22 @@ export class AgentResultCardBuilder {
     private readonly model: ResultClassifierModel | undefined,
     private readonly timeoutMs = 5000,
     private readonly grounding = new AgentResultGrounding(),
+    private readonly log: ResultCardLog = console,
+    private readonly clock: () => number = Date.now,
   ) {}
 
   async build(job: AgentJob, results: AgentJobResult[], taskIndex = 0): Promise<AgentResultCardData> {
     const items = results.map((result, index) => this.base(job, result, this.task(job, result, index, results.length, taskIndex)));
-    const enriched = await this.classify(items).catch(() => undefined);
+    const started = this.clock();
+    const outcome = await this.classify(items).catch((error: unknown): Classified => ({ fallback: `model error: ${ error instanceof Error ? error.message : String(error) }` }));
+    const ms = this.clock() - started;
+    if ('items' in outcome) {
+      this.log.info(`[AgentResultCard] ${ job.jobId }: classified ${ outcome.items.map(item => item.purpose).join(', ') } in ${ ms }ms`);
+    } else {
+      this.log.warn(`[AgentResultCard] ${ job.jobId }: plain card (${ outcome.fallback }) after ${ ms }ms`);
+    }
 
-    return { items: (enriched ?? items).map(item => this.grounding.ground(item)) };
+    return { items: ('items' in outcome ? outcome.items : items).map(item => this.grounding.ground(item)) };
   }
 
   private task(job: AgentJob, result: AgentJobResult, index: number, count: number, taskIndex: number): { task?: AgentJobTask; index: number } {
@@ -88,8 +102,9 @@ export class AgentResultCardBuilder {
     };
   }
 
-  private async classify(items: AgentResultItem[]): Promise<AgentResultItem[] | undefined> {
-    if (!this.model || !items.some(item => item.report)) return undefined;
+  private async classify(items: AgentResultItem[]): Promise<Classified> {
+    if (!this.model) return { fallback: 'no model configured' };
+    if (!items.some(item => item.report)) return { fallback: 'empty report' };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -98,10 +113,12 @@ export class AgentResultCardBuilder {
         this.model(SYSTEM, user, controller.signal),
         new Promise<null>(resolve => controller.signal.addEventListener('abort', () => resolve(null), { once: true })),
       ]);
-      const parsed = raw ? this.parse(raw) : undefined;
-      if (!parsed) return undefined;
+      if (controller.signal.aborted && !raw) return { fallback: `timed out at ${ this.timeoutMs }ms` };
+      if (!raw) return { fallback: 'model returned nothing' };
+      const parsed = this.parse(raw);
+      if (!parsed) return { fallback: `unreadable reply: ${ JSON.stringify(raw.slice(0, 80)) }` };
 
-      return items.map((item, index) => this.merge(item, parsed.find(entry => entry?.index === index)));
+      return { items: items.map((item, index) => this.merge(item, parsed.find(entry => entry?.index === index))) };
     } finally {
       clearTimeout(timer);
     }
