@@ -13,7 +13,7 @@ export interface DecisionRecord {
   createdAt:      number;
   expiresAt:      number;
   toolName?:      string;
-  questions?:     { question: string; multiSelect?: boolean; options: { label: string; description?: string }[] }[];
+  questions?:     { question: string; header?: string; multiSelect?: boolean; task?: boolean; command?: string; options: { label: string; description?: string }[] }[];
   /** What the user chose, kept so an answer survives even if delivering it fails. */
   answers?:       { question: string; selected: string[] }[];
   /** Opaque, local-only action data consumed by the Desktop main process. */

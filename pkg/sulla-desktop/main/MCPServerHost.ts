@@ -52,6 +52,7 @@ import {
   clampTimeout,
   emitQuestionCardViaWs,
   formatQuestionResolution,
+  MAX_TIMEOUT_MS,
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
@@ -399,10 +400,12 @@ export class MCPServerHost {
             question:    z.string().describe('The full question text shown to the user.'),
             header:      z.string().optional().describe('Short label/chip shown above the question (≤ ~12 chars).'),
             multiSelect: z.boolean().optional().describe('Set true to let the user pick multiple options. Default false.'),
+            task:        z.boolean().optional().describe('Set true when you need the user to DO something you cannot (run a command on their Mac, set a secret, sign in, approve something outside Sulla). Renders a task card with a Done button; options default to Done.'),
+            command:     z.string().optional().describe('For a task: the exact shell command for the user to run, shown with a Copy button. Never include secret values.'),
             options:     z.array(z.object({
               label:       z.string().describe('The option text the user selects.'),
               description: z.string().optional().describe('Optional one-line explanation of this option.'),
-            })).describe('2–4 distinct options the user can choose from.'),
+            })).optional().describe('2–4 distinct options the user can choose from. Optional for a task (defaults to Done).'),
           })).describe('1–4 questions to ask the user.'),
           timeoutMs: z.number().optional().describe('Timeout in ms (min 5000, max 1800000, default 300000 = 5 min).'),
         },
@@ -426,7 +429,8 @@ export class MCPServerHost {
           return { content: [{ type: 'text' as const, text: error }], isError: true };
         }
 
-        const clamped = clampTimeout(timeoutMs);
+        // A task (run a command, set a secret) takes longer than a pick: wait the longest unless told otherwise.
+        const clamped = clampTimeout(timeoutMs ?? (normalized.some(q => q.task) ? MAX_TIMEOUT_MS : undefined));
         const { decisionService } = await import('@pkg/agent/services/DecisionService');
         // Stop waiting when the run stops or when the caller drops this call
         // (Claude Code abandons a tool that is silent for 300 s; the SDK then

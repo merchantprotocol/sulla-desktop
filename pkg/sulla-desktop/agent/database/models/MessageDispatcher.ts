@@ -340,6 +340,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       question:    typeof q?.question === 'string' ? q.question : '',
       header:      typeof q?.header === 'string' ? q.header : undefined,
       multiSelect: q?.multiSelect === true,
+      task:        q?.task === true || undefined,
+      command:     q?.task === true && typeof q?.command === 'string' ? q.command : undefined,
       options:     Array.isArray(q?.options)
         ? q.options.map((o: any) => ({
           label:       typeof o?.label === 'string' ? o.label : '',

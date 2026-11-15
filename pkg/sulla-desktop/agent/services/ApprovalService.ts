@@ -68,6 +68,10 @@ export interface UserQuestion {
   /** When true the user may pick multiple options. */
   multiSelect?: boolean;
   options:      UserQuestionOption[];
+  /** Something the user must do (run a command, set a secret); answered with Done. */
+  task?:        boolean;
+  /** For a task: the command the user runs, shown with a Copy button. */
+  command?:     string;
 }
 
 export interface UserQuestionAnswerItem {

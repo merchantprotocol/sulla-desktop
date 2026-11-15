@@ -140,6 +140,10 @@ export interface ToolQuestionItem {
   header?:      string;
   multiSelect?: boolean;
   options:      readonly ToolQuestionOption[];
+  /** Something the user must do, answered with Done (see ask_user_question `task`). */
+  task?:        boolean;
+  /** For a task: the command the user runs. */
+  command?:     string;
 }
 /** One element of the user's answer — the selected option labels (and/or
  *  free-form text) for a single question. */

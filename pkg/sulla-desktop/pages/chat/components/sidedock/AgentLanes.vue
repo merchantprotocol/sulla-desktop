@@ -28,6 +28,11 @@
         <span class="ln-sum-sep">·</span>{{ part }}
       </template>
     </p>
+    <WaitingOnYou
+      v-if="needsYou.length"
+      :items="needsYou"
+      :now="now"
+    />
     <div
       v-if="!needsYou.length && !live.length && !finished.length"
       class="ln-empty"
@@ -38,31 +43,6 @@
       v-else
       class="ln-list"
     >
-      <div
-        v-for="msg in needsYou"
-        :key="msg.id"
-        class="ln-row ln-you"
-      >
-        <span class="ln-av ln-av-you">S</span>
-        <div class="ln-main">
-          <div class="ln-l1">
-            <b>Sulla needs you</b><span
-              class="ln-task"
-              :title="needText(msg)"
-            >· {{ needText(msg) }}</span>
-            <span class="ln-sp" />
-            <span class="ln-time">{{ age(msg.createdAt) }}</span>
-            <button
-              type="button"
-              class="ln-answer"
-              @click="jump(msg.id)"
-            >
-              {{ msg.kind === 'tool_approval' ? 'Review' : 'Answer' }}
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div
         v-for="node in live"
         :key="node.row.key"
@@ -229,6 +209,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
 
+import WaitingOnYou from './WaitingOnYou.vue';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimes } from '../../messages/lineTime';
 import { ActivityTrail, activityBins, laneStep, shortenHashes } from '../../messages/sideDock';
@@ -297,7 +278,12 @@ const finished = computed(() => new AgentTreeBuilder([]).flatten(tree.value).map
 /** The thread in one line, worded for the side column: says "Nothing needs you" outright when that is true. */
 const summary = computed(() => {
   const activity = deriveThreadActivity({ running: controller.isRunning.value, messages: controller.messages.value, agents: live.value.map(node => node.row), heartbeatMinutes: null });
-  if (activity.state === 'you') return { state: 'you', lead: 'Needs you', parts: activity.parts };
+  if (activity.state === 'you') {
+    // What waits on you is listed right below; the line counts it and says what the agents are doing.
+    const agents = deriveThreadActivity({ running: controller.isRunning.value, messages: [], agents: live.value.map(node => node.row), heartbeatMinutes: null });
+    const count = needsYou.value.length;
+    return { state: 'you', lead: 'Needs you', parts: [`${ count } ${ count === 1 ? 'thing' : 'things' }`, ...(agents.state === 'idle' ? [] : agents.parts)] };
+  }
   // A stopped agent is worth a look: say so in red instead of "Nothing needs you".
   if (activity.state === 'stalled') return { state: 'stalled', lead: 'No progress', parts: activity.parts };
   return { state: activity.state, lead: 'Nothing needs you', parts: activity.state === 'idle' ? ['nothing running'] : activity.parts };
@@ -307,10 +293,6 @@ const needsYou = computed(() => controller.messages.value.filter((msg): msg is T
 
 watch(() => client.snapshot.value.rows, rows => trail.record(rows, Date.now()), { immediate: true });
 
-function needText(msg: ToolQuestionMessage | ToolApprovalMessage): string {
-  if (msg.kind === 'tool_approval') return msg.reason || msg.command;
-  return msg.questions.length > 1 ? `${ msg.questions.length } questions` : (msg.questions[0]?.question || 'a question');
-}
 function initials(row: AgentStateRow): string {
   const name = (row.agentId || row.label || 'A').replace(/[-_]?worker$/i, '');
   const parts = name.split(/[-_\s]+/).filter(Boolean);

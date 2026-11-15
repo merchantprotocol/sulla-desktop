@@ -139,12 +139,15 @@ describe('agent lanes', () => {
       messages: [question('m1')],
       rows:     [row('j1:0', 'working'), row('j2:0', 'working', { agentId: 'opus-worker', label: 'Review of the fix', parentJobId: 'j1', parentTaskIndex: 0 }), row('j3:0', 'done', { label: 'Review · Astra #4339' })],
     });
+    // What waits on you comes first, above the lanes, and the summary counts it.
+    expect(lanes.html().indexOf('wy-list')).toBeLessThan(lanes.html().indexOf('ln-list'));
+    expect(lanes.find('.wy-i').text()).toContain('Question');
+    expect(lanes.find('.ln-sum').text()).toMatch(/^Needs you·1 thing·2 agents running/);
     const rows = lanes.findAll('.ln-row');
-    expect(rows[0].text()).toContain('Sulla needs you');
-    expect(rows[1].find('.ln-av').classes()).toContain('ln-spin');
-    expect(rows[1].find('.ln-step').text()).toBe('running pnpm test');
-    expect(rows[2].classes()).toContain('ln-child');
-    expect(rows[2].find('.ln-av').attributes('title')).toBe('opus-worker · started by codex-luna-worker');
+    expect(rows[0].find('.ln-av').classes()).toContain('ln-spin');
+    expect(rows[0].find('.ln-step').text()).toBe('running pnpm test');
+    expect(rows[1].classes()).toContain('ln-child');
+    expect(rows[1].find('.ln-av').attributes('title')).toBe('opus-worker · started by codex-luna-worker');
     expect(lanes.find('.ln-fin summary').text()).toContain('Finished · 1');
   });
 

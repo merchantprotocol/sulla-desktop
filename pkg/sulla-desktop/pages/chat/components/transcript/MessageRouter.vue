@@ -26,6 +26,7 @@
   <Thinking        v-else-if="msg.kind === 'thinking'"  :msg="msg" />
   <ToolCall        v-else-if="msg.kind === 'tool'"      :msg="msg" />
   <ToolApproval    v-else-if="msg.kind === 'tool_approval'" :msg="msg" />
+  <ToolTask        v-else-if="TaskAsks.isTask(msg)"    :msg="msg" />
   <ToolQuestion    v-else-if="msg.kind === 'tool_question'" :msg="msg" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
@@ -44,6 +45,7 @@
 <script setup lang="ts">
 import type { Message } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
+import { TaskAsks } from '../../messages/taskAsk';
 
 import TurnUser        from './TurnUser.vue';
 import TurnSulla       from './TurnSulla.vue';
@@ -53,6 +55,7 @@ import Thinking        from '../thinking/Thinking.vue';
 import ToolCall        from '../tool/ToolCall.vue';
 import ToolApproval    from '../tool/ToolApproval.vue';
 import ToolQuestion    from '../tool/ToolQuestion.vue';
+import ToolTask        from '../tool/ToolTask.vue';
 import PatchBlock      from '../patch/PatchBlock.vue';
 import ChannelMessage  from '../channel/ChannelMessage.vue';
 import SubAgentBubble  from '../subagent/SubAgentBubble.vue';
