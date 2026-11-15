@@ -95,3 +95,12 @@ describe('review verdict codes read as words', () => {
     expect(WorkStepsModule.plainToolNames('verdict CHANGES_REQUESTED, for the gap')).toBe('verdict changes requested, for the gap');
   });
 });
+
+describe('a shell step\'s detail', () => {
+  // risk: a live block read "shell · cd /mnt/data/sulla/runtime/conversations/2a2adf720e26f71b68de1266fd018c75 && …"
+  it('does not show Sulla\'s internal folders or full ids', () => {
+    const { detail } = summariseCommand('cd /mnt/data/sulla/runtime/conversations/2a2adf720e26f71b68de1266fd018c75 && ls reports/out.json');
+    expect(detail).toBe('cd …/chat folder && ls reports/out.json');
+    expect(summariseCommand('cat /mnt/data/sulla/runtime/conversations/2a2adf720e26f71b68de1266fd018c75/plan.md').detail).toBe('cat …/plan.md');
+  });
+});

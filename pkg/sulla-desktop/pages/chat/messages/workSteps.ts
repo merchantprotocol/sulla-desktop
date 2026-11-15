@@ -131,9 +131,23 @@ export function summariseCommand(raw: string): { title: string; short?: string; 
   }
   const words = command.replace(/\s+/g, ' ').trim();
   const title = commandName(words);
+  const shown = plainPaths(words);
   // A Sulla tool inside a loop: "GitHub · read PR" titles it; "read PR" names it in a list.
   const short = title.includes(' · ') ? title.split(' · ').pop() : undefined;
-  return { title, ...(short ? { short } : {}), detail: words.length > 90 ? `${ words.slice(0, 89) }…` : words };
+  return { title, ...(short ? { short } : {}), detail: shown.length > 90 ? `${ shown.slice(0, 89) }…` : shown };
+}
+
+/**
+ * Sulla's own folders read by their last part, and long ids shortened:
+ * `cd /mnt/data/sulla/runtime/conversations/2a2adf72…c75/work && ls` → `cd …/work && ls`.
+ */
+function plainPaths(text: string): string {
+  return text
+    .replace(/(?:\/mnt\/data\/sulla|\/private\/tmp|\/Users\/[^/\s]+)(?:\/[^\s'"`;|&)]+)*/g, (path) => {
+      const last = path.split('/').pop() ?? '';
+      return /^[0-9a-f]{24,}$/.test(last) ? '…/chat folder' : `…/${ last }`;
+    })
+    .replace(/\b[0-9a-f]{24,}\b/g, id => id.slice(0, 7));
 }
 
 /** Steps that only set the stage (`cd x &&`, `echo ---;`, loop keywords), never the point of a command. */
