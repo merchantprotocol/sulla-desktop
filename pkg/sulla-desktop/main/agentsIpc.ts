@@ -469,7 +469,8 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     import('@pkg/agent/utils/sullaPaths'),
     import('@pkg/agent/database/models/AgentJobMessagingModel'),
   ]);
-  const jobs = await agentJobProvider.states.descendants(parentThreadId);
+  // UI poll (every 3s per open chat): a few seconds of staleness is invisible, a recursive query per poll is not.
+  const jobs = await agentJobProvider.states.descendants(parentThreadId, { maxStaleMs: 4_000 });
   const logsDir = resolveSullaLogsDir();
   // Two batched reads for the whole card set instead of per-task telemetry and conversation lookups.
   const [telemetryByJob, conversationById] = await Promise.all([

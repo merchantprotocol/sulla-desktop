@@ -50,7 +50,7 @@ export class AgentJobMutationQueue {
 export class AgentStateService {
   private versionValue: number;
   private readonly clock:() => number;
-  private readonly descendantReads = new Map<string, { expiresAt:number; writeVersion:number; jobs:AgentJob[] }>();
+  private readonly descendantReads = new Map<string, { expiresAt:number; storedAt:number; writeVersion:number; jobs:AgentJob[] }>();
   private readonly descendantInFlight = new Map<string, Promise<AgentJob[]>>();
   /** Bumped only when a durable job row is actually written; gates the lineage read cache. */
   private writeVersion = 0;
@@ -160,10 +160,17 @@ export class AgentStateService {
     return this.loadJob(jobId);
   }
 
-  async descendants(parentThreadId: string): Promise<AgentJob[]> {
+  /**
+   * `maxStaleMs` lets a presentation poll (the sub-agent rail, every 3s per open chat) reuse a recent
+   * read even though some job was written since. With several agents writing constantly the strict
+   * write-version check never hit, so every poll re-ran the recursive lineage query. Callers that need
+   * exact state (kill, fleet decisions) omit it and keep the strict behaviour.
+   */
+  async descendants(parentThreadId: string, options?: { maxStaleMs?: number }): Promise<AgentJob[]> {
     await this.ready();
     if (this.store.lineageForParentThread) {
       const cached = this.descendantReads.get(parentThreadId);
+      if (cached && options?.maxStaleMs && this.clock() - cached.storedAt <= options.maxStaleMs) return cached.jobs;
       if (cached && cached.expiresAt > this.clock() && cached.writeVersion === this.writeVersion) return cached.jobs;
       // Single-flight: concurrent identical lineage reads share one recursive query.
       const running = this.descendantInFlight.get(parentThreadId);
@@ -185,11 +192,10 @@ export class AgentStateService {
     const startedAt = this.writeVersion;
     const persisted = await this.store.lineageForParentThread!(parentThreadId, 100);
     const jobs = persisted.map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
-    // Only a read that no write overtook may be remembered; a 6s ceiling covers writers outside this service.
-    if (startedAt === this.writeVersion) {
-      if (this.descendantReads.size >= 128 && !this.descendantReads.has(parentThreadId)) this.descendantReads.delete(this.descendantReads.keys().next().value!);
-      this.descendantReads.set(parentThreadId, { expiresAt: this.clock() + 6_000, writeVersion: startedAt, jobs });
-    }
+    // Always remember the read, tagged with the write version it started at: strict readers still reject
+    // it once any write overtook it (version mismatch), tolerant readers may reuse it for maxStaleMs.
+    if (this.descendantReads.size >= 128 && !this.descendantReads.has(parentThreadId)) this.descendantReads.delete(this.descendantReads.keys().next().value!);
+    this.descendantReads.set(parentThreadId, { expiresAt: this.clock() + 6_000, storedAt: this.clock(), writeVersion: startedAt, jobs });
     for (const job of jobs) this.cache.jobs.set(job.jobId, job);
     this.trimTerminalCache();
     return jobs;
