@@ -59,6 +59,15 @@ export function parkedActivity(row: AgentStateRow): { state: 'waiting' | 'idle';
   return { state: 'idle', detail: 'idle, waiting for a message' };
 }
 
+/**
+ * Every agent listed here was launched from this thread, so it raises its
+ * blocker to Sulla, not to the user. Only pending questions and approvals
+ * need the user. The blocker text leads: it is what explains the state.
+ */
+export function blockedDetail(row: AgentStateRow): string {
+  return `waiting on Sulla: ${ row.stateReason || row.lastCheckinSummary || 'reported a blocker' }`;
+}
+
 function agentItem(row: AgentStateRow): ThreadActivityItem | null {
   const at = Date.parse(row.lastActivityAt) || undefined;
   const ref = { kind: 'agent' as const, key: row.key };
@@ -73,7 +82,7 @@ function agentItem(row: AgentStateRow): ThreadActivityItem | null {
   case 'quiet':
     return { state: 'stalled', title: row.label, detail: said || 'no check-in lately', at, ref };
   case 'blocked':
-    return { state: 'you', title: row.label, detail: said || 'reported a blocker', at, ref };
+    return { state: 'waiting', title: row.label, detail: blockedDetail(row), at, ref };
   default:
     return null;
   }

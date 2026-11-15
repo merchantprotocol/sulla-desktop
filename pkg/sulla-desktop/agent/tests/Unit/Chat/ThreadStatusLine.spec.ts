@@ -105,6 +105,30 @@ describe('the activity line above the message box', () => {
     w.unmount();
   });
 
+  // risk: a sub-agent still running under a manager that already finished
+  // showed in the left Sub-agents panel but vanished from this tray
+  it('lists a live sub-agent whose parent agent has already finished', async() => {
+    const parent = row('done', { label: 'Manager', endedAt: new Date().toISOString() });
+    const child = row('parked', { key: 'job-2:0', jobId: 'job-2', threadId: 'child-2', label: 'Waiting worker', parentJobId: 'job-1', parentTaskIndex: 0, depth: 1 });
+    const w = mountLine([parent, child]);
+    await w.find('.ta-line').trigger('click');
+    const names = w.findAll('.ta-name').map(n => n.text());
+    expect(names.some(n => n.startsWith('Waiting worker'))).toBe(true);
+    expect(names.some(n => n.startsWith('Manager'))).toBe(false);
+    w.unmount();
+  });
+
+  it('does not list a live sub-agent twice when its parent is live too', async() => {
+    const parent = row('working', { label: 'Manager' });
+    const child = row('working', { key: 'job-2:0', jobId: 'job-2', threadId: 'child-2', label: 'Worker', parentJobId: 'job-1', parentTaskIndex: 0, depth: 1 });
+    const w = mountLine([parent, child], { running: true });
+    await w.find('.ta-line').trigger('click');
+    const names = w.findAll('.ta-name').map(n => n.text());
+    expect(names).toHaveLength(1);
+    expect(names[0].startsWith('Manager')).toBe(true);
+    w.unmount();
+  });
+
   it('expands a row in place and sends a typed message to that agent', async() => {
     const w = mountLine([row('working')], { running: true });
     await w.find('.ta-line').trigger('click');

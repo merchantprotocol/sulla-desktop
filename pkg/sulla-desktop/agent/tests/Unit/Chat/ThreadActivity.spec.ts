@@ -55,6 +55,21 @@ describe('a chat thread always says what it is doing', () => {
     expect(deriveThreadActivity({ ...base, agents: [timer, row('parked', { key: 'job:idle' })] })).toMatchObject({ state: 'waiting', parts: ['1 agent waiting on others'] });
   });
 
+  // risk: a sub-agent's blocker is addressed to Sulla, yet the bar told the user "Needs you"
+  // and showed the agent's progress summary instead of the blocker
+  it('shows a blocked sub-agent as waiting on Sulla, with the blocker first', () => {
+    const blocked = row('blocked', { label: 'Research · Astra tax-sync', lastCheckinSummary: 'Ten vendors researched.', stateReason: 'Need the Astra account login' });
+    const a = deriveThreadActivity({ ...base, agents: [blocked] });
+
+    expect(a.state).toBe('waiting');
+    expect(a.items[0]).toMatchObject({ state: 'waiting', detail: 'waiting on Sulla: Need the Astra account login' });
+  });
+
+  it('still says Needs you for a pending question even when a sub-agent is blocked', () => {
+    const question = { id: 'q1', kind: 'tool_question', status: 'pending', createdAt: 1, questions: [{ header: 'Scope', question: 'Ship phase 1?' }] } as any;
+    expect(deriveThreadActivity({ ...base, agents: [row('blocked', { stateReason: 'x' })], messages: [question] }).state).toBe('you');
+  });
+
   // risk: a pending decision hid behind "working" while the user was the blocker
   it('puts an open question or approval ahead of everything else', () => {
     const question = { id: 'q1', kind: 'tool_question', status: 'pending', createdAt: 1, questions: [{ header: 'Merge', question: 'Merge now?' }] } as any;

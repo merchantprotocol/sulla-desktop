@@ -456,6 +456,24 @@ describe('authoritative live agent state', () => {
     expect(rows.find(row => row.jobId === 'idle')).toMatchObject({ state: 'parked', stateReason: null });
   });
 
+  it('clears a sub-agent blocker once Sulla has delivered an answer after it', async() => {
+    // risk: the live view kept a sub-agent blocked (and the chat bar lit) after Sulla answered it,
+    // because the snapshot never learned when the answer arrived
+    const raised = job('raised', [task()]);
+    const answered = job('answered', [task()]);
+    const { states } = harness([raised, answered], 10_000);
+    const checkin = { createdAt: 5_000, summary: 'Ten vendors researched', blockers: ['Need the Astra account login'] };
+    const telemetry = {
+      latest:          async() => checkin,
+      answeredForJobs: async() => ({ answered: { 0: 6_000 }, raised: { 0: 4_000 } }),
+    };
+
+    const rows = (await new AgentStateProjector(states, telemetry, () => 10_000).snapshot()).rows;
+
+    expect(rows.find(row => row.jobId === 'raised')).toMatchObject({ state: 'blocked', stateReason: 'Need the Astra account login' });
+    expect(rows.find(row => row.jobId === 'answered')?.state).not.toBe('blocked');
+  });
+
   it('settles a job whose blocked task already returned instead of failing and re-notifying it on every restart', async() => {
     // risk: a delivered blocked result re-derives the job as running, so each restart fails it again and wakes the parent with a stale notice
     const returned = job('returned-blocked', [

@@ -14,6 +14,8 @@ export interface AgentTaskCheckin { createdAt: number; summary: string; blockers
 export interface AgentStateTelemetry {
   latest(jobId: string, taskIndex: number): Promise<AgentTaskCheckin | null>;
   latestForJobs?(jobIds: string[]): Promise<Record<string, Record<number, AgentTaskCheckin | null>>>;
+  /** Latest time Sulla's message (its answer) was delivered to each task; a later answer clears a blocker. */
+  answeredForJobs?(jobIds: string[]): Promise<Record<string, Record<number, number | null>>>;
 }
 export interface AgentProjectionConfig { quietAfterMs: number; terminalTtlMs: number; }
 const DEFAULT_CONFIG: AgentProjectionConfig = { quietAfterMs: 5 * 60_000, terminalTtlMs: 2 * 60_000 };
@@ -42,9 +44,11 @@ export class AgentStateProjector {
     // renderer can accept the following snapshot instead of discarding it.
     const version = this.states.version;
     const now = this.clock();
-    const latestByJob = this.telemetry.latestForJobs
-      ? await this.telemetry.latestForJobs([...new Set(jobs.map(job => job.jobId))])
-      : undefined;
+    const jobIds = [...new Set(jobs.map(job => job.jobId))];
+    const [latestByJob, answeredByJob] = await Promise.all([
+      this.telemetry.latestForJobs ? this.telemetry.latestForJobs(jobIds) : undefined,
+      this.telemetry.answeredForJobs ? this.telemetry.answeredForJobs(jobIds).catch(() => undefined) : undefined,
+    ]);
     const jobById = new Map(jobs.map(job => [job.jobId, job]));
     const taskByKey = new Map(jobs.flatMap(job => job.tasks.map((task, taskIndex) => [`${ job.jobId }:${ taskIndex }`, task] as const)));
     const waitingByThread = new Map<string, number>();
@@ -63,7 +67,7 @@ export class AgentStateProjector {
         ? latestByJob[job.jobId]?.[taskIndex] ?? null
         : await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
-      const activity = this.activity.project(job, task, taskIndex, checkin);
+      const activity = this.activity.project(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null);
       const state = activity.state as AgentViewStatus;
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;

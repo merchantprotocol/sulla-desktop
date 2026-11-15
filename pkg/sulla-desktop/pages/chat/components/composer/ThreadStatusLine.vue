@@ -274,13 +274,13 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
-import { activityAge, deriveThreadActivity, parkedActivity, type ThreadActivityState } from '../../messages/threadActivity';
+import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, type ThreadActivityState } from '../../messages/threadActivity';
 import ToolApproval from '../tool/ToolApproval.vue';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
-import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
+import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -307,7 +307,13 @@ const confirmStop = ref('');
 const tree = computed(() => context.backendThreadId.value
   ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)
   : []);
-const agentNodes = computed(() => tree.value.filter(node => LIVE.has(node.row.state)));
+// A live agent is listed with its live descendants nested under it. One whose
+// parent has already finished is lifted to the top level, so a sub-agent still
+// working under a done manager is not hidden (the Sub-agents panel lists it).
+function liveTops(nodes: readonly AgentTreeNode[]): AgentTreeNode[] {
+  return nodes.flatMap(node => (LIVE.has(node.row.state) ? [node] : liveTops(node.children)));
+}
+const agentNodes = computed(() => liveTops(tree.value));
 const liveRows = computed(() => new AgentTreeBuilder([]).flatten(agentNodes.value).map(node => node.row).filter(row => LIVE.has(row.state)));
 const heartbeatMinutes = computed(() => controller.heartbeat.value.intervalMinutes ?? null);
 const humanMessages = computed(() => controller.messages.value.filter((msg): msg is ToolQuestionMessage | ToolApprovalMessage =>
@@ -331,19 +337,22 @@ const ageText = computed(() => {
 
 function rowState(row: AgentStateRow): ThreadActivityState {
   if (row.state === 'quiet') return 'stalled';
-  if (row.state === 'blocked') return 'you';
+  if (row.state === 'blocked') return 'waiting';
   if (row.state === 'parked') return parkedActivity(row).state;
   return 'working';
 }
-const CHIP = { working: 'Working', waiting: 'Waiting', idle: 'Idle', you: 'Needs you', stalled: 'No progress', starting: 'Starting', scheduled: 'Scheduled' } as const;
+const CHIP = { working: 'Working', waiting: 'Waiting', idle: 'Idle', you: 'Needs you', stalled: 'No progress', starting: 'Starting', scheduled: 'Scheduled', blocked: 'Blocked' } as const;
 function rowChip(row: AgentStateRow): string {
-  return row.state === 'queued' ? CHIP.starting : CHIP[rowState(row)];
+  if (row.state === 'queued') return CHIP.starting;
+  if (row.state === 'blocked') return CHIP.blocked;
+  return CHIP[rowState(row)];
 }
 /** Full commit hashes swamp a one-line summary; the full text stays in the title and the expanded detail. */
 function shortShas(text: string): string { return text.replace(/\b([0-9a-f]{7})[0-9a-f]{33}\b/g, '$1') }
 function rowDetail(row: AgentStateRow): string {
   if (row.state === 'parked') return parkedActivity(row).detail;
   if (row.state === 'quiet') return `no check-in for ${ age(Date.parse(row.lastActivityAt)) }`;
+  if (row.state === 'blocked') return blockedDetail(row);
   return row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
 function humanTitle(msg: ToolQuestionMessage | ToolApprovalMessage): string {
