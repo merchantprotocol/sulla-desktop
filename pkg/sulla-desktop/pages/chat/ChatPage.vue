@@ -613,7 +613,7 @@ async function onJumpTo(target: { threadId: ThreadId; messageId: any }): Promise
 // ─── Composables ───────────────────────────────────────────────────
 // Pass the controller in explicitly because Vue doesn't let a component
 // inject its own provide(). Descendants can still just call useChatController().
-const { active: dragActive } = useDragDrop(controller);
+const { active: dragActive } = useDragDrop(controller, toRef(props, 'isActive'));
 useKeyboardShortcuts({
   controller,
   isActive: toRef(props, 'isActive'),
