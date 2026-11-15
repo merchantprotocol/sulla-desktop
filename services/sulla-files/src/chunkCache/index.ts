@@ -18,6 +18,7 @@ export class CachingStore extends Store {
   private readonly hydrator:ChunkHydrator;
   private readonly evictor:ChunkCacheEvictor;
   private timer?:NodeJS.Timeout;
+  private lastWriteEviction = 0;
   constructor(private readonly options:ChunkCacheOptions) {
     super(options.root);
     this.access = new ChunkAccessTracker(options.db);
@@ -61,7 +62,12 @@ export class CachingStore extends Store {
     await this.options.db.query(`INSERT INTO files_chunk_cache(collection_id,chunk_id,state,stored_bytes,last_read_at)
       VALUES($1,$2,'resident',$3,NOW()) ON CONFLICT(collection_id,chunk_id) DO UPDATE
       SET state='resident',stored_bytes=EXCLUDED.stored_bytes,evicted_at=NULL,updated_at=NOW()`, [collectionId, id, bytes.byteLength]);
-    void this.evictor.run().catch(() => undefined);
+    // The eviction pass sums the whole cache table, so running it on every write made each
+    // write O(cached chunks). The 60s timer still bounds the cache; writes only nudge it at most every 30s.
+    if (Date.now() - this.lastWriteEviction >= 30_000) {
+      this.lastWriteEviction = Date.now();
+      void this.evictor.run().catch(() => undefined);
+    }
     return created;
   }
   async stop():Promise<void> { if (this.timer) clearInterval(this.timer); await this.access.stop() }

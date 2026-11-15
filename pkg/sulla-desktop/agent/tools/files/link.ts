@@ -19,6 +19,10 @@ export class FilesLinkWorker extends FilesTool {
     const resolved = await this.resolvePath(input);
     if (resolved?.kind === 'file') input = { ...input, file_id: resolved.fileId, collection_id: resolved.collectionId };
     else if (resolved?.kind === 'folder') input = { ...input, collection_id: resolved.collectionId, folder_path: resolved.folderPath };
+    else if (input.file_id && !input.collection_id) {
+      const record = await this.containerJson<{ file: { collection_id: string } }>(`/v1/agent-files/${ encodeURIComponent(input.file_id) }`, input);
+      input = { ...input, collection_id: record.file.collection_id };
+    }
     if (input.target_file_id && input.kind) {
       await this.containerJson('/v1/file-edges', input, { method: 'POST', body: JSON.stringify({ fileId: input.file_id, targetFileId: input.target_file_id, kind: input.kind }) });
       return { successBoolean: true, responseString: 'File link saved.' };

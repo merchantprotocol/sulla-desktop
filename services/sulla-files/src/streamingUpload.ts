@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 import * as chunkCrypto from './crypto.js';
 import { publishUploadChunk } from './uploadCleanup.js';
 import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
+import { PlaintextChunkReader } from './plaintextChunkReader.js';
+export { PlaintextChunkReader } from './plaintextChunkReader.js';
 
 import type { FilesIdentity } from './auth.js';
 import type { Config } from './config.js';
@@ -15,7 +17,6 @@ import type { Store } from './store.js';
 import type { Readable } from 'node:stream';
 import type pg from 'pg';
 
-const CHUNK_BYTES = 4 * 1024 * 1024;
 
 interface WinnerAwareCrypto {
   maxEncryptedChunkBytes(plainSize:number):number;
@@ -32,7 +33,8 @@ interface StreamingUploadInput {
   collectionId:  string;
   path:          string;
   mime:          string;
-  expectedBytes: number;
+  expectedBytes?: number;
+  maxBytes?: number;
   actor:         FilesIdentity;
   body:          Readable;
   intentDb:      pg.Pool;
@@ -60,29 +62,21 @@ async function assertChunkMetadata(client:pg.PoolClient, collectionId:string, ch
   }
 }
 
-async function * plaintextChunks(body:Readable, expectedBytes:number):AsyncGenerator<Buffer> {
-  let pending = Buffer.alloc(0);
-  let total = 0;
-  for await (const value of body) {
-    const incoming = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    total += incoming.byteLength;
-    if (total > expectedBytes) throw new Error('Upload exceeded its declared size');
-    pending = pending.byteLength ? Buffer.concat([pending, incoming]) : incoming;
-    while (pending.byteLength >= CHUNK_BYTES) {
-      yield pending.subarray(0, CHUNK_BYTES);
-      pending = pending.subarray(CHUNK_BYTES);
-    }
-  }
-  if (total !== expectedBytes) throw new Error('Upload did not match its declared size');
-  if (pending.byteLength || total === 0) yield pending;
+export interface StreamedUpload {
+  chunkIds:string[];
+  chunks:{ id: string; size: number; storedSize: number }[];
+  totalSize:number;
+  sourceHash:string;
 }
 
-export async function insertStreamingUpload(
-  client:pg.PoolClient,
+/** Phase 1: read the request body, encrypt and publish chunks under the upload intent.
+ * Uses no transaction, so a slow client never holds a database transaction or the
+ * namespace lock open (idle-in-transaction is killed after 60 s). */
+export async function streamUploadChunks(
   config:Config,
   store:Store,
-  input:StreamingUploadInput,
-):Promise<any> {
+  input:Pick<StreamingUploadInput, 'uploadId' | 'collectionId' | 'expectedBytes' | 'maxBytes' | 'body' | 'intentDb'>,
+):Promise<StreamedUpload> {
   // These methods are supplied by the shared Files detail/media stack. Keeping
   // the contract explicit here lets this upload PR remain independently based
   // on the approved sharing head while the parent integrates both siblings.
@@ -94,7 +88,7 @@ export async function insertStreamingUpload(
   const sourceHash = createHash('sha256');
   let totalSize = 0;
 
-  for await (const plain of plaintextChunks(input.body, input.expectedBytes)) {
+  for await (const plain of new PlaintextChunkReader(input.body, input.expectedBytes, input.maxBytes).chunks()) {
     totalSize += plain.byteLength;
     sourceHash.update(plain);
     const id = crypto.chunkId(plain, dedupKey);
@@ -112,6 +106,16 @@ export async function insertStreamingUpload(
     chunks.push({ id, size: plain.byteLength, storedSize: encrypted.byteLength });
   }
 
+  return { chunkIds, chunks, totalSize, sourceHash: sourceHash.digest('hex') };
+}
+
+/** Phase 2: short metadata transaction on `client` (caller holds BEGIN and the namespace lock). */
+export async function commitStreamedUpload(
+  client:pg.PoolClient,
+  input:StreamingUploadInput,
+  streamed:StreamedUpload,
+):Promise<any> {
+  const { chunkIds, chunks, totalSize } = streamed;
   const manifestHash = createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: totalSize })).digest('hex');
   await assertManifestMetadata(client, manifestHash, chunkIds, totalSize);
   for (const chunk of chunks) await assertChunkMetadata(client, input.collectionId, chunk);
@@ -132,5 +136,15 @@ export async function insertStreamingUpload(
   await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]);
   await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
     VALUES($1,$2,$3,$4,$5,$6,$7)`, [agentWrite ? 'agent-or-device' : 'user', createdById, input.actor.deviceId || null, file.id, version.id, version.publication_status === 'draft' ? 'draft-write' : 'upload', {path:input.path}]);
-  return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime, source_hash: sourceHash.digest('hex') };
+  return { ...file, current_version_id: version.id, size: totalSize, path: input.path, mime: input.mime, source_hash: streamed.sourceHash };
+}
+
+/** Both phases on one client (kept for the 64 MiB FUSE replace path). */
+export async function insertStreamingUpload(
+  client:pg.PoolClient,
+  config:Config,
+  store:Store,
+  input:StreamingUploadInput,
+):Promise<any> {
+  return commitStreamedUpload(client, input, await streamUploadChunks(config, store, input));
 }

@@ -21,9 +21,7 @@ export type FilesStartupStage =
   | 'residency-recovery'
   | 'indexer'
   | 'enrichment'
-  | 'cleanup'
-  | 'server-keyring'
-  | 'server-initialization';
+  | 'cleanup';
 
 export type FilesDiagnosticClass =
   | 'bootstrap'
@@ -52,7 +50,7 @@ interface SafeDiagnosticDetails {
 const STARTUP_STAGES = new Set<FilesStartupStage>([
   'bootstrap-state', 'preflight', 'legacy-import', 'legacy-import-verification', 'keyring', 'recovery',
   'identity-adoption', 'manager-initialization', 'recovery-enrollment', 'residency-recovery', 'indexer',
-  'enrichment', 'cleanup', 'server-keyring', 'server-initialization',
+  'enrichment', 'cleanup',
 ]);
 const DIAGNOSTIC_CLASSES = new Set<FilesDiagnosticClass>([
   'bootstrap', 'database', 'filesystem', 'master-key', 'startup', 'transport', 'vault-authority',

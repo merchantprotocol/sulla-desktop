@@ -17,7 +17,8 @@ import { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatServic
 import { defaultChatHeartbeatConfig, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 import { getModelProviderService } from '@pkg/agent/services/ModelProviderService';
 import { sendJobMessage } from '@pkg/agent/tools/agents/send_job_message';
-import { findTaskByThread, getAllJobs, getJob } from '@pkg/agent/tools/agents/jobRegistry';
+import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
+import { findTaskByThread, getJob } from '@pkg/agent/tools/agents/jobRegistry';
 import { stopAgentJob } from '@pkg/agent/tools/agents/stop_agent_job';
 import Logging from '@pkg/utils/logging';
 
@@ -252,9 +253,10 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
     const limit = companionInteger(params.limit, 'limit', 50, 1, 100);
     const now = Date.now();
     const finishedCutoff = now - includeFinishedHours * 60 * 60 * 1000;
+    // Bounded read: live jobs plus those that ended inside the window, never every job ever run.
     const [activeAgents, allJobs] = await Promise.all([
       getActiveAgentsRegistry().getAllAgents(),
-      getAllJobs(),
+      agentJobProvider.states.jobsForProjection(includeFinishedHours * 60 * 60 * 1000),
     ]);
     const selectedJobs = allJobs
       .filter(job => job.status === 'running' || (includeFinishedHours > 0 && job.finishedAt !== null && job.finishedAt >= finishedCutoff))

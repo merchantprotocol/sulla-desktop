@@ -20,6 +20,9 @@ export class ToolDeadlinePolicy {
   private readonly requestDefaultMs = 30_000;
   private readonly overrides = new Map<string, number>([
     ['git_push', 120_000], ['git_fetch', 120_000], ['create_pr', 120_000],
+    // Large private repository packfiles can take several minutes over the
+    // credential broker; clone has its own matching command timeout.
+    ['git_clone', 1_800_000],
     ['merge_pr', 120_000], ['ci_logs', 120_000],
     // Long-polls the agent mailbox for up to 300 s (AgentMailClient.MAX_WAIT_SECONDS).
     ['mail_wait_for_code', 305_000],

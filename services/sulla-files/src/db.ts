@@ -18,6 +18,11 @@ export async function connect(url:string, max = 10, startup = new StartupDatabas
   const db = new pg.Pool({ connectionString: url, max });
   // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
   db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
+  // pg-pool only listens on idle clients. A checked-out client that Postgres
+  // terminates mid-transaction (25P03 idle-in-transaction timeout, admin
+  // terminate) emits 'error' with no listener and crashes the whole service.
+  // The in-flight query still rejects to its caller; this only stops the crash.
+  db.on('connect', client => client.on('error', error => console.error('[SullaFiles] database connection lost during use:', error.message)));
   // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
   await startup.until('connect', () => db.query('SELECT 1')); return db
 }

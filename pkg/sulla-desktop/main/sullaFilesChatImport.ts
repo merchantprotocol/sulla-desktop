@@ -11,6 +11,7 @@ import { dialog, type BrowserWindow } from 'electron';
 import { getSullaFilesClient } from './sullaFilesClient';
 
 import paths from '@pkg/utils/paths';
+import { FilesListingPager } from './FilesListingPager';
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024 * 1024;
 const filesClient = getSullaFilesClient();
@@ -255,26 +256,27 @@ export async function importChatFiles(filePaths:string[], destination = ''):Prom
       collections.find(item => item.kind === 'knowledge' && item.compatibility_state !== 'legacy');
     if (!collection?.id) throw new Error('The authenticated Files collection is unavailable.');
 
-    const [active, trash] = await Promise.all([
-      responseJson<FilesRecord[]>(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=false`),
-      responseJson<FilesRecord[]>(`/v1/files?collectionId=${ encodeURIComponent(collection.id) }&path=&trash=true`),
-    ]);
     const normalizedDestination = destination.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
     if (normalizedDestination.split('/').some(part => part === '.' || part === '..')) throw new Error('The Files destination is invalid.');
-    const reserved = new Set([...active, ...trash].flatMap(file => typeof file.path === 'string' ? [file.path] : []));
     const destinationPrefix = normalizedDestination ? `${ normalizedDestination }/` : '';
-    const destinationReserved = new Set([...reserved].flatMap(item => {
-      if (destinationPrefix && !item.startsWith(destinationPrefix)) return [];
-      const relative = destinationPrefix ? item.slice(destinationPrefix.length) : item;
-      return relative.includes('/') ? [] : [relative];
-    }));
+    // Only names directly inside the destination are kept (active and trash), read page by page
+    // under the destination prefix, so memory follows that folder, not the whole collection.
+    const destinationReserved = new Set<string>();
+    for (const trash of ['false', 'true']) {
+      for await (const page of FilesListingPager.pages<FilesRecord>(url => filesClient.request(url), '/v1/files', { collectionId: collection.id, path: normalizedDestination, trash })) {
+        for (const file of page) {
+          if (typeof file.path !== 'string' || (destinationPrefix && !file.path.startsWith(destinationPrefix))) continue;
+          const relative = destinationPrefix ? file.path.slice(destinationPrefix.length) : file.path;
+          if (!relative.includes('/')) destinationReserved.add(relative);
+        }
+      }
+    }
     const references:ChatFilesReference[] = [];
     for (const source of sources) {
       try {
         let uploaded = false;
         for (let attempt = 0; attempt < 100; attempt++) {
           const targetPath = [normalizedDestination, availablePath(source.name, destinationReserved)].filter(Boolean).join('/');
-          reserved.add(targetPath);
           const mime = mimeFor(targetPath);
           const { response, sourceChanged } = await uploadPreparedSource(source, `/v1/files/import?collectionId=${ encodeURIComponent(collection.id) }&path=${ encodeURIComponent(targetPath) }`, mime);
           if (response.status === 409) {

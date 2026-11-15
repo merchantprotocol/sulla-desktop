@@ -17,6 +17,7 @@ RUN useradd --create-home --uid 10001 --shell /bin/bash sulla \
  && chmod 0700 /run/secrets/sulla-agent /run/sulla-bootstrap /run/sulla-control /run/sulla-control/inbox
 
 COPY --chmod=0755 resources/darwin/bin/sulla /usr/local/libexec/sulla-remote
+COPY --chmod=0755 services/sulla-agent/secret-env.sh /usr/local/libexec/sulla-secret-env.sh
 COPY --chmod=0755 services/sulla-agent/sulla-wrapper.sh /usr/local/bin/sulla
 COPY --chmod=0755 services/sulla-agent/entrypoint.sh /usr/local/bin/sulla-agent-entrypoint
 COPY --chown=sulla:sulla services/sulla-agent/supervisor.mjs /usr/local/libexec/sulla-agent-supervisor.mjs

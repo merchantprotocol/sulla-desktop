@@ -29,6 +29,8 @@ describe('tool deadline policy', () => {
     // risk: one global timeout stalls discovery calls or prematurely expires network writes
     expect(policy.deadlineMs('browse_tools', ['read'])).toBe(15_000);
     expect(policy.deadlineMs('git_push', ['update'])).toBe(120_000);
+    // risk: large private clone is killed before its packfile finishes
+    expect(policy.deadlineMs('git_clone', ['create'])).toBe(1_800_000);
     expect(policy.deadlineMs('custom_write', ['create'])).toBe(120_000);
     expect(policy.deadlineMs('unknown_tool')).toBe(120_000);
     // risk: a read deadline (15 s) would kill the agent mail OTP long-poll (up to 300 s) mid-wait

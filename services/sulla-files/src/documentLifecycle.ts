@@ -166,13 +166,24 @@ export function registerDocumentLifecycleRoutes(app:express.Express, db:pg.Pool,
 
   app.get('/v1/files/:id/versions', async(request:RequestWithIdentity, response, next) => { try {
     const file = await deps.requireFile(request, request.params.id, 'view');
+    const requested = Number(request.query.limit ?? 50);
+    const limit = Number.isInteger(requested) ? Math.max(1, Math.min(100, requested)) : 50;
+    let cursor:{createdAt:string;id:string}|undefined;
+    if (request.query.cursor) {
+      try { const parsed=JSON.parse(Buffer.from(String(request.query.cursor),'base64url').toString('utf8')); if(typeof parsed.createdAt!=='string'||typeof parsed.id!=='string') throw new Error('invalid cursor'); cursor=parsed; }
+      catch { throw httpError(400,'invalid versions cursor'); }
+    }
     const versions = await db.query(`SELECT id,major_version,minor_version,version_kind,publication_status,created_by_type,created_by_id,created_at,version_comment,size
-      FROM file_versions WHERE file_id=$1 AND deleted=FALSE ORDER BY created_at DESC,id DESC`, [file.id]);
+      FROM file_versions WHERE file_id=$1 AND deleted=FALSE
+        AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3::uuid))
+      ORDER BY created_at DESC,id DESC LIMIT $4`, [file.id,cursor?.createdAt ?? null,cursor?.id ?? null,limit+1]);
+    const hasMore=versions.rows.length>limit; const page=versions.rows.slice(0,limit); const last=page.at(-1);
     response.json({
       fileId:file.id,draftVersionId:file.draft_version_id,publishedVersionId:file.published_version_id,
       recordLockType:file.record_lock_type,retentionMode:file.retention_mode,retainUntil:iso(file.retain_until),disposalStatus:file.disposal_status,
-      versions:versions.rows.map(row => ({id:row.id,major:row.major_version,minor:row.minor_version,kind:row.version_kind,
+      versions:page.map(row => ({id:row.id,major:row.major_version,minor:row.minor_version,kind:row.version_kind,
         publication_status:row.publication_status,created_by:{type:row.created_by_type,id:row.created_by_id},created_at:iso(row.created_at),comment:row.version_comment,size:Number(row.size)})),
+      nextCursor:hasMore&&last?Buffer.from(JSON.stringify({createdAt:new Date(last.created_at).toISOString(),id:last.id})).toString('base64url'):null,
     });
   } catch (error) { next(error) } });
 

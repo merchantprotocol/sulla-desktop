@@ -12,7 +12,7 @@ import { agentLaunchPauseService, type AgentLaunchPauseState } from './AgentLaun
 import type { AgentJob } from '../tools/agents/jobRegistry';
 
 export interface AgentKillResult { ok: boolean; killedJobs: number; error?: string }
-export interface KillJobStore { allJobs(): Promise<AgentJob[]> }
+export interface KillJobStore { allJobs(): Promise<AgentJob[]>; activeJobs?(): Promise<AgentJob[]> }
 export type StopTree = (jobId: string, principal: ReturnType<typeof StopPrincipal.human>, reason: string) => Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'>;
 
 /** Human-only fleet kill orchestration. Persistence happens before runtime aborts. */
@@ -59,7 +59,7 @@ export class AgentKillService {
     try {
       await agentLaunchPauseService.set(on);
       if (!on) return { ok: true, killedJobs: 0 };
-      const live = (await this.jobs.allJobs()).filter(job => this.isLive(job));
+      const live = (await (this.jobs.activeJobs?.() ?? this.jobs.allJobs())).filter(job => this.isLive(job));
       const rootThreads = new Set(live.map(job => job.parentThreadId).filter((id): id is string => Boolean(id)));
       let killedJobs = 0;
       for (const threadId of rootThreads) {
@@ -76,7 +76,7 @@ export class AgentKillService {
   private isLive(job: AgentJob): boolean { return job.status === 'running' || job.status === 'parked'; }
 
   private async descendants(threadId: string): Promise<AgentJob[]> {
-    const jobs = await this.jobs.allJobs();
+    const jobs = await (this.jobs.activeJobs?.() ?? this.jobs.allJobs());
     const discovered = new Set([threadId]);
     const result: AgentJob[] = [];
     let changed = true;

@@ -212,33 +212,6 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
     });
   }
 
-  initializeServer(master:Buffer):Promise<void> {
-    return this.serial(async() => {
-      const generation = this.currentGeneration;
-      this.currentState = 'starting';
-      const diagnostics = new FilesStartupDiagnostics();
-      let stage:FilesStartupStage = 'server-keyring';
-      const reportStage = (next:FilesStartupStage) => { stage = next; diagnostics.stage(stage) };
-      diagnostics.stage(stage);
-      try {
-        await this.keyring.unlockServer(master, this.config.capabilitySigningKey);
-        this.assertGeneration(generation);
-        reportStage('server-initialization');
-        await this.hooks.initialize(reportStage);
-        this.assertGeneration(generation);
-        this.currentState = 'unlocked'; this.failure = undefined;
-        diagnostics.completed(stage);
-      } catch (error) {
-        diagnostics.failed(stage, error);
-        await this.hooks.stop().catch(cleanupError => diagnostics.cleanupFailed(cleanupError));
-        const invalidated = generation !== this.currentGeneration;
-        this.currentState = invalidated ? 'locked' : 'error';
-        this.failure = invalidated ? undefined : { code: 'FILES_SERVER_STARTUP_FAILED', stage };
-        this.keyring.close(); throw error;
-      }
-    });
-  }
-
   lock():Promise<void> {
     this.currentGeneration++;
     this.currentState = 'locked';

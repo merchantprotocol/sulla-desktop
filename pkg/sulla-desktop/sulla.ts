@@ -307,6 +307,18 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
     },
   );
 
+  lifecycle.registerOnce('database-retention', ['database-manager'],
+    async() => {
+      const { databaseRetentionService } = await import('@pkg/agent/services/DatabaseRetentionService');
+      databaseRetentionService.initialize();
+      console.log('[Background] Database retention initialized');
+    },
+    async() => {
+      const { databaseRetentionService } = await import('@pkg/agent/services/DatabaseRetentionService');
+      databaseRetentionService.shutdown();
+    },
+  );
+
   lifecycle.registerOnce('workflow-recovery', ['database-manager'],
     async() => {
       const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');

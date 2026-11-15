@@ -1014,6 +1014,13 @@ export class BackendGraphWebSocketService {
         }
       } else if (err?.name !== 'AbortError') {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
+        // The turn is over even though it failed (including failures before
+        // the graph ran). Leaving cycleComplete false kept the thread "busy"
+        // and its chat heartbeat paused forever.
+        if (state && isCurrentRun()) {
+          state.metadata.cycleComplete = true;
+          state.metadata.waitingForUser = true;
+        }
         // Launch errors are already written for the user; the detail is in the log.
         const content = err?.name === 'AgentLaunchError'
           ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
@@ -1023,6 +1030,7 @@ export class BackendGraphWebSocketService {
           content,
           role:      'assistant',
           thread_id: threadId,
+          runEnded:  true,
         });
       }
     } finally {

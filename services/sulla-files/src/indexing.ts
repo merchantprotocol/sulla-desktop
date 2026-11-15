@@ -22,14 +22,20 @@ export async function lockIndexingEligibility(client:pg.PoolClient, fileId:strin
 
 const CHUNK_CHARS = 3_500;
 const CHUNK_OVERLAP = 300;
+// Embeddings are intentionally submitted one text at a time. These explicit
+// limits keep a future batch embedder from turning a large extracted document
+// into a second, unbounded in-memory queue.
+export const MAX_EMBEDDING_BATCH_TEXTS = 1;
+export const MAX_EMBEDDING_BATCH_CHARS = CHUNK_CHARS;
+// Keep a worker's synchronous embedding/SQL burst short, then yield so queued
+// uploads and health checks can make progress even with a large persisted backlog.
+const INDEX_JOBS_PER_TURN = 10;
 
-function chunks(text:string):string[] {
-  const output:string[] = [];
+export function* chunks(text:string):Generator<string> {
   for (let start = 0; start < text.length; start += CHUNK_CHARS - CHUNK_OVERLAP) {
     const content = text.slice(start, start + CHUNK_CHARS).trim();
-    if (content) output.push(content);
+    if (content) yield content;
   }
-  return output;
 }
 
 export async function reconcileIndexingAccounting(db:pg.Pool):Promise<void> {
@@ -91,6 +97,8 @@ export class IndexingQueue {
   private timer?:            NodeJS.Timeout;
   private running = false;
   private stopped = false;
+  private activeJob:string | null = null;
+  get diagnosticJob():string | null { return this.activeJob }
 
   constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
@@ -134,7 +142,15 @@ export class IndexingQueue {
   private async drain():Promise<void> {
     if (this.stopped || this.running) return;
     this.running = true;
-    try { while (!this.stopped && await this.processOne()) { /* drain persisted work */ } } finally { this.running = false }
+    try {
+      let processed = 0;
+      while (!this.stopped && await this.processOne()) {
+        if (++processed >= INDEX_JOBS_PER_TURN) {
+          processed = 0;
+          await new Promise<void>(resolve => setImmediate(resolve));
+        }
+      }
+    } finally { this.running = false }
   }
 
   private async processOne():Promise<boolean> {
@@ -142,6 +158,7 @@ export class IndexingQueue {
       WHERE version_id=(SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
       RETURNING file_id,version_id,attempts`);
     const job = claimed.rows[0]; if (!job) return false;
+    this.activeJob = String(job.file_id);
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
       const eligibilityClient = await this.db.connect();
@@ -188,13 +205,15 @@ export class IndexingQueue {
         }
         await client.query('DELETE FROM file_search_chunks WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)', [file.id]);
         if (extracted.status === 'indexed' && extracted.text) {
-          for (const [ordinal, content] of chunks(extracted.text).entries()) {
+          let ordinal = 0;
+          for (const content of chunks(extracted.text)) {
             const embedding = this.embedder.embed(content);
             const vectorTable = await vectorTableExists(this.db);
             const vectorReady = vectorTable && await vectorSearchReady(this.db);
             const inserted = await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
               VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, vectorReady ? null : JSON.stringify(Array.from(embedding))]);
             if (vectorTable) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::halfvec)', [inserted.rows[0].id, vectorLiteral(embedding)]);
+            ordinal++;
           }
         }
         await client.query('INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3) ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text', [file.id, file.path, extracted.text]);
@@ -225,6 +244,7 @@ export class IndexingQueue {
         await client.query('COMMIT');
       } catch (failureError) { await client.query('ROLLBACK'); throw failureError } finally { client.release() }
     } finally {
+      this.activeJob = null;
       try { await source?.cleanup?.() } catch { console.warn('[SullaFiles] index source cleanup failed') }
     }
     return true;

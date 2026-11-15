@@ -4,8 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createApp } from './app.js';
+import { pruneLegacyOutboundAuditRows } from './auditRetention.js';
+import { LocalVaultAuthority } from './localAuthority.js';
 import { readFile } from 'node:fs/promises';
-import http from 'node:http';
 import https from 'node:https';
 import { ensureDesktopAccount } from './auth.js';
 import { loadConfig } from './config.js';
@@ -20,16 +21,17 @@ const db = await connectDatabase(config);
 await untilDatabaseReady('migrations', () => migrate(db));
 await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config));
 
-const app = createApp(db, config);
-if (config.mode === 'desktop' && (!config.tlsCertificatePath || !config.tlsPrivateKeyPath)) {
+const localAuthority = new LocalVaultAuthority(db, config);
+const app = createApp(db, config, { localAuthority });
+// Background, batched, lock-free sweep of legacy agent-use rows; failures retry on next start.
+void pruneLegacyOutboundAuditRows(db).catch((error) => console.warn(`sulla-vault: audit row cleanup stopped (${ (error as Error).message }); it resumes on next start`));
+if (!config.tlsCertificatePath || !config.tlsPrivateKeyPath) {
   throw new Error('Desktop vault TLS identity is required');
 }
-const server = config.tlsCertificatePath && config.tlsPrivateKeyPath
-  ? https.createServer({
-    cert: await readFile(config.tlsCertificatePath),
-    key:  await readFile(config.tlsPrivateKeyPath),
-  }, app)
-  : http.createServer(app);
+const server = https.createServer({
+  cert: await readFile(config.tlsCertificatePath),
+  key:  await readFile(config.tlsPrivateKeyPath),
+}, app);
 server.listen(config.port, '0.0.0.0', () => {
   console.log(`sulla-vault listening on :${ config.port } (${ config.mode } mode)`);
 });
@@ -38,5 +40,6 @@ server.listen(config.port, '0.0.0.0', () => {
 guard.handleSignals(async() => {
   server.closeIdleConnections();
   server.close();
+  await localAuthority.outboundAuditSink.close();
   await db.end();
 });

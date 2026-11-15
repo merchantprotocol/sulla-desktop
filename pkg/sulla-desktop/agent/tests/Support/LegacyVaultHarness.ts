@@ -123,7 +123,7 @@ export class LegacyVaultAuthorityDriver {
 
   constructor(db: Database) {
     this.authority = new LocalVaultAuthority(db, {
-      mode: 'desktop', port: 0, databaseUrl: 'postgresql://synthetic/unused', jwtSecret: 'j'.repeat(64), extensionOrigins: [],
+      mode: 'desktop', port: 0, databaseUrl: 'postgresql://synthetic/unused', extensionOrigins: [],
       bootstrapServiceId: 'bootstrap', bootstrapServiceToken: 'b'.repeat(40),
       controlServiceId: LegacyVaultAuthorityDriver.CONTROL_ID, controlServiceToken: LegacyVaultAuthorityDriver.CONTROL_TOKEN,
       approvalServiceId: 'approval', approvalServiceToken: 'a'.repeat(40),

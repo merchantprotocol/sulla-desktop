@@ -23,8 +23,26 @@ function creator(actor:FilesIdentity):[string, string] {
  * file-versus-folder prefix invariant as a normal unique constraint, so the
  * shared lock is the serialization point for checking and changing paths.
  */
-export async function lockStoredNamespace(client:pg.PoolClient, collectionId:string):Promise<void> {
-  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`stored-namespace:${ collectionId }`]);
+export async function lockStoredNamespace(client:pg.PoolClient, collectionId:string, scopedPath?:string):Promise<void> {
+  const collectionKey = `stored-namespace:${ collectionId }`;
+  if (scopedPath === undefined) {
+    // Broad namespace edits (rename/move/delete, sync reconciliation) retain the
+    // exclusive gate and therefore exclude every path-scoped create below.
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [collectionKey]);
+    return;
+  }
+  // A scoped create shares the collection gate with other creates, but excludes
+  // broad namespace mutations. Ancestor file slots are shared; the target slot
+  // is exclusive. This catches exact-path and file-vs-folder prefix races even
+  // for deep paths, while allowing siblings in one directory to proceed together.
+  // Every transaction acquires the same sorted set of ancestor/target keys.
+  await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [collectionKey]);
+  const ancestors = new Set(storedParentPaths(scopedPath));
+  const paths = [...new Set([...ancestors, scopedPath])].sort();
+  for (const path of paths) {
+    const acquire = path === scopedPath ? 'pg_advisory_xact_lock' : 'pg_advisory_xact_lock_shared';
+    await client.query(`SELECT ${ acquire }(hashtextextended($1,0))`, [`stored-namespace-path:${ collectionId }:${ path }`]);
+  }
 }
 
 export async function assertStoredFilePath(
@@ -59,11 +77,7 @@ export async function ensureStoredFileParents(
 ):Promise<void> {
   const [createdByType, createdById] = creator(actor);
   const description=actor.agentId||actor.jobId ? `Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description` : null;
-  for (const path of storedParentPaths(filePath)) {
-    await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
-      VALUES($1,$2,$3,$4,$5) ON CONFLICT(collection_id,path) DO NOTHING`,
-    [collectionId, path, createdByType, createdById, description]);
-  }
+  await insertMissingFolders(client, collectionId, storedParentPaths(filePath), createdByType, createdById, description);
 }
 
 export async function ensureStoredFolder(
@@ -75,9 +89,31 @@ export async function ensureStoredFolder(
   await assertStoredFolderPath(client, collectionId, folderPath);
   const [createdByType, createdById] = creator(actor);
   const description=actor.agentId||actor.jobId ? `Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description` : null;
-  for (const path of [...storedParentPaths(folderPath), folderPath]) {
-    await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
-      VALUES($1,$2,$3,$4,$5) ON CONFLICT(collection_id,path) DO NOTHING`,
-    [collectionId, path, createdByType, createdById, description]);
-  }
+  await insertMissingFolders(client, collectionId, [...storedParentPaths(folderPath), folderPath], createdByType, createdById, description);
+}
+
+/**
+ * Inserts only the folders that do not exist yet. A folder INSERT fires the namespace
+ * journal and tree-revision triggers even when ON CONFLICT then skips it, so inserting
+ * every ancestor on every file write cost ~13 trigger runs per file. One indexed lookup
+ * finds the missing ones (normally none) and one multi-row insert creates them.
+ */
+async function insertMissingFolders(
+  client:pg.PoolClient,
+  collectionId:string,
+  paths:string[],
+  createdByType:string,
+  createdById:string,
+  description:string|null,
+):Promise<void> {
+  if (!paths.length) return;
+  const existing = await client.query('SELECT path FROM file_folders WHERE collection_id=$1 AND path=ANY($2::text[])', [collectionId, paths]);
+  const have = new Set(existing.rows.map((row:{ path:string }) => row.path));
+  const missing = paths.filter(path => !have.has(path));
+  if (!missing.length) return;
+  // Parents first: callers pass them shallowest-first, and unnest keeps that order.
+  await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
+    SELECT $1,p,$3,$4,$5 FROM unnest($2::text[]) WITH ORDINALITY AS t(p,o) ORDER BY o
+    ON CONFLICT(collection_id,path) DO NOTHING`,
+  [collectionId, missing, createdByType, createdById, description]);
 }

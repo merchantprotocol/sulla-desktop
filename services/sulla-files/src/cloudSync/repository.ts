@@ -16,6 +16,8 @@ import type { ApplyRemoteInput, ForkLocalInput, LocalFileState, PullRepository }
 import type { RecursiveDeleteProgress, RecursiveDeleteProgressStore } from './push.js';
 import { conflictPath, type RemoteVersion } from './validation.js';
 
+const CLOUD_HEAD_PAGE = 5000;
+
 export type SyncStatus = 'off' | 'idle' | 'syncing' | 'error' | 'needs-vault';
 export type CloudOp = 'create' | 'escrow' | 'upload-open' | 'commit' | 'delete' | 'info';
 
@@ -398,9 +400,16 @@ export class PgCloudSyncRepository implements PullRepository, RecursiveDeletePro
 
   // ---- PullRepository ----
 
-  async cloudHeads(collectionId:string):Promise<StateEntry[]> {
-    return (await this.db.query(`SELECT file_id::text AS file_id,version_id::text AS version_id,deleted FROM files_cloud_file_heads WHERE collection_id=$1`,
-      [collectionId])).rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, deleted: Boolean(row.deleted) }));
+  /** Cloud heads in fileId order, CLOUD_HEAD_PAGE rows per query (keyset on the primary key). */
+  async *cloudHeadPages(collectionId:string):AsyncGenerator<StateEntry[], void, void> {
+    let after = '00000000-0000-0000-0000-000000000000'; let first = true;
+    while (true) {
+      const rows = (await this.db.query(`SELECT file_id::text AS file_id,version_id::text AS version_id,deleted FROM files_cloud_file_heads WHERE collection_id=$1 AND (file_id>$2::uuid OR $3) ORDER BY file_id LIMIT $4`,
+        [collectionId, after, first, CLOUD_HEAD_PAGE])).rows;
+      if (rows.length) yield rows.map(row => ({ fileId: row.file_id, versionId: row.version_id, deleted: Boolean(row.deleted) }));
+      if (rows.length < CLOUD_HEAD_PAGE) return;
+      after = rows.at(-1).file_id; first = false;
+    }
   }
 
   async hasLocalVersion(versionId:string):Promise<boolean> {

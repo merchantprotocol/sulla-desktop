@@ -16,6 +16,9 @@ export function executionTargetFor(category: string, name: string): ToolExecutio
   const bareName = name.startsWith(`${ category }_`) ? name.slice(category.length + 1) : name;
 
   if (bareName === 'reconcile_github_pr_mirror') return 'desktop-local';
+  // Decide approvals need the calling chat's thread, which only the in-process
+  // tool receives (catalog forwarding carries no graph state).
+  if (category === 'files' && bareName === 'request_publish') return 'desktop-local';
   if (CATALOG_CATEGORIES.has(category)) return 'catalog';
   if (CONTROLLER_TOOLS.has(bareName) || category === 'agents') return 'controller';
   if (WORKFLOW_MANAGER_TOOLS.has(bareName)) return 'workflow-manager';

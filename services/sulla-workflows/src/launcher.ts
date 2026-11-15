@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import tar from 'tar-stream';
 
 import { config } from './config.js';
-import { DockerRuntimeDriver, KubernetesRuntimeDriver } from '../../../packages/runtime-protocol/src/containerRuntime.js';
+import { DockerRuntimeDriver } from '../../../packages/runtime-protocol/src/containerRuntime.js';
 
 export interface RunLaunch {
   executionId: string;
@@ -43,7 +43,6 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
         // small heap. Without a cap V8 sizes the heap from the whole guest.
         NODE_OPTIONS:         `--max-old-space-size=${ RUNNER_HEAP_MIB } --max-semi-space-size=2`,
         SULLA_WORKFLOW_ROLE:  'runner',
-        SULLA_WORKFLOW_MODE:  config.mode,
         SULLA_EXECUTION_ID:   run.executionId,
         SULLA_DATABASE_URL:   config.databaseUrl,
         SULLA_REDIS_URL:      config.redisUrl,
@@ -109,33 +108,6 @@ export class DockerWorkflowLauncher implements WorkflowLauncher {
   }
 }
 
-export class KubernetesWorkflowLauncher implements WorkflowLauncher {
-  constructor(private readonly runtime = new KubernetesRuntimeDriver()) {}
-  async prepareRunner(_run: RunLaunch): Promise<string> {
-    return this.runtime.create({ name: 'workflow-runner', image: config.workflowImage });
-  }
-
-  async startRunner(runnerId: string, _run: RunLaunch): Promise<void> {
-    await this.runtime.start(runnerId);
-  }
-
-  async stopRunner(runnerId: string): Promise<void> {
-    await this.runtime.remove(runnerId, true);
-  }
-
-  async runnerExists(runnerId: string): Promise<boolean> {
-    try {
-      const inspected = await this.runtime.inspect(runnerId);
-      return inspected?.status?.phase === 'Running' || inspected?.State?.Running === true;
-    } catch (error) {
-      if (String(error).includes('404')) return false;
-      throw error;
-    }
-  }
-}
-
 export function createWorkflowLauncher(): WorkflowLauncher {
-  return config.launcher === 'kubernetes'
-    ? new KubernetesWorkflowLauncher()
-    : new DockerWorkflowLauncher();
+  return new DockerWorkflowLauncher();
 }

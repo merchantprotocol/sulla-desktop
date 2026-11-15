@@ -87,8 +87,9 @@ export interface VaultBrokerServiceIdentity {
 export type VaultBrokerIdentityProvider = () => Promise<VaultBrokerServiceIdentity>;
 export type VaultBrokerFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** Desktop always uses its local container vault; hosted vault mode moved to merchantprotocol/sulla-server. */
 export function usesContainerVaultAuthority(): boolean {
-  return process.env.SULLA_VAULT_MODE !== 'server';
+  return true;
 }
 
 export class VaultBrokerError extends Error {

@@ -23,11 +23,12 @@ export class AgentStateClient {
   private readonly state = shallowRef<AgentStateSnapshot>(EMPTY);
   private readonly loadError = shallowRef('');
   private timer:     ReturnType<typeof setInterval> | null = null;
+  private resyncInFlight?: Promise<void>;
   private started = false;
   readonly snapshot: Readonly<ShallowRef<AgentStateSnapshot>> = readonly(this.state) as Readonly<ShallowRef<AgentStateSnapshot>>;
   readonly error: Readonly<ShallowRef<string>> = readonly(this.loadError) as Readonly<ShallowRef<string>>;
 
-  constructor(private readonly transport: AgentStateTransport, private readonly host: AgentStateWindow, private readonly intervalMs = 15_000) {}
+  constructor(private readonly transport: AgentStateTransport, private readonly host: AgentStateWindow, private readonly intervalMs = 60_000) {}
 
   async start(): Promise<void> {
     if (this.started) return;
@@ -58,6 +59,15 @@ export class AgentStateClient {
   }
 
   async resync(): Promise<void> {
+    if (this.resyncInFlight) return this.resyncInFlight;
+    const pending = this.loadSnapshot().finally(() => {
+      if (this.resyncInFlight === pending) this.resyncInFlight = undefined;
+    });
+    this.resyncInFlight = pending;
+    return pending;
+  }
+
+  private async loadSnapshot(): Promise<void> {
     try {
       const snapshot = await this.transport.invoke(AGENT_STATE_SNAPSHOT_CHANNEL) as AgentStateSnapshot;
       this.apply(snapshot);
@@ -69,6 +79,6 @@ export class AgentStateClient {
   }
 
   private readonly onSnapshot = (_event: unknown, snapshot: AgentStateSnapshot): void => { this.apply(snapshot) };
-  private readonly onReconnect = (): void => { void this.resync() };
+  private readonly onReconnect = (): void => { if (this.host.document.visibilityState === 'visible') void this.resync() };
   private readonly onVisibility = (): void => { if (this.host.document.visibilityState === 'visible') void this.resync(); };
 }

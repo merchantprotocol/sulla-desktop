@@ -9,6 +9,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { FilesListingPager } from './FilesListingPager';
 import { sullaAppGroupDirectory } from './sullaAppGroup';
 
 /**
@@ -175,6 +176,7 @@ export function authorizeRelayHeader(header:RelayHeader, tokens:CapabilityTokens
 
 export class FileProviderRelay {
   constructor(private readonly files:FileProviderFilesPort, private readonly tokens:CapabilityTokens, private readonly deviceName = os.hostname().split('.')[0] || 'Mac') {}
+  private readonly listing = (url:string) => this.files.request(url);
 
   async handle(header:RelayHeader, body:Buffer = Buffer.alloc(0)):Promise<RelayReply> {
     const { op, args } = authorizeRelayHeader(header, this.tokens);
@@ -215,8 +217,13 @@ export class FileProviderRelay {
   }
 
   private async folders(collectionId:string):Promise<Map<string, FolderRow>> {
-    const rows = await this.files.json<FolderRow[]>(`/v1/folders?collectionId=${ enc(collectionId) }&details=true`);
-    return new Map(rows.filter(row => typeof row?.path === 'string' && UUID.test(String(row.folderId))).map(row => [row.path, row]));
+    // Folder rows (not files) are kept, because folderItem resolves parent ids through them;
+    // the response is read one bounded page at a time.
+    const folders = new Map<string, FolderRow>();
+    for await (const rows of FilesListingPager.pages<FolderRow>(this.listing, '/v1/folders', { collectionId, details: 'true' })) {
+      for (const row of rows) if (typeof row?.path === 'string' && UUID.test(String(row.folderId))) folders.set(row.path, row);
+    }
+    return folders;
   }
 
   private folderItem(collectionId:string, folderPath:string, folders:Map<string, FolderRow>):FileProviderItem {
@@ -274,8 +281,7 @@ export class FileProviderRelay {
     if (id.kind === 'file') { const row = await this.file(id.fileId); return this.fileItem(row, await this.folders(row.collection_id)) }
     const resolved = await this.container(id);
     if (id.kind === 'path') {
-      const files = await this.files.json<any[]>(`/v1/files?collectionId=${ enc(resolved.collectionId) }&path=${ enc(resolved.path) }&trash=false`);
-      if (!resolved.folders.has(resolved.path) && !files.some(file => String(file.path).startsWith(`${ resolved.path }/`))) throw new RelayError(404, 'folder not found');
+      if (!resolved.folders.has(resolved.path) && !await FilesListingPager.some<any>(this.listing, '/v1/files', { collectionId: resolved.collectionId, path: resolved.path, trash: 'false' }, file => String(file.path).startsWith(`${ resolved.path }/`))) throw new RelayError(404, 'folder not found');
     }
     return this.folderItem(resolved.collectionId, resolved.path, resolved.folders);
   }
@@ -285,17 +291,19 @@ export class FileProviderRelay {
     if (id.kind === 'trash') return [];
     const { collectionId, path: folderPath, folders } = await this.container(id);
     const prefix = folderPath ? `${ folderPath }/` : '';
-    const files = await this.files.json<any[]>(`/v1/files?collectionId=${ enc(collectionId) }&path=${ enc(folderPath) }&trash=false`);
     const items = new Map<string, FileProviderItem>();
     for (const folder of folders.keys()) {
       if (folder.startsWith(prefix) && folder.length > prefix.length && !folder.slice(prefix.length).includes('/')) { const item = this.folderItem(collectionId, folder, folders); items.set(item.id, item) }
     }
-    for (const row of files) {
-      if (typeof row?.path !== 'string' || !row.path.startsWith(prefix) || !row.current_version_id) continue;
-      const rest = row.path.slice(prefix.length);
-      const slash = rest.indexOf('/');
-      const item = slash < 0 ? this.fileItem(row, folders) : this.folderItem(collectionId, prefix + rest.slice(0, slash), folders);
-      items.set(item.id, item);
+    // Pages stream through; only direct children of this folder are kept.
+    for await (const files of FilesListingPager.pages<any>(this.listing, '/v1/files', { collectionId, path: folderPath, trash: 'false' })) {
+      for (const row of files) {
+        if (typeof row?.path !== 'string' || !row.path.startsWith(prefix) || !row.current_version_id) continue;
+        const rest = row.path.slice(prefix.length);
+        const slash = rest.indexOf('/');
+        const item = slash < 0 ? this.fileItem(row, folders) : this.folderItem(collectionId, prefix + rest.slice(0, slash), folders);
+        items.set(item.id, item);
+      }
     }
     return [...items.values()];
   }
@@ -450,8 +458,7 @@ export class FileProviderRelay {
     if (id.kind === 'file') { await this.file(id.fileId); await this.json(`/v1/files/${ enc(id.fileId) }`, { method: 'DELETE' }); return }
     if (id.kind !== 'folder' && id.kind !== 'path') throw new RelayError(403, 'Collections are removed in Sulla Files');
     const source = await this.container(id);
-    const files = await this.files.json<any[]>(`/v1/files?collectionId=${ enc(source.collectionId) }&path=${ enc(source.path) }&trash=false`);
-    const occupied = files.some(file => String(file.path).startsWith(`${ source.path }/`)) || [...source.folders.keys()].some(folder => folder.startsWith(`${ source.path }/`));
+    const occupied = [...source.folders.keys()].some(folder => folder.startsWith(`${ source.path }/`)) || await FilesListingPager.some<any>(this.listing, '/v1/files', { collectionId: source.collectionId, path: source.path, trash: 'false' }, file => String(file.path).startsWith(`${ source.path }/`));
     if (occupied && !recursive) throw new RelayError(409, 'folder is not empty', 'directory-not-empty');
     const state = await this.files.json<{ folderId?:string; subtreeSignature:string }>(`/v1/database-file-operations/folder-state?collectionId=${ enc(source.collectionId) }&path=${ enc(source.path) }`);
     await this.batch(source.collectionId, { kind: 'folder', action: 'trash', folderPath: source.path, ...(state.folderId ? { expectedFolder: state } : {}), sourceSubtreeSignature: state.subtreeSignature });

@@ -148,7 +148,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+    const rows = await this.connection.select(`SELECT job_id, status, created_at, finished_at, task_count, results, tasks, error,
+      parent_channel, parent_thread_id, parent_agent_id, visibility, parent_job_id, parent_task_index,
+      project_task_ids, completion_delivered_at, waiting_on_children, restart_resume_count, dismissed_at,
+      stopped_by, stop_reason, orphaned_child_notices
+      FROM agent_jobs
       WHERE (($1::text IS NOT NULL AND parent_thread_id = $1) OR ($1::text IS NULL AND parent_thread_id IS NULL AND parent_agent_id = $2))
         AND created_at >= to_timestamp($3 / 1000.0)
         AND status <> 'stopped'
@@ -165,19 +169,32 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
   async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`WITH RECURSIVE lineage AS (
-      SELECT agent_jobs.*, 1 AS lineage_depth FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL
+    // Walk UP from the small live/recent set instead of DOWN through the thread's whole history:
+    // cost is bounded by running/parked + last-24h jobs (retention keeps that set small), not by how
+    // many jobs a busy thread ever launched. Ancestors are walked regardless of age, so a running
+    // grandchild of a long-finished parent still reaches the root thread. Every job on the path must
+    // be undismissed, matching the old downward walk. Depth guard stops malformed cycles.
+    const rows = await this.connection.select(`WITH RECURSIVE up AS (
+      SELECT c.job_id AS candidate_id, c.created_at, c.parent_thread_id AS thread, 1 AS depth
+      FROM agent_jobs c
+      WHERE c.dismissed_at IS NULL AND c.parent_thread_id IS NOT NULL
+        AND (c.status IN ('running', 'parked') OR c.finished_at >= now() - INTERVAL '24 hours')
       UNION ALL
-      SELECT child.*, parent.lineage_depth + 1 FROM lineage parent
-      -- LATERAL keeps the child lookup on the parent_thread_id index (6 ms on 3k
-      -- jobs). The previous IN (subselect) form seq-scanned every level (3.8 s).
-      CROSS JOIN LATERAL jsonb_array_elements(parent.tasks) task
-      JOIN agent_jobs child ON child.parent_thread_id = task->>'threadId'
-      -- Depth guard: managers nest at most a few levels; it also stops a malformed cycle.
-      WHERE child.dismissed_at IS NULL AND parent.lineage_depth < 6
+      SELECT up.candidate_id, up.created_at, p.parent_thread_id, up.depth + 1
+      FROM up
+      JOIN agent_job_tasks t ON t.thread_id = up.thread
+      JOIN agent_jobs p ON p.job_id = t.job_id
+      WHERE up.thread <> $1 AND up.depth < 6 AND p.dismissed_at IS NULL AND p.parent_thread_id IS NOT NULL
     ), selected AS (
-      SELECT * FROM lineage ORDER BY created_at DESC LIMIT $2
-    ) SELECT * FROM selected ORDER BY created_at ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+      SELECT candidate_id AS job_id, created_at, MIN(depth) AS lineage_depth FROM up WHERE thread = $1
+      GROUP BY candidate_id, created_at ORDER BY created_at DESC LIMIT $2
+    ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,'[]'::jsonb AS results,
+      (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+        FROM jsonb_array_elements(j.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
+      j.error,j.parent_channel,j.parent_thread_id,j.parent_agent_id,j.visibility,j.parent_job_id,j.parent_task_index,j.project_task_ids,
+      j.completion_delivered_at,j.waiting_on_children,j.restart_resume_count,j.dismissed_at,j.stopped_by,j.stop_reason,j.orphaned_child_notices
+      FROM selected JOIN agent_jobs j ON j.job_id = selected.job_id
+      ORDER BY j.created_at ASC, selected.lineage_depth ASC, j.job_id ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
     return rows.map(row => this.map(row));
   }
 
@@ -208,6 +225,18 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   async allJobs(): Promise<AgentJob[]> {
     return (await this.query().unsafeAll().get()).map(row => this.map(row));
   }
+
+  /**
+   * Every running/parked job with full task payloads. The working set is a handful of rows (partial
+   * index idx_agent_jobs_projection_active), unlike allJobs() which reads every job ever run.
+   */
+  async liveJobs(): Promise<AgentJob[]> {
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE status IN ('running', 'parked') ORDER BY created_at ASC`);
+    return rows.map(row => this.map(row));
+  }
+
+  /** Compact active work for operational callers that do not need durable history or result payloads. */
+  async activeJobs(): Promise<AgentJob[]> { return this.jobsForList(1, false) }
 
   /**
    * Live Agents projection input: every running/parked job, jobs that ended within `recentMs`, and the
@@ -248,9 +277,19 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
 
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH selected AS (
-      SELECT * FROM agent_jobs WHERE status IN ('running', 'parked') AND dismissed_at IS NULL
+      SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
+        parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at,
+        dismissed_at, waiting_on_children, orphaned_child_notices, stopped_by, stop_reason,
+        (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+          FROM jsonb_array_elements(tasks) WITH ORDINALITY task(value, ordinality)) AS tasks
+      FROM agent_jobs WHERE status IN ('running', 'parked') AND dismissed_at IS NULL
       UNION ALL
-      (SELECT * FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
+      (SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
+        parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at,
+        dismissed_at, waiting_on_children, orphaned_child_notices, stopped_by, stop_reason,
+        (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+          FROM jsonb_array_elements(tasks) WITH ORDINALITY task(value, ordinality)) AS tasks
+       FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
       parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at, dismissed_at, waiting_on_children,
       orphaned_child_notices, stopped_by, stop_reason, '[]'::jsonb AS results,
@@ -301,19 +340,29 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     await this.connection.run(`UPDATE agent_jobs SET completion_delivered_at = now() WHERE job_id = $1 AND completion_delivered_at IS NULL`, [jobId]);
   }
 
-  async pendingCompletions(): Promise<AgentJob[]> {
-    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+  /**
+   * Bounded by idx_agent_jobs_undelivered_completion (partial, sort-key ordered); LIMIT keeps one
+   * recovery tick from dragging an unbounded backlog of undelivered historical rows.
+   */
+  async pendingCompletions(limit = 500): Promise<AgentJob[]> {
+    const rows = await this.connection.select(`SELECT job_id, status, created_at, finished_at, task_count, results, tasks, error,
+      parent_channel, parent_thread_id, parent_agent_id, visibility, parent_job_id, parent_task_index,
+      project_task_ids, completion_delivered_at, waiting_on_children, restart_resume_count, dismissed_at,
+      stopped_by, stop_reason, orphaned_child_notices
+      FROM agent_jobs
       WHERE completion_delivered_at IS NULL
         AND status <> 'stopped'
         AND tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))'
         AND parent_channel IS NOT NULL
         AND parent_thread_id IS NOT NULL
-      ORDER BY COALESCE(finished_at, created_at) ASC`);
+      ORDER BY COALESCE(finished_at, created_at) ASC
+      LIMIT $1`, [Math.min(1000, Math.max(1, Math.trunc(limit) || 500))]);
     return rows.map(row => this.map(row));
   }
 
   async findByTaskThread(threadId: string): Promise<AgentJob | undefined> {
-    const row = await this.connection.first(`SELECT * FROM agent_jobs WHERE tasks @> jsonb_build_array(jsonb_build_object('threadId', $1::text)) ORDER BY created_at DESC LIMIT 1`, [threadId]);
+    const row = await this.connection.first(`SELECT j.* FROM agent_job_tasks t JOIN agent_jobs j ON j.job_id = t.job_id
+      WHERE t.thread_id = $1 ORDER BY j.created_at DESC LIMIT 1`, [threadId]);
     return row ? this.map(row) : undefined;
   }
 
@@ -340,4 +389,68 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async deleteJob(jobId: string): Promise<void> { await this.query().where('job_id', jobId).delete(); }
+
+  /** Delete one bounded set of terminal jobs whose delivery and lineage are settled. */
+  async deleteExpiredBatch(retentionMs = 24 * 60 * 60 * 1000, limit = 500): Promise<number> {
+    const rows = await this.connection.select(`WITH expired AS (
+      SELECT job.job_id FROM agent_jobs job
+      WHERE job.status IN ('completed', 'failed', 'stopped')
+        AND job.finished_at < now() - ($1::bigint * interval '1 millisecond')
+        AND job.waiting_on_children = 0
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_job_tasks task
+          WHERE task.job_id = job.job_id AND task.task_status IN ('queued', 'running', 'parked')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_task_waits wait
+          WHERE wait.job_id = job.job_id AND wait.state IN ('scheduled', 'claimed')
+        )
+        -- Delivery is settled when it was acknowledged, there is no parent to deliver to, no task
+        -- still holds an unacknowledged completion (recovery would never send it), or the parent
+        -- has had a week to take it (abandoned conversation).
+        AND (job.completion_delivered_at IS NOT NULL
+          OR job.parent_channel IS NULL OR job.parent_thread_id IS NULL
+          OR NOT (job.tasks @? '$[*] ? (@.completion != null && !exists(@.completionDeliveredAt))')
+          OR job.finished_at < now() - interval '7 days')
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_jobs child
+          WHERE child.parent_job_id = job.job_id
+            AND (child.status IN ('running', 'parked')
+              OR (child.completion_delivered_at IS NULL
+                AND child.parent_channel IS NOT NULL AND child.parent_thread_id IS NOT NULL))
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM agent_jobs parent
+          WHERE parent.job_id = job.parent_job_id AND parent.status IN ('running', 'parked')
+        )
+      ORDER BY job.finished_at, job.job_id
+      LIMIT $2
+      FOR UPDATE OF job SKIP LOCKED
+    ), deleted AS (
+      DELETE FROM agent_jobs job USING expired WHERE job.job_id = expired.job_id
+      RETURNING job.job_id
+    ), released_claims AS (
+      -- work_file_claims.owner_job_id has no FK; drop claims owned by deleted jobs in the same statement.
+      DELETE FROM work_file_claims claim USING deleted WHERE claim.owner_job_id = deleted.job_id
+    ) SELECT job_id FROM deleted`, [Math.max(0, Math.trunc(retentionMs)), Math.min(500, Math.max(1, Math.trunc(limit))) ]);
+    return rows.length;
+  }
+
+  /**
+   * Drain expired jobs in bounded batches with a short pause between them so the
+   * one-time backlog clears without a long lock or CPU spike. Bounded per pass.
+   */
+  async drainExpired(options: { retentionMs?: number; batchSize?: number; maxBatches?: number; pauseMs?: number } = {}): Promise<number> {
+    const batchSize = Math.min(500, Math.max(1, Math.trunc(options.batchSize ?? 500)));
+    const maxBatches = Math.max(1, Math.trunc(options.maxBatches ?? 10));
+    const pauseMs = Math.max(0, options.pauseMs ?? 250);
+    let total = 0;
+    for (let batch = 0; batch < maxBatches; batch++) {
+      const deleted = await this.deleteExpiredBatch(options.retentionMs, batchSize);
+      total += deleted;
+      if (deleted < batchSize) break;
+      if (pauseMs > 0 && batch + 1 < maxBatches) await new Promise(resolve => setTimeout(resolve, pauseMs));
+    }
+    return total;
+  }
 }

@@ -103,6 +103,10 @@
       "desktop/wait",
       "docker/docker_images",
       "docker/docker_ps",
+      "docker/docker_stats",
+      "docker/docker_inspect_health",
+      "docker/docker_system_df",
+      "docker/docker_vm_snapshot",
       "redis/redis_ttl"
     ],
     "write": [

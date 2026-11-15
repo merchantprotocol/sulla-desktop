@@ -102,6 +102,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
   onlineOnlyReason = '';
 
   private files: FilesItem[] = [];
+  private filesCursor:string|null = null;
+  private filesHasMore = false;
+  private loadingMore = false;
   private watching = false;
   private watchedCollectionId = '';
   private collectionId = '';
@@ -220,8 +223,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
       status.serverConfigured = selectedRoot.serverConfigured ?? status.serverConfigured;
     }
     this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
-    const [active, trash] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
+    const [activePage, trash] = await Promise.all([
+      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
     ]).catch((error) => {
       if (capabilitiesGeneration === this.capabilitiesGeneration) {
@@ -231,7 +234,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
       throw error;
     });
 
-    this.files = active.map(file => filesItem(file));
+    this.files = activePage.files.map(file => filesItem(file));
+    this.filesCursor = activePage.nextCursor;
+    this.filesHasMore = activePage.hasMore;
     const trashItems = (trash as FilesApiRecord[]).map(trashItem);
     if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
@@ -261,6 +266,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
       status: { ...status, indexing: indexCoverage(this.files.filter(file => !file.deletedAt)) },
     };
     return snapshot;
+  }
+
+  async loadMore():Promise<FilesItem[]> {
+    if(this.loadingMore || !this.filesHasMore || !this.collectionId) return this.files;
+    this.loadingMore=true;
+    try {
+      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,cursor:this.filesCursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      this.files.push(...page.files.map(file=>filesItem(file)));
+      this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+      return this.files;
+    } finally { this.loadingMore=false; }
   }
 
   async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> {

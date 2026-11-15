@@ -8,8 +8,9 @@ import { assertUnprotectedFile } from './protectedFiles.js';
 
 import type { Config } from './config.js';
 import type { Store } from './store.js';
-import type express from 'express';
 import type pg from 'pg';
+import { sendFileStream } from './sendFileStream.js';
+export { sendFileStream } from './sendFileStream.js';
 
 export interface ByteRange { start:number; end:number }
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -104,26 +105,4 @@ export async function streamFileContent(db:pg.Pool, config:Config, store:Store, 
     }
   }
   return { ...file, range, contentLength: file.size === 0 ? 0 : end - start + 1, body: body() };
-}
-
-export async function sendFileStream(request:express.Request, response:express.Response, content:NonNullable<Awaited<ReturnType<typeof streamFileContent>>>, disposition?:string):Promise<void> {
-  response.status(content.range ? 206 : 200);
-  response.setHeader('Accept-Ranges', 'bytes');
-  response.setHeader('Cache-Control', 'private, no-store');
-  response.setHeader('Content-Type', content.mime);
-  response.setHeader('Content-Length', content.contentLength);
-  if (content.range) response.setHeader('Content-Range', `bytes ${ content.range.start }-${ content.range.end }/${ content.size }`);
-  if (disposition) response.setHeader('Content-Disposition', disposition);
-  if (request.method === 'HEAD' || content.contentLength === 0) { response.end(); return }
-  for await (const part of content.body) {
-    if (!response.write(part)) {
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => { response.off('drain', drained); response.off('close', closed) };
-        const drained = () => { cleanup(); resolve() };
-        const closed = () => { cleanup(); reject(Object.assign(new Error('Media stream cancelled'), { name: 'AbortError' })) };
-      response.once('drain', drained); response.once('close', closed);
-      });
-    }
-  }
-  response.end();
 }

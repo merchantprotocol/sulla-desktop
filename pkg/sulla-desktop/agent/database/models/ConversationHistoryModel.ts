@@ -79,6 +79,23 @@ function isHiddenChannel(channelId?: string | null): boolean {
 export class ConversationHistoryModel {
   private static readonly TABLE = 'conversation_history';
 
+  /** Batched lookup by id: one round trip instead of one getById per task. Missing ids are absent from the map. */
+  static async getByIds(ids: string[]): Promise<Map<string, ConversationHistoryRecord>> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    const found = new Map<string, ConversationHistoryRecord>();
+    if (unique.length === 0) return found;
+    try {
+      const rows = await postgresClient.queryAll<ConversationHistoryRecord>(`
+        SELECT * FROM ${ ConversationHistoryModel.TABLE }
+        WHERE id = ANY($1::text[])
+      `, [unique]);
+      for (const row of rows) found.set(row.id, row);
+    } catch (err) {
+      console.error('[ConversationHistoryModel] Failed to get by ids:', err);
+    }
+    return found;
+  }
+
   // ──────────────────────────────────────────────
   // Table setup
   // ──────────────────────────────────────────────

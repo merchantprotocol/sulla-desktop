@@ -22,7 +22,6 @@ export interface HeartbeatRunAuditInput {
   selectedTaskStatus?:       string | null;
   selectedTaskAssignee?:     string | null;
   selectedTaskLastMovedAt?:  string | Date | null;
-  selectedTaskCommentCount?: number | null;
 }
 
 /**
@@ -61,7 +60,6 @@ export class HeartbeatRunAuditModel {
         selected_task_status         TEXT,
         selected_task_assignee       TEXT,
         selected_task_last_moved_at  TIMESTAMPTZ,
-        selected_task_comment_count  INTEGER,
         created_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
@@ -91,14 +89,14 @@ export class HeartbeatRunAuditModel {
            status, status_note, blocker_reason, error, cycle_count,
            selected_project_id, selected_epic_id, selected_task_id,
            selected_task_status, selected_task_assignee,
-           selected_task_last_moved_at, selected_task_comment_count
+           selected_task_last_moved_at
          )
          VALUES (
            $1, $2, $3, $4, $5,
            $6, $7, $8, $9, $10,
            $11, $12, $13,
            $14, $15,
-           $16, $17
+           $16
          )
          ON CONFLICT (run_id) DO UPDATE SET
            completed_at = EXCLUDED.completed_at,
@@ -115,7 +113,6 @@ export class HeartbeatRunAuditModel {
            selected_task_status = EXCLUDED.selected_task_status,
            selected_task_assignee = EXCLUDED.selected_task_assignee,
            selected_task_last_moved_at = EXCLUDED.selected_task_last_moved_at,
-           selected_task_comment_count = EXCLUDED.selected_task_comment_count,
            updated_at = NOW()`,
         [
           input.runId,
@@ -134,7 +131,6 @@ export class HeartbeatRunAuditModel {
           input.selectedTaskStatus ?? null,
           input.selectedTaskAssignee ?? null,
           toAuditTimestamp(input.selectedTaskLastMovedAt),
-          input.selectedTaskCommentCount ?? null,
         ],
       );
     } catch (err) {

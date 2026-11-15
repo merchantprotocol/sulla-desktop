@@ -382,4 +382,113 @@ dbDescribe('AgentJobRepository', () => {
     };
     expect(await repository.hasQueuedOrRunningChildren(completedParent)).toBe(false);
   });
+
+  it('reads live jobs, thread jobs, task-thread owners and pending completions without scanning history', async() => {
+    // risk: polling cost grows with every historical job (seq scan + jsonb detoast)
+    const live = job('poll-live');
+    const done = { ...job('poll-done'), status: 'completed' as const, finishedAt: Date.now() };
+    const stale = { ...job('poll-stale'), parentThreadId: 'poll-parent', parentChannel: 'sulla-desktop' };
+    stale.tasks[0] = { ...stale.tasks[0], threadId: 'poll-task-thread',
+      completion: { label: 'lane', status: 'completed', output: 'ok', threadId: 'poll-task-thread', contract: 'result' } };
+    for (const item of [live, done, stale]) await repository.insertJob(item);
+    await repository.complete({ ...stale, status: 'completed', finishedAt: Date.now() });
+    expect((await repository.liveJobs()).map(item => item.jobId)).toContain('poll-live');
+    expect((await repository.liveJobs()).map(item => item.jobId)).not.toContain('poll-done');
+    expect((await repository.findByTaskThread('poll-task-thread'))?.jobId).toBe('poll-stale');
+    const pending = await repository.pendingCompletions(10);
+    expect(pending.map(item => item.jobId)).toContain('poll-stale');
+    expect(await repository.pendingCompletions(1)).toHaveLength(1);
+    await repository.markCompletionDelivered('poll-stale');
+    expect((await repository.pendingCompletions()).map(item => item.jobId)).not.toContain('poll-stale');
+  });
+
+  it('keeps a live descendant visible through a terminal parent older than the display window', async() => {
+    // risk: live work disappears from the Live Agents projection after an old parent ages out
+    const root = 'lineage-old-parent-root';
+    const middle = { ...job('lineage-old-parent-mid'), parentThreadId: root };
+    middle.tasks[0] = { ...middle.tasks[0], threadId: 'lineage-old-parent-mid-thread', status: 'completed' };
+    await repository.insertJob(middle);
+    await repository.complete({ ...middle, status: 'completed', finishedAt: Date.now() });
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '25 hours' WHERE job_id = $1`, [middle.jobId]);
+    const live = { ...job('lineage-old-parent-live'), parentThreadId: 'lineage-old-parent-mid-thread' };
+    await repository.insertJob(live);
+
+    const rows = await repository.lineageForParentThread(root);
+    expect(rows.map(item => item.jobId)).toContain(live.jobId);
+    expect(rows.map(item => item.jobId)).not.toContain(middle.jobId);
+  });
+
+  it('deletes eligible jobs with cascading child rows, but protects live and undelivered references', async() => {
+    // risk: retention orphaning operational data or deleting work before its completion is delivered
+    const eligible = job('retention-eligible-a');
+    const secondEligible = job('retention-eligible-b');
+    const live = job('retention-live');
+    const parked = job('retention-parked');
+    parked.tasks[0] = { ...parked.tasks[0], status: 'parked' };
+    for (const item of [eligible, secondEligible]) item.tasks[0] = { ...item.tasks[0], status: 'completed' };
+    const undelivered = { ...job('retention-undelivered'), parentChannel: 'sulla-desktop', parentThreadId: 'parent' };
+    undelivered.tasks[0] = { ...undelivered.tasks[0], status: 'completed',
+      completion: { label: 'lane', status: 'completed', output: 'pending', threadId: 'undelivered-thread' } };
+    for (const item of [eligible, secondEligible, live, parked, undelivered]) await repository.insertJob(item);
+    await repository.complete({ ...eligible, status: 'completed', finishedAt: Date.now(), completionDeliveredAt: Date.now() });
+    await repository.complete({ ...secondEligible, status: 'completed', finishedAt: Date.now(), completionDeliveredAt: Date.now() });
+    await repository.complete({ ...undelivered, status: 'completed', finishedAt: Date.now() });
+    await database.query(`UPDATE agent_jobs SET status = 'parked', finished_at = now() - interval '25 hours' WHERE job_id = $1`, [parked.jobId]);
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '25 hours' WHERE job_id = ANY($1::text[])`, [[eligible.jobId, secondEligible.jobId, undelivered.jobId, parked.jobId]]);
+    await database.query(`INSERT INTO agent_job_messages (id, job_id, task_index, message) VALUES ('retention-message', $1, 0, 'x')`, [eligible.jobId]);
+    await database.query(`INSERT INTO agent_job_checkins (job_id, task_index, step, summary) VALUES ($1, 0, 's', 'x')`, [eligible.jobId]);
+    await database.query(`INSERT INTO agent_job_result_history (job_id, task_index, generation, task_status) VALUES ($1, 0, 1, 'completed')`, [eligible.jobId]);
+    await database.query(`INSERT INTO agent_job_task_reopens (job_id, task_index) VALUES ($1, 0)`, [eligible.jobId]);
+    await database.query(`INSERT INTO agent_job_review_items (job_id, task_index, item_id, text) VALUES ($1, 0, 'item', 'x')`, [eligible.jobId]);
+    await database.query(`INSERT INTO agent_task_waits (job_id, task_index, wake_at, reason, state) VALUES ($1, 0, now(), 'x', 'cancelled')`, [eligible.jobId]);
+    await database.query(`INSERT INTO agent_stranded_episodes (manager_job_id, manager_task_index, state_key, parent_channel, parent_thread_id, label, reason) VALUES ($1, 0, 'state', 'sulla-desktop', 'parent', 'lane', 'x')`, [eligible.jobId]);
+
+    expect(await repository.deleteExpiredBatch(24 * 60 * 60 * 1000, 1)).toBe(1);
+    expect(await database.query(`SELECT job_id FROM agent_jobs WHERE job_id = ANY($1::text[]) ORDER BY job_id`, [[eligible.jobId, secondEligible.jobId, live.jobId, undelivered.jobId, parked.jobId]])).toEqual([
+      expect.objectContaining({ job_id: secondEligible.jobId }), expect.objectContaining({ job_id: live.jobId }), expect.objectContaining({ job_id: parked.jobId }), expect.objectContaining({ job_id: undelivered.jobId }),
+    ]);
+    expect(await repository.deleteExpiredBatch(24 * 60 * 60 * 1000, 1)).toBe(1);
+    for (const [table, column] of [
+      ['agent_job_messages', 'job_id'], ['agent_job_checkins', 'job_id'],
+      ['agent_job_result_history', 'job_id'], ['agent_job_task_reopens', 'job_id'],
+      ['agent_job_review_items', 'job_id'], ['agent_task_waits', 'job_id'],
+      ['agent_stranded_episodes', 'manager_job_id'], ['agent_job_tasks', 'job_id'],
+    ]) {
+      expect(await database.query(`SELECT 1 FROM ${table} WHERE ${column} = $1`, [eligible.jobId])).toHaveLength(0);
+    }
+  });
+
+  it('expires undelivered jobs only when nothing is left to deliver or the parent abandoned them', async() => {
+    // risk: undeliverable rows pinned forever, or a pending completion dropped before its parent wakes
+    const parent = { parentChannel: 'sulla-desktop', parentThreadId: 'retention-parent' };
+    const nothingPending = { ...job('retention-nothing-pending'), ...parent };
+    const pendingRecent = { ...job('retention-pending-recent'), ...parent };
+    const pendingAbandoned = { ...job('retention-pending-abandoned'), ...parent };
+    nothingPending.tasks[0] = { ...nothingPending.tasks[0], status: 'completed' };
+    for (const item of [pendingRecent, pendingAbandoned]) {
+      item.tasks[0] = { ...item.tasks[0], status: 'completed',
+        completion: { label: 'lane', status: 'completed', output: 'pending', threadId: `${ item.jobId }-thread` } };
+    }
+    for (const item of [nothingPending, pendingRecent, pendingAbandoned]) {
+      await repository.insertJob(item);
+      await repository.complete({ ...item, status: 'completed', finishedAt: Date.now() });
+    }
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '25 hours' WHERE job_id = ANY($1::text[])`, [[nothingPending.jobId, pendingRecent.jobId]]);
+    await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '8 days' WHERE job_id = $1`, [pendingAbandoned.jobId]);
+
+    expect(await repository.drainExpired({ batchSize: 1, maxBatches: 5, pauseMs: 0 })).toBe(2);
+    const left = await database.query(`SELECT job_id FROM agent_jobs WHERE job_id = ANY($1::text[])`, [[nothingPending.jobId, pendingRecent.jobId, pendingAbandoned.jobId]]);
+    expect(left.map((row: { job_id: string }) => row.job_id)).toEqual([pendingRecent.jobId]);
+  });
+
+  it('keeps the lineage recursion on typed task rows and returns each descendant once', async() => {
+    // risk: lineage poll copied task jsonb through every recursion level (275 ms mean, 5k calls)
+    const root = 'lineage-bound-root';
+    const mid = { ...job('lineage-bound-mid'), parentThreadId: root };
+    mid.tasks[0] = { ...mid.tasks[0], threadId: 'lineage-bound-mid-thread' };
+    const leaf = { ...job('lineage-bound-leaf'), parentThreadId: 'lineage-bound-mid-thread' };
+    await repository.insertJob(mid); await repository.insertJob(leaf);
+    const rows = await repository.lineageForParentThread(root);
+    expect(rows.map(item => item.jobId)).toEqual(['lineage-bound-mid', 'lineage-bound-leaf']);
+  });
 });

@@ -17,6 +17,7 @@ class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
   readonly observedActivity: Array<number | null> = [];
   jobsForProjection?: (recentMs: number) => Promise<AgentJob[]>;
+  lineageForParentThread?: (parentThreadId: string, limit?: number) => Promise<AgentJob[]>;
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
   async allJobs(): Promise<AgentJob[]> { return Array.from(this.durable.values()).map(job => structuredClone(job)); }
   async job(jobId: string): Promise<AgentJob | undefined> {
@@ -61,6 +62,41 @@ describe('authoritative live agent state', () => {
     expect((await states.jobForWrite('worker'))?.jobId).toBe('worker');
     expect(point).toHaveBeenCalledTimes(3);
     expect(history).not.toHaveBeenCalled();
+  });
+
+  it('reads only the live working set on the reconciliation and live-refresh paths', async() => {
+    // risk: every poll parses the whole agent_jobs table (3.9k rows, ~35 MB jsonb, ~20 s)
+    const live = job('live', [task()]);
+    const old = job('old', [task({ status: 'completed' })], { status: 'completed', finishedAt: 2_000 });
+    const { states, store, cache } = harness([live, old]);
+    cache.jobs.set('old', structuredClone(old));
+    store.liveJobs = vi.fn(async() => [structuredClone(live)]);
+    const history = vi.spyOn(store, 'allJobs');
+    expect((await states.jobsBeforeReady()).map(item => item.jobId)).toEqual(['live']);
+    expect((await states.refreshLive()).map(item => item.jobId)).toEqual(['live']);
+    expect(history).not.toHaveBeenCalled();
+    // A live read must not evict terminal jobs it never looked at.
+    expect(cache.jobs.has('old')).toBe(true);
+    // A cached job that is no longer live in the database is dropped.
+    cache.jobs.set('gone', job('gone', [task()]));
+    await states.refreshLive();
+    expect(cache.jobs.has('gone')).toBe(false);
+  });
+
+  it('falls back to a full read only when the store has no live read', async() => {
+    const { states, store } = harness([job('a', [task()])]);
+    const history = vi.spyOn(store, 'allJobs');
+    expect((await states.jobsBeforeReady()).map(item => item.jobId)).toEqual(['a']);
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves jobs for one parent thread through the indexed store read', async() => {
+    const { states, store } = harness([job('a', [task()], { parentThreadId: 'p' }), job('b', [task()], { parentThreadId: 'q' })]);
+    store.jobsForParentThread = vi.fn(async(thread: string) => (await store.allJobs()).filter(item => item.parentThreadId === thread));
+    const history = vi.spyOn(store, 'allJobs');
+    expect((await states.jobsForParentThread('p')).map(item => item.jobId)).toEqual(['a']);
+    expect(store.jobsForParentThread).toHaveBeenCalledWith('p');
+    expect(history).toHaveBeenCalledTimes(1); // only the fake's own filter, not a states.jobs() refresh
   });
 
   it('shares an outstanding history refresh and permits another after it settles', async() => {
@@ -112,6 +148,22 @@ describe('authoritative live agent state', () => {
     expect(read).toHaveBeenLastCalledWith(25, true);
     await states.list(2.9);
     expect(read).toHaveBeenLastCalledWith(2, true);
+  });
+
+  it('reuses one bounded lineage read across rapid refreshes for the same chat', async() => {
+    // risk: repeated subagent rail reads amplify Postgres work across open chats
+    const { store } = harness([job('worker', [task({ threadId: 'worker-thread' })], { parentThreadId: 'parent-thread' })]);
+    let now = 10_000;
+    const lineage = vi.fn(async() => store.allJobs());
+    store.lineageForParentThread = lineage;
+    const cachedStates = new AgentStateService(store, { jobs: new Map() }, () => now);
+    const first = await cachedStates.descendants('parent-thread');
+    const second = await cachedStates.descendants('parent-thread');
+    expect(second).toEqual(first);
+    expect(lineage).toHaveBeenCalledTimes(1);
+    now += 6_001;
+    await cachedStates.descendants('parent-thread');
+    expect(lineage).toHaveBeenCalledTimes(2);
   });
 
   it('bounds settled cache history while preserving complete reads and parked work', async() => {

@@ -8,6 +8,7 @@ import { promises as dns } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import { join } from 'node:path';
 
 import pg from 'pg';
 import { IdentityError, VaultOperationError, type LocalEncryptedItem, type LocalItemContext } from '@sulla/domain';
@@ -96,7 +97,9 @@ import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionM
 import { SullaCloudSessionManagerFactory } from './sullaCloudSession/SullaCloudSessionManagerFactory.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
+import { AuditFileSink } from './auditFileSink.js';
 import { FilesAuditEmitter } from './filesAudit.js';
+import { OutboundAuditRecorder } from './outboundAudit.js';
 import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 import { DesktopHumanBackup } from './localCrypto/DesktopHumanBackup.js';
 import type { VaultUserBackupRow } from './localCrypto/DesktopHumanBackup.js';
@@ -598,6 +601,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private migrationState: LocalVaultState = 'locked';
   private stagedCacheUpdate: StagedCacheUpdate | null = null;
   private readonly filesAudit: FilesAuditEmitter;
+  readonly outboundAuditSink: AuditFileSink;
+  private readonly outboundAudit: OutboundAuditRecorder;
   private codecProvider = new DomainVaultSyncCodecProvider();
 
   private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
@@ -621,20 +626,20 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     private readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
-    if (config.mode === 'desktop') {
-      const credentials = [
-        ['bootstrap', config.bootstrapServiceToken],
-        ['control', config.controlServiceToken],
-        ['approval', config.approvalServiceToken],
-        ['broker', config.brokerServiceToken],
-        ['files', config.filesServiceToken],
-      ] as const;
-      for (const [name, value] of credentials) {
-        if (!value || Buffer.byteLength(value) < 32) throw new Error(`Desktop vault ${ name } credential is not configured`);
-      }
-      if (new Set(credentials.map(([, value]) => value)).size !== credentials.length) {
-        throw new Error('Desktop vault service credentials must be distinct');
-      }
+    this.outboundAuditSink = new AuditFileSink({ dir: join(config.auditSpoolDir ?? '/var/lib/sulla-vault', 'audit-logs') });
+    this.outboundAudit = new OutboundAuditRecorder(this.outboundAuditSink);
+    const credentials = [
+      ['bootstrap', config.bootstrapServiceToken],
+      ['control', config.controlServiceToken],
+      ['approval', config.approvalServiceToken],
+      ['broker', config.brokerServiceToken],
+      ['files', config.filesServiceToken],
+    ] as const;
+    for (const [name, value] of credentials) {
+      if (!value || Buffer.byteLength(value) < 32) throw new Error(`Desktop vault ${ name } credential is not configured`);
+    }
+    if (new Set(credentials.map(([, value]) => value)).size !== credentials.length) {
+      throw new Error('Desktop vault service credentials must be distinct');
     }
   }
 
@@ -3164,7 +3169,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     sink: BrokerStreamSink,
   ): Promise<void> {
     const method = input.method.toUpperCase();
-    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie']);
+    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie', 'x-sulla-git-request-id']);
     const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
     headers['accept-encoding'] = 'identity';
     const streamLimit = input.operation === 'github.git' ? MAX_GIT_STREAM_BYTES : MAX_STREAM_BYTES;
@@ -3176,14 +3181,33 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
     const binary = input.responseType === 'binary-stream';
     const redactor = binary ? null : new StreamingRedactor(prepared.secrets);
+    const requestedId = Object.entries(input.headers ?? {}).find(([name]) => name.toLowerCase() === 'x-sulla-git-request-id')?.[1];
+    const requestId = typeof requestedId === 'string' && /^[0-9a-f-]{36}$/i.test(requestedId) ? requestedId : randomUUID();
+    const startedAt = Date.now();
+    let received = 0;
+    let logged = false;
+    let endedBy = 'unknown';
+    let terminalReason: unknown;
+    const target = new URL(prepared.target);
+    const pathParts = target.pathname.split('/').filter(Boolean);
+    const repository = target.hostname === 'github.com' && pathParts.length >= 2 ? `${ pathParts[0] }/${ pathParts[1].replace(/\.git$/, '') }` : 'unknown';
+    const service = input.operation === 'github.git' ? (target.pathname.includes('git-receive-pack') ? 'receive-pack' : 'upload-pack') : input.operation;
+    const logTermination = () => {
+      if (logged) return;
+      logged = true;
+      const error = terminalReason instanceof Error ? { name: terminalReason.name, code: (terminalReason as NodeJS.ErrnoException).code, message: prepared.secrets.reduce((message, secret) => secret ? message.split(secret).join('[secret redacted]') : message, terminalReason.message) } : terminalReason;
+      console.info(JSON.stringify({ component: 'vault.broker.stream', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), bytesReceived: received, durationMs: Date.now() - startedAt, endedBy, ...(error ? { reason: error } : {}) }));
+    };
+    if (binary) console.info(JSON.stringify({ component: 'vault.broker.stream', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), event: 'start' }));
 
     await new Promise<void>((resolve, reject) => {
       let started = false;
-      let received = 0;
       let aborted = false;
       let current: ClientRequest | undefined;
       sink.onAbort(() => {
         aborted = true;
+        endedBy = 'downstream-abort';
+        terminalReason = 'broker client disconnected';
         current?.destroy(new LocalVaultError('upstream_failed', 499, 'Broker client disconnected'));
       });
       this.openUpstream(prepared.target, {
@@ -3202,10 +3226,14 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
           if (aborted) request.destroy(new LocalVaultError('upstream_failed', 499, 'Broker client disconnected'));
         },
         onError: (_request, safe) => {
+          if (endedBy === 'unknown') endedBy = safe instanceof Error && /timed out/i.test(safe.message) ? 'vault-timeout' : 'upstream-error';
+          terminalReason = safe;
           if (started) {
             sink.destroy(safe);
+            logTermination();
             resolve();
           } else {
+            logTermination();
             reject(safe);
           }
         },
@@ -3225,6 +3253,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
               sink.start(302, { location });
               this.inFlight.delete(request);
               sink.end();
+              endedBy = 'upstream-redirect';
+              logTermination();
               resolve();
               return;
             }
@@ -3268,14 +3298,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
             }
           });
           response.on('end', () => {
-            try { this.requireGeneration(prepared.generation); } catch (error) { request.destroy(error as Error); return; }
+            try { this.requireGeneration(prepared.generation); } catch (error) { endedBy = 'vault-generation-change'; terminalReason = error; request.destroy(error as Error); return; }
             const tail = redactor?.flush();
             if (tail?.byteLength) sink.write(tail);
             this.inFlight.delete(request);
             sink.end();
+            endedBy = 'upstream-end';
+            logTermination();
             resolve();
           });
-          response.on('error', error => request.destroy(error));
+          response.on('error', error => { endedBy = 'upstream-response-error'; terminalReason = error; request.destroy(error); });
         },
       });
     });
@@ -3512,18 +3544,20 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     }
   }
 
+  /** Agent credential use goes to the rotating file sink, never Postgres or the Files per-secret audit, and never as a reveal. */
   private async audit(
     input: BrokerExecuteRequest,
     item: ItemRow,
     blocked: boolean,
     reason: string | null,
-    db: Queryable = this.db,
+    _db?: Queryable,
   ): Promise<void> {
-    await this.auditLogRepository.recordOutboundRequest([input.claims.sub, item.org_id ?? null, item.collection_id, item.id, input.claims.pod_id,
-        { agentId: input.claims.agent_id, operation: input.operation,
-          destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
-          ...(input.operation === 'item.http' ? { itemId: item.id } : {}) }, blocked, reason], db);
-    this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: item.id, action: 'vault_outbound_request', actor: input.claims.agent_id || input.claims.sub, result: blocked ? 'blocked' : 'allowed', meta: { operation: input.operation, agentId: input.claims.agent_id } });
+    this.outboundAudit.record({
+      actorUserId: input.claims.sub, orgId: item.org_id ?? null, collectionId: item.collection_id, itemId: item.id,
+      podId: input.claims.pod_id, agentId: input.claims.agent_id, operation: input.operation,
+      destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
+      blocked, reason,
+    });
   }
 
   private async auditBrokerDenial(input: BrokerExecuteRequest, reason: string): Promise<void> {
@@ -3534,12 +3568,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     } catch {
       // Invalid destinations are represented by the denial reason, never copied into audit metadata.
     }
-    await this.auditLogRepository.recordOutboundDenial([input.claims.sub, input.claims.pod_id, {
-        agentId: input.claims.agent_id,
-        operation: input.operation,
-        ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
-        ...(destination ? { destination } : {}),
-      }, reason]);
+    this.outboundAudit.record({
+      actorUserId: input.claims.sub, podId: input.claims.pod_id, agentId: input.claims.agent_id, operation: input.operation,
+      ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
+      ...(destination ? { destination } : {}),
+      blocked: true, reason,
+    });
   }
 }
 

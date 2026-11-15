@@ -17,18 +17,26 @@ services:
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - "sulla_postgres_data:/var/lib/postgresql/data"
-    # Sized for a small guest (2 GB on an 8 GB Mac) that also holds Docker,
-    # the kernel and every other service. shared_buffers is shared memory the
-    # kernel cannot reclaim, so it stays small; the guest page cache does the
-    # rest of the caching. Durability settings (fsync, synchronous_commit,
+    # Sized to stay well inside the container's 2 GB cap on any Mac while still
+    # holding the hot working set: the main database is multi-GB and 64 MB of
+    # shared_buffers gave only a 91-96% cache hit rate, so reads went to disk
+    # under load. shared_buffers is shared memory the kernel cannot reclaim, so it
+    # stays modest; the guest page cache does the rest of the caching.
+    # Durability settings (fsync, synchronous_commit,
     # full_page_writes) keep their safe defaults.
     command:
       - postgres
       - -c
-      - shared_buffers=64MB
+      - shared_buffers=256MB
       # Planner hint only; allocates nothing.
       - -c
-      - effective_cache_size=256MB
+      - effective_cache_size=1GB
+      # Fewer, larger WAL flushes under write bursts.
+      - -c
+      - wal_buffers=16MB
+      # Spread checkpoint I/O instead of spiking it.
+      - -c
+      - checkpoint_completion_target=0.9
       # Per sort/hash step per backend.
       - -c
       - work_mem=4MB
@@ -50,6 +58,17 @@ services:
       - idle_in_transaction_session_timeout=60s
       - -c
       - random_page_cost=1.1
+      # Stale planner statistics turned cheap index plans into whole-table scans after bursts of
+      # inserts/deletes (Postgres sat at 130-160% CPU until a manual ANALYZE). Analyze and vacuum
+      # small, hot tables much sooner than the 10%/20% defaults.
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_naptime=30s
+      - -c
+      - autovacuum_vacuum_cost_limit=1000
       - -c
       - shared_preload_libraries=pg_stat_statements
     restart: unless-stopped

@@ -146,7 +146,7 @@ export class CloudSessionAgentMailTransport implements AgentMailTransport {
 export type AgentMailFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 /**
- * Server vault mode (SULLA_VAULT_MODE=server): reads the token (the service
+ * Direct (in-process) transport: reads the token (the service
  * AGENT_MAIL_TOKEN, or the user's Cloud access token for user mailboxes)
  * in-process and sends it only in the Authorization header. Any echo of it
  * is scrubbed.

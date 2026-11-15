@@ -30,5 +30,20 @@ describe('GitCloneWorker', () => {
     expect(vi.mocked(runCommand).mock.calls[1][0]).toContain('remote set-url origin');
     expect(vi.mocked(runCommand).mock.calls[1][0]).toContain('https://github.com/acme/repo.git');
     expect(vi.mocked(runCommand).mock.calls[1][0]).not.toContain('one-use-secret');
+    expect(vi.mocked(runCommand).mock.calls[0][2]).toMatchObject({ timeoutMs: 1_800_000 });
+  });
+
+  it('allows blobless partial clones only when explicitly requested', async() => {
+    // risk: large repository data transfer stalls or silently changes default clone semantics
+    vi.mocked(withGitHubBrokerRemote).mockImplementation(async(_context, _remote, run) => await run('http://127.0.0.1/one-use-secret/acme/repo.git') as any);
+    vi.mocked(runCommand)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as any);
+    const worker = new GitCloneWorker();
+    worker.executionContext = { v: 1, iss: 'sulla-desktop', aud: 'sulla-tools', sub: 'user', org_id: 'org', agent_id: 'agent', job_id: 'job', pod_id: 'pod', device_id: 'device', scopes: ['*'], iat: 1, exp: 9999999999, jti: 'jti', request_id: 'request' };
+    const result = await (worker as any)._validatedCall({ owner: 'acme', repo: 'repo', absolutePath: '/workspace/repo', filter: 'blob:none' });
+    expect(result.successBoolean).toBe(true);
+    expect(vi.mocked(runCommand).mock.calls[0][0]).toContain('--filter=blob:none');
+    expect((await (worker as any)._validatedCall({ owner: 'acme', repo: 'repo', absolutePath: '/workspace/repo', filter: 'tree:0' })).successBoolean).toBe(false);
   });
 });

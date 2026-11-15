@@ -49,6 +49,8 @@ export const STATEFUL_GRACE_MS = 10 * 60_000;
 export const MAX_AUTO_RECREATES = 3;
 /** A container healthy this long since its last start begins a fresh incident. */
 export const HEALTHY_RESET_MS = 10 * 60_000;
+/** Require three consecutive one-minute observations before restarting a slow service. */
+export const UNHEALTHY_TICKS_BEFORE_RESTART = 3;
 
 /** The compose service that runs the Files FUSE adapter (it mounts /mnt/sulla-files). */
 export const FILES_ADAPTER_SERVICE = 'sulla_files_fuse';
@@ -68,6 +70,7 @@ export interface HealAction {
 }
 
 interface IncidentHistory {
+  unhealthyTicks: number;
   restarts: number;
   recreates: number;
   gaveUp: boolean;
@@ -119,15 +122,25 @@ export class ContainerHealPlanner {
       }
       const reason = this.troubleOf(row);
 
-      if (!reason) continue;
+      if (!reason) {
+        if (history) { history.unhealthyTicks = 0; this.#history.set(row.container, history); }
+        continue;
+      }
+      // Transient health-check timeouts under load are not proof that a live process is wedged.
+      // Count independent supervisor observations; keep immediate repairs for restart loops/stuck creation.
+      const current = history ?? { unhealthyTicks: 0, restarts: 0, recreates: 0, gaveUp: false };
       if (dependencyDown && !DEPENDENCY_SERVICES.includes(row.service)) continue;
       const stuckCreated = reason === 'stuck created';
       const grace = STATEFUL_SERVICES.includes(row.service) ? STATEFUL_GRACE_MS : STATELESS_GRACE_MS;
 
       if (!stuckCreated && row.runningForMs < grace) continue;
+      if (reason === 'unhealthy') {
+        current.unhealthyTicks += 1;
+        this.#history.set(row.container, current);
+        if (current.unhealthyTicks < UNHEALTHY_TICKS_BEFORE_RESTART) continue;
+      }
 
       const managedBy = row.managedBy ?? 'compose';
-      const current = history ?? { restarts: 0, recreates: 0, gaveUp: false };
       const maxAttempts = 1 + MAX_AUTO_RECREATES;
       const base = { container: row.container, service: row.service, reason, managedBy, maxAttempts };
 

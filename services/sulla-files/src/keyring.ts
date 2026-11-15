@@ -32,15 +32,10 @@ export class FilesKeyring {
   get unlocked():boolean { return Boolean(this.master) }
 
   async unlock(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
-    return this.unlockInternal(master, legacySigningKey, false);
+    return this.unlockInternal(master, legacySigningKey);
   }
 
-  /** One-time server migration wraps the exact historical derived keys transactionally. */
-  async unlockServer(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
-    return this.unlockInternal(master, legacySigningKey, true);
-  }
-
-  private async unlockInternal(master:Buffer, legacySigningKey:string | Buffer, migrateServerMarkers:boolean):Promise<void> {
+  private async unlockInternal(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
     if (master.length !== 32) throw new Error('Invalid Files master key');
     const epoch = this.epoch;
     if (this.pending) await this.pending;
@@ -50,11 +45,11 @@ export class FilesKeyring {
       return;
     }
     const copy = Buffer.from(master);
-    this.pending = this.initialize(copy, legacySigningKey, epoch, migrateServerMarkers).finally(() => copy.fill(0));
+    this.pending = this.initialize(copy, legacySigningKey, epoch).finally(() => copy.fill(0));
     try { await this.pending } finally { this.pending = undefined }
   }
 
-  private async initialize(master:Buffer, legacySigningKey:string | Buffer, epoch:number, migrateServerMarkers:boolean):Promise<void> {
+  private async initialize(master:Buffer, legacySigningKey:string | Buffer, epoch:number):Promise<void> {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
@@ -87,8 +82,6 @@ export class FilesKeyring {
             const wrapped = [await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`), await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`)];
             if (!row.data_key && !row.dedup_key) {
               await client.query("INSERT INTO files_collection_keys(collection_id,data_key,dedup_key,key_origin) VALUES($1,$2,$3,'legacy-signing-v1')", [row.id, ...wrapped]);
-            } else if (migrateServerMarkers && serverMarker(row.data_key, 'data', row.id) && serverMarker(row.dedup_key, 'dedup', row.id)) {
-              await client.query("UPDATE files_collection_keys SET data_key=$2,dedup_key=$3,key_origin='legacy-signing-v1' WHERE collection_id=$1", [row.id, ...wrapped]);
             } else {
               throw new Error('Existing Files key state cannot be migrated automatically');
             }
@@ -214,11 +207,4 @@ export class FilesKeyring {
     for (const keys of this.cache.values()) { keys.data.fill(0); keys.dedup.fill(0) }
     this.cache.clear();
   }
-}
-
-function serverMarker(value:unknown, purpose:'data' | 'dedup', id:string):boolean {
-  if (!value || typeof value !== 'object') return false;
-  const marker = value as Partial<Envelope>;
-  return marker.version === 1 && marker.algorithm === 'xchacha20-poly1305' && marker.nonce === '' &&
-    marker.ciphertext === `server-derived:${ purpose }:${ id }`;
 }
