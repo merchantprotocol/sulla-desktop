@@ -139,7 +139,7 @@ export interface FilesVersion {
 }
 
 export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean; cloudBackup?: { enabled:boolean; status:'off'|'idle'|'syncing'|'error'|'needs-vault'; lastSyncAt?:string|null; pendingBytes:number; conflicts:number; lastError?:string|null; cryptoModule:{provider:string;version:string;fips:boolean} } };
+  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; fileCount?: number; totalBytes?: number; agentRunCount?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean; cloudBackup?: { enabled:boolean; status:'off'|'idle'|'syncing'|'error'|'needs-vault'; lastSyncAt?:string|null; pendingBytes:number; conflicts:number; lastError?:string|null; cryptoModule:{provider:string;version:string;fips:boolean} } };
   availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'sulla' | null }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
@@ -179,6 +179,7 @@ export interface FilesOperationCapabilities {
   crossCollectionOperations:FilesCrossCollectionCapability;
 }
 export interface FilesFolderState { collectionId?:string; folderId:string; path:string; revision:string; description?:string|null; namingHint?:string|null; needsDescription?:boolean }
+export interface FilesFolderSummary { path:string; name:string; fileCount:number; totalBytes:number; updatedAt:string|null }
 export interface FilesFolderSourceSnapshot {
   collectionId:string;
   path:string;
@@ -421,6 +422,16 @@ export interface FilesDataSource {
   loadMore?():Promise<FilesItem[]>;
   loadFolder?(path:string):Promise<FilesItem[]>;
   onFolderFilesChanged?(listener:(files:FilesItem[])=>void):()=>void;
+  /** Newest active files of the open collection from the server (bounded), optionally only one creator type. */
+  recentFiles?(options?:{ limit?:number; createdByType?:'user' | 'agent-run' }):Promise<FilesItem[]>;
+  /** Resolve file ids (e.g. stars) to rows wherever they live, without loading their folders. */
+  filesByIds?(ids:string[]):Promise<FilesItem[]>;
+  /** Every direct child file of `path`, paged to completion, independent of the open folder listing. */
+  listFolderChildren?(path:string):Promise<FilesItem[]>;
+  /** Every active file at or below `path`, paged to completion (used when folder receipts are unavailable). */
+  listFolderTree?(path:string):Promise<FilesItem[]>;
+  /** Server totals for each direct child folder of `path`. */
+  folderSummaries?(path:string):Promise<FilesFolderSummary[]>;
   openPreferences?():void;
   selectCollection?(collectionId:string):void;
   operationCapabilities?(collectionId:string):Promise<FilesOperationCapabilities>;
