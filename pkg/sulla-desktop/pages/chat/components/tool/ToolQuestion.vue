@@ -66,7 +66,9 @@
     <fieldset
       v-for="(q, qi) in msg.questions"
       :key="qi"
+      :ref="el => { blocks[qi] = el as HTMLElement | null }"
       class="qc-block"
+      :class="{ 'qc-open': !locked && missing.length < msg.questions.length && missing.some(m => m.qi === qi) }"
       :disabled="locked"
     >
       <legend class="qc-question">
@@ -139,9 +141,19 @@
         Submit answer
       </button>
       <span
-        v-if="!canSubmit"
+        v-if="!canSubmit && missing.length && missing.length < msg.questions.length"
         class="qc-hint"
-      >Pick an option or write an answer to continue.</span>
+      >Answer {{ missing.length }} more {{ missing.length === 1 ? 'question' : 'questions' }} first: <button
+        v-for="(m, mi) in missing"
+        :key="m.qi"
+        type="button"
+        class="qc-jump"
+        @click="jumpTo(m.qi)"
+      >{{ m.name }}{{ mi < missing.length - 1 ? ',' : '' }}</button></span>
+      <span
+        v-else-if="!canSubmit"
+        class="qc-hint"
+      >Pick an option or write an answer{{ msg.questions.length > 1 ? ' for each question' : '' }} to continue.</span>
     </footer>
 
     <dl
@@ -163,6 +175,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
+import { answerSelection } from '../../messages/questionAnswer';
 
 const props = defineProps<{ msg: ToolQuestionMessage }>();
 const controller = useChatController();
@@ -188,6 +201,7 @@ const countdown = computed(() => {
 const stateText = computed(() => {
   if (props.msg.status === 'answered') return 'Answered';
   if (props.msg.status === 'timed_out') return 'Expired';
+  if (props.msg.resolutionError) return 'Not sent';
   return sending.value ? 'Answer sent' : 'Waiting for your answer';
 });
 const stateTone = computed(() => props.msg.status === 'answered' || sending.value ? 'done' : props.msg.status === 'timed_out' ? 'closed' : 'open');
@@ -210,7 +224,7 @@ const locked = computed(() => sending.value || props.msg.status !== 'pending');
 
 // The backend rejected the answer: reopen the card so it can be fixed and resent.
 watch(() => props.msg.resolutionError, (error) => {
-  if (error && props.msg.status === 'pending') sending.value = false;
+  if (error && props.msg.status !== 'answered' && props.msg.status !== 'timed_out') sending.value = false;
 });
 
 function toggle(qi: number, label: string, multi: boolean): void {
@@ -228,13 +242,21 @@ const canSubmit = computed(() =>
   props.msg.questions.every((_q, qi) =>
     (picks[qi]?.length ?? 0) > 0 || (otherText[qi]?.trim().length ?? 0) > 0));
 
+/** Questions still without an answer, named by their short header when they have one. */
+const missing = computed(() => props.msg.questions
+  .map((q, qi) => ({ qi, name: q.header || `Question ${ qi + 1 }`, done: (picks[qi]?.length ?? 0) > 0 || (otherText[qi]?.trim().length ?? 0) > 0 }))
+  .filter(x => !x.done));
+const blocks = reactive<(HTMLElement | null)[]>([]);
+function jumpTo(qi: number): void {
+  const el = blocks[qi];
+  el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el?.querySelector<HTMLElement>('.qc-option')?.focus({ preventScroll: true });
+}
+
 function submit(): void {
   if (locked.value || !canSubmit.value) return;
   const answers: ToolQuestionAnswerItem[] = props.msg.questions.map((q, qi) => {
-    const selected = [...(picks[qi] ?? [])];
-    const other = otherText[qi]?.trim();
-    if (other) selected.push(other);
-    return { question: q.question, selected };
+    return { question: q.question, selected: answerSelection(picks[qi] ?? [], otherText[qi] ?? '', !!q.multiSelect) };
   });
   sending.value = true;
   controller.answerQuestion(props.msg.id, answers);
@@ -304,6 +326,8 @@ function submit(): void {
 
 .qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .qc-actions .qc-hint { margin: 0; }
+.qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.qc-block.qc-open { border-radius: 10px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .qc-submit {
   height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
   background: var(--accent); color: var(--text-on-accent, #fff);
