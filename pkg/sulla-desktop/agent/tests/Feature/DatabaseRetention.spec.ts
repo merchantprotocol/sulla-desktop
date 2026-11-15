@@ -63,10 +63,10 @@ dbDescribe('database retention with real Postgres', () => {
     ];
     for (const row of rows) {
       await database.query(`INSERT INTO workflow_executions (execution_id,workflow_id,workflow_name,workflow_slug,status,started_at,completed_at,updated_at)
-        VALUES ($1,'retention-test','Retention test','retention-test',$2,NOW()-INTERVAL '40 days',
-          CASE WHEN $2='failed' THEN NOW()-($3 * INTERVAL '1 day') END,NOW()-INTERVAL '40 days')`, [row.id,row.status,row.age]);
+        VALUES ($1,'retention-test','Retention test','retention-test',$2::text,NOW()-INTERVAL '40 days',
+          CASE WHEN $2::text='failed' THEN NOW()-($3::int * INTERVAL '1 day') END,NOW()-INTERVAL '40 days')`, [row.id,row.status,row.age]);
       await database.query(`INSERT INTO workflow_checkpoints (execution_id,workflow_id,workflow_name,node_id,node_label,node_subtype,sequence,playbook_state,created_at)
-        VALUES ($1,'retention-test','Retention test','node','Node','test',1,'{}'::jsonb,NOW()-($2 * INTERVAL '1 day'))`, [row.id,row.age]);
+        VALUES ($1,'retention-test','Retention test','node','Node','test',1,'{}'::jsonb,NOW()-($2::int * INTERVAL '1 day'))`, [row.id,row.age]);
     }
     const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
     await WorkflowExecutionModel.markCompleted(`${prefix}-success`);
