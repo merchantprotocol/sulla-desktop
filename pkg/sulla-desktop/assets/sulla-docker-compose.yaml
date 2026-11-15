@@ -89,6 +89,10 @@ services:
     # agent registry) carry no TTL and must not silently disappear: past the
     # cap writes fail loudly instead.
     command: redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy noeviction
+    # The image declares VOLUME /data. Named, so a re-create never strands it in
+    # an anonymous volume (backend/sullaVolumeMigration.ts moves an old one over).
+    volumes:
+      - "sulla_redis_data:/data"
     restart: unless-stopped
     mem_limit: 192m
     healthcheck:
@@ -162,6 +166,8 @@ services:
 
 volumes:
   sulla_postgres_data:
+  sulla_redis_data:
+    name: sulla_redis_data
   sulla_python_runtime_cache:
   sulla_node_runtime_cache:
   sulla-files-data:
