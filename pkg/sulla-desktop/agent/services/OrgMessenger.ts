@@ -10,6 +10,7 @@ export interface OrgMessagingSession { orgId(): Promise<string>; userId(): Promi
 export interface OrgContactRequestPrompter { request(senderUserId: string, messages: readonly MessageEnvelope[], resolve: (choice: ContactRequestChoice) => Promise<readonly number[]>): Promise<void> }
 export interface OrgInboxTargetResolver { target(envelope: MessageEnvelope): Promise<AgentInboxTarget> }
 export interface OrgConversationHaltHandler { halt(target: AgentInboxTarget): Promise<void> }
+export interface OrgMessagingDeviceIdentity { deviceId(): Promise<string> }
 
 /** Coordinates durable outbox retries, cursor-driven inbox delivery, and first-contact holds. */
 export class OrgMessenger {
@@ -23,6 +24,7 @@ export class OrgMessenger {
     private readonly targetResolver: OrgInboxTargetResolver,
     private readonly contactPrompter: OrgContactRequestPrompter,
     private readonly haltHandler?: OrgConversationHaltHandler,
+    private readonly deviceIdentity: OrgMessagingDeviceIdentity = { deviceId: async() => (await import('@pkg/main/deviceIdentity')).getDesktopDeviceId() },
     private readonly pageSize = 50,
   ) {}
 
@@ -41,13 +43,17 @@ export class OrgMessenger {
     // canonical address strings.
     await this.state.enqueue({ messageId: envelope.data.messageId, envelope: this.codec.encode(envelope) });
     await this.flushOutbox();
+    if (envelope.data.kind === 'control' && envelope.data.control?.action === 'halt') {
+      this.haltedConversations.add(`${orgId}:${envelope.data.conversationId}`);
+      await this.haltHandler?.halt(await this.targetResolver.target(envelope));
+    }
   }
 
   async flushOutbox(): Promise<number> {
     let sent = 0;
     for (const item of await this.state.pending()) {
       const result = await this.transport.submit(this.codec.decode(item.envelope));
-      if (result.status === 'accepted' || result.status === 'duplicate') {
+      if (result.status === 'accepted' || result.status === 'duplicate' || result.status === 'held') {
         await this.state.markSent(item.messageId);
         sent++;
       }
@@ -72,7 +78,7 @@ export class OrgMessenger {
         }
         const local = this.bridge.toLocal(envelope, target.channel);
         await this.inbox.receive({
-          envelope: { from: local.from, kind: local.kind, body: `${this.bridge.label(envelope)}\n${local.body}`, ids: { ...local.ids, messageId: local.messageId } },
+          envelope: { from: local.from, kind: local.kind, body: `${this.bridge.label(envelope)}\n${local.body}`, ids: { ...local.ids, messageId: local.messageId, relayed: true } },
           target,
         });
         delivered++;
@@ -111,16 +117,36 @@ export class OrgMessenger {
   }
 
   async run(signal: AbortSignal): Promise<void> {
+    let backoffMs = 15_000;
     while (!signal.aborted) {
       try {
-        await this.syncOnce();
-        for await (const _hint of this.transport.wakeups()) {
-          if (signal.aborted) return;
-          await this.syncOnce();
+        const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
+        if (!orgId || !userId) {
+          await this.wait(signal, 15_000);
+          continue;
         }
+        const deviceId = await this.deviceIdentity.deviceId();
+        const lease = await this.transport.claimAgentHost(deviceId);
+        if (lease.deviceId !== deviceId || (lease.userId && lease.userId !== userId)) throw new Error('This Desktop does not hold the organization agent-host lease');
+        await this.syncOnce();
+        backoffMs = 15_000;
+        // Cloud transport wakeups are polling-based today. This interval also
+        // renews the host lease and observes sign-out / active-org changes.
+        await this.wait(signal, 15_000);
       } catch {
-        await new Promise(resolve => setTimeout(resolve, 15_000));
+        await this.wait(signal, backoffMs);
+        backoffMs = Math.min(backoffMs * 2, 120_000);
       }
     }
+  }
+
+  private wait(signal: AbortSignal, milliseconds: number): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise(resolve => {
+      const timer = setTimeout(done, milliseconds);
+      const onAbort = () => done();
+      function done() { clearTimeout(timer); signal.removeEventListener('abort', onAbort); resolve(); }
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }

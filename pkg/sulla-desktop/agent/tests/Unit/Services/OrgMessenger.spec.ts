@@ -54,6 +54,7 @@ class TestTransport implements OrgMessagingTransport {
   wakeups() { return this.host.wakeups(); }
   directory() { return this.host.directory(); }
   claimAgentHost(deviceId: string) { return this.host.claimAgentHost(deviceId); }
+  count() { return this.host.count(); }
 }
 
 function message(messageId: string, hostSeq?: number): MessageEnvelope {
@@ -72,8 +73,8 @@ function outboundMessage(messageId: string): MessageEnvelope {
     createdAt: new Date(0).toISOString() });
 }
 
-function messenger(transport: TestTransport, state: MemoryState, delivered: string[], capturePrompt?: (resolve: (choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) => void, halt?: (target: AgentInboxTarget) => Promise<void>) {
-  const inbox = new AgentInbox(new MemoryInboxRepository(), { isRunning: () => false, wake: async (_target, _batch, entries) => { delivered.push(...entries.map(entry => entry.envelope.ids.messageId)); return 'accepted'; } });
+function messenger(transport: TestTransport, state: MemoryState, delivered: string[], capturePrompt?: (resolve: (choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) => void, halt?: (target: AgentInboxTarget) => Promise<void>, inboxDeliveries?: AgentInboxEntry[], inboxRepository: AgentInboxRepository = new MemoryInboxRepository()) {
+  const inbox = new AgentInbox(inboxRepository, { isRunning: () => false, wake: async (_target, _batch, entries) => { inboxDeliveries?.push(...entries); delivered.push(...entries.map(entry => entry.envelope.ids.messageId)); return 'accepted'; } });
   return new OrgMessenger(transport, new TestSession(), state, inbox, { target: async () => ({ channel: 'user-1', threadId: 'conversation-1' }) }, { request: async (_sender, _messages, resolve) => capturePrompt?.(resolve) }, { halt: async target => halt?.(target) });
 }
 
@@ -102,6 +103,20 @@ describe('OrgMessenger', () => {
     );
   });
 
+  it('fails the contract when a host breaks message-id duplicate receipts', async () => {
+    // risk: duplicate side effects; deliberate broken-host control
+    class BrokenHost extends InMemoryOrgMessagingTransport {
+      async submit(envelope: MessageEnvelope) {
+        const receipt = await super.submit(envelope);
+        return { ...receipt, status: 'accepted' as const };
+      }
+    }
+    await expect(new OrgMessagingTransportContract().verify(
+      admission => new BrokenHost(admission),
+      (condition, message) => { if (!condition) throw new Error(message); },
+    )).rejects.toThrow('duplicate retains original sequence');
+  });
+
   it('keeps a durable outbox message and retries the identical message id after restart', async () => {
     // risk: duplicate side effect
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
@@ -109,6 +124,7 @@ describe('OrgMessenger', () => {
     await expect(messenger(transport, state, delivered).send(outboundMessage('stable-id'))).rejects.toThrow('offline');
     await messenger(transport, state, delivered).flushOutbox();
     expect(transport.submitted).toEqual(['stable-id', 'stable-id']);
+    expect(transport.count()).toBe(1);
     expect(state.outbox.size).toBe(0);
   });
 
@@ -116,17 +132,22 @@ describe('OrgMessenger', () => {
     // risk: duplicate or lost delivery
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
     await transport.submit(message('incoming-id', 7));
-    await messenger(transport, state, delivered).pullInbox();
-    await messenger(transport, state, delivered).pullInbox();
+    const inboxDeliveries: AgentInboxEntry[] = [];
+    const inboxRepository = new MemoryInboxRepository();
+    await messenger(transport, state, delivered, undefined, undefined, inboxDeliveries, inboxRepository).pullInbox();
+    await messenger(transport, state, delivered, undefined, undefined, inboxDeliveries, inboxRepository).pullInbox();
     expect(delivered).toEqual(['incoming-id']);
     expect(state.cursors.get('org-1:user-1')).toBe(1);
+    expect(inboxDeliveries[0]?.envelope.ids.relayed).toBe(true);
+    expect(inboxDeliveries[0]?.envelope.body).toContain('untrusted');
   });
 
   it('keeps held first-contact requests out of AgentInbox until the human allows them, then delivers by host sequence', async () => {
     // risk: unauthorized message admission
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
     transport.holdNext();
-    await transport.submit(message('held-request'));
+    await transport.submit(message('held-request-1'));
+    await transport.submit(message('held-request-2'));
     let resolveRequest: ((choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) | undefined;
     const service = messenger(transport, state, delivered, resolve => { resolveRequest = resolve; });
     await service.syncOnce();
@@ -134,16 +155,15 @@ describe('OrgMessenger', () => {
     transport.acceptNext();
     await resolveRequest?.('allow_always');
     await service.syncOnce();
-    expect(delivered).toEqual(['held-request']);
+    expect(delivered).toEqual(['held-request-1', 'held-request-2']);
   });
 
   it('refuses agent posts after a control halt and cancels the local running conversation', async () => {
     // risk: unauthorized agent side effect after a human halt
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
-    await transport.submit(haltMessage());
     const stopped: AgentInboxTarget[] = [];
     const service = messenger(transport, state, delivered, undefined, async target => { stopped.push(target); });
-    await service.pullInbox();
+    await service.send(haltMessage());
     expect(stopped).toEqual([{ channel: 'user-1', threadId: 'conversation-1' }]);
     await expect(service.send(agentPost())).rejects.toThrow('halted');
     expect(transport.submitted).toEqual(['halt-id']);

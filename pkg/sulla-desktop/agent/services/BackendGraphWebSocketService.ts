@@ -44,6 +44,11 @@ import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
+import { AgentTurnStopper } from './AgentTurnStopper';
+import { CloudOrgMessagingTransport, DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
+import { OrgMessenger } from './OrgMessenger';
+import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
+import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -84,6 +89,8 @@ export class BackendGraphWebSocketService {
   private readonly agentInbox: AgentInbox;
   private readonly inboxReceiverResolver: AgentInboxReceiverResolver;
   private readonly inboxRunGuard: ReceiverRunGuard;
+  private readonly orgMessenger: OrgMessenger;
+  private orgMessagingAbort?: AbortController;
 
   /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
   private prepareFreshTurn(state: AgentGraphState): void {
@@ -217,8 +224,21 @@ export class BackendGraphWebSocketService {
       isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
     }, this.inboxRunGuard);
+    this.orgMessenger = new OrgMessenger(
+      new CloudOrgMessagingTransport(),
+      new DesktopOrgCloudSession(),
+      new PostgresOrgMessagingStateRepository(new DesktopPostgresConnection(postgresClient)),
+      this.agentInbox,
+      { target: async envelope => ({ channel: SULLA_DESKTOP_CHANNEL_ID, threadId: envelope.data.conversationId }) },
+      new OrgContactRequestDecisionPrompter(),
+      { halt: async target => { if (target.threadId) await new AgentTurnStopper(this.wsService).stop(target.channel, target.threadId); } },
+    );
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
+  }
+
+  sendOrgMessage(envelope: import('@sulla/domain').MessageEnvelope): Promise<void> {
+    return this.orgMessenger.send(envelope);
   }
 
   private inboxThread(target: AgentInboxTarget): string | undefined {
@@ -237,7 +257,7 @@ export class BackendGraphWebSocketService {
       undefined,
       target.agentId,
       'system',
-      { source: 'agent_inbox', inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId) },
+      { source: 'agent_inbox', inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
     );
   }
 
@@ -304,6 +324,8 @@ export class BackendGraphWebSocketService {
   }
 
   dispose(): void {
+    this.orgMessagingAbort?.abort();
+    this.orgMessagingAbort = undefined;
     this.unsubscribes.forEach(unsub => unsub());
     this.unsubscribes = [];
     for (const [, abort] of this.activeAborts) {
@@ -502,6 +524,11 @@ export class BackendGraphWebSocketService {
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
     agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
+    if ((process as any).type === 'browser') {
+      this.orgMessagingAbort?.abort();
+      this.orgMessagingAbort = new AbortController();
+      this.orgMessenger.run(this.orgMessagingAbort.signal).catch(error => console.warn('[BackendGraphWS] Org messaging stopped unexpectedly:', error));
+    }
   }
 
   /**
@@ -879,6 +906,9 @@ export class BackendGraphWebSocketService {
 
       // Route responses back to the originating channel
       state.metadata.wsChannel = channelId;
+      // Relayed organization turns are explicitly marked so BaseTool can
+      // require approval for writes while still running as this Desktop's user.
+      (state.metadata as any).relayed = metadata?.relayed === true;
 
       // Scope workflow tools to a specific workflow (e.g. when chatting from workflow editor)
       if (scopedWorkflowId) {
