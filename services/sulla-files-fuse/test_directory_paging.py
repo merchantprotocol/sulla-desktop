@@ -46,7 +46,16 @@ def load_adapter():
     pyfuse3.readdir_reply = Reply()
     trio = types.ModuleType("trio")
     yaml = types.ModuleType("yaml")
-    sys.modules.update(pyfuse3=pyfuse3, trio=trio, yaml=yaml)
+    urllib3 = types.ModuleType("urllib3")
+    urllib3.PoolManager = lambda **_kwargs: types.SimpleNamespace(request=None)
+    urllib3.Timeout = lambda **_kwargs: None
+    urllib3.exceptions = types.SimpleNamespace(
+        HTTPError=type("HTTPError", (Exception,), {}),
+        TimeoutError=type("TimeoutError", (Exception,), {}),
+        NewConnectionError=type("NewConnectionError", (Exception,), {}),
+        ProtocolError=type("ProtocolError", (Exception,), {}),
+    )
+    sys.modules.update(pyfuse3=pyfuse3, trio=trio, yaml=yaml, urllib3=urllib3)
     spec = importlib.util.spec_from_file_location("sulla_files_fuse_test", ROOT / "sulla_files_fuse.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

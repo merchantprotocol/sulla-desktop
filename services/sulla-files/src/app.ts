@@ -882,7 +882,7 @@ export function createApp(
       const filePath = cleanPath(String(request.query.path ?? ''), false);
       const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
       await requireCollection(request, collectionId, 'edit');
-      await client.query('BEGIN'); await lockStoredNamespace(client, collectionId);
+      await client.query('BEGIN'); await lockStoredNamespace(client, collectionId, filePath);
       // A trashed file keeps its (collection_id, path) row, so a plain INSERT hit the unique index and
       // creating a file where one was deleted failed with 'A file already occupies ...'. Revive the
       // trashed row instead (insertVersion un-deletes it and appends a version; history is kept).
@@ -915,7 +915,7 @@ export function createApp(
   app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { const client=await db.connect(); try {
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
     const actor=mountIdentity(request,'create',{collectionId,path:folderPath}); await requireCollection(request, collectionId, 'edit');
-    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId); await ensureStoredFolder(client,collectionId,folderPath,actor);
+    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
     const createdDescription=`Created by ${actor.agentId??actor.jobId??'agent'} on ${new Date().toISOString().slice(0,10)} — needs description`;
     await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
     await client.query('COMMIT'); await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
