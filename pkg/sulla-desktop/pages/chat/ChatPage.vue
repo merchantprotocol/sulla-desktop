@@ -644,8 +644,7 @@ const pinnedEntries = computed(() => {
 
 /**
  * Activate the pin's thread, then fire a window event so the Transcript
- * can scroll the target message into view. Transcript-side handler is
- * a follow-up; for now the activate gets you there.
+ * scrolls the target message into view (see TranscriptJump).
  */
 async function onJumpTo(target: { threadId: ThreadId; messageId: any }): Promise<void> {
   await onActivate(target.threadId);

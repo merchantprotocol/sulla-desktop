@@ -27,11 +27,13 @@
         >
           <ThinkingGroup
             v-if="entry.kind === 'thinking-group'"
+            :ref="el => jumper.register(entry.id, el)"
             :messages="entry.messages"
             :line-id="entry.id"
           />
           <MessageRouter
             v-else
+            :ref="el => jumper.register(entry.id, el)"
             :msg="entry"
           />
         </template>
@@ -58,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue';
 
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
@@ -69,6 +71,7 @@ import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { returnCoveredByCard } from '../../messages/handoffCover';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
+import { TranscriptJump } from '../../messages/transcriptJump';
 import { waitingOn } from '../../messages/waitingStatus';
 import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
@@ -86,6 +89,16 @@ const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(
   at: LineTimes.idTime(entry.id) ?? (entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt),
 }))));
 provide(LineTimeKey, id => times.value.get(id));
+
+// "Jump to" from the side dock, status line or quick switcher: whichever
+// transcript shows the message scrolls to it.
+const jumper = new TranscriptJump();
+function onJump(event: Event): void {
+  const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
+  if (messageId) jumper.jump(transcriptEntries.value, String(messageId), matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+onMounted(() => window.addEventListener('chat:jump-to-message', onJump));
+onBeforeUnmount(() => window.removeEventListener('chat:jump-to-message', onJump));
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
 const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
