@@ -30,7 +30,7 @@ export async function runVectorBackfill(db: pg.Pool, log: (message: string) => v
     if (!status.done) {
       let copied = 0;
       for (;;) {
-        const result = await db.query(`WITH batch AS (
+        const result = await lock.query(`WITH batch AS (
             SELECT sc.id, sc.embedding_json::text AS embedding FROM file_search_chunks sc
             WHERE sc.embedding_json IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM file_search_vectors sv WHERE sv.chunk_id=sc.id)
@@ -42,7 +42,7 @@ export async function runVectorBackfill(db: pg.Pool, log: (message: string) => v
         await sleep(PAUSE_MS);
       }
       log(`[FilesVector] copy complete (${ copied } rows); building HNSW index`);
-      const builder = await db.connect();
+      const builder = lock;
       try {
         // A failed CONCURRENTLY build leaves an INVALID index behind; rebuild it.
         await builder.query(`DO $$ BEGIN
@@ -54,18 +54,18 @@ export async function runVectorBackfill(db: pg.Pool, log: (message: string) => v
         await builder.query('SET statement_timeout = 0');
         await builder.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_file_search_vectors_hnsw
           ON file_search_vectors USING hnsw (embedding halfvec_cosine_ops) WITH (m=16, ef_construction=64)`);
-      } finally { builder.release(true) }
+      } finally { /* The same session owns the backfill lock until the outer finally. */ }
       // Rows indexed while the build ran carry both copies; anything still JSON-only gets one more pass.
-      const leftover = await db.query(`SELECT 1 FROM file_search_chunks sc WHERE sc.embedding_json IS NOT NULL
+      const leftover = await lock.query(`SELECT 1 FROM file_search_chunks sc WHERE sc.embedding_json IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM file_search_vectors sv WHERE sv.chunk_id=sc.id) LIMIT 1`);
       if (leftover.rowCount) { log('[FilesVector] new rows appeared during the index build; will finish on the next start'); return; }
-      await db.query('INSERT INTO files_schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING', [VECTOR_READY_MARKER]);
+      await lock.query('INSERT INTO files_schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING', [VECTOR_READY_MARKER]);
       log('[FilesVector] semantic search now uses halfvec + HNSW');
     }
 
     let cleared = 0;
     for (;;) {
-      const result = await db.query(`UPDATE file_search_chunks sc SET embedding_json=NULL
+      const result = await lock.query(`UPDATE file_search_chunks sc SET embedding_json=NULL
         WHERE sc.id IN (SELECT c.id FROM file_search_chunks c JOIN file_search_vectors v ON v.chunk_id=c.id
           WHERE c.embedding_json IS NOT NULL LIMIT ${ NULL_BATCH })`);
       if (!result.rowCount) break;
@@ -77,7 +77,8 @@ export async function runVectorBackfill(db: pg.Pool, log: (message: string) => v
     log(`[FilesVector] backfill paused: ${ error instanceof Error ? error.message : String(error) }`);
   } finally {
     await lock.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => undefined);
-    lock.release();
+    // Maintenance SETs must never escape into a request client.
+    lock.release(true);
   }
 }
 

@@ -1554,8 +1554,9 @@ export class LocalFilesManager {
           throw new Error('Remote purge source identity changed before eviction; bytes were restored');
         }
       } else if (existing?.path) throw new Error('Remote purge cannot prove ownership of local bytes; they were preserved');
-      const client = await this.db.connect(); await client.query('BEGIN');
+      let committedReceipt:any;
       try {
+        await new TransactionRunner(this.db).run('remote-purge', async client => {
         await client.query("SET LOCAL sulla.trusted_replication='on'");
         if (existing && !(await client.query('SELECT 1 FROM files WHERE id=$1 AND collection_id=$2 AND path=$3 AND current_version_id=$4 AND operation_revision=$5 FOR UPDATE',[entry.file.id,collectionId,existing.path,existing.current_version_id,existing.operation_revision])).rowCount) throw new Error('Remote purge target changed; retained bytes were preserved');
         if (remoteOperationId && !(await client.query("SELECT 1 FROM files_path_operations WHERE operation_id=$1 AND state='publishing' AND plan->>'fileId'=$2 AND plan->>'versionId'=$3 AND plan->>'revision'=$4 FOR UPDATE",[remoteOperationId,entry.file.id,existing.current_version_id,String(existing.operation_revision)])).rowCount) throw new Error('Remote purge journal changed; retained bytes were preserved');
@@ -1580,14 +1581,14 @@ export class LocalFilesManager {
         await client.query('DELETE FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId]);
         await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
         if (remoteOperationId && (await client.query("UPDATE files_path_operations SET state='db-committed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='publishing'",[remoteOperationId])).rowCount!==1) throw new Error('Remote purge journal commit proof could not be recorded');
-        await client.query('COMMIT');
+        committedReceipt = receipt;
+        });
         if (remoteOperationId && remotePlan) await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'db-committed',plan:remotePlan,receipts:[]});
-        if (receipt?.state==='completed') {
-          const disposed=await this.nativeJournal.dispose(receipt.id);
+        if (committedReceipt?.state==='completed') {
+          const disposed=await this.nativeJournal.dispose(committedReceipt.id);
           if (disposed.state==='recovery-required') throw new Error(disposed.error??'Remote purge retained artifacts require recovery');
         }
       } catch (error) {
-        await client.query('ROLLBACK').catch(()=>undefined);
         if (remoteOperationId) {
           const durable=(await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1',[remoteOperationId])).rows[0];
           if (durable && ['planned','publishing','db-committed'].includes(durable.state)) await this.recoverRemotePurgeOperation(durable).catch(async recoveryError=>{
@@ -1596,7 +1597,7 @@ export class LocalFilesManager {
           });
         }
         throw error;
-      } finally { client.release() }
+      }
       return;
     }
     if (entry.op === 'lifecycle') {

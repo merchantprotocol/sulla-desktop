@@ -7,7 +7,7 @@
 // Requires SULLA_TEST_DATABASE_URL (a throwaway Postgres 16).
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest, type Server } from 'node:http';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
@@ -15,6 +15,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { issueCapabilityToken } from '../src/auth.js';
 import { migrate } from '../src/db.js';
 import { TransactionScope } from '../src/TransactionScope.js';
+import { IndexingQueue } from '../src/indexing.js';
+import { FilesMutationCoordinator } from '../src/safeFilesystem.js';
 import { Store } from '../src/store.js';
 import { LocalFilesManager } from '../src/localManager.js';
 
@@ -47,7 +49,7 @@ class MountWriteFixture {
 
   async initialize():Promise<void> {
     await this.admin.query(`CREATE SCHEMA "${ this.schema }"`);
-    this.pool = new Pool({ connectionString: this.url, max: this.poolMax, application_name: this.applicationName, options: `-csearch_path=${ this.schema },public` });
+    this.pool = new Pool({ connectionString: this.url, max: this.poolMax, connectionTimeoutMillis:1000, application_name: this.applicationName, options: `-csearch_path=${ this.schema },public` });
     this.pool.on('error', () => undefined);
     this.pool.on('connect', client => client.on('error', () => undefined));
     await migrate(this.pool);
@@ -126,7 +128,7 @@ class MountWriteFixture {
 
 describeWithDatabase('Remaining Files writers (real HTTP routes and Postgres)',()=>{
   let f:MountWriteFixture;
-  beforeAll(async()=>{f=new MountWriteFixture(databaseUrl,2);await f.initialize()},60000);
+  beforeAll(async()=>{f=new MountWriteFixture(databaseUrl,1);await f.initialize()},60000);
   afterAll(async()=>{await f?.dispose()});
   const json=(path:string,method:string,body:any)=>f.request(path,method,Buffer.from(JSON.stringify(body)),{'content-type':'application/json'});
   const assertSlow=async(work:()=>Promise<Reply>)=>{
@@ -145,15 +147,87 @@ describeWithDatabase('Remaining Files writers (real HTTP routes and Postgres)',(
     const created=await json('/v1/agent-files','POST',{collectionId:source,path:`${run}.txt`,content:`payload-${run}`});
     expect(created.status,JSON.stringify(created.body)).toBe(201);
     // Source identity is assigned by the authenticated job, not request content.
-    await f.pool!.query('UPDATE files SET created_by_id=$2 WHERE id=$1',[created.body.id,run]);
-    await assertSlow(()=>json(wholeRun?`/v1/agent-runs/${run}/keep`:`/v1/agent-files/${created.body.id}/keep`,'POST',{collectionId:target}));
+    await f.pool!.query('UPDATE files SET created_by_id=$2 WHERE id=$1',[created.body.fileId,run]);
+    await assertSlow(()=>json(wholeRun?`/v1/agent-runs/${run}/keep`:`/v1/agent-files/${created.body.fileId}/keep`,'POST',{collectionId:target}));
     const rows=await f.pool!.query('SELECT id FROM files WHERE collection_id=$1 AND deleted_at IS NULL',[target]);expect(rows.rowCount).toBe(1);
   });
   it('native ingest stages before BEGIN and records source atomically',async()=>{
     const target=await f.collection();const bytes=Buffer.from('native slow content');
     await assertSlow(()=>f.request(`/v1/local/native-sources/ingest?collectionId=${target}&path=native.txt`,'PUT',bytes,{
-      'content-type':'text/plain','x-sulla-source-hash':sha256(bytes),'x-sulla-source-handle':'h'.repeat(43),'x-sulla-source-revision':sha256('revision-1'),'x-sulla-operation-id':randomUUID()
+      'content-type':'text/plain','x-sulla-source-hash':sha256(bytes),'x-sulla-source-handle':createHash('sha256').update(target).digest('base64url'),'x-sulla-source-revision':sha256('revision-1'),'x-sulla-operation-id':randomUUID()
     }));
     expect((await f.pool!.query('SELECT count(*)::int AS count FROM files_native_sources WHERE collection_id=$1',[target])).rows[0].count).toBe(1);
   });
+  it.each(['system','upload','import'])('%s stages a slow body before acquiring its transaction',async(kind)=>{
+    const target=await f.collection();const bytes=Buffer.from(`slow-${kind}`);
+    await assertSlow(()=>f.request(kind==='system'?`/v1/local/system-areas/ingest?collectionId=${target}&path=slow.txt`:`/v1/files/${kind}?collectionId=${target}&path=slow.txt`,'PUT',bytes,{'content-type':'application/octet-stream','x-sulla-expected-bytes':String(bytes.length),'x-sulla-source-hash':sha256(bytes)}));
+  });
+  it.each(['empty','editor','keep','run','native','system','upload','import'])('%s loses no metadata when its connection dies during COMMIT',async(kind)=>{
+    const target=await f.collection();let write:()=>Promise<Reply>;
+    if(kind==='editor'){
+      const made=await json('/v1/files/empty','POST',{collectionId:target,path:'edit.txt'});
+      expect(made.status).toBe(201);
+      write=()=>json(`/v1/files/${made.body.id}/content`,'PUT',{baseVersionId:made.body.current_version_id,content:'commit-failure'});
+    }else if(kind==='keep'||kind==='run'){
+      const run=`run-${randomUUID()}`;const source=await f.collection('scratch',run);
+      const made=await json('/v1/agent-files','POST',{collectionId:source,path:'keep.txt',content:'preserve source'});
+      expect(made.status).toBe(201);
+      await f.pool!.query('UPDATE files SET created_by_id=$2 WHERE id=$1',[made.body.fileId,run]);
+      write=()=>json(kind==='keep'?`/v1/agent-files/${made.body.fileId}/keep`:`/v1/agent-runs/${run}/keep`,'POST',{collectionId:target});
+    }else if(kind==='native'||kind==='system'){
+      const bytes=Buffer.from('commit-failure');
+      write=()=>f.request(`/v1/local/${kind==='native'?'native-sources':'system-areas'}/ingest?collectionId=${target}&path=failure.txt`,'PUT',bytes,{
+        'content-type':'text/plain','x-sulla-source-hash':sha256(bytes),'x-sulla-source-handle':createHash('sha256').update(target).digest('base64url'),'x-sulla-source-revision':sha256('revision'),'x-sulla-operation-id':randomUUID()
+      });
+    }else if(kind==='upload'||kind==='import'){
+      const bytes=Buffer.from('commit-failure');write=()=>f.request(`/v1/files/${kind}?collectionId=${target}&path=failure.txt`,'PUT',bytes,{'content-type':'application/octet-stream','x-sulla-expected-bytes':String(bytes.length)});
+    }else write=()=>json('/v1/files/empty','POST',{collectionId:target,path:'failure.txt'});
+    const snapshot=async()=> (await f.pool!.query(`SELECT f.id,f.current_version_id,f.deleted_at,v.id AS version_id FROM files f JOIN file_versions v ON v.file_id=f.id WHERE f.collection_id=$1 ORDER BY f.id,v.id`,[target])).rows;
+    const before=await snapshot();
+    await f.pool!.query(`CREATE OR REPLACE FUNCTION kill_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_terminate_backend(pg_backend_pid()); RETURN NEW; END $$`);
+    await f.pool!.query(`CREATE CONSTRAINT TRIGGER kill_commit AFTER INSERT ON file_versions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION kill_commit()`);
+    try{const reply=await write();expect(reply.status,JSON.stringify(reply.body)).toBe(503);expect(reply.body.code).toBe('FILES_DB_RETRYABLE')}
+    finally{await f.pool!.query('DROP TRIGGER kill_commit ON file_versions')}
+    expect(await snapshot()).toEqual(before);
+    // Repeating the same operation after a dead connection remains usable and commits completely.
+    const retried=await write();expect(retried.status,JSON.stringify(retried.body)).toBeLessThan(300);
+  });
+
+  it('remote purge commits a tombstone and releases the one-client pool',async()=>{
+    const fileId=randomUUID();
+    const manager=(f as any).manager as any;
+    await manager.pull({op:'purge',syncAuthority:{canMaterialize:true},
+      file:{id:fileId,collection_id:f.collectionId,path:'remote-only.txt',lifecycle_generation:1}});
+    expect((await f.pool!.query('SELECT file_id FROM file_purge_tombstones WHERE file_id=$1',[fileId])).rows[0]?.file_id).toBe(fileId);
+    expect(f.pool!.waitingCount).toBe(0);
+  });
+
+  it('filesystem copy publishes outside both short metadata transactions',async()=>{
+    const made=await f.createAndWrite('copy-source.txt',Buffer.from('copy source'));
+    await f.pool!.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,'copy-source.txt',$2,$3,11,1,'default')`,[f.collectionId,made.fileId,sha256('copy source')]);
+    const manager=(f as any).manager;const root=manager.roots[0];
+    const atomic=vi.spyOn(FilesMutationCoordinator,'requireAtomicRename').mockResolvedValue(undefined);
+    const scan=vi.spyOn(manager,'scanFolder').mockResolvedValue(undefined);
+    const watch=f.watchIdleTransactions();
+    const mutations={copyVerified:async(input:any)=>{
+      expect(TransactionScope.current()).toBeUndefined();
+      // A one-client pool would deadlock here if the planning client had not been released.
+      await f.pool!.query('SELECT 1');await sleep(3500);
+      return {staged:input.staged,target:input.target,fingerprint:{dev:1n,ino:1n,size:11,mtimeMs:1}};
+    },finalizePublication:async()=>undefined};
+    try{await manager.applyPathOperationsNow('copy',[{sourcePath:'copy-source.txt',targetPath:'copy-target.txt',folder:false,fileSnapshots:[{id:made.fileId,path:'copy-source.txt',currentVersionId:made.versionId}]}],{userId:f.userId,deviceId:'test-device',kind:'capability'},root,mutations)}
+    finally{atomic.mockRestore();scan.mockRestore();expect(await watch.stop()).toEqual([])}
+    expect((await f.pool!.query("SELECT 1 FROM files WHERE collection_id=$1 AND path='copy-target.txt'",[f.collectionId])).rowCount).toBe(1);
+  });
+
+  it('background indexing stages extraction, capabilities and embeddings without a nested acquire',async()=>{
+    await f.pool!.query('DELETE FROM file_index_jobs');
+    const made=await json('/v1/files/empty','POST',{collectionId:f.collectionId,path:'indexed.txt'});expect(made.status).toBe(201);
+    const source=join((f as any).root,'synthetic-index-source.txt');await writeFile(source,'Synthetic content to index');
+    const watch=f.watchIdleTransactions();
+    const queue=new IndexingQueue(f.pool!,async()=>{await sleep(3500);return {path:source}}, {dim:512,embed:()=>{expect(TransactionScope.current()).toBeUndefined();return new Float32Array(512)}} as any);
+    try{await (queue as any).processOne()}finally{await queue.close();expect(await watch.stop()).toEqual([])}
+    const job=(await f.pool!.query('SELECT status FROM file_index_jobs WHERE version_id=$1',[made.body.current_version_id])).rows[0];expect(job.status).toBe('indexed');
+  });
+
 });

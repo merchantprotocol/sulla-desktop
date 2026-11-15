@@ -375,7 +375,7 @@ export function createApp(
   async function stageVersionContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
     return contentStager.stage(collectionId, bytes);
   }
-  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null; staged?: StagedVersionContent }) {
+  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null; staged: StagedVersionContent }) {
     input = { ...input, mime: resolveMime(input.path, input.mime) };
     const agentWrite = input.createdByType === 'agent-run' || input.createdByType === 'agent' || Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
     const collection = await collectionRow(input.collectionId, client);
@@ -384,9 +384,8 @@ export function createApp(
     const publicationStatus = new PublicationLifecyclePolicy().statusForWrite({ collection, path:input.path, createdByType });
     await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
     await ensureStoredFileParents(client, input.collectionId, input.path, input.actor);
-    // Callers that still pass only bytes stage here (inside their transaction); the Files mount,
-    // audit and live-edit paths stage first so their transactions hold only DB statements.
-    const staged = input.staged ?? await contentStager.stage(input.collectionId, input.bytes);
+    // Every writer must stage before entering its metadata transaction. Never add a fallback here.
+    const staged = input.staged;
     if (staged.collectionId !== input.collectionId || staged.size !== input.bytes.length) throw new Error('staged content does not match the version being written');
     const chunkIds = [...staged.chunkIds]; const chunks = staged.chunks; const manifestHash = staged.manifestHash;
     await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
@@ -1245,8 +1244,9 @@ export function createApp(
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
   app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
   app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
-  app.post('/v1/local/maintenance', async(_request, response, next) => { const client = await db.connect(); try {
-    await client.query('BEGIN'); const now = new Date();
+  app.post('/v1/local/maintenance', async(_request, response, next) => { try {
+    const now = new Date();
+    const {expired,disposal}=await transactions.run('maintenance-expiry',async client=>{
     const disposal = await client.query(`UPDATE files SET disposal_status='pending',disposal_review_at=NOW(),lifecycle_generation=lifecycle_generation+1
       WHERE deleted_at IS NOT NULL AND disposal_status='none' AND retention_mode<>'none' AND NOT files_retention_active(files) RETURNING id`);
     const expired = (await client.query('SELECT * FROM files WHERE expires_at<$1 AND deleted_at IS NULL FOR UPDATE', [now])).rows;
@@ -1256,11 +1256,11 @@ export function createApp(
       await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3,updated_at=$3 WHERE id=$1', [file.id, deleted.id, now]);
       await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [file.collection_id, file.id, deleted.id]);
     }
-    await client.query('COMMIT');
+    return {expired,disposal}; });
     await drainPendingChunkGc(db, (collectionId, chunkId) => store.delete(collectionId, chunkId));
     const receiptGc=manager?await manager.expireTrashReceipts(now):{invalidated:0,disposed:0,preserved:0};
     response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => {
     const abort = new AbortController();
@@ -1666,15 +1666,15 @@ export function createApp(
     if (requested && destination && requested.id !== destination.id) throw new HttpError(409, 'another file already exists at the requested path');
     for (const file of candidates) await assertUnprotectedFile(queryable, file);
     let exactFileEdit = false;
-    try { await requirePath(request, bundle.collectionId, path, 'edit') } catch (error:any) {
+    try { await requirePath(request, bundle.collectionId, path, 'edit',queryable) } catch (error:any) {
       if (error.status !== 403 || requested?.path !== path) throw error;
-      await requireFile(request, requested.id, 'edit'); exactFileEdit = true;
+      await requireFile(request, requested.id, 'edit',queryable); exactFileEdit = true;
     }
     for (const file of candidates) {
       if (exactFileEdit && file.id === requested.id) continue;
-      await requirePath(request, file.collection_id, file.path, 'edit');
+      await requirePath(request, file.collection_id, file.path, 'edit',queryable);
     }
-    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit');
+    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit',false,false,queryable);
     if (bundle.keyContext) validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, identity(request).userId);
     const existing = requested ?? destination;
     const scopedEdit = false;
@@ -1705,14 +1705,14 @@ export function createApp(
     return { existing, path, missing, conflict, currentVersionId: existing?.current_version_id ?? null, canonicalFileId: existing?.id ?? bundle.file.id };
   }
   app.post('/v1/versions/prepare', async(request:RequestWithIdentity, response, next) => { try { const result = await prepare(request, request.body, db, false, true); response.json({ missing: result.missing, currentVersionId: result.currentVersionId, canonicalFileId: result.canonicalFileId, conflict: result.conflict }) } catch (error) { next(error) } });
-  app.post('/v1/versions/commit', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/versions/commit', async(request:RequestWithIdentity, response, next) => { try {
     const bundle = request.body; const actor = identity(request);
-    await client.query('BEGIN');
+    const outcome=await transactions.run('remote-version-commit',async client=>{
     const bundlePath = cleanPath(bundle.file.path, false);
     await lockStoredNamespace(client, bundle.collectionId);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`version-commit:${ bundle.collectionId }:${ bundlePath }`]);
     const checked = await prepare(request, bundle, client, true);
-    if (checked.missing.length) { await client.query('ROLLBACK'); return response.status(400).json({ error: 'manifest chunks missing', missing: checked.missing }) }
+    if (checked.missing.length) return {status:400,body:{ error:'manifest chunks missing',missing:checked.missing }};
     const fileId = checked.canonicalFileId;
     const prior = (await client.query('SELECT file_id,chunk_collection_id,manifest_hash,size,deleted FROM file_versions WHERE id=$1', [bundle.version.id])).rows[0];
     if (prior) {
@@ -1729,10 +1729,9 @@ export function createApp(
           throw new HttpError(409, 'immutable version key context does not match the committed version');
         }
       }
-      await client.query('COMMIT');
-      return response.json({ ok: true, versionId: bundle.version.id, fileId });
+      return {status:200,body:{ok:true,versionId:bundle.version.id,fileId}};
     }
-    if (checked.conflict) { await client.query('ROLLBACK'); return response.status(409).json({ conflict: true, currentVersionId: checked.currentVersionId }) }
+    if(checked.conflict)return {status:409,body:{conflict:true,currentVersionId:checked.currentVersionId}};
     await assertStoredFilePath(client, bundle.collectionId, checked.path, fileId);
     await ensureStoredFileParents(client, bundle.collectionId, checked.path, actor);
     if (bundle.manifest) {
@@ -1756,8 +1755,9 @@ export function createApp(
     if (advanced.rowCount !== 1) throw new HttpError(409, 'file changed while committing the remote version');
     await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']);
     await client.query('DELETE FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2 AND actor_scope=$3', [bundle.version.id, actor.userId, actorScope(actor)]);
-    await client.query('COMMIT'); response.json({ ok: true, versionId: bundle.version.id, fileId });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+    return {status:200,body:{ok:true,versionId:bundle.version.id,fileId}}; });
+    response.status(outcome.status).json(outcome.body);
+  } catch (error) { next(error) } });
 
   app.get('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
@@ -2005,7 +2005,7 @@ export function createApp(
     const readVersion=async(fileId:string,versionId:string):Promise<Buffer>=>{const loaded=await loadFileContent(db,config,store,fileId,versionId);if(!loaded)throw new HttpError(409,'Files version content is unavailable');return loaded.buffer};
     const currentBytes=await readVersion(file.id,file.current_version_id); let saved;
     try{saved=await textSave(db as unknown as pg.PoolClient,file,baseVersionId,Buffer.from(content,'utf8'),currentBytes,readVersion)}catch(error){
-      if(baseVersionId!==file.current_version_id){return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited version could not be merged safely.',currentVersionId:file.current_version_id})}
+      if(!databaseFailures.isConnectionLoss(error)&&baseVersionId!==file.current_version_id){return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited version could not be merged safely.',currentVersionId:file.current_version_id})}
       throw error;
     }
     const actor=identity(request); const staged=await stageVersionContent(file.collection_id,saved.bytes);
@@ -2182,11 +2182,14 @@ export function createApp(
     const source = await requireFile(request, request.params.id, 'edit'); const targetCollectionId = String(request.body.collectionId ?? ''); const targetPath = cleanPath(String(request.body.path ?? source.path), false);
     await requirePath(request, targetCollectionId, targetPath, 'edit'); const target = await collectionRow(targetCollectionId); if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
     const content = await loadFileContent(db, config, store, source.id, source.current_version_id); if (!content) throw new HttpError(404, 'source content not found');
+    if(source.collection_id===targetCollectionId&&source.path===targetPath)throw new HttpError(409,'The file is already kept at this path');
     const actor = identity(request);
     const staged=await stageVersionContent(targetCollectionId,content.buffer);
     const kept=await transactions.run('keep-agent-file',async client=>{
+    for(const id of [...new Set([source.collection_id,targetCollectionId])].sort())await lockStoredNamespace(client,id);
+    await client.query('SELECT id FROM files WHERE id=$1 FOR UPDATE',[source.id]);
     const current=await requireFile(request,source.id,'edit',client);
-    if(current.current_version_id!==source.current_version_id)throw new HttpError(409,'Source changed while preparing keep');
+    if(current.current_version_id!==source.current_version_id||current.path!==source.path||current.collection_id!==source.collection_id)throw new HttpError(409,'Source changed while preparing keep');
     await requirePath(request,targetCollectionId,targetPath,'edit',client);
     await lockStoredNamespace(client, targetCollectionId);
     const lockedExisting = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [targetCollectionId, targetPath])).rows[0];
@@ -2201,19 +2204,25 @@ export function createApp(
     const targetCollectionId = String(request.body.collectionId ?? ''); await requireCollection(request, targetCollectionId, 'edit'); const target = await collectionRow(targetCollectionId);
     if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
     const files = (await db.query(`SELECT ${FILE_COLUMNS_SQL} FROM files f WHERE f.collection_id=$1 AND f.created_by_id=$2 AND f.deleted_at IS NULL`, [source.id, request.params.runId])).rows;
-    const materialized = await Promise.all(files.map(async file => ({ file, content: await loadFileContent(db, config, store, file.id, file.current_version_id) })));
-    for(const item of materialized){if(!item.content)throw new HttpError(404,'Source content not found'); (item as any).staged=await stageVersionContent(targetCollectionId,item.content.buffer);}
+    const materialized:{file:any;content:NonNullable<Awaited<ReturnType<typeof loadFileContent>>>;staged:StagedVersionContent}[]=[];
+    // Bound acquisitions and encryption work instead of flooding the pool for a large run.
+    for(const file of files){
+      const content=await loadFileContent(db,config,store,file.id,file.current_version_id);
+      if(!content)throw new HttpError(404,'Source content not found');
+      materialized.push({file,content,staged:await stageVersionContent(targetCollectionId,content.buffer)});
+    }
     const count=await transactions.run('keep-agent-run',async client=>{
     await requireCollection(request,targetCollectionId,'edit',false,false,client);
-    await lockStoredNamespace(client, targetCollectionId);
+    for(const id of [...new Set([source.id,targetCollectionId])].sort())await lockStoredNamespace(client,id);
+    await client.query('SELECT id FROM files WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[materialized.map(item=>item.file.id)]);
     let count = 0;
     for (const item of materialized) {
       if (!item.content) throw new HttpError(404, `source content not found for ${ item.file.path }`);
       const current=await requireFile(request,item.file.id,'edit',client);
-      if(current.current_version_id!==item.file.current_version_id)throw new HttpError(409,'Source changed while preparing keep');
+      if(current.current_version_id!==item.file.current_version_id||current.path!==item.file.path||current.collection_id!==item.file.collection_id)throw new HttpError(409,'Source changed while preparing keep');
       await requirePath(request,targetCollectionId,item.file.path,'edit',client);
       const existing = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [targetCollectionId, item.file.path])).rows[0];
-      const kept = await insertVersion(client, { collectionId: targetCollectionId, fileId: existing?.id, path: item.file.path, mime: item.file.mime, bytes: item.content.buffer, staged:(item as any).staged, actor, createdByType: item.file.created_by_type, createdById: item.file.created_by_id, message: `Kept from agent run ${ request.params.runId }` });
+      const kept = await insertVersion(client, { collectionId: targetCollectionId, fileId: existing?.id, path: item.file.path, mime: item.file.mime, bytes: item.content.buffer, staged:item.staged, actor, createdByType: item.file.created_by_type, createdById: item.file.created_by_id, message: `Kept from agent run ${ request.params.runId }` });
       await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [item.file.id]);
       await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,props,created_by) VALUES('file',$1,'agent-run',$2,'created_by',$3,$4) ON CONFLICT DO NOTHING`, [kept.id, request.params.runId, JSON.stringify({ keptFromCollectionId: source.id, sourceFileId: item.file.id }), actor.userId]); count++;
     }
