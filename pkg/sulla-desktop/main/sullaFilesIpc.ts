@@ -622,13 +622,17 @@ export function initSullaFilesIpc():void {
     }
     return files;
   });
-  ipcMain.handle('sulla-files:list-page', async(_event, input:{ collectionId:string; path?:string; trash?:boolean; cursor?:string }) => {
-    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:String(FilesListingPager.pageSize)});
+  ipcMain.handle('sulla-files:list-page', async(_event, input:{ collectionId:string; path?:string; trash?:boolean; cursor?:string; children?:boolean }) => {
+    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:String(FilesListingPager.pageSize),...(input.children?{children:'true'}:{})});
     if(input.cursor) query.set('cursor',input.cursor);
     const response=await filesClient.request(`/v1/files?${query}`);
     if(!response.ok) throw new FilesApiError(await response.text(),response.status);
     return { files:await response.json(), nextCursor:response.headers.get('X-Next-Cursor'), hasMore:response.headers.get('X-Has-More')==='true' };
   });
+  // Cross-folder views and counts come from bounded server queries, never from the open folder's rows.
+  ipcMain.handle('sulla-files:recent', (_event, input:{ collectionId:string; limit?:number; createdByType?:string }) => json(`/v1/files/recent?${ new URLSearchParams({ collectionId:input.collectionId, limit:String(input.limit ?? 50), ...(input.createdByType ? { createdByType:input.createdByType } : {}) }) }`));
+  ipcMain.handle('sulla-files:stats', (_event, input:{ collectionId:string }) => json(`/v1/files/stats?collectionId=${ encodeURIComponent(input.collectionId) }`));
+  ipcMain.handle('sulla-files:folder-summary', (_event, input:{ collectionId:string; path?:string }) => json(`/v1/folders/summary?${ new URLSearchParams({ collectionId:input.collectionId, path:input.path ?? '' }) }`));
   ipcMain.handle('sulla-files:create-empty-file', (_event,input:{collectionId:string;path:string}) => json('/v1/files/empty',{method:'POST',body:JSON.stringify(input)}));
   ipcMain.handle('sulla-files:search', (_event, input:{ query: string; collectionId?: string }) => json('/v1/search', { method: 'POST', body: JSON.stringify(input) }));
   ipcMain.handle('sulla-files:reindex', (_event, input:{ fileId: string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/reindex`, { method: 'POST' }));

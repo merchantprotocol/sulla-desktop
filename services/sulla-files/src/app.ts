@@ -63,6 +63,8 @@ import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepositor
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 import { ListingPage } from './ListingPage.js';
+import { FileListingQuery } from './FileListingQuery.js';
+import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const FOLDER_WHERE_CANDIDATES = 2000;
@@ -159,7 +161,7 @@ export function createApp(
   chunkStore?:Store,
   cloudSync?:CloudSyncService,
 ) {
-  const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
   const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
@@ -1745,20 +1747,37 @@ export function createApp(
     await client.query('COMMIT');
     response.status(204).end();
   } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  // Cross-folder views read their own bounded server queries; clients only hold the open folder's rows.
+  app.get('/v1/files/recent', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    const access = await requireCollection(request, collectionId, 'view', true, true);
+    let rows:any[]; try { rows = await filesFeed.recent({ collectionId, limit: request.query.limit, createdByType: request.query.createdByType }) } catch (error) { if (error instanceof RangeError) throw new HttpError(400, error.message); throw error }
+    response.json(rows.filter(row => !isProtectedPath(row.path)).map(row => ({ ...lifecycleFields({ ...row, size: Number(row.size) }), capabilities: lifecycleCapabilities(access.role, true) })));
+  } catch (error) { next(error) } });
+  app.get('/v1/files/stats', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    await requireCollection(request, collectionId, 'view', true, true);
+    response.json(await filesFeed.stats(collectionId));
+  } catch (error) { next(error) } });
+  app.get('/v1/folders/summary', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    const path = cleanPath(String(request.query.path ?? '')); await requireCollection(request, collectionId, 'view', true, true);
+    const visible = [];
+    for (const summary of await filesFeed.folderSummaries(collectionId, path)) {
+      const folderPath = path ? `${ path }/${ summary.name }` : summary.name; if (isProtectedPath(folderPath)) continue;
+      try { await requirePath(request, collectionId, folderPath, 'view'); visible.push({ path: folderPath, ...summary }) } catch (error:any) { if (error.status !== 403) throw error }
+    }
+    response.json(visible);
+  } catch (error) { next(error) } });
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
     const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
     let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
-    const params:any[] = [collectionId, path ? `${ path }/` : ''];
-    let filter = '';
-    if (typeof request.query.deviceId === 'string' && request.query.deviceId) {
-      params.push(request.query.deviceId);
-      filter = ` AND v.device_id=$${ params.length }`;
-    }
+    const scope=listingQuery.build({ collectionId, path, childrenOnly:request.query.children==='true', trash, deviceId:typeof request.query.deviceId==='string'?request.query.deviceId:undefined, after:pageRequest.after, limit:(paged ? pageRequest.limit : ListingPage.legacyMaxRows)+1 });
     const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
       FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
-      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2)) AND f.path>$${params.push(pageRequest.after)}${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path LIMIT $${params.push(paged ? pageRequest.limit+1 : ListingPage.legacyMaxRows+1)}`, params);
+      WHERE ${ scope.where } ${ scope.orderLimit }`, scope.values);
     if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
     const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
     const actor = identity(request); const visible = [];
