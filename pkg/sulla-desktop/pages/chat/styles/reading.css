@@ -111,11 +111,12 @@
 .chat-fade-in { animation: chat-fade-in 0.45s ease forwards; }
 
 /* Contract-token chat thread. */
+/* No width cap: the transcript fills the area inside the scroller's side padding. */
 .chat-dialogue {
-  max-width: 720px;
+  max-width: none;
   gap: 18px;
 }
-.chat-root.artifact-open .chat-dialogue { max-width: 680px; }
+.chat-root.artifact-open .chat-dialogue { max-width: none; }
 .scroller {
   padding-top: 22px;
   scrollbar-color: color-mix(in srgb, var(--border-default) 93.75%, transparent) transparent;

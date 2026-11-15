@@ -129,7 +129,7 @@ defineExpose({ scroller, scrollToBottom });
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
   overflow-y: auto; overflow-x: hidden;
-  padding: 96px 12% var(--scroller-pad-b, 240px);
+  padding: 96px 8% var(--scroller-pad-b, 240px);
   scroll-behavior: smooth;
   /* Messages fade out just above the message box instead of running up
      against (or behind) it. --composer-h is the box's live height. */
