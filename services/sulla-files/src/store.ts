@@ -24,6 +24,16 @@ export class Store {
     } catch { return false } finally { await handle?.close() }
   }
 
+  /** Stored (encrypted) size of a chunk, or undefined when it is not in the store. */
+  async storedSize(collectionId:string, id:string):Promise<number | undefined> {
+    let handle;
+    try {
+      handle = await open(this.path(collectionId, id), constants.O_RDONLY | constants.O_NOFOLLOW);
+      const info = await handle.stat();
+      return info.isFile() ? info.size : undefined;
+    } catch { return undefined } finally { await handle?.close() }
+  }
+
   async get(collectionId:string, id:string):Promise<Buffer> {
     return readFile(this.path(collectionId, id));
   }

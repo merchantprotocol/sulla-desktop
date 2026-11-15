@@ -6,6 +6,7 @@
 import { appendAuditLine, type AuditEventInput, type AuditEventLine } from './auditChain.js';
 import { lockStoredNamespace } from './storedNamespace.js';
 import { auditContext } from './auditContext.js';
+import { TransactionRunner } from './FilesTransaction.js';
 
 import type pg from 'pg';
 
@@ -33,11 +34,25 @@ export function validateAuditEvent(value:unknown):AuditEventInput {
     ...(input.meta !== undefined ? {meta:input.meta as Record<string,unknown>} : {})};
 }
 
-/** Queue and append are separate: a failed append never rolls back the user's operation. */
-export class FileAuditWriter {
+export interface AuditStagedContent { readonly collectionId:string; readonly size:number }
+
+/**
+ * Queue and append are separate: a failed append never rolls back the user's operation.
+ *
+ * Each delivery reads the subject's audit log, appends the next chained line and encrypts the
+ * new content with no transaction open; the transaction only re-checks that nothing moved on
+ * (the spool row is still pending, the log is still at the version that was read) and records
+ * the version. The old shape held BEGIN and the Logs namespace lock while it read the log
+ * through the pool and wrote chunks, which under load waited on the pool past Postgres's
+ * idle-in-transaction timeout and then kept using the terminated client.
+ */
+export class FileAuditWriter<Staged extends AuditStagedContent = AuditStagedContent> {
   private running = false;
+  private readonly transactions:TransactionRunner;
   constructor(private readonly db:pg.Pool, private readonly read:(id:string,versionId:string)=>Promise<Buffer>,
-    private readonly write:(client:pg.PoolClient,collectionId:string,path:string,bytes:Buffer,fileId?:string)=>Promise<unknown>) {}
+    private readonly stage:(collectionId:string,bytes:Buffer)=>Promise<Staged>,
+    private readonly write:(client:pg.PoolClient,collectionId:string,path:string,bytes:Buffer,staged:Staged,fileId?:string)=>Promise<unknown>,
+    transactions?:TransactionRunner) { this.transactions = transactions ?? new TransactionRunner(db) }
 
   async drain():Promise<void> {
     if (this.running) return;
@@ -45,35 +60,40 @@ export class FileAuditWriter {
     try {
       await auditContext.run({actor:'sulla-files',requestId:''}, async() => {
         for (let count=0; count<100; count++) {
-          const client = await this.db.connect();
           let eventId:string | undefined;
           try {
-            await client.query('BEGIN');
-            // One delivery lock preserves ordering, including across multiple service instances.
-            const lock = await client.query("SELECT pg_try_advisory_xact_lock(hashtextextended('files-audit-delivery',0)) locked");
-            if (!lock.rows[0]?.locked) { await client.query('ROLLBACK'); break }
-            const pending = (await client.query('SELECT * FROM files_audit_spool ORDER BY id LIMIT 1 FOR UPDATE')).rows[0];
-            if (!pending) { await client.query('COMMIT'); break }
-            eventId=pending.id;
+            const pending = (await this.db.query('SELECT * FROM files_audit_spool ORDER BY id LIMIT 1')).rows[0];
+            if (!pending) break;
+            eventId=String(pending.id);
             const input=validateAuditEvent(pending.event);
-            const logs=(await client.query("SELECT id FROM collections WHERE system_area='logs'")).rows[0];
+            const logs=(await this.db.query("SELECT id FROM collections WHERE system_area='logs'")).rows[0];
             if (!logs) throw new Error('Logs system collection is not initialized');
-            await lockStoredNamespace(client,logs.id);
             const path=`audit/${input.subjectKind==='vault-secret'?'vault':'files'}/${input.subjectId}.jsonl`;
-            const existing=(await client.query('SELECT id,current_version_id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE',[logs.id,path])).rows[0];
+            const existing=(await this.db.query('SELECT id,current_version_id FROM files WHERE collection_id=$1 AND path=$2',[logs.id,path])).rows[0];
             const bytes=existing ? await this.read(existing.id,existing.current_version_id) : Buffer.alloc(0);
             const lines=bytes.toString('utf8').trimEnd().split('\n').filter(Boolean);
             const previous=lines.length ? JSON.parse(lines.at(-1)!) as AuditEventLine : undefined;
             const line=appendAuditLine(input,previous,pending.event.ts ?? new Date(pending.created_at).toISOString());
-            await this.write(client,logs.id,path,Buffer.concat([bytes,Buffer.from(`${JSON.stringify(line)}\n`)]),existing?.id);
-            await client.query('DELETE FROM files_audit_spool WHERE id=$1',[pending.id]);
-            await client.query('COMMIT');
+            const next=Buffer.concat([bytes,Buffer.from(`${JSON.stringify(line)}\n`)]);
+            const staged=await this.stage(logs.id,next);
+            const outcome=await this.transactions.run('audit-append', async client => {
+              // One delivery lock preserves ordering, including across multiple service instances.
+              const lock = await client.query("SELECT pg_try_advisory_xact_lock(hashtextextended('files-audit-delivery',0)) locked");
+              if (!lock.rows[0]?.locked) return 'busy' as const;
+              if (!(await client.query('SELECT id FROM files_audit_spool WHERE id=$1 FOR UPDATE',[pending.id])).rowCount) return 'delivered' as const;
+              await lockStoredNamespace(client,logs.id,path);
+              const current=(await client.query('SELECT id,current_version_id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE',[logs.id,path])).rows[0];
+              if ((current?.current_version_id ?? null) !== (existing?.current_version_id ?? null)) return 'stale' as const;
+              await this.write(client,logs.id,path,next,staged,existing?.id);
+              await client.query('DELETE FROM files_audit_spool WHERE id=$1',[pending.id]);
+              return 'appended' as const;
+            });
+            if (outcome==='busy') break;
           } catch(error) {
-            await client.query('ROLLBACK').catch(()=>undefined);
             console.error('[SullaFiles] audit append failed; event retained in retry spool', {eventId,error:error instanceof Error?error.message:'unknown error'});
             if (eventId) await this.db.query('UPDATE files_audit_spool SET last_error=$2 WHERE id=$1',[eventId,'Audit append failed; retry pending']).catch(()=>undefined);
             break;
-          } finally { client.release() }
+          }
         }
       });
     } finally { this.running=false }
