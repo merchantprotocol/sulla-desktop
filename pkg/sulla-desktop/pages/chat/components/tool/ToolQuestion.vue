@@ -284,9 +284,20 @@ function submit(): void {
 .qc-countdown { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .qc-countdown.urgent { color: var(--status-warning); font-weight: 600; }
 
-.qc-block { margin: 0; padding: 0; border: 0; min-width: 0; }
-.qc-block + .qc-block { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border-subtle, var(--border-default)); }
-.qc-question { padding: 0; max-width: 70ch; font-size: 15px; line-height: 1.6; font-weight: 400; color: var(--text-primary); }
+/*
+ * Each question sits in a padded box (pulled out by the same amount, so text
+ * stays aligned with the card) with a transparent border, so the "needs an
+ * answer" state only recolours it and never shifts layout. The legend floats
+ * so the fieldset box starts above the question, not through its middle.
+ */
+.qc-block { position: relative; margin: 0 -14px; padding: 12px 14px 14px; border: 1px solid transparent; border-radius: 10px; min-width: 0; }
+.qc-block + .qc-block { margin-top: 12px; }
+.qc-block + .qc-block::before {
+  content: ''; position: absolute; top: -7px; left: 14px; right: 14px; height: 1px;
+  background: var(--border-subtle, var(--border-default));
+}
+.qc-question { float: left; width: 100%; padding: 0; max-width: 70ch; font-size: 15px; line-height: 1.6; font-weight: 400; color: var(--text-primary); }
+.qc-question + * { clear: both; }
 .qc-topic { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .qc-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--text-muted); }
 
@@ -327,7 +338,7 @@ function submit(): void {
 .qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .qc-actions .qc-hint { margin: 0; }
 .qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.qc-block.qc-open { border-radius: 10px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.qc-block.qc-open { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .qc-submit {
   height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
   background: var(--accent); color: var(--text-on-accent, #fff);
