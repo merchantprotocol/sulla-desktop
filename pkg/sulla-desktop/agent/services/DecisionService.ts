@@ -109,7 +109,7 @@ export class DecisionService {
     }
     entry.busy = true;
     try {
-      const next = { ...entry.record, status: action };
+      const next: DecisionRecord = { ...entry.record, status: action, ...(answers.length ? { answers } : {}) };
       const rows = await postgresClient.query(`UPDATE human_decisions SET status = $2, record = $3::jsonb, updated_at = NOW()
         WHERE id = $1 AND status IN ('pending', 'deferred') AND session_id = $4 RETURNING id`,
       [response.id, action, JSON.stringify(next), this.session]);

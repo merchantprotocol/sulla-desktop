@@ -407,7 +407,7 @@ export class MCPServerHost {
           timeoutMs: z.number().optional().describe('Timeout in ms (min 5000, max 1800000, default 300000 = 5 min).'),
         },
       },
-      async ({ questions, timeoutMs }) => {
+      async ({ questions, timeoutMs }, extra: { signal?: AbortSignal }) => {
         // The claude-code MCP path bypasses BaseNode's in-loop tool filtering,
         // so honor the calling agent's allowlist here. Restricted background
         // agents (heartbeat, subconscious) carry an explicit allowedToolNames
@@ -428,11 +428,16 @@ export class MCPServerHost {
 
         const clamped = clampTimeout(timeoutMs);
         const { decisionService } = await import('@pkg/agent/services/DecisionService');
+        // Stop waiting when the run stops or when the caller drops this call
+        // (Claude Code abandons a tool that is silent for 300 s; the SDK then
+        // aborts this request). Either way nobody will read the answer here,
+        // so the question must expire instead of staying open and swallowing it.
+        const stopSignals = [session.state.metadata.options?.abort?.signal, extra?.signal].filter((signal): signal is AbortSignal => !!signal);
         const { record, result } = await decisionService.request({
           kind: 'question', title: normalized[0].question, questions: normalized,
           conversationId: session.state.metadata.threadId,
           channel: session.state.metadata.wsChannel || 'sulla-desktop',
-        }, clamped, session.state.metadata.options?.abort?.signal);
+        }, clamped, stopSignals.length ? AbortSignal.any(stopSignals) : undefined);
         const questionId = record.id;
 
         const emitted = await emitQuestionCardViaWs(
