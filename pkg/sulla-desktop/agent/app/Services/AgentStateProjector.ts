@@ -85,6 +85,7 @@ export class AgentStateProjector {
   private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {
     if (state === 'blocked') return checkin?.blockers.join('; ') || task.summary || 'Blocked';
     if (state === 'quiet') return 'No recent check-in';
+    if (state === 'parked' && task.wakeAt !== undefined && task.wakeAt > this.clock()) return 'scheduled wake-up';
     if (['failed', 'lost', 'stopped'].includes(state)) return job.error || task.summary || state;
     return null;
   }

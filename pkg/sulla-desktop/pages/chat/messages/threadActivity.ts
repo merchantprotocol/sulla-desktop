@@ -48,6 +48,17 @@ function plural(n: number, word: string): string {
   return `${ n } ${ word }${ n === 1 ? '' : 's' }`;
 }
 
+/**
+ * A parked agent is only waiting while it has live children or a scheduled
+ * wake-up. One re-parked after a turn that returned nothing waits on no one:
+ * it sits idle until it is messaged or stopped.
+ */
+export function parkedActivity(row: AgentStateRow): { state: 'waiting' | 'idle'; detail: string } {
+  if (row.waitingOnChildren > 0) return { state: 'waiting', detail: `waiting on ${ plural(row.waitingOnChildren, 'agent') }` };
+  if (row.stateReason) return { state: 'waiting', detail: `waiting on a ${ row.stateReason }` };
+  return { state: 'idle', detail: 'idle, waiting for a message' };
+}
+
 function agentItem(row: AgentStateRow): ThreadActivityItem | null {
   const at = Date.parse(row.lastActivityAt) || undefined;
   const ref = { kind: 'agent' as const, key: row.key };
@@ -55,8 +66,10 @@ function agentItem(row: AgentStateRow): ThreadActivityItem | null {
   switch (row.state) {
   case 'working': case 'queued':
     return { state: 'working', title: row.label, detail: said || (row.state === 'queued' ? 'starting' : 'working'), at, ref };
-  case 'parked':
-    return { state: 'waiting', title: row.label, detail: `waiting on ${ plural(row.waitingOnChildren, 'agent') }`, at, ref };
+  case 'parked': {
+    const parked = parkedActivity(row);
+    return parked.state === 'waiting' ? { state: 'waiting', title: row.label, detail: parked.detail, at, ref } : null;
+  }
   case 'quiet':
     return { state: 'stalled', title: row.label, detail: said || 'no check-in lately', at, ref };
   case 'blocked':
@@ -112,7 +125,8 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     if (input.heartbeatMinutes) parts.push(`heartbeat every ${ input.heartbeatMinutes } min`);
   } else {
     state = 'idle';
-    parts = ['nothing running or scheduled'];
+    const idleAgents = input.agents.filter(row => row.state === 'parked' && parkedActivity(row).state === 'idle').length;
+    parts = [idleAgents ? `${ plural(idleAgents, 'agent') } idle, waiting for a message` : 'nothing running or scheduled'];
   }
 
   return { state, lead: LEAD[state], parts, items, lastActivityAt };

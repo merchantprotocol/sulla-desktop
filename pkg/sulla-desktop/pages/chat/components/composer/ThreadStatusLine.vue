@@ -51,7 +51,7 @@
       aria-label="Activity in this thread"
     >
       <div class="ta-trayhead">
-        ACTIVITY IN THIS THREAD
+        <span>In this thread</span>
         <span class="ta-sp" />
         <button
           v-if="stalledRows.length > 1"
@@ -62,12 +62,18 @@
           Nudge all stalled
         </button>
       </div>
+      <div
+        class="ta-cols"
+        aria-hidden="true"
+      >
+        <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Age</span><span />
+      </div>
 
       <!-- Questions and approvals: answer them right here. -->
       <div
         v-for="msg in humanMessages"
         :key="msg.id"
-        class="ta-item ta-you"
+        class="ta-item"
         :class="{ 'ta-open': expanded.has(msg.id) }"
       >
         <div
@@ -79,8 +85,9 @@
           @keydown.enter.prevent="toggle(msg.id)"
           @keydown.space.prevent="toggle(msg.id)"
         >
-          <span class="ta-dot ta-dot-you" />
-          <span class="ta-title"><b>{{ humanTitle(msg) }}</b> <span>· {{ humanDetail(msg) }}</span></span>
+          <span class="ta-chip ta-chip-you"><span class="ta-dot ta-dot-you" />{{ CHIP.you }}</span>
+          <span class="ta-name">{{ humanTitle(msg) }}</span>
+          <span class="ta-last">{{ humanDetail(msg) }}</span>
           <span class="ta-when">{{ age(msg.createdAt) }}</span>
           <span class="ta-acts">
             <button
@@ -110,7 +117,7 @@
         v-for="node in agentNodes"
         :key="node.row.key"
         class="ta-item"
-        :class="[`ta-${rowState(node.row)}`, { 'ta-open': expanded.has(node.row.key) }]"
+        :class="{ 'ta-open': expanded.has(node.row.key) }"
       >
         <div
           class="ta-head"
@@ -122,10 +129,17 @@
           @keydown.space.prevent="toggle(node.row.key)"
         >
           <span
+            class="ta-chip"
+            :class="`ta-chip-${rowState(node.row)}`"
+          ><span
             class="ta-dot"
             :class="`ta-dot-${rowState(node.row)}`"
-          />
-          <span class="ta-title"><b>{{ node.row.label }}</b> <span>· {{ rowDetail(node.row) }}</span></span>
+          />{{ rowChip(node.row) }}</span>
+          <span class="ta-name">{{ node.row.label }}<small v-if="node.row.agentId">{{ node.row.agentId }}</small></span>
+          <span
+            class="ta-last"
+            :title="rowDetail(node.row)"
+          >{{ shortShas(rowDetail(node.row)) }}</span>
           <span class="ta-when">{{ age(Date.parse(node.row.lastActivityAt)) }}</span>
           <span class="ta-acts">
             <button
@@ -138,9 +152,25 @@
             <button
               v-else-if="node.row.canMessage"
               type="button"
-              class="ta-btn"
+              class="ta-btn ta-icon"
+              title="Message"
+              :aria-label="`Message ${node.row.label}`"
               @click.stop="startMessage(node.row.key)"
-            >Message</button>
+            ><svg
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            ><path d="M3 3.5h10v7H7l-3 2.5v-2.5H3z" /></svg></button>
+            <button
+              v-if="node.row.canOpen && node.row.threadId"
+              type="button"
+              class="ta-btn ta-icon"
+              title="Open"
+              :aria-label="`Open ${node.row.label}`"
+              @click.stop="openAgent(node.row)"
+            ><svg
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            ><path d="M6.5 3.5h-3v9h9v-3M9 3.5h3.5V7M12.5 3.5 7 9" /></svg></button>
             <button
               v-if="node.row.canStop"
               type="button"
@@ -149,7 +179,18 @@
               :aria-label="confirmStop === node.row.key ? `Confirm stop ${node.row.label}` : `Stop ${node.row.label}`"
               :class="{ 'ta-confirm': confirmStop === node.row.key }"
               @click.stop="stop(node.row)"
-            >{{ confirmStop === node.row.key ? 'Stop?' : '■' }}</button>
+            ><template v-if="confirmStop === node.row.key">Stop?</template><svg
+              v-else
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            ><rect
+              x="4.5"
+              y="4.5"
+              width="7"
+              height="7"
+              rx="1.2"
+              class="ta-fill"
+            /></svg></button>
           </span>
         </div>
         <div
@@ -158,12 +199,12 @@
         >
           <dl class="ta-facts">
             <template v-if="node.row.lastCheckinSummary">
-              <dt>{{ node.row.lastCheckinAt ? clock(node.row.lastCheckinAt) : 'latest' }}</dt><dd>{{ node.row.lastCheckinSummary }}</dd>
+              <dt>{{ node.row.lastCheckinAt ? clock(node.row.lastCheckinAt) : 'Latest' }}</dt><dd>{{ node.row.lastCheckinSummary }}</dd>
             </template>
             <template v-if="node.row.stateReason">
-              <dt>status</dt><dd>{{ node.row.stateReason }}</dd>
+              <dt>Status</dt><dd>{{ node.row.stateReason }}</dd>
             </template>
-            <dt>agent</dt><dd>{{ node.row.agentId || 'agent' }} · started {{ node.row.startedAt ? clock(node.row.startedAt) : 'not yet' }}</dd>
+            <dt>Started</dt><dd>{{ node.row.startedAt ? clock(node.row.startedAt) : 'not yet' }}</dd>
           </dl>
           <div
             v-if="node.children.length"
@@ -175,10 +216,13 @@
               class="ta-kid"
             >
               <span
+                class="ta-chip"
+                :class="`ta-chip-${rowState(kid.row)}`"
+              ><span
                 class="ta-dot"
                 :class="`ta-dot-${rowState(kid.row)}`"
-              />
-              <span class="ta-title">{{ kid.row.label }} <span>· {{ rowDetail(kid.row) }}</span></span>
+              />{{ rowChip(kid.row) }}</span>
+              <span class="ta-last"><b>{{ kid.row.label }}</b> · {{ shortShas(rowDetail(kid.row)) }}</span>
               <span class="ta-when">{{ age(Date.parse(kid.row.lastActivityAt)) }}</span>
             </div>
           </div>
@@ -201,21 +245,13 @@
               Send
             </button>
           </form>
-          <div class="ta-row">
-            <button
-              v-if="node.row.canOpen && node.row.threadId"
-              type="button"
-              class="ta-btn"
-              @click="openAgent(node.row)"
-            >
-              Open
-            </button>
-            <span
-              v-if="notice[node.row.key]"
-              class="ta-notice"
-              role="status"
-            >{{ notice[node.row.key] }}</span>
-          </div>
+          <p
+            v-if="notice[node.row.key]"
+            class="ta-notice"
+            role="status"
+          >
+            {{ notice[node.row.key] }}
+          </p>
         </div>
       </div>
 
@@ -224,8 +260,9 @@
         class="ta-item"
       >
         <div class="ta-head ta-static">
-          <span class="ta-dot ta-dot-waiting" />
-          <span class="ta-title"><b>Heartbeat</b> <span>· checks in every {{ heartbeatMinutes }} min</span></span>
+          <span class="ta-chip ta-chip-waiting"><span class="ta-dot ta-dot-waiting" />{{ CHIP.scheduled }}</span>
+          <span class="ta-name">Heartbeat</span>
+          <span class="ta-last">checks in every {{ heartbeatMinutes }} min</span>
         </div>
       </div>
     </div>
@@ -237,7 +274,7 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
-import { activityAge, deriveThreadActivity, type ThreadActivityState } from '../../messages/threadActivity';
+import { activityAge, deriveThreadActivity, parkedActivity, type ThreadActivityState } from '../../messages/threadActivity';
 import ToolApproval from '../tool/ToolApproval.vue';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 
@@ -292,14 +329,20 @@ const ageText = computed(() => {
   return items ? `${ items } item${ items === 1 ? '' : 's' }` : '';
 });
 
-function rowState(row: AgentStateRow): Exclude<ThreadActivityState, 'idle'> {
+function rowState(row: AgentStateRow): ThreadActivityState {
   if (row.state === 'quiet') return 'stalled';
   if (row.state === 'blocked') return 'you';
-  if (row.state === 'parked') return 'waiting';
+  if (row.state === 'parked') return parkedActivity(row).state;
   return 'working';
 }
+const CHIP = { working: 'Working', waiting: 'Waiting', idle: 'Idle', you: 'Needs you', stalled: 'No progress', starting: 'Starting', scheduled: 'Scheduled' } as const;
+function rowChip(row: AgentStateRow): string {
+  return row.state === 'queued' ? CHIP.starting : CHIP[rowState(row)];
+}
+/** Full commit hashes swamp a one-line summary; the full text stays in the title and the expanded detail. */
+function shortShas(text: string): string { return text.replace(/\b([0-9a-f]{7})[0-9a-f]{33}\b/g, '$1') }
 function rowDetail(row: AgentStateRow): string {
-  if (row.state === 'parked') return `waiting on ${ row.waitingOnChildren } agent${ row.waitingOnChildren === 1 ? '' : 's' }`;
+  if (row.state === 'parked') return parkedActivity(row).detail;
   if (row.state === 'quiet') return `no check-in for ${ age(Date.parse(row.lastActivityAt)) }`;
   return row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
@@ -383,35 +426,48 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ta { margin-bottom: 8px; }
+/*
+ * Theme text tokens are often the same hue as the surface (Ocean: blue on
+ * blue), so labels here use neutral ink mixed from --text-primary and keep
+ * colour for state. The tray drops to --bg-page so it reads as its own layer.
+ */
+.ta {
+  --ta-ink-2: color-mix(in srgb, var(--text-primary) 78%, var(--bg-surface));
+  --ta-ink-3: color-mix(in srgb, var(--text-primary) 58%, var(--bg-surface));
+  --ta-well: var(--bg-page);
+  --ta-well-raised: color-mix(in srgb, var(--bg-surface) 60%, var(--bg-page));
+  --ta-cols: 104px minmax(0, 1.3fr) minmax(0, 1.5fr) 40px 92px;
+  margin-bottom: 8px;
+}
 .ta-line {
-  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px;
-  padding: 0 12px; border: 1px solid var(--border-default); border-radius: 9px;
-  background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 13px;
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px;
+  padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--ta-well); color: var(--ta-ink-2); font: inherit; font-size: 13px;
   text-align: left; cursor: pointer; transition: background-color .18s cubic-bezier(.22,1,.36,1), border-color .18s cubic-bezier(.22,1,.36,1);
 }
-.ta-line:hover:not(:disabled) { background: var(--bg-surface-alt, var(--bg-surface)); }
+.ta-line:hover:not(:disabled) { background: var(--ta-well-raised); }
 .ta-line:disabled { cursor: default; }
 .ta-line:focus-visible, .ta-head:focus-visible, .ta-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ta-lead { color: var(--text-primary); font-weight: 600; white-space: nowrap; }
-.ta-sep { color: var(--text-muted); }
+.ta-lead { color: var(--text-primary); font-weight: 650; white-space: nowrap; }
+.ta-sep { color: var(--ta-ink-3); }
 .ta-part { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ta-age { margin-left: auto; color: var(--text-muted); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
-.ta-chev { color: var(--text-muted); transition: transform .2s cubic-bezier(.22,1,.36,1); }
+.ta-age { margin-left: auto; color: var(--ta-ink-2); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
+.ta-chev { color: var(--ta-ink-2); transition: transform .2s cubic-bezier(.22,1,.36,1); }
 .ta-line[aria-expanded="true"] .ta-chev { transform: rotate(180deg); }
-.ta-line.ta-you { border-color: color-mix(in srgb, var(--status-warning) 55%, transparent); background: color-mix(in srgb, var(--status-warning) 9%, var(--bg-surface)); }
+.ta-line.ta-working { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--ta-well)); color: var(--text-primary); }
+.ta-line.ta-you { border-color: color-mix(in srgb, var(--status-warning) 55%, transparent); background: color-mix(in srgb, var(--status-warning) 10%, var(--ta-well)); }
 .ta-line.ta-you .ta-lead { color: var(--status-warning); }
-.ta-line.ta-stalled { border-color: color-mix(in srgb, var(--status-error) 55%, transparent); background: color-mix(in srgb, var(--status-error) 9%, var(--bg-surface)); }
+.ta-line.ta-stalled { border-color: color-mix(in srgb, var(--status-error) 55%, transparent); background: color-mix(in srgb, var(--status-error) 10%, var(--ta-well)); }
 .ta-line.ta-stalled .ta-lead { color: var(--status-error); }
-.ta-line.ta-idle { background: transparent; border-color: transparent; color: var(--text-muted); }
-.ta-line.ta-idle .ta-lead { color: var(--text-muted); font-weight: 500; }
+.ta-line.ta-idle { background: transparent; border-color: transparent; color: var(--ta-ink-3); }
+.ta-line.ta-idle .ta-lead { color: var(--ta-ink-2); font-weight: 500; }
 
 .ta-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .ta-dot-working { background: var(--accent); animation: ta-breathe 1.6s cubic-bezier(.22,1,.36,1) infinite; }
-.ta-dot-waiting { background: color-mix(in srgb, var(--accent) 55%, var(--text-muted)); }
+.ta-dot-waiting { background: color-mix(in srgb, var(--accent) 55%, var(--ta-ink-3)); }
 .ta-dot-you { background: var(--status-warning); }
 .ta-dot-stalled { background: var(--status-error); }
-.ta-dot-idle { border: 1.5px solid var(--text-muted); }
+.ta-dot-idle { border: 1.5px solid var(--ta-ink-3); }
 @keyframes ta-breathe {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
   70% { box-shadow: 0 0 0 6px transparent; }
@@ -420,51 +476,79 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) { .ta-dot-working { animation: none; } }
 
 .ta-tray {
+  container-type: inline-size;
   margin-top: 6px; max-height: min(52vh, 460px); overflow: auto;
-  border: 1px solid var(--border-default); border-radius: 10px; background: var(--bg-surface);
+  border: 1px solid var(--border-strong); border-radius: 12px; background: var(--ta-well);
+  box-shadow: 0 18px 40px -20px rgba(0, 0, 0, .55);
 }
 .ta-trayhead {
-  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
-  border-bottom: 1px solid var(--border-default); color: var(--text-muted);
-  font: 11px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em;
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  border-bottom: 1px solid var(--border-default); color: var(--text-primary); font-size: 12px; font-weight: 600;
 }
 .ta-sp { flex: 1; }
+.ta-cols, .ta-head { display: grid; grid-template-columns: var(--ta-cols); gap: 12px; align-items: center; padding: 0 14px; }
+.ta-cols { padding-top: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border-default); color: var(--ta-ink-3); font-size: 11.5px; }
+.ta-r { text-align: right; }
 .ta-item + .ta-item { border-top: 1px solid var(--border-default); }
-.ta-head {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
-  padding: 8px 12px; cursor: pointer; font-size: 13px;
+.ta-head { min-height: 48px; padding-top: 7px; padding-bottom: 7px; cursor: pointer; font-size: 13px; }
+.ta-head:hover, .ta-open > .ta-head, .ta-open > .ta-body { background: var(--ta-well-raised); }
+.ta-head.ta-static { cursor: default; }
+.ta-head.ta-static:hover { background: none; }
+
+.ta-chip {
+  display: inline-flex; align-items: center; gap: 6px; justify-self: start; height: 22px; padding: 0 8px;
+  border-radius: 6px; font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
 }
-.ta-head:hover, .ta-open > .ta-head { background: var(--bg-surface-alt, var(--bg-surface)); }
-.ta-head.ta-static { cursor: default; grid-template-columns: 14px minmax(0, 1fr); }
-.ta-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.ta-title b { color: var(--text-primary); font-weight: 600; }
-.ta-you > .ta-head .ta-title b { color: var(--status-warning); }
-.ta-stalled > .ta-head .ta-title b { color: var(--status-error); }
-.ta-when { color: var(--text-muted); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
-.ta-acts { display: flex; gap: 4px; }
+.ta-chip .ta-dot { width: 6px; height: 6px; }
+.ta-chip-working { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.ta-chip-waiting { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ta-ink-2); }
+.ta-chip-idle { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--ta-ink-2); }
+.ta-chip-you { background: color-mix(in srgb, var(--status-warning) 18%, transparent); color: var(--status-warning); }
+.ta-chip-stalled { background: color-mix(in srgb, var(--status-error) 18%, transparent); color: var(--status-error); }
+
+.ta-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-weight: 650; }
+.ta-name small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--ta-ink-3); font-size: 12px; font-weight: 400; }
+.ta-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ta-ink-2); }
+.ta-last b { color: var(--text-primary); font-weight: 600; }
+.ta-when { color: var(--ta-ink-3); font: 12px var(--font-mono, ui-monospace, monospace); text-align: right; white-space: nowrap; }
+.ta-acts { display: flex; gap: 4px; justify-content: flex-end; }
 .ta-btn {
-  display: inline-flex; align-items: center; justify-content: center; height: 26px; padding: 0 9px;
-  border: 1px solid var(--border-default); border-radius: 6px; background: transparent;
-  color: var(--text-secondary); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 10px;
+  border: 1px solid var(--border-strong); border-radius: 7px; background: transparent;
+  color: var(--text-primary); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
 }
-.ta-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.ta-btn:hover:not(:disabled) { border-color: var(--accent); }
 .ta-btn:disabled { opacity: .45; cursor: default; }
-.ta-btn.ta-icon { min-width: 26px; padding: 0 6px; }
+.ta-btn.ta-icon { min-width: 28px; padding: 0 6px; color: var(--ta-ink-2); }
+.ta-btn.ta-icon:hover:not(:disabled) { color: var(--text-primary); }
+.ta-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.ta-btn svg .ta-fill { fill: currentColor; stroke: none; }
+.ta-btn.ta-danger { color: var(--status-error); }
 .ta-btn.ta-danger:hover:not(:disabled), .ta-btn.ta-confirm { color: var(--status-error); border-color: var(--status-error); }
-.ta-btn.ta-pri { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent, var(--bg-page)); font-weight: 600; }
-.ta-body { padding: 4px 12px 12px 36px; font-size: 13px; }
-.ta-body.ta-card { padding-left: 12px; }
-.ta-facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 2px 0 8px; }
-.ta-facts dt { color: var(--text-muted); font: 11.5px var(--font-mono, ui-monospace, monospace); }
-.ta-facts dd { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
-.ta-kids { margin: 2px 0 10px; padding-left: 12px; border-left: 1px solid var(--border-default); }
-.ta-kid { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 4px 0; }
-.ta-msg { display: flex; gap: 6px; margin: 4px 0 8px; }
+.ta-btn.ta-pri { height: 32px; padding: 0 14px; background: var(--accent); border-color: var(--accent); color: var(--bg-page); font-weight: 650; }
+
+.ta-body { padding: 2px 14px 14px calc(104px + 26px); font-size: 13px; }
+.ta-body.ta-card { padding-left: 14px; }
+.ta-facts { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; margin: 0 0 10px; }
+.ta-facts dt { color: var(--ta-ink-3); font: 12px var(--font-mono, ui-monospace, monospace); }
+.ta-facts dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.ta-kids { margin: 0 0 10px; border-top: 1px solid var(--border-default); }
+.ta-kid { display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border-default); }
+.ta-msg { display: flex; gap: 8px; margin: 4px 0 0; }
 .ta-msg input {
-  flex: 1; min-width: 0; height: 30px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 7px;
-  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary); font: inherit; font-size: 13px;
+  flex: 1; min-width: 0; height: 32px; padding: 0 11px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--ta-well); color: var(--text-primary); font: inherit; font-size: 13px;
 }
+.ta-msg input::placeholder { color: var(--ta-ink-3); }
 .ta-msg input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
-.ta-row { display: flex; align-items: center; gap: 8px; }
-.ta-notice { color: var(--text-muted); font-size: 12px; }
+.ta-notice { margin: 8px 0 0; color: var(--ta-ink-2); font-size: 12px; }
+
+/* Narrow composer (side panel): stack each row instead of squeezing columns. */
+@container (max-width: 560px) {
+  .ta-cols { display: none; }
+  .ta-head { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 4px; }
+  .ta-head > .ta-chip { grid-column: 1 / -1; }
+  .ta-head > .ta-last { grid-column: 1 / -1; grid-row: 3; }
+  .ta-body { padding-left: 14px; }
+}
 </style>

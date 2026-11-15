@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { activityAge, deriveThreadActivity } from '@pkg/pages/chat/messages/threadActivity';
+import { activityAge, deriveThreadActivity, parkedActivity } from '@pkg/pages/chat/messages/threadActivity';
 
 const row = (state: string, extra: Record<string, unknown> = {}) => ({
   key:                `job:${ state }`,
@@ -38,6 +38,21 @@ describe('a chat thread always says what it is doing', () => {
   it('counts parked agents and a heartbeat as waiting, not idle', () => {
     expect(deriveThreadActivity({ ...base, agents: [row('parked', { waitingOnChildren: 2 })] }).state).toBe('waiting');
     expect(deriveThreadActivity({ ...base, heartbeatMinutes: 20 })).toMatchObject({ state: 'waiting', parts: ['heartbeat every 20 min'] });
+  });
+
+  // risk: a worker re-parked after an empty turn waits on no one, yet the thread said "waiting on others"
+  it('treats a parked agent with no children and no scheduled wake-up as idle', () => {
+    const a = deriveThreadActivity({ ...base, agents: [row('parked')] });
+    expect(a).toMatchObject({ state: 'idle', parts: ['1 agent idle, waiting for a message'] });
+    expect(a.items).toEqual([]);
+    expect(parkedActivity(row('parked')).detail).toBe('idle, waiting for a message');
+  });
+
+  it('still waits on a parked agent with live children or a scheduled wake-up', () => {
+    expect(parkedActivity(row('parked', { waitingOnChildren: 2 }))).toEqual({ state: 'waiting', detail: 'waiting on 2 agents' });
+    const timer = row('parked', { stateReason: 'scheduled wake-up' });
+    expect(parkedActivity(timer)).toEqual({ state: 'waiting', detail: 'waiting on a scheduled wake-up' });
+    expect(deriveThreadActivity({ ...base, agents: [timer, row('parked', { key: 'job:idle' })] })).toMatchObject({ state: 'waiting', parts: ['1 agent waiting on others'] });
   });
 
   // risk: a pending decision hid behind "working" while the user was the blocker

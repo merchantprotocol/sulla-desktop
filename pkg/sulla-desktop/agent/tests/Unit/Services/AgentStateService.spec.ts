@@ -446,6 +446,16 @@ describe('authoritative live agent state', () => {
     expect(rows.find(row => row.taskIndex === 1)?.state).toBe('blocked');
   });
 
+  it('marks only a future timer wake as a scheduled wake-up, not a re-parked idle task', async() => {
+    // risk: a worker parked on nothing read as "waiting on 0 agents" and kept its thread looking busy
+    const timer = job('timer', [task({ status: 'parked', wakeAt: 600_000 })], { status: 'parked' });
+    const idle = job('idle', [task({ status: 'parked', wakeAt: 400_000 })], { status: 'parked' });
+    const { states } = harness([timer, idle], 500_000);
+    const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
+    expect(rows.find(row => row.jobId === 'timer')).toMatchObject({ state: 'parked', stateReason: 'scheduled wake-up' });
+    expect(rows.find(row => row.jobId === 'idle')).toMatchObject({ state: 'parked', stateReason: null });
+  });
+
   it('settles a job whose blocked task already returned instead of failing and re-notifying it on every restart', async() => {
     // risk: a delivered blocked result re-derives the job as running, so each restart fails it again and wakes the parent with a stale notice
     const returned = job('returned-blocked', [

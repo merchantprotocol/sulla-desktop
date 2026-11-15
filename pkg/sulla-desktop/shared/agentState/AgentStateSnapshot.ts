@@ -39,7 +39,7 @@ export interface AgentStateRow {
  label: string;
  visibility: 'hidden' | 'tab';
  state: AgentRowState;
- /** Human-readable reason for failed / lost / blocked / quiet / stopped. */
+ /** Human-readable reason for failed / lost / blocked / quiet / stopped, and 'scheduled wake-up' for a timer-parked task. */
  stateReason: string | null;
  /** Durable actor that stopped this task, preferring task attribution over its job fallback. */
  stoppedBy?: AgentStopAttribution;
