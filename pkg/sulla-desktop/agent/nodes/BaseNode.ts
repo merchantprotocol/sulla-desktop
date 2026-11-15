@@ -1238,7 +1238,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const attemptEpoch = index === 0 ? primaryAttemptEpoch : modelRouter.attemptToken?.(candidate.provider);
         let service: BaseLanguageModel;
         try {
-          service = index === 0 ? this.llm : await getServiceByProvider(candidate.provider, candidate.model);
+          service = index === 0 ? this.llm : await getServiceByProvider(candidate.provider, candidate.model, candidate.effort);
         } catch (serviceError) {
           lastErr = serviceError;
           lastRecovery = classifyLLMFailure(serviceError);

@@ -204,6 +204,7 @@ export class CodexService extends BaseLanguageModel {
     if (this.model && this.model !== 'codex') {
       codexArgs.push('--model', shq(this.model));
     }
+    if (this.effort) codexArgs.push('-c', shq(`model_reasoning_effort=${ JSON.stringify(this.effort) }`));
     codexArgs.push('-'); // read the prompt from stdin
 
     // `exec` replaces the inner sh with codex so there's no shell layer
@@ -246,6 +247,7 @@ export class CodexService extends BaseLanguageModel {
     for (const override of p.configOverrides ?? []) args.push('-c', override);
     if (p.instructionsPath) args.push('-c', `model_instructions_file=${ JSON.stringify(p.instructionsPath) }`);
     if (this.model && this.model !== 'codex') args.push('--model', this.model);
+    if (this.effort) args.push('-c', `model_reasoning_effort=${ JSON.stringify(this.effort) }`);
     args.push('-');
 
     return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
@@ -275,6 +277,10 @@ export class CodexService extends BaseLanguageModel {
   override getModel(): string {
     return this.model || 'codex';
   }
+
+  /** Reasoning effort from Preferences → AI models; '' leaves the CLI's own default. */
+  private effort = '';
+  setEffort(effort: string | undefined): void { this.effort = /^[a-z]{2,10}$/.test(effort || '') ? effort! : '' }
 
   /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
   private launchModel(): string {
@@ -1420,9 +1426,10 @@ export function getCodexService(): CodexService {
 }
 
 /** Create a fresh (non-singleton) CodexService with a specific model override. */
-export function createCodexService(model: string): CodexService {
+export function createCodexService(model: string, effort?: string): CodexService {
   const svc = new CodexService();
   svc.setModel(model);
+  svc.setEffort(effort);
   return svc;
 }
 

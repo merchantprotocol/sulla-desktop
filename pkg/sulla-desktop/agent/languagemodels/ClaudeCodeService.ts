@@ -368,6 +368,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     // how runClaude knows a steer has been seen.
     claudeArgs.push('--input-format', 'stream-json', '--replay-user-messages');
     if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
+    if (this.effort) claudeArgs.push('--effort', shq(this.effort));
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
     if (p.systemPromptPath) claudeArgs.push('--append-system-prompt-file', shq(p.systemPromptPath));
@@ -401,6 +402,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--input-format', 'stream-json', '--replay-user-messages',
     ];
     if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
+    if (this.effort) args.push('--effort', this.effort);
     if (p.existingSession) args.push('--resume', p.existingSession);
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
@@ -415,6 +417,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
   override getModel(): string {
     return this.model || 'claude-code';
   }
+
+  /** Reasoning effort from Preferences → AI models; '' leaves the CLI's own default. */
+  private effort = '';
+  setEffort(effort: string | undefined): void { this.effort = /^[a-z]{2,10}$/.test(effort || '') ? effort! : '' }
 
   /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
   private launchModel(): string {
@@ -2011,9 +2017,10 @@ export function getClaudeCodeService(): ClaudeCodeService {
 }
 
 /** Create a fresh (non-singleton) ClaudeCodeService with a specific model override. */
-export function createClaudeCodeService(model: string): ClaudeCodeService {
+export function createClaudeCodeService(model: string, effort?: string): ClaudeCodeService {
   const svc = new ClaudeCodeService();
   svc.setModel(model);
+  svc.setEffort(effort);
   return svc;
 }
 

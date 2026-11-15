@@ -20,7 +20,7 @@ export interface RoutedModelService {
 export class ModelDispatchService {
   constructor(
     private readonly resolveCandidates: (target: 'agents'|'subconscious', choice: AgentModelChoice) => Promise<ModelCandidate[]>,
-    private readonly createService: (provider: string, model: string) => Promise<BaseLanguageModel>,
+    private readonly createService: (provider: string, model: string, effort?: string) => Promise<BaseLanguageModel>,
   ) {}
 
   candidates(target: 'agents'|'subconscious', choice: AgentModelChoice): Promise<ModelCandidate[]> {
@@ -28,7 +28,9 @@ export class ModelDispatchService {
   }
 
   service(candidate: ModelCandidate): Promise<BaseLanguageModel> {
-    return this.createService(candidate.provider, candidate.model);
+    return candidate.effort
+      ? this.createService(candidate.provider, candidate.model, candidate.effort)
+      : this.createService(candidate.provider, candidate.model);
   }
 
   async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice): Promise<RoutedModelService | null> {
