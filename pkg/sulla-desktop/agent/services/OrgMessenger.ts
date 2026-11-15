@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { AgentInboxBridge, EnvelopeCodec, type ContactRequestChoice, type InboxCursor, type MessageEnvelope, type OrgMessagingTransport } from '@sulla/domain';
+import { AgentInboxBridge, EnvelopeCodec, MessageEnvelope, type ContactRequestChoice, type InboxCursor, type OrgMessagingTransport } from '@sulla/domain';
 import type { AgentInbox, AgentInboxTarget } from './AgentInbox';
 import type { OrgMessagingStateRepository } from './OrgMessagingStateRepository';
 
@@ -11,13 +11,21 @@ export interface OrgContactRequestPrompter { request(senderUserId: string, messa
 export interface OrgInboxTargetResolver { target(envelope: MessageEnvelope): Promise<AgentInboxTarget> }
 export interface OrgConversationHaltHandler { halt(target: AgentInboxTarget): Promise<void> }
 export interface OrgMessagingDeviceIdentity { deviceId(): Promise<string> }
+export interface OrgConversationStartRequest {
+  conversationId: string;
+  kind: 'direct' | 'group' | 'agent_thread';
+  participantUserIds: readonly string[];
+}
+export interface OrgConversationStarter {
+  startConversation(request: OrgConversationStartRequest): Promise<{ conversationId: string }>;
+}
 
 /** Coordinates durable outbox retries, cursor-driven inbox delivery, and first-contact holds. */
 export class OrgMessenger {
   private readonly bridge = new AgentInboxBridge();
   private readonly codec = new EnvelopeCodec();
   constructor(
-    private readonly transport: OrgMessagingTransport,
+    private readonly transport: OrgMessagingTransport & OrgConversationStarter,
     private readonly session: OrgMessagingSession,
     private readonly state: OrgMessagingStateRepository,
     private readonly inbox: AgentInbox,
@@ -34,6 +42,22 @@ export class OrgMessenger {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     if (envelope.data.orgId !== orgId || envelope.data.from.userId !== userId || envelope.data.provenance.actingForUserId !== userId) {
       throw new Error('Org message must belong to the active human and organization');
+    }
+    if (envelope.data.kind === 'agent' && this.haltedConversations.has(`${orgId}:${envelope.data.conversationId}`)) {
+      throw new Error('This organization conversation is halted');
+    }
+    if (envelope.data.kind === 'human' || envelope.data.kind === 'agent') {
+      const participantUserIds = [...new Set([envelope.data.from.userId, ...envelope.data.to.map(address => address.userId)])];
+      const request: OrgConversationStartRequest = {
+        conversationId: envelope.data.conversationId,
+        kind: envelope.data.kind === 'agent' ? 'agent_thread' : participantUserIds.length === 2 ? 'direct' : 'group',
+        participantUserIds,
+      };
+      const started = await this.transport.startConversation(request);
+      if (!started.conversationId) throw new Error('Cloud did not return an organization conversation id');
+      if (started.conversationId !== envelope.data.conversationId) {
+        envelope = MessageEnvelope.create({ ...envelope.data, conversationId: started.conversationId });
+      }
     }
     if (envelope.data.kind === 'agent' && this.haltedConversations.has(`${orgId}:${envelope.data.conversationId}`)) {
       throw new Error('This organization conversation is halted');

@@ -5,7 +5,7 @@
 import { InMemoryOrgMessagingTransport, MessageAdmissionService, MessageEnvelope, OrgMessagingTransportContract, ParticipantAddress, type ContactRequestChoice, type InboxCursor, type OrgMessagingTransport, type WakeHint } from '@sulla/domain';
 import { describe, expect, it } from 'vitest';
 import { AgentInbox, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from '../../../services/AgentInbox';
-import { OrgMessenger, type OrgMessagingSession } from '../../../services/OrgMessenger';
+import { OrgMessenger, type OrgConversationStartRequest, type OrgMessagingSession } from '../../../services/OrgMessenger';
 import type { OrgMessagingStateRepository, PendingOrgMessage } from '../../../services/OrgMessagingStateRepository';
 
 class MemoryState implements OrgMessagingStateRepository {
@@ -38,11 +38,26 @@ class TestTransport implements OrgMessagingTransport {
   private admission: 'accepted' | 'held' | 'denied' = 'accepted';
   private readonly host = new InMemoryOrgMessagingTransport(new MessageAdmissionService(async () => this.admission));
   readonly submitted: string[] = [];
+  readonly submittedConversations: string[] = [];
+  readonly operations: string[] = [];
+  readonly started: OrgConversationStartRequest[] = [];
+  private readonly conversations = new Map<string, string>();
   failNextSubmit = false;
   holdNext() { this.admission = 'held'; }
   acceptNext() { this.admission = 'accepted'; }
+  async startConversation(request: OrgConversationStartRequest) {
+    this.operations.push('start');
+    this.started.push(request);
+    const key = `${request.kind}:${[...request.participantUserIds].sort().join(':')}`;
+    const existing = request.kind === 'group' ? undefined : this.conversations.get(key);
+    const conversationId = existing ?? request.conversationId;
+    if (request.kind !== 'group') this.conversations.set(key, conversationId);
+    return { conversationId };
+  }
   async submit(envelope: MessageEnvelope) {
+    this.operations.push('submit');
     this.submitted.push(envelope.data.messageId);
+    this.submittedConversations.push(envelope.data.conversationId);
     const result = await this.host.submit(envelope);
     if (this.failNextSubmit) { this.failNextSubmit = false; throw new Error('offline'); }
     return result;
@@ -65,8 +80,8 @@ function message(messageId: string, hostSeq?: number): MessageEnvelope {
     createdAt: new Date(0).toISOString(), hostSeq });
 }
 
-function outboundMessage(messageId: string): MessageEnvelope {
-  return MessageEnvelope.create({ messageId, conversationId: 'conversation-1', orgId: 'org-1',
+function outboundMessage(messageId: string, conversationId = 'conversation-1'): MessageEnvelope {
+  return MessageEnvelope.create({ messageId, conversationId, orgId: 'org-1',
     from: ParticipantAddress.human('org-1', 'user-1'), to: [ParticipantAddress.human('org-1', 'user-2')],
     kind: 'human', intent: 'note', body: { text: 'hello', format: 'plain', refs: [] },
     causality: { rootId: messageId, hop: 0, clientSeq: 1 }, provenance: { actingForUserId: 'user-1', placement: 'desktop' },
@@ -95,6 +110,31 @@ function agentPost(): MessageEnvelope {
 }
 
 describe('OrgMessenger', () => {
+  it('starts a direct conversation before first send and uses the host-reused pair id', async () => {
+    // risk: first contact cannot start or messages target a nonexistent conversation
+    const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
+    const service = messenger(transport, state, delivered);
+    await service.send(outboundMessage('first-message', 'client-conversation-1'));
+    await service.send(outboundMessage('second-message', 'client-conversation-2'));
+    expect(transport.started.map(({ kind, participantUserIds }) => ({ kind, participantUserIds }))).toEqual([
+      { kind: 'direct', participantUserIds: ['user-1', 'user-2'] },
+      { kind: 'direct', participantUserIds: ['user-1', 'user-2'] },
+    ]);
+    expect(transport.operations).toEqual(['start', 'submit', 'start', 'submit']);
+    expect(transport.submittedConversations).toEqual(['client-conversation-1', 'client-conversation-1']);
+  });
+
+  it('starts an agent thread before the first agent message is submitted', async () => {
+    // risk: org/send_message posts to a conversation the Cloud host has not started
+    const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
+    await messenger(transport, state, delivered).send(agentPost());
+    expect(transport.started).toEqual([{
+      conversationId: 'conversation-1', kind: 'agent_thread', participantUserIds: ['user-1', 'user-2'],
+    }]);
+    expect(transport.operations).toEqual(['start', 'submit']);
+    expect(transport.submittedConversations).toEqual(['conversation-1']);
+  });
+
   it('satisfies the shared host transport behavior contract', async () => {
     // risk: cross-tenant delivery, duplicates, or bypassed contact consent
     await new OrgMessagingTransportContract().verify(

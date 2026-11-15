@@ -4,6 +4,7 @@
 
 import { EnvelopeCodec, type AgentHostLease, type ContactRequestChoice, type InboxCursor, type InboxPage, type MessageEnvelope, type OrgDirectory, type OrgMessagingTransport, type SubmitReceipt, type WakeHint } from '@sulla/domain';
 import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClient';
+import type { OrgConversationStartRequest } from './OrgMessenger';
 
 export interface OrgCloudSession {
   accessToken(): Promise<string>;
@@ -49,6 +50,18 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
     const route = envelope.data.kind === 'control' ? 'control' : envelope.data.kind === 'agent' ? 'agent-messages' : 'messages';
     return this.request(`/conversations/${encodeURIComponent(envelope.data.conversationId)}/${route}`, {
       method: 'POST', body: JSON.stringify({ envelope: this.codec.encode(envelope) }),
+    });
+  }
+
+  async startConversation(input: OrgConversationStartRequest): Promise<{ conversationId: string }> {
+    const userId = await this.session.userId();
+    const participantUserIds = [...new Set(input.participantUserIds)];
+    if (!userId || !input.conversationId.trim() || participantUserIds.some(id => !id.trim()) || !participantUserIds.includes(userId) || participantUserIds.length < 2) {
+      throw new Error('Conversation must include the active user and at least one participant');
+    }
+    return this.request<{ conversationId: string }>('/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ ...input, participantUserIds }),
     });
   }
 

@@ -14,6 +14,30 @@ class TestSession implements OrgCloudSession {
 }
 
 describe('CloudOrgMessagingTransport', () => {
+  it('starts a conversation through the active organization and returns its canonical pair id', async () => {
+    // risk: cross-tenant or orphaned first-contact conversation
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ conversationId: 'canonical-pair-id' }), { status: 200 }));
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch, 'https://cloud.test', 1000, 0), new TestSession());
+    await expect(transport.startConversation({
+      conversationId: 'client-generated-id', kind: 'agent_thread', participantUserIds: ['local-user', 'recipient'],
+    })).resolves.toEqual({ conversationId: 'canonical-pair-id' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toBe('https://cloud.test/orgs/active-org/conversations');
+    expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({
+      conversationId: 'client-generated-id', kind: 'agent_thread', participantUserIds: ['local-user', 'recipient'],
+    });
+  });
+
+  it('refuses to start a conversation without the active user as a participant', async () => {
+    // risk: conversation created outside the signed-in user's identity
+    const fetch = vi.fn();
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession());
+    await expect(transport.startConversation({
+      conversationId: 'client-generated-id', kind: 'direct', participantUserIds: ['someone-else', 'recipient'],
+    })).rejects.toThrow('active user');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('retries a network-failed post with the same message id and active org', async () => {
     // risk: duplicate side effect
     const hostMessageIds = new Set<string>();
