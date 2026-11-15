@@ -420,6 +420,7 @@ export interface FilesDataSource {
   load(): Promise<FilesSnapshot>;
   loadMore?():Promise<FilesItem[]>;
   loadFolder?(path:string):Promise<FilesItem[]>;
+  onFolderFilesChanged?(listener:(files:FilesItem[])=>void):()=>void;
   openPreferences?():void;
   selectCollection?(collectionId:string):void;
   operationCapabilities?(collectionId:string):Promise<FilesOperationCapabilities>;

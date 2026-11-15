@@ -106,6 +106,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private filesHasMore = false;
   private listingPath = '';
   private loadingMore = false;
+  private loadingMorePromise:Promise<FilesItem[]>|null = null;
+  private listingGeneration = 0;
+  private folderListeners = new Set<(files:FilesItem[])=>void>();
   private watching = false;
   private watchedCollectionId = '';
   private collectionId = '';
@@ -132,7 +135,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilitiesListeners.forEach(listener => listener());
   }
 
-  selectCollection(collectionId:string):void { this.collectionId = collectionId }
+  selectCollection(collectionId:string):void { if(collectionId!==this.collectionId){this.listingGeneration++;this.listingPath='';this.files=[];this.filesCursor=null;this.filesHasMore=false;} this.collectionId = collectionId }
 
   private resetRemoteCapabilities():void {
     Object.assign(this.capabilities, {
@@ -177,6 +180,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async load():Promise<FilesSnapshot> {
+    const listingGeneration = this.listingGeneration;
+    const listingPath = this.listingPath;
     this.capabilities.durableOperations = false;
     this.capabilities.folderReceipts = false;
     this.capabilities.nativeFolderReceipts = false;
@@ -226,7 +231,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     }
     this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
     const [activePage, trash] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id, path:this.listingPath, children:true }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
+      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id, path:listingPath, children:true }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
     ]).catch((error) => {
       if (capabilitiesGeneration === this.capabilitiesGeneration) {
@@ -235,6 +240,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       }
       throw error;
     });
+    if (listingGeneration !== this.listingGeneration || listingPath !== this.listingPath) return this.load();
 
     // File rows are scoped to the open directory; the complete folder tree remains independently paged.
     const loaded = [...activePage.files];
@@ -243,6 +249,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.files = loaded.map(file => filesItem(file));
     this.filesCursor = cursor;
     this.filesHasMore = hasMore && Boolean(cursor);
+    if (this.filesHasMore) void this.completeFolder(listingGeneration,listingPath);
     this.listingPath = this.listingPath || '';
     const trashItems = (trash as FilesApiRecord[]).map(trashItem);
     if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
@@ -276,20 +283,39 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async loadFolder(path:string):Promise<FilesItem[]> {
+    const generation=++this.listingGeneration;
     this.listingPath=path; this.files=[]; this.filesCursor=null; this.filesHasMore=false;
     const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
-    this.files=page.files.map(file=>filesItem(file)); this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore; return this.files;
+    if(generation!==this.listingGeneration || path!==this.listingPath) return this.files;
+    this.files=page.files.map(file=>filesItem(file)); this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+    void this.completeFolder(generation,path);
+    return this.files;
   }
 
-  async loadMore():Promise<FilesItem[]> {
-    if(this.loadingMore || !this.filesHasMore || !this.collectionId) return this.files;
+  private async completeFolder(generation:number,path:string):Promise<void> {
+    while(generation===this.listingGeneration && path===this.listingPath && this.filesHasMore) {
+      await this.loadMore(generation);
+    }
+  }
+
+  async loadMore(generation=this.listingGeneration):Promise<FilesItem[]> {
+    if(this.loadingMore) {
+      await this.loadingMorePromise;
+      return generation===this.listingGeneration ? this.loadMore(generation) : this.files;
+    }
+    if(!this.filesHasMore || !this.collectionId) return this.files;
+    const path=this.listingPath;
     this.loadingMore=true;
-    try {
-      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path:this.listingPath,children:true,cursor:this.filesCursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+    this.loadingMorePromise=(async()=>{ try {
+      const cursor=this.filesCursor;
+      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true,cursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      if(generation!==this.listingGeneration || path!==this.listingPath) return this.files;
       this.files.push(...page.files.map(file=>filesItem(file)));
       this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+      this.folderListeners.forEach(listener=>listener([...this.files]));
       return this.files;
-    } finally { this.loadingMore=false; }
+    } finally { this.loadingMore=false; this.loadingMorePromise=null; } })();
+    return this.loadingMorePromise;
   }
 
   async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> {
@@ -332,7 +358,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {
     const response = await ipcRenderer.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { results:{ id:string }[]; coverage:FilesIndexCoverage };
     const byId = new Map(this.files.map(file => [file.id, file]));
-    return { files: response.results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
+    const details = await Promise.all(response.results.map(async result => byId.get(result.id) ?? await ipcRenderer.invoke('sulla-files:metadata',{fileId:result.id}).then(record=>filesItem(record as FilesApiFile)).catch(()=>null)));
+    return { files: details.filter((file):file is FilesItem=>Boolean(file&&!file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
   }
 
   reindex(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:reindex', { fileId }) }
@@ -377,6 +404,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilitiesListeners.add(listener);
     return () => this.capabilitiesListeners.delete(listener);
   }
+
+  onFolderFilesChanged(listener:(files:FilesItem[])=>void):()=>void { this.folderListeners.add(listener); return ()=>this.folderListeners.delete(listener) }
 
   onFilesChanged(listener:(change:{ collectionId:string; seq:string; paths:string[] }) => void):() => void {
     const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => listener(change);
