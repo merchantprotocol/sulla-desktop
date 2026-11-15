@@ -104,6 +104,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private files: FilesItem[] = [];
   private filesCursor:string|null = null;
   private filesHasMore = false;
+  private listingPath = '';
   private loadingMore = false;
   private watching = false;
   private watchedCollectionId = '';
@@ -197,6 +198,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Wait for Files to finish starting, then try again.');
+    if (this.collectionId !== collection.id) this.listingPath = '';
     this.collectionId = collection.id;
     if (this.watching && this.watchedCollectionId !== collection.id) {
       this.watchedCollectionId = collection.id;
@@ -224,7 +226,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     }
     this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
     const [activePage, trash] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
+      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id, path:this.listingPath, children:true }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
     ]).catch((error) => {
       if (capabilitiesGeneration === this.capabilitiesGeneration) {
@@ -234,22 +236,14 @@ export class DesktopFilesDataSource implements FilesDataSource {
       throw error;
     });
 
-    // The tree comes from the complete folder list, so every file page must load before the snapshot is
-    // shown. Loading only the first page made folders that sort later look empty (scroll-to-load never
-    // fires in a folder that shows no files).
+    // File rows are scoped to the open directory; the complete folder tree remains independently paged.
     const loaded = [...activePage.files];
-    let cursor = activePage.nextCursor;
-    let hasMore = activePage.hasMore;
-    while (hasMore && cursor && loaded.length < 20_000) {
-      const page = await ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id, cursor }) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
-      loaded.push(...page.files);
-      if (page.nextCursor === cursor) break;
-      cursor = page.nextCursor;
-      hasMore = page.hasMore;
-    }
+    const cursor = activePage.nextCursor;
+    const hasMore = activePage.hasMore;
     this.files = loaded.map(file => filesItem(file));
     this.filesCursor = cursor;
     this.filesHasMore = hasMore && Boolean(cursor);
+    this.listingPath = this.listingPath || '';
     const trashItems = (trash as FilesApiRecord[]).map(trashItem);
     if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
@@ -281,11 +275,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return snapshot;
   }
 
+  async loadFolder(path:string):Promise<FilesItem[]> {
+    this.listingPath=path; this.files=[]; this.filesCursor=null; this.filesHasMore=false;
+    const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+    this.files=page.files.map(file=>filesItem(file)); this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore; return this.files;
+  }
+
   async loadMore():Promise<FilesItem[]> {
     if(this.loadingMore || !this.filesHasMore || !this.collectionId) return this.files;
     this.loadingMore=true;
     try {
-      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,cursor:this.filesCursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path:this.listingPath,children:true,cursor:this.filesCursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
       this.files.push(...page.files.map(file=>filesItem(file)));
       this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
       return this.files;

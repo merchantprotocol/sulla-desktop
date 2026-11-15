@@ -622,8 +622,8 @@ export function initSullaFilesIpc():void {
     }
     return files;
   });
-  ipcMain.handle('sulla-files:list-page', async(_event, input:{ collectionId:string; path?:string; trash?:boolean; cursor?:string }) => {
-    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:String(FilesListingPager.pageSize)});
+  ipcMain.handle('sulla-files:list-page', async(_event, input:{ collectionId:string; path?:string; trash?:boolean; cursor?:string; children?:boolean }) => {
+    const query=new URLSearchParams({collectionId:input.collectionId,path:input.path??'',trash:String(input.trash===true),limit:String(FilesListingPager.pageSize),...(input.children?{children:'true'}:{})});
     if(input.cursor) query.set('cursor',input.cursor);
     const response=await filesClient.request(`/v1/files?${query}`);
     if(!response.ok) throw new FilesApiError(await response.text(),response.status);

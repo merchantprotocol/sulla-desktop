@@ -419,6 +419,7 @@ export interface FilesDataSource {
   undoOperation?(operationId:string):Promise<FilesOperationReceipt>;
   load(): Promise<FilesSnapshot>;
   loadMore?():Promise<FilesItem[]>;
+  loadFolder?(path:string):Promise<FilesItem[]>;
   openPreferences?():void;
   selectCollection?(collectionId:string):void;
   operationCapabilities?(collectionId:string):Promise<FilesOperationCapabilities>;

@@ -2133,6 +2133,7 @@ function markActivity(paths:string[]) {
 function onFilesChanged(change:{ paths:string[] }) { markActivity(change.paths); scheduleFilesRefresh() }
 function refreshVisibleFiles() { if (document.visibilityState !== 'hidden') scheduleFilesRefresh() }
 watch([busy, loading], ([mutating, fetching]) => { if (!mutating && !fetching && pendingChange) scheduleFilesRefresh() });
+watch(currentPath, async path => { if(section.value!=='files'||!snapshot.value||!props.dataSource.loadFolder)return; try { const files=await props.dataSource.loadFolder(path); if(snapshot.value)snapshot.value={...snapshot.value,files:[...files]}; } catch(error) { operationError.value=error instanceof Error?error.message:String(error); } });
 let stopUploadProgress:(() => void) | undefined;
 let stopCapabilitiesChanged:(() => void) | undefined;
 let uploadDismissTimer:ReturnType<typeof setTimeout> | undefined;
