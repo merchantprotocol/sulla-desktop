@@ -8,6 +8,8 @@ import { constants } from 'node:fs';
 import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { TransactionScope } from './TransactionScope.js';
+
 export class Store {
   constructor(private root:string) {}
 
@@ -61,6 +63,8 @@ export class Store {
   }
 
   async put(collectionId:string, id:string, bytes:Uint8Array):Promise<boolean> {
+    // An fsync'd chunk write under load takes seconds: never while a transaction is open.
+    TransactionScope.assertOutside('a chunk store write');
     const target = this.path(collectionId, id);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     const temp = `${ target }.tmp-${ process.pid }-${ randomUUID() }`;

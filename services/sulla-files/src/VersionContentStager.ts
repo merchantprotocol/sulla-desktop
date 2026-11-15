@@ -5,6 +5,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { TransactionScope } from './TransactionScope.js';
+
 export const VERSION_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Content already encrypted and durable in the chunk store, ready for a short commit transaction. */
@@ -38,6 +40,7 @@ export class VersionContentStager {
   constructor(private readonly keyring:StagerKeyring, private readonly store:StagerChunkStore, private readonly crypto:StagerCrypto) {}
 
   async stage(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
+    TransactionScope.assertOutside('staging version content (key lookup, encrypt, fsync)');
     const { data, dedup } = await this.keyring.keys(collectionId);
     const chunkIds:string[] = []; const chunks = new Map<string, { id:string; size:number; storedSize:number }>();
     for (let offset = 0; offset < Math.max(1, bytes.length); offset += VERSION_CHUNK_BYTES) {

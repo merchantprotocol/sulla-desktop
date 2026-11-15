@@ -5,6 +5,8 @@
 
 import type pg from 'pg';
 
+import { TransactionScope } from './TransactionScope.js';
+
 /**
  * A request failed because its database connection was lost (Postgres terminated it, the
  * idle-in-transaction timeout fired, the server restarted). Nothing was committed unless
@@ -58,6 +60,10 @@ export interface TransactionObserver {
  * A lost connection never leaves a half-written version: Postgres rolls the transaction
  * back, the broken client is evicted from the pool, and the caller gets a
  * RetryableDatabaseError (HTTP 503) instead of a hang or an opaque 500.
+ *
+ * `work` runs inside a TransactionScope: reaching the pool again (requireFile/requirePath
+ * without the client, loadFileContent, a nested run) or staging chunks from inside it fails in
+ * tests and is logged in production. Pass `client` to every lookup made inside `work`.
  */
 export class TransactionRunner {
   constructor(
@@ -68,12 +74,14 @@ export class TransactionRunner {
   ) {}
 
   async run<T>(name:string, work:(client:pg.PoolClient) => Promise<T>):Promise<T> {
+    TransactionScope.assertOutside('starting a nested transaction');
     let client:pg.PoolClient;
     try { client = await this.db.connect() } catch (error) { throw this.translate(error, false) }
     let began = 0; let committing = false;
     try {
       await client.query('BEGIN'); began = Date.now();
-      const result = await work(client);
+      // While `work` runs, a pool acquire or chunk staging anywhere below it is a scope violation.
+      const result = await TransactionScope.within(name, () => work(client));
       committing = true;
       await client.query('COMMIT');
       client.release();
