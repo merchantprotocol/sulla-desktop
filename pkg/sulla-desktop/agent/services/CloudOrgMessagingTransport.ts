@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { EnvelopeCodec, type AgentHostLease, type ContactRequestChoice, type InboxCursor, type InboxPage, type MessageEnvelope, type OrgDirectory, type OrgMessagingTransport, type SubmitReceipt, type WakeHint } from '@sulla/domain';
-import { getActiveContractorId, getCurrentAccessToken, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClient';
 
 export interface OrgCloudSession {
@@ -13,9 +12,9 @@ export interface OrgCloudSession {
 }
 
 export class DesktopOrgCloudSession implements OrgCloudSession {
-  accessToken(): Promise<string> { return getCurrentAccessToken(); }
-  orgId(): Promise<string> { return getActiveContractorId(); }
-  userId(): Promise<string> { return getCurrentUserId(); }
+  async accessToken(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentAccessToken(); }
+  async orgId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getActiveContractorId(); }
+  async userId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentUserId(); }
 }
 
 /** Cloud adapter. The team id is resolved from the active authenticated session for every request. */

@@ -9,6 +9,7 @@ import type { OrgMessagingStateRepository } from './OrgMessagingStateRepository'
 export interface OrgMessagingSession { orgId(): Promise<string>; userId(): Promise<string> }
 export interface OrgContactRequestPrompter { request(senderUserId: string, messages: readonly MessageEnvelope[], resolve: (choice: ContactRequestChoice) => Promise<readonly number[]>): Promise<void> }
 export interface OrgInboxTargetResolver { target(envelope: MessageEnvelope): Promise<AgentInboxTarget> }
+export interface OrgConversationHaltHandler { halt(target: AgentInboxTarget): Promise<void> }
 
 /** Coordinates durable outbox retries, cursor-driven inbox delivery, and first-contact holds. */
 export class OrgMessenger {
@@ -21,15 +22,24 @@ export class OrgMessenger {
     private readonly inbox: AgentInbox,
     private readonly targetResolver: OrgInboxTargetResolver,
     private readonly contactPrompter: OrgContactRequestPrompter,
+    private readonly haltHandler?: OrgConversationHaltHandler,
     private readonly pageSize = 50,
   ) {}
+
+  private readonly haltedConversations = new Set<string>();
 
   async send(envelope: MessageEnvelope): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     if (envelope.data.orgId !== orgId || envelope.data.from.userId !== userId || envelope.data.provenance.actingForUserId !== userId) {
       throw new Error('Org message must belong to the active human and organization');
     }
-    await this.state.enqueue({ messageId: envelope.data.messageId, envelope: JSON.stringify(envelope.toJSON()) });
+    if (envelope.data.kind === 'agent' && this.haltedConversations.has(`${orgId}:${envelope.data.conversationId}`)) {
+      throw new Error('This organization conversation is halted');
+    }
+    // Persist the canonical wire representation: MessageEnvelope.toJSON() keeps
+    // ParticipantAddress instances, while decode() intentionally accepts only
+    // canonical address strings.
+    await this.state.enqueue({ messageId: envelope.data.messageId, envelope: this.codec.encode(envelope) });
     await this.flushOutbox();
   }
 
@@ -54,6 +64,12 @@ export class OrgMessenger {
       const ordered = [...page.messages].sort((a, b) => (a.data.hostSeq ?? 0) - (b.data.hostSeq ?? 0));
       for (const envelope of ordered) {
         const target = await this.targetResolver.target(envelope);
+        if (envelope.data.kind === 'control' && envelope.data.control?.action === 'halt') {
+          this.haltedConversations.add(`${orgId}:${envelope.data.conversationId}`);
+          await this.haltHandler?.halt(target);
+          delivered++;
+          continue;
+        }
         const local = this.bridge.toLocal(envelope, target.channel);
         await this.inbox.receive({
           envelope: { from: local.from, kind: local.kind, body: `${this.bridge.label(envelope)}\n${local.body}`, ids: { ...local.ids, messageId: local.messageId } },
