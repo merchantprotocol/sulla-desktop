@@ -289,12 +289,35 @@
           {{ notice[itemKey(item)] }}
         </p>
 
-        <details
-          v-if="item.report"
-          class="ar-raw"
-        >
-          <summary>Full report from the agent</summary>
-          <pre>{{ item.report }}</pre>
+        <!-- Technical details, one click away instead of repeated in every row. -->
+        <details class="ar-raw">
+          <summary>Details · job, model, thread, full report</summary>
+          <dl class="ar-kv">
+            <template
+              v-for="fact in factsOf(item)"
+              :key="fact.label"
+            >
+              <dt>{{ fact.label }}</dt>
+              <dd>{{ fact.value }}</dd>
+              <button
+                v-if="fact.copy"
+                type="button"
+                class="ar-copy"
+                :aria-label="`Copy ${fact.label.toLowerCase()}`"
+                @click="copyFact(item, fact)"
+              >
+                {{ copied === `${itemKey(item)}:${fact.label}` ? 'Copied' : 'Copy' }}
+              </button>
+              <span v-else />
+            </template>
+          </dl>
+          <details
+            v-if="item.report"
+            class="ar-report"
+          >
+            <summary>Full report · {{ wordCount(item.report) }} words</summary>
+            <pre>{{ item.report }}</pre>
+          </details>
         </details>
       </template>
     </section>
@@ -427,6 +450,30 @@ function tailOf(item: AgentResultItem): string[] {
   return reportTail(item.report, item.outcome).filter(line => !shownAbove.some(text => line.includes(text.replace(/…$/, ''))));
 }
 
+// ── Details: the technical facts, each copyable where useful ──
+interface Fact { label: string; value: string; copy?: string }
+function factsOf(item: AgentResultItem): Fact[] {
+  const facts: Fact[] = [{ label: 'Job', value: `${ item.jobId } · task ${ item.taskIndex }`, copy: item.jobId }];
+  const agent = [item.agentId, item.model].filter(Boolean).join(' · ');
+  if (agent) facts.push({ label: 'Agent · model', value: agent });
+  const ran = [item.startedAt && item.endedAt ? `${ clockTime(item.startedAt) } → ${ clockTime(item.endedAt) }` : '', item.durationMs ? `(${ duration(item.durationMs) })` : '', item.runLocation === 'container' ? '· container' : item.runLocation === 'vm' ? '· host' : ''].filter(Boolean).join(' ');
+  if (ran) facts.push({ label: 'Ran', value: ran });
+  if (item.threadId) facts.push({ label: 'Thread', value: item.threadId, copy: item.threadId });
+  if (item.workspace) facts.push({ label: 'Workspace', value: item.workspace, copy: item.workspace });
+  return facts;
+}
+function clockTime(ms: number): string {
+  const d = new Date(ms);
+  return `${ d.getHours() }:${ String(d.getMinutes()).padStart(2, '0') }`;
+}
+function wordCount(text: string): string { return text.trim().split(/\s+/).length.toLocaleString() }
+async function copyFact(item: AgentResultItem, fact: Fact): Promise<void> {
+  if (!fact.copy || !await actions.copy(fact.copy)) return;
+  const key = `${ itemKey(item) }:${ fact.label }`;
+  copied.value = key;
+  setTimeout(() => { if (copied.value === key) copied.value = '' }, 2000);
+}
+
 function openAgent(item: AgentResultItem): void {
   if (!actions.openAgent(item)) flash(item, 'Could not open this agent\'s conversation here.');
 }
@@ -539,6 +586,13 @@ function flash(item: AgentResultItem, text: string): void {
   max-height: 320px; overflow: auto; margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--ar-raised);
   color: var(--ar-ink-2); font: 12px/1.55 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere;
 }
+.ar-kv { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; margin: 0 0 10px; font-size: 12.5px; }
+.ar-kv dt { color: var(--ar-ink-3); }
+.ar-kv dd { margin: 0; overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--font-mono, ui-monospace, monospace); }
+.ar-copy { padding: 0 4px; border: 0; background: none; color: var(--ar-ink-3); font: inherit; font-size: 12px; cursor: pointer; }
+.ar-copy:hover, .ar-copy:focus-visible { color: var(--text-primary); }
+.ar-report summary { padding: 4px 0 8px; }
+@container (max-width: 520px) { .ar-kv { grid-template-columns: 90px minmax(0, 1fr); } .ar-kv .ar-copy, .ar-kv > span { display: none; } }
 
 @container (max-width: 520px) {
   .ar-head, .ar-group .ar-head { grid-template-columns: minmax(0, 1fr) auto; }

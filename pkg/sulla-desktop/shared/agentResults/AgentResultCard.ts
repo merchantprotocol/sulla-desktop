@@ -46,6 +46,12 @@ export interface AgentResultItem {
   outcome:       string;
   /** For a blocked or failed agent: what blocks it or what failed, in one sentence. */
   problem?:      string;
+  /** Technical details for the card's Details section. */
+  model?:        string;
+  runLocation?:  'vm' | 'container';
+  workspace?:    string;
+  startedAt?:    number;
+  endedAt?:      number;
   merges?:       AgentResultMerge[];
   environments?: AgentResultEnvironment[];
   tally?:        { passed?: number; failed?: number; skipped?: number };

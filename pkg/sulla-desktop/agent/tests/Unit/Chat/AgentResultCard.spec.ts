@@ -95,8 +95,8 @@ describe('a finished background agent in the chat', () => {
     expect(card.text()).not.toContain('All 11 PRs are on main');
   });
 
-  it('keeps the plain notice when there is no usable result', () => {
-    expect(render({}).card.text()).toContain('Task ready.');
+  it('keeps the plain notice for anything that is not a finished-agent notice', () => {
+    expect(render({ headline: 'Heartbeat insight' }).card.text()).toContain('Task ready.');
     expect(readAgentResultCard({ items: [{ ...merge, tone: 'rainbow' }] })).toBeUndefined();
   });
 
