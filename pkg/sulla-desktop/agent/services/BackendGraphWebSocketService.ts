@@ -62,6 +62,16 @@ const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
 
+/**
+ * Folder key for a conversation container's workspace and provider homes.
+ * A woken hidden delegated thread carries the key its spawn_agent run used
+ * (ParkedAgentRehydrator); every chat keeps its channel-scoped key.
+ */
+export function conversationPersistenceKey(channelId: string, threadId: string, state: AgentGraphState): string {
+  const delegatedKey = (state.metadata as any).containerPersistenceKey;
+  return typeof delegatedKey === 'string' && delegatedKey ? delegatedKey : `conversation:${ channelId }:${ threadId }`;
+}
+
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
 export function getBackendGraphWebSocketService(): BackendGraphWebSocketService {
@@ -392,7 +402,7 @@ export class BackendGraphWebSocketService {
     const lifecycle = await createAgentContainerLifecycle({
       jobId: `chat-${ threadId }`, taskIndex: 0, provider,
       model, state,
-      persistenceKey: `conversation:${ channelId }:${ threadId }`,
+      persistenceKey: conversationPersistenceKey(channelId, threadId, state),
     });
     const idleTimer = this.armConversationIdle(key, lifecycle);
     this.conversationContainers.set(key, { provider, model, agentId, lifecycle, idleTimer });

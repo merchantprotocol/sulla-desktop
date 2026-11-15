@@ -625,6 +625,7 @@ export class SpawnAgentWorker extends BaseTool {
             promptMessage.content += '\n\n[Container workspace] Agent-local file, shell, and Git work runs in the bounded job workspace shown by pwd. The workspace survives container exit; the container itself is removed when this job ends.';
           }
           const { createAgentContainerLifecycle } = await import('../../services/AgentContainerLauncher');
+          const { delegatedThreadPersistenceKey } = await import('../../services/DelegatedContainerKey');
           const createLifecycle = () => createAgentContainerLifecycle({
             jobId: activityJobId!,
             taskIndex: index,
@@ -635,7 +636,7 @@ export class SpawnAgentWorker extends BaseTool {
             signal: combined?.signal ?? taskAbortSignal,
             // A scheduled wait may exceed the container idle limit. Recreated
             // runtimes must resume the same workspace and provider home.
-            persistenceKey: threadId,
+            persistenceKey: delegatedThreadPersistenceKey(threadId),
           });
           containerLifecycle = new ParkedContainerLifecycle(await createLifecycle(), createLifecycle);
         }
