@@ -63,6 +63,7 @@ import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepositor
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 import { ListingPage } from './ListingPage.js';
+import { FilesDatabaseErrorPolicy } from './FilesDatabaseErrorPolicy.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const FOLDER_WHERE_CANDIDATES = 2000;
@@ -160,6 +161,7 @@ export function createApp(
   cloudSync?:CloudSyncService,
 ) {
   const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const databaseErrorPolicy = new FilesDatabaseErrorPolicy();
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
   const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
@@ -1019,7 +1021,12 @@ export function createApp(
       if(saved.merged) response.setHeader('X-Sulla-Merged','1');
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
-    } catch(error){await client.query('ROLLBACK');throw error} finally{client.release()}
+    } catch(error){
+      await client.query('ROLLBACK');
+      const conflict=databaseErrorPolicy.retryableConflict(error);
+      if(conflict) throw conflict;
+      throw error;
+    } finally{client.release()}
   } catch (error) { next(error) } });
   app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
     const actor=identity(request); const sourceFileId=String(request.body.sourceFileId??'');
