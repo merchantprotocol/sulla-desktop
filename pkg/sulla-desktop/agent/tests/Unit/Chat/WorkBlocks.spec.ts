@@ -12,6 +12,7 @@ import PatchBlock from '@pkg/pages/chat/components/patch/PatchBlock.vue';
 import ThinkingGroup from '@pkg/pages/chat/components/thinking/ThinkingGroup.vue';
 import ErrorCard from '@pkg/pages/chat/components/transcript/ErrorCard.vue';
 import { ChatControllerKey, ModelSelectorKey } from '@pkg/pages/chat/controller/useChatController';
+import { LineTimeKey } from '@pkg/pages/chat/messages/lineTime';
 
 const controller = { applyPatch: vi.fn(), rejectPatch: vi.fn(), revertPatch: vi.fn(), openArtifact: vi.fn() };
 const global = {
@@ -21,6 +22,7 @@ const global = {
   },
 };
 const by = { agent: 'product-owner', model: 'opus-5.5' };
+const patchMsg = { id: 'p9', kind: 'patch', createdAt: 0, state: 'applied', path: '/a/b/c.md', stat: { added: 1, removed: 0 }, hunks: [{ lines: [{ n: 1, op: 'add', text: 'x' }] }] } as any;
 
 afterEach(() => { document.body.innerHTML = ''; vi.clearAllMocks() });
 
@@ -125,14 +127,43 @@ describe('who produced a block', () => {
     const { ChatController } = await import('@pkg/pages/chat/controller/ChatController');
     const chat = new ChatController();
     chat.thread.value = { ...chat.thread.value, agentId: 'product-owner' };
-    chat.model.value = { ...chat.model.value, name: 'opus-5.5' };
+    chat.model.value = { ...chat.model.value, id: 'claude-opus-5-5', name: 'opus-5.5' };
     chat.appendMessage({ id: 'live', kind: 'patch', createdAt: Date.now() } as any);
     chat.appendMessage({ id: 'old', kind: 'patch', createdAt: Date.now() - 60 * 60_000 } as any);
     chat.appendMessage({ id: 'reply', kind: 'sulla', createdAt: Date.now() } as any);
-    const find = (id: string) => chat.thread.value.messages.find((m: any) => m.id === id);
+    const find = (id: string) => chat.thread.value.messages.find((m: any) => m.id === id) as any;
 
     expect(find('live').by).toEqual({ agent: 'product-owner', model: 'opus-5.5' });
     expect(find('old').by).toBeUndefined();
     expect(find('reply').by).toBeUndefined();
+  });
+
+  // risk: the chip read "Default", the picker's label, instead of a model
+  it('uses the agent\'s configured model when the picker says Default', async() => {
+    const { ChatController } = await import('@pkg/pages/chat/controller/ChatController');
+    const chat = new ChatController();
+    chat.thread.value = { ...chat.thread.value, agentId: 'product-owner' };
+    chat.model.value = { id: '', name: 'Default', tier: 'hosted', ctx: '' };
+    chat.appendMessage({ id: 'a', kind: 'patch', createdAt: Date.now() } as any);
+    chat.agentModelOf = () => 'claude-opus-5-5';
+    chat.appendMessage({ id: 'b', kind: 'patch', createdAt: Date.now() } as any);
+    const find = (id: string) => chat.thread.value.messages.find((m: any) => m.id === id) as any;
+
+    expect(find('a').by).toEqual({ agent: 'product-owner', model: undefined });
+    expect(find('b').by).toEqual({ agent: 'product-owner', model: 'claude-opus-5-5' });
+  });
+
+  it('never shows a picker label as the model on older blocks', () => {
+    const block = mount(PatchBlock, { props: { msg: { ...patchMsg, by: { agent: 'product-owner', model: 'Default' } } }, global });
+    expect(block.find('.wb-by').text()).toBe('PProduct Owner');
+  });
+
+  it('shows when the block happened, from the transcript', () => {
+    const block = mount(PatchBlock, {
+      props:  { msg: patchMsg },
+      global: { provide: { ...global.provide, [LineTimeKey as symbol]: (id: string) => (id === 'p9' ? { label: '2:28 PM', full: 'Sunday 2:28 PM' } : undefined) } },
+    });
+    expect(block.find('.wb-meta').text()).toBe('2:28 PM · +1 −0');
+    expect(block.find('.wb-time').attributes('title')).toBe('Sunday 2:28 PM');
   });
 });

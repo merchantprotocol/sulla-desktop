@@ -119,6 +119,12 @@ export function findProblem(report: string): string | undefined {
 export function reportTail(report: string, outcome: string, lines = 3): string[] {
   const all = report.split('\n').map(line => line.trim()).filter(Boolean);
   if (all.length <= 1) return [];
+  // Sulla's own housekeeping notes (`[Container recovery] Guest workspace
+  // retained at …`) are appended after the agent's words: cut from there.
+  const note = all.findIndex(line => /^\[[A-Z][\w ]{2,40}\]\s/.test(line));
+  if (note >= 0) all.splice(note);
+  // Closing braces and brackets left by a JSON report say nothing.
+  for (let index = all.length - 1; index >= 0; index--) if (!/[\p{L}\p{N}]/u.test(all[index])) all.splice(index, 1);
 
   return all.slice(-lines).filter(line => line !== outcome).map(line => (line.length > 220 ? `${ line.slice(0, 217) }…` : line));
 }

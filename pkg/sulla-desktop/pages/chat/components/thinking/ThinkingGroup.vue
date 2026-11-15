@@ -16,6 +16,7 @@
     tone="think"
     :live="!completed"
     :by="by"
+    :line-id="lineId"
   >
     <template #title>
       <b>{{ title.lead }}</b><template v-if="title.rest">
@@ -23,7 +24,7 @@
       </template>
     </template>
     <template #meta>
-      {{ elapsedLabel }} · {{ steps.length }} step{{ steps.length === 1 ? '' : 's' }}
+      <template v-if="elapsedLabel">{{ elapsedLabel }} · </template>{{ steps.length }} step{{ steps.length === 1 ? '' : 's' }}
     </template>
 
     <ul
@@ -93,7 +94,7 @@ import WorkBlock from '../transcript/WorkBlock.vue';
 
 import type { ThinkingMessage, ToolMessage } from '../../models/Message';
 
-const props = defineProps<{ messages: readonly (ThinkingMessage | ToolMessage)[] }>();
+const props = defineProps<{ messages: readonly (ThinkingMessage | ToolMessage)[]; lineId?: string }>();
 
 const steps = computed(() => workSteps(props.messages));
 const completed = computed(() => props.messages.every(message =>
@@ -124,7 +125,10 @@ onMounted(() => { if (!completed.value) startTicking(); });
 watch(completed, done => (done ? stopTicking() : startTicking()));
 onBeforeUnmount(stopTicking);
 
+/** Unknown for a block replayed already finished: no end time was seen. */
+const endKnown = computed(() => !completed.value || props.messages.some(message => message.kind === 'thinking' && message.completedAt));
 const elapsedLabel = computed(() => {
+  if (!endKnown.value) return '';
   const end = completed.value ? completedAt.value : Date.now() + tick.value * 0;
   const seconds = Math.max(0, Math.round((end - startedAt.value) / 1000));
   return seconds < 60 ? `${ seconds }s` : `${ Math.floor(seconds / 60) }m ${ seconds % 60 }s`;

@@ -60,11 +60,11 @@
           <b>{{ item.label }}</b>
           <span>{{ byline(item) }}</span>
         </span>
-        <!-- "Finished" would contradict a Blocked or Failed chip. -->
         <span
-          v-if="item.purpose !== 'other' || item.status === 'completed'"
+          v-if="kindOf(item) || when?.label"
           class="ar-kind"
-        >{{ PURPOSE_LABEL[item.purpose] }}</span>
+          :title="when?.full"
+        >{{ [kindOf(item), when?.label].filter(Boolean).join(' ') }}</span>
         <span
           v-if="items.length > 1"
           class="ar-chev"
@@ -329,11 +329,18 @@ import { computed, reactive, ref } from 'vue';
 
 import { useAgentResultActions } from '../../composables/useAgentResultActions';
 import { useChatController } from '../../controller/useChatController';
+import { useLineTime } from '../../messages/lineTime';
 
 import { PURPOSE_LABEL, findProblem, reportTail } from '@pkg/shared/agentResults/AgentResultCard';
 import type { AgentResultCardData, AgentResultEnvironment, AgentResultFinding, AgentResultItem, AgentResultTone } from '@pkg/shared/agentResults/AgentResultCard';
 
 const props = defineProps<{ data: AgentResultCardData; messageId?: string }>();
+const lineTime = useLineTime();
+const when = computed(() => (props.messageId ? lineTime(props.messageId) : undefined));
+/** "Finished" would contradict a Blocked or Failed chip, so it shows only for completed work. */
+function kindOf(item: AgentResultItem): string {
+  return item.purpose !== 'other' || item.status === 'completed' ? PURPOSE_LABEL[item.purpose] : '';
+}
 const actions = useAgentResultActions();
 let controller: ReturnType<typeof useChatController> | undefined;
 try { controller = useChatController() } catch { /* outside a chat page */ }

@@ -84,6 +84,8 @@ export class PersonaAdapter {
    *  once per backend id so re-mapping a long-finished thinking bubble
    *  doesn't drift the frozen elapsed label. */
   private firstCompletedAt = new Map<string, number>();
+  /** Thinking bubbles this window saw before they finished. */
+  private seenRunning = new Set<string>();
   /** Hash of the last-mapped transcript Message per backend id, for skipping no-op updates. */
   private lastMappedHash = new Map<string, string>();
   /**
@@ -421,6 +423,7 @@ export class PersonaAdapter {
     this.seen.clear();
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
+    this.seenRunning.clear();
     this.lastMappedHash.clear();
     this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
@@ -440,6 +443,7 @@ export class PersonaAdapter {
     this.stopWatchers = [];
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
+    this.seenRunning.clear();
     this.lastMappedHash.clear();
     this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
@@ -679,8 +683,12 @@ export class PersonaAdapter {
     if (b.kind === 'thinking') {
       const thoughts = splitThoughts(b.content ?? '');
       const completed = (b as any)._completed === true || !this.ci.graphRunning.value;
+      // Completion time is only known when this window saw it still running.
+      // A bubble replayed already finished has no true end time; leave it
+      // unset (and keep any saved one) rather than stamping the replay time.
       let completedAt: number | undefined;
-      if (completed) {
+      if (!completed) this.seenRunning.add(b.id);
+      else if (this.seenRunning.has(b.id)) {
         completedAt = this.firstCompletedAt.get(b.id);
         if (completedAt === undefined) {
           completedAt = Date.now();
@@ -694,7 +702,7 @@ export class PersonaAdapter {
         thoughts,
         startedAt: createdAt,
         completed,
-        completedAt,
+        ...(completedAt !== undefined ? { completedAt } : {}),
         summary:   completed ? firstLineOf(b.content ?? '') : undefined,
       } satisfies ThinkingMessage;
     }
@@ -1017,9 +1025,13 @@ export class PersonaAdapter {
   private stableCreatedAt(backendId: string): number {
     const existing = this.firstSeenAt.get(backendId);
     if (existing !== undefined) return existing;
+    // Backend ids start with their creation time (`1794753730205_ws_thinking`).
+    // Use it so a replay after a restart keeps the real time, not the replay time.
     const now = Date.now();
-    this.firstSeenAt.set(backendId, now);
-    return now;
+    const minted = Number(/^(\d{13})_/.exec(backendId)?.[1]);
+    const at = minted > 1_500_000_000_000 && minted <= now + 60_000 ? minted : now;
+    this.firstSeenAt.set(backendId, at);
+    return at;
   }
 
   // ─── Workflow artifact driver ─────────────────────────────────────

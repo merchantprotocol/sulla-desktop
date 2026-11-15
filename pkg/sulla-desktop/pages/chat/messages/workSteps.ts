@@ -12,11 +12,11 @@ import type { ThinkingMessage, ToolMessage } from '../models/Message';
  */
 export type WorkStep =
   | { kind: 'think'; key: string; text: string }
-  | { kind: 'run'; key: string; title: string; detail: string; raw: string; status?: ToolMessage['status']; tool?: ToolMessage }
+  | { kind: 'run'; key: string; title: string; short?: string; detail: string; raw: string; status?: ToolMessage['status']; tool?: ToolMessage }
   | { kind: 'note'; key: string; text: string };
 
 /** Status lines that only announce the next entry ("Running a shell command"). */
-const FILLER = /^(running a shell command|running a command|preparing your turn…?|booting isolated environment…?|tools connected[^]*|session started[^]*|thinking…?|writing a file|editing files|using [\w./-]+)$/i;
+const FILLER = /^(running a shell command|running a command|preparing your turn(?:…|\.\.\.)?|booting isolated environment(?:…|\.\.\.)?|tools connected[^]*|session started[^]*|thinking(?:…|\.\.\.)?|writing a file|editing files|using [\w./-]+)$/i;
 const THOUGHT = /^💭\s*/;
 const COMMAND = /^\$\s+/;
 
@@ -41,7 +41,7 @@ export function workSteps(messages: readonly (ThinkingMessage | ToolMessage)[]):
       if (!text || FILLER.test(text)) return;
       if (COMMAND.test(text)) {
         const command = summariseCommand(text.replace(COMMAND, ''));
-        steps.push({ kind: 'run', key, title: command.title, detail: command.detail, raw: text });
+        steps.push({ kind: 'run', key, title: command.title, short: command.short, detail: command.detail, raw: text });
       } else if (THOUGHT.test(text)) {
         steps.push({ kind: 'think', key, text: text.replace(THOUGHT, '') });
       } else {
@@ -57,7 +57,7 @@ export function workSteps(messages: readonly (ThinkingMessage | ToolMessage)[]):
  * reads as title "github merge_pr", detail "x #4334 · aefaf0d". Anything else
  * keeps the command's first words as the title.
  */
-export function summariseCommand(command: string): { title: string; detail: string } {
+export function summariseCommand(command: string): { title: string; short?: string; detail: string } {
   const sulla = /^sulla\s+([\w-]+)\/([\w-]+)\s*(?:'([^]*?)'?)?\s*(?:2>&1.*)?$/.exec(command);
   if (sulla) {
     const args = parseArgs(sulla[3]);
@@ -68,11 +68,36 @@ export function summariseCommand(command: string): { title: string; detail: stri
       typeof args.query === 'string' ? `"${ args.query.slice(0, 60) }"` : '',
       typeof args.path === 'string' ? args.path : '',
     ].filter(Boolean);
-    return { title: `${ sulla[1] } ${ sulla[2] }`, detail: parts.join(' · ') };
+    return { title: `${ sulla[1] } ${ sulla[2] }`, short: sulla[2], detail: parts.join(' · ') };
   }
   const words = command.replace(/\s+/g, ' ').trim();
-  const program = words.split(' ')[0] ?? '';
-  return { title: program.split('/').pop() || 'command', detail: words.length > 90 ? `${ words.slice(0, 89) }…` : words };
+  return { title: commandName(words), detail: words.length > 90 ? `${ words.slice(0, 89) }…` : words };
+}
+
+/** Steps that only set the stage (`cd x &&`, `echo ---;`, loop keywords), never the point of a command. */
+const SETUP = /^(cd|echo|printf|export|set|true|sleep|source|\.|clear|:)$/;
+const KEYWORDS = /^(for|while|until|if|then|else|elif|do|done|fi|case|esac|in|time|sudo|env|nohup|exec)$/;
+/** Tools whose first argument says what they do (`git status`, `gh pr`). */
+const SUBCOMMANDED = /^(git|gh|npm|pnpm|yarn|npx|docker|kubectl|wrangler|uv|cargo|go|brew|psql|sulla|codex|claude)$/;
+
+/**
+ * The name of what a shell command actually runs: the first segment that is
+ * not setup or a loop keyword, as `program subcommand` for tools like git.
+ * `cd /repo && git status --short` → "git status"; `for p in 1 2; do gh pr view $p; done` → "gh pr".
+ */
+function commandName(command: string): string {
+  for (const segment of command.split(/&&|\|\||;|\||\n|\$\(|`/)) {
+    const words = segment.trim().split(' ').filter(word => word && !/^\w+=/.test(word));
+    if (/^(for|case|select)$/.test(words[0] ?? '')) continue; // a loop header names a variable, not a program
+    while (words.length && KEYWORDS.test(words[0])) words.shift();
+    const program = (words[0] ?? '').split('/').pop() ?? '';
+    if (!program || SETUP.test(program) || !/^[\w.-]+$/.test(program)) continue;
+    const next = words[1];
+    if (SUBCOMMANDED.test(program) && next && /^[a-z][\w-]*$/.test(next)) return `${ program } ${ next }`;
+    const script = /^python\d?$|^node$|^bash$|^sh$/.test(program) && next && /\.\w+$/.test(next) ? next.split('/').pop() : '';
+    return script ? `${ program } ${ script }` : program;
+  }
+  return 'shell';
 }
 
 function parseArgs(text: string | undefined): Record<string, unknown> {
@@ -104,13 +129,17 @@ export function workTitle(steps: readonly WorkStep[], completed: boolean, summar
     if (latest.kind === 'run') return { lead: latest.title, rest: latest.detail };
     return { lead: 'Thinking', rest: latest.text };
   }
-  if (summary?.trim()) return { lead: summary.trim(), rest: runs.length ? uniqueTitles(runs) : '' };
+  // The saved summary is the log's first line: a real sentence, or only a
+  // status placeholder ("Thinking…") or a command, which say nothing.
+  const said = summary?.trim().replace(THOUGHT, '');
+  if (said && !FILLER.test(said) && !COMMAND.test(said)) return { lead: said, rest: runs.length ? uniqueTitles(runs) : '' };
   if (runs.length) return { lead: `Ran ${ runs.length } step${ runs.length === 1 ? '' : 's' }`, rest: uniqueTitles(runs) };
   const first = steps.find(step => step.kind !== 'run');
   return { lead: 'Thought it through', rest: first?.text ?? '' };
 }
 
-function uniqueTitles(runs: readonly { title: string }[]): string {
-  const names = [...new Set(runs.map(run => run.title.split(' ').pop() ?? run.title))];
+/** The step names for a title: `merge_pr` for Sulla tools, `git status` for shell commands. */
+function uniqueTitles(runs: readonly { title: string; short?: string }[]): string {
+  const names = [...new Set(runs.map(run => run.short ?? run.title))];
   return names.length > 4 ? `${ names.slice(0, 4).join(', ') }, +${ names.length - 4 }` : names.join(', ');
 }

@@ -9,6 +9,7 @@
     icon="!"
     tone="err"
     :by="msg.by"
+    :line-id="msg.id"
   >
     <template #title>
       <b>{{ msg.text }}</b>

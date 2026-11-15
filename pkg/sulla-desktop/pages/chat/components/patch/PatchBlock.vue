@@ -14,6 +14,7 @@
     icon="±"
     tone="patch"
     :by="msg.by"
+    :line-id="msg.id"
     :default-open="false"
   >
     <template #title>

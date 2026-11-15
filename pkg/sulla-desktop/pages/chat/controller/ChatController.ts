@@ -389,8 +389,15 @@ export class ChatController {
    */
   private stampAuthor(m: Message): Message {
     if (m.by || !STAMPED_KINDS.has(m.kind) || Math.abs(Date.now() - m.createdAt) > 2 * 60_000) return m;
-    return { ...m, by: { agent: this.thread.value.agentId ?? undefined, model: this.model.value.name || undefined } } as Message;
+    const agent = this.thread.value.agentId ?? undefined;
+    // An empty model id means the picker shows "Default"/"Auto", a label and
+    // not a model: use the agent's own configured model, else leave it out.
+    const model = this.model.value.id ? this.model.value.name : (agent && this.agentModelOf?.(agent)) || undefined;
+    return { ...m, by: { agent, model } } as Message;
   }
+
+  /** The model an agent is configured to run on; set by the page that owns the agent list. */
+  agentModelOf?: (agentId: string) => string | null | undefined;
 
   /** Persist a completed batch append, such as backend-thread hydration. */
   persistThread(): void {

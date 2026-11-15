@@ -31,13 +31,17 @@
       /><template v-else>{{ icon }}</template></span>
       <span class="wb-title"><slot name="title" /></span>
       <span
-        v-if="authorName || by?.model"
+        v-if="authorName || model"
         class="wb-by"
-        :title="`Produced by ${authorName || 'Sulla'}${by?.model ? ` on ${by.model}` : ''}`"
+        :title="`Produced by ${authorName || 'Sulla'}${model ? ` on ${model}` : ''}`"
       >
-        <i aria-hidden="true">{{ (authorName || 'S').charAt(0).toUpperCase() }}</i>{{ authorName || 'Sulla' }}<small v-if="by?.model">{{ by.model }}</small>
+        <i aria-hidden="true">{{ (authorName || 'S').charAt(0).toUpperCase() }}</i>{{ authorName || 'Sulla' }}<small v-if="model">{{ model }}</small>
       </span>
-      <span class="wb-meta"><slot name="meta" /></span>
+      <span class="wb-meta"><time
+        v-if="when?.label"
+        class="wb-time"
+        :title="when.full"
+      >{{ when.label }} · </time><slot name="meta" /></span>
       <span
         class="wb-chev"
         aria-hidden="true"
@@ -57,6 +61,7 @@
 import { computed, inject, ref } from 'vue';
 
 import { ModelSelectorKey } from '../../controller/useChatController';
+import { useLineTime } from '../../messages/lineTime';
 
 const props = withDefaults(defineProps<{
   icon:         string;
@@ -64,7 +69,9 @@ const props = withDefaults(defineProps<{
   by?:          { agent?: string; model?: string };
   live?:        boolean;
   defaultOpen?: boolean;
-}>(), { by: undefined, live: false, defaultOpen: false });
+  /** The transcript line this block is, for its time. */
+  lineId?:      string;
+}>(), { by: undefined, live: false, defaultOpen: false, lineId: undefined });
 
 const open = ref(props.defaultOpen);
 const selector = inject(ModelSelectorKey, null);
@@ -74,6 +81,11 @@ const authorName = computed(() => {
   if (!id) return '';
   return selector?.agentOptions.value.find(agent => agent.slug === id)?.name ?? id;
 });
+
+/** "Default" and "Auto" are picker labels, not models; older blocks were stamped with them. */
+const model = computed(() => (props.by?.model && !/^(default|auto)$/i.test(props.by.model) ? props.by.model : ''));
+const lineTime = useLineTime();
+const when = computed(() => (props.lineId ? lineTime(props.lineId) : undefined));
 
 defineExpose({ open });
 </script>

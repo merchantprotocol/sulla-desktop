@@ -28,6 +28,7 @@
           <ThinkingGroup
             v-if="entry.kind === 'thinking-group'"
             :messages="entry.messages"
+            :line-id="entry.id"
           />
           <MessageRouter
             v-else
@@ -57,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, provide, ref } from 'vue';
 
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
@@ -66,6 +67,7 @@ import TurnWaiting from './TurnWaiting.vue';
 import { groupTranscriptThinking } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
+import { LineTimeKey, lineTimes } from '../../messages/lineTime';
 import { waitingOn } from '../../messages/waitingStatus';
 import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
@@ -74,6 +76,13 @@ const scroller = ref<HTMLElement | null>(null);
 
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
 const transcriptEntries = computed(() => groupTranscriptThinking(controller.messages.value));
+
+// Each line's time, shown once per minute (see lineTime.ts).
+const times = computed(() => lineTimes(transcriptEntries.value.map(entry => ({
+  id: entry.id,
+  at: entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt,
+}))));
+provide(LineTimeKey, id => times.value.get(id));
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
 const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));

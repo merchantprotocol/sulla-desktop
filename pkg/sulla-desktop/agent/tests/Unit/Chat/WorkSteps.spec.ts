@@ -28,9 +28,9 @@ describe('a work log reads as steps', () => {
 
   it('still reads a command the activity line cut off mid-JSON', () => {
     expect(summariseCommand('sulla github/merge_pr \'{"owner":"dataripple-org","repo":"ripple-receptionist-'))
-      .toEqual({ title: 'github merge_pr', detail: '' });
+      .toMatchObject({ title: 'github merge_pr', detail: '' });
     expect(summariseCommand('sulla github/check_runs \'{"repo":"ripple-receptionist-worker","sha":"aefaf0d6bb…')).toMatchObject({ title: 'github check_runs', detail: 'ripple-receptionist-worker' });
-    expect(summariseCommand('cd /mnt/data/workspace && git status --short')).toMatchObject({ title: 'cd' });
+    expect(summariseCommand('cd /mnt/data/workspace && git status --short')).toMatchObject({ title: 'git status' });
   });
 });
 
@@ -49,5 +49,25 @@ describe('the one-line title', () => {
     expect(workTitle(steps, true, 'Checked and merged #1')).toEqual({ lead: 'Checked and merged #1', rest: 'get_pr, check_runs, merge_pr' });
     expect(workTitle(steps, true)).toEqual({ lead: 'Ran 3 steps', rest: 'get_pr, check_runs, merge_pr' });
     expect(workTitle(workSteps([thinking(['💭 Looking at the scope card first.'])]), true)).toEqual({ lead: 'Thought it through', rest: 'Looking at the scope card first.' });
+  });
+});
+
+describe('a shell command is named by what it runs', () => {
+  // risk: lines titled "cd", "for" or "echo" told the reader nothing
+  it('skips setup steps and loop keywords', () => {
+    expect(summariseCommand('cd /mnt/data/workspace && git status --short').title).toBe('git status');
+    expect(summariseCommand('for p in 4334 4339; do gh pr view $p --json state; done').title).toBe('gh pr');
+    expect(summariseCommand('echo "---"; python3 /tmp/audit.py --realm 1').title).toBe('python3 audit.py');
+    expect(summariseCommand('FOO=1 npm run build').title).toBe('npm run');
+    expect(summariseCommand('cd /x && echo done').title).toBe('shell');
+  });
+
+  // risk: finished blocks were titled "Thinking…", the log's placeholder first line
+  it('ignores a summary that is only a placeholder or a command', () => {
+    const steps = workSteps([thinking(['$ cd /r && git status'])]);
+    expect(workTitle(steps, true, 'Thinking...')).toEqual({ lead: 'Ran 1 step', rest: 'git status' });
+    expect(workTitle(steps, true, 'Thinking…')).toEqual({ lead: 'Ran 1 step', rest: 'git status' });
+    expect(workTitle(steps, true, '$ cd /r && git status').lead).toBe('Ran 1 step');
+    expect(workTitle(steps, true, '💭 Checking the merge gate first.').lead).toBe('Checking the merge gate first.');
   });
 });

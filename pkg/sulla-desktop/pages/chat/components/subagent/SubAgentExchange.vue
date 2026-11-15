@@ -32,6 +32,11 @@
         <b v-else>{{ msg.agentId }}</b>
         · {{ msg.label }}
       </span>
+      <time
+        v-if="when?.label"
+        class="sx-time"
+        :title="when.full"
+      >{{ when.label }}</time>
       <span
         class="sx-status"
         :class="`sx-${status.tone}`"
@@ -58,6 +63,7 @@ import { computed, inject, ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 import { parseLegacyAgentNotice } from '../../messages/legacyAgentNotice';
+import { useLineTime } from '../../messages/lineTime';
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
@@ -71,6 +77,8 @@ let controller: ReturnType<typeof useChatController> | undefined;
 try { controller = useChatController() } catch { /* outside a chat page */ }
 
 const showDetail = ref(false);
+const lineTime = useLineTime();
+const when = computed(() => lineTime(props.msg.id));
 
 const sameTask = (jobId?: string, taskIndex?: number) => !!props.msg.jobId && jobId === props.msg.jobId && (props.msg.taskIndex ?? 0) === (taskIndex ?? 0);
 
@@ -129,7 +137,7 @@ function openConversation(): void {
   font-family: var(--font-body);
 }
 .sx-line {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 10px; align-items: center;
   padding: 7px 12px; border: 1px solid var(--border-default); border-radius: 9px;
   background: color-mix(in srgb, var(--bg-page) 55%, transparent); color: var(--sx-ink-2); font-size: 13px;
 }
@@ -142,6 +150,7 @@ function openConversation(): void {
 .sx-agent { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--text-primary) 30%, transparent); text-underline-offset: 2px; }
 .sx-agent:hover { text-decoration-color: currentColor; }
 .sx-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sx-ink-3); white-space: nowrap; }
+.sx-time { color: var(--sx-ink-3); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
 .sx-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sx-ink-3); }
 .sx-run .sx-dot { background: var(--accent); }
 .sx-ok .sx-dot { background: var(--status-success); }
@@ -158,6 +167,6 @@ function openConversation(): void {
 }
 @media (max-width: 560px) {
   .sx-line { grid-template-columns: auto minmax(0, 1fr); }
-  .sx-status, .sx-link { grid-column: 2; }
+  .sx-time, .sx-status, .sx-link { grid-column: 2; }
 }
 </style>

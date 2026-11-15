@@ -292,6 +292,7 @@ const modelSelector   = new AgentModelSelectorController({
     controller.selectForChat(selected, providerId || null, agentId);
   },
 });
+controller.agentModelOf = agentId => modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.model;
 modelSelector.start().then(() => {
   if (controller.thread.value.providerId || controller.thread.value.agentId) {
     modelSelector.restoreForChat(controller.thread.value.providerId, controller.model.value.id, controller.thread.value.agentId);
