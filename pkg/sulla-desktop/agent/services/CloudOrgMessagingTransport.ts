@@ -33,9 +33,12 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const [orgId, token] = await Promise.all([this.session.orgId(), this.session.accessToken()]);
     if (!orgId || !token) throw new Error('An active Sulla Cloud organization session is required');
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${token}`);
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     const response = await this.http.send(`/orgs/${encodeURIComponent(orgId)}${path}`, {
       ...init,
-      headers: { Authorization: `Bearer ${token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+      headers,
     }, true);
     if (!response.ok) throw new Error(`Cloud org messaging request failed (${response.status})`);
     return await response.json() as T;
@@ -79,9 +82,12 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
 
   async *wakeups(): AsyncIterable<WakeHint> {
     let since = 0;
+    let identity = '';
     while (true) {
       const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
       if (!orgId || !userId) return;
+      const nextIdentity = `${orgId}:${userId}`;
+      if (identity !== nextIdentity) { identity = nextIdentity; since = 0; }
       const page = await this.pull({ orgId, userId, since }, 50);
       if (page.next > since) {
         since = page.next;
@@ -99,6 +105,6 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
   directory(): OrgDirectory { return this.cachedDirectory; }
 
   claimAgentHost(deviceId: string): Promise<AgentHostLease> {
-    return this.request('/agent-host-lease', { method: 'POST', body: JSON.stringify({ deviceId }) });
+    return this.request<AgentHostLease>('/agent-host-lease', { method: 'POST', body: JSON.stringify({ deviceId }) });
   }
 }
