@@ -11,13 +11,9 @@ import * as fs from 'fs/promises';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
 
-/** The pre-database settings file exists but cannot be parsed. */
-export class SettingsBootstrapFileCorruptError extends Error {
-  constructor(readonly detail: string) {
-    super(`Settings bootstrap file ${ detail }`);
-    this.name = 'SettingsBootstrapFileCorruptError';
-  }
-}
+import { SettingsBootstrapFile } from './SettingsBootstrapFile';
+
+export { SettingsBootstrapFileCorruptError } from './SettingsBootstrapFile';
 
 interface SettingsAttributes {
   property: string;
@@ -398,90 +394,22 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     await this.writeBootstrapSetting(property, value);
   }
 
-  // Serialises read-modify-write updates of the pre-database settings file.
-  private static bootstrapFileWrites: Promise<void> = Promise.resolve();
+  // The pre-database settings file: atomic, serialised, corruption-safe I/O.
+  private static readonly bootstrapFile = new SettingsBootstrapFile(() => SullaSettingsModel.getFallbackFilePath());
 
-  /**
-   * Read the pre-database settings file. Returns null only when the file does
-   * not exist; throws when it exists but cannot be read or parsed, so callers
-   * can tell "not readable yet" apart from "value absent".
-   */
-  public static async readBootstrapFile(): Promise<Record<string, unknown> | null> {
-    let content: string;
-
-    try {
-      content = await fs.readFile(this.getFallbackFilePath(), 'utf8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-      throw err;
-    }
-    let data: unknown;
-
-    try {
-      data = JSON.parse(content);
-    } catch {
-      throw new SettingsBootstrapFileCorruptError('is not valid JSON');
-    }
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      throw new SettingsBootstrapFileCorruptError('does not hold a JSON object');
-    }
-
-    return data as Record<string, unknown>;
+  /** The bootstrap file's contents; null when it does not exist, throws when unreadable. */
+  public static readBootstrapFile(): Promise<Record<string, unknown> | null> {
+    return this.bootstrapFile.read();
   }
 
-  /**
-   * Move a corrupt bootstrap file aside (kept as `<file>.corrupt-<ms>` for
-   * recovery) so the next write starts a fresh one. Returns the new path.
-   */
-  public static async quarantineBootstrapFile(): Promise<string> {
-    const filePath = this.getFallbackFilePath();
-    const quarantined = `${ filePath }.corrupt-${ Date.now() }`;
-
-    await fs.rename(filePath, quarantined);
-
-    return quarantined;
+  /** Rewrite a corrupt bootstrap file, keeping the damaged copy aside and its readable keys. */
+  public static repairBootstrapFile(): Promise<void> {
+    return this.bootstrapFile.update(() => undefined);
   }
 
-  /**
-   * Write one property to the pre-database settings file, whether or not the
-   * database is ready. Writes are serialised and atomic (temp file + rename):
-   * a concurrent reader never sees a half-written file, and two writers never
-   * drop each other's keys.
-   */
+  /** Write one property to the bootstrap file, whether or not the database is ready. */
   public static writeBootstrapSetting(property: string, value: unknown): Promise<void> {
-    return this.updateBootstrapFile((data) => {
-      data[property] = value;
-    });
-  }
-
-  private static updateBootstrapFile(mutate: (data: Record<string, any>) => void): Promise<void> {
-    const write = this.bootstrapFileWrites.then(async() => {
-      const filePath = this.getFallbackFilePath();
-      let data: Record<string, any> = {};
-
-      try {
-        data = (await this.readBootstrapFile()) ?? {};
-      } catch (err) {
-        if (!(err instanceof SettingsBootstrapFileCorruptError)) throw err;
-        // Writes are atomic, so a corrupt file is not a write in progress. Keep
-        // it aside for recovery rather than silently dropping its keys.
-        console.warn(`[SullaSettingsModel] Settings bootstrap file ${ err.detail }; moved aside to ${ await this.quarantineBootstrapFile() }`);
-      }
-      mutate(data);
-      const temporary = `${ filePath }.${ process.pid }.${ crypto.randomUUID() }.tmp`;
-
-      await fs.writeFile(temporary, JSON.stringify(data, null, 2));
-      try {
-        await fs.rename(temporary, filePath);
-      } catch (err) {
-        await fs.unlink(temporary).catch(() => undefined);
-        throw err;
-      }
-    });
-
-    this.bootstrapFileWrites = write.catch(() => undefined);
-
-    return write;
+    return this.bootstrapFile.write(property, value);
   }
 
   /**
@@ -513,9 +441,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       return getIpcRenderer().invoke('sulla-settings-delete', property);
     }
     if (!this.isReady) {
-      await this.updateBootstrapFile((data) => {
-        delete data[property];
-      });
+      await this.bootstrapFile.remove(property);
       return;
     }
 

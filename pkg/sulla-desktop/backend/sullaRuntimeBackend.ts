@@ -33,11 +33,14 @@ import {
   UserStoppedContainers,
 } from './sullaContainerHealth';
 import {
-  clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
+  clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName, SULLA_COMPOSE_COMMAND,
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import { ComposeSecretGuard } from './ComposeSecretGuard';
 import { ContainerDriftReconciler } from './ContainerDriftReconciler';
+import { GuestServiceSecretInstallState } from './GuestServiceSecretInstallState';
 import { ServiceSecretComposeValues } from './ServiceSecretComposeValues';
+import { SullaComposeRegeneration } from './SullaComposeRegeneration';
 import {
   ComposeContainerNameReconciler, ComposeServiceHealthWaiter, type ComposeServiceTarget, type DockerCli,
 } from './sullaComposeContainers';
@@ -184,6 +187,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     mainEvents.on('sulla-container-intent', (intent, names) => {
       this.#userStopped.record(intent, names);
     });
+    // The service secret: tell the provider how to inspect and open the guest
+    // database, and regenerate compose when the database's value wins.
+    serviceSecretProvider.useInstallState(new GuestServiceSecretInstallState(
+      this.#guestDocker, target => this.waitForDockerServiceHealthy(target, 300), SullaSettingsModel,
+    ));
+    serviceSecretProvider.onChange(reason => this.regenerateComposeAfterSecretChange(reason));
   }
 
   readonly executor = this;
@@ -216,6 +225,18 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   readonly #volumeMigrator = new NamedVolumeMigrator(this.#guestDocker, this.#composeContainers, 'sulla', console);
   /** Sulla containers the person stopped from the Docker tab; supervision leaves them stopped. */
   readonly #userStopped = new UserStoppedContainers();
+  /** Mid-session drift sweeps share one reconciler so a container that cannot converge is not recreated in a loop. */
+  readonly #composeDrift = new ContainerDriftReconciler(
+    this.#guestDocker, SULLA_COMPOSE_COMMAND.slice(1), service => this.recreateComposeService(service), console,
+    target => this.settleBeforeRecreate(target),
+  );
+  readonly #composeRegeneration = new SullaComposeRegeneration(async() => {
+    await this.prepareSullaComposeFile();
+
+    // The Files mount manager owns the FUSE adapter, and on-demand runtimes
+    // may be mid-invocation; neither carries the service secret.
+    return this.#composeTargets.filter(target => target.service !== 'sulla_files_fuse' && !(target.service in ON_DEMAND_SERVICES));
+  }, this.#composeDrift, console);
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
   /** The native Sulla runtime VM. */
@@ -1314,8 +1335,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     // Waits for a readable settings store; never a hardcoded fallback credential.
     const serviceSecret = await ServiceSecretComposeValues.resolve(serviceSecretProvider);
-    const rawSullaServicePassword = serviceSecret.raw;
-    const sullaServicePassword = serviceSecret.envValue;
     const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
     let sullaApiToken = '';
     try {
@@ -1330,7 +1349,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
     const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
     try {
-      const accountsSecrets = await this.prepareAccountsSecrets(rawSullaServicePassword);
+      const accountsSecrets = await this.prepareAccountsSecrets(serviceSecret.raw);
       // The host files remain the value store; the container binds a
       // root-owned guest copy because the VM cannot see host paths.
       await provisionAccountsSecretsInGuest({
@@ -1425,9 +1444,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           // 256 MB at moderate cost) lives outside the heap, so the limit stays.
           NODE_OPTIONS: serviceNodeOptions(256),
           SULLA_VAULT_MODE: 'desktop',
-          SULLA_VAULT_ADMIN_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
-          SULLA_VAULT_DATABASE_URL: serviceSecret.databaseUrl('sulla_vault'),
-          SULLA_VAULT_LEGACY_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
+          // SULLA_VAULT_*DATABASE_URL: set by serviceSecret.applyTo(compose) below.
           SULLA_VAULT_BOOTSTRAP_TOKEN: vaultIdentities.bootstrapToken,
           SULLA_VAULT_DESKTOP_CONTROL_TOKEN: vaultIdentities.controlToken,
           SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
@@ -1494,7 +1511,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       environment: {
         NODE_OPTIONS: serviceNodeOptions(256),
         SULLA_WORKFLOW_ROLE: 'manager',
-        SULLA_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
+        // SULLA_DATABASE_URL: set by serviceSecret.applyTo(compose) below.
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
         SULLA_TOOL_API_URL: `http://host.docker.internal:${ chatApiPort }`,
@@ -1579,13 +1596,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // The agent tool code in this image opens its own PostgresClient pool
         // (default 20) next to the service pool above; one caller needs few.
         SULLA_DATABASE_POOL_MAX: '5',
-        SULLA_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
+        // SULLA_DATABASE_URL and SULLA_FILES_CAPABILITY_SECRET: set by serviceSecret.applyTo(compose) below.
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
         SULLA_FILES_API_URL:     'https://sulla_files:8792',
         SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
-        SULLA_FILES_CAPABILITY_SECRET: sullaServicePassword,
         ...(vaultIdentities ? {
           SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
@@ -1631,7 +1647,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // 512 is the real heap; the rest of mem_limit covers the Potion table,
         // chunk buffers and the OCR/Whisper/ffmpeg child processes.
         NODE_OPTIONS:                      serviceNodeOptions(512, 4),
-        SULLA_FILES_DATABASE_URL:          serviceSecret.databaseUrl('sulla'),
+        // SULLA_FILES_DATABASE_URL, _CAPABILITY_SIGNING_KEY, _LOCAL_TOKEN: set by serviceSecret.applyTo(compose) below.
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
         SULLA_FILES_STORED_ONLY:           '1',
@@ -1641,8 +1657,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...((cloudDeviceId: string | null) => (cloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: cloudDeviceId } : {}))(readExistingDesktopDeviceId()),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
-        SULLA_FILES_CAPABILITY_SIGNING_KEY: serviceSecret.filesCapabilitySigningKey,
-        SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
         SULLA_FILES_BOOTSTRAP_SERVICE_ID:  'sulla-desktop-files-bootstrap',
         SULLA_FILES_BOOTSTRAP_TOKEN:       filesBootstrapIdentity,
         SULLA_FILES_TLS_CERTIFICATE_PATH:  '/run/sulla-files-tls/tls.crt',
@@ -1752,9 +1766,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
 
     // Modify dynamic values like passwords
-    if (compose.services?.postgres?.environment) {
-      compose.services.postgres.environment = serviceSecret.applyToPostgresEnvironment(compose.services.postgres.environment);
-    }
+    // Every secret-bearing env var (service DATABASE_URLs, Files tokens, the
+    // PostgreSQL password) is set here and only here, for every generation.
+    serviceSecret.applyTo(compose);
 
     compose.volumes ??= {};
     compose.volumes['sulla-vault-data'] ??= {};
@@ -1790,6 +1804,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
+    // Never write a file where a service lacks its secret env or carries a fallback credential.
+    new ComposeSecretGuard(serviceSecret).assert(compose, composeYaml);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
     this.#composeTargets = ComposeContainerNameReconciler.targetsOf(compose);
   }
@@ -1860,17 +1876,60 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     if (sinceLast < 30_000 && this.#lastFilesGuestMountFailure) throw new Error(this.#lastFilesGuestMountFailure);
     this.#lastGuestRecovery = Date.now();
-    await this.prepareSullaComposeFile();
-    this.assertManagedServicesGeneration(generation);
-    if (!getSullaFilesMountManager().guestMountAvailable()) {
-      throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
-    }
-    await reconcileComposeService({
-      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'],
-      service:        'workflow_manager',
-      run:            (...command) => this.execCommand({ root: true }, ...command),
-      checkpoint:     () => this.assertManagedServicesGeneration(generation),
+    // Every other running container drifted by the new file is recreated too
+    // (it used to keep its old definition until the next boot).
+    await this.#composeRegeneration.run('Files guest mount recovery', {
+      checkpoint:  () => this.assertManagedServicesGeneration(generation),
+      beforeSweep: async() => {
+        if (!getSullaFilesMountManager().guestMountAvailable()) {
+          throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
+        }
+        await reconcileComposeService({
+          composeCommand: [...SULLA_COMPOSE_COMMAND],
+          service:        'workflow_manager',
+          run:            (...command) => this.execCommand({ root: true }, ...command),
+          checkpoint:     () => this.assertManagedServicesGeneration(generation),
+        });
+      },
     });
+  }
+
+  /**
+   * The settings database held a different service secret than the one the
+   * running containers were given: rewrite compose with it and recreate every
+   * running container whose definition changed. Before the first compose file
+   * exists there is nothing to do; boot writes the new value.
+   */
+  private async regenerateComposeAfterSecretChange(reason: string): Promise<void> {
+    await this.#managedServicesReconciliation?.catch(() => undefined);
+    if (this.#composeTargets.length === 0) return;
+    const generation = this.#managedServicesGeneration;
+
+    await this.#composeRegeneration.run(`service secret: ${ reason }`, { checkpoint: () => this.assertManagedServicesGeneration(generation) });
+  }
+
+  /** Recreate one service from the current compose file (compose's own diff decides). */
+  private async recreateComposeService(service: string): Promise<void> {
+    await reconcileComposeService({
+      composeCommand: [...SULLA_COMPOSE_COMMAND],
+      service,
+      run:            (...command) => this.execCommand({ root: true }, ...command),
+    });
+  }
+
+  /**
+   * Before a drifted container is recreated: if it is still in its start
+   * period (Files may be applying a schema migration), give it a bounded wait
+   * to become healthy so the recreate never interrupts a migration.
+   */
+  private async settleBeforeRecreate(target: ComposeServiceTarget): Promise<void> {
+    const health = (await this.#guestDocker.run([
+      'inspect', '--format', '{{if .State.Health}}{{.State.Health.Status}}{{end}}', target.container,
+    ]).catch(() => '')).trim();
+
+    if (health !== 'starting') return;
+    await this.waitForDockerServiceHealthy(target, target.service === 'sulla_files' ? 600 : 120)
+      .catch(error => console.warn(`[Sulla] ${ target.service } did not become healthy before its recreate: ${ (error as Error)?.message?.split('\n')[0] }`));
   }
 
   /**
@@ -1966,7 +2025,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // runs for those, so compare their config hash with the file just written:
       // a drifted one (e.g. stale env after the service secret changed) is
       // recreated; an unchanged one is left alone.
-      const configDrift = new ContainerDriftReconciler(this.#guestDocker, composeCommand.slice(1), startOptionalService, console);
+      const configDrift = new ContainerDriftReconciler(this.#guestDocker, composeCommand.slice(1), startOptionalService, console,
+        target => this.settleBeforeRecreate(target));
 
       // Retire the old Desktop board container; preserve all database data.
       await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);

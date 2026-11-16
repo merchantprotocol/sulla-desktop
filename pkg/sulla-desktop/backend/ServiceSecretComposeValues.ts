@@ -5,6 +5,15 @@
 
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 
+/** The compose services whose environment carries the service secret. */
+export type SecretBearingService = 'sulla_vault' | 'workflow_manager' | 'tools' | 'sulla_files';
+
+export const SECRET_BEARING_SERVICES: readonly SecretBearingService[] = ['sulla_vault', 'workflow_manager', 'tools', 'sulla_files'];
+
+interface ComposeServiceDefinition {
+  environment?: Record<string, unknown> | string[];
+}
+
 /** Anything that resolves the install's service secret (ServiceSecretProvider). */
 export interface ServiceSecretSource {
   get(): Promise<string>;
@@ -50,6 +59,47 @@ export class ServiceSecretComposeValues {
   /** The Files capability signing key (hex), derived exactly as Desktop derives it. */
   get filesCapabilitySigningKey(): string {
     return sullaFilesCapabilityKey(this.secret);
+  }
+
+  /** Every secret-bearing env var of one service, compose-ready. */
+  environmentFor(service: SecretBearingService): Record<string, string> {
+    switch (service) {
+    case 'sulla_vault':
+      return {
+        SULLA_VAULT_ADMIN_DATABASE_URL:  this.databaseUrl('sulla'),
+        SULLA_VAULT_DATABASE_URL:        this.databaseUrl('sulla_vault'),
+        SULLA_VAULT_LEGACY_DATABASE_URL: this.databaseUrl('sulla'),
+      };
+    case 'workflow_manager':
+      return { SULLA_DATABASE_URL: this.databaseUrl('sulla') };
+    case 'tools':
+      return { SULLA_DATABASE_URL: this.databaseUrl('sulla'), SULLA_FILES_CAPABILITY_SECRET: this.envValue };
+    case 'sulla_files':
+      return {
+        SULLA_FILES_DATABASE_URL:           this.databaseUrl('sulla'),
+        SULLA_FILES_CAPABILITY_SIGNING_KEY: this.filesCapabilitySigningKey,
+        SULLA_FILES_LOCAL_TOKEN:            this.envValue,
+      };
+    }
+  }
+
+  /**
+   * The one place the secret enters a generated compose document: set the
+   * secret env of every secret-bearing service present, and the PostgreSQL
+   * password. Every (re)generation goes through here, so no service can be
+   * left to fall back to a default credential baked into its image.
+   */
+  applyTo(compose: { services?: Record<string, ComposeServiceDefinition | undefined> }): void {
+    for (const service of SECRET_BEARING_SERVICES) {
+      const definition = compose.services?.[service];
+
+      if (!definition) continue;
+      if (Array.isArray(definition.environment)) throw new Error(`compose service ${ service } must use a map environment`);
+      definition.environment = { ...(definition.environment ?? {}), ...this.environmentFor(service) };
+    }
+    const postgres = compose.services?.postgres;
+
+    if (Array.isArray(postgres?.environment)) postgres.environment = this.applyToPostgresEnvironment(postgres.environment);
   }
 
   /** Replace POSTGRES_PASSWORD in a compose `environment:` list (the asset ships a placeholder). */

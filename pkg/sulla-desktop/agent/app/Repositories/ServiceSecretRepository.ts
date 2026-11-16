@@ -25,8 +25,11 @@ export interface ServiceSecretSettingsStore {
   /** The pre-database settings file; null when missing, throws when unreadable. */
   readBootstrapFile(): Promise<Record<string, unknown> | null>;
   writeBootstrapSetting(property: string, value: unknown): Promise<void>;
-  /** Move a corrupt bootstrap file aside; returns where it went. */
-  quarantineBootstrapFile(): Promise<string>;
+  /**
+   * Rewrite a corrupt bootstrap file: the damaged copy is moved aside and
+   * every key still readable from it is carried into the new file.
+   */
+  repairBootstrapFile(): Promise<void>;
 }
 
 export interface ServiceSecretRepositoryLogger {
@@ -88,11 +91,14 @@ export class ServiceSecretRepository {
     }
   }
 
-  /** Move a persistently corrupt bootstrap file aside so it reads as missing. */
-  async quarantineBootstrapFile(): Promise<void> {
-    const movedTo = await this.settings.quarantineBootstrapFile();
-
-    this.log.warn(`[ServiceSecret] Settings bootstrap file stayed corrupt; moved it aside to ${ movedTo }`);
+  /**
+   * Repair a bootstrap file that stayed corrupt for the whole wait (writes are
+   * atomic, so it is not a write in progress): the damaged copy is kept aside
+   * and its readable keys, the service secret included, are carried over.
+   */
+  async repairBootstrapFile(): Promise<void> {
+    await this.settings.repairBootstrapFile();
+    this.log.warn('[ServiceSecret] Settings bootstrap file stayed corrupt; moved it aside and kept its readable keys');
   }
 
   /** Persist to the authoritative store and, once the database is up, mirror to the bootstrap file. */

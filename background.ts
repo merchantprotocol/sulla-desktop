@@ -934,8 +934,9 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
     console.log(`[FirstRun] Generated install secret: ${ key }`);
   };
 
-  // Resolves the install service secret, generating and persisting it once when absent.
-  await SullaSettingsModel.getServicePassword();
+  // The service secret (sullaServicePassword) is not generated here: only the
+  // runtime can tell a fresh install from one whose database already holds it,
+  // so ServiceSecretProvider resolves it when compose is first generated.
   await ensure('sullaN8nEncryptionKey', () => SullaSettingsModel.generateEncryptionKey());
   await ensure('sullaApiToken', () => SullaSettingsModel.generateEncryptionKey(48));
 }

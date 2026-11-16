@@ -23,6 +23,13 @@ export interface DriftLogger {
 export type ServiceRecreator = (service: string) => Promise<void>;
 
 /**
+ * Runs before a drifted container is recreated. Used to let a service that is
+ * still starting (Files applying a schema migration) reach healthy first, so
+ * the recreate never interrupts it. Should not throw; a throw skips the recreate.
+ */
+export type BeforeRecreate = (target: ComposeServiceTarget) => Promise<void>;
+
+/**
  * Detects a running compose container whose definition (env, image, mounts…)
  * no longer matches the compose file Desktop just generated, and recreates it.
  *
@@ -40,14 +47,28 @@ export class ContainerDriftReconciler {
     private readonly composeArgs: readonly string[],
     private readonly recreate: ServiceRecreator,
     private readonly logger: DriftLogger = console,
+    private readonly beforeRecreate: BeforeRecreate = async() => undefined,
   ) {}
+
+  /** Desired hash each container was last recreated to; a repeat means compose cannot converge it. */
+  private readonly recreatedTo = new Map<string, string>();
 
   /** Recreate the target when its running container drifted from the compose file. */
   async reconcile(target: ComposeServiceTarget): Promise<DriftOutcome> {
     const outcome = await this.detect(target);
 
     if (outcome.kind !== 'drifted') return outcome;
+    // Never loop: if the last recreate aimed at this same definition and the
+    // container still reports another hash, compose labels it differently
+    // (e.g. a version skew); recreating again would not help.
+    if (this.recreatedTo.get(target.container) === outcome.desired) {
+      this.logger.warn(`[Sulla] ${ target.service } still reports a different config hash after a recreate; leaving it`);
+
+      return { kind: 'unknown', service: target.service, reason: 'hash did not converge after a recreate' };
+    }
+    await this.beforeRecreate(target);
     this.logger.log(`[Sulla] ${ target.service } config drifted (running ${ outcome.running.slice(0, 8) }, desired ${ outcome.desired.slice(0, 8) }); recreating it`);
+    this.recreatedTo.set(target.container, outcome.desired);
     await this.recreate(target.service);
 
     return { kind: 'recreated', service: target.service };
