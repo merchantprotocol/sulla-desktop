@@ -28,11 +28,11 @@ export interface StartupDatabaseWaitOptions {
   log?:          Pick<Console, 'warn' | 'log'>;
 }
 
-const TRANSIENT_NETWORK_CODES = new Set([
-  'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
-]);
-
 export class StartupDatabaseWait {
+  static readonly #transientNetworkCodes: ReadonlySet<string> = new Set([
+    'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
+  ]);
+
   readonly #name: string;
   readonly #deadlineMs: number;
   readonly #initialDelayMs: number;
@@ -57,7 +57,7 @@ export class StartupDatabaseWait {
     if (!e || typeof e !== 'object') return false;
     const code = typeof e.code === 'string' ? e.code : '';
     // 57P01-3 shutdown / crash / cannot connect now, 08xxx connection exceptions, 53300 too many connections.
-    if (/^(57P0[123]|08|53300)/.test(code) || TRANSIENT_NETWORK_CODES.has(code)) return true;
+    if (/^(57P0[123]|08|53300)/.test(code) || StartupDatabaseWait.#transientNetworkCodes.has(code)) return true;
     if (Array.isArray(e.errors) && e.errors.length && e.errors.every(inner => StartupDatabaseWait.isUnreachable(inner))) return true;
 
     return typeof e.message === 'string' && /Connection terminated|connection.*(?:closed|ended)|timeout exceeded when trying to connect/i.test(e.message);
@@ -78,16 +78,16 @@ export class StartupDatabaseWait {
         if (this.#now() - startedAt + delay > this.#deadlineMs) throw error;
         // First miss, then about once a minute: a slow Postgres start is one line, not a flood.
         if (attempt === 1 || attempt % 12 === 0) {
-          this.#log.warn(`[${ this.#name }] waiting for Postgres during ${ label } (attempt ${ attempt }: ${ describe(error) }); retrying`);
+          this.#log.warn(`[${ this.#name }] waiting for Postgres during ${ label } (attempt ${ attempt }: ${ StartupDatabaseWait.#describe(error) }); retrying`);
         }
         await this.#sleep(delay);
       }
     }
   }
-}
 
-function describe(error: unknown): string {
-  const e = error as { code?: string; message?: string } | null;
+  static #describe(error: unknown): string {
+    const e = error as { code?: string; message?: string } | null;
 
-  return [e?.code, e?.message?.split('\n')[0]].filter(Boolean).join(' ') || 'unknown error';
+    return [e?.code, e?.message?.split('\n')[0]].filter(Boolean).join(' ') || 'unknown error';
+  }
 }

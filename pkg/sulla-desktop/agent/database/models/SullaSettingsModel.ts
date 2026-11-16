@@ -8,8 +8,13 @@
 import crypto from 'crypto';
 import * as fs from 'fs/promises';
 
+import { ServiceSecretGenerator } from '../../app/Services/ServiceSecret/ServiceSecretGenerator';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
+
+import { SettingsBootstrapFile } from './SettingsBootstrapFile';
+
+export { SettingsBootstrapFileCorruptError } from './SettingsBootstrapFile';
 
 interface SettingsAttributes {
   property: string;
@@ -236,6 +241,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
             const content = await fs.readFile(this.getFallbackFilePath(), 'utf8');
             const data = JSON.parse(content) as Record<string, any>;
             for (const [property, value] of Object.entries(data)) {
+              // The service secret's provider converges it (the database wins on a mismatch).
+              if (property === 'sullaServicePassword') continue;
               await this.setSetting(property, value);
             }
             console.log(`SullaSettingsModel: synced ${ Object.keys(data).length } settings from lock file`);
@@ -387,18 +394,25 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       return;
     }
 
-    // Fallback: read-modify-write JSON file
-    const filePath = this.getFallbackFilePath();
-    console.log(`[SullaSettingsModel] Fallback path set to: ${ filePath }`);
-    let data: Record<string, any> = {};
-    try {
-      const content = await fs.readFile(filePath, 'utf8');
-      data = JSON.parse(content);
-    } catch {} // file missing → start empty
+    await this.writeBootstrapSetting(property, value);
+  }
 
-    data[property] = value;
+  // The pre-database settings file: atomic, serialised, corruption-safe I/O.
+  private static readonly bootstrapFile = new SettingsBootstrapFile(() => SullaSettingsModel.getFallbackFilePath());
 
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+  /** The bootstrap file's contents; null when it does not exist, throws when unreadable. */
+  public static readBootstrapFile(): Promise<Record<string, unknown> | null> {
+    return this.bootstrapFile.read();
+  }
+
+  /** Rewrite a corrupt bootstrap file, keeping the damaged copy aside and its readable keys. */
+  public static repairBootstrapFile(): Promise<void> {
+    return this.bootstrapFile.update(() => undefined);
+  }
+
+  /** Write one property to the bootstrap file, whether or not the database is ready. */
+  public static writeBootstrapSetting(property: string, value: unknown): Promise<void> {
+    return this.bootstrapFile.write(property, value);
   }
 
   /**
@@ -430,14 +444,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       return getIpcRenderer().invoke('sulla-settings-delete', property);
     }
     if (!this.isReady) {
-      const filePath = this.getFallbackFilePath();
-      let data: Record<string, any> = {};
-      try {
-        const content = await fs.readFile(filePath, 'utf8');
-        data = JSON.parse(content);
-      } catch {} // file missing → do nothing
-      delete data[property];
-      await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+      await this.bootstrapFile.remove(property);
       return;
     }
 
@@ -452,35 +459,23 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     this.invalidateLocal(property);
   }
 
-  public static generatePassword(length = 16): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+';
-    return Array.from(crypto.randomBytes(length))
-      .map(b => chars[b % chars.length])
-      .join('');
+  /** @deprecated use ServiceSecretGenerator (ServiceSecretProvider) — removed in the final OOP cleanup PR */
+  public static generatePassword(_length = 16): string {
+    return new ServiceSecretGenerator().generate();
   }
 
   /**
    * Return the installation's shared service password.
    *
-   * New installs persist a generated value during first-run setup. Older
-   * installs may predate that setting while their PostgreSQL data directory
-   * was initialized with the historical development password. Persist that
-   * legacy value when repairing such an install instead of generating a new
-   * password that would no longer match the existing database.
+   * Thin delegate kept for callers owned by other epics. The resolution
+   * (wait for a readable store, generate once on a confirmed-absent value,
+   * never a hardcoded credential) lives in ServiceSecretProvider.
    */
   public static async getServicePassword(): Promise<string> {
-    const configured = await this.get('sullaServicePassword');
+    // Loaded on use: the provider's repository imports this model.
+    const { serviceSecretProvider } = await import('../../app/Providers/ServiceSecretServiceProvider');
 
-    if (typeof configured === 'string' && configured.length > 0) {
-      return configured;
-    }
-
-    const legacyPassword = 'sulla_dev_password';
-
-    console.warn('[SullaSettingsModel] sullaServicePassword missing; persisting legacy value for data compatibility');
-    await this.set('sullaServicePassword', legacyPassword, 'string');
-
-    return legacyPassword;
+    return serviceSecretProvider.get();
   }
 
   public static generateEncryptionKey(length = 32): string {

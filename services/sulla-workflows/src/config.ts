@@ -25,7 +25,8 @@ if (localToken && Buffer.byteLength(localToken) < 32) throw new Error('SULLA_API
 export const config = {
   role,
   port:                 Number(process.env.SULLA_WORKFLOW_PORT ?? 8788),
-  databaseUrl:          process.env.SULLA_DATABASE_URL ?? 'postgresql://sulla:sulla_dev_password@postgres:5432/sulla',
+  // No default: Desktop always sets it; the manager and runner refuse to start without it.
+  databaseUrl:          process.env.SULLA_DATABASE_URL?.trim() ?? '',
   redisUrl:             process.env.SULLA_REDIS_URL ?? 'redis://redis:6379',
   managerUrl:           process.env.SULLA_MANAGER_URL ?? 'http://sulla_workflow_manager:8788',
   toolApiUrl:           process.env.SULLA_TOOL_API_URL ?? 'http://host.docker.internal:3000',
