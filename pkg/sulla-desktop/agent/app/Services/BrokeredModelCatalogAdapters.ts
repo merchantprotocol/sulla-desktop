@@ -4,7 +4,7 @@
 
 import { RandomUuidGenerator } from '@sulla/foundation';
 
-import { issueLocalBrokerContext, requireConfiguredCredentialBroker } from '../../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../../vault-broker';
 import type { IntegrationService } from '../../services/IntegrationService';
 import type { BrokeredModelHttpTransport, BrokeredModelListRequest } from './BrokeredModelCatalogService';
 import type { IntegrationAccountCatalogRepository } from './BrokeredModelCatalogStrategies';
@@ -28,7 +28,7 @@ export class VaultBrokeredModelHttpTransport implements BrokeredModelHttpTranspo
   constructor(private readonly ids: IdGenerator = new RandomUuidGenerator()) {}
 
   async execute(request: BrokeredModelListRequest): Promise<unknown> {
-    const base = await issueLocalBrokerContext({
+    const base = await configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId: 'sulla',
       podId: `sulla-model-list-${this.ids.next()}`,
       credentialScope: { integration_id: request.providerId, account_id: request.accountId },
@@ -37,7 +37,7 @@ export class VaultBrokeredModelHttpTransport implements BrokeredModelHttpTranspo
     });
     const { getDesktopDeviceId } = await import('@pkg/main/deviceIdentity');
     const context = { ...base, device_id: await getDesktopDeviceId() };
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const result = await broker.execute(broker.requestFor(context, {
       operation: 'provider.models',
       ref: { integrationId: request.providerId, accountId: request.accountId },

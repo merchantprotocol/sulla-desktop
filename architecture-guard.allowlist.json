@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1027,
+  "entries": 1021,
   "files": {
     "background.ts": {
       "rules": {
@@ -1111,12 +1111,6 @@
         "procedural-module": 1
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/services/vaultAccessPolicy.ts": {
-      "rules": {
-        "mutable-state": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/agent/tools/agents/agentConversations.ts": {
       "rules": {
@@ -3139,12 +3133,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/main/vaultBootstrapProcess.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/voice/kokoroTts.ts": {
       "rules": {
         "long-file": 560,
@@ -3830,20 +3818,6 @@
         "procedural-module": 3
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/vault-broker/index.ts": {
-      "rules": {
-        "long-file": 577,
-        "mutable-state": 2
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/vault-broker/providerCliBridge.ts": {
-      "rules": {
-        "long-file": 620,
-        "mutable-state": 4
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/window/browserContextMenu.ts": {
       "rules": {

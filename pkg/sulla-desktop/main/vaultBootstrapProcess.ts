@@ -206,21 +206,46 @@ async function updateMasterCache(): Promise<void> {
   }
 }
 
-export async function runVaultBootstrapProcess(): Promise<never> {
-  try {
-    await app.whenReady();
-    configurePinnedTls();
-    if (process.argv.includes('--sulla-vault-cache-update-helper')) {
-      await updateMasterCache();
-      process.stdout.write(`${ JSON.stringify({ ok: true, updated: true }) }\n`);
-    } else {
-      const result = await bootstrap();
-      process.stdout.write(`${ JSON.stringify({ ok: true, state: result.state }) }\n`);
+export interface VaultBootstrapProcessRuntime {
+  whenReady(): Promise<void>;
+  exit(code: number): void;
+  argv: readonly string[];
+  writeStdout(value: string): void;
+  waitForExit(): Promise<never>;
+  configurePinnedTls(): void;
+  bootstrap(): Promise<BootstrapUnlockResponse>;
+  updateMasterCache(): Promise<void>;
+}
+
+/** Owns the one-shot bootstrap process lifecycle; runtime services are swappable in tests. */
+export class VaultBootstrapProcess {
+  constructor(private readonly runtime: VaultBootstrapProcessRuntime = {
+    whenReady: () => app.whenReady(),
+    exit: code => app.exit(code),
+    argv: process.argv,
+    writeStdout: value => process.stdout.write(value),
+    waitForExit: () => new Promise<never>(() => undefined),
+    configurePinnedTls,
+    bootstrap,
+    updateMasterCache,
+  }) {}
+
+  async run(): Promise<never> {
+    try {
+      await this.runtime.whenReady();
+      this.runtime.configurePinnedTls();
+      if (this.runtime.argv.includes('--sulla-vault-cache-update-helper')) {
+        await this.runtime.updateMasterCache();
+        this.runtime.writeStdout(`${ JSON.stringify({ ok: true, updated: true }) }\n`);
+      } else {
+        const result = await this.runtime.bootstrap();
+        this.runtime.writeStdout(`${ JSON.stringify({ ok: true, state: result.state }) }\n`);
+      }
+      this.runtime.exit(0);
+    } catch (error) {
+      this.runtime.writeStdout(`${ JSON.stringify({ ok: false, error: (error as Error).message }) }\n`);
+      this.runtime.exit(1);
     }
-    app.exit(0);
-  } catch (error) {
-    process.stdout.write(`${ JSON.stringify({ ok: false, error: (error as Error).message }) }\n`);
-    app.exit(1);
+    return await this.runtime.waitForExit();
   }
-  return await new Promise<never>(() => undefined);
 }
