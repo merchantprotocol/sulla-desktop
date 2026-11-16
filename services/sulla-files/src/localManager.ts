@@ -35,6 +35,10 @@ import { NativeRootScanner } from './NativeRootScanner.js';
 import { WatchedFolderRepository, type WatchedRow } from './Repositories/WatchedFolderRepository.js';
 import { ScanProgress } from './ScanProgress.js';
 import { TrackedPathFilter } from './TrackedPathFilter.js';
+import { PathOperationRecovery } from './PathOperationRecovery.js';
+import { PathOperationRepository } from './Repositories/PathOperationRepository.js';
+import { TrashReceiptExpiry } from './TrashReceiptExpiry.js';
+import { OperationFingerprint, type PathOperationPlanEntry, type PathOperationRow, type RemotePurgePlan } from './PathOperationPlan.js';
 import { FileRootRepository } from './Repositories/FileRootRepository.js';
 import { TrackedRootCatalog, type BrokeredRootInput, type FileRootStatus } from './TrackedRootCatalog.js';
 import { WatchedFileIngestor } from './WatchedFileIngestor.js';
@@ -48,35 +52,6 @@ interface RuntimeState {
   legacyImport?: Config['legacyPreflight'];
 }
 export type { FileRootStatus } from './TrackedRootCatalog.js';
-interface PathOperationPlanEntry {
-  rootId: string;
-  fileId: string;
-  sourcePath: string;
-  targetPath: string;
-  stagePath: string;
-  contentHash: string;
-  kind: 'move' | 'copy';
-}
-interface PathOperationRow {
-  operation_id: string;
-  state: 'planned' | 'publishing' | 'db-committed';
-  plan: PathOperationPlanEntry[] | RemotePurgePlan;
-  receipts: PathOperationReceipt[];
-}
-interface RemotePurgePlan {
-  kind:'remote-purge-v1'; rootId:string; collectionId:string; fileId:string;
-  sourcePath:string; stagePath:string; versionId:string; revision:string;
-  contentHash:string; fingerprint:{dev:string;ino:string;size:number;mtimeMs:number};
-  lifecycleGeneration:number;
-}
-interface PathOperationReceipt {
-  fileId: string;
-  stagePath: string;
-  targetPath: string;
-  published: true;
-  fingerprint?: { dev: string; ino: string; size: number; mtimeMs: number };
-}
-
 export type { FuseTrackedFile, NativePublicationAction, NativePublicationCompletionProof, NativeSourceIngestResult, NativeSourceOperationInput } from './NativeSourceOperations.js';
 
 function conflictPath(path:string, device:string):string {
@@ -84,25 +59,6 @@ function conflictPath(path:string, device:string):string {
   const date = new Date().toISOString().replace(/T.*/, '');
   return `${ stem } (conflicted copy ${ device.replace(/[^\w-]/g, '-') } ${ date })${ extension }`;
 }
-function serializeFingerprint(value:PublicationReceipt['fingerprint']):NonNullable<PathOperationReceipt['fingerprint']> {
-  return { dev: value.dev.toString(), ino: value.ino.toString(), size: value.size, mtimeMs: value.mtimeMs };
-}
-
-function deserializeFingerprint(value:NonNullable<PathOperationReceipt['fingerprint']>):PublicationReceipt['fingerprint'] {
-  if (!/^\d+$/.test(value.dev) || !/^\d+$/.test(value.ino) || !Number.isSafeInteger(value.size) || !Number.isSafeInteger(value.mtimeMs)) {
-    throw new Error('Path operation publication receipt has an invalid fingerprint');
-  }
-  return { dev: BigInt(value.dev), ino: BigInt(value.ino), size: value.size, mtimeMs: value.mtimeMs };
-}
-
-function sameIdentity(left:PublicationReceipt['fingerprint'], right:PublicationReceipt['fingerprint']):boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function sameFingerprint(left:PublicationReceipt['fingerprint'], right:PublicationReceipt['fingerprint']):boolean {
-  return sameIdentity(left, right) && left.size === right.size && left.mtimeMs === right.mtimeMs;
-}
-
 /** Resolve symlinks before allowing plaintext watched files beside private storage. */
 export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:string, chunkRoot:string):Promise<void> {
   const [files, data, chunks] = await Promise.all([realpath(filesRoot), realpath(dataRoot), realpath(chunkRoot)]);
@@ -130,6 +86,8 @@ export class LocalFilesManager {
   private readonly progress = new ScanProgress();
   private readonly rootRepository:FileRootRepository;
   private readonly catalog:TrackedRootCatalog;
+  private readonly recovery:PathOperationRecovery;
+  private readonly trashExpiry:TrashReceiptExpiry;
   private readonly ingestor:WatchedFileIngestor;
   private readonly scanner:NativeRootScanner;
   private nativeJournalInstance?:NativeOperationJournal;
@@ -204,36 +162,8 @@ export class LocalFilesManager {
     });
   }
 
-  async expireTrashReceipts(now=new Date()):Promise<{invalidated:number;disposed:number;preserved:number}> {
-    return this.serial(async()=>{
-      const rows=(await this.db.query(`SELECT id FROM files_database_operation_receipts
-        WHERE action='trash' AND state IN('completed','undone')
-          AND folder_plan#>>'{lifecycle,expiresAt}' IS NOT NULL
-          AND (folder_plan#>>'{lifecycle,expiresAt}')::timestamptz<=$1
-          AND folder_plan#>>'{lifecycle,disposal,undoInvalidatedAt}' IS NULL ORDER BY created_at`,[now])).rows;
-      let invalidated=0,disposed=0,preserved=0;
-      for (const candidate of rows) {
-        const client=await this.db.connect(); let receipt:any; let operation:any;
-        try {
-          await client.query('BEGIN');
-          receipt=(await client.query('SELECT * FROM files_database_operation_receipts WHERE id=$1 FOR UPDATE',[candidate.id])).rows[0];
-          if (!receipt || receipt.folder_plan?.lifecycle?.disposal?.undoInvalidatedAt) { await client.query('COMMIT'); continue }
-          operation=(await client.query('SELECT * FROM files_path_operations WHERE operation_id=$1 FOR UPDATE',[receipt.id])).rows[0];
-          if (operation && (!['completed','undone','rolled-back'].includes(operation.state)||operation.last_error)) { await client.query('ROLLBACK'); preserved++; continue }
-          const folderPlan=receipt.folder_plan?.source?receipt.folder_plan:null;
-          const fileIds=[...new Set<string>([receipt.file_id,...(folderPlan?.children??[]).flatMap((item:any)=>[item.before?.fileId,item.after?.fileId])].filter(Boolean))];
-          if (fileIds.length && (await client.query('SELECT 1 FROM files f WHERE f.id=ANY($1::uuid[]) AND files_retention_active(f) LIMIT 1',[fileIds])).rowCount) { await client.query('ROLLBACK'); preserved++; continue }
-          const invalidation={undoInvalidatedAt:now.toISOString(),invalidatedBy:'configured-retention',reason:'configured-trash-retention-expired'};
-          receipt.folder_plan.lifecycle={...(receipt.folder_plan.lifecycle??{}),disposal:invalidation};
-          await client.query('UPDATE files_database_operation_receipts SET folder_plan=$2 WHERE id=$1',[receipt.id,receipt.folder_plan]);
-          if (operation) { operation.plan.disposal=invalidation; await client.query('UPDATE files_path_operations SET plan=$2,updated_at=NOW() WHERE operation_id=$1',[receipt.id,operation.plan]) }
-          await client.query('COMMIT'); invalidated++;
-        } catch(error) { await client.query('ROLLBACK'); throw error }
-        finally { client.release() }
-        if (operation) { const result=await this.nativeJournal.dispose(receipt.id); if (result.state==='complete') disposed++; else preserved++ }
-      }
-      return {invalidated,disposed,preserved};
-    });
+  expireTrashReceipts(now=new Date()):Promise<{invalidated:number;disposed:number;preserved:number}> {
+    return this.serial(() => this.trashExpiry.expire(now));
   }
 
   async originalRevealTarget(file:any):Promise<OriginalRevealTarget|null> {
@@ -277,6 +207,9 @@ export class LocalFilesManager {
     this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
     for (const root of this.roots) this.rootMutations.set(root.id, root.primary ? this.mutations : new FilesMutationCoordinator(root.path));
     this.rootRepository = new FileRootRepository(db);
+    const pathOperations = new PathOperationRepository(db);
+    this.recovery = new PathOperationRecovery(pathOperations, this.mutations, this.rootMutations, () => this.nativeJournal);
+    this.trashExpiry = new TrashReceiptExpiry(pathOperations, new TransactionRunner(db), () => this.nativeJournal);
     this.catalog = new TrackedRootCatalog(db, config, this.roots, this.rootCollections, this.rootRepository);
     this.ingestor = new WatchedFileIngestor(db, config, this.store, indexer);
     this.scanner = new NativeRootScanner(config, this.roots, this.rootCollections, new WatchedFolderRepository(db), this.ingestor, this.progress);
@@ -651,7 +584,7 @@ export class LocalFilesManager {
               stagePath:   operation.stagePath,
               targetPath:  operation.targetPath,
               published:   true,
-              fingerprint: serializeFingerprint(completed.at(-1)!.publication.fingerprint),
+              fingerprint: OperationFingerprint.serialize(completed.at(-1)!.publication.fingerprint),
             }])],
           );
         }
@@ -753,134 +686,11 @@ export class LocalFilesManager {
   }
 
   /** Reconcile durable native publications before the watcher can infer changes. */
-  async recoverPathOperations():Promise<void> {
-    return this.mutations.runExclusive(['.sulla-trash/.operations'], async() => {
-      const rows = (await this.db.query(
-        `SELECT operation_id,state,plan,receipts FROM files_path_operations
-          WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed') ORDER BY created_at`,
-      )).rows as PathOperationRow[];
-      for (const row of rows) {
-        try {
-          if ((row.plan as RemotePurgePlan)?.kind==='remote-purge-v1') { await this.recoverRemotePurgeOperation(row as any); continue }
-          if ([2,3].includes((row.plan as any)?.version)) { await this.nativeJournal.recover(row); continue }
-          const plan = Array.isArray(row.plan) ? row.plan : [];
-          if (!plan.length) throw new Error('Path operation has no recoverable plan');
-          const receipts = Array.isArray(row.receipts) ? row.receipts : [];
-          if (row.state === 'db-committed') await this.finishCommittedPathOperation(plan, receipts);
-          else await this.rollbackUncommittedPathOperation(plan, receipts);
-          await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1", [row.operation_id]);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [row.operation_id, message.slice(0, 2000)]);
-          throw new Error(`Files path operation ${ row.operation_id } requires preserved-artifact reconciliation: ${ message }`);
-        }
-      }
-      const disposalRows=(await this.db.query(`SELECT operation_id FROM files_path_operations WHERE state IN('completed','undone','rolled-back')
-        AND plan#>>'{disposal,undoInvalidatedAt}' IS NOT NULL AND plan#>>'{disposal,artifactsDisposedAt}' IS NULL ORDER BY created_at`)).rows;
-      for (const disposal of disposalRows) {
-        const result=await this.nativeJournal.dispose(disposal.operation_id);
-        if (result.state==='recovery-required') throw new Error(result.error??`Trash receipt ${disposal.operation_id} artifact disposal requires recovery`);
-      }
-    });
-  }
+  recoverPathOperations():Promise<void> { return this.recovery.recoverAll() }
 
-  private async recoverRemotePurgeOperation(input:PathOperationRow):Promise<void> {
-    const row=(await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1',[input.operation_id])).rows[0];
-    if (!row) throw new Error('Remote purge journal is missing; retained bytes were preserved');
-    if (row.state==='completed' || row.state==='rolled-back') return;
-    if (!['planned','publishing','db-committed'].includes(row.state) || row.plan?.kind!=='remote-purge-v1') throw new Error('Remote purge journal state is invalid; retained bytes were preserved');
-    const plan=row.plan as RemotePurgePlan; const mutations=this.rootMutations.get(plan.rootId);
-    if (!mutations) throw new Error(`Remote purge root ${plan.rootId} is unavailable; retained bytes were preserved`);
-    const verify=(p:PinnedRegularFile)=>this.verifyOperationPinned(p,plan.contentHash);
-    const expected=deserializeFingerprint(plan.fingerprint);
-    if (row.state==='db-committed') {
-      if ((await this.db.query('SELECT 1 FROM files WHERE id=$1 OR (collection_id=$2 AND path=$3) LIMIT 1',[plan.fileId,plan.collectionId,plan.sourcePath])).rowCount) {
-        throw new Error('Remote purge metadata is still live; retained bytes were preserved');
-      }
-      const tombstone=(await this.db.query('SELECT collection_id,path,lifecycle_generation FROM file_purge_tombstones WHERE file_id=$1',[plan.fileId])).rows[0];
-      if (!tombstone || tombstone.collection_id!==plan.collectionId || tombstone.path!==plan.sourcePath || Number(tombstone.lifecycle_generation)<plan.lifecycleGeneration) {
-        throw new Error('Remote purge commit proof is missing or changed; retained bytes were preserved');
-      }
-      if (await mutations.exists(plan.stagePath)) await mutations.disposeRetainedFile(plan.stagePath,expected,verify);
-      await this.db.query("UPDATE files_path_operations SET state='completed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='db-committed'",[row.operation_id]);
-      return;
-    }
-    const sourceExists=await mutations.exists(plan.sourcePath); const stageExists=await mutations.exists(plan.stagePath);
-    if (sourceExists && stageExists) throw new Error('Remote purge source and retained stage both exist; both were preserved');
-    if (!sourceExists && !stageExists) throw new Error('Remote purge source and retained stage are both missing');
-    if (stageExists) await mutations.recoverEviction({source:plan.sourcePath,quarantine:plan.stagePath,fingerprint:expected},verify);
-    await this.db.query("UPDATE files_path_operations SET state='rolled-back',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state IN('planned','publishing')",[row.operation_id]);
-  }
+  private recoverRemotePurgeOperation(input:PathOperationRow):Promise<void> { return this.recovery.recoverRemotePurge(input) }
 
-  private async finishCommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
-    const mutations = this.rootMutations.get(plan[0]?.rootId ?? 'default');
-    if (!mutations || plan.some(entry => (entry.rootId ?? 'default') !== (plan[0]?.rootId ?? 'default'))) throw new Error('Path operation root is unavailable or inconsistent');
-    for (const entry of plan) {
-      const receipt = this.operationReceipt(entry, receipts);
-      if (!receipt?.fingerprint) throw new Error(`Committed publication receipt is missing: ${ entry.targetPath }`);
-      const fingerprint = deserializeFingerprint(receipt.fingerprint);
-      if (!await mutations.exists(entry.targetPath)) throw new Error(`Committed target is missing: ${ entry.targetPath }`);
-      const target = await mutations.pin(entry.targetPath);
-      try {
-        if (!sameFingerprint(target.fingerprint, fingerprint)) throw new Error(`Committed target identity changed: ${ entry.targetPath }`);
-        await this.verifyOperationPinned(target, entry.contentHash);
-      } finally { await target.close() }
-      if (await mutations.exists(entry.stagePath)) {
-        const staged = await mutations.pin(entry.stagePath);
-        try {
-          if (!sameFingerprint(staged.fingerprint, fingerprint)) throw new Error(`Committed stage identity changed: ${ entry.stagePath }`);
-          await this.verifyOperationPinned(staged, entry.contentHash);
-        } finally { await staged.close() }
-        await mutations.finalizePublication({ staged: entry.stagePath, target: entry.targetPath, fingerprint });
-      }
-    }
-  }
-
-  private async rollbackUncommittedPathOperation(plan:PathOperationPlanEntry[], receipts:PathOperationReceipt[]):Promise<void> {
-    const mutations = this.rootMutations.get(plan[0]?.rootId ?? 'default');
-    if (!mutations || plan.some(entry => (entry.rootId ?? 'default') !== (plan[0]?.rootId ?? 'default'))) throw new Error('Path operation root is unavailable or inconsistent');
-    for (const entry of [...plan].reverse()) {
-      const durableReceipt = this.operationReceipt(entry, receipts);
-      const stageExists = await mutations.exists(entry.stagePath);
-      if (await mutations.exists(entry.targetPath) && (durableReceipt?.fingerprint || stageExists)) {
-        let fingerprint = durableReceipt?.fingerprint ? deserializeFingerprint(durableReceipt.fingerprint) : undefined;
-        if (!fingerprint) {
-          const [stage, target] = await Promise.all([mutations.pin(entry.stagePath), mutations.pin(entry.targetPath)]);
-          try {
-            if (!sameIdentity(stage.fingerprint, target.fingerprint)) throw new Error(`Uncommitted target is not owned by its recovery stage: ${ entry.targetPath }`);
-            await Promise.all([this.verifyOperationPinned(stage, entry.contentHash), this.verifyOperationPinned(target, entry.contentHash)]);
-            fingerprint = target.fingerprint;
-          } finally { await Promise.all([stage.close(), target.close()]) }
-        }
-        await mutations.rollbackPublication(
-          { staged: entry.stagePath, target: entry.targetPath, fingerprint },
-          pinned => this.verifyOperationPinned(pinned, entry.contentHash),
-        );
-      }
-      if (entry.kind === 'move' && await mutations.exists(entry.stagePath)) {
-        const staged = await mutations.pin(entry.stagePath);
-        const receipt:EvictionReceipt = { source: entry.sourcePath, quarantine: entry.stagePath, fingerprint: staged.fingerprint };
-        await staged.close();
-        await mutations.recoverEviction(receipt, pinned => this.verifyOperationPinned(pinned, entry.contentHash));
-      } else if (entry.kind === 'copy' && await mutations.exists(entry.stagePath)) {
-        const staged = await mutations.pin(entry.stagePath);
-        const receipt:PublicationReceipt = { staged: entry.stagePath, target: entry.targetPath, fingerprint: staged.fingerprint };
-        await staged.close();
-        await mutations.finalizePublication(receipt);
-      }
-    }
-  }
-
-  private operationReceipt(entry:PathOperationPlanEntry, receipts:PathOperationReceipt[]):PathOperationReceipt | undefined {
-    return receipts.find(receipt => receipt.published && receipt.fileId === entry.fileId && receipt.stagePath === entry.stagePath && receipt.targetPath === entry.targetPath);
-  }
-
-  private async verifyOperationPinned(pinned:PinnedRegularFile, expectedHash:string):Promise<void> {
-    const hash = createHash('sha256');
-    for await (const chunk of pinned.createReadStream()) hash.update(chunk);
-    if (hash.digest('hex') !== expectedHash) throw new Error(`Recovery artifact changed: ${ pinned.relativePath }`);
-    await pinned.assertUnchanged();
-  }
+  private verifyOperationPinned(pinned:PinnedRegularFile, expectedHash:string):Promise<void> { return this.recovery.verifyPinned(pinned, expectedHash) }
 
   async rescan():Promise<void> { return this.serial(async() => { await this.recoverPathOperations(); await this.scanFolder(); if (!this.paused) await this.syncNow(); }) }
   async sync():Promise<void> { if (this.paused || !this.config.serverUrl) return; return this.serial(() => this.syncNow()) }
@@ -1021,7 +831,7 @@ export class LocalFilesManager {
         remoteOperationId=randomUUID();
         remotePlan={kind:'remote-purge-v1',rootId:existing.root_id,collectionId,fileId:entry.file.id,sourcePath:existing.path,
           stagePath:`.sulla-trash/.operations/${remoteOperationId}/remote-purge`,versionId:existing.current_version_id,
-          revision:String(existing.operation_revision),contentHash:existing.content_hash,fingerprint:serializeFingerprint(expected),
+          revision:String(existing.operation_revision),contentHash:existing.content_hash,fingerprint:OperationFingerprint.serialize(expected),
           lifecycleGeneration:Number(entry.file.lifecycle_generation??0)};
         await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,'trash','planned',$2)`,[remoteOperationId,remotePlan]);
         await this.db.query("UPDATE files_path_operations SET state='publishing',updated_at=NOW() WHERE operation_id=$1",[remoteOperationId]);
@@ -1035,7 +845,7 @@ export class LocalFilesManager {
           }
           throw error;
         }
-        if (!sameFingerprint(eviction.fingerprint,expected)) {
+        if (!OperationFingerprint.same(eviction.fingerprint,expected)) {
           await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'publishing',plan:remotePlan,receipts:[]});
           throw new Error('Remote purge source identity changed before eviction; bytes were restored');
         }
