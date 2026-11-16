@@ -1,0 +1,187 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { isProviderBridgeDenial } from '../../../languagemodels/providerRecovery';
+import { AgentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
+import {
+  ProviderBridgeAuthorizeUnavailableError,
+  ProviderCliBridgeService,
+  type ProviderCliBridgeLease,
+  type ProviderCliBridgeOptions,
+} from '../../../../vault-broker/providerCliBridge';
+
+/**
+ * Real ProviderCliBridgeService on a loopback port; only the vault broker
+ * (the external upstream) is faked. Each case is a request a healthy
+ * container job makes that the bridge used to refuse as a terminal
+ * "Provider bridge request denied", which the CLI recovery treats as fatal.
+ */
+const now = Math.floor(Date.now() / 1000);
+const context = {
+  v: 1, iss: 'sulla-desktop', aud: 'sulla-tools', sub: 'user-1', org_id: 'org-1', agent_id: 'agent-1', pod_id: 'pod-1',
+  thread_id: 'thread-1', job_id: 'job-1', device_id: 'device-1',
+  credential_scope: { integration_id: 'codex', account_id: 'acct-1' }, scopes: [], iat: now, exp: now + 300, jti: 'jti-1',
+} as any;
+
+class FakeBroker {
+  readonly calls: unknown[] = [];
+  constructor(private readonly respond: (signal?: AbortSignal) => Promise<Response> = async() => new Response('data: ok\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } })) {}
+  requestFor = (_ctx: unknown, request: unknown) => request;
+  executeStream = async(request: unknown, signal?: AbortSignal) => {
+    this.calls.push(request);
+    return this.respond(signal);
+  };
+}
+
+const leases: ProviderCliBridgeLease[] = [];
+afterEach(async() => {
+  await Promise.all(leases.splice(0).map(lease => lease.close()));
+  vi.restoreAllMocks();
+});
+
+async function openBridge(overrides: Partial<ProviderCliBridgeOptions> & { broker?: FakeBroker }) {
+  const timings: string[] = [];
+  const lease = await new ProviderCliBridgeService(() => { throw new Error('no default broker in tests') }).create({
+    context, provider: 'codex', accountId: 'acct-1', authorize: () => true,
+    logTiming: message => timings.push(message),
+    ...overrides,
+    broker: (overrides.broker ?? new FakeBroker()) as any,
+  });
+  leases.push(lease);
+  const send = (body = '{"model":"gpt-5"}') => fetch(`${ lease.config.baseUrl }/responses`, {
+    method:  'POST',
+    headers: { authorization: `Bearer ${ lease.config.environment.SULLA_PROVIDER_BRIDGE_TOKEN }`, 'content-type': 'application/json' },
+    body,
+  });
+  return { lease, send, timings };
+}
+
+describe('provider bridge never falsely denies a healthy container job', () => {
+  it('forwards the request when the early OAuth refresh fails instead of answering a terminal denial', async() => {
+    // risk: one failed precautionary Codex token refresh killed the whole worker with 502 provider_bridge_failed
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const broker = new FakeBroker();
+    const { send, timings } = await openBridge({ broker, beforeUpstream: async() => { throw new Error('OAuth refresh failed: socket hang up') } });
+
+    const response = await send();
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('data: ok\n\n');
+    expect(broker.calls).toHaveLength(1);
+    expect(timings.at(-1)).toContain('upkeep=credential_upkeep_failed');
+    expect(timings.at(-1)).not.toContain('provider_bridge_failed');
+  });
+
+  it('answers a retryable 503 and keeps the lease when the revocation check cannot run', async() => {
+    // risk: a Redis blip revoked the lease for the rest of the job (403 identity_changed on every later call)
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Call 0 is the bind-time check in create(); call 1 is the first request's check.
+    let calls = 0;
+    const flaky = await openBridge({
+      authorize: () => {
+        if (calls++ === 1) throw new ProviderBridgeAuthorizeUnavailableError('revocation_check_unavailable', { cause: new Error('Connection is closed.') });
+        return true;
+      },
+    });
+
+    const first = await flaky.send();
+    const firstBody = await first.json() as { error: { type: string; message: string; reason?: string } };
+    expect(first.status).toBe(503);
+    expect(first.headers.get('retry-after')).toBe('5');
+    expect(firstBody.error.type).toBe('provider_bridge_unavailable');
+    expect(firstBody.error.reason).toBe('revocation_check_unavailable');
+    expect(isProviderBridgeDenial(new Error(firstBody.error.message))).toBe(false);
+
+    const second = await flaky.send();
+    expect(second.status).toBe(200);
+    expect(flaky.lease.signal.aborted).toBe(false);
+  });
+
+  it('still revokes on a genuine refusal and names the cause', async() => {
+    // risk: over-correcting lets an unregistered container keep spending the account
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const registry = new AgentContainerRuntimeRegistry();
+    let calls = 0;
+    const { lease, send, timings } = await openBridge({
+      authorize: () => {
+        if (calls++ === 0) return true; // bind time: the container is still registered
+        registry.require(context); // request time: it is not
+        return true;
+      },
+    });
+
+    const response = await send();
+    const body = await response.json() as { error: { type: string; message: string; reason?: string } };
+
+    expect(response.status).toBe(403);
+    expect(body.error.type).toBe('provider_bridge_identity_changed');
+    expect(body.error.reason).toBe('container_not_registered');
+    expect(isProviderBridgeDenial(new Error(body.error.message))).toBe(true);
+    expect(lease.signal.aborted).toBe(true);
+    expect(timings.at(-1)).toContain('reason=container_not_registered');
+  });
+
+  it('logs a job teardown mid-stream as a cancellation, not provider_bridge_failed', async() => {
+    // risk: every job ending with an open stream inflated the provider_bridge_failed error count
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const lifecycle = new AbortController();
+    const encoder = new TextEncoder();
+    // Like the real broker fetch, the open upstream stream errors when the bridge aborts it.
+    const broker = new FakeBroker(async signal => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: first\n\n'));
+        signal?.addEventListener('abort', () => controller.error(new DOMException('This operation was aborted', 'AbortError')), { once: true });
+      },
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const { send, timings } = await openBridge({ broker, signal: lifecycle.signal });
+
+    const response = await send();
+    const reader = response.body!.getReader();
+    await reader.read();
+    lifecycle.abort();
+    await reader.read().catch(() => undefined);
+    await vi.waitFor(() => expect(timings.some(line => line.includes('path=/v1/responses'))).toBe(true));
+
+    const line = timings.find(entry => entry.includes('path=/v1/responses'))!;
+    expect(line).toContain('failure=provider_bridge_cancelled reason=lifecycle_revoked');
+    expect(line).not.toContain('provider_bridge_failed');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('answers a malformed body as a client error, not a bridge failure', async() => {
+    // risk: CLI-side request bugs counted (and failed fast) as Sulla bridge failures
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send } = await openBridge({});
+    const response = await send('{not json');
+    const body = await response.json() as { error: { type: string; reason?: string } };
+    expect(response.status).toBe(400);
+    expect(body.error).toMatchObject({ type: 'invalid_provider_request', reason: 'invalid_json' });
+  });
+
+  it('keeps an unknown failure as provider_bridge_failed but with the stage in the reason', async() => {
+    // risk: 42 identical provider_bridge_failed lines a day with no way to split them by cause
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send, timings } = await openBridge({ broker: new FakeBroker(async() => { throw new RangeError('boom') }) });
+    const response = await send();
+    const body = await response.json() as { error: { type: string; reason?: string } };
+    expect(response.status).toBe(502);
+    expect(body.error).toMatchObject({ type: 'provider_bridge_failed', reason: 'upstream_headers_RangeError' });
+    expect(timings.at(-1)).toContain('reason=upstream_headers_RangeError');
+  });
+
+  it('treats a bare fetch failure reaching the vault as transient', async() => {
+    // risk: a dropped vault connection without an errno failed the worker instead of backing off
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send } = await openBridge({ broker: new FakeBroker(async() => { throw new TypeError('fetch failed') }) });
+    const response = await send();
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('5');
+  });
+});

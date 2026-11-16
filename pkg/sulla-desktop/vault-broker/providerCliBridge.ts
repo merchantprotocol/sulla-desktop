@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 
+import { ProviderBridgeIdentityError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
 import { ProviderModelPin } from './ProviderModelPin';
 import type { BrokerInjection, ToolExecutionContext } from './index';
 import type { LocalVaultBrokerClient } from './index';
@@ -156,15 +157,15 @@ export class ProviderCliBridgeTools {
   const ctx = input.context;
   const authMode = input.authMode ?? (input.provider === 'claude-code' ? 'api-key' : undefined);
   if (!ctx.sub || !ctx.agent_id || !ctx.pod_id || !ctx.device_id || !ctx.thread_id || !ctx.job_id) {
-    throw new Error('Provider CLI bridge requires live subject, agent, device, thread, and job identity');
+    throw new ProviderBridgeIdentityError('Provider CLI bridge requires live subject, agent, device, thread, and job identity', 'identity_incomplete');
   }
   const definition = PROVIDERS.find(candidate => candidate.cli === input.provider &&
     candidate.integration === ctx.credential_scope?.integration_id && candidate.authMode === authMode);
   if (!definition || !input.accountId || ctx.credential_scope?.account_id !== input.accountId) {
-    throw new Error('Provider CLI bridge identity is outside the exact provider account scope');
+    throw new ProviderBridgeIdentityError('Provider CLI bridge identity is outside the exact provider account scope', 'account_scope_mismatch');
   }
   if (!Number.isFinite(ctx.exp) || ctx.exp * 1000 <= Date.now()) {
-    throw new Error('Provider CLI bridge identity has expired');
+    throw new ProviderBridgeIdentityError('Provider CLI bridge identity has expired', 'identity_expired');
   }
   return definition;
 }
@@ -188,7 +189,7 @@ static async liveContext(
   const context = authorized === true ? identity.context : authorized;
   ProviderCliBridgeTools.assertIdentity({ ...identity, context });
   if (!ProviderCliBridgeTools.sameIdentity(context, identity.context)) {
-    throw new Error('Provider CLI bridge identity changed during renewal');
+    throw new ProviderBridgeIdentityError('Provider CLI bridge identity changed during renewal', 'identity_changed');
   }
   return context;
 }
@@ -226,12 +227,16 @@ static async readJsonBody(request: http.IncomingMessage, signal: AbortSignal): P
     if (signal.aborted) throw new Error('Provider CLI request was aborted');
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.byteLength;
-    if (total > MAX_REQUEST_BYTES) throw new Error('Provider CLI request exceeds the broker bound');
+    if (total > MAX_REQUEST_BYTES) throw new ProviderBridgeRequestError('Provider CLI request exceeds the broker bound', 413, 'body_too_large');
     chunks.push(buffer);
   }
   if (signal.aborted) throw new Error('Provider CLI request was aborted');
-  if (!chunks.length) throw new Error('Provider CLI request body is required');
-  return { body: JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown, bytes: total };
+  if (!chunks.length) throw new ProviderBridgeRequestError('Provider CLI request body is required', 400, 'body_required');
+  try {
+    return { body: JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown, bytes: total };
+  } catch {
+    throw new ProviderBridgeRequestError('Provider CLI request body is not JSON', 400, 'invalid_json');
+  }
 }
 
 static assertAdvertisedHost(raw: string): string {
@@ -275,7 +280,7 @@ export class ProviderCliBridgeResponsePolicy {
   response.writeHead(status, { 'content-type': 'application/json', ...extra.headers });
   response.end(JSON.stringify({
     // The CLI prints only `message`; carry the denial code so app logs say which gate refused.
-    error: { type: code, message: extra.message ?? `Provider bridge request denied (${ code })`, ...(extra.reason ? { reason: extra.reason } : {}) },
+    error: { type: code, message: extra.message ?? `Provider bridge request denied (${ code }${ extra.reason ? `: ${ extra.reason }` : '' })`, ...(extra.reason ? { reason: extra.reason } : {}) },
   }));
   }
 }
@@ -286,7 +291,7 @@ export const PROVIDER_BRIDGE_RETRY_AFTER_SECONDS = 5;
 const TRANSIENT_BROKER_CODES = Object.freeze(['upstream_failed', 'upstream_timeout', 'vault_unavailable', 'database_unavailable']);
 const TRANSIENT_NETWORK_CODES = Object.freeze([
   'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH', 'EAI_AGAIN', 'ENOTFOUND',
-  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_CLOSED', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'ECONNABORTED',
 ]);
 
 export interface ProviderBridgeFailure {
@@ -307,13 +312,21 @@ export class ProviderCliBridgeFailurePolicy {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : undefined;
 }
 
+/** Reason code for a refused authorization: the typed reason, else the error name. */
+  static denialReason(error: unknown): string {
+    const value = error as { reason?: unknown; name?: unknown } | undefined;
+    return ProviderCliBridgeFailurePolicy.safeToken(value?.reason) ??
+      `authorize_${ ProviderCliBridgeFailurePolicy.safeToken(value?.name) ?? 'Error' }`;
+  }
+
 /**
- * Classify a failure that happened before upstream headers arrived. Vault
- * egress outages (network change, DNS, VPN) and a briefly unreachable vault
- * are Sulla-side and transient: the CLI gets 503 + Retry-After so it backs
- * off instead of hammering a terminal-looking 502.
+ * Classify a request failure. Vault egress outages (network change, DNS, VPN)
+ * and a briefly unreachable vault are Sulla-side and transient: the CLI gets
+ * 503 + Retry-After so it backs off instead of hammering a terminal-looking
+ * 502. Anything else stays `provider_bridge_failed`, but always with a reason
+ * (`<stage>_<ErrorName>`) so the log says where it broke.
  */
-  static classifyProviderBridgeFailure(error: unknown): ProviderBridgeFailure {
+  static classifyProviderBridgeFailure(error: unknown, stage = 'bridge'): ProviderBridgeFailure {
   const value = error as { name?: unknown; code?: unknown; status?: unknown; reason?: unknown; retryable?: unknown; message?: unknown; cause?: unknown } | undefined;
   const errorName = ProviderCliBridgeFailurePolicy.safeToken(value?.name) ?? (error instanceof Error ? 'Error' : typeof error);
   const errorCode = ProviderCliBridgeFailurePolicy.safeToken(value?.code);
@@ -339,9 +352,12 @@ export class ProviderCliBridgeFailurePolicy {
   const chromium = /\bnet::(ERR_[A-Z_]+)\b/.exec(message)?.[1];
   if (chromium) return failure(true, `vault_unreachable_${ chromium }`);
   if (/still starting its password vault/i.test(message)) return failure(true, 'vault_starting');
-  return failure(false);
+  // Node's fetch rejects every connection-level failure as `TypeError: fetch failed`.
+  if (errorName === 'TypeError' && message === 'fetch failed') return failure(true, 'vault_unreachable_fetch_failed');
+  return failure(false, ProviderCliBridgeFailurePolicy.safeToken(`${ stage }_${ errorName }`) ?? stage);
 }
 }
 
 
 export { ProviderCliBridgeService } from './ProviderCliBridgeService';
+export { ProviderBridgeAuthorizeUnavailableError, ProviderBridgeIdentityError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
