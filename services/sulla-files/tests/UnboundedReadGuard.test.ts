@@ -47,7 +47,9 @@ const ALLOWED:Record<string, number> = {
   'Repositories/AgentFileRepository.ts': 1,
   // Every version referencing one deduplicated chunk, read to authorize a chunk fetch (moved from app.ts).
   'Repositories/ChunkAccessRepository.ts': 1,
-  'app.ts': 3,
+  // A legacy move/copy selection: the live files under one selected folder (moved from app.ts).
+  'Repositories/FileLocatorRepository.ts': 1,
+  'app.ts': 2,
   'legacyImport.ts': 3,
   'localManager.ts': 3,
 };
