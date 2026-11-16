@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1041,
+  "entries": 1035,
   "files": {
     "background.ts": {
       "rules": {
@@ -4331,24 +4331,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-files/src/keyBundleRecovery.ts": {
-      "rules": {
-        "raw-sql": 13
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/keyExchange.ts": {
-      "rules": {
-        "raw-sql": 6
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/keyring.ts": {
-      "rules": {
-        "raw-sql": 29
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/legacyImport.ts": {
       "rules": {
         "long-file": 690,
@@ -4509,19 +4491,6 @@
       "rules": {
         "raw-sql": 12,
         "procedural-module": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/vaultKeyBundleAuthority.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "services/sulla-files/src/vaultPrincipal.ts": {
-      "rules": {
-        "raw-sql": 9,
-        "procedural-module": 1
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
