@@ -50,6 +50,16 @@ async function harness(): Promise<DesktopEnrollmentHarness> {
   return DesktopEnrollmentHarness.load();
 }
 
+/**
+ * Waits (in real time) until `complete()`'s Cloud lookup has settled. Since #2346 the coordinator bounds that
+ * lookup with a 30 s timer; while the lookup runs (real WebCrypto key generation for the request) that bound
+ * is the only armed timer, so a poll helper would mistake it for the 5 s poll sleep and race fake time past it.
+ * Joining with gate() shares the coordinator's in-flight lookup, so it adds no Cloud call (asserted below).
+ */
+async function untilLookupSettled(subject: DesktopEnrollmentHarness): Promise<void> {
+  await subject.gate();
+}
+
 /** Waits (in real time) until the code under test has armed its next sleep timer. */
 async function untilTimerArmed(): Promise<void> {
   const deadline = performance.now() + 5_000;
@@ -157,6 +167,25 @@ describe('vault enrollment gate (requester)', () => {
     await expect(subject.gate()).resolves.toBe('create');
   });
 
+  it('bounds a state lookup that never answers at 30 s, and asks Cloud again on the next call', async() => {
+    // risk: irreversible — a hung, cached lookup blocked first-run vault creation for the whole run (#2346)
+    const scripted = cloud;
+    let hang = true;
+    env.cloud = { request: (method: string, url: string, options: any) => (hang && url.includes('/enrollment/state') ? new Promise(() => undefined) : scripted.request(method, url, options)) };
+    const subject = await harness();
+    let outcome = 'pending';
+    const first = subject.gate().catch((error: Error) => { outcome = error.message });
+    await untilTimerArmed();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(outcome).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1);
+    await first;
+    expect(outcome).toBe('enrollment_lookup_timeout');
+    hang = false;
+    await expect(subject.gate()).resolves.toBe('waiting_for_approver');
+    expect(scripted.callsTo('/enrollment/state')).toHaveLength(1);
+  });
+
   it('swallows a 409 when opening the request, but not other errors', async() => {
     cloud.openReplies.push({ status: 409, body: { error: 'request_already_pending' } });
     const subject = await harness();
@@ -173,6 +202,7 @@ describe('vault enrollment completion (requester)', () => {
     cloud.consumeReplies.push({ status: 409, body: { error: 'request_not_found_or_consumed' } }, { status: 200, body: { wrappedUserKey: ENVELOPE } });
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
+    await untilLookupSettled(subject);
     await untilTimerArmed();
     await vi.advanceTimersByTimeAsync(4_999);
     expect(cloud.callsTo('/consume')).toHaveLength(0); // risk: polling before the first sleep
@@ -201,6 +231,7 @@ describe('vault enrollment completion (requester)', () => {
     cloud.consumeReplies.push({ status: 200, body: { wrappedUserKey: ENVELOPE } });
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
+    await untilLookupSettled(subject);
     await runPolls(1);
     await done;
     const [open] = cloud.callsTo(`/vaults/${ VAULT }/enrollment/requests`, 'POST');
@@ -218,6 +249,7 @@ describe('vault enrollment completion (requester)', () => {
     cloud.consumeReplies.push({ status: 200, body: { wrappedUserKey: ENVELOPE } });
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-cloud');
+    await untilLookupSettled(subject);
     await runPolls(1);
     await done;
     expectSigned(cloud.callsTo('/consume')[0], 'enrollment-consume:req-0001', 'user-cloud');
@@ -228,6 +260,7 @@ describe('vault enrollment completion (requester)', () => {
     cloud.consumeReplies.push({ status: 409, body: { error: 'confirmation_conflict' } }, { status: 409 }, { status: 200, body: { wrappedUserKey: ENVELOPE } });
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
+    await untilLookupSettled(subject);
     await runPolls(3);
     await expect(done).resolves.toBe('adopted');
     expect(cloud.callsTo('/consume')).toHaveLength(3);
@@ -238,6 +271,7 @@ describe('vault enrollment completion (requester)', () => {
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
     const settled = expect(done).rejects.toThrow();
+    await untilLookupSettled(subject);
     await runPolls(1);
     await settled;
     expect(broker.events).toEqual([]);
@@ -249,6 +283,7 @@ describe('vault enrollment completion (requester)', () => {
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
     const settled = expect(done).rejects.toThrow('enrollment_denied');
+    await untilLookupSettled(subject);
     await runPolls(2);
     await settled;
     expect(cloud.callsTo('/consume')).toHaveLength(2);
@@ -259,6 +294,7 @@ describe('vault enrollment completion (requester)', () => {
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
     const settled = expect(done).rejects.toThrow('enrollment_timeout');
+    await untilLookupSettled(subject);
     await runPolls(60);
     await settled;
     expect(cloud.callsTo('/consume')).toHaveLength(60);
@@ -271,6 +307,7 @@ describe('vault enrollment completion (requester)', () => {
     const subject = await harness();
     const done = subject.complete(MASTER, 'user-0001');
     const settled = expect(done).rejects.toThrow();
+    await untilLookupSettled(subject);
     await runPolls(1);
     await settled;
     expect(broker.events).toEqual(['adopt']);
@@ -281,8 +318,10 @@ describe('vault enrollment completion (requester)', () => {
     const subject = await harness();
     const first = subject.complete(MASTER, 'user-0001');
     const second = subject.complete(MASTER, 'user-0001');
+    await untilLookupSettled(subject);
     await runPolls(2);
     await expect(Promise.all([first, second])).resolves.toEqual(['adopted', 'adopted']);
+    expect(cloud.callsTo('/enrollment/state')).toHaveLength(1);
     expect(cloud.callsTo(`/vaults/${ VAULT }/enrollment/requests`, 'POST')).toHaveLength(1);
     expect(cloud.callsTo('/consume')).toHaveLength(2);
     expect(broker.events).toEqual(['adopt', 'commit', 'unlocked']);
