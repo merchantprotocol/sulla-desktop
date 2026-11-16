@@ -34,6 +34,7 @@ import type { IndexingQueue } from './indexing.js';
 import type { OriginalRevealTarget } from './originalReveal.js';
 import type { EvictionReceipt, FileFingerprint, PinnedRegularFile, PublicationReceipt, ReplacementReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
+import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/', '.sulla-operation-recovery/', 'master.key'];
@@ -175,6 +176,7 @@ export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:stri
 
 export class LocalFilesManager {
   private readonly store: Store;
+  private readonly chunkRegistry = new ManifestChunkRegistry();
   private readonly publicationLifecyclePolicy: PublicationLifecyclePolicy;
   private readonly collectionPolicyRepository: CollectionPolicyRepository;
   private collectionId?:  string;
@@ -1378,10 +1380,23 @@ export class LocalFilesManager {
     if (changed) console.log(`[SullaFiles] recorded ${ changed } watched folder change(s) for root ${ root.id }`);
   }
 
+  /**
+   * Every chunk of an ingested version is recorded for the commit, including one whose blob is
+   * already on disk: a blob left by an earlier attempt that rolled back has no `chunks` row, and
+   * skipping it here would commit a version that can never be read.
+   */
+  private async stageIngestChunk(collectionId:string, id:string, plain:Buffer, dataKey:Uint8Array):Promise<{ id:string; size:number; storedSize:number }> {
+    const existing = await this.store.storedSize(collectionId, id);
+    if (existing !== undefined) return { id, size: plain.length, storedSize: existing };
+    const encrypted = await encryptChunk(plain, dataKey, id);
+    await this.store.put(collectionId, id, encrypted);
+    return { id, size: plain.length, storedSize: encrypted.length };
+  }
+
   private async ingest(root:FileRootConfig, collectionId:string, filePath:string, mtimeMs:number, old:WatchedRow | undefined, missing:Map<string, WatchedRow>):Promise<boolean> {
     const keys = await this.config.keyring!.keys(collectionId); const whole = createHash('sha256'); const ids:string[] = []; const chunks:any[] = []; let total = 0;
-    for await (const part of createReadStream(this.safe(filePath, root), { highWaterMark: CHUNK_BYTES })) { const plain = Buffer.from(part); total += plain.length; whole.update(plain); const id = chunkId(plain, keys.dedup); ids.push(id); if (!await this.store.has(collectionId, id)) { const encrypted = await encryptChunk(plain, keys.data, id); await this.store.put(collectionId, id, encrypted); chunks.push({ id, size: plain.length, storedSize: encrypted.length }) } }
-    if (total === 0) { const empty = Buffer.alloc(0); const id = chunkId(empty, keys.dedup); ids.push(id); if (!await this.store.has(collectionId, id)) { const encrypted = await encryptChunk(empty, keys.data, id); await this.store.put(collectionId, id, encrypted); chunks.push({ id, size: 0, storedSize: encrypted.length }) } }
+    for await (const part of createReadStream(this.safe(filePath, root), { highWaterMark: CHUNK_BYTES })) { const plain = Buffer.from(part); total += plain.length; whole.update(plain); const id = chunkId(plain, keys.dedup); ids.push(id); chunks.push(await this.stageIngestChunk(collectionId, id, plain, keys.data)) }
+    if (total === 0) { const empty = Buffer.alloc(0); const id = chunkId(empty, keys.dedup); ids.push(id); chunks.push(await this.stageIngestChunk(collectionId, id, empty, keys.data)) }
     const contentHash = whole.digest('hex'); if (old?.content_hash === contentHash) { await this.db.query('UPDATE watched_folder_state SET size=$3,mtime_ms=$4 WHERE collection_id=$1 AND path=$2', [collectionId, filePath, total, Math.trunc(mtimeMs)]); return false }
     const renameFrom = !old ? missing.get(contentHash) : undefined; const manifestHash = createHash('sha256').update(JSON.stringify({ ids, size: total })).digest('hex');
     const existing = !old && !renameFrom ? (await this.db.query(`SELECT f.id,f.deleted_at,v.manifest_hash FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id
@@ -1396,6 +1411,7 @@ export class LocalFilesManager {
       await lockStoredNamespace(client, collectionId);
       await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
       for (const chunk of chunks) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
+      await this.chunkRegistry.assertRegistered(client, collectionId, ids);
       let fileId = old?.file_id ?? renameFrom?.file_id ?? existing?.id; let parent:string | null = null;
       await assertStoredFilePath(client, collectionId, filePath, fileId);
       if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query("UPDATE files SET path=$2,mime=$3,size=$4,extracted_at=NULL,extraction_status='pending',deleted_at=NULL,updated_at=NOW() WHERE id=$1", [fileId, filePath, mime(filePath), total]); await client.query('UPDATE file_search_text SET search_text=NULL WHERE file_id=$1', [fileId]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING id", [collectionId, filePath, this.config.userId, mime(filePath), total])).rows[0].id }

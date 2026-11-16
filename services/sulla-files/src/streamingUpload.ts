@@ -16,6 +16,7 @@ import type { Config } from './config.js';
 import type { Store } from './store.js';
 import type { Readable } from 'node:stream';
 import type pg from 'pg';
+import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 
 
 interface WinnerAwareCrypto {
@@ -119,6 +120,7 @@ export async function commitStreamedUpload(
   const manifestHash = createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: totalSize })).digest('hex');
   await assertManifestMetadata(client, manifestHash, chunkIds, totalSize);
   for (const chunk of chunks) await assertChunkMetadata(client, input.collectionId, chunk);
+  await new ManifestChunkRegistry().assertRegistered(client, input.collectionId, chunkIds);
   const agentWrite = Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
   const collection = (await client.query('SELECT system_area FROM collections WHERE id=$1', [input.collectionId])).rows[0];
   const createdByType = agentWrite ? 'agent-run' : 'user';
