@@ -4,6 +4,14 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /**
+ * Seconds a provider CLI should wait before retrying a transient Sulla-side
+ * bridge failure. Lives in this leaf module (not providerCliBridge.ts) because
+ * ProviderCliBridgeService reads it at load time, and providerCliBridge.ts
+ * re-exports that service: through the import cycle it was still undefined.
+ */
+export const PROVIDER_BRIDGE_RETRY_AFTER_SECONDS = 5;
+
+/**
  * A provider bridge refusal with a short, non-secret reason code. The code is
  * written to the bridge log line and returned to the CLI so denials can be
  * counted by cause instead of collapsing into one generic type.

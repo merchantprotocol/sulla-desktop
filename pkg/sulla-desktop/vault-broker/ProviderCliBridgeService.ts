@@ -6,8 +6,8 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { ProviderModelPin } from './ProviderModelPin';
-import { ProviderBridgeRequestError } from './ProviderBridgeErrors';
-import { ProviderBridgeRevokedError, PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderCliBridgeTools, ProviderCliBridgeResponsePolicy, ProviderCliBridgeFailurePolicy } from './providerCliBridge';
+import { PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderBridgeAuthorizeUnavailableError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
+import { ProviderBridgeRevokedError, ProviderCliBridgeTools, ProviderCliBridgeResponsePolicy, ProviderCliBridgeFailurePolicy } from './providerCliBridge';
 import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
 import { vaultHealthMonitor, VaultHealthMonitor } from './vaultHealth';
 import type { ToolExecutionContext } from './index';
@@ -121,7 +121,9 @@ export class ProviderCliBridgeService {
         return live;
       } catch (error) {
         const reason = ProviderCliBridgeFailurePolicy.denialReason(error);
-        if ((error as { retryable?: unknown })?.retryable === true) {
+        // Only the typed "check could not run" error keeps the lease; any other
+        // throw (even one that claims to be retryable) is a refusal.
+        if (error instanceof ProviderBridgeAuthorizeUnavailableError) {
           deny(503, 'provider_bridge_unavailable', { message: UNAVAILABLE_MESSAGE, reason, headers: { ...RETRY_HEADERS } });
           return undefined;
         }
@@ -241,7 +243,13 @@ export class ProviderCliBridgeService {
         // The CLI hung up or the job's lifecycle ended: a cancellation, not a bridge failure.
         const reason = lifetime.signal.aborted ? 'lifecycle_revoked' : 'client_disconnected';
         if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason });
-        else status = 499;
+        else {
+          status = 499;
+          // The streamed reply can never finish; end the connection so the CLI
+          // sees the cut instead of waiting on an open socket. request.destroy()
+          // alone leaves the socket up once the request body was fully read.
+          response.destroy();
+        }
         failureNote = ` failure=provider_bridge_cancelled reason=${ reason } stage=${ stage }`;
         console.warn(`[ProviderCliBridge] request cancelled reason=${ reason } stage=${ stage }`);
         return;

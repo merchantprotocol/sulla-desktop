@@ -285,8 +285,6 @@ export class ProviderCliBridgeResponsePolicy {
   }
 }
 
-/** Seconds a provider CLI should wait before retrying a transient Sulla-side bridge failure. */
-export const PROVIDER_BRIDGE_RETRY_AFTER_SECONDS = 5;
 
 const TRANSIENT_BROKER_CODES = Object.freeze(['upstream_failed', 'upstream_timeout', 'vault_unavailable', 'database_unavailable']);
 const TRANSIENT_NETWORK_CODES = Object.freeze([
@@ -360,4 +358,4 @@ export class ProviderCliBridgeFailurePolicy {
 
 
 export { ProviderCliBridgeService } from './ProviderCliBridgeService';
-export { ProviderBridgeAuthorizeUnavailableError, ProviderBridgeIdentityError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
+export { PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderBridgeAuthorizeUnavailableError, ProviderBridgeIdentityError, ProviderBridgeRequestError } from './ProviderBridgeErrors';

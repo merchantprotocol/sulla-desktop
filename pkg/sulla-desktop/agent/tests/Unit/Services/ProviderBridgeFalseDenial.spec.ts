@@ -155,6 +155,26 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(timings.at(-1)).toContain('reason=container_not_registered');
   });
 
+  it('revokes when authorize throws an untyped error that only claims to be retryable', async() => {
+    // risk: permissions: any error carrying retryable:true could dodge revocation and keep a refused job spending the account
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const { lease, send } = await openBridge({
+      authorize: () => {
+        if (calls++ === 0) return true;
+        throw Object.assign(new Error('capability refused'), { retryable: true, reason: 'capability_refused' });
+      },
+    });
+
+    const response = await send();
+    const body = await response.json() as { error: { type: string; reason?: string } };
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get('retry-after')).toBeNull();
+    expect(body.error).toMatchObject({ type: 'provider_bridge_identity_changed', reason: 'capability_refused' });
+    expect(lease.signal.aborted).toBe(true);
+  });
+
   it('logs a job teardown mid-stream as a cancellation, not provider_bridge_failed', async() => {
     // risk: every job ending with an open stream inflated the provider_bridge_failed error count
     vi.spyOn(console, 'warn').mockImplementation(() => {});
