@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { open, readFile } from 'node:fs/promises';
 
 import type * as Automerge from '@automerge/automerge';
@@ -17,22 +17,18 @@ import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
 import { trashFileWithoutReceipt } from './databaseOperations.js';
-import { getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
-import { folderOperationState } from './folderOperationBatches.js';
-import { sendFileStream, streamFileContent } from './fileStream.js';
 import { ContentReadFailureLog } from './ContentReadFailureLog.js';
 import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent } from './preview.js';
-import { assertUnprotectedFile, protectedPathError } from './protectedFiles.js';
+import { assertUnprotectedFile } from './protectedFiles.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
 import { SharesService } from './shares.js';
 import { CatalogSyncService } from './cloudRemote/catalogSync.js';
 import { DesktopRequestSyncService } from './cloudRemote/desktopRequests.js';
 import { Store } from './store.js';
-import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
-import { insertStreamingUpload, streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
-import { isUseCasePath } from './useCasePaths.js';
+import { assertStoredFilePath, ensureStoredFileParents, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
+import { streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
 import { BACKUP_ROOT, checkedBackupDirectory, localBackupRoot, LocalBackupObjectStore, openBackupDestination, type BackupDestinationConfig } from './backup/destinations.js';
 import { PersonalBackupScheduler } from './backup/scheduler.js';
@@ -53,7 +49,7 @@ import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import type pg from 'pg';
 import { DatabaseFailureClassifier, RetryableDatabaseError, TransactionRunner } from './FilesTransaction.js';
-import { VersionContentStager, type StagedVersionContent } from './VersionContentStager.js';
+import { VersionContentStager } from './VersionContentStager.js';
 import { LocalManagerGate } from './Http/LocalManagerGate.js';
 import { VersionWriter } from './Services/VersionWriter.js';
 import { VersionWriteRepository } from './Repositories/VersionWriteRepository.js';
@@ -70,10 +66,15 @@ import { AgentWriteRoutes } from './routes/AgentWriteRoutes.js';
 import { AgentWriteRepository } from './Repositories/AgentWriteRepository.js';
 import { AgentKeepRoutes } from './routes/AgentKeepRoutes.js';
 import { AgentKeepRepository } from './Repositories/AgentKeepRepository.js';
+import { FuseFileRoutes } from './routes/FuseFileRoutes.js';
+import { FuseContentRoutes } from './routes/FuseContentRoutes.js';
+import { FuseMetadataRoutes } from './routes/FuseMetadataRoutes.js';
+import { FuseWriteRepository } from './Repositories/FuseWriteRepository.js';
+import { FileMetadataRepository } from './Repositories/FileMetadataRepository.js';
 import { FileListingQuery } from './FileListingQuery.js';
 import { HttpError } from './Http/HttpError.js';
 import { FilesRequestInput } from './Http/FilesRequestInput.js';
-import { FilesAccessGate, type RequestWithIdentity, type Right } from './Http/FilesAccessGate.js';
+import { FilesAccessGate, type RequestWithIdentity } from './Http/FilesAccessGate.js';
 import { FileListingRepository } from './Repositories/FileListingRepository.js';
 import { FileListingRoutes } from './routes/FileListingRoutes.js';
 import { ShareRoutes } from './routes/ShareRoutes.js';
@@ -113,7 +114,6 @@ import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
 import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
-const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
 const FILE_ROW_JSON_SQL = `row_to_json((SELECT x FROM (SELECT ${FILE_COLUMNS_SQL}) x))`;
@@ -290,7 +290,7 @@ function composeFilesApp(
   const liveText = new LiveTextCoordinator(db, config, store, accessGate, transactions, versionWriter, automergeDocuments, automergeTexts, requestAudit);
   const live = liveText.sessions; const adoptLive = liveText.adopt;
   app.locals.liveTextSessions = live;
-  const textSave = new TextVersionMerger(automergeDocuments, automergeTexts, live, managers).merge;
+  const textMerger = new TextVersionMerger(automergeDocuments, automergeTexts, live, managers); const textSave = textMerger.merge;
   const auditWriter=new FileAuditWriter(db, async(id,versionId) => {
     const content=await loadFileContent(db,config,store,id,versionId);
     if (!content) throw new Error('Audit log content unavailable');
@@ -302,7 +302,6 @@ function composeFilesApp(
   const actorScope = (actor:FilesIdentity):string => actor.jobId
     ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
     : `device:${ actor.deviceId || config.deviceId }`;
-  const mountIdentity = (request:RequestWithIdentity, _operation:string, _resource:Record<string,unknown> = {}) => identity(request);
   const originalReveal = new OriginalRevealRoutes(config, accessGate, manager);
   originalReveal.register(app);
   if (residency) registerResidencyRoutes(app, residency, async(request, fileId) => { await requireFile(request as RequestWithIdentity, fileId, 'edit') });
@@ -388,299 +387,20 @@ function composeFilesApp(
     try { response.status(202).json({runId:await backupScheduler.enqueue(destination.id,destination.config,'hourly')}) } catch { throw new HttpError(409,'Backup is already running or the service is unavailable') }
   } catch(error){next(error)} });
   new LocalSourceRoutes(db, config, accessGate, managers, versionWriter, transactions, new HomeSystemFileRepository(db), manager).register(app);
-  app.get('/v1/fuse/files', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? '');
-    if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    await requireCollection(request, collectionId, 'view');
-    response.setHeader('Cache-Control', 'private, no-store');
-    response.json(await requireFuseExperiment().fuseSnapshot(collectionId));
-  } catch (error) { next(error) } });
+  const operationAccess = (request:RequestWithIdentity) => ({
+    custody: manager?.operationCustody(),
+    prepare: async(collectionId:string) => { await requireCollection(request, collectionId, 'edit') },
+    file: (client:pg.PoolClient,id:string) => requireFile(request,id,'edit',client),
+    path: async(client:pg.PoolClient,collectionId:string,path:string) => { await requirePath(request,collectionId,path,'edit',client) },
+  });
+  const fuseWrites = new FuseWriteRepository(db);
+  const fuseFiles = new FuseFileRoutes(db, accessGate, managers, versionWriter, transactions, fuseWrites, requestAudit, operationAccess);
+  fuseFiles.registerSnapshot(app);
   const fuseTree = new FuseTreeRepository(db);
   new FuseReadRoutes(accessGate, fuseTree, new FuseTreeSnapshotCache(fuseTree, config.userId), requireFuseExperiment, config.userId).register(app);
-  app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? '');
-    const filePath = cleanPath(String(request.query.path ?? ''), false);
-    const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
-    await requireCollection(request, collectionId, 'edit');
-    const bytes = Buffer.from(request.body as Buffer);
-    // Encrypt and fsync the chunks first; the transaction below holds only DB statements.
-    const staged = await stageVersionContent(collectionId, bytes);
-    const file = await transactions.run('fuse-create', async client => {
-      await lockStoredNamespace(client, collectionId, filePath);
-      // A trashed file keeps its (collection_id, path) row, so a plain INSERT hit the unique index and
-      // creating a file where one was deleted failed with 'A file already occupies ...'. Revive the
-      // trashed row instead (insertVersion un-deletes it and appends a version; history is kept).
-      const trashed = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NOT NULL FOR UPDATE', [collectionId, filePath])).rows[0];
-      return insertVersion(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
-        mime: request.header('content-type') ?? 'application/octet-stream', bytes, staged, actor,
-        createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
-    });
-    await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
-  } catch (error) { next(error) } });
-  app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await fileRow(request.params.id); const nextPath = cleanPath(request.body.path, false);
-    const targetCollectionId=String(request.body.targetCollectionId??file.collection_id);
-    mountIdentity(request, 'rename', { collectionId:file.collection_id, fileId:file.id, path:nextPath });
-    const input=parseDatabaseBatch({idempotencyKey:randomUUID(),collectionId:file.collection_id,items:[{
-      itemId:randomUUID(),action:targetCollectionId===file.collection_id?'rename':'move',fileId:file.id,
-      expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:nextPath,
-      ...(targetCollectionId===file.collection_id?{}:{targetCollectionId}),
-    }]});
-    const submitted=await submitDatabaseBatch(db,input,identity(request),operationAccess(request));
-    await runDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
-    const result=await getDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
-    if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Files move did not complete');
-    response.json(result.items[0]?.after);
-  } catch (error) { next(error) } });
-  app.delete('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await fileRow(request.params.id); mountIdentity(request, 'delete', { collectionId:file.collection_id,fileId:file.id,path:file.path });
-    await trashFileWithoutReceipt(db, file.id, identity(request), operationAccess(request)); response.status(204).end();
-  } catch (error) { next(error) } });
-  app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
-    const actor=mountIdentity(request,'create',{collectionId,path:folderPath}); await requireCollection(request, collectionId, 'edit');
-    const createdDescription=`Created by ${actor.agentId??actor.jobId??'agent'} on ${new Date().toISOString().slice(0,10)} — needs description`;
-    await transactions.run('fuse-mkdir', async client => {
-      await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
-      await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
-    });
-    await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
-  } catch(error){next(error)} });
-  app.patch('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
-    const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
-    const targetCollectionId=String(request.body.targetCollectionId??collectionId); const targetPath=cleanPath(request.body.targetPath,false);
-    mountIdentity(request,'rename',{collectionId,path:folderPath});
-    const source=await folderOperationState(db,collectionId,folderPath,operationAccess(request));
-    const input=parseDatabaseBatch({idempotencyKey:randomUUID(),collectionId,items:[{
-      itemId:randomUUID(),kind:'folder',action:targetCollectionId===collectionId?'rename':'move',folderPath,
-      expectedFolder:source.folderId?source:undefined,sourceSubtreeSignature:source.subtreeSignature,targetPath,
-      ...(targetCollectionId===collectionId?{}:{targetCollectionId}),
-    }]});
-    const submitted=await submitDatabaseBatch(db,input,identity(request),operationAccess(request));
-    await runDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
-    const result=await getDatabaseBatch(db,submitted.operationId,identity(request),operationAccess(request));
-    if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Folder move did not complete');
-    response.json(result.items[0]?.after);
-  } catch(error){next(error)} });
-  app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
-    const collectionId=String(request.query.collectionId??''); const folderPath=cleanPath(String(request.query.path??''),false);
-    mountIdentity(request,'delete',{collectionId,path:folderPath}); await requirePath(request,collectionId,folderPath,'edit');
-    await transactions.run('fuse-rmdir', async client => {
-      await lockStoredNamespace(client,collectionId);
-      const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[collectionId,folderPath]);
-      if(occupied.rowCount) throw new HttpError(409,'folder is not empty');
-      await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
-    });
-    response.status(204).end();
-  } catch(error){next(error)} });
-  app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => {
-    const controller = new AbortController(); const abort = () => controller.abort();
-    request.once('aborted', abort); response.once('close', abort);
-    let readVersionId:string | undefined;
-    try {
-      let file = await requireFile(request, request.params.id, 'view');
-      if(live.has(file.id)){await live.flush(file.id);file=await requireFile(request,file.id,'view');}
-      readVersionId = file.current_version_id;
-      const stream = await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,controller.signal);
-      if (!stream) return response.sendStatus(404);
-      const hash=createHash('sha256');
-      for await (const part of stream.body) { controller.signal.throwIfAborted(); hash.update(part) }
-      const content = await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,controller.signal);
-      if (!content) return response.sendStatus(404);
-      response.setHeader('ETag', `"${ file.current_version_id }"`);
-      response.setHeader('X-Sulla-Source-Hash', hash.digest('hex'));
-      await sendFileStream(request,response,content);
-    } catch(error) {
-      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'fuse-read', fileId: request.params.id, versionId: readVersionId });
-      if (!controller.signal.aborted && !response.headersSent) next(error);
-      else if (!controller.signal.aborted) response.destroy(error as Error);
-    } finally { request.off('aborted',abort); response.off('close',abort) }
-  });
-  app.put('/v1/fuse/files/:id/content/stream', async(request:RequestWithIdentity, response, next) => {
-    const uploadId=randomUUID();
-    try {
-      const file=await requireFile(request,request.params.id,'edit');
-      const match=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
-      const sourceHash=request.header('x-sulla-source-hash');
-      const declaredBytes=Number(request.header('content-length'));
-      if(!match||!sourceHash||!/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428,'If-Match version and X-Sulla-Source-Hash are required');
-      if(!Number.isSafeInteger(declaredBytes)||declaredBytes<0) throw new HttpError(400,'valid content-length is required');
-      if(declaredBytes>FUSE_MAX_FILE_BYTES) throw new HttpError(413,'Files mount writes are limited to 64 MiB');
-      const actor=identity(request);
-      const contentHash=request.header('x-sulla-content-hash')?.toLowerCase();
-      if(match!==file.current_version_id) {
-        // A retried upload whose first attempt committed: the current version already holds this content.
-        if(contentHash&&/^[0-9a-f]{64}$/.test(contentHash)&&Number(file.size)===declaredBytes) {
-          const current=await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,new AbortController().signal);
-          const currentHash=createHash('sha256'); if(current) for await (const part of current.body) currentHash.update(part);
-          if(current&&currentHash.digest('hex')===contentHash) {
-            request.resume();
-            response.setHeader('ETag',`"${file.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',contentHash);
-            return response.json({id:file.id,collectionId:file.collection_id,path:file.path,mime:file.mime,size:Number(file.size),versionId:file.current_version_id,sourceHash:contentHash,mtimeMs:Date.now()});
-          }
-        }
-        throw new HttpError(409,'Files mount version changed');
-      }
-      const baseContent=await streamFileContent(db,config,store,file.id,match,undefined,new AbortController().signal);
-      if(!baseContent) throw new HttpError(409,'Files mount version changed');
-      const baseHash=createHash('sha256');
-      for await (const part of baseContent.body) baseHash.update(part);
-      if(sourceHash.toLowerCase()!==baseHash.digest('hex')) throw new HttpError(409,'Files mount version changed');
-      // Phase 1 (no transaction): read the body, encrypt and publish chunks under an upload intent.
-      await beginUploadIntent(db,uploadId,file.collection_id);
-      const uploadInput={uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,expectedBytes:declaredBytes,actor,body:request,intentDb:db,
-        existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'};
-      const streamed=await streamUploadChunks(config,store,uploadInput);
-      // Phase 2: a short transaction that only re-checks the version and records metadata.
-      const result=await transactions.run('fuse-write-stream',async client=>{
-        await lockStoredNamespace(client,file.collection_id,file.path);
-        const current=await requireFile(request,file.id,'edit',client);
-        if(current.current_version_id!==file.current_version_id||current.path!==file.path||current.collection_id!==file.collection_id) throw new HttpError(409,'Files mount version changed');
-        return commitStreamedUpload(client,uploadInput,streamed);
-      });
-      await completeUploadIntent(db,uploadId).catch(()=>undefined);
-      const hash=result.source_hash;
-      await audit(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status});
-      response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',hash);
-      response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:hash,mtimeMs:Date.now()});
-    } catch(error) { next(error) }
-  });
-  app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
-    const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
-    const sourceHash = request.header('x-sulla-source-hash');
-    if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
-    const written = await fuseContentWrite(request, request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer))
-      .catch(error => { if (ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'fuse-write', fileId: request.params.id, versionId: match }); throw error });
-    const result = written.result;
-    if (!written.replayed) await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
-    if(written.merged) response.setHeader('X-Sulla-Merged','1');
-    response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',written.sourceHash);
-    response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:written.sourceHash,mtimeMs:Date.now()});
-  } catch (error) { next(error) } });
-  /**
-   * A small mount write. Reads, hashing, text merging and chunk encryption run against a
-   * snapshot of the file outside any transaction; the transaction then only re-checks that
-   * snapshot under the path lock and records the version. A concurrent writer that moved the
-   * file on in between makes the snapshot stale, and the whole write is redone (bounded).
-   * A retried request whose content is already the current version is answered from that
-   * version instead of writing a duplicate (the first attempt committed, its reply was lost).
-   */
-  async function fuseContentWrite(request:RequestWithIdentity, fileId:string, match:string, sourceHash:string, submitted:Buffer) {
-    const manager = requireFuseExperiment(); const actor = identity(request);
-    const sha256 = (bytes:Buffer) => createHash('sha256').update(bytes).digest('hex');
-    const submittedHash = sha256(submitted);
-    for (let attempt = 1; ; attempt++) {
-      const file = await requireFile(request, fileId, 'edit');
-      const currentBytes = await manager.readStoredVersion(file.id, file.current_version_id);
-      const baseVersion = (await db.query('SELECT id,parent_version_id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [match, file.id])).rows[0];
-      if (!baseVersion) throw new HttpError(409, 'Files mount version changed');
-      if (match !== file.current_version_id && sha256(currentBytes) === submittedHash) {
-        return { result: file, sourceHash: submittedHash, merged: false, replayed: true };
-      }
-      const baseBytes = match === file.current_version_id ? currentBytes : await manager.readStoredVersion(file.id, match);
-      if (sourceHash !== sha256(baseBytes)) throw new HttpError(409, 'Files mount version changed');
-      const saved = await textSave(db as unknown as pg.PoolClient, file, match, submitted, currentBytes);
-      const staged = await stageVersionContent(file.collection_id, saved.bytes);
-      const outcome = await transactions.run('fuse-write', async client => {
-        await lockStoredNamespace(client, file.collection_id, file.path);
-        const current = await requireFile(request, file.id, 'edit', client);
-        if (current.current_version_id !== file.current_version_id || current.path !== file.path || current.collection_id !== file.collection_id) return undefined;
-        const result = await insertVersion(client, { collectionId: file.collection_id, fileId: file.id, path: file.path, mime: file.mime,
-          bytes: saved.bytes, staged, actor, createdByType: actor.agentId ? 'agent' : 'agent-run', createdById: actor.agentId ?? actor.jobId ?? actor.userId,
-          message: 'Updated through the Files mount', baseVersionId: file.current_version_id });
-        if (saved.document) await saveAutomergeVersion(client, file.id, result.current_version_id, saved.document);
-        return result;
-      });
-      if (outcome) {
-        if (saved.document) adoptLive(request, file.id, saved.document);
-        return { result: outcome, sourceHash: staged.sourceHash, merged: saved.merged, replayed: false };
-      }
-      if (attempt >= 4) throw new HttpError(409, 'Files changed concurrently or are busy; retry the write');
-    }
-  }
-  app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ try {
-    const actor=identity(request); const sourceFileId=String(request.body.sourceFileId??'');
-    if(!sourceFileId) throw new HttpError(400,'sourceFileId is required');
-    if(sourceFileId===request.params.id) throw new HttpError(400,'replacement source must differ from target');
-    const manager=requireFuseExperiment();
-    // Read, merge and encrypt from a snapshot first; the transaction only re-checks it and records the version.
-    const target=await requireFile(request,request.params.id,'edit'); const source=await requireFile(request,sourceFileId,'edit');
-    if(target.collection_id!==source.collection_id) throw new HttpError(400,'replacement source must be in the target collection');
-    const bytes=await manager.readStoredVersion(source.id,source.current_version_id);
-    const baseHeader=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1]??target.current_version_id;
-    const currentBytes=await manager.readStoredVersion(target.id,target.current_version_id);
-    const saved=await textSave(db as unknown as pg.PoolClient,target,baseHeader,bytes,currentBytes).catch(error=>{
-      if(baseHeader!==target.current_version_id) throw error;
-      return {bytes,document:undefined,merged:false};
-    });
-    const staged=await stageVersionContent(target.collection_id,saved.bytes);
-    const result=await transactions.run('fuse-replace',async client=>{
-      await lockStoredNamespace(client,target.collection_id);
-      const lockedTarget=await requireFile(request,target.id,'edit',client); const lockedSource=await requireFile(request,source.id,'edit',client);
-      if(lockedTarget.current_version_id!==target.current_version_id||lockedTarget.path!==target.path||lockedSource.current_version_id!==source.current_version_id||lockedSource.deleted_at)
-        throw new HttpError(409,'Files changed concurrently or are busy; retry the replace');
-      const result=await insertVersion(client,{collectionId:target.collection_id,fileId:target.id,path:target.path,mime:source.mime,bytes:saved.bytes,staged,
-        actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
-      if(saved.document) await saveAutomergeVersion(client,target.id,result.current_version_id,saved.document);
-      await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[source.id]);
-      return result;
-    });
-    if(saved.document)adoptLive(request,target.id,saved.document);
-    const nextHash=staged.sourceHash; await audit(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
-    if(saved.merged) response.setHeader('X-Sulla-Merged','1'); response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
-    response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
-  } catch(error){next(error)} });
-  const metadataValue=(row:any,folder:boolean):Record<string,unknown>=>{
-    const value={...(row.metadata??{})};
-    if(folder&&row.description!==null) value.description=row.description;
-    if(folder&&row.naming_hint!==null) value.naming_hint=row.naming_hint;
-    return value;
-  };
-  const metadataTarget=async(request:RequestWithIdentity,collectionId:string,path:string,right:Right,queryable:pg.Pool|pg.PoolClient=db)=>{
-    const file=(await queryable.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[collectionId,path])).rows[0];
-    if(file){await requireFile(request,file.id,right,queryable);return {kind:'file' as const,row:file}}
-    const folder=(await queryable.query('SELECT * FROM file_folders WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[collectionId,path])).rows[0];
-    if(!folder) throw new HttpError(404,'Files path not found');
-    await requirePath(request,collectionId,path,right,queryable); return {kind:'folder' as const,row:folder};
-  };
-  const canWriteMetadata=(actor:FilesIdentity,key:string)=>!(actor.agentId&&key.startsWith('approved'));
-
-  app.get('/v1/fuse/metadata',async(request:RequestWithIdentity,response,next)=>{try{
-    const collectionId=String(request.query.collectionId??''); const path=cleanPath(request.query.path);
-    const target=await metadataTarget(request,collectionId,path,'view');
-    response.json({path,kind:target.kind,metadata:metadataValue(target.row,target.kind==='folder'),revision:Number(target.row.metadata_revision)});
-  }catch(error){next(error)}});
-  app.put('/v1/fuse/metadata',async(request:RequestWithIdentity,response,next)=>{try{
-    const collectionId=String(request.body.collectionId??''); const path=cleanPath(request.body.path); const actor=mountIdentity(request,'metadata',{collectionId,path});
-    const set=request.body.set??{},unset=request.body.unset??[];
-    if(!set||typeof set!=='object'||Array.isArray(set)||!Array.isArray(unset)||unset.some((key:unknown)=>typeof key!=='string')) throw new HttpError(400,'set must be an object and unset must be a string array');
-    const keys=[...Object.keys(set),...unset];
-    if(keys.some(key=>!key||key.length>128||key.includes('\0'))) throw new HttpError(400,'invalid metadata key');
-    if(keys.some(key=>!canWriteMetadata(actor,key))) throw new HttpError(403,'metadata field is not writable by this actor');
-    const updatedTarget=await transactions.run('metadata-write',async client=>{ const target=await metadataTarget(request,collectionId,path,'edit',client);
-    if(request.body.baseRevision!==undefined&&Number(request.body.baseRevision)!==Number(target.row.metadata_revision)) throw new HttpError(409,'metadata revision changed');
-    const old=metadataValue(target.row,target.kind==='folder'); const next={...old,...set}; for(const key of unset) delete next[key];
-    const table=target.kind==='file'?'files':'file_folders';
-    if(target.kind==='folder'){
-      const description=Object.hasOwn(next,'description')?next.description:null,namingHint=Object.hasOwn(next,'naming_hint')?next.naming_hint:null;
-      if(description!==null&&typeof description!=='string'||namingHint!==null&&typeof namingHint!=='string') throw new HttpError(400,'folder description and naming_hint must be strings');
-      delete next.description; delete next.naming_hint;
-      await client.query(`UPDATE ${table} SET metadata=$2,description=$3,naming_hint=$4,metadata_revision=metadata_revision+1,updated_at=NOW() WHERE id=$1`,[target.row.id,next,description,namingHint]);
-    }else await client.query(`UPDATE ${table} SET metadata=$2,metadata_revision=metadata_revision+1,updated_at=NOW() WHERE id=$1`,[target.row.id,next]);
-    const updated=(await client.query(`SELECT * FROM ${table} WHERE id=$1`,[target.row.id])).rows[0];
-    for(const key of keys) if(JSON.stringify(old[key])!==JSON.stringify(metadataValue(updated,target.kind==='folder')[key])) await client.query(
-      `INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,action,details) VALUES($1,$2,$3,$4,'metadata-set',$5)`,
-      [actor.agentId?'agent':actor.kind==='capability'?'agent-or-device':'user',actor.agentId??actor.userId,actor.jobId??actor.deviceId??null,target.kind==='file'?target.row.id:null,{key,old:old[key]??null,new:metadataValue(updated,target.kind==='folder')[key]??null,collectionId,path}]);
-    return {updated,kind:target.kind}; });
-    response.json({revision:Number(updatedTarget.updated.metadata_revision),metadata:metadataValue(updatedTarget.updated,updatedTarget.kind==='folder')});
-  }catch(error){next(error)}});
-  app.get('/v1/fuse/folder-metadata',async(request:RequestWithIdentity,response,next)=>{try{
-    const collectionId=String(request.query.collectionId??'');const path=cleanPath(request.query.path);const target=await metadataTarget(request,collectionId,path,'view');
-    if(target.kind!=='folder') throw new HttpError(400,'path is not a folder'); const prefix=path?`${path}/`:'';
-    const rows=(await db.query(`SELECT path,metadata,metadata_revision FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 AND position('/' in substring(path from $3))=0 AND metadata<>'{}'::jsonb`,[collectionId,`${prefix}%`,prefix.length+1])).rows;
-    const files:Record<string,Record<string,unknown>>={}; for(const row of rows) files[row.path.slice(prefix.length)]=row.metadata;
-    response.json({folder:metadataValue(target.row,true),files,revision:Math.max(Number(target.row.metadata_revision),...rows.map(row=>Number(row.metadata_revision)))});
-  }catch(error){next(error)}});
+  fuseFiles.register(app);
+  new FuseContentRoutes(db, config, store, accessGate, managers, versionWriter, transactions, fuseWrites, textMerger, automergeTexts, liveText, requestAudit, contentReadFailures).register(app);
+  new FuseMetadataRoutes(db, accessGate, transactions, new FileMetadataRepository(db)).register(app);
   const fileLocator = new FileLocatorRepository(db);
   new FileResolveRoutes(accessGate, fileLocator).register(app);
   new LocalRootRoutes(manager).register(app);
@@ -688,12 +408,6 @@ function composeFilesApp(
 
   new SearchRoutes(new SearchScopeRepository(db), search).register(app);
   new StarRoutes(accessGate, new StarRepository(db)).register(app);
-  const operationAccess = (request:RequestWithIdentity) => ({
-    custody: manager?.operationCustody(),
-    prepare: async(collectionId:string) => { await requireCollection(request, collectionId, 'edit') },
-    file: (client:pg.PoolClient,id:string) => requireFile(request,id,'edit',client),
-    path: async(client:pg.PoolClient,collectionId:string,path:string) => { await requirePath(request,collectionId,path,'edit',client) },
-  });
   new FileOperationRoutes(db, accessGate, fileLocator, operationAccess, manager).register(app);
   new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 

@@ -61,7 +61,8 @@ const ALLOWED:Record<string, number> = {
   'Repositories/FileLocatorRepository.ts': 1,
   // One scratch run's live files, staged for keeping in a permanent collection (moved from app.ts).
   'Repositories/AgentKeepRepository.ts': 1,
-  'app.ts': 1,
+  // The direct child files of one folder that carry metadata (moved from app.ts /v1/fuse/folder-metadata).
+  'Repositories/FileMetadataRepository.ts': 1,
 };
 
 function sources(directory:string):string[] {

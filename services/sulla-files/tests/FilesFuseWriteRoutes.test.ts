@@ -1,0 +1,103 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+// Characterizes the Files-mount write routes moved out of app.ts (FuseFileRoutes, FuseContentRoutes,
+// FuseMetadataRoutes with FuseWriteRepository and FileMetadataRepository) on the real app and a real Postgres.
+import { createHash } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { databaseUrl, FilesRoutesFixture } from './FilesAppFixture.js';
+
+vi.mock('@aws-sdk/client-s3', () => ({ S3Client:class {}, PutObjectCommand:class {}, GetObjectCommand:class {}, HeadObjectCommand:class {}, DeleteObjectCommand:class {}, ListObjectsV2Command:class {} }));
+
+describe.skipIf(!databaseUrl)('Files mount write routes (real app, real Postgres)', () => {
+  const fixture = new FilesRoutesFixture();
+  beforeAll(() => fixture.start(), 30_000);
+  afterAll(() => fixture.stop());
+  const sha256 = (value:string) => createHash('sha256').update(value).digest('hex');
+  const current = async(id:string) => (await fixture.pool.query('SELECT path,current_version_id,deleted_at FROM files WHERE id=$1', [id])).rows[0];
+  const write = (id:string, version:string, base:string, next:string) => fixture.request(`/v1/fuse/files/${ id }/content`, 'PUT', {
+    body: Buffer.from(next), headers: { 'content-type': 'text/plain', 'if-match': `"${ version }"`, 'x-sulla-source-hash': sha256(base) } });
+
+  it('creates a file, revives a trashed path with its history and audits the create', async() => {
+    // risk: data accuracy — recreating a deleted path must revive the same file, not fail or fork it.
+    const id = await fixture.createFile('mount/revive.txt');
+    const first = (await current(id)).current_version_id;
+    expect((await fixture.request(`/v1/fuse/files/${ id }`, 'DELETE')).status).toBe(204);
+    expect((await current(id)).deleted_at).not.toBeNull();
+    expect((await fixture.createFile('mount/revive.txt'))).toBe(id);
+    const revived = await current(id);
+    expect(revived.deleted_at).toBeNull();
+    expect((await fixture.pool.query('SELECT parent_version_id FROM file_versions WHERE id=$1', [revived.current_version_id])).rows[0].parent_version_id).toBe(first);
+    expect((await fixture.pool.query("SELECT count(*)::int AS n FROM audit_log WHERE file_id=$1 AND action='fuse-create'", [id])).rows[0].n).toBe(2);
+  });
+
+  it('writes content against the current version, merges a stale text base and replays a committed retry', async() => {
+    // risk: lost updates / duplicate versions — mount writes must be version-checked and idempotent on retry.
+    const id = await fixture.createFile('mount/edit.txt'); const v1 = (await current(id)).current_version_id;
+    expect(await fixture.request(`/v1/fuse/files/${ id }/content`, 'PUT', { body: Buffer.from('x'), headers: { 'content-type': 'text/plain' } })).toMatchObject({ status: 428 });
+    const saved = await write(id, v1, 'body of mount/edit.txt', 'line one\nbody of mount/edit.txt');
+    expect(saved.status).toBe(200);
+    expect(saved.headers.etag).toBe(`"${ saved.body.versionId }"`);
+    expect(saved.body).toMatchObject({ id, path: 'mount/edit.txt', sourceHash: sha256('line one\nbody of mount/edit.txt') });
+    const replay = await write(id, v1, 'body of mount/edit.txt', 'line one\nbody of mount/edit.txt');
+    expect(replay.body.versionId).toBe(saved.body.versionId);
+    const merged = await write(id, v1, 'body of mount/edit.txt', 'body of mount/edit.txt\nline two');
+    expect(merged.status).toBe(200);
+    expect(merged.headers['x-sulla-merged']).toBe('1');
+    expect((await fixture.request(`/v1/fuse/files/${ id }/content`)).body).toBe('line one\nbody of mount/edit.txt\nline two');
+    expect(await write(id, v1, 'not the base', 'z')).toMatchObject({ status: 409, body: { error: 'Files mount version changed' } });
+  });
+
+  it('streams a version-checked write and enforces its headers', async() => {
+    // risk: data accuracy — a streamed write must commit exactly the declared bytes on the expected base.
+    const id = await fixture.createFile('mount/stream.txt'); const v1 = (await current(id)).current_version_id;
+    const stream = (headers:Record<string, string>, body = Buffer.from('streamed')) => fixture.request(`/v1/fuse/files/${ id }/content/stream`, 'PUT', { body, headers });
+    expect((await stream({})).status).toBe(428);
+    const written = await stream({ 'if-match': `"${ v1 }"`, 'x-sulla-source-hash': sha256('body of mount/stream.txt') });
+    expect(written).toMatchObject({ status: 200, body: { id, sourceHash: sha256('streamed') } });
+    expect(Number(written.body.size)).toBe(8);
+    expect((await fixture.request(`/v1/fuse/files/${ id }/content`)).body).toBe('streamed');
+    expect((await stream({ 'if-match': `"${ v1 }"`, 'x-sulla-source-hash': sha256('body of mount/stream.txt') })).status).toBe(409);
+  });
+
+  it('renames files, creates described folders and removes only empty ones', async() => {
+    // risk: data accuracy — namespace moves and removals must never drop live files.
+    const id = await fixture.createFile('mount/old-name.txt');
+    expect(await fixture.request(`/v1/fuse/files/${ id }`, 'PATCH', { body: { path: 'mount/new-name.txt' } })).toMatchObject({ status: 200 });
+    expect((await current(id)).path).toBe('mount/new-name.txt');
+    const folder = await fixture.request('/v1/fuse/folders', 'POST', { body: { collectionId: fixture.collectionId, path: 'mount/fresh/inner' }, token: fixture.token({ agent_id: 'agent-x', job_id: 'job-x' }) });
+    expect(folder).toMatchObject({ status: 201, body: { path: 'mount/fresh/inner', needsDescription: true } });
+    expect(folder.body.description).toMatch(/^Created by agent-x on \d{4}-\d{2}-\d{2} — needs description$/);
+    expect((await fixture.pool.query("SELECT description FROM file_folders WHERE collection_id=$1 AND path='mount/fresh'", [fixture.collectionId])).rows[0].description).toBe(folder.body.description);
+    expect(await fixture.request(`/v1/fuse/folders?collectionId=${ fixture.collectionId }&path=mount`, 'DELETE')).toMatchObject({ status: 409, body: { error: 'folder is not empty' } });
+    expect((await fixture.request(`/v1/fuse/folders?collectionId=${ fixture.collectionId }&path=mount/fresh`, 'DELETE')).status).toBe(204);
+    expect((await fixture.pool.query("SELECT count(*)::int AS n FROM file_folders WHERE collection_id=$1 AND path LIKE 'mount/fresh%'", [fixture.collectionId])).rows[0].n).toBe(0);
+  });
+
+  it('replaces a file with another file\'s content and trashes the source', async() => {
+    // risk: irreversible write — replace must carry the source bytes and retire the source exactly once.
+    const target = await fixture.createFile('mount/target.bin'); const source = await fixture.createFile('mount/source.bin');
+    expect(await fixture.request(`/v1/fuse/files/${ target }/replace`, 'POST', { body: { sourceFileId: target } })).toMatchObject({ status: 400, body: { error: 'replacement source must differ from target' } });
+    const replaced = await fixture.request(`/v1/fuse/files/${ target }/replace`, 'POST', { body: { sourceFileId: source } });
+    expect(replaced).toMatchObject({ status: 200, body: { id: target, path: 'mount/target.bin' } });
+    expect((await fixture.request(`/v1/fuse/files/${ target }/content`)).body).toBe('body of mount/source.bin');
+    expect((await current(source)).deleted_at).not.toBeNull();
+  });
+
+  it('writes revision-checked metadata, audits each changed key and lists a folder\'s child metadata', async() => {
+    // risk: permissions / data accuracy — agents may not set approval fields; stale revisions are refused.
+    await fixture.createFile('meta/doc.txt');
+    const put = (body:Record<string, unknown>, token?:string) => fixture.request('/v1/fuse/metadata', 'PUT', { body: { collectionId: fixture.collectionId, path: 'meta/doc.txt', ...body }, ...(token ? { token } : {}) });
+    expect(await put({ set: { status: 'draft' } })).toMatchObject({ status: 200, body: { revision: 1, metadata: { status: 'draft' } } });
+    expect(await put({ set: { status: 'final' }, baseRevision: 0 })).toMatchObject({ status: 409, body: { error: 'metadata revision changed' } });
+    expect(await put({ set: { approvedBy: 'x' } }, fixture.token({ agent_id: 'agent-m', job_id: 'job-m' }))).toMatchObject({ status: 403 });
+    expect(await put({ unset: ['status'], set: { owner: 'me' }, baseRevision: 1 })).toMatchObject({ status: 200, body: { revision: 2, metadata: { owner: 'me' } } });
+    expect((await fixture.pool.query("SELECT details->>'key' AS key FROM audit_log WHERE action='metadata-set' AND details->>'path'='meta/doc.txt' ORDER BY id", [])).rows.map(row => row.key)).toEqual(['status', 'owner', 'status']);
+    expect(await fixture.request(`/v1/fuse/folder-metadata?collectionId=${ fixture.collectionId }&path=meta`)).toMatchObject({ status: 200, body: { files: { 'doc.txt': { owner: 'me' } } } });
+    expect(await fixture.request(`/v1/fuse/folder-metadata?collectionId=${ fixture.collectionId }&path=meta/doc.txt`)).toMatchObject({ status: 400, body: { error: 'path is not a folder' } });
+    expect(await fixture.request(`/v1/fuse/metadata?collectionId=${ fixture.collectionId }&path=meta/missing.txt`)).toMatchObject({ status: 404, body: { error: 'Files path not found' } });
+  });
+});
