@@ -20,6 +20,7 @@ import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
+import { ChatErrorDiagnostics } from './ChatErrorDiagnostics';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
@@ -1092,7 +1093,12 @@ export class BackendGraphWebSocketService {
         const content = err?.name === 'AgentLaunchError'
           ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
           : `Agent error: ${ err.message || String(err) }`;
-        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
+        firstRunTrace('chat', 'chat error surfaced', {
+          shown: content,
+          ...new ChatErrorDiagnostics().describe(err, {
+            channelId, threadId, agentId, state, wakeTurnJobId: wakeTurnToRepark?.jobId, wakeTurnTaskIdx: wakeTurnToRepark?.taskIndex,
+          }),
+        });
         this.emitMessage(channelId, 'assistant_message', {
           content,
           role:      'assistant',
