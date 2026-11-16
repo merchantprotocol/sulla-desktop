@@ -42,18 +42,7 @@ export class LegacyMigrationService {
     legacy.on('error', () => { /* idle client dropped; this one-shot pool is ended below */ });
     let rows: LegacyIntegrationRow[] = [];
     try {
-      const client = await legacy.connect();
-      try {
-        await this.host.localStore.beginReadOnly(client);
-        const result = await this.host.legacyCredentialRepository.list(client);
-        rows = result.rows;
-        await this.host.localStore.commit(client);
-      } catch (error) {
-        await this.host.localStore.rollback(client);
-        throw error;
-      } finally {
-        client.release();
-      }
+      rows = (await this.host.localStore.readOnlyTransaction(legacy, client => this.host.legacyCredentialRepository.list(client))).rows;
     } catch {
       this.host.migrationState = 'migration_failed';
       throw new LocalVaultError('migration_failed', 409, 'Legacy credential source could not be read');
@@ -77,71 +66,69 @@ export class LegacyMigrationService {
       groups.set(key, group);
     }
 
-    const client = await this.host.db.connect();
     let batchId = '';
     try {
-      await this.host.localStore.begin(client);
-      await this.host.localStore.lockLegacyImport(client);
-      const batch = await this.host.migrationRepository.start<{ id: string }>(sourceFingerprint, client);
-      batchId = batch.rows[0].id;
-      let imported = 0;
-      let skipped = 0;
-      for (const groupRows of groups.values()) {
+      // A failed ROLLBACK never masks the original error, and that client is destroyed (PgTransactionRunner).
+      const counts = await this.host.runTransaction(async client => {
+        await this.host.localStore.lockLegacyImport(client);
+        const batch = await this.host.migrationRepository.start<{ id: string }>(sourceFingerprint, client);
+        batchId = batch.rows[0].id;
+        let imported = 0;
+        let skipped = 0;
+        for (const groupRows of groups.values()) {
+          this.host.requireGeneration(generation);
+          const { integration_id: integrationId, account_id: accountId } = groupRows[0];
+          const existing = await this.host.itemRepository.findLegacyIntegrationItem([`${ integrationId }/${ accountId }`, keys.userId], client);
+          if (existing.rowCount) {
+            skipped += groupRows.length;
+            continue;
+          }
+          const properties: Record<string, string> = {};
+          for (const row of groupRows) properties[row.property] = LocalAuthorityCrypto.decryptLegacyValue(row.value, keys.legacyVmk);
+          const policy = agentPolicyFromLegacyLlmAccess(properties.llm_access);
+          const sites = new Set(trustedOriginsForIntegration(integrationId));
+          for (const property of ['base_url', 'server_url', 'gateway_url', 'url', 'endpoint']) {
+            const raw = properties[property];
+            if (!raw) continue;
+            try {
+              const url = new URL(raw);
+              if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) sites.add(url.hostname.toLowerCase());
+            } catch { /* An invalid legacy URL is not promoted into broker policy. */ }
+          }
+          policy.sites = [...sites];
+          const itemId = randomUUID();
+          const plaintext: VaultItemPlaintext = {
+            type: 'apiKey',
+            name: `${ integrationId } (${ accountId })`,
+            integration: { integrationId, accountId, properties },
+            agentPolicy: policy,
+          };
+          const encrypted = await this.host.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+          const reopened = await this.host.openItemText(encrypted, keys.userKey, { itemId, ownerId: keys.userId });
+          if (reopened !== JSON.stringify(plaintext)) {
+            throw new LocalVaultError('migration_failed', 409, 'Migrated item failed reopen verification');
+          }
+          await this.host.itemRepository.insertMigratedLegacyItem([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, `${ integrationId }/${ accountId }`], client);
+          for (const row of groupRows) {
+            await this.host.migrationRepository.addRow([row.source_kind, row.value_id, sourceFingerprint, itemId], client);
+          }
+          imported += groupRows.length;
+        }
         this.host.requireGeneration(generation);
-        const { integration_id: integrationId, account_id: accountId } = groupRows[0];
-        const existing = await this.host.itemRepository.findLegacyIntegrationItem([`${ integrationId }/${ accountId }`, keys.userId], client);
-        if (existing.rowCount) {
-          skipped += groupRows.length;
-          continue;
-        }
-        const properties: Record<string, string> = {};
-        for (const row of groupRows) properties[row.property] = LocalAuthorityCrypto.decryptLegacyValue(row.value, keys.legacyVmk);
-        const policy = agentPolicyFromLegacyLlmAccess(properties.llm_access);
-        const sites = new Set(trustedOriginsForIntegration(integrationId));
-        for (const property of ['base_url', 'server_url', 'gateway_url', 'url', 'endpoint']) {
-          const raw = properties[property];
-          if (!raw) continue;
-          try {
-            const url = new URL(raw);
-            if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) sites.add(url.hostname.toLowerCase());
-          } catch { /* An invalid legacy URL is not promoted into broker policy. */ }
-        }
-        policy.sites = [...sites];
-        const itemId = randomUUID();
-        const plaintext: VaultItemPlaintext = {
-          type: 'apiKey',
-          name: `${ integrationId } (${ accountId })`,
-          integration: { integrationId, accountId, properties },
-          agentPolicy: policy,
-        };
-        const encrypted = await this.host.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-        const reopened = await this.host.openItemText(encrypted, keys.userKey, { itemId, ownerId: keys.userId });
-        if (reopened !== JSON.stringify(plaintext)) {
-          throw new LocalVaultError('migration_failed', 409, 'Migrated item failed reopen verification');
-        }
-        await this.host.itemRepository.insertMigratedLegacyItem([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, `${ integrationId }/${ accountId }`], client);
-        for (const row of groupRows) {
-          await this.host.migrationRepository.addRow([row.source_kind, row.value_id, sourceFingerprint, itemId], client);
-        }
-        imported += groupRows.length;
-      }
-      this.host.requireGeneration(generation);
-      await this.host.migrationRepository.commit(batchId, imported, skipped, client);
-      await this.host.localStore.commit(client);
+        await this.host.migrationRepository.commit(batchId, imported, skipped, client);
+        return { imported, skipped };
+      });
       keys.legacyVmk?.fill(0);
       keys.legacyVmk = undefined;
       this.host.migrationState = 'unlocked';
-      return { batchId, imported, skipped, state: 'unlocked' };
+      return { batchId, ...counts, state: 'unlocked' };
     } catch (error) {
-      await this.host.localStore.rollback(client);
       this.host.migrationState = 'migration_failed';
       if (batchId) {
         await this.host.migrationRepository.fail(batchId).catch(() => undefined);
       }
       if (error instanceof LocalVaultError) throw error;
       throw new LocalVaultError('migration_failed', 409, 'Legacy migration rolled back');
-    } finally {
-      client.release();
     }
   }
 }

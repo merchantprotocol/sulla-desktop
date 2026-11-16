@@ -8,7 +8,7 @@ import type { QueryResult, QueryResultRow } from 'pg';
 
 import type { Database } from '../db.js';
 
-import { PgTransactionRunner } from './PgTransactionRunner.js';
+import { PgTransactionRunner, type TransactionPool } from './PgTransactionRunner.js';
 
 /**
  * Transaction control and the two integration-state reads that LocalVaultAuthority issued
@@ -29,14 +29,10 @@ export class PostgresLocalAuthorityRepository {
     return this.transactions.run(this.db, operation);
   }
 
-  begin(client: pg.PoolClient): Promise<unknown> { return client.query('BEGIN') }
-
-  beginReadOnly(client: pg.PoolClient): Promise<unknown> { return client.query('BEGIN READ ONLY') }
-
-  commit(client: pg.PoolClient): Promise<unknown> { return client.query('COMMIT') }
-
-  /** ROLLBACK whose failure propagates (callers that never swallowed it). */
-  rollback(client: pg.PoolClient): Promise<unknown> { return client.query('ROLLBACK') }
+  /** One BEGIN READ ONLY … COMMIT unit on a client of another pool (the legacy credential source), same guarantees. */
+  readOnlyTransaction<T>(pool: TransactionPool, operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.transactions.run(pool, operation, 'BEGIN READ ONLY');
+  }
 
   /** Serializes legacy credential imports across vault processes for the current transaction. */
   lockLegacyImport(client: pg.PoolClient): Promise<unknown> {
