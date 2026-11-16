@@ -57,7 +57,7 @@ describe.skipIf(!databaseUrl)('Files local source routes (real app, real Postgre
     const fileId = await fixture.createFile('move/source.txt');
     await fixture.createFile('move/taken.txt');
     expect(await fixture.request('/v1/local/system-areas/move', 'POST', { body: { fileId: randomUUID(), targetPath: 'move/x.txt' } })).toMatchObject({ status: 404, body: { error: 'Home collection file not found' } });
-    expect((await fixture.request('/v1/local/system-areas/move', 'POST', { body: { fileId, targetPath: 'moved/target.txt' }, token: null, headers: { 'x-sulla-files-token': 'nope' } })).toMatchObject({ status: 401, body: { error: 'unauthorized local request' } });
+    expect(await fixture.request('/v1/local/system-areas/move', 'POST', { body: { fileId, targetPath: 'moved/target.txt' }, token: null, headers: { 'x-sulla-files-token': 'nope' } })).toMatchObject({ status: 401, body: { error: 'unauthorized local request' } });
     expect((await fixture.request('/v1/local/system-areas/move', 'POST', { body: { fileId, targetPath: 'move/taken.txt' }, token: null })).status).toBe(409);
     expect((await fixture.pool.query('SELECT path FROM files WHERE id=$1', [fileId])).rows[0].path).toBe('move/source.txt');
     // Regression: /v1/local/* carries no bearer identity; the move used to ask for one, answer 401 and roll back.
