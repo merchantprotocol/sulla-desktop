@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { EventEmitter } from 'node:events';
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PostgresClient } from '@pkg/agent/database/PostgresClient';
@@ -14,8 +12,12 @@ import { PostgresClient } from '@pkg/agent/database/PostgresClient';
  * the CURRENT service secret on every new connection, and a refused secret
  * must be visible in the boot log instead of looking like a silent hang.
  * pg is replaced by a recorder so no database is needed.
+ *
+ * vi.hoisted runs before static imports are initialised, so EventEmitter is
+ * loaded inside the hoisted block rather than from a top-level import.
  */
-const harness = vi.hoisted(() => {
+const harness = await vi.hoisted(async() => {
+  const { EventEmitter } = await import('node:events');
   const state = {
     secret:      'secret-one',
     pools:       [] as Array<{ options: Record<string, unknown> }>,
