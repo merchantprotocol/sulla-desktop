@@ -4,7 +4,7 @@
 
 import type { InboxCursor } from '@sulla/domain';
 
-export interface PendingOrgMessage { messageId: string; envelope: string }
+export type PendingOrgMessage = { messageId: string; envelope: string };
 
 export interface OrgMessagingStateRepository {
   enqueue(message: PendingOrgMessage): Promise<void>;
