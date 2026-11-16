@@ -49,22 +49,32 @@ export class PostgresClient {
     return this.shuttingDown;
   }
 
+  /**
+   * Password callback for the host pool. node-postgres calls it once for every
+   * new connection, so a rotated service secret reaches the next connection
+   * instead of staying pinned to the value read at boot. An arrow property so
+   * the pool can call it unbound.
+   */
+  private readonly servicePassword = async(): Promise<string> => {
+    // The provider reads settings, whose model imports this client. Load it only on use;
+    // value() never syncs through this client, so it cannot wait on itself.
+    const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
+
+    return serviceSecretProvider.value();
+  };
+
   public async initialize(): Promise<void> {
     if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
 
     const connectionString = process.env.SULLA_DATABASE_URL;
-    let password: string | undefined;
-    if (!connectionString) {
-      // The provider reads settings, whose model imports this client. Load it only on use;
-      // value() never syncs through this client, so it cannot wait on itself.
-      const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
-      password = await serviceSecretProvider.value();
-    }
+    // Read once up front so a secret that cannot be resolved still fails
+    // initialize() as before; the pool then re-reads it per connection.
+    if (!connectionString) await this.servicePassword();
 
     this.pool = new Pool({
       ...(connectionString ? { connectionString } : {
-        host: '127.0.0.1', port: hostPort(30116), user: 'sulla', password, database: 'sulla',
+        host: '127.0.0.1', port: hostPort(30116), user: 'sulla', password: this.servicePassword, database: 'sulla',
       }),
       max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
@@ -233,12 +243,11 @@ export class PostgresClient {
    * explicit maxAttempts value.
    */
   async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
-    // The provider reads settings, whose model imports this client. Load it only on use.
-    const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
-    const password = await serviceSecretProvider.value();
-
     for (let i = 1; i <= maxAttempts; i++) {
       let probe: Pool | null = null;
+      // Outside the try: a secret that cannot be resolved rejects at once, as
+      // before. Read per attempt so a secret that changes mid-wait is used.
+      const password = await this.servicePassword();
 
       try {
         probe = new Pool({
@@ -257,17 +266,43 @@ export class PostgresClient {
         console.log(`[PostgresClient] Host database port reachable (attempt ${ i })`);
 
         return;
-      } catch {
+      } catch (error: unknown) {
+        const reason = this.describeConnectFailure(error);
+
         if (i === maxAttempts) {
-          throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts`);
+          throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts (${ reason.summary })`);
         }
         const attemptLabel = Number.isFinite(maxAttempts) ? `${ i }/${ maxAttempts }` : `${ i }`;
-        console.log(`[PostgresClient] waitForReady attempt ${ attemptLabel } failed, retrying...`);
+        if (reason.authFailed) {
+          console.error(`[PostgresClient] waitForReady attempt ${ attemptLabel }: authentication failed (${ reason.summary }); the database rejected the service secret, retrying...`);
+        } else {
+          console.log(`[PostgresClient] waitForReady attempt ${ attemptLabel } failed (${ reason.summary }), retrying...`);
+        }
         await new Promise(resolve => setTimeout(resolve, intervalMs));
       } finally {
         try { await probe?.end() } catch { /* ignore */ }
       }
     }
+  }
+
+  /**
+   * Names why a readiness probe failed without echoing the error message,
+   * which can carry connection details. A Postgres error reports its SQLSTATE
+   * and class; a socket error its Node code. 28P01 (invalid_password) and 28000
+   * (invalid_authorization_specification) mean the server answered but refused
+   * the secret, which is not the same as "not up yet".
+   */
+  private describeConnectFailure(error: unknown): { authFailed: boolean; summary: string } {
+    const { code, severity } = (error && typeof error === 'object' ? error : {}) as { code?: unknown; severity?: unknown };
+
+    if (typeof code === 'string' && typeof severity === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
+      return { authFailed: code === '28P01' || code === '28000', summary: `SQLSTATE ${ code }, class ${ code.slice(0, 2) }` };
+    }
+    if (typeof code === 'string' && /^[A-Z_]+$/.test(code)) {
+      return { authFailed: false, summary: `unreachable: ${ code }` };
+    }
+
+    return { authFailed: false, summary: 'unreachable: no error code' };
   }
 
   async end(): Promise<void> {

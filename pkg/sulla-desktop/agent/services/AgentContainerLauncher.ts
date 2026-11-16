@@ -912,10 +912,10 @@ async function cleanupContainerResources(
       let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
       try {
         decision = await inspectGuestWorkspaceForCleanup(workspacePath);
-      } catch {
+      } catch (error) {
         decision = {
           remove: false,
-          reason: 'workspace retained because its cleanup state could not be inspected safely',
+          reason: `workspace retained because its cleanup state could not be inspected safely: ${ (error as Error)?.message ?? error }`,
         };
       }
       receipt.workspaceDecisionReason = decision.reason;
@@ -926,7 +926,7 @@ async function cleanupContainerResources(
         } catch (error) {
           failures.push(error);
         }
-      } else {
+      } else if (!decision.persistent) {
         receipt.retainedGuestPaths.push(workspacePath);
         receipt.recoveryWorkspacePath = workspacePath;
       }
