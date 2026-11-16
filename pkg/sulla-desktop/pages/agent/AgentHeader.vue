@@ -2438,6 +2438,7 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
 .app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-page); }
+.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-page) 93%, var(--text-primary)); }
 .app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
