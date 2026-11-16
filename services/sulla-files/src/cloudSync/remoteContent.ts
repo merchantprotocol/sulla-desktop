@@ -9,6 +9,7 @@ import type pg from 'pg';
 
 import { chunkId as localChunkId, decryptAndVerifyChunk, encryptChunk } from '../crypto.js';
 import type { FilesKeyring } from '../keyring.js';
+import { PgCloudChunkMapRepository } from '../Repositories/CloudChunkMapRepository.js';
 import type { Store } from '../store.js';
 import { openCloudChunk } from './chunkSource.js';
 import type { FilesSyncCloudApi } from './cloudApi.js';
@@ -30,10 +31,11 @@ import { CloudSyncIntegrityError } from './validation.js';
  */
 export class CloudRemoteContent implements RemoteContentSource {
   constructor(
-    private readonly db:Pick<pg.Pool, 'query'>,
+    db:Pick<pg.Pool, 'query'>,
     private readonly api:Pick<FilesSyncCloudApi, 'getChunk'>,
     private readonly keyring:Pick<FilesKeyring, 'keys'>,
     private readonly store:Store,
+    private readonly copies:Pick<PgCloudChunkMapRepository, 'localCopyOf' | 'recordDownloadedCopy'> = new PgCloudChunkMapRepository(db),
   ) {}
 
   async materialize(collectionId:string, keyVersion:number, root:Uint8Array, manifest:ManifestPlain):Promise<MaterializedContent> {
@@ -67,25 +69,19 @@ export class CloudRemoteContent implements RemoteContentSource {
     plainBytes:number,
     keys:{ data:Uint8Array; dedup:Uint8Array },
   ):Promise<{ localId:string; bytes:Buffer; storedSize:number }> {
-    const mapped = (await this.db.query(`SELECT m.local_chunk_id,c.stored_size FROM files_cloud_chunk_map m
-      JOIN chunks c ON c.collection_id=m.collection_id AND c.id=m.local_chunk_id
-      WHERE m.collection_id=$1 AND m.cloud_chunk_id=$2`, [collectionId, cloudChunkId])).rows[0];
+    const mapped = await this.copies.localCopyOf(collectionId, cloudChunkId);
     if (mapped) {
       // Already local (possibly evicted; the caching store hydrates it). Read it to keep the whole-file hash honest.
-      const encrypted = await this.store.get(collectionId, mapped.local_chunk_id);
-      const bytes = await decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, mapped.local_chunk_id, plainBytes);
-      return { localId: mapped.local_chunk_id, bytes, storedSize: Number(mapped.stored_size) };
+      const encrypted = await this.store.get(collectionId, mapped.localChunkId);
+      const bytes = await decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, mapped.localChunkId, plainBytes);
+      return { localId: mapped.localChunkId, bytes, storedSize: mapped.storedSize };
     }
     const wire = await this.api.getChunk(collectionId, cloudChunkId);
     const bytes = await openCloudChunk(root, collectionId, keyVersion, cloudChunkId, wire, plainBytes);
     const localId = localChunkId(bytes, keys.dedup);
     const encrypted = await encryptChunk(bytes, keys.data, localId);
     await this.store.put(collectionId, localId, encrypted);
-    await this.db.query(`INSERT INTO files_cloud_chunk_map(collection_id,local_chunk_id,cloud_chunk_id,cipher_sha256,cipher_bytes,uploaded_at,verified_at)
-      VALUES($1,$2,$3,$4,$5,NULL,NOW())
-      ON CONFLICT(collection_id,local_chunk_id) DO UPDATE SET cloud_chunk_id=EXCLUDED.cloud_chunk_id,cipher_sha256=EXCLUDED.cipher_sha256,
-        cipher_bytes=EXCLUDED.cipher_bytes,verified_at=NOW()`,
-    [collectionId, localId, cloudChunkId, createHash('sha256').update(wire).digest('hex'), wire.length]);
+    await this.copies.recordDownloadedCopy(collectionId, localId, cloudChunkId, createHash('sha256').update(wire).digest('hex'), wire.length);
     return { localId, bytes, storedSize: encrypted.length };
   }
 }
