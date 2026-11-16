@@ -34,6 +34,30 @@ export async function scopeToolExecutionContext(
   };
 }
 
+/** Narrow verified caller authority to an explicitly chosen integration account. */
+export async function scopeToolExecutionContextToAccount(
+  ctx: ToolExecutionContext,
+  integrationId: string,
+  accountId: string,
+): Promise<ToolExecutionContext> {
+  const accounts = await getIntegrationService().getAccounts(integrationId);
+  const match = accounts.find(candidate => candidate.account_id === accountId);
+  if (!match || match.credentialRequired === false) {
+    throw new Error(`Unknown ${ integrationId } account: ${ accountId }`);
+  }
+  const existing = ctx.credential_scope;
+  if (existing && (existing.integration_id !== integrationId || existing.account_id !== accountId)) {
+    throw new Error('Verified credential scope does not match the selected tool target');
+  }
+  return {
+    ...ctx,
+    credential_scope: {
+      integration_id: integrationId,
+      account_id:     accountId,
+    },
+  };
+}
+
 export function githubRepositoryFromArgs(args: unknown): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
   const values = args as Record<string, unknown>;

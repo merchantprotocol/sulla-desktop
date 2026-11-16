@@ -5,6 +5,14 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// MCPServerHost reaches main-process modules (first-run trace) that import Electron;
+// CI installs with ELECTRON_SKIP_BINARY_DOWNLOAD, so the real package throws on load.
+vi.mock('electron', () => {
+  const app = { getPath: () => '/tmp', getVersion: () => '0.0.0-test', isPackaged: false };
+
+  return { default: { app }, app, ipcMain: { handle: vi.fn(), on: vi.fn() }, safeStorage: {} };
+});
+
 import { MCPServerHost } from '@pkg/main/MCPServerHost';
 
 const decisions = vi.hoisted(() => {

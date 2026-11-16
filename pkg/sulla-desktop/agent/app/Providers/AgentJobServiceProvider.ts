@@ -30,6 +30,7 @@ import { completionInboxStore } from '../../services/AgentCompletionInbox';
 import { BlockerEscalationService } from '../../services/BlockerEscalationService';
 import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
+import { GraphRegistry } from '../../services/GraphRegistry';
 import { AgentTaskActivityProjector } from '../Services/AgentTaskActivityProjector';
 import { ReviewObligationGate } from '../Services/ReviewObligationGate';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
@@ -81,7 +82,6 @@ export class AgentJobServiceProvider {
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const conversations = new GraphRegistryTopLevelConversationRegistry();
-    const { GraphRegistry } = await import('../../services/GraphRegistry');
     const ownerPresence = new GraphRegistryOwnerPresence(GraphRegistry);
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) },
       { matches: async owner => ownerPresence.matches(owner) }, new MainStrandedOwnerDetector(taskLocator, this.jobs));

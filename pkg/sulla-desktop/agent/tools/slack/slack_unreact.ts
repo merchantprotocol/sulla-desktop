@@ -15,7 +15,7 @@ export class SlackUnreactWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, ts, reaction } = input;
+    const { channel, ts, reaction, account } = input;
 
     try {
       const slack = await registry.get<SlackClient>('slack');
@@ -25,7 +25,7 @@ export class SlackUnreactWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      await slack.removeReaction(channel, ts, reaction, this.executionContext);
+      await slack.removeReaction(channel, ts, reaction, this.executionContext, account);
       return {
         successBoolean: true,
         responseString: `Slack reaction ":${ reaction }:" removed successfully from message ${ ts } in channel ${ channel }`,

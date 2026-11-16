@@ -33,17 +33,22 @@ const console = Logging.moby;
 type runClientOptions = ContainerRunClientOptions & {
   /** The executable to run, defaulting to this.executable (i.e. "docker") */
   executable?: string;
+  /** Use an executable already installed in PATH instead of bundled resources. */
+  systemExecutable?: boolean;
 };
 
 export class MobyClient implements ContainerEngineClient {
-  constructor(vm: VMExecutor, endpoint: string) {
+  constructor(vm: VMExecutor, endpoint: string, options: { systemExecutable?: boolean } = {}) {
     this.vm = vm;
     this.endpoint = endpoint;
+    this.systemExecutable = options.systemExecutable ?? false;
+    this.executable = this.systemExecutable ? 'docker' : executable('docker');
   }
 
   readonly vm:       VMExecutor;
-  readonly executable = executable('docker');
+  readonly executable: string;
   readonly endpoint: string;
+  readonly systemExecutable: boolean;
 
   /**
    * Run a list of cleanup functions in reverse.
@@ -288,18 +293,27 @@ export class MobyClient implements ContainerEngineClient {
   runClient(args: string[], stdio?: 'ignore' | 'pipe' | 'stream' | Log, options?: runClientOptions) {
     // Always add the `bin` directory, as docker CLI plugins may need them too.
     const dirsToAdd = [path.join(paths.resources, process.platform, 'bin')];
-    const executableName = options?.executable ?? this.executable;
+    const requestedExecutable = options?.executable ?? this.executable;
+    // Linux distributions commonly ship Compose as the Docker CLI v2 plugin,
+    // not as a separate docker-compose executable.
+    const useComposePlugin = process.platform === 'linux' && requestedExecutable === 'docker-compose';
+    const executableName = useComposePlugin ? 'docker' : requestedExecutable;
     const isCLIPlugin = /^docker-(?!credential-)/.test(executableName);
 
     const binType = isCLIPlugin ? 'docker-cli-plugins' : 'bin';
     const executableDir = path.join(paths.resources, process.platform, binType);
-    const executable = path.resolve(executableDir, executableName);
+    const useSystemExecutable = options?.systemExecutable ?? this.systemExecutable;
+    const executable = useSystemExecutable ? executableName : path.resolve(executableDir, executableName);
+    const executableArgs = useComposePlugin ? ['compose', ...args] : args;
 
     if (isCLIPlugin) {
       dirsToAdd.push(executableDir);
     }
 
-    const opts = _.merge({ env: _.merge({}, process.env) }, options ?? {}, {
+    const spawnOptions = { ...options };
+    delete spawnOptions.executable;
+    delete spawnOptions.systemExecutable;
+    const opts = _.merge({ env: _.merge({}, process.env) }, spawnOptions, {
       env: {
         DOCKER_HOST: this.endpoint,
         PATH:        `${ process.env.PATH }${ path.delimiter }${ dirsToAdd.join(path.delimiter) }`,
@@ -310,13 +324,13 @@ export class MobyClient implements ContainerEngineClient {
     switch (stdio) {
     case 'ignore':
     case undefined:
-      return spawnFile(executable, args, { ...opts, stdio: 'ignore' });
+      return spawnFile(executable, executableArgs, { ...opts, stdio: 'ignore' });
     case 'stream':
-      return spawn(executable, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
+      return spawn(executable, executableArgs, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] });
     case 'pipe':
-      return spawnFile(executable, args, { ...opts, stdio: 'pipe' });
+      return spawnFile(executable, executableArgs, { ...opts, stdio: 'pipe' });
     }
 
-    return spawnFile(executable, args, { ...opts, stdio });
+    return spawnFile(executable, executableArgs, { ...opts, stdio });
   }
 }

@@ -354,12 +354,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/integrations/slack/SlackClient.ts": {
-      "rules": {
-        "long-file": 794
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/agent/languagemodels/AlibabaService.ts": {
       "rules": {
         "mutable-state": 1
@@ -1918,12 +1912,6 @@
         "procedural-module": 1
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/cloud/deviceKey.ts": {
-      "rules": {
-        "procedural-module": 7
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/cloud/filesSyncV1/index.ts": {
       "rules": {

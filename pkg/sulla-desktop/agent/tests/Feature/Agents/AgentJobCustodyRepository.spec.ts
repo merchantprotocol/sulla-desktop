@@ -110,7 +110,7 @@ suite('AgentJobCustodyRepository',()=>{
  it('does not send whole-job manager-change notices to task-scoped owners',async()=>{ // risk: overriding delegated custody with a whole-job handoff
    const id=`custody-task-override-${Date.now()}`;await createJob(id,2);const instance=service();const taskOwner:CustodyOwner={channel:'task-channel',threadId:'task-thread',agentId:'task-agent'};
    expect((await instance.move({jobId:id,taskIndex:1,to:taskOwner,actor:human,reason:'task scope'})).ok).toBe(true);expect((await move(instance,id)).ok).toBe(true);
-   expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND task_index=1 AND message LIKE '[Manager changed]%'`,[id])).toHaveLength(0);
+   expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND task_index=1 AND id LIKE $2 AND message LIKE '[Manager changed]%'`,[id,`custody:${id}:job:1:worker:%`])).toHaveLength(0);
  });
  it('cascades custody and audit history when the parent job is deleted',async()=>{ // risk: orphaned sensitive audit rows after retention
    const id=`custody-cascade-${Date.now()}`;await createJob(id);expect((await move(service(),id)).ok).toBe(true);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);

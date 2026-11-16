@@ -13,7 +13,10 @@
       <WindowDragLogo :size="20" />
     </div>
     <!-- Phase 4: Scroll wrapper with chevrons -->
-    <div class="tab-scroll-wrapper">
+    <div
+      class="tab-scroll-wrapper"
+      :class="tabDensityClass"
+    >
       <button
         v-show="canScrollLeft"
         class="tab-scroll-chevron tab-scroll-chevron-left"
@@ -220,7 +223,7 @@
         </template>
       </div>
     </div>
-    <div class="relative flex shrink-0 justify-end items-center gap-4 pb-2">
+    <div class="titlebar-controls relative flex shrink-0 justify-end items-center gap-4">
       <div
         v-if="route.path === '/Filesystem'"
         class="flex gap-2"
@@ -358,12 +361,11 @@
       </div>
       <!-- Engine status: one dot for the whole app (replaces the chat's ONLINE pill). -->
       <span
-        class="engine-status"
-        :class="engineStatus.tone"
+        class="engine-status-control"
         role="status"
         :title="`Sulla engine: ${engineStatus.label}`"
         :aria-label="`Sulla engine: ${engineStatus.label}`"
-      />
+      ><span class="engine-status" :class="engineStatus.tone" /></span>
       <!-- Three-dot menu (rendered in a popup BrowserWindow via IPC — see moreMenuWindow.ts) -->
       <div class="relative hidden lg:flex">
         <button
@@ -901,6 +903,10 @@ function handleMoreMenuAction(
   case 'newTab':
     openNewBrowserTab();
     break;
+  case 'chatHistory':
+    // The visible chat tab toggles its history panel (same as the old header History button).
+    window.dispatchEvent(new CustomEvent('sulla:toggle-chat-history'));
+    break;
   case 'integrations':
     openModeTab('integrations');
     break;
@@ -1084,6 +1090,7 @@ const orderedTabs = computed(() => {
 });
 
 const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
+const tabDensityClass = computed(() => orderedTabs.value.length >= 9 ? 'tabs-compact' : orderedTabs.value.length >= 6 ? 'tabs-tight' : 'tabs-normal');
 
 // Keep tabOrder in sync when tabs are added/removed
 watch(
@@ -1506,9 +1513,12 @@ function handleTabContextMenuAction(
 
 <style scoped>
 .tab-activity-dot {
+  position: absolute;
+  top: -2px;
+  right: -3px;
   width: 7px;
   height: 7px;
-  margin-right: 6px;
+  margin: 0;
   flex: none;
   border-radius: 50%;
 }
@@ -2388,4 +2398,85 @@ function handleTabContextMenuAction(
   }
 }
 
+/* Approved full-width titlebar treatment. */
+.app-titlebar {
+  position: relative;
+  z-index: 20;
+  width: calc(100% + 64px);
+  margin-left: -64px;
+  min-height: 44px;
+  height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+  background: var(--bg-surface, var(--bg-page));
+}
+.app-titlebar > div:first-child { height: 44px; }
+.app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
+.app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
+.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: stretch; overflow-x: auto; overflow-y: hidden; }
+.app-titlebar .tab-item {
+  position: relative;
+  height: 34px;
+  min-width: 64px;
+  max-width: none;
+  flex: 0 1 var(--tab-basis, 190px);
+  gap: var(--tab-gap, 8px);
+  padding: 0 var(--tab-padding, 12px);
+  border: 0;
+  border-radius: 9px 9px 0 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted, var(--text-secondary));
+  overflow: visible;
+}
+.app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-titlebar .tab-icon { flex: 0 0 16px; }
+.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-surface, var(--bg-page)); }
+.app-titlebar .tab-active .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-page, var(--bg-surface)); }
+.app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
+.app-titlebar .tab-active,
+.app-titlebar .tab-active-native {
+  z-index: 2;
+  min-width: 120px;
+  margin-bottom: -1px;
+  border: 0;
+  border-radius: 9px 9px 0 0;
+  background: var(--bg-page, var(--bg-surface));
+  box-shadow: none;
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: visible;
+}
+.app-titlebar .tab-active .tab-accent-bar,
+.app-titlebar .tab-active-native .tab-accent-bar { display: none; }
+.app-titlebar .tab-active::before,
+.app-titlebar .tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-page, var(--bg-surface)) 10.5px);
+}
+.app-titlebar .tab-active::before { left: -10px; }
+.app-titlebar .tab-active::after { right: -10px; transform: scaleX(-1); }
+.app-titlebar .tab-active-indicator { display: none !important; }
+.app-titlebar .tab-pinned { min-width: 64px; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
+.app-titlebar .tab-pinned.tab-active { box-shadow: none; }
+.app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
+.app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
+.app-titlebar .tab-scroll-wrapper > button.tab-new { margin-left: 4px; }
+.app-titlebar .titlebar-controls { gap: 4px; height: 44px; padding: 0; }
+.app-titlebar .titlebar-controls button { width: 28px !important; height: 28px !important; flex: 0 0 28px; margin: 0; padding: 0; border-radius: 7px; }
+.app-titlebar .engine-status-control { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border-radius: 7px; }
+.app-titlebar .engine-status { width: 9px; height: 9px; margin: 0; box-shadow: none; }
+.app-titlebar .engine-status.busy { box-shadow: none; }
+.app-titlebar .titlebar-controls > .relative { display: flex; align-items: center; justify-content: center; }
+
+.app-titlebar .tab-scroll-container { scrollbar-width: none; }
+.app-titlebar .tab-scroll-container::-webkit-scrollbar { display: none; }
+.app-titlebar .tab-scroll-wrapper.tabs-tight { --tab-basis: 150px; --tab-padding: 9px; --tab-gap: 6px; }
+.app-titlebar .tab-scroll-wrapper.tabs-compact { --tab-basis: 96px; --tab-padding: 6px; --tab-gap: 5px; }
 </style>

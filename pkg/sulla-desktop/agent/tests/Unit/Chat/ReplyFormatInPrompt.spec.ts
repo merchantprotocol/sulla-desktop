@@ -3,7 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// The observational-memory section reads Postgres; a unit run has no database,
+// and the settings secret would wait for one until the test times out.
+vi.mock('../../../database/models/ObservationsModel', () => ({ ObservationsModel: { listActive: async() => [] } }));
+vi.mock('../../../database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: async(_key: string, fallback: unknown) => fallback } }));
 
 import '../../../prompts/sections';
 import { SystemPromptBuilder, type PromptBuildContext } from '../../../prompts/SystemPromptBuilder';

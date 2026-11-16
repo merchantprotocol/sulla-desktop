@@ -8,7 +8,7 @@ import type { LocalVaultState } from './LocalVaultStatusContracts.js';
 /** Broker (agent credential use), relay and Sulla Cloud request wire shapes. */
 export interface BrokerRelayCreateRequest {
   claims:    BrokerClaims;
-  operation: 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
+  operation: 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
   ref:       BrokerCredentialRef;
   approvalId?: string;
   /** Opaque routing ids for `sulla-cloud.relay` only; never credentials. */

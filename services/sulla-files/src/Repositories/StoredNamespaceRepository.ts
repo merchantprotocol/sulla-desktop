@@ -15,10 +15,14 @@ export class StoredNamespaceRepository {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key]);
   }
 
-  /** Transaction advisory lock on `key`, exclusive or shared. */
-  async lockPath(client:pg.PoolClient, key:string, shared:boolean):Promise<void> {
-    const acquire = shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock';
-    await client.query(`SELECT ${ acquire }(hashtextextended($1,0))`, [key]);
+  /**
+   * The path-scoped gate (migration 067): `stored-namespace:<id>` shared, then each
+   * `stored-namespace-path:<id>:<slot>` from the shallowest ancestor (shared) to `path`
+   * (exclusive), then "<id>:<path>" appended to the transaction-local
+   * `sulla_files.namespace_scopes` list the namespace trigger reads. One round trip.
+   */
+  async lockScope(client:pg.PoolClient, collectionId:string, path:string):Promise<void> {
+    await client.query('SELECT files_lock_namespace_scope($1,$2)', [collectionId, path]);
   }
 
   /** The shallowest file at, above or below `path` (other than `sameFileId`), if any. */

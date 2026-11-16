@@ -478,6 +478,11 @@ function onAgentCommand(_event: any, args: any) {
   if (!args?.command) return;
 
   switch (args.command) {
+  case 'find-chat': {
+    // Menu bar Find Chat (⌘P): the visible chat tab toggles its find palette.
+    window.dispatchEvent(new CustomEvent('sulla:find-chat'));
+    break;
+  }
   case 'open-agent-chat-tab': {
     const threadId = typeof args.threadId === 'string' ? args.threadId.trim() : '';
     const agentId = typeof args.agentId === 'string' ? args.agentId.trim() : '';
@@ -845,6 +850,13 @@ onUnmounted(() => {
 
 .agent-router-rail {
   flex-shrink: 0;
+  margin-top: 44px;
+  height: calc(100% - 44px);
+}
+
+.agent-router-body:has(.agent-router-rail.expanded) .agent-router-content :deep(.app-titlebar) {
+  width: calc(100% + 212px);
+  margin-left: -212px;
 }
 
 .agent-router-content {
@@ -852,7 +864,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /*

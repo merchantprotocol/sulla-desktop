@@ -27,6 +27,7 @@ describe.skipIf(!databaseUrl)('stored namespace (real Postgres)', () => {
     await pool.query('CREATE TABLE collections(id uuid PRIMARY KEY)');
     await pool.query(migration('026_stored_folders.sql'));
     await pool.query(migration('037_folder_descriptions.sql'));
+    await pool.query(migration('067_scoped_namespace_trigger.sql'));
     await pool.query('CREATE TABLE files(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),collection_id uuid NOT NULL,path text NOT NULL)');
   });
   afterAll(async() => { await pool.query(`DROP SCHEMA IF EXISTS ${ schema } CASCADE`); await pool.end() });

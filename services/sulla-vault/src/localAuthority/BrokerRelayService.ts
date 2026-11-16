@@ -30,13 +30,11 @@ export class BrokerRelayService {
   ): Promise<BrokerRelayCreateResponse> {
     this.host.requireBrokerIdentity(serviceId, token);
     if (input.operation === 'sulla-cloud.relay') return this.host.parts.sullaCloud.createSullaCloudRelay(input);
-    const expected = input.operation === 'slack.socket-mode'
-      ? { integrationId: 'slack', host: 'slack.com', fields: ['app_token', 'app_level_token'], gatewayField: undefined }
-      : input.operation === 'discord.gateway'
-        ? { integrationId: 'discord', host: 'discord.com', fields: ['bot_token', 'token'], gatewayField: undefined }
-        : input.operation === 'enterprise.gateway'
-          ? { integrationId: 'enterprise_gateway', host: null, fields: ['api_key'], gatewayField: 'gateway_url' }
-          : null;
+    const expected = input.operation === 'discord.gateway'
+      ? { integrationId: 'discord', host: 'discord.com', fields: ['bot_token', 'token'], gatewayField: undefined }
+      : input.operation === 'enterprise.gateway'
+        ? { integrationId: 'enterprise_gateway', host: null, fields: ['api_key'], gatewayField: 'gateway_url' }
+        : null;
     if (!expected || input.ref.integrationId !== expected.integrationId) {
       throw new LocalVaultError('policy_denied', 403, 'Relay operation is not registered for this integration');
     }

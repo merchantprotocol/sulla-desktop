@@ -148,7 +148,8 @@ class E9Scripts {
       s('import custom local', c => c.authority.importDesktopIntegrationAccount('approval', E9_TOKENS.approval, 'custom', { accountId: 'local', values: { api_key: 'sk-custom', base_url: 'https://llm.example.test/v1', gateway_url: 'https://gw.example.test/path?q=1' } } as never)),
       s('import vertex region', c => c.authority.importDesktopIntegrationAccount('approval', E9_TOKENS.approval, 'vertex-ai', { accountId: 'gcp', values: { api_key: 'vx', region: 'us-central1' } } as never)),
       s('update openai work', c => c.authority.importDesktopIntegrationAccount('approval', E9_TOKENS.approval, 'openai', { accountId: 'work', label: 'Work 2', active: false, connected: false, values: { api_key: 'sk-work-rotated' } } as never)),
-      s('import slack', c => c.authority.importDesktopIntegrationAccount('approval', E9_TOKENS.approval, 'slack', { accountId: 'main', values: { app_token: 'xapp-secret-1' } } as never)),
+      // Slack Socket Mode is no longer a vault relay (SLACK-1); Discord's gateway keeps the relay path covered.
+      s('import discord', c => c.authority.importDesktopIntegrationAccount('approval', E9_TOKENS.approval, 'discord', { accountId: 'main', values: { bot_token: 'discord-bot-secret-1' } } as never)),
       s('import s3 backup', c => c.authority.importDesktopIntegrationAccount('approval', E9_TOKENS.approval, 's3-backup', { accountId: 'main', values: { backup_kind: 's3', backup_target: 's3://bucket/path', accessKeyId: 'AKIAE9', secretAccessKey: 'SECRETE9' } } as never)),
       s('integration metadata github', c => c.authority.integrationMetadata('broker', E9_TOKENS.broker, 'github')),
       s('integration metadata openai', c => c.authority.integrationMetadata('broker', E9_TOKENS.broker, 'openai')),
@@ -235,9 +236,9 @@ class E9Scripts {
         await c.authority.executeStream(E9Scripts.github({ responseType: 'stream' }) as never, 'broker', E9_TOKENS.broker, sink);
         return sink.events;
       }),
-      s('slack relay opens', async c => {
-        const handle = await c.authority.createRelay({ claims: { sub: E9_USER_ID, agent_id: 'research-agent', pod_id: 'pod-1', credential_scope: { integration_id: 'slack', account_id: 'main' } },
-          operation: 'slack.socket-mode', ref: { integrationId: 'slack', accountId: 'main' } } as never, 'broker', E9_TOKENS.broker);
+      s('discord relay opens', async c => {
+        const handle = await c.authority.createRelay({ claims: { sub: E9_USER_ID, agent_id: 'research-agent', pod_id: 'pod-1', credential_scope: { integration_id: 'discord', account_id: 'main' } },
+          operation: 'discord.gateway', ref: { integrationId: 'discord', accountId: 'main' } } as never, 'broker', E9_TOKENS.broker);
         c.memory.set('relay', handle.relayId);
         return handle;
       }),
