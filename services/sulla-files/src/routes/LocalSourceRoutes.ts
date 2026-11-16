@@ -51,7 +51,7 @@ export class LocalSourceRoutes {
     } catch (error) { next(error) } });
     app.put('/v1/local/native-sources/ingest', express.raw({ type: '*/*', limit: '64mb' }), async(request, response, next) => { try {
       const metadata = this.nativeMetadata(request);
-      const bytes = Buffer.from(request.body as Buffer);
+      const bytes = this.rawBody(request);
       if (createHash('sha256').update(bytes).digest('hex') !== metadata.desiredHash) throw new HttpError(409, 'native source bytes do not match their declared hash');
       const collectionId = String(request.query.collectionId ?? '');
       const fileId = typeof request.query.fileId === 'string' && request.query.fileId ? request.query.fileId : undefined;
@@ -59,7 +59,7 @@ export class LocalSourceRoutes {
       const path = cleanPath(String(request.query.path ?? ''), false);
       const collection = await this.access.collectionRow(collectionId);
       if (collection.compatibility_state !== 'native') throw new HttpError(409, 'native source ingestion requires a native Files collection');
-      const actor:FilesIdentity = { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability', orgId: this.config.orgId };
+      const actor = this.localActor();
       const staged=await this.versions.stage(collectionId,bytes);
       const result = await this.managers.nativeSources().ingestNativeSource({ ...metadata, fileId, baseVersionId, collectionId, path },
         (client, versionId) => this.versions.insert(client, {
@@ -71,7 +71,7 @@ export class LocalSourceRoutes {
     } catch (error) { next(error) } });
     // Read-only system areas: plain internal ingest, no native-source rows, handles, or publication state.
     app.put('/v1/local/system-areas/ingest', express.raw({ type: '*/*', limit: '64mb' }), async(request, response, next) => { try {
-      const bytes = Buffer.from(request.body as Buffer);
+      const bytes = this.rawBody(request);
       const desiredHash = String(request.header('x-sulla-source-hash') ?? '').toLowerCase();
       if (!/^[a-f0-9]{64}$/.test(desiredHash) || createHash('sha256').update(bytes).digest('hex') !== desiredHash) throw new HttpError(409, 'system-area bytes do not match their declared hash');
       const collectionId = String(request.query.collectionId ?? '');
@@ -79,7 +79,7 @@ export class LocalSourceRoutes {
       const collection = await this.access.collectionRow(collectionId);
       if (!isSystemArea(collection.system_area) && collection.system_area !== null) throw new HttpError(409, 'system-area ingestion requires the home or a system collection');
       const mime = request.header('content-type') ?? 'application/octet-stream';
-      const actor:FilesIdentity = { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability', orgId: this.config.orgId };
+      const actor = this.localActor();
       const staged=await this.versions.stage(collectionId,bytes);
       const result = await mirrorSystemAreaFile(this.db, {
         collectionId, path, manifestHash: await this.versions.manifestHashFor(collectionId, bytes),
@@ -99,7 +99,7 @@ export class LocalSourceRoutes {
       const moved = await this.transactions.run('system-area-move', async client => {
       const file = await this.homeFiles.lockHomeFile(client, fileId);
       if (!file) throw new HttpError(404, 'Home collection file not found');
-      await lockStoredNamespace(client, file.collection_id); await ensureStoredFileParents(client, file.collection_id, targetPath, this.access.identity(request));
+      await lockStoredNamespace(client, file.collection_id); await ensureStoredFileParents(client, file.collection_id, targetPath, this.localActor());
       await assertStoredFilePath(client, file.collection_id, targetPath, file.id);
       const moved = await this.homeFiles.move(client, file.id, targetPath);
       await this.homeFiles.auditMove(client, this.config.userId, this.config.deviceId, file.id, file.current_version_id, {from:file.path,to:targetPath});
@@ -200,6 +200,17 @@ export class LocalSourceRoutes {
       response.setHeader('X-Sulla-Source-Hash', action.desiredHash);
       response.type('application/octet-stream').send(bytes);
     } catch (error) { next(error) } });
+  }
+
+  /** /v1/local/* is gated by the local service token and carries no bearer identity; it acts as the device owner. */
+  private localActor():FilesIdentity {
+    return { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability', orgId: this.config.orgId };
+  }
+
+  /** express.raw only parses a body that has a content-type; anything else is refused before hashing. */
+  private rawBody(request:express.Request):Buffer {
+    if (!Buffer.isBuffer(request.body)) throw new HttpError(400, 'request body must be raw bytes with a content-type');
+    return request.body;
   }
 
   private nativeMetadata(request:express.Request) {
