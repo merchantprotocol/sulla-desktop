@@ -52,6 +52,7 @@ import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSession
 import { CloudSessionStartupRestorer, VaultNotReadyError } from './cloud/session/CloudSessionStartupRestorer';
 import { cloudSessionStartupRestoreProvider } from './cloud/session/CloudSessionStartupRestoreCoordinator';
 import { cloudSessionKeyProvider } from './cloud/session/CloudSessionKeyServiceProvider';
+import { cloudRecoveryKeyProvider } from './cloud/session/CloudRecoveryKeyNoticeStore';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
 import { getDesktopRelayClient } from './desktopRelay';
@@ -74,7 +75,6 @@ const passwordSignIn = new CloudPasswordSignIn(accountTransport, () => CloudAcco
 const legacyAdopter = new LegacyCloudSessionAdopter(accountTransport);
 
 let accountWrapFlushHookInstalled = false;
-let unshownRecoveryKey: { recoveryKey: string; storage: ReturnType<typeof recoveryKeyStorageStatus>; madeAt: string } | undefined;
 
 function zeroPendingCloudMasterKey(): void {
   cloudSessionKeyProvider.keys.clear();
@@ -127,9 +127,9 @@ async function flushAccountPasswordWrap(userId = cloudSessionKeyProvider.keys.co
       } catch (error) {
         console.warn('[SullaCloudAuth] Recovery key was created but Keychain save failed:', error instanceof Error ? error.message : String(error));
       }
-      unshownRecoveryKey = { recoveryKey: result.recoveryKey, storage, madeAt: new Date().toISOString() };
+      const notice = cloudRecoveryKeyProvider.notices.publish(result.recoveryKey, storage);
       for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send('sulla-cloud:recovery-key-created', unshownRecoveryKey);
+        window.webContents.send('sulla-cloud:recovery-key-created', notice);
       }
     }
     return { recoveryKey: result.recoveryKey };
@@ -688,8 +688,8 @@ export function initSullaCloudAuthEvents(): void {
     firstRunTrace('account', 'pending first-run Cloud sign-in cleared');
     return { ok: true };
   });
-  ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => unshownRecoveryKey);
-  ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { unshownRecoveryKey = undefined });
+  ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => cloudRecoveryKeyProvider.notices.pending());
+  ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { cloudRecoveryKeyProvider.notices.clear() });
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
     return buildStatus();
