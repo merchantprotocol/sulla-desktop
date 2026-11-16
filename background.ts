@@ -54,7 +54,7 @@ import SettingsValidator from '@pkg/main/commandServer/settingsValidator';
 import { HttpCredentialHelperServer } from '@pkg/main/credentialServer/httpCredentialHelperServer';
 import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
-import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
+import { FailureLifecycle } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
 import { IpcRegistrationGate } from '@pkg/main/ipcRegistrationGate';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -2440,7 +2440,7 @@ async function handleFailure(payload: any) {
     titlePart = payload.context || titlePart;
   }
   console.log(`Sulla Desktop was unable to start:`, payload);
-  await reportFailureUnlessShuttingDown<FailureDetails>({
+  await new FailureLifecycle<FailureDetails>({
     isShuttingDown:    () => shuttingDown || gone,
     // getFailureDetails is going to read from existing log files.
     // Wait 1 second before reading them to allow recent writes to appear in them.
@@ -2470,7 +2470,7 @@ async function handleFailure(payload: any) {
       }
     },
     onFailureDetailsError: e => console.log(`Failed to get failure details: `, e),
-  });
+  }).reportUnlessShuttingDown();
 }
 
 function doFullRestart(context: CommandWorkerInterface.CommandContext) {
