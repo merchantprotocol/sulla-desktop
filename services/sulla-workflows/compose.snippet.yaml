@@ -19,7 +19,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      SULLA_DATABASE_URL: postgresql://sulla:sulla_dev_password@postgres:5432/sulla
+      SULLA_DATABASE_URL: postgresql://sulla:${SULLA_SERVICE_PASSWORD:?set SULLA_SERVICE_PASSWORD}@postgres:5432/sulla
       SULLA_REDIS_URL: redis://redis:6379
       SULLA_MANAGER_URL: http://sulla_workflow_manager:8788
       SULLA_TOOL_API_URL: http://host.docker.internal:3000

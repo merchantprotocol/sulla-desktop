@@ -8,7 +8,7 @@ import http from 'node:http';
 import { ProviderModelPin } from './ProviderModelPin';
 import { ProviderBridgeRevokedError, PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderCliBridgeTools, ProviderCliBridgeResponsePolicy, ProviderCliBridgeFailurePolicy } from './providerCliBridge';
 import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
-import { recordVaultFailure, recordVaultSuccess, vaultFailureKind } from './vaultHealth';
+import { vaultHealthMonitor, VaultHealthMonitor } from './vaultHealth';
 import type { ToolExecutionContext } from './index';
 import type { ProviderCliBridgeOptions, ProviderCliBridgeLease, ProviderCliBridgeIdentity } from './providerCliBridge';
 
@@ -183,7 +183,7 @@ export class ProviderCliBridgeService {
       }), requestAbort.signal);
       upstreamHeadersMs = performance.now() - upstreamStartedAt;
       status = upstream.status;
-      if (upstream.status === 423) recordVaultFailure('locked'); else recordVaultSuccess();
+      if (upstream.status === 423) vaultHealthMonitor.record('locked'); else vaultHealthMonitor.recordSuccess();
       if (upstream.status >= 400) {
         console.warn(`[ProviderCliBridge] upstream ${ definition.integration } ${ upstreamPath } returned ${ upstream.status }`);
       }
@@ -215,8 +215,8 @@ export class ProviderCliBridgeService {
     } catch (error) {
       const failure = ProviderCliBridgeFailurePolicy.classifyProviderBridgeFailure(error);
       const brokerStatus = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
-      const vaultKind = vaultFailureKind(brokerStatus, failure.errorCode === 'vault_locked' ? 'vault_locked' : failure.reason);
-      if (vaultKind) recordVaultFailure(vaultKind);
+      const vaultKind = VaultHealthMonitor.failureKind(brokerStatus, failure.errorCode === 'vault_locked' ? 'vault_locked' : failure.reason);
+      if (vaultKind) vaultHealthMonitor.record(vaultKind);
       failureNote = ` failure=${ failure.type }${ failure.errorCode ? `:${ failure.errorCode }` : '' }${ failure.reason ? ` reason=${ failure.reason }` : '' }`;
       console.error(`[ProviderCliBridge] request failed: ${ failure.errorName }${ failure.errorCode ? ` (${ failure.errorCode })` : '' }` +
         `${ failure.reason ? ` reason=${ failure.reason }` : '' } -> ${ failure.status } ${ failure.type }`);
