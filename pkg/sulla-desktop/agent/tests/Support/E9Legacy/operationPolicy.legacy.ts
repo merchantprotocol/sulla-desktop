@@ -105,7 +105,8 @@ export const BROKER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperationP
     integrations: ['slack'],
     hosts: ['slack.com'],
     methods: ['GET', 'POST'],
-    injections: authHeaders(['bot_token', 'scopes_token', 'app_token', 'app_level_token']),
+    // SLACK-1 deliberate change (not a refactor drift): Slack Web API injects the bot token only.
+    injections: [{ field: 'bot_token', target: 'header', name: 'authorization', scheme: 'Bearer' }],
   },
   'discord.rest': {
     integrations: ['discord'],
