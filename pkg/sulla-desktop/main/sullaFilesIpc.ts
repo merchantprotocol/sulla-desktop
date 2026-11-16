@@ -19,6 +19,8 @@ import { boundedFilesResponseReader } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { importChatFiles, pickAndImportChatFiles } from './sullaFilesChatImport';
 import { FilesApiError, getSullaFilesClient } from './sullaFilesClient';
+import { SullaFilesIpcUploadService } from './SullaFilesIpcUploadService';
+import { SullaFilesIpcMediaService } from './SullaFilesIpcMediaService';
 import { getSullaFilesLinkService, type CreateShareInput } from './sullaFilesLinkService';
 import { getSullaFilesRootRegistry, isProtectedTrackedPath } from './sullaFilesRootRegistry';
 import { getSullaFilesSourceGateway } from './sullaFilesSourceGateway';
@@ -30,7 +32,6 @@ import { FilesSyncV1 } from './cloud/filesSyncV1';
 import { createUseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
 import { FilesListingPager } from './FilesListingPager';
 
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
@@ -39,120 +40,11 @@ import type { FilesRevealResult, FilesOperationRequest, FilesOperationRetry, Fil
 const console = Logging.background;
 const ipcMain = getIpcMainProxy(console);
 const RESIDENCY_TRANSFER_TIMEOUT_MS = 30 * 60_000;
-const MAX_DIRECT_UPLOAD_BYTES = 64 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const filesClient = getSullaFilesClient();
-const FILES_RETRY_DELAY_MS = 1_500;
-let filesReadyRetry:ReturnType<typeof setTimeout> | undefined;
-
-function filesTemporarilyUnavailable(error:unknown):boolean {
-  return error instanceof FilesApiError ? error.status >= 500
-    : error instanceof TypeError || (error instanceof Error &&
-      ['AbortError', 'TimeoutError'].includes(error.name)) ||
-      (error instanceof Error && (error.message === 'Files service is unavailable' ||
-        /net::ERR_(CONNECTION_(REFUSED|RESET|CLOSED|ABORTED)|EMPTY_RESPONSE|TIMED_OUT|NETWORK_CHANGED)\b/.test(error.message)));
-}
-
-function queueFilesReadyRetry():void {
-  if (filesReadyRetry) return;
-  filesReadyRetry = setTimeout(() => {
-    filesReadyRetry = undefined;
-    // request() also performs the watcher's authenticated readiness/unlock check.
-    void filesClient.request('/healthz', { signal: AbortSignal.timeout(3_000) })
-      .then(response => response.body?.cancel()).catch(() => undefined);
-  }, FILES_RETRY_DELAY_MS);
-  filesReadyRetry.unref();
-}
-
-async function readyFilesJson<T>(endpoint:string, init:RequestInit):Promise<T> {
-  try {
-    return await filesClient.json<T>(endpoint, init);
-  } catch (error) {
-    if (!filesTemporarilyUnavailable(error)) throw error;
-    await new Promise(resolve => setTimeout(resolve, FILES_RETRY_DELAY_MS));
-    try {
-      return await filesClient.json<T>(endpoint, init);
-    } catch (retryError) {
-      if (filesTemporarilyUnavailable(retryError)) queueFilesReadyRetry();
-      throw retryError;
-    }
-  }
-}
-
-async function cloudFilesAvailable():Promise<boolean> {
-  try {
-    const account = await getIntegrationService().getConnectionStatus('sulla-cloud');
-    if (!account.connected) return false;
-
-    const { getCloudConnectionStatus } = await import('@pkg/main/cloud/cloudLifecycle');
-    const cloud = await getCloudConnectionStatus();
-
-    return cloud.signedIn && cloud.device.registered && !cloud.device.revoked && cloud.channel?.state === 'connected';
-  } catch {
-    return false;
-  }
-}
 
 async function json(endpoint:string, init:RequestInit = {}, server = false):Promise<any> {
   return filesClient.json(endpoint, init, { server });
-}
-
-function stableUploadIdentity(left:fs.BigIntStats, right:fs.BigIntStats):boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
-}
-
-function storedPath(destination:string, name:string):string {
-  const normalized = destination.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
-  if (normalized.split('/').some(part => part === '.' || part === '..')) throw new Error('Upload destination is not a valid Files folder');
-  return [normalized, path.basename(name)].filter(Boolean).join('/');
-}
-
-async function readStableUpload(source:string):Promise<Buffer> {
-  const selected = await fs.promises.lstat(source, { bigint: true });
-  if (!selected.isFile() || selected.isSymbolicLink()) throw new Error('Only regular files can be uploaded');
-  if (selected.size > BigInt(MAX_DIRECT_UPLOAD_BYTES)) throw new Error('Files selected in Desktop must be 64 MiB or smaller');
-  const file = await fs.promises.open(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  try {
-    const before = await file.stat({ bigint: true });
-    if (!stableUploadIdentity(selected, before)) throw new Error('Selected file changed before it could be read');
-    const chunks:Buffer[] = [];
-    let total = 0;
-    while (total <= MAX_DIRECT_UPLOAD_BYTES) {
-      const chunk = Buffer.allocUnsafe(Math.min(1024 * 1024, MAX_DIRECT_UPLOAD_BYTES - total + 1));
-      const { bytesRead } = await file.read(chunk, 0, chunk.byteLength, null);
-      if (!bytesRead) break;
-      total += bytesRead;
-      if (total > MAX_DIRECT_UPLOAD_BYTES) throw new Error('Files selected in Desktop must be 64 MiB or smaller');
-      chunks.push(chunk.subarray(0, bytesRead));
-    }
-    const bytes = Buffer.concat(chunks, total);
-    const [after, pathname] = await Promise.all([file.stat({ bigint: true }), fs.promises.lstat(source, { bigint: true })]);
-    if (!stableUploadIdentity(before, after) || !stableUploadIdentity(after, pathname) || bytes.byteLength !== Number(after.size)) {
-      throw new Error('Selected file changed while it was being read. Nothing was uploaded.');
-    }
-    return bytes;
-  } finally { await file.close() }
-}
-
-async function importPaths(paths:string[], destination = '', progress?:(value:{ current: number; total: number; name: string; percent: number; done: boolean }) => void, collectionId?:string):Promise<number> {
-  if (!collectionId || !UUID.test(collectionId)) throw new Error('Choose a Files collection before uploading');
-  if (!Array.isArray(paths) || paths.length > 250) throw new Error('Choose no more than 250 files at once');
-  let imported = 0;
-  for (const [index, source] of paths.entries()) {
-    progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 12, done: false });
-    const bytes = await readStableUpload(source);
-    const target = storedPath(destination, source);
-    const response = await filesClient.request(`/v1/files/import?collectionId=${ encodeURIComponent(collectionId) }&path=${ encodeURIComponent(target) }&conflict=keep-both`, {
-      method:  'PUT',
-      // Chromium sets content-length for byte bodies and rejects a caller-set one.
-      headers: { 'content-type': 'application/octet-stream' },
-      body:    bytes as unknown as BodyInit,
-    });
-    if (!response.ok) throw new FilesApiError((await response.json().catch(() => ({})) as { error?:string }).error ?? `Files upload failed (${ response.status })`, response.status);
-    imported++;
-    progress?.({ current: index + 1, total: paths.length, name: path.basename(source), percent: 100, done: index + 1 === paths.length });
-  }
-  return imported;
 }
 
 interface FileReference {
@@ -522,41 +414,10 @@ async function downloadReferences(event:Electron.IpcMainInvokeEvent, items:{ fil
   } catch (error) { return { count: created.length, error: `${ created.length } file${ created.length === 1 ? '' : 's' } downloaded before the remaining download failed: ${ error instanceof Error ? error.message : String(error) }` } }
 }
 
-const mediaCapabilities = new Map<string, { fileId: string; versionId?: string; expiresAt: number }>();
-function mediaCapability(input:{ fileId: string; versionId?: string }):string {
-  const now = Date.now();
-  for (const [token, capability] of mediaCapabilities) if (capability.expiresAt <= now) mediaCapabilities.delete(token);
-  const token = randomUUID();
-  mediaCapabilities.set(token, { ...input, expiresAt: now + 4 * 60 * 60_000 });
-  return `sulla-files-media://content/${ token }`;
-}
-
-function passiveMedia(mime:string):boolean {
-  return /^(?:video\/|audio\/)/i.test(mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(mime);
-}
-
-function initFilesMediaProtocol():void {
-  if (protocol.isProtocolHandled('sulla-files-media')) return;
-  protocol.handle('sulla-files-media', async(request) => {
-    const url = new URL(request.url);
-    if (url.hostname !== 'content' || !['GET', 'HEAD'].includes(request.method)) return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
-    const parts = url.pathname.split('/').filter(Boolean);
-    if (parts.length !== 1) return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
-    const capability = mediaCapabilities.get(parts[0]);
-    if (!capability || capability.expiresAt <= Date.now()) { mediaCapabilities.delete(parts[0]); return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } }) }
-    const endpoint = `/v1/files/${ encodeURIComponent(capability.fileId) }/preview${ capability.versionId ? `?versionId=${ encodeURIComponent(capability.versionId) }` : '' }`;
-    const upstream = await filesClient.stream(endpoint, { method: request.method, headers: request.headers.get('range') ? { range: request.headers.get('range')! } : undefined }, request.signal);
-    const mime = upstream.headers.get('content-type') ?? '';
-    if (upstream.ok && !passiveMedia(mime)) { await upstream.body?.cancel(); return new Response(null, { status: 415, headers: { 'cache-control': 'no-store' } }) }
-    const headers = new Headers(upstream.headers);
-    headers.set('cache-control', 'private, no-store');
-    headers.set('x-content-type-options', 'nosniff');
-    return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
-  });
-}
-
 export function initSullaFilesIpc():void {
   const watcher = getSullaFilesWatcher();
+  const upload = new SullaFilesIpcUploadService(filesClient);
+  const media = new SullaFilesIpcMediaService(protocol, filesClient);
   createUseCaseSuggestionIpcRegistrar(
     (channel, handler) => ipcMain.handle(channel, handler),
     (channel, handler) => ipcMain.handle(channel, handler),
@@ -605,7 +466,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('sulla-files:operation-cancel', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/cancel`, { method: 'POST', body: '{}' }));
   ipcMain.handle('sulla-files:operation-retry', (_event, input:{ operationId:string; request:FilesOperationRetry }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/retry`, { method: 'POST', body: JSON.stringify(input.request) }));
   ipcMain.handle('sulla-files:operation-undo', (_event, input:{ operationId:string }) => json(`/v1/database-file-operations/${ encodeURIComponent(input.operationId) }/undo`, { method: 'POST', body: '{}' }));
-  try { initFilesMediaProtocol() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
+  try { media.initialize() } catch (error) { console.error('Files media protocol failed to initialize:', error) }
   const mountManager = getSullaFilesMountManager();
   mountManager.on('changed', status => {
     for (const contents of webContents.getAllWebContents()) contents.send('files-ui:native-runtime-changed', status);
@@ -705,7 +566,7 @@ export function initSullaFilesIpc():void {
   ipcMain.handle('files-ui:capabilities', async() => {
     const [status, cloudAvailable, residencyResult] = await Promise.all([
       getSullaFilesWatcher().status(),
-      cloudFilesAvailable(),
+      upload.cloudFilesAvailable(),
       json('/v1/residency-capabilities')
         .then((residency:Record<string, unknown>) => ({ residency, reason: '' }))
         .catch((error) => ({ residency: undefined, reason: error instanceof Error ? error.message : 'Online-only residency is unavailable.' })),
@@ -848,7 +709,7 @@ export function initSullaFilesIpc():void {
     const senderUrl = event.senderFrame?.url;
     if (!senderUrl || new URL(senderUrl).protocol !== 'app:') throw new Error('Files media URLs are only available to the Sulla application');
     await json(`/v1/files/${ encodeURIComponent(input.fileId) }`);
-    return mediaCapability(input);
+    return media.capability(input);
   });
   ipcMain.handle('files-ui:pick-upload', async(event, input:string | { collectionId?: string; destination?: string } = '') => {
     const destination = typeof input === 'string' ? input : input.destination ?? '';
@@ -859,7 +720,7 @@ export function initSullaFilesIpc():void {
       : await dialog.showOpenDialog({ title: 'Upload to Sulla Files', properties: ['openFile', 'multiSelections'] });
     if (picked.canceled) return 0;
 
-    return importPaths(picked.filePaths, destination, progress => event.sender.send('files-ui:upload-progress', progress), collectionId);
+    return upload.importPaths(picked.filePaths, destination, progress => event.sender.send('files-ui:upload-progress', progress), collectionId);
   });
   ipcMain.handle('files-ui:pick-upload-references', async(event) => {
     try {
@@ -996,7 +857,7 @@ export function initSullaFilesIpc():void {
     }
   });
   ipcMain.handle('files-ui:upload-paths', async(event, input:{ paths: string[]; destination?: string; collectionId?: string }) => {
-    try { return await importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId) } catch (error) {
+    try { return await upload.importPaths(input.paths, input.destination, progress => event.sender.send('files-ui:upload-progress', progress), input.collectionId) } catch (error) {
       console.warn('[SullaFiles] upload-paths failed:', error instanceof Error ? error.message : String(error));
       throw error;
     }
