@@ -51,6 +51,7 @@ import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
 import { GuestTlsIdentityProvisioner } from './sullaRuntime/GuestTlsIdentityProvisioner';
 import { HostServiceIdentityStore } from './sullaRuntime/HostServiceIdentityStore';
 import { ManagedContainerHealthWatcher } from './sullaRuntime/ManagedContainerHealthWatcher';
+import { SullaServiceImageFreshness } from './sullaRuntime/SullaServiceImageFreshness';
 import { SullaAccountsDatabaseRepository } from './Repositories/SullaAccountsDatabaseRepository';
 import { sullaRuntimeShareList } from './sullaRuntime/shares';
 import {
@@ -244,6 +245,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this, { vault: PROVISION_VAULT_TLS, files: PROVISION_FILES_TLS },
     { refreshVault: refreshVaultPinnedSessions, refreshFiles: refreshFilesPinnedSessions }, () => paths.appHome,
   );
+  readonly #imageFreshness = new SullaServiceImageFreshness(this, this.#managedSullaRefreshImages, this.#pinnedSullaImages,
+    (target, timeoutSec, generation) => this.waitForDockerServiceHealthy(target, timeoutSec, generation));
   readonly #accountsDatabase = new SullaAccountsDatabaseRepository({
     capture: args => this.execCommand({ capture: true, root: true }, ...args),
     run:     args => this.execCommand({ root: true }, ...args),
@@ -1957,7 +1960,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               if (service === 'sulla_files') {
                 if (!state.startsWith('running')) {
                   await startOptionalService(service);
-                } else if (await this.sullaServiceImageIsStale(container, service, generation)) {
+                } else if (await this.#imageFreshness.isStale(container, service, generation)) {
                   await startOptionalService(service);
                 } else {
                   await configDrift.reconcile(entry);
@@ -2046,48 +2049,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         else if (!reconcileRunning) startReconcile();
       });
     });
-  }
-
-  /**
-   * After a running service finishes starting, pull its published image and
-   * report whether the container is still on an older one. Failures keep the
-   * running container.
-   */
-  private async sullaServiceImageIsStale(container: string, service: string, generation?: number): Promise<boolean> {
-    await this.waitForDockerServiceHealthy({ service, container }, 600, generation);
-    const refreshImage = this.#managedSullaRefreshImages.get(service);
-    const pinnedImage = this.#pinnedSullaImages.get(service);
-
-    if (!refreshImage && pinnedImage) {
-      // Bundled with this app: the container must run exactly that image, never a
-      // leftover (e.g. :latest from an older build). Nothing to pull: it is loaded.
-      try {
-        const [running, pinned] = await Promise.all([
-          this.execCommand({ capture: true, root: true }, 'docker', 'inspect', '--format', '{{.Image}}', container),
-          this.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', pinnedImage),
-        ]);
-
-        return running.trim() !== pinned.trim();
-      } catch (error) {
-        console.warn(`[Sulla] Could not compare ${ container } with its bundled image ${ pinnedImage }; keeping it:`, error);
-
-        return false;
-      }
-    }
-    if (!refreshImage) return false;
-    try {
-      await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
-      const [running, latest] = await Promise.all([
-        this.execCommand({ capture: true, root: true }, 'docker', 'inspect', '--format', '{{.Image}}', container),
-        this.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', refreshImage),
-      ]);
-
-      return running.trim() !== latest.trim();
-    } catch (error) {
-      console.warn(`[Sulla] Could not check ${ refreshImage } for ${ service }; keeping the running container:`, error);
-
-      return false;
-    }
   }
 
   /**
