@@ -12,13 +12,13 @@ import ChatHeader from '@pkg/pages/chat/components/chrome/ChatHeader.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
 
 const controller = { thread: ref({ title: 'Fix · #4350 round 2' }), sidebar: ref({ historyOpen: false }), toggleHistory: vi.fn(), renameThread: vi.fn() };
-const props = { subAgents: { total: 0, live: 0 }, subAgentsOpen: false, filesOpen: false, dockSide: true };
+const props = {};
 
 describe('an agent\'s own chat tab', () => {
   // risk: the "Launched by" chip floated over the header buttons once the side dock narrowed the chat
   it('shows who launched it in the header\'s own left column, with a way back', async() => {
     const back = vi.fn();
-    const header = mount(ChatHeader, { props, global: { provide: { [ChatControllerKey as symbol]: controller, 'chat:agent-origin': ref({ name: 'account-manager', back }) } } });
+    const header = mount(ChatHeader, { global: { provide: { [ChatControllerKey as symbol]: controller, 'chat:agent-origin': ref({ name: 'account-manager', back }) } } });
 
     const chip = header.find('.ch-left .ch-origin');
     expect(chip.text()).toContain('Launched by account-manager');
@@ -27,7 +27,7 @@ describe('an agent\'s own chat tab', () => {
   });
 
   it('shows nothing there for an ordinary chat', () => {
-    const header = mount(ChatHeader, { props, global: { provide: { [ChatControllerKey as symbol]: controller } } });
+    const header = mount(ChatHeader, { global: { provide: { [ChatControllerKey as symbol]: controller } } });
     expect(header.find('.ch-origin').exists()).toBe(false);
   });
 });
