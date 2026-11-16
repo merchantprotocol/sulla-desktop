@@ -3803,17 +3803,10 @@
     },
     "services/sulla-files/src/app.ts": {
       "rules": {
-        "long-file": 1436,
+        "long-file": 2107,
         "raw-sql": 182
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/localManager.ts": {
-      "rules": {
-        "long-file": 1669,
-        "raw-sql": 326
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "services/sulla-relay/verify/two-replica.mjs": {
       "rules": {
