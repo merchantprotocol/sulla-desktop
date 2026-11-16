@@ -7,9 +7,13 @@
   Window-level drag-and-drop for files. Shows an overlay while files
   are being dragged over; on drop, pipes Files through AttachmentService
   into the controller's staging tray.
+
+  Every open chat tab stays mounted (background tabs are only hidden), so
+  each one hears document-level drag events. Only the visible tab reacts;
+  otherwise one drop would be staged into every open conversation.
 */
 
-import { onMounted, onBeforeUnmount, ref } from 'vue';
+import { onMounted, onBeforeUnmount, ref, type Ref } from 'vue';
 import { webUtils } from 'electron';
 
 import { AttachmentService } from '../services/AttachmentService';
@@ -17,7 +21,7 @@ import { useChatController } from '../controller/useChatController';
 import type { ChatController } from '../controller/ChatController';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export function useDragDrop(controllerOverride?: ChatController) {
+export function useDragDrop(controllerOverride?: ChatController, isActive?: Ref<boolean | undefined>) {
   const active = ref(false);
   let depth = 0;
 
@@ -29,8 +33,13 @@ export function useDragDrop(controllerOverride?: ChatController) {
     try { controller = useChatController(); } catch { /* fine in tests */ }
   }
 
+  /** A chat outside the tab strip has no active flag and always accepts drops. */
+  function hidden(): boolean {
+    return isActive?.value === false;
+  }
+
   function hasFiles(e: DragEvent): boolean {
-    return !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+    return !hidden() && !!e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
   }
 
   function onEnter(e: DragEvent) {
@@ -46,6 +55,7 @@ export function useDragDrop(controllerOverride?: ChatController) {
     if (depth === 0) active.value = false;
   }
   async function onDrop(e: DragEvent) {
+    if (hidden()) return;
     if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
     e.preventDefault();
     depth = 0;

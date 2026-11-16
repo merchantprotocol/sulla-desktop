@@ -207,6 +207,11 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    *
    * @returns
    */
+  /** True once settings are served from the database rather than the startup fallback file. */
+  public static get ready(): boolean {
+    return this.isReady;
+  }
+
   public static async bootstrap(): Promise<void> {
     if (this.isReady) return;
     if (!this.installationLockFile) {

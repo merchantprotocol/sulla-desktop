@@ -1,0 +1,120 @@
+/*
+ * Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * "Sulla" is a trademark. See TRADEMARK.md.
+ */
+/* Agent result card (AgentResultCard.vue and its AgentResultBody.vue). */
+/*
+ * Same layer as the activity tray: the page colour, neutral ink mixed from
+ * --text-primary (theme text tokens can share the surface hue), and colour
+ * kept for state.
+ */
+.ar {
+  --ar-ink-2: color-mix(in srgb, var(--text-primary) 78%, var(--bg-surface));
+  --ar-ink-3: color-mix(in srgb, var(--text-primary) 58%, var(--bg-surface));
+  --ar-raised: color-mix(in srgb, var(--bg-surface) 55%, var(--bg-page));
+  container-type: inline-size;
+  border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-page);
+  color: var(--text-primary); font-family: var(--font-body); overflow: hidden;
+}
+.ar-grouphead { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--border-default); font-size: 13px; color: var(--ar-ink-2); }
+.ar-grouphead b { color: var(--text-primary); font-weight: 650; }
+.ar-group .ar-item + .ar-item { border-top: 1px solid var(--border-default); }
+
+.ar-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 16px 0; }
+.ar-group .ar-head { grid-template-columns: auto minmax(0, 1fr) auto auto; padding: 10px 16px; cursor: pointer; }
+.ar-group .ar-head:hover, .ar-group .ar-open > .ar-head { background: var(--ar-raised); }
+.ar-group .ar-open { background: var(--ar-raised); }
+.ar-head:focus-visible, .ar-btn:focus-visible, .ar-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ar-chev { color: var(--ar-ink-3); transition: transform .18s cubic-bezier(.22,1,.36,1); }
+.ar-open .ar-chev { transform: rotate(180deg); }
+
+.ar-chip {
+  display: inline-flex; align-items: center; gap: 6px; justify-self: start; height: 22px; padding: 0 8px; border-radius: 6px;
+  font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
+}
+.ar-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ar-ok { background: color-mix(in srgb, var(--status-success) 16%, transparent); color: var(--status-success); }
+.ar-warn { background: color-mix(in srgb, var(--status-warning) 16%, transparent); color: var(--status-warning); }
+.ar-bad { background: color-mix(in srgb, var(--status-error) 16%, transparent); color: var(--status-error); }
+.ar-info { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.ar-dim { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--ar-ink-2); }
+.ar-ok-t { color: var(--status-success); }
+.ar-bad-t { color: var(--status-error); }
+
+.ar-title { min-width: 0; }
+.ar-title b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }
+.ar-title span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ar-ink-3); }
+.ar-kind { font-size: 12px; color: var(--ar-ink-3); white-space: nowrap; }
+.ar-outcome { max-width: 68ch; margin: 10px 16px 0; font-size: 15px; line-height: 1.5; }
+.ar-outcome.ar-secondary { margin-top: 6px; font-size: 13.5px; color: var(--ar-ink-2); }
+.ar-problem {
+  max-width: 72ch; margin: 10px 16px 0; padding: 9px 12px; border-radius: 9px; font-size: 14.5px; line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--status-warning) 35%, transparent);
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+}
+.ar-problem b { color: var(--status-warning); font-weight: 650; }
+.ar-problem.ar-failed { border-color: color-mix(in srgb, var(--status-error) 35%, transparent); background: color-mix(in srgb, var(--status-error) 8%, transparent); }
+.ar-problem.ar-failed b { color: var(--status-error); }
+.ar-whonext { margin: 8px 16px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.ar-tail { margin: 10px 16px 0; padding: 8px 12px; list-style: none; border-radius: 8px; background: var(--ar-raised); font: 12.5px/1.55 var(--font-mono, ui-monospace, monospace); color: var(--ar-ink-2); }
+.ar-tail li { overflow-wrap: anywhere; }
+.ar-handled { display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 13px; color: var(--ar-ink-3); }
+.ar-handled-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-body { margin: 12px 16px 0; }
+.ar-label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--ar-ink-3); }
+.ar-label:first-child { margin-top: 0; }
+.ar-rows { border-top: 1px solid var(--border-default); }
+.ar-row { display: grid; gap: 12px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border-default); font-size: 13px; }
+.ar-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ar-ink-2); }
+.ar-t b { color: var(--text-primary); font-weight: 600; }
+.ar-r-merge { grid-template-columns: 64px minmax(0, 1fr) auto; }
+.ar-r-env { grid-template-columns: 110px minmax(0, 1fr) auto; }
+.ar-r-check { grid-template-columns: 16px minmax(0, 1fr); }
+.ar-r-find { grid-template-columns: 84px minmax(0, 1fr); }
+.ar-r-file { grid-template-columns: minmax(0, 1fr); }
+.ar-ico { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.ar-mono, .ar-file { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; color: var(--text-primary); }
+.ar-sha { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+.ar-tally { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 4px; font-size: 13px; color: var(--ar-ink-2); }
+.ar-tally b { color: var(--text-primary); font-weight: 650; }
+.ar-tally .ar-ok-t { color: var(--status-success); }
+.ar-tally .ar-bad-t { color: var(--status-error); }
+.ar-more { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; }
+
+.ar-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 16px 14px; }
+.ar-btn {
+  height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: transparent;
+  color: var(--text-primary); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer;
+}
+.ar-btn:hover { border-color: var(--accent); }
+.ar-btn.ar-quiet { border-color: transparent; color: var(--ar-ink-2); }
+.ar-btn.ar-quiet:hover { color: var(--text-primary); }
+.ar-btn.ar-pri { background: var(--accent); border-color: var(--accent); color: var(--bg-page); font-weight: 650; }
+.ar-sp { flex: 1; }
+.ar-notice { margin: -6px 16px 12px; font-size: 12px; color: var(--ar-ink-2); }
+
+.ar-raw { margin: 0 16px; border-top: 1px solid var(--border-default); }
+.ar-raw summary { cursor: pointer; padding: 9px 0; font-size: 12.5px; color: var(--ar-ink-2); }
+.ar-raw pre {
+  max-height: 320px; overflow: auto; margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--ar-raised);
+  color: var(--ar-ink-2); font: 12px/1.55 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.ar-kv { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; margin: 0 0 10px; font-size: 12.5px; }
+.ar-kv dt { color: var(--ar-ink-3); }
+.ar-kv dd { margin: 0; overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--font-mono, ui-monospace, monospace); }
+.ar-copy { padding: 0 4px; border: 0; background: none; color: var(--ar-ink-3); font: inherit; font-size: 12px; cursor: pointer; }
+.ar-copy:hover, .ar-copy:focus-visible { color: var(--text-primary); }
+.ar-report summary { padding: 4px 0 8px; }
+@container (max-width: 520px) { .ar-kv { grid-template-columns: 90px minmax(0, 1fr); } .ar-kv .ar-copy, .ar-kv > span { display: none; } }
+
+@container (max-width: 520px) {
+  .ar-head, .ar-group .ar-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .ar-head > .ar-chip { grid-column: 1 / -1; }
+  .ar-kind { display: none; }
+  .ar-r-env { grid-template-columns: minmax(0, 1fr) auto; }
+  .ar-r-env > :first-child { grid-column: 1 / -1; }
+  .ar-r-find { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { .ar-chev { transition: none; } }

@@ -447,6 +447,8 @@ export class ChatCompletionsServer {
         return res.json({ success: true, result });
       } catch (error) {
         const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
+        // One line per failed tool call, so routine tool errors can be told apart from platform outages.
+        console.warn(`[DesktopExecutor] ${ toolName } failed after ${ Date.now() - startedAt } ms: ${ (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300) }`);
         return res.status(timedOut ? 504 : 500).json({
           success: false,
           error: {

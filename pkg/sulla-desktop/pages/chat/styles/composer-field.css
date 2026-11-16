@@ -1,0 +1,31 @@
+/*
+ * Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * "Sulla" is a trademark. See TRADEMARK.md.
+ */
+/* The message box reads as a text field (Composer.vue), in both docks. */
+
+/* A placeholder, not a link: neutral grey instead of the accent. */
+.composer > .input::placeholder { color: color-mix(in srgb, var(--text-primary) 55%, var(--bg-surface)) !important; }
+
+/* Anywhere on the bar that isn't a button puts the cursor in the box. */
+.composer { cursor: text; }
+
+/* Bottom dock: the card is the field; its edge lights on hover. */
+.composer-card:hover:not(:focus-within) { box-shadow: inset 0 0 0 1px var(--border-strong), var(--elev-float); }
+
+/* Side dock: a drawn field between the buttons, with its own hover and focus. */
+.cw-side .composer > .input {
+  min-height: 34px; margin: 0 4px !important; padding: 6px 10px !important;
+  border: 1px solid var(--border-strong) !important; border-radius: 10px !important;
+  background: var(--bg-page) !important;
+  transition: border-color .15s cubic-bezier(.22, 1, .36, 1), box-shadow .15s cubic-bezier(.22, 1, .36, 1);
+}
+.cw-side .composer > .input:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)) !important; }
+.cw-side .composer > .input:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent) !important;
+}
+/* The field shows focus itself; no second ring around the whole box. */
+.cw-side .composer-card:has(.composer:focus-within) { box-shadow: none; }

@@ -61,7 +61,9 @@ Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Su
 
 **Asking the User a Question:**
 - ✅ ALWAYS: \`ask_user_question\` (or the \`mcp__sulla-native__ask_user_question\` MCP tool under Claude Code) when you need the user to pick between options or supply a detail — it renders an interactive card and BLOCKS for a real answer
+- ✅ ALWAYS: when the user must DO something you cannot (run a command on their Mac, set a secret, sign in, approve outside Sulla), ask with \`task: true\`, a short \`header\`, one sentence in \`question\` and the exact \`command\` if there is one. It renders a task card with Done, and it is the only way the request shows under Waiting on you
 - ❌ NEVER: your native AskUserQuestion tool (disabled), or asking in plain text and assuming an answer
+- ❌ NEVER: put a request for the user to act inside a normal reply ("From you: run this and reply done"); it is easy to miss
 
 **Host Command Execution (rare — host MUST be required):**
 - ✅ DEFAULT: regular \`exec\` in the Sulla VM for everyday work (search, read, edit, install, build, test, sulla CLI)
@@ -124,7 +126,7 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 **Rules:**
 - ❌ NEVER invent tool names or sulla commands — browse_tools first when unsure
 - ❌ NEVER use \`execute_workflow\` for CLI commands — it only runs named Sulla workflows
-- Use \`ask_user_question\` whenever you need a real answer from the user — to pick between options, confirm an assumption, or get a yes/no go-ahead before a risky or destructive action outside the VM (offer Approve / Deny options). It renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer.
+- Use \`ask_user_question\` whenever you need a real answer from the user — to pick between options, confirm an assumption, or get a yes/no go-ahead before a risky or destructive action outside the VM (offer Approve / Deny options). It renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer. When the user must DO something you cannot (run a command on their Mac, set a secret, sign in), ask with \`task: true\` and the exact \`command\`: it renders a task card with Done and lists it under Waiting on you; never bury such a request in a normal reply.
 
 Make parallel tool calls when possible.
 

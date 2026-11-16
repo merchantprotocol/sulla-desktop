@@ -180,15 +180,6 @@ export function sameModels(a: readonly ClassModel[], b: readonly ClassModel[]): 
   return a.length === b.length && a.every((m, i) => modelKey(m) === modelKey(b[i]));
 }
 
-/** Models a class can add, grouped by connected provider in provider order. */
-export function addModelGroups(state: ModelRoutingState, modelClass: ModelClass): { provider: RoutingProviderInfo; models: { id: string; label: string; added: boolean }[] }[] {
-  const have = new Set(state.classes[modelClass].map(modelKey));
-  return providerOrder(state)
-    .map(id => findProvider(state, id)!)
-    .filter(p => p?.connected && p.models.length && canUseClass(state, modelClass, p.id))
-    .map(p => ({ provider: p, models: p.models.map(m => ({ id: m.id, label: modelName(state, p.id, m.id), added: have.has(`${ p.id }/${ m.id }`) })) }));
-}
-
 /** Provider + class pairs a list can add, grouped by connected provider in provider order. */
 export function addRowGroups(state: ModelRoutingState, rows: readonly RoutingRow[]): { provider: RoutingProviderInfo; classes: { value: ModelClass; model?: ClassModel; inList: boolean }[] }[] {
   return providerOrder(state)
@@ -296,33 +287,6 @@ export function fallbackChain(modelClass: ModelClass): ModelClass[] {
   return chain;
 }
 
-export interface SummaryPart { label: string; out?: boolean; more?: boolean }
-
-/** Collapsed accordion line: "Opus 5.5 → GPT-5.5 → +2 more"; models that can't run right now are marked `out`. */
-export function classSummary(state: ModelRoutingState, modelClass: ModelClass, now = Date.now()): SummaryPart[] {
-  const parts = orderedClassModels(state, modelClass).map(m => ({ label: shortModelName(modelName(state, m.provider, m.model)), out: !availability(state, m.provider, now).ok }));
-  return parts.length <= 3 ? parts : [...parts.slice(0, 2), { label: `+${ parts.length - 2 } more`, more: true }];
-}
-
-export function emptyClassText(modelClass: ModelClass): string {
-  const fb = CLASS_FALLBACK[modelClass];
-  return fb ? `No models. Agents asking for ${ CLASS_LABELS[modelClass] } will fall back to ${ CLASS_LABELS[fb] }.`
-    : 'No models. Local has no fallback, so Local work won’t run until you add a model that runs on this Mac.';
-}
-
-export interface ClassNow { kind: 'ok' | 'cool' | 'off'; label: string; bold?: boolean; inUse?: string }
-
-/** "What an agent asking for this class gets right now", shown at the right of each accordion header. */
-export function classNow(state: ModelRoutingState, modelClass: ModelClass, now = Date.now()): ClassNow {
-  const t = traceClass(state, modelClass, now);
-  if (t.chosen) {
-    if (t.via) return { kind: 'ok', label: `Uses ${ CLASS_LABELS[t.via] }` };
-    return { kind: 'ok', label: shortModelName(modelName(state, t.chosen.provider, t.chosen.model)), bold: true, inUse: modelKey(t.chosen) };
-  }
-  if (t.waits.length) return { kind: 'cool', label: `Waiting until ${ formatClock(findProvider(state, t.waits[0].provider)?.coolingUntil) }` };
-  return { kind: 'off', label: 'Won’t run' };
-}
-
 // ── Agent model choice ────────────────────────────────────────────────────
 
 /** Short label for an agent's Model setting: "Agents list", "Class: Coding" or "Claude Code · claude-opus-5-5". */
@@ -366,19 +330,6 @@ export function sameRows(a: readonly RoutingRow[], b: readonly RoutingRow[]): bo
 export function listIsRecommended(state: ModelRoutingState, list: RoutingListKey): boolean {
   if (!state.recommended) return false;
   return list === 'agents' ? sameRows(state.agentsList, state.recommended.agentsList) : sameRows(state.subconsciousList, state.recommended.subconsciousList);
-}
-
-/**
- * True when a class already equals the recommended models in provider order. While a class follows
- * provider order its saved order is re-sorted with the Agents list, so the order is compared after sorting.
- */
-export function classIsRecommended(state: ModelRoutingState, modelClass: ModelClass): boolean {
-  const rec = state.recommended;
-  if (!rec) return false;
-  if (state.followProviderOrder[modelClass] !== rec.followProviderOrder[modelClass]) return false;
-  return state.followProviderOrder[modelClass]
-    ? sameModels(sortByProviderOrder(state, state.classes[modelClass]), sortByProviderOrder(state, rec.classes[modelClass]))
-    : sameModels(state.classes[modelClass], rec.classes[modelClass]);
 }
 
 // ── Defaults (new chats, heartbeat) ───────────────────────────────────────

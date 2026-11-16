@@ -15,17 +15,23 @@ export interface LateAnswerMessageSender {
 }
 
 export interface LateAnswerReceipt {
-  settled: true;
+  settled: boolean;
   conversationId: string;
   late: true;
   closed?: boolean;
   reason?: string;
 }
 
-/** Delivers a post-timeout question answer exactly once without reviving the parked tool. */
+/**
+ * Delivers an answer that arrived after its question stopped waiting, exactly
+ * once, to Sulla in the original thread. It goes in as an `inject_message`:
+ * added to a turn already running there, otherwise it starts a new turn, so it
+ * never replaces work in progress. The claim is released if delivery fails,
+ * and the answers stay saved on the decision either way.
+ */
 export class LateDecisionAnswerHandler {
   constructor(
-    private readonly decisions: Pick<PendingDecisionRepository, 'claimLateAnswer'>,
+    private readonly decisions: Pick<PendingDecisionRepository, 'claimLateAnswer' | 'releaseLateAnswer'>,
     private readonly conversations: LateAnswerConversationRepository,
     private readonly sender: LateAnswerMessageSender,
   ) {}
@@ -38,20 +44,36 @@ export class LateDecisionAnswerHandler {
     if (!conversation) {
       return { settled: true, conversationId: record.conversationId, late: true, closed: true, reason: 'Question closed; the original conversation no longer exists.' };
     }
-    if (!await this.decisions.claimLateAnswer(record.id)) {
+    if (!await this.decisions.claimLateAnswer(record.id, answers)) {
       return { settled: true, conversationId: record.conversationId, late: true, reason: 'answered late — sent as a new message' };
     }
     const answerText = answers.map(answer => `${ answer.question }: ${ answer.selected.join(', ') }`).join('; ');
+    let delivered = false;
+    try {
+      delivered = await this.sender.send(record.channel, {
+        type: 'inject_message',
+        data: {
+          threadId: record.conversationId,
+          content:  `My answers to your earlier question "${ record.title }" (it stopped waiting before I answered): ${ answerText }`,
+          metadata: { source: 'late_question_answer', inputSource: 'keyboard', decisionId: record.id },
+        },
+      });
+    } catch { delivered = false }
+    if (!delivered) {
+      await this.decisions.releaseLateAnswer(record.id).catch(() => undefined);
+      return { settled: false, conversationId: record.conversationId, late: true, reason: 'Could not reach Sulla. Your answers are saved; send them again.' };
+    }
+    // Visible record in the chat; Sulla already has the answer, so this is best effort.
     await this.sender.send(record.channel, {
       type: 'assistant_message',
       data: {
-        content: `Late answer to ${ record.title }: ${ answerText }`,
-        role: 'user',
-        kind: 'notice',
+        content:   `Late answer to ${ record.title }: ${ answerText }`,
+        role:      'user',
+        kind:      'notice',
         thread_id: record.conversationId,
         timestamp: Date.now(),
       },
-    });
+    }).catch(() => false);
     return { settled: true, conversationId: record.conversationId, late: true, reason: 'answered late — sent as a new message' };
   }
 

@@ -36,7 +36,10 @@
         class="chat-body"
         :class="{ 'is-editing': editing }"
       >
-        {{ msg.text }}
+        <span
+          v-if="reply"
+          class="reply-quote"
+        >{{ reply.quote }}</span>{{ reply ? reply.body : msg.text }}
       </div>
       <small class="noir-time">{{ timeLabel }}</small>
       <EditOverlay
@@ -69,11 +72,14 @@ import EditOverlay from './EditOverlay.vue';
 import TurnActions from './TurnActions.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
 import { useChatController } from '../../controller/useChatController';
+import { parseReply } from '../../messages/replyQuote';
 import ChatAttachmentChip from '../files/ChatAttachmentChip.vue';
 
 import type { UserMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: UserMessage }>();
+// A reply to part of a Sulla message arrives as a leading quote; show it as a quote block.
+const reply = computed(() => parseReply(props.msg.text));
 // Retained so existing parents that listen to @edit continue to compile.
 defineEmits<(e: 'edit') => void>();
 
@@ -124,5 +130,12 @@ function onNewChat(): void {
 .attachments {
   display: flex; gap: 8px; flex-wrap: wrap;
   justify-content: flex-end; margin-bottom: 12px;
+}
+.reply-quote {
+  margin-bottom: 8px; padding: 6px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--text-on-accent, #fff) 14%, transparent);
+  font-size: 0.9em; line-height: 1.45; opacity: 0.9;
+  white-space: pre-line;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
 </style>

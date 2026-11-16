@@ -12,6 +12,7 @@
  */
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
+import { runTools, type ToolInFlight } from './RunToolTracker';
 
 const lastActivity = new Map<string, number>();
 
@@ -38,6 +39,11 @@ export const RunActivity = {
 
   lastActivityAt(key: string): number | undefined {
     return lastActivity.get(key);
+  },
+
+  /** The oldest tool call still running for this key (a long command emits nothing until it ends). */
+  toolInFlight(key: string): ToolInFlight | undefined {
+    return runTools.inFlight(key);
   },
 
   end(key: string): void {

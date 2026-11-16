@@ -26,6 +26,7 @@ const state: EditableState = {
     standard: [{ provider: 'openai', model: 'top' }, { provider: 'anthropic', model: 'next' }],
   },
   followProviderOrder: { frontier: true, standard: true, fast: true, coding: true, local: true },
+  neverUse: [],
 };
 
 function router(): ModelRouter {

@@ -11,6 +11,8 @@
 //   2. Register a component in components/transcript/MessageRouter.vue
 //   3. Done. TypeScript will force you to handle it everywhere that matters.
 
+import type { AgentResultCardData } from '@pkg/shared/agentResults/AgentResultCard';
+
 import type { ArtifactId, AttachmentId, MessageId } from '../types/chat';
 
 export type MessageKind =
@@ -42,80 +44,90 @@ export interface MessageBase {
   readonly turnId?:   string;  // groups messages that belong to one logical turn
   /** For pinning/bookmarking */
   pinned?:            boolean;
+  /** The agent and model that were running when this block arrived (work blocks only). */
+  by?:                { agent?: string; model?: string };
 }
 
 // ─── User ─────────────────────────────────────────────────────────
 export interface UserMessage extends MessageBase {
-  kind:         'user';
-  text:         string;
+  kind:           'user';
+  text:           string;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
-  attachments?: readonly AttachedFile[];
+  attachments?:   readonly AttachedFile[];
   /** If this turn is a re-run of an earlier message */
-  editedFrom?:  MessageId;
+  editedFrom?:    MessageId;
 }
 
 export interface AttachedFile {
-  id:     AttachmentId;
-  name:   string;
-  size:   string;  // humanized e.g. "48 KB"
-  kind:   'image' | 'json' | 'ts' | 'md' | 'log' | 'file';
-  url?:   string;  // data URL for images (optional)
+  id:       AttachmentId;
+  name:     string;
+  size:     string;  // humanized e.g. "48 KB"
+  kind:     'image' | 'json' | 'ts' | 'md' | 'log' | 'file';
+  url?:     string;  // data URL for images (optional)
   fileRef?: {
-    fileId: string; versionId: string; path: string; mime: string; size: number;
-    createdByType?: string; createdById?: string; collectionId?: string; collectionKind?: string; agentRunId?: string;
+    fileId:          string;
+    versionId:       string;
+    path:            string;
+    mime:            string;
+    size:            number;
+    createdByType?:  string;
+    createdById?:    string;
+    collectionId?:   string;
+    collectionKind?: string;
+    agentRunId?:     string;
   };
 }
 
 // ─── Sulla (complete) + Streaming (in-flight) ────────────────────
 export interface SullaMessage extends MessageBase {
-  kind:       'sulla';
-  text:       string;        // markdown-ish; rendered by prose component
-  model:      string;        // e.g. "opus-4.7"
-  tokens?:    number;
+  kind:            'sulla';
+  text:            string;        // markdown-ish; rendered by prose component
+  model:           string;        // e.g. "opus-4.7"
+  tokens?:         number;
   fileReferences?: readonly AttachedFile[];
 }
 
 export interface StreamingMessage extends MessageBase {
-  kind:       'streaming';
-  text:       string;        // grows over time
-  startedAt:  number;
+  kind:      'streaming';
+  text:      string;        // grows over time
+  startedAt: number;
 }
 
 // ─── Thinking (live / settled / expanded rendered by Thinking.vue) ─
 export interface ThinkingMessage extends MessageBase {
-  kind:        'thinking';
-  thoughts:    readonly string[];  // appended to while live
-  startedAt:   number;
-  completed:   boolean;            // false = live streaming
+  kind:         'thinking';
+  thoughts:     readonly string[];  // appended to while live
+  startedAt:    number;
+  completed:    boolean;            // false = live streaming
   completedAt?: number;            // wall-clock ms when completed flipped true — used to freeze the elapsed timer
-  summary?:    string;             // one-line summary when settled
+  summary?:     string;             // one-line summary when settled
 }
 
 // ─── Tool call ────────────────────────────────────────────────────
 export interface ToolMessage extends MessageBase {
-  kind:       'tool';
-  tool:       string;        // "Grep" | "Read" | "Bash" | …
-  desc:       string;        // short human description
-  status:     'running' | 'ok' | 'error';
-  meta?:      string;        // "8 hits · 120ms" | "exit 0 · 94ms" | …
-  input?:     string;        // formatted invocation details
-  output?:    string;        // captured output (may be truncated)
-  error?:     string;        // failure detail
+  kind:          'tool';
+  tool:          string;        // "Grep" | "Read" | "Bash" | …
+  desc:          string;        // short human description
+  status:        'running' | 'ok' | 'error';
+  meta?:         string;        // "8 hits · 120ms" | "exit 0 · 94ms" | …
+  input?:        string;        // formatted invocation details
+  output?:       string;        // captured output (may be truncated)
+  error?:        string;        // failure detail
   outputFormat?: 'text' | 'code' | 'url' | 'json';
 }
 
 // ─── Tool approval ────────────────────────────────────────────────
 export interface ToolApprovalMessage extends MessageBase {
   resolutionError?: string;
-  kind:        'tool_approval';
-  reason:      string;         // what Sulla wants to do & why
-  command:     string;         // the exact command/action
-  decision:    'pending' | 'approved' | 'denied' | 'timed_out';
+  kind:             'tool_approval';
+  reason:           string;         // what Sulla wants to do & why
+  command:          string;         // the exact command/action
+  decision:         'pending' | 'approved' | 'denied' | 'timed_out';
   /** Round-trip id that the renderer sends back on approve/deny so the
    *  backend's pending promise (parked in ApprovalService) can settle. */
-  approvalId?: string;
+  approvalId?:      string;
   /** Optional origin tag — tool / workflow / vault / function / etc. */
-  origin?:     { kind: string; [field: string]: unknown };
+  origin?:          { kind: string; [field: string]: unknown };
 }
 
 // ─── Tool question (multiple choice) ──────────────────────────────
@@ -128,6 +140,10 @@ export interface ToolQuestionItem {
   header?:      string;
   multiSelect?: boolean;
   options:      readonly ToolQuestionOption[];
+  /** Something the user must do, answered with Done (see ask_user_question `task`). */
+  task?:        boolean;
+  /** For a task: the command the user runs. */
+  command?:     string;
 }
 /** One element of the user's answer — the selected option labels (and/or
  *  free-form text) for a single question. */
@@ -137,32 +153,32 @@ export interface ToolQuestionAnswerItem {
 }
 export interface ToolQuestionMessage extends MessageBase {
   resolutionError?: string;
-  resolutionNote?: string;
-  kind:        'tool_question';
-  questions:   readonly ToolQuestionItem[];
-  status:      'pending' | 'answered' | 'timed_out';
+  resolutionNote?:  string;
+  kind:             'tool_question';
+  questions:        readonly ToolQuestionItem[];
+  status:           'pending' | 'answered' | 'timed_out';
   /** Round-trip id sent back on answer so the backend's parked promise
    *  (ApprovalService.parkQuestion) can settle. */
-  questionId?: string;
+  questionId?:      string;
   /** Populated once the user answers — mirrors what was sent back. */
-  answers?:    readonly ToolQuestionAnswerItem[];
+  answers?:         readonly ToolQuestionAnswerItem[];
   /** When the backend stops waiting for an answer (ms epoch), from the decisions store. */
-  expiresAt?:  number;
+  expiresAt?:       number;
 }
 
 // ─── Patch ────────────────────────────────────────────────────────
 export interface PatchMessage extends MessageBase {
-  kind:     'patch';
-  path:     string;         // "pkg/sulla-desktop/main/browserTabs/GuestBridge.ts"
-  stat:     { added: number; removed: number };
-  hunks:    readonly PatchHunk[];
-  state:    'proposed' | 'applied' | 'rejected';
+  kind:        'patch';
+  path:        string;         // "pkg/sulla-desktop/main/browserTabs/GuestBridge.ts"
+  stat:        { added: number; removed: number };
+  hunks:       readonly PatchHunk[];
+  state:       'proposed' | 'applied' | 'rejected';
   /** Opaque payload used by the main-process revert handler. Only present
    *  for patches emitted post-hoc after an agent Edit/Write tool_use. */
   revertMeta?: PatchRevertMeta;
 }
 export type PatchRevertMeta =
-  | { op: 'edit';  path: string; oldString: string; newString: string }
+  | { op: 'edit'; path: string; oldString: string; newString: string }
   | { op: 'write'; path: string; oldContent: string };
 export interface PatchHunk {
   lines: readonly PatchLine[];
@@ -183,11 +199,11 @@ export interface ChannelMessage extends MessageBase {
 
 // ─── Sub-agent activity ───────────────────────────────────────────
 export interface SubAgentMessage extends MessageBase {
-  kind:    'subagent';
-  name:    string;          // "code-researcher"
-  desc:    string;          // current step or final summary
-  status:  'running' | 'done' | 'error';
-  steps:   readonly { tag: string; text: string }[];
+  kind:   'subagent';
+  name:   string;          // "code-researcher"
+  desc:   string;          // current step or final summary
+  status: 'running' | 'done' | 'error';
+  steps:  readonly { tag: string; text: string }[];
 }
 
 export interface SubAgentExchangeMessage extends MessageBase {
@@ -218,9 +234,9 @@ export interface Citation {
 
 // ─── Memory saved/updated/removed ────────────────────────────────
 export interface MemoryMessage extends MessageBase {
-  kind:   'memory';
-  memId:  string;           // e.g. "w9oK"
-  action: 'saved' | 'updated' | 'removed';
+  kind:     'memory';
+  memId:    string;           // e.g. "w9oK"
+  action:   'saved' | 'updated' | 'removed';
   summary?: string;
 }
 
@@ -229,6 +245,8 @@ export interface ProactiveMessage extends MessageBase {
   kind:     'proactive';
   headline: string;
   body:     string;         // markdown-ish
+  /** Finished background agents: drawn as a result card instead of the text. */
+  result?:  AgentResultCardData;
 }
 
 export interface HeartbeatMessage extends MessageBase {
@@ -239,17 +257,17 @@ export interface HeartbeatMessage extends MessageBase {
 
 // ─── TTS (transient speaking indicator) ──────────────────────────
 export interface TtsMessage extends MessageBase {
-  kind:       'tts';
-  text:       string;       // what's being spoken
-  refId?:     MessageId;    // the sulla message this narrates
-  endsAt?:    number;       // expected end
+  kind:    'tts';
+  text:    string;       // what's being spoken
+  refId?:  MessageId;    // the sulla message this narrates
+  endsAt?: number;       // expected end
 }
 
 // ─── Interim user voice transcript ────────────────────────────────
 export interface InterimMessage extends MessageBase {
-  kind:        'interim';
-  text:        string;      // grows as user speaks
-  startedAt:   number;
+  kind:      'interim';
+  text:      string;      // grows as user speaks
+  startedAt: number;
 }
 
 // ─── Error ────────────────────────────────────────────────────────
@@ -269,8 +287,8 @@ export interface NoticeMessage extends MessageBase {
 
 // ─── HTML reply ───────────────────────────────────────────────────
 export interface HtmlMessage extends MessageBase {
-  kind:     'html';
-  html:     string;         // sanitized
+  kind:        'html';
+  html:        string;         // sanitized
   artifactId?: ArtifactId;  // if rendered as a separate artifact
 }
 

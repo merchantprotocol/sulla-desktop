@@ -21,7 +21,8 @@
 <template>
   <div
     class="chat-root"
-    :class="{ 'artifact-open': hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': artifactExpanded, 'subagents-open': subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': chatFilesOpen }"
+    :class="{ 'artifact-open': !dockSide && hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': !dockSide && artifactExpanded, 'subagents-open': !dockSide && subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': !dockSide && chatFilesOpen, 'dock-side': dockSide }"
+    :style="{ '--side-ratio': String(sideRatio) }"
   >
     <Canvas />
 
@@ -46,6 +47,7 @@
         @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
         @select="selectSubAgent"
         @visibility="subAgentRailVisible = $event"
+        @counts="subAgentCounts = $event"
       />
 
       <main class="main">
@@ -63,8 +65,15 @@
           bottom edge looks the same).
         -->
         <div class="composer-backdrop" aria-hidden="true" />
-        <StatusBadges />
-        <SessionMark editable />
+        <ChatHeader
+          :sub-agents="subAgentCounts"
+          :sub-agents-open="!subAgentsCollapsed"
+          :files-open="chatFilesOpen"
+          @toggle-subagents="subAgentsCollapsed = !subAgentsCollapsed"
+          @toggle-files="setChatFilesOpen(!chatFilesOpen)"
+          :dock-side="dockSide"
+          @find-chat="switcherOpen = true"
+        />
         <SearchBar />
 
         <EmptyState
@@ -74,22 +83,62 @@
         />
         <Transcript v-else />
 
-        <Composer />
+        <!--
+          One Composer, moved (not remounted) into the side dock when the dock
+          is on the side, so the draft, attachments and queue come along.
+        -->
+        <Teleport
+          :to="sideBox ?? 'body'"
+          :disabled="!dockSide || !sideBox"
+        >
+          <Composer />
+        </Teleport>
       </main>
 
-      <ArtifactSidebar
-        :collapsed="artifactCollapsed"
-        :agent="selectedSubAgent"
-        @toggle-collapse="artifactCollapsed = !artifactCollapsed"
-        @open-agent="openSubAgentCard"
-        @dismiss-agent="dismissSubAgent"
-      />
-      <ChatFilesDrawer
-        :open="chatFilesOpen"
-        @close="setChatFilesOpen(false)"
-        @open-files="openFiles"
-      />
+      <template v-if="!dockSide">
+        <ArtifactSidebar
+          :collapsed="artifactCollapsed"
+          :agent="selectedSubAgent"
+          @toggle-collapse="artifactCollapsed = !artifactCollapsed"
+          @open-agent="openSubAgentCard"
+          @dismiss-agent="dismissSubAgent"
+        />
+        <ChatFilesDrawer
+          :open="chatFilesOpen"
+          @close="setChatFilesOpen(false)"
+          @open-files="openFiles"
+        />
+      </template>
+      <SideDock
+        v-else
+        ref="sideDock"
+      >
+        <template #files>
+          <ChatFilesDrawer
+            :open="true"
+            @close="sideDock?.selectTab('sulla')"
+            @open-files="openFiles"
+          />
+        </template>
+        <template #artifacts>
+          <ArtifactSidebar
+            :collapsed="false"
+            :agent="selectedSubAgent"
+            @toggle-collapse="sideDock?.selectTab('sulla')"
+            @open-agent="openSubAgentCard"
+            @dismiss-agent="dismissSubAgent"
+          />
+        </template>
+      </SideDock>
     </div>
+    <QuickSwitcher
+      v-if="switcherOpen"
+      :threads="allThreads"
+      :pinned="pinnedEntries"
+      @activate="id => { switcherOpen = false; onActivate(id) }"
+      @jump-to="target => { switcherOpen = false; onJumpTo(target) }"
+      @close="switcherOpen = false"
+    />
 
     <SubAgentDrawer :target="subAgentTarget" @close="subAgentTarget = null" />
 
@@ -104,8 +153,7 @@
 import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import Canvas             from './components/chrome/Canvas.vue';
-import StatusBadges       from './components/chrome/StatusBadges.vue';
-import SessionMark        from './components/chrome/SessionMark.vue';
+import ChatHeader         from './components/chrome/ChatHeader.vue';
 import DropOverlay        from './components/chrome/DropOverlay.vue';
 import ModelSwitcherModal from './components/chrome/ModelSwitcherModal.vue';
 import ShortcutsModal     from './components/chrome/ShortcutsModal.vue';
@@ -120,6 +168,9 @@ import EmptyState        from './components/empty/EmptyState.vue';
 import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SubAgentRail      from './components/subagent/SubAgentRail.vue';
+import SideDock          from './components/sidedock/SideDock.vue';
+import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
+import { DockPositions } from './composables/useDockPosition';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 
@@ -143,6 +194,7 @@ import { usePushToTalk }         from './composables/usePushToTalk';
 import { useResizeSync }         from './composables/useResizeSync';
 
 import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
+import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
 import type { Thread }   from './models/Thread';
@@ -286,6 +338,7 @@ const modelSelector   = new AgentModelSelectorController({
     controller.selectForChat(selected, providerId || null, agentId);
   },
 });
+controller.agentModelOf = agentId => modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.model;
 modelSelector.start().then(() => {
   if (controller.thread.value.providerId || controller.thread.value.agentId) {
     modelSelector.restoreForChat(controller.thread.value.providerId, controller.model.value.id, controller.thread.value.agentId);
@@ -347,6 +400,7 @@ const onSupportPrompt = (event:Event) => {
 window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
 onBeforeUnmount(() => window.removeEventListener('sulla:support-chat-prompt', onSupportPrompt));
 const subAgentRailVisible = ref(false);
+const subAgentCounts = ref({ total: 0, live: 0 });
 
 // Side panels can be tucked away to a tab on the edge; the choice
 // sticks across tabs and restarts.
@@ -364,6 +418,8 @@ const subAgentRail = ref<InstanceType<typeof SubAgentRail> | null>(null);
 const selectedSubAgent = ref<ThreadAgentCard | null>(null);
 const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selectedSubAgent.value.kind }:${ selectedSubAgent.value.jobId }:${ selectedSubAgent.value.taskIndex }` : '');
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+// The composer's activity line reads this thread's agents and reports its state to the tab strip.
+provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
 
 function selectSubAgent(card: ThreadAgentCard): void {
   const isNewSelection = selectedSubAgentKey.value !== `${ card.kind }:${ card.jobId }:${ card.taskIndex }`;
@@ -588,8 +644,7 @@ const pinnedEntries = computed(() => {
 
 /**
  * Activate the pin's thread, then fire a window event so the Transcript
- * can scroll the target message into view. Transcript-side handler is
- * a follow-up; for now the activate gets you there.
+ * scrolls the target message into view (see TranscriptJump).
  */
 async function onJumpTo(target: { threadId: ThreadId; messageId: any }): Promise<void> {
   await onActivate(target.threadId);
@@ -604,7 +659,7 @@ async function onJumpTo(target: { threadId: ThreadId; messageId: any }): Promise
 // ─── Composables ───────────────────────────────────────────────────
 // Pass the controller in explicitly because Vue doesn't let a component
 // inject its own provide(). Descendants can still just call useChatController().
-const { active: dragActive } = useDragDrop(controller);
+const { active: dragActive } = useDragDrop(controller, toRef(props, 'isActive'));
 useKeyboardShortcuts({
   controller,
   isActive: toRef(props, 'isActive'),
@@ -690,6 +745,21 @@ function onForkEvent(ev: Event): void {
 const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
+// ─── Dock position: bottom of the chat, or the right-hand side column ───
+const { position: dockPosition, sideRatio } = DockPositions.use();
+const dockSide = computed(() => dockPosition.value === 'side');
+const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
+const sideBox = computed(() => sideDock.value?.boxEl ?? null);
+// Find chat (⌘P): past chats, pins, and this chat's decisions and results.
+const switcherOpen = ref(false);
+function onFindChatKey(event: KeyboardEvent): void {
+  if (props.isActive === false || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== 'p') return;
+  event.preventDefault();
+  switcherOpen.value = !switcherOpen.value;
+}
+onMounted(() => window.addEventListener('keydown', onFindChatKey));
+onBeforeUnmount(() => window.removeEventListener('keydown', onFindChatKey));
+
 function setChatFilesOpen(open:boolean):void {
   chatFilesOpen.value = open;
   window.dispatchEvent(new CustomEvent('sulla:chat-files-state-changed', { detail: { open } }));
@@ -721,11 +791,45 @@ watch(
   },
   { immediate: true },
 );
+// A chat tab and its chat share one name. Renaming the tab (right-click →
+// Rename Tab) renames the chat; the title watcher above then carries it back
+// to the tab, so the custom name is cleared rather than kept separately.
+watch(
+  () => tabs.find(t => t.id === props.tabId)?.customTitle,
+  (name) => {
+    if (!props.tabId || !name) return;
+    if (name !== controller.thread.value.title) controller.renameThread(name);
+    updateTab(props.tabId, { customTitle: undefined });
+  },
+  { immediate: true },
+);
 watch(() => props.isActive, (active) => {
   if (active) window.dispatchEvent(new CustomEvent('sulla:chat-files-state-changed', { detail: { open: chatFilesOpen.value } }));
 });
 
+// A tab opened by /resume carries a one-time handoff: start on the shelved
+// note with the same persona, then mark the note resumed.
+function startShelfResume(): void {
+  if (!props.tabId) return;
+  let pending: { prompt?: string; agentId?: string | null; fileId?: string } | null = null;
+  try {
+    const raw = localStorage.getItem(ShelfNotes.RESUME_KEY(props.tabId));
+    if (raw) { localStorage.removeItem(ShelfNotes.RESUME_KEY(props.tabId)); pending = JSON.parse(raw) }
+  } catch { pending = null }
+  if (!pending?.prompt) return;
+  if (pending.agentId) controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, pending.agentId);
+  const { prompt, fileId } = pending;
+  setTimeout(() => {
+    controller.send(prompt);
+    if (fileId) {
+      ipcRenderer.invoke('thread-shelf:mark-resumed' as any, fileId, controller.thread.value.id)
+        .catch((error: unknown) => console.warn('[ChatPage] Could not mark the shelf note resumed:', error));
+    }
+  }, 600);
+}
+
 onMounted(() => {
+  startShelfResume();
   window.addEventListener('chat:new-chat',          onNewChatEvent);
   window.addEventListener('chat:fork',              onForkEvent);
   window.addEventListener('chat:artifact-expand',   onArtifactExpand);
@@ -874,5 +978,21 @@ onBeforeUnmount(() => {
   .chat-root.chat-files-open.artifact-open .main { right: 436px; }
   .chat-root.chat-files-open.artifact-open.artifact-expanded .main { right: 70vw; }
   .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
+}
+
+/* ─── Side dock: the right column holds the tabs and the message box ─── */
+/* Its width is a saved share of the chat area (dragged on its edge), kept between 340px and 70%. */
+.chat-root { --side-dock-w: clamp(340px, calc(var(--side-ratio, 0.32) * 100%), 70%); }
+.chat-root.dock-side .main { right: var(--side-dock-w, 440px); }
+/* useResizeSync sets these inline from the bottom box; on the side nothing sits over the transcript. */
+.chat-root.dock-side .main { --composer-h: 0px !important; --scroller-pad-b: 48px !important; }
+.chat-root.dock-side .composer-backdrop { display: none; }
+/* The Sulla tab's lanes replace the Sub-agents rail (kept mounted for its counts). */
+.chat-root.dock-side .shell :deep(.sd-agent-rail) { display: none; }
+.chat-root.dock-side .shell :deep(.sdk-embed .chat-files-drawer) {
+  position: static; display: flex; width: auto; height: 100%; border-left: 0; background: none; backdrop-filter: none;
+}
+.chat-root.dock-side .shell :deep(.sdk-embed .sd-artifact-panel) {
+  position: static; width: auto !important; height: 100%; margin: 0; border-radius: 0; box-shadow: none; background: none; backdrop-filter: none;
 }
 </style>

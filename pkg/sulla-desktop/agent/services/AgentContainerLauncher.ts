@@ -33,6 +33,7 @@ import {
 } from './GuestRuntimeTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
+import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
 import {
@@ -275,6 +276,29 @@ export function isContainerGoneError(error: unknown): boolean {
   const text = `${ (error as { stderr?: string })?.stderr ?? '' } ${ (error as Error)?.message ?? '' }`;
 
   return /no such container|is not running/i.test(text);
+}
+
+/**
+ * `sulla-runtime exec` exits 255 with no stderr when the VM's command channel
+ * is not up yet (right after a VM start). Retry an idempotent guest step a few
+ * times instead of failing the whole agent job on that boot race.
+ */
+export async function retryWhileGuestStarting<T>(
+  step: () => Promise<T>,
+  attempts = 5,
+  delayMs = 2_000,
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await step();
+    } catch (error) {
+      const starting = (error as { exitCode?: unknown })?.exitCode === 255 && !(error as { stderr?: string }).stderr?.trim();
+      if (!starting || attempt >= attempts) throw error;
+      console.warn(`[AgentContainer] Guest command channel not ready (attempt ${ attempt }/${ attempts }); retrying`);
+      await sleep(delayMs);
+    }
+  }
 }
 
 function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
@@ -811,7 +835,8 @@ async function provisionContainerSecrets(
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new InfrastructureFailure(`Invalid container secret name ${ key }`);
     return `${ key }\t${ Buffer.from(value).toString('base64') }`;
   }).join('\n') + '\n';
-  await guestExec([
+  // Idempotent (install -d, overwrite each file), so safe to retry.
+  await retryWhileGuestStarting(() => guestExec([
     'sh', '-c',
     [
       'set -eu', 'umask 077',
@@ -829,7 +854,7 @@ async function provisionContainerSecrets(
       ].join('\n'),
     ].join('; '),
     'sulla-container-secrets', secretDir, String(identity.uid), String(identity.gid),
-  ], encoded);
+  ], encoded));
   return secretDir;
 }
 
@@ -1791,6 +1816,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       const finish = async(error?: Error) => {
         if (settled) return;
         settled = true;
+        runTools.clear(run.state.metadata);
         clearTimeout(idleTimer);
         clearInterval(renewTimer);
         if (abortForceTimer) clearTimeout(abortForceTimer);
@@ -1858,6 +1884,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
           const item = event.item;
           const kind = item.item_type ?? item.type;
+          // Codex: a command or tool call is in flight from started to completed.
+          if (typeof item.id === 'string' && ['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].includes(kind)) {
+            if (event.type === 'item.started') runTools.started(run.state.metadata, item.id, kind === 'command_execution' ? 'a command' : String(item.tool ?? kind));
+            else runTools.finished(run.state.metadata, item.id);
+          }
           if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
             streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
             flushStream(true);
@@ -1878,6 +1909,13 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         }
         if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
           activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
+          // Claude Code: in flight until its tool_result comes back in a user message.
+          if (typeof nested.content_block.id === 'string') runTools.started(run.state.metadata, nested.content_block.id, nested.content_block.name === 'Bash' ? 'a command' : String(nested.content_block.name ?? 'a tool'));
+        }
+        if (event.type === 'user' && Array.isArray(event.message?.content)) {
+          for (const block of event.message.content) {
+            if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') runTools.finished(run.state.metadata, block.tool_use_id);
+          }
         }
       };
       const onData = (chunk: Buffer, parseProvider = false) => {

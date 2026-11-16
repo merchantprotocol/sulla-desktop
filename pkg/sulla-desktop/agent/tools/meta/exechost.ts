@@ -10,9 +10,10 @@ import { HOST_ACCESS_DISABLED_MESSAGE, isHostAccessEnabled } from '../util/hostA
 /**
  * ExecHost — LAST RESORT shell on the host macOS machine (NOT the Sulla VM).
  *
- * Everyday work must stay in the VM via the regular `exec` tool. The host
- * home directory is mounted into the Sulla VM at the same path, so project files,
- * installs, builds, tests, and sulla CLI calls do not need host execution.
+ * Everyday work must stay in the VM via the regular `exec` tool. Project
+ * files live in VM worktrees (/mnt/worktrees) and Sulla Files, so installs,
+ * builds, tests, and sulla CLI calls do not need host execution. The host
+ * home directory is not shared into the VM.
  * Use this tool only when the parent host MUST be used (host-only
  * binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or
  * an explicit user request). Prefer reaching host services from the VM at

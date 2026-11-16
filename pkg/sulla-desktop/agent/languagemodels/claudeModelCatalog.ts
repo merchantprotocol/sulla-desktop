@@ -31,6 +31,26 @@ export interface ClaudeCatalogModel {
   id:           string;
   name:         string;
   description?: string;
+  efforts?:     { id: string }[];
+  /** True for the fixed list used when Anthropic offers no model list (subscription sign-in). */
+  unverified?:  boolean;
+}
+
+/**
+ * Effort levels the installed Claude Code accepts, read from its own `--help`
+ * ("--effort <level> … (low, medium, high, xhigh, max)"). Empty when the CLI
+ * has no such option, so the page then shows no effort choice for Claude.
+ */
+async function claudeEffortLevels(): Promise<{ id: string }[]> {
+  try {
+    const { runCommand } = await import('../tools/util/CommandRunner');
+    const { stdout, exitCode } = await runCommand('claude --help', [], { runInGuest: true, timeoutMs: 15_000, maxOutputChars: 200_000 });
+    if (exitCode !== 0) return [];
+    const match = /--effort\s+<level>[\s\S]{0,200}?\(([a-z, ]+)\)/.exec(stdout);
+    return match ? match[1].split(',').map(s => s.trim()).filter(s => /^[a-z]{2,10}$/.test(s)).map(id => ({ id })) : [];
+  } catch {
+    return [];
+  }
 }
 
 /** "Auto" = omit --model so the claude CLI uses its configured default. */
@@ -121,11 +141,16 @@ export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<
   if (credential.kind === 'oauth-capability' || credential.kind === 'oauth-pending') {
     // Anthropic rejects Claude subscription OAuth on /v1/models. Keep the
     // supported CLI aliases stable instead of making a request known to fail.
+    // The aliases are Claude Code's own "newest in this family" names, so they stay current without edits here.
     dynamic = [
-      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' },
-      { id: 'claude-opus-5', name: 'Claude Opus 5' },
-      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' },
-      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' },
+      { id: 'opus', name: 'Newest Opus', description: 'Claude Code picks the latest Opus', unverified: true },
+      { id: 'sonnet', name: 'Newest Sonnet', description: 'Claude Code picks the latest Sonnet', unverified: true },
+      { id: 'haiku', name: 'Newest Haiku', description: 'Claude Code picks the latest Haiku', unverified: true },
+      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', unverified: true },
+      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', unverified: true },
+      { id: 'claude-opus-5', name: 'Claude Opus 5', unverified: true },
+      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', unverified: true },
+      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', unverified: true },
     ];
   } else if (credential.kind === 'api-key' && credential.apiKey) {
     dynamic = await fetchLiveModels(credential.apiKey, credential.workspaceId ?? '');
@@ -135,7 +160,8 @@ export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<
     dynamic = null;
   }
 
-  const models = [AUTO_SENTINEL, ...(dynamic ?? [])];
+  const efforts = dynamic ? await claudeEffortLevels() : [];
+  const models = [AUTO_SENTINEL, ...(dynamic ?? []).map(m => (efforts.length ? { ...m, efforts } : m))];
   if (dynamic) {
     cache = { at: Date.now(), models };
     log.log(`[claudeModelCatalog] Loaded ${ models.length - 1 } claude models from live catalog`);

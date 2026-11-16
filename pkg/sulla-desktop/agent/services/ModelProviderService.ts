@@ -58,9 +58,16 @@ export interface ProviderInfo {
 }
 
 export interface ProviderModelInfo {
-  id:           string;
-  name:         string;
-  description?: string;
+  id:             string;
+  name:           string;
+  description?:   string;
+  /** Effort levels the model accepts, as its CLI reports them. */
+  efforts?:       { id: string; description?: string }[];
+  defaultEffort?: string;
+  /** The model the provider recommends moving to, when it names one. */
+  upgrade?:       string;
+  /** True when the entry comes from a fixed list, not from the provider. */
+  unverified?:    boolean;
 }
 
 // ── Excluded from the model selector dropdown ────────────────────

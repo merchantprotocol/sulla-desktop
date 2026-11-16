@@ -402,6 +402,14 @@ export class ConversationHistoryModel {
   /**
    * Lookup by thread_id.
    */
+  /** Every live row for one chat thread (a thread reopened in another tab gets its own row). */
+  static async listByThread(threadId: string): Promise<ConversationHistoryRecord[]> {
+    return postgresClient.queryAll<ConversationHistoryRecord>(`
+      SELECT * FROM ${ ConversationHistoryModel.TABLE }
+      WHERE thread_id = $1 AND deleted_at IS NULL
+    `, [threadId]);
+  }
+
   static async getByThread(threadId: string): Promise<ConversationHistoryRecord | null> {
     try {
       return await postgresClient.queryOne<ConversationHistoryRecord>(`

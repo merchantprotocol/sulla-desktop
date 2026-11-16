@@ -71,26 +71,7 @@
       </p>
     </div>
   </aside>
-  <button
-    v-else-if="rows.length"
-    type="button"
-    class="sd-agent-rail-tab"
-    :class="{ running: liveCount }"
-    title="Show sub-agents"
-    aria-label="Show sub-agents panel"
-    @click="emit('toggle-collapse')"
-  >
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    ><rect
-      x="3.5"
-      y="4.5"
-      width="17"
-      height="15"
-      rx="3"
-    /><path d="M9.5 4.5v15" /></svg><b>Sub-agents · {{ liveCount ? `${liveCount} live` : rows.length }}</b>
-  </button>
+  <!-- Hidden: reopen from the chat header's Sub-agents button. -->
 </template>
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -104,7 +85,7 @@ import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{ parentThreadId?: string; collapsed?: boolean; selectedKey?: string }>();
-const emit = defineEmits<{ select: [card: ThreadAgentCard]; visibility: [visible: boolean]; 'toggle-collapse': [] }>();
+const emit = defineEmits<{ select: [card: ThreadAgentCard]; visibility: [visible: boolean]; counts: [counts: { total: number; live: number }]; 'toggle-collapse': [] }>();
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const now = ref(Date.now());
@@ -144,6 +125,8 @@ async function dismiss(card: ThreadAgentCard): Promise<void> {
 }
 defineExpose({ dismiss });
 watch(() => rows.value.length > 0, visible => emit('visibility', visible), { immediate: true });
+// The chat header's always-visible Sub-agents button shows these.
+watch(() => [rows.value.length, liveCount.value] as const, ([total, live]) => emit('counts', { total, live }), { immediate: true });
 watch(() => props.parentThreadId, () => { dismissed.value = new Set(); void refreshMetadata() }, { immediate: true });
 onMounted(() => { timer = setInterval(() => { now.value = Date.now(); metadataTick += 1; if (metadataTick % 3 === 0) void refreshMetadata() }, 1000) });
 onBeforeUnmount(() => { if (timer) clearInterval(timer); });
@@ -329,36 +312,6 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer); });
   padding: 24px 12px;
   color: var(--text-muted);
   font-size: 13px;
-}
-.sd-agent-rail-tab {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  z-index: 8;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 5px;
-  border: 1px solid var(--border-default);
-  border-left: 0;
-  border-radius: 0 9px 9px 0;
-  background: var(--bg-surface);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.sd-agent-rail-tab svg {
-  width: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-}
-.sd-agent-rail-tab b {
-  writing-mode: vertical-rl;
-  font: 600 10px var(--font-mono);
-  letter-spacing: .12em;
-  text-transform: uppercase;
 }
 @media(prefers-reduced-motion:reduce) {
   .sd-filter-indicator,.sd-agent-row{transition-duration:1ms !important;

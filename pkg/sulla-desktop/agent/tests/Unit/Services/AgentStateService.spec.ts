@@ -300,8 +300,26 @@ describe('authoritative live agent state', () => {
   it('shows an inactive task as quiet before the longer lost threshold', async() => {
     // risk: an hour-silent task is presented as actively working
     const { states } = harness([job('quiet', [task({ startedAt: 1_000 })])]);
-    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }).snapshot();
-    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true });
+    // Watching since before the task started, so its silence is real.
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 0).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true, runtimeAlive: null });
+  });
+
+  // risk: right after a restart every running agent read "silent · it may have stopped" because in-memory activity was empty
+  it('does not count the time before a restart as silence', async() => {
+    const { states } = harness([job('resumed', [task({ startedAt: 1_000 })])]);
+    const justStarted = new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);
+    expect((await justStarted.snapshot()).rows[0].state).toBe('working');
+    const later = new AgentStateProjector(states, new EmptyTelemetry(), () => 14_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);
+    expect((await later.snapshot()).rows[0].state).toBe('quiet');
+  });
+
+  // risk: a quiet agent whose container is still running read as stopped
+  it('says whether a quiet container agent is still running', async() => {
+    const { states } = harness([job('quiet', [task({ startedAt: 1_000, threadId: 't-quiet' })])]);
+    const runtime = { alive: (thread: string | undefined | null) => thread === 't-quiet' };
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, runtime, 0).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', runtimeAlive: true });
   });
 
   it('keeps snapshot state working when task-scoped model activity is fresh but its check-in is old', async() => {
@@ -444,6 +462,45 @@ describe('authoritative live agent state', () => {
     const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
     expect(rows.find(row => row.taskIndex === 0)?.state).toBe('parked');
     expect(rows.find(row => row.taskIndex === 1)?.state).toBe('blocked');
+  });
+
+  it('marks only a future timer wake as a scheduled wake-up, not a re-parked idle task', async() => {
+    // risk: a worker parked on nothing read as "waiting on 0 agents" and kept its thread looking busy
+    const timer = job('timer', [task({ status: 'parked', wakeAt: 600_000 })], { status: 'parked' });
+    const idle = job('idle', [task({ status: 'parked', wakeAt: 400_000 })], { status: 'parked' });
+    const { states } = harness([timer, idle], 500_000);
+    const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
+    expect(rows.find(row => row.jobId === 'timer')).toMatchObject({ state: 'parked', stateReason: 'scheduled wake-up' });
+    expect(rows.find(row => row.jobId === 'idle')).toMatchObject({ state: 'parked', stateReason: null });
+  });
+
+  it('clears a sub-agent blocker once Sulla has delivered an answer after it', async() => {
+    // risk: the live view kept a sub-agent blocked (and the chat bar lit) after Sulla answered it,
+    // because the snapshot never learned when the answer arrived
+    const raised = job('raised', [task()]);
+    const answered = job('answered', [task()]);
+    const { states } = harness([raised, answered], 10_000);
+    const checkin = { createdAt: 5_000, summary: 'Ten vendors researched', blockers: ['Need the Astra account login'] };
+    const telemetry = {
+      latest:          async() => checkin,
+      answeredForJobs: async() => ({ answered: { 0: 6_000 }, raised: { 0: 4_000 } }),
+    };
+
+    const rows = (await new AgentStateProjector(states, telemetry, () => 10_000).snapshot()).rows;
+
+    expect(rows.find(row => row.jobId === 'raised')).toMatchObject({ state: 'blocked', stateReason: 'Need the Astra account login' });
+    expect(rows.find(row => row.jobId === 'answered')?.state).not.toBe('blocked');
+  });
+
+  it('carries a long-running command into the live row and keeps the agent working', async() => {
+    // risk: a worker inside one 7-minute command showed "No progress" in the chat
+    const seeding = job('seeding', [task({ startedAt: 1_000 })]);
+    const { states } = harness([seeding], 500_000);
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: () => 60_000, toolInFlight: () => ({ name: 'a command', startedAt: 80_000 }) }, () => 500_000);
+
+    const [row] = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000, {}, activity).snapshot()).rows;
+
+    expect(row).toMatchObject({ state: 'working', toolInFlight: { name: 'a command', since: new Date(80_000).toISOString() } });
   });
 
   it('settles a job whose blocked task already returned instead of failing and re-notifying it on every restart', async() => {

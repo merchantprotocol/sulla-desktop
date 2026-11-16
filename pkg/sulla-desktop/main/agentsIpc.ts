@@ -17,6 +17,7 @@
 
 import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
+import { AgentRuntimeLiveness } from '@pkg/agent/app/Services/AgentRuntimeLiveness';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
@@ -208,6 +209,8 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 
 // ── IPC handler ──────────────────────────────────────────────────────────────
 
+// The reconciler's container probes, kept so a quiet agent can read "still running" or "stopped responding".
+const agentRuntimeLiveness = new AgentRuntimeLiveness();
 const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
   latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.latestTelemetryForJobs([jobId]))[jobId]?.[taskIndex]?.latestCheckin ?? null,
   // One batched read per snapshot instead of one telemetry query pair per task.
@@ -216,10 +219,20 @@ const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
     return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) =>
       [jobId, Object.fromEntries(Object.entries(tasks).map(([index, item]) => [index, item.latestCheckin]))]));
   },
-}, Date.now, {}, agentJobProvider.activity);
+  answeredForJobs: async(jobIds) => {
+    const telemetry = await agentJobProvider.messaging.latestTelemetryForJobs(jobIds);
+    return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) =>
+      [jobId, Object.fromEntries(Object.entries(tasks).map(([index, item]) => [index, item.lastMessageDeliveredAt ?? null]))]));
+  },
+}, Date.now, {}, agentJobProvider.activity, agentRuntimeLiveness);
 const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
   graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
-  container: async task => task.runLocation === 'container' ? probeAgentContainerRuntime(undefined, task.threadId) : false,
+  container: (task) => {
+    if (task.runLocation !== 'container') return Promise.resolve(false);
+    const alive = probeAgentContainerRuntime(undefined, task.threadId);
+    agentRuntimeLiveness.record(task.threadId, alive);
+    return Promise.resolve(alive);
+  },
   lastCheckin: (jobId, taskIndex) => agentJobProvider.messaging.latestCheckinAt(jobId, taskIndex),
 }, agentJobProvider.activity);
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
@@ -486,7 +499,7 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     try {
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
     const checkin = telemetryByJob[job.jobId]?.[taskIndex]?.latestCheckin ?? null;
-    const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin);
+    const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin, telemetryByJob[job.jobId]?.[taskIndex]?.lastMessageDeliveredAt ?? null);
     const lastActivityAt = activity.lastActivityAt;
 
     if (task.threadId) {
@@ -669,7 +682,7 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       const parent = job.parentThreadId ? conversationById.get(job.parentThreadId) ?? null : null;
       const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
         const latestCheckin = telemetry[taskIndex]?.latestCheckin ?? null;
-        const activity = agentJobProvider.activity.project(job, task, taskIndex, latestCheckin);
+        const activity = agentJobProvider.activity.project(job, task, taskIndex, latestCheckin, telemetry[taskIndex]?.lastMessageDeliveredAt ?? null);
         const lastActivityAt = activity.lastActivityAt;
         let lastActivity = latestCheckin?.summary || (task.status === 'queued' ? 'Waiting to start' : 'Working');
         if (task.threadId) {

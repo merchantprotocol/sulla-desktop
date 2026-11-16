@@ -18,7 +18,7 @@ import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
-import { agentJobLifecycle } from './AgentJobLifecycleService';
+import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
@@ -66,6 +66,16 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
+
+/**
+ * Folder key for a conversation container's workspace and provider homes.
+ * A woken hidden delegated thread carries the key its spawn_agent run used
+ * (ParkedAgentRehydrator); every chat keeps its channel-scoped key.
+ */
+export function conversationPersistenceKey(channelId: string, threadId: string, state: AgentGraphState): string {
+  const delegatedKey = (state.metadata as any).containerPersistenceKey;
+  return typeof delegatedKey === 'string' && delegatedKey ? delegatedKey : `conversation:${ channelId }:${ threadId }`;
+}
 
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
@@ -187,11 +197,11 @@ export class BackendGraphWebSocketService {
       console.warn(`[BackendGraphWS] Deferred orchestrator wake for thread ${ threadId }: a turn is already running; the message stays queued for its next turn.`);
       return false;
     }
-    await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+    const receipt = await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
       `[Message from orchestrator]\n${ message }`, threadId, undefined, agentId || parked.agentId, 'system', {
         source: 'orchestrator_job_message', ...messageMeta,
       });
-    return true;
+    return receipt !== 'deferred';
   }
 
   /** Every completion claim owned by this turn, including steers injected into a live delegated run. */
@@ -414,7 +424,7 @@ export class BackendGraphWebSocketService {
     const lifecycle = await createAgentContainerLifecycle({
       jobId: `chat-${ threadId }`, taskIndex: 0, provider,
       model, state,
-      persistenceKey: `conversation:${ channelId }:${ threadId }`,
+      persistenceKey: conversationPersistenceKey(channelId, threadId, state),
     });
     const idleTimer = this.armConversationIdle(key, lifecycle);
     this.conversationContainers.set(key, { provider, model, agentId, lifecycle, idleTimer });
@@ -454,13 +464,13 @@ export class BackendGraphWebSocketService {
   private initialize(): void {
     this.wsService.connect(SULLA_DESKTOP_CHANNEL_ID);
     const sullaUnsub = this.wsService.onMessage(SULLA_DESKTOP_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(SULLA_DESKTOP_CHANNEL_ID, 'sulla-desktop', msg);
+      this.handleChannelMessageSafely(SULLA_DESKTOP_CHANNEL_ID, 'sulla-desktop', msg);
     });
     if (sullaUnsub) this.unsubscribes.push(sullaUnsub);
 
     this.wsService.connect(HEARTBEAT_CHANNEL_ID);
     const heartbeatUnsub = this.wsService.onMessage(HEARTBEAT_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(HEARTBEAT_CHANNEL_ID, 'heartbeat', msg);
+      this.handleChannelMessageSafely(HEARTBEAT_CHANNEL_ID, 'heartbeat', msg);
     });
     if (heartbeatUnsub) this.unsubscribes.push(heartbeatUnsub);
 
@@ -470,7 +480,7 @@ export class BackendGraphWebSocketService {
     // wrappers, tool execution, memory recall, etc. all apply uniformly.
     this.wsService.connect(MOBILE_RELAY_CHANNEL_ID);
     const mobileRelayUnsub = this.wsService.onMessage(MOBILE_RELAY_CHANNEL_ID, (msg) => {
-      this.handleChannelMessage(MOBILE_RELAY_CHANNEL_ID, 'sulla-desktop', msg);
+      this.handleChannelMessageSafely(MOBILE_RELAY_CHANNEL_ID, 'sulla-desktop', msg);
     });
     if (mobileRelayUnsub) this.unsubscribes.push(mobileRelayUnsub);
 
@@ -524,6 +534,12 @@ export class BackendGraphWebSocketService {
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
     agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
+    // No spawn_agent runner survives a restart, so a return recorded by a
+    // runner that died (or by a dormant wake turn that predates this fix)
+    // would otherwise never reach its parent.
+    returnedTaskSettlement.settleStranded()
+      .then(count => { if (count) console.log(`[BackendGraphWS] Settled ${ count } returned delegated task(s) left without a runner`); })
+      .catch(err => console.warn('[BackendGraphWS] Failed to settle stranded returned tasks:', err));
     if ((process as any).type === 'browser') {
       this.orgMessagingAbort?.abort();
       this.orgMessagingAbort = new AbortController();
@@ -539,7 +555,7 @@ export class BackendGraphWebSocketService {
     if (this.subscribedChannels.has(channelId)) return;
     this.wsService.connect(channelId);
     const unsub = this.wsService.onMessage(channelId, (msg) => {
-      this.handleChannelMessage(channelId, 'sulla-desktop', msg);
+      this.handleChannelMessageSafely(channelId, 'sulla-desktop', msg);
     });
     if (unsub) this.unsubscribes.push(unsub);
     this.subscribedChannels.add(channelId);
@@ -560,6 +576,36 @@ export class BackendGraphWebSocketService {
   // ------------------------------------------------------------------
   // Unified channel message handling — dispatches to default agent via GraphRegistry
   // ------------------------------------------------------------------
+
+  /**
+   * A turn can fail before dispatchToAgent's own error handling starts (for
+   * example a database read while resolving the route). Without this the
+   * rejection went nowhere: the window never heard the turn ended and showed
+   * "working" forever. Report it on the thread and end the run state.
+   */
+  private async handleChannelMessageSafely(
+    channelId: string,
+    triggerType: 'sulla-desktop' | 'heartbeat',
+    msg: WebSocketMessage,
+  ): Promise<void> {
+    try {
+      await this.handleChannelMessage(channelId, triggerType, msg);
+    } catch (err: any) {
+      console.error(`[BackendGraphWS] ${ msg.type } on ${ channelId } failed before the agent started:`, err);
+      if (msg.type !== 'user_message' && msg.type !== 'inject_message') return;
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const threadId = typeof data?.threadId === 'string' ? data.threadId : undefined;
+      this.emitMessage(channelId, 'assistant_message', {
+        content:   `Agent error: ${ err?.message || String(err) }`,
+        role:      'assistant',
+        kind:      'error',
+        thread_id: threadId,
+      });
+      this.emitMessage(channelId, 'transfer_data', {
+        role: 'system', content: 'graph_execution_complete', stopReason: 'error', waitingForUser: false, thread_id: threadId,
+      });
+    }
+  }
 
   private async handleChannelMessage(
     channelId: string,
@@ -1061,7 +1107,9 @@ export class BackendGraphWebSocketService {
         // Truthful status: a dormant parked job this turn woke is re-parked
         // now unless the turn itself completed/failed/stopped it (parkTask
         // only acts while the job is still 'running', so this is a no-op then).
-        if (wakeTurnToRepark) await agentJobLifecycle.endWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
+        // A return_result made during the turn is settled and delivered here
+        // instead: no spawn_agent runner is left to hand it to the parent.
+        if (wakeTurnToRepark) await agentJobLifecycle.endDormantWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
         this.activeAborts.delete(abortKey);
         this.resumeContexts.delete(abortKey);
         releaseChatActivity(`graph:${ abortKey }`);

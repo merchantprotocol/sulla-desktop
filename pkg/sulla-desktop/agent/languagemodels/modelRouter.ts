@@ -5,10 +5,11 @@
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
-import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelClass, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
+import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelCatalogReport, type ModelClass, type RoutingModelInfo, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
 import { PROVIDER_FACTORIES } from './index';
+import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
 
-export type ModelCandidate = { provider: string; model: string };
+export interface ModelCandidate { provider: string; model: string; effort?: string }
 export type EditableState = EditableRoutingState;
 /**
  * Soft provider health. A provider is never removed from routing: failures only push it towards the back of
@@ -31,6 +32,7 @@ export function backoffMs(failures: number): number {
 
 const SETTING = 'modelRouting';
 const HEALTH_SETTING = 'modelRoutingProviderHealth';
+const CATALOG_SETTING = 'modelCatalogCheck';
 const fallback: Partial<Record<ModelClass, ModelClass>> = { frontier: 'standard', coding: 'standard', fast: 'standard', standard: 'frontier' };
 const localProviders = new Set(['ollama']);
 const subscriptionProviders = new Set(['claude-code', 'codex']);
@@ -43,7 +45,7 @@ export function isKnownProvider(id: string): boolean { return providerOrder.incl
 // provider changes its discovery endpoint. Unknown providers/models remain editable.
 export const DEFAULT_MODELS: Partial<Record<string, Partial<Record<ModelClass, string[]>>>> = {
   'claude-code': { frontier: ['claude-opus-5-5'], standard: ['claude-sonnet-5-5'], fast: ['claude-haiku-5-5'], coding: ['claude-sonnet-5-5'] },
-  codex: { frontier: ['gpt-5.5'], standard: ['gpt-5.3-codex'], fast: ['gpt-5.1-codex-mini'], coding: ['gpt-5.3-codex'] },
+  codex: { frontier: ['gpt-5.5'], standard: ['gpt-5.6-terra'], fast: ['gpt-5.6-luna'], coding: ['gpt-5.6-sol'] },
   anthropic: { frontier: ['claude-opus-5-5'], standard: ['claude-sonnet-5-5'], fast: ['claude-haiku-5-5'], coding: ['claude-sonnet-5-5'] },
   openai: { frontier: ['gpt-5.5'], standard: ['gpt-5.3'], fast: ['gpt-5-mini'], coding: ['gpt-5.3-codex'] },
   grok: { frontier: ['grok-4.6'], standard: ['grok-4.1-fast'], fast: ['grok-4.1-fast'], coding: ['grok-code-fast-1'] },
@@ -87,6 +89,7 @@ export function recommendedState(connected = providerOrder): EditableState {
     subconsciousList: [...connected].sort((a, b) => Number(!localProviders.has(a)) - Number(!localProviders.has(b)) || Number(subscriptionProviders.has(a)) - Number(subscriptionProviders.has(b)) || providerOrder.indexOf(a) - providerOrder.indexOf(b)).map(provider => ({ provider, class: DEFAULT_MODELS[provider]?.fast?.length ? 'fast' : strongest(provider), enabled: !(onlineAlternative && subscriptionProviders.has(provider)) })),
     classes,
     followProviderOrder: { frontier: true, standard: true, fast: true, coding: true, local: true },
+    neverUse: [],
   };
 }
 
@@ -94,6 +97,11 @@ export function canonicalProviderId(provider: string): string {
   const normalized = String(provider || '').trim().toLowerCase();
   const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai' };
   return aliases[normalized] || normalized.replace(/_/g, '-');
+}
+
+/** Settings saved before pairs: a blocked model meant "at any effort". Effort-only blocks have no model, so they are dropped. */
+function legacyNeverUse(saved: any): EditableState['neverUse'] {
+  return Array.isArray(saved?.blockedModels) ? saved.blockedModels.filter((b: any) => b?.provider && b?.model).map((b: any) => ({ provider: b.provider, model: b.model, effort: 'any' })) : [];
 }
 
 function normalize(saved: Partial<EditableState>, defaults: EditableState): EditableState {
@@ -104,6 +112,7 @@ function normalize(saved: Partial<EditableState>, defaults: EditableState): Edit
     subconsciousList: Array.isArray(saved.subconsciousList) ? saved.subconsciousList : defaults.subconsciousList,
     classes,
     followProviderOrder: { ...defaults.followProviderOrder, ...(saved.followProviderOrder || {}) },
+    neverUse: Array.isArray(saved.neverUse) ? saved.neverUse : legacyNeverUse(saved),
   };
 }
 
@@ -161,6 +170,15 @@ export class ModelRouter {
       for (const item of models || []) {
         if (!providers.has(item.provider)) throw new Error(`Unknown model provider: ${item.provider}`);
         if (cls === 'local' && !localProviders.has(item.provider)) throw new Error(`Provider ${item.provider} cannot use the local class`);
+        if (item.rule && !(item.rule.kind === 'first' || (item.rule.kind === 'contains' && typeof item.rule.text === 'string' && item.rule.text.trim() && item.rule.text.length <= 60))) {
+          throw new Error(`Invalid model rule for ${ item.provider }`);
+        }
+        if (item.effort !== undefined && !/^[a-z]{2,10}$/.test(item.effort)) throw new Error(`Invalid effort for ${ item.provider }`);
+      }
+    }
+    for (const item of patch.neverUse || []) {
+      if (!providers.has(item.provider) || !item.model || !(item.effort === 'any' || /^[a-z]{2,10}$/.test(item.effort || ''))) {
+        throw new Error(`Invalid never-use pair: ${ item.provider }/${ item.model } at ${ item.effort }`);
       }
     }
   }
@@ -240,16 +258,25 @@ export class ModelRouter {
   /** True while the provider is backed off. Backed-off providers are still routed, just after the healthy ones. */
   async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }
 
-  private async liveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: { id: string; label: string }[] }>> {
+  private async liveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>> {
     const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
     let available = new Map<string, { connected: boolean; connectionUnknown: boolean }>();
     try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), { connected: provider.connected === true, connectionUnknown: provider.connectionStatus === 'unknown' }])) } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
       const connected = available.get(id)?.connected === true;
       const connectionUnknown = available.get(id)?.connectionUnknown === true;
-      let models: { id: string; label: string }[] = [];
+      let models: RoutingModelInfo[] = [];
       if (connected && mps?.getModelsForProvider) {
-        try { models = (await mps.getModelsForProvider(id)).map((model: any) => ({ id: String(model.id), label: String(model.name || model.label || model.id) })) } catch { /* discovery is best effort */ }
+        try {
+          models = (await mps.getModelsForProvider(id)).map((model: any) => ({
+            id:    String(model.id),
+            label: String(model.name || model.label || model.id),
+            ...(Array.isArray(model.efforts) && model.efforts.length ? { efforts: model.efforts } : {}),
+            ...(model.defaultEffort ? { defaultEffort: String(model.defaultEffort) } : {}),
+            ...(model.upgrade ? { upgrade: String(model.upgrade) } : {}),
+            ...(model.unverified ? { unverified: true } : {}),
+          }));
+        } catch { /* discovery is best effort */ }
       }
       return [id, { connected, connectionUnknown, models }] as const;
     }));
@@ -265,6 +292,9 @@ export class ModelRouter {
     // A human's explicit selector choice is a hard route boundary. Recovery may retry this
     // exact route, but it must never substitute a configured alternate provider or model.
     if (pinned) return [pinned];
+    // Rules pick from the live lists; never-use models are skipped everywhere except an explicit pin above.
+    const liveModels = new Map([...live].map(([id, p]) => [id, p.models] as const));
+    state.classes = applyRules(state.classes, liveModels, state.neverUse).classes;
     // A list row uses its provider's first model in the row's own class. If that class has no model for the
     // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
     // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
@@ -275,10 +305,13 @@ export class ModelRouter {
     // behind the healthy ones, so they are still tried as a last resort instead of producing "no provider".
     await this.loadHealth();
     const now = Date.now(); const healthy: ModelCandidate[] = []; const backedOff: ModelCandidate[] = [];
-    for (const item of source) {
+    for (let item of source) {
       const provider = live.get(item.provider);
       // Discovery is advisory; unknown status still enters authenticated execution.
       if (!provider?.connected && !provider?.connectionUnknown) continue;
+      // A never-use pair is skipped whole: that model is never run at that effort.
+      if (isPairBlocked(state.neverUse, item.provider, item.model, effectiveEffort(item, provider?.models ?? []))) continue;
+      item = { provider: item.provider, model: item.model, ...(item.effort ? { effort: item.effort } : {}) };
       if ([...healthy, ...backedOff].some(x => x.provider === item.provider && x.model === item.model)) continue;
       (this.backedOff(item.provider, now) ? backedOff : healthy).push(item);
     }
@@ -292,6 +325,37 @@ export class ModelRouter {
     }
     const configured = [...healthy, ...backedOff];
     return configured;
+  }
+
+  /**
+   * Refresh models: re-fetch every connected provider's list past its cache, re-resolve rules,
+   * and record what changed since the previous check.
+   */
+  async refreshCatalog(): Promise<ModelCatalogReport> {
+    await Promise.allSettled([
+      import('./claudeModelCatalog').then(m => m.clearClaudeModelCatalogCache()),
+      import('./codexModelCatalog').then(m => m.clearCodexModelCatalogCache()),
+      import('./cursorModelCatalog').then(m => m.listCursorModels({ force: true })),
+      import('./openCodeModelCatalog').then(m => m.listOpenCodeModels({ force: true })),
+    ]);
+    const live = await this.liveProviders();
+    const lists: Record<string, string[]> = {};
+    for (const [id, p] of live) {
+      if (p.connected && p.models.length) lists[id] = p.models.map(m => m.id);
+    }
+    const saved = await SullaSettingsModel.get(CATALOG_SETTING, null) as { lists?: Record<string, string[]> } | null;
+    const { added, removed } = compareCatalogs(saved?.lists || {}, lists);
+    const state = await this.getEditableState();
+    const { classes, moved } = applyRules(state.classes, new Map([...live].map(([id, p]) => [id, p.models] as const)), state.neverUse);
+    if (moved.length) await SullaSettingsModel.set(SETTING, { ...state, classes }, 'json');
+    const report: ModelCatalogReport = { checkedAt: new Date().toISOString(), added, removed, moved };
+    await SullaSettingsModel.set(CATALOG_SETTING, { lists: { ...(saved?.lists || {}), ...lists }, report }, 'json');
+    return report;
+  }
+
+  async catalogReport(): Promise<ModelCatalogReport> {
+    const saved = await SullaSettingsModel.get(CATALOG_SETTING, null) as { report?: ModelCatalogReport } | null;
+    return saved?.report || { checkedAt: null, added: [], removed: [], moved: [] };
   }
 
   async providerInfo(): Promise<RoutingProviderInfo[]> {
