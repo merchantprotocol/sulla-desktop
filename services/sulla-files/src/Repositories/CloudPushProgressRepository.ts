@@ -58,7 +58,8 @@ export class PgCloudPushProgressRepository implements RecursiveDeleteProgressSto
       SELECT $1,collection_id,$2,$3,$4,$5 FROM (SELECT collection_id FROM files WHERE id=$2 UNION ALL SELECT collection_id FROM file_folders WHERE id=$2 LIMIT 1) root
       ON CONFLICT(collection_id,root_item_id) DO UPDATE SET next_index=GREATEST(files_cloud_namespace_batches.next_index,EXCLUDED.next_index),sessions=EXCLUDED.sessions,updated_at=NOW()
       WHERE files_cloud_namespace_batches.batch_id=EXCLUDED.batch_id AND files_cloud_namespace_batches.device_id=EXCLUDED.device_id`,
-    [progress.batchId,progress.rootItemId,progress.deviceId,progress.nextIndex,progress.sessions]);
+    // sessions is a JS array: node-pg would send it as a Postgres array literal, which jsonb misparses, so serialize it.
+    [progress.batchId,progress.rootItemId,progress.deviceId,progress.nextIndex,JSON.stringify(progress.sessions)]);
   }
 
   async clear(batchId:string):Promise<void> {

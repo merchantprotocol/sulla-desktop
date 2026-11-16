@@ -272,4 +272,18 @@ describe.skipIf(!databaseUrl)('cloud sync repositories (real Postgres)', () => {
     await progress.clear(batchId);
     expect(await progress.load(root.fileId)).toBeNull();
   });
+
+  it('round-trips a non-empty recursive-delete session list exactly', async () => {
+    // risk: irreversible side effect, a resumed folder delete must re-send exactly the tombstones it saved.
+    const root = await file('folder/b.txt');
+    const batchId = randomUUID();
+    const sessions = [
+      { journalSeq: 7, fileId: root.fileId, versionId: randomUUID(), parentVersionId: null, baseVersionId: null, deleted: true,
+        manifest: { size: 0, chunks: [] }, chunkIds: [], declared: [], staged: [], uploadId: null, present: [], namespaceKind: 'folder' as const },
+      { journalSeq: 8, fileId: randomUUID(), versionId: randomUUID(), parentVersionId: randomUUID(), baseVersionId: null, deleted: true,
+        manifest: null, chunkIds: ['c1', 'c1'], declared: [{ id: 'c1', cipherBytes: 12, cipherSha256: 'ab' }], staged: ['c1'], uploadId: 'u-1', present: [] },
+    ];
+    await progress.save({ batchId, rootItemId: root.fileId, deviceId: 'mac-1', nextIndex: 1, sessions });
+    expect(await progress.load(root.fileId)).toEqual({ batchId, rootItemId: root.fileId, deviceId: 'mac-1', nextIndex: 1, sessions });
+  });
 });
