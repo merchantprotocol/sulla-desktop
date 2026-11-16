@@ -58,7 +58,8 @@ class RecordingNetwork {
   readonly requests: { url: string; authorization: string | null }[] = [];
   readonly fetch = vi.fn(async (input: string, init: RequestInit) => {
     this.requests.push({ url: input, authorization: new Headers(init.headers).get('Authorization') });
-    return new Response(JSON.stringify({ messages: [], next: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const body = input.includes('/directory') ? { people: [{ userId: 'server-subject-9', displayName: 'Dana' }] } : { messages: [], next: 0 };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   });
 }
 
@@ -215,5 +216,22 @@ describe('OrgMessengerFleet with OrgHostingResolver', () => {
     } finally {
       fleet.stopAll();
     }
+  });
+
+  it('gives agent tools the Server subject to author with and reads the directory from the org\'s Server', async () => {
+    // risk: data accuracy / tenant isolation — tools sign Server-org messages with the Cloud id (refused) or list Cloud people
+    const { resolver } = setup();
+    const network = new RecordingNetwork();
+    vi.stubGlobal('fetch', network.fetch);
+    const factory = new DesktopOrgMessengerFactory(new MemoryState(), {} as AgentInbox, { target: async () => ({ channel: 'sulla-desktop' }) }, { request: async () => {} });
+    const fleet = new OrgMessengerFleet(new OrgMembershipDirectory(new StaticMembershipSource([CLOUD_ORG, SERVER_ORG])), factory, identity, resolver);
+    // No reconcile: no sync loops run; the org is resolved on demand like a tool call does.
+    expect(await fleet.participant(SERVER_ORG.orgId)).toEqual({ membership: SERVER_ORG, userId: 'server-subject-7' });
+    expect(await fleet.participant()).toEqual({ membership: CLOUD_ORG, userId: 'cloud-user-1' });
+
+    network.requests.length = 0;
+    const { directory } = await fleet.loadDirectory('Server Co');
+    expect(directory.people).toEqual([{ userId: 'server-subject-9', displayName: 'Dana' }]);
+    expect(network.requests).toEqual([{ url: 'https://sulla.acme.test/orgs/org-server/directory', authorization: 'Bearer server-token' }]);
   });
 });

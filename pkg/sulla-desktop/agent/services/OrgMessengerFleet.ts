@@ -47,7 +47,7 @@ export class MemberOrgMessagingSession implements OrgMessagingSession {
 export class OrgMessengerFleet {
   private readonly messengers = new Map<string, OrgMessenger>();
   private readonly loops = new Map<string, AbortController>();
-  private readonly hostKeys = new Map<string, string>();
+  private readonly hostings = new Map<string, OrgHosting>();
   private readonly creating = new Map<string, Promise<OrgMessenger | undefined>>();
   private signedInUserId = '';
   private fleetWake?: () => void;
@@ -120,15 +120,31 @@ export class OrgMessengerFleet {
     }
   }
 
+  /**
+   * The target org and the caller's id on that org's host: the Cloud user id for a Cloud org, the Server subject
+   * for a Server org. Envelopes for that org must be authored with this id.
+   */
+  async participant(requestedOrg?: string): Promise<{ membership: OrgMembership; userId: string }> {
+    const membership = await this.resolveOrg(requestedOrg);
+    await this.reachableMessenger(membership);
+    const hosting = this.hostings.get(membership.orgId);
+    if (!hosting) throw OrgMessengerFleet.unreachable(membership);
+    return { membership, userId: await hosting.credentials.userId() };
+  }
+
+  /** People and agent addresses in the target org, read from the org's own host. */
+  async loadDirectory(requestedOrg?: string): Promise<{ membership: OrgMembership; directory: { people: readonly unknown[] } }> {
+    const membership = await this.resolveOrg(requestedOrg);
+    return { membership, directory: await (await this.reachableMessenger(membership)).loadDirectory() };
+  }
+
   /** Sends through the target org's own messenger and outbox. The envelope must be authored for that org. */
   async send(envelope: MessageEnvelope, requestedOrg?: string): Promise<void> {
     const membership = await this.resolveOrg(requestedOrg);
     if (envelope.data.orgId !== membership.orgId) {
       throw new Error('Message organization does not match the organization it is being sent to');
     }
-    const messenger = await this.messengerFor(membership);
-    if (!messenger) throw new Error(`Organization "${membership.name}" is not reachable right now; its host could not be resolved`);
-    await messenger.send(envelope);
+    await (await this.reachableMessenger(membership)).send(envelope);
   }
 
   /** LiveEvents hook: wakes one org (or all) on new conversation activity, and the fleet on membership changes. */
@@ -148,6 +164,16 @@ export class OrgMessengerFleet {
   stopAll(): void {
     for (const orgId of [...this.messengers.keys()]) this.forget(orgId);
     for (const orgId of [...this.loops.keys()]) this.stopLoop(orgId);
+  }
+
+  private async reachableMessenger(membership: OrgMembership): Promise<OrgMessenger> {
+    const messenger = await this.messengerFor(membership);
+    if (!messenger) throw OrgMessengerFleet.unreachable(membership);
+    return messenger;
+  }
+
+  private static unreachable(membership: OrgMembership): Error {
+    return new Error(`Organization "${membership.name}" is not reachable right now; its host could not be resolved`);
   }
 
   /**
@@ -175,11 +201,12 @@ export class OrgMessengerFleet {
     }
     const hostKey = `${hosting.kind}:${hosting.baseUrl}`;
     const existing = this.messengers.get(membership.orgId);
-    if (existing && this.hostKeys.get(membership.orgId) === hostKey) return existing;
+    const current = this.hostings.get(membership.orgId);
+    if (existing && current && `${current.kind}:${current.baseUrl}` === hostKey) return existing;
     if (existing) this.forget(membership.orgId);
     const messenger = this.factory.create(membership, new MemberOrgMessagingSession(membership, hosting, this.directory), hosting);
     this.messengers.set(membership.orgId, messenger);
-    this.hostKeys.set(membership.orgId, hostKey);
+    this.hostings.set(membership.orgId, hosting);
     return messenger;
   }
 
@@ -203,7 +230,7 @@ export class OrgMessengerFleet {
   private forget(orgId: string): void {
     this.stopLoop(orgId);
     this.messengers.delete(orgId);
-    this.hostKeys.delete(orgId);
+    this.hostings.delete(orgId);
   }
 
   private wait(signal: AbortSignal, milliseconds: number): Promise<void> {

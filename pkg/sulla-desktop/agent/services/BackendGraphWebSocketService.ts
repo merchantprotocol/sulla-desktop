@@ -279,6 +279,16 @@ export class BackendGraphWebSocketService {
     return this.orgMessengerFleet.resolveOrg(org);
   }
 
+  /** The target org and the caller's id on that org's host (Cloud user id, or the Server subject). */
+  orgMessagingParticipant(org?: string): Promise<{ membership: OrgMembership; userId: string }> {
+    return this.orgMessengerFleet.participant(org);
+  }
+
+  /** The target org's people and agent addresses, read from the org's own host. */
+  loadOrgDirectory(org?: string): Promise<{ membership: OrgMembership; directory: { people: readonly unknown[] } }> {
+    return this.orgMessengerFleet.loadDirectory(org);
+  }
+
   /** LiveEvents wake hook for org messaging; polling every 60 s remains the fallback. */
   onOrgLiveEvent(topic: string, orgId?: string): void {
     this.orgMessengerFleet.onLiveEvent(topic, orgId);
