@@ -148,6 +148,16 @@ def traced(operation, describe=None, mutating=False):
                 emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
                      ms=round((time.monotonic() - started) * 1000, 1), **details)
                 raise
+            except OSError as error:
+                # A Files or filesystem failure the operation did not map itself: answer this one
+                # request with its errno (404 ENOENT, 401/403 EACCES, 5xx/timeout EIO after the
+                # bounded retries) and keep the daemon serving every other request.
+                code = HTTP_ERRNO.errno_for_failure(error)
+                quiet = code in QUIET_ERRNOS and not mutating
+                if not quiet: stats["opErrors"] += 1
+                emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
+                     status=getattr(error, "status", None), error=str(error), ms=round((time.monotonic() - started) * 1000, 1), **details)
+                raise pyfuse3.FUSEError(code) from error
             except Exception:
                 stats["opErrors"] += 1
                 log.exception("unhandled error in %s", operation, extra={"event": "fuse-op-crash", "fields": {"op": operation, **details}})
@@ -219,6 +229,13 @@ class HttpErrno:
         if status == 413:
             return errno.EFBIG
         return errno.EIO
+
+    def errno_for_failure(self, error):
+        """The errno to answer for any OSError: FilesApi already put the mapped errno on it; anything else is EIO."""
+        status = getattr(error, "status", None)
+        if isinstance(status, int) and not isinstance(error.errno, int):
+            return self.errno_for(status, getattr(error, "detail", None))
+        return error.errno if isinstance(error.errno, int) and error.errno > 0 else errno.EIO
 
 
 HTTP_ERRNO = HttpErrno()
@@ -629,6 +646,21 @@ class SullaFiles(pyfuse3.Operations):
         directory = self.nodes.get(fh)
         if not directory:
             raise pyfuse3.FUSEError(errno.ENOENT)
+        try:
+            await self._list_directory(fh, directory, start_id, token)
+        except OSError as error:
+            if fh != pyfuse3.ROOT_INODE or isinstance(error, pyfuse3.FUSEError):
+                raise
+            # The root must always list: Desktop probes the mount with `ls -A /mnt/sulla-files` and
+            # recreates the adapter when it fails, so an error here became a restart loop. Answer an
+            # empty (or partial) root, log why, and list again on the next readdir.
+            self.directory_complete.discard(directory["path"])
+            self.directory_etags.pop(directory["path"], None)
+            stats["opErrors"] += 1
+            emit("root-listing-failed", logging.ERROR, errno=_errno_name(HTTP_ERRNO.errno_for_failure(error)),
+                 status=getattr(error, "status", None), code=(getattr(error, "detail", None) or {}).get("code"), error=str(error))
+
+    async def _list_directory(self, fh, directory, start_id, token):
         directory_path = directory["path"]
         collection_id = directory.get("collectionId")
         children = self.children.get(directory_path, {})
@@ -792,12 +824,16 @@ class SullaFiles(pyfuse3.Operations):
             await self.api.put_metadata(collection_id, path, set_values, unset, revision)
             self._invalidate_metadata(collection_id, path)
 
+    @traced("read", lambda s, a: s._handle_info(a[0]))
     async def read(self, fh, offset, length):
-        handle = self.handles[fh]
+        handle = self.handles.get(fh)
+        if handle is None: raise pyfuse3.FUSEError(errno.EBADF)
         return os.pread(handle["file"].fileno(), length, offset)
 
+    @traced("write", lambda s, a: s._handle_info(a[0]))
     async def write(self, fh, offset, buf):
-        handle = self.handles[fh]
+        handle = self.handles.get(fh)
+        if handle is None: raise pyfuse3.FUSEError(errno.EBADF)
         if handle["append"]:
             offset = handle["size"]
         end = offset + len(buf)
