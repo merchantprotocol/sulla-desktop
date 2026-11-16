@@ -27,11 +27,13 @@ export class VaultFilesStartup {
   private vaultUnlockedValue = false;
   private filesUnlockedValue = false;
   private mountTokenWrittenValue = false;
+  private mountedValue = false;
 
   vaultLocked():void {
     this.vaultUnlockedValue = false;
     this.filesUnlockedValue = false;
     this.mountTokenWrittenValue = false;
+    this.mountedValue = false;
     this.reason = undefined;
     this.phaseValue = 'vault-locked';
   }
@@ -42,18 +44,19 @@ export class VaultFilesStartup {
   filesUnlocked():void {
     this.vaultUnlockedValue = true;
     this.filesUnlockedValue = true;
-    this.phaseValue = this.mountTokenWrittenValue ? 'mount-token-written' : 'files-unlocked';
+    this.phaseValue = this.mountedValue ? 'mounted' : this.mountTokenWrittenValue ? 'mount-token-written' : 'files-unlocked';
     this.reason = undefined;
   }
 
   mountTokenWritten():void {
     if (!this.filesUnlockedValue || !this.vaultUnlockedValue) return;
     this.mountTokenWrittenValue = true;
-    this.phaseValue = 'mount-token-written';
+    this.phaseValue = this.mountedValue ? 'mounted' : 'mount-token-written';
   }
 
   mounted():void {
     if (!this.isReady()) return;
+    this.mountedValue = true;
     if (this.phaseValue === 'degraded') return;
     this.phaseValue = 'mounted';
     this.reason = undefined;
