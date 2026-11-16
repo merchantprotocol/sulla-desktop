@@ -338,7 +338,8 @@ export class BackendGraphWebSocketService {
         source: 'sub_agent_completion', completionEntries: entries,
       });
     }).catch(err => {
-      for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
+      // requeue, not enqueue: these entries are claimed by the take above, so enqueue would drop them as duplicates.
+      for (const entry of entries) requeueAgentCompletion(channelId, threadId, entry);
       console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
 
     });
@@ -908,7 +909,8 @@ export class BackendGraphWebSocketService {
       // pending once the active run ends.
       if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey)) {
         if (metadata?.source === 'sub_agent_completion') {
-          for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+          // Claimed by the caller's take: requeue clears that claim, enqueue would silently drop them.
+          for (const entry of metadata.completionEntries ?? []) requeueAgentCompletion(channelId, threadId, entry);
         }
         return 'deferred';
       }
@@ -1107,6 +1109,8 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
+          // Results the model already answered stay acknowledged; only unseen ones go back to the inbox.
+          completionConsumption.confirmAnswered(state?.messages ?? []);
           await completionConsumption.releaseOnAbort(async entry => {
             requeueAgentCompletion(channelId, threadId, entry);
             await agentJobProvider.completionAcknowledgements.release(entry);
