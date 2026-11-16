@@ -24,8 +24,8 @@ describe.skipIf(!databaseUrl)('legacy import repositories (real Postgres)', () =
 
   async function collection(options:{ legacy?:boolean; external?:boolean; key?:boolean } = {}):Promise<string> {
     const id = randomUUID();
-    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,compatibility_state,legacy_source)
-      VALUES($1,'u1','c','knowledge','desktop-only',$2,'{}',$3,$4)`, [id, options.external ? '{"v":1}' : '{}', options.external ? 'legacy-external-data' : 'native', options.legacy ?? false]);
+    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,compatibility_state,legacy_source,explorer_path)
+      VALUES($1,'u1','c','knowledge','desktop-only',$2,'{}',$3,$4,$5)`, [id, options.external ? '{"v":1}' : '{}', options.external ? 'legacy-external-data' : 'native', options.legacy ?? false, id]);
     if (options.key) await pool.query(`INSERT INTO files_collection_keys(collection_id,data_key,dedup_key) VALUES($1,'{}','{}')`, [id]);
     return id;
   }
