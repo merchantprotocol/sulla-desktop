@@ -5,7 +5,7 @@
 import { resolveAgentIdentity, type AgentIdentityMetadata } from '../../utils/agentIdentity';
 
 export interface GraphRegistryEntryPort { state: { metadata: AgentIdentityMetadata } }
-export interface GraphRegistryPort { get(threadId: string): GraphRegistryEntryPort | undefined }
+export interface GraphRegistryPort { get(threadId: string): GraphRegistryEntryPort | null | undefined }
 
 /** Confirms the registered graph entry still represents the exact custody owner. */
 export class GraphRegistryOwnerPresence {
