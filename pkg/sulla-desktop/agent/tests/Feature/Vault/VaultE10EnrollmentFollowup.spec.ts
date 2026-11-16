@@ -28,6 +28,8 @@ const TOKENS = { bootstrap: 'b'.repeat(40), control: 'c'.repeat(40), approval: '
 const USER_ID = 'e10a0000-0000-4000-8000-000000000011';
 const VAULT_ID = 'e10b0000-0000-4000-8000-000000000012';
 const REQUEST_ID = 'e10c0000-0000-4000-8000-000000000013';
+/** A well-formed request id that is not REQUEST_ID: an envelope bound to it fails proof verification. */
+const OTHER_REQUEST_ID = 'e10c0000-0000-4000-8000-000000000014';
 const TTL_MS = 60_000;
 const subtle = webcrypto.subtle;
 
@@ -41,18 +43,21 @@ interface AuthorityState {
 
 const zeroed = (bytes: Uint8Array) => bytes.every(byte => byte === 0);
 const erased = (staged: Staged) => [staged.userKey, staged.privateKey, staged.masterKey].every(zeroed);
-const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
 class Deferred {
   release!: () => void;
   readonly promise = new Promise<void>(resolve => { this.release = resolve });
 }
 
-/** Stored-key reader double; the gate, when armed, holds the private-key unwrap until released. */
+/**
+ * Stored-key reader double; the gate, when armed, holds the private-key unwrap until released.
+ * `requested` resolves the moment adopt asks for the private key, so a spec can await that point
+ * explicitly instead of guessing how many event-loop turns the real WebCrypto unwrap takes.
+ */
 class KeyReader {
   readonly privateKeysHandedOut: Uint8Array[] = [];
+  readonly requested = new Deferred();
   gate: Deferred | undefined;
-  privateKeyRequested = false;
   private calls = 0;
 
   constructor(private readonly userKey: Uint8Array, private readonly privateKey: Uint8Array) {}
@@ -60,7 +65,7 @@ class KeyReader {
   async get() {
     this.calls += 1;
     if (this.calls % 2 === 0 && this.gate) {
-      this.privateKeyRequested = true;
+      this.requested.release();
       await this.gate.promise;
     }
     return {
@@ -142,8 +147,12 @@ describe('Adopting a device enrollment never stages keys after a lock', () => {
     const fx = await new AdoptFixture().setup();
     fx.reader.gate = new Deferred();
     const pending = fx.adopt();
-    for (let i = 0; i < 50 && !fx.reader.privateKeyRequested; i += 1) await tick();
-    expect(fx.reader.privateKeyRequested).toBe(true);
+    // Wait until adopt is parked in the key reader; if adopt settles first, fail instead of hanging.
+    const reached = await Promise.race([
+      fx.reader.requested.promise.then(() => 'key reader' as const),
+      pending.then(() => 'resolved' as const, () => 'rejected' as const),
+    ]);
+    expect(reached).toBe('key reader');
 
     fx.authority.lockNow();
     fx.reader.gate.release();
@@ -212,8 +221,10 @@ describe('Staged enrollment keys are purged at their TTL', () => {
     const fx = await new AdoptFixture().setup();
     await fx.adopt();
     const first = fx.state.pendingVaultEnrollments.get(REQUEST_ID)!;
+    expect(erased(first)).toBe(false);
 
-    await expect(fx.adopt(REQUEST_ID, 'some-other-request')).rejects.toMatchObject({ code: 'invalid_proof', status: 403 });
+    // Valid request id, but the envelope is bound to another request: it fails at proof verification.
+    await expect(fx.adopt(REQUEST_ID, OTHER_REQUEST_ID)).rejects.toMatchObject({ code: 'invalid_proof', status: 403 });
 
     expect(erased(first)).toBe(true);
     expect(fx.state.pendingVaultEnrollments.size).toBe(0);
