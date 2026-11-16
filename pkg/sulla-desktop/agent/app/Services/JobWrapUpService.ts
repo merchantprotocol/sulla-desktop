@@ -48,13 +48,28 @@ export class JobWrapUpService extends Service {
       const key = this.key(jobId, taskIndex);
       if (this.timers.has(key)) continue;
       await this.messages.send({ jobId, taskIndex, message });
-      const delayMs = Math.max(1, gracePeriodSeconds || 120) * 1_000;
-      const handle = this.timer.schedule(delayMs, () => {
-        this.timers.delete(key);
-        void this.stops.stopTask(jobId, taskIndex, principal, reason);
-      });
-      this.timers.set(key, handle);
+      this.scheduleTask(jobId, taskIndex, principal, reason, gracePeriodSeconds);
     }
+  }
+
+  unscheduledTaskIndexes(jobId:string,taskIndexes:number[]):number[]{
+    return taskIndexes.filter(taskIndex=>!this.timers.has(this.key(jobId,taskIndex)));
+  }
+
+  /** Schedule the grace timer after a caller has already sent its authorized message. */
+  scheduleAfterMessage(jobId:string,taskIndexes:number[],principal:StopPrincipalValue,reason:string,gracePeriodSeconds:number):void {
+    for(const taskIndex of taskIndexes)this.scheduleTask(jobId,taskIndex,principal,reason,gracePeriodSeconds);
+  }
+
+  private scheduleTask(jobId:string,taskIndex:number,principal:StopPrincipalValue,reason:string,gracePeriodSeconds:number):void {
+    const key=this.key(jobId,taskIndex);
+    if(this.timers.has(key))return;
+    const delayMs=Math.max(1,gracePeriodSeconds||120)*1_000;
+    const handle=this.timer.schedule(delayMs,()=>{
+      this.timers.delete(key);
+      void this.stops.stopTask(jobId,taskIndex,principal,reason);
+    });
+    this.timers.set(key,handle);
   }
 
   /** Called by job lifecycle settlement paths; a returned/settled task wins the grace race. */

@@ -36,11 +36,12 @@ async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>):
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
-  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt).sort((a, b) => a.createdAt - b.createdAt);
+  return (await this.states.jobsForParentThread(parentThreadId)).sort((a, b) => a.createdAt - b.createdAt);
 }
 /** Count direct open child tasks while treating a queued hard stop as closed immediately. */
 async openChildrenForThread(parentThreadId: string): Promise<number> {
-  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !this.states.hasPendingTerminalWrite(job.jobId))
+  // Only running/parked jobs can hold open tasks, so the bounded live read is exact.
+  return (await this.states.refreshLive()).filter(job => job.parentThreadId === parentThreadId && !this.states.hasPendingTerminalWrite(job.jobId))
     .reduce((count, job) => count + (['running','parked'].includes(job.status) ? job.tasks.filter(task => ['queued','running','parked'].includes(task.status)).length : 0), 0);
 }
 
@@ -131,7 +132,7 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
     if (current.status === 'stopped') return { ...current, results, tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() } : task) };
     const failed = results.find(result => result.status === 'error');
     return { ...current, status: failed ? 'failed' : 'completed', finishedAt: this.clock.now().getTime(), results, error: failed?.output,
-      tasks: current.tasks.map((task, index) => { const result = results[index]; return !result || task.status === 'stopped' ? task : { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() }; }) };
+      tasks: current.tasks.map((task, index) => { const result = results[index]; return !result || task.status === 'stopped' ? task : { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime(), completion: task.completion ?? result }; }) };
   });
   if (job) void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 }
@@ -149,9 +150,6 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
     return job;
-  }, async next => {
-    await this.repository.updateTaskCompletions(jobId, taskIndex, next.tasks, next.results);
-    return true;
   });
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
@@ -214,8 +212,8 @@ async resolveAgentDepth(metadataSubAgentDepth: unknown, threadId: string | undef
 
 /** Tab this.runtime.jobs still open under one parent chat (each holds a renderer tab). */
 async countOpenTabJobs(parentThreadId: string): Promise<number> {
-  const all = await this.getJobsForParentThread(parentThreadId);
-  return all.filter(job => job.visibility === 'tab' && job.status === 'running').length;
+  const all = await this.states.refreshLive();
+  return all.filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt && job.visibility === 'tab' && job.status === 'running').length;
 }
 
 /**
@@ -253,7 +251,7 @@ async failJob(jobId: string, error: string): Promise<void> {
 /** Persist and mirror one deduplicated late-child notice on its terminal owner. */
 async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
   const recorded = await this.repository.appendOrphanNotice(jobId, notice);
-  if (recorded) await this.states.refresh();
+  if (recorded) await this.states.refreshLive();
   return recorded;
 }
 

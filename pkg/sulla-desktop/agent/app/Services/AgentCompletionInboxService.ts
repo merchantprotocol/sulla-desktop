@@ -61,12 +61,13 @@ export class AgentCompletionInboxService extends Service {
     return !duplicate;
   }
 
-  move(fromChannel: string, fromThreadId: string, toChannel: string, toThreadId: string, jobId: string, taskIndex: number): void {
+  move(fromChannel: string, fromThreadId: string, toChannel: string, toThreadId: string, jobId: string, taskIndex?: number): void {
     const source = this.inboxes.get(this.keyFor(fromChannel, fromThreadId));
     if (!source) return;
-    const moving = source.entries.filter(entry => entry.jobId === jobId && entry.taskIndex === taskIndex);
+    const matches = (entry: PendingCompletion) => entry.jobId === jobId && (taskIndex === undefined || entry.taskIndex === taskIndex);
+    const moving = source.entries.filter(matches);
     if (!moving.length) return;
-    source.entries = source.entries.filter(entry => entry.jobId !== jobId || entry.taskIndex !== taskIndex);
+    source.entries = source.entries.filter(entry => !matches(entry));
     if (!source.entries.length) this.inboxes.delete(this.keyFor(fromChannel, fromThreadId));
     for (const entry of moving) this.enqueue(toChannel, toThreadId, entry);
   }

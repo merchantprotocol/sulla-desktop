@@ -50,7 +50,7 @@ dbDescribe('custody-aware completion redelivery (B regression gaps)',()=>{
     if(priorEnvironment.poolMax===undefined)delete process.env.SULLA_DATABASE_POOL_MAX;else process.env.SULLA_DATABASE_POOL_MAX=priorEnvironment.poolMax;
   });
 
-  const quietInbox=async()=>{const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});return completionInboxStore;};
+  const quietInbox=async()=>{const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');const inbox=agentCompletionProvider.inbox;inbox.dispose();inbox.registerIdleDispatcher(()=>{});return inbox;};
   const resultsFor=<T extends {jobId:string;results:unknown[]}>(entries:T[],jobId:string):T[]=>entries.filter(entry=>entry.jobId===jobId&&entry.results.length>0);
 
   it('H4 same-instant return_result and reassign_job (no barrier) land the result once, at the final owner',async()=>{

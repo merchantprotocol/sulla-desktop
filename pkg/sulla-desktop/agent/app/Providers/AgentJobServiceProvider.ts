@@ -8,7 +8,6 @@ import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
 import { AgentJobReviewItemRepository } from '../Repositories/AgentJobReviewItemRepository';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
-import { AgentJobCustodyStateWriter } from '../Repositories/AgentJobCustodyStateWriter';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
 import { CompletionAcknowledgementService } from '../Services/CompletionAcknowledgementService';
@@ -33,7 +32,6 @@ import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
 import { AgentTaskActivityProjector } from '../Services/AgentTaskActivityProjector';
 import { ReviewObligationGate } from '../Services/ReviewObligationGate';
-import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { AgentJobCustodyRepository } from '../Repositories/AgentJobCustodyRepository';
 import { JobCustodyService } from '../Services/JobCustodyService';
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
@@ -74,7 +72,6 @@ export class AgentJobServiceProvider {
     this.messaging = new AgentJobMessagingRepository(connection);
     this.reviewItems = new AgentJobReviewItemRepository(connection);
     this.reviewGate = new ReviewObligationGate(this.reviewItems);
-    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime, Date.now, new AgentJobMutationQueue(), new AgentJobFailureLogger({ error: message => Logging.background.error(message) }));
@@ -82,24 +79,24 @@ export class AgentJobServiceProvider {
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);
     this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes, this.activity, this.reviewItems);
-    this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(Date.now, new RunActivityManagerActivitySource(runActivity)),
-      strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const conversations = new GraphRegistryTopLevelConversationRegistry();
-    const { GraphRegistry } = await import('../../services/GraphRegistry');
     const ownerPresence = new GraphRegistryOwnerPresence(GraphRegistry);
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) },
       { matches: async owner => ownerPresence.matches(owner) }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));
-    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new CustodyChangeNotificationService(this.jobs, completionInboxStore), clock);
+    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new CustodyChangeNotificationService(completionInboxStore), clock);
     const receiverResolver = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel), this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receiverResolver, async channel => GraphRegistry.findThreadByChannel(channel));
     this.completionRequeue = new CustodyCompletionRequeueService(completionInboxStore, this.custody);
     this.custodyCallerVerifier = new CustodyCallerVerifier(taskLocator, conversations);
-    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator, this.custody, this.custodyLineage, undefined, new AgentJobCustodyStateWriter());
+    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore, this.custody);
+    this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(Date.now, new RunActivityManagerActivitySource(runActivity)),
+      strandedEpisodes, new StrandedManagerAlertService(completionInboxStore, this.custody));
+    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator, this.custody, this.custodyLineage, this.jobs);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);

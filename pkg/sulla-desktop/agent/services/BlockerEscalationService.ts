@@ -44,7 +44,7 @@ export class BlockerEscalationService extends Service {
       notice:`[Blocker from ${label} (job ${target.jobId} task ${target.taskIndex})] ${blockers} — answer with agents/send_job_message`,
       dedupeKey:`blocker:${target.jobId}:${target.taskIndex}:${JSON.stringify(checkin.blockers)}`,
     });
-    if(this.custody){await this.custody.withOwner(target.jobId,target.taskIndex,async(_client,owner)=>{enqueue(owner);});}
+    if(this.custody){await this.custody.withOwner(target.jobId,target.taskIndex,async(_client,owner)=>{if(owner.version>0)enqueue(owner);});}
     else if(target.parentThreadId)enqueue({channel:target.parentChannel??'sulla-desktop',threadId:target.parentThreadId});
     return receipt;
   }

@@ -11,7 +11,7 @@ export interface AgentInboxJobReader { allJobs(): Promise<AgentJob[]>; activeJob
 
 /** Resolves a channel to its own persona and durable parked thread; never falls back to Sulla for named agents. */
 export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverResolver {
-  constructor(private readonly jobs: AgentInboxJobReader, private readonly activeThreads: (channel: string) => string|string[]|undefined,private readonly custody?:Pick<JobCustodyPort,'resolveOwner'>) {}
+  constructor(private readonly jobs: AgentInboxJobReader, private readonly activeThreads: (channel: string) => string|string[]|undefined,private readonly custody?:Pick<JobCustodyPort,'resolveOwner'|'resolveOwners'>) {}
 
   async resolve(channel: string): Promise<AgentInboxTarget> {
     return (await this.resolveAll(channel))[0]??{channel,agentId:channel};
@@ -20,9 +20,11 @@ export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverReso
     const candidates=new Map<string,AgentInboxTarget>();
     const active=this.activeThreads(channel);for(const threadId of Array.isArray(active)?active:active?[active]:[])candidates.set(threadId,{channel,threadId,agentId:channel});
     const jobs = await (this.jobs.activeJobs?.() ?? this.jobs.allJobs());
+    const parkedJobs=jobs.filter(job=>job.status==='parked');
+    const owners=await this.custody?.resolveOwners?.(parkedJobs.map(job=>job.jobId));
     for (const job of jobs.sort((a,b) => b.createdAt-a.createdAt)) {
       for(let index=0;index<job.tasks.length;index++){const task=job.tasks[index];if(task.agentId===channel&&task.status==='parked'&&task.threadId)candidates.set(task.threadId,{channel,threadId:task.threadId,agentId:channel});}
-      if(job.status==='parked'){const owner=await this.custody?.resolveOwner(job.jobId);if(owner?.agentId===channel)candidates.set(owner.threadId,owner);else if(!owner&&job.parentAgentId===channel&&job.parentThreadId)candidates.set(job.parentThreadId,{channel,threadId:job.parentThreadId,agentId:channel});}
+      if(job.status==='parked'){const owner=owners?.get(job.jobId);if(owner?.agentId===channel)candidates.set(owner.threadId,owner);else if(!owner&&job.parentAgentId===channel&&job.parentThreadId)candidates.set(job.parentThreadId,{channel,threadId:job.parentThreadId,agentId:channel});}
     }
     return [...candidates.values()];
   }

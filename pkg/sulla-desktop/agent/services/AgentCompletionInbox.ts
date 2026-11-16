@@ -11,7 +11,7 @@ import { CompletionIdleDispatcher } from '../app/Services/CompletionIdleDispatch
 export { COMPLETION_RESULT_LIMIT };
 export type { AgentTerminalNotice, PendingCompletion } from '../app/Services/AgentCompletionInboxService';
 export interface CompletionInboxPort {
-  move(fromChannel: string, fromThreadId: string, toChannel: string, toThreadId: string, jobId: string, taskIndex: number): void;
+  move(fromChannel: string, fromThreadId: string, toChannel: string, toThreadId: string, jobId: string, taskIndex?: number): void;
   requeue(channel: string, threadId: string, entry: import('../app/Services/AgentCompletionInboxService').PendingCompletion): boolean;
   requeueAfterFailure(channel: string, threadId: string, entry: import('../app/Services/AgentCompletionInboxService').PendingCompletion): number;
   requeueQuietly(channel: string, threadId: string, entry: import('../app/Services/AgentCompletionInboxService').PendingCompletion): void;

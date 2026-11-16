@@ -25,15 +25,13 @@ export class CheckAgentJobsWorker extends BaseTool {
       const job = await this.fleet.job(jobId);
       if (!job) {
         return {
-          // A successful history query can truthfully report that the job is
-          // absent (for example after retention); the status is payload data.
-          successBoolean: true,
+          successBoolean: false,
           responseString: `Job "${ jobId }" not found. It may not exist or may have been explicitly pruned after the retention period.`,
         };
       }
       // The read succeeded: a failed/stopped job status is data in the payload, not a tool failure.
       const owner = await agentJobProvider.custody.resolveOwner(jobId);
-      return { successBoolean: true, responseString: JSON.stringify({ ...job, ...(owner ? { custody: owner } : {}) }, null, 2) };
+      return { successBoolean: true, responseString: JSON.stringify({ ...job, ...(owner && owner.version > 0 ? { custody: owner } : {}) }, null, 2) };
     }
 
     const scope = input.scope === 'all' ? 'all' : 'mine';

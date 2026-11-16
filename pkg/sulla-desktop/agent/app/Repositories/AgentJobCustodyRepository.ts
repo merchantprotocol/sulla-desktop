@@ -25,6 +25,19 @@ export class AgentJobCustodyRepository {
     return this.legacyParentOwner(this.database, jobId, taskIndex);
   }
 
+  async resolveOwners(jobIds: string[]): Promise<Map<string,CustodyRecord>> {
+    if (!jobIds.length) return new Map();
+    const rows=await this.database.query<any>(`SELECT j.job_id,c.changed_at,COALESCE(c.version,0) AS version,
+      COALESCE(c.owner_channel,j.parent_channel) AS owner_channel,COALESCE(c.owner_thread_id,j.parent_thread_id) AS owner_thread_id,
+      COALESCE(c.owner_agent_id,j.parent_agent_id,j.parent_channel) AS owner_agent_id
+      FROM agent_jobs j LEFT JOIN LATERAL (SELECT * FROM agent_job_custody c WHERE c.job_id=j.job_id AND c.task_index IS NULL
+        ORDER BY c.task_index NULLS LAST LIMIT 1) c ON true
+      WHERE j.job_id=ANY($1::text[]) AND COALESCE(c.owner_channel,j.parent_channel) IS NOT NULL
+        AND COALESCE(c.owner_thread_id,j.parent_thread_id) IS NOT NULL
+        AND COALESCE(c.owner_agent_id,j.parent_agent_id,j.parent_channel) IS NOT NULL`,[jobIds as unknown as string]);
+    return new Map(rows.map((row:any)=>[String(row.job_id),this.mapRecord(row)]));
+  }
+
   /**
    * The single custody/inbox producer protocol. Every scope first takes the
    * job advisory lock; task scopes then take their task lock. Custody rows are
@@ -85,12 +98,13 @@ export class AgentJobCustodyRepository {
     await this.observe(kind,'locked',jobId,taskIndex);
     const result = await client.query(this.resolveSql(), [jobId, taskIndex ?? null]);
     if (result.rows[0]) return this.mapRecord(result.rows[0], taskIndex);
-    return kind === 'producer' ? this.legacyParentOwner(client, jobId, taskIndex) : undefined;
+    return this.legacyParentOwner(client, jobId, taskIndex);
   }
 
-  private async legacyParentOwner(client: { query<T=any>(sql:string, values?:unknown[]):Promise<{rows:T[]}> }, jobId:string, taskIndex?:number):Promise<CustodyRecord|undefined> {
+  private async legacyParentOwner(client: { query(sql:string, values?:any[]):Promise<any> }, jobId:string, taskIndex?:number):Promise<CustodyRecord|undefined> {
     const result=await client.query<any>(`SELECT parent_channel,parent_thread_id,parent_agent_id,created_at FROM agent_jobs WHERE job_id=$1`,[jobId]);
-    const row=result.rows[0];
+    const rows=Array.isArray(result)?result:result?.rows??[];
+    const row=rows[0];
     if(!row?.parent_channel||!row?.parent_thread_id)return undefined;
     return {jobId,...(taskIndex===undefined?{}:{taskIndex}),channel:row.parent_channel,threadId:row.parent_thread_id,agentId:row.parent_agent_id??row.parent_channel,version:0,changedAt:new Date(row.created_at??0)};
   }

@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe,expect,it } from 'vitest';
+import { describe,expect,it,vi } from 'vitest';
 import { DurableAgentInboxReceiverResolver } from '../../../services/AgentInboxReceiverResolver';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 
@@ -30,5 +30,13 @@ describe('DurableAgentInboxReceiverResolver',()=>{
     const resolver=new DurableAgentInboxReceiverResolver({allJobs:async()=>{allReads++;return[];},activeJobs:async()=>{activeReads++;return[parked('bounded-agent','bounded-thread')];}},()=>undefined);
     expect((await resolver.resolve('bounded-agent')).threadId).toBe('bounded-thread');
     expect(activeReads).toBe(1);expect(allReads).toBe(0);
+  });
+  it('resolves all parked custody owners in one batch instead of querying once per job',async()=>{ // risk: inbox resolution adds a per-job database query on every channel lookup
+    const first={...parked('first','first-thread'),tasks:[]};const second={...parked('second','second-thread'),jobId:'job-second',tasks:[]};
+    const resolveOwners=vi.fn(async(jobIds:string[])=>new Map(jobIds.map(jobId=>[jobId,{jobId,channel:jobId==='job-first'?'first':'second',agentId:jobId==='job-first'?'first':'second',threadId:`${jobId}-owner`,version:1,changedAt:new Date()}])));
+    const resolver=new DurableAgentInboxReceiverResolver({allJobs:async()=>[first,second]},()=>undefined,{resolveOwner:async()=>undefined,resolveOwners});
+    const matches=await resolver.resolveAll('first');
+    expect(resolveOwners).toHaveBeenCalledTimes(1);expect(resolveOwners).toHaveBeenCalledWith(['job-first','job-second']);
+    expect(matches.map(match=>match.threadId)).toEqual(['job-first-owner']);
   });
 });

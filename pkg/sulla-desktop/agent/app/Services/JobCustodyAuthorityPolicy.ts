@@ -28,6 +28,12 @@ export class JobCustodyAuthorityPolicy {
     if(await this.lineage.isAncestor(actor.threadId,current.threadId)) return undefined;
     return this.refuse('forbidden',`Custody belongs to ${current.agentId} (${current.channel}/${current.threadId}).`,current);
   }
+  async authorizeControl(current:CustodyRecord,actor:VerifiedCustodyActor):Promise<boolean>{
+    actor.assertVerified();
+    if(actor.kind==='human'||this.same(current,actor))return true;
+    if(await this.lineage.isAncestor(actor.threadId,current.threadId))return true;
+    return Boolean(await this.topLevelSessions?.allows(actor,current));
+  }
   async authorize(input:CustodyAuthorityInput):Promise<CustodyMoveResult|undefined>{
     const current=input.current;
     if(this.same(current,input.destination)) return this.refuse('no-op','Destination already owns this job.',current);

@@ -73,6 +73,19 @@ describe('AgentCompletionInboxService', () => {
     expect(inbox.pendingCount()).toBe(0);
   });
 
+  it('moves every queued task completion when custody changes at whole-job scope', () => {
+    // risk: completion loss or stale-owner delivery during a whole-job custody handoff.
+    const { inbox } = createInbox();
+    inbox.enqueue('old-owner', 'old-thread', completion('job-move', 0));
+    inbox.enqueue('old-owner', 'old-thread', completion('job-move', 1));
+    inbox.enqueue('old-owner', 'old-thread', completion('other-job', 0));
+
+    inbox.move('old-owner', 'old-thread', 'new-owner', 'new-thread', 'job-move');
+
+    expect(inbox.take('old-owner', 'old-thread').map(entry => entry.jobId)).toEqual(['other-job']);
+    expect(inbox.take('new-owner', 'new-thread').map(entry => [entry.jobId, entry.taskIndex])).toEqual([['job-move', 0], ['job-move', 1]]);
+  });
+
   it('bounds retained acknowledged dedupe keys with oldest-first eviction', () => {
     // risk: unbounded memory growth from completed tasks over a long app lifetime.
     const { inbox } = createInbox();

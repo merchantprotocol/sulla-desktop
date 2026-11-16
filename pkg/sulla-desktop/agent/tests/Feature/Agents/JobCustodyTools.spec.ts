@@ -62,7 +62,7 @@ dbDescribe('registered custody transfer tools',()=>{
       {message_id:`custody:${worker.jobId}:job:1:new`,receiver_thread_id:'manager-two-thread'},
       {message_id:`custody:${worker.jobId}:job:1:old`,receiver_thread_id:'manager-one-thread'},
     ]);
-    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');
+    const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');const completionInboxStore=agentCompletionProvider.inbox;
     expect(completionInboxStore.take('manager-one','manager-one-thread').filter(entry=>entry.notice?.includes(`Job ${worker.jobId}`))).toHaveLength(0);
     expect(completionInboxStore.take('manager-two','manager-two-thread').filter(entry=>entry.notice?.includes(`Job ${worker.jobId}`))).toHaveLength(0);
     const {PostgresAgentInboxRepository}=await import('../../../app/Repositories/PostgresAgentInboxRepository');const {DesktopPostgresConnection}=await import('../../../app/Database/DesktopPostgresConnection');const {postgresClient}=await import('../../../database/PostgresClient');
@@ -98,7 +98,7 @@ dbDescribe('registered custody transfer tools',()=>{
     const adopted=await tools.call('adopt_job',{jobId:lead.jobId,reason:'stranded owner'}, {wsChannel:adopter,agentId:adopter,threadId:`${adopter}-thread`,isSubAgent:false,subAgentDepth:0});
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
     GraphRegistry.delete(`${adopter}-thread`); // keep the durable completion queued instead of letting the live graph consume it
-    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');completionInboxStore.registerIdleDispatcher(()=>{});
+    const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');const completionInboxStore=agentCompletionProvider.inbox;completionInboxStore.registerIdleDispatcher(()=>{});
     const returned=await tools.call('return_result',{status:'completed',summary:'lead done',output:{ok:true}}, {wsChannel:'lead',agentId:'lead',threadId:lead.tasks[0].threadId,subAgentDepth:1});
     expect(returned,JSON.stringify(returned)).toMatchObject({success:true});
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
@@ -117,6 +117,8 @@ dbDescribe('registered custody transfer tools',()=>{
     const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:`h2b-worker-${stamp}`}],'h2b-old',oldThread,{parentAgentId:'h2b-old'});
     const adopted=await tools.call('adopt_job',{jobId:job.jobId,reason:'live top-level transfer'},{wsChannel:'h2b-new',agentId:'h2b-new',threadId:newThread,isSubAgent:false,subAgentDepth:0});
     expect(adopted,JSON.stringify(adopted)).toMatchObject({success:true});
+    expect(await tools.call('send_job_message',{jobId:job.jobId,message:'top-level session steering'},
+      {wsChannel:'h2b-old',agentId:'h2b-old',threadId:oldThread,isSubAgent:false,subAgentDepth:0})).toMatchObject({success:true});
     const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');expect(await agentJobProvider.custody.history(job.jobId)).toHaveLength(1);
     const notices=await database.query<any>(`SELECT receiver_thread_id FROM agent_inbox_messages WHERE message_id LIKE $1 ORDER BY receiver_thread_id`,[`custody:${job.jobId}:job:1:%`]);
     expect(notices.map(row=>row.receiver_thread_id).sort()).toEqual([newThread,oldThread].sort());GraphRegistry.delete(oldThread);GraphRegistry.delete(newThread);
@@ -130,12 +132,16 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await tools.call('reassign_job',{jobId:job.jobId,to:`new-owner-${stamp}`,reason:'handoff'},oldMeta)).toMatchObject({success:true});
     expect(await tools.call('send_job_message',{jobId:job.jobId,message:'new instruction'},newMeta)).toMatchObject({success:true});
     const refused=await tools.call('send_job_message',{jobId:job.jobId,message:'stale instruction'},oldMeta);expect(refused.success).toBe(false);expect(JSON.stringify(refused)).toContain('new-owner');
+    expect(await tools.call('stop_agent_job',{jobId:job.jobId,mode:'wrap_up',reason:'finish current step',gracePeriodSeconds:60},newMeta)).toMatchObject({success:true});
+    const wrapMessages=await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 AND message LIKE '[Stop requested by %'`,[job.jobId]);
+    expect(wrapMessages).toHaveLength(1);
+    const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');agentJobProvider.wrapUp.taskSettled(job.jobId,0);
     const pending=await database.query<any>(`SELECT message FROM agent_job_messages WHERE job_id=$1 ORDER BY created_at`,[job.jobId]);expect(pending.filter(row=>row.message.includes('[Manager changed]'))).toHaveLength(1);
   });
 
   it('H1 routes a registered check-in, blocker, and final result only to the new owner after a move',async()=>{
     // risk: stranded worker progress/question/result; guards the complete registered worker lifecycle after handoff
-    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
+    const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');const completionInboxStore=agentCompletionProvider.inbox;const stamp=Date.now();
     const old=`block-old-${stamp}`,next=`block-new-${stamp}`,child=`block-worker-${stamp}`;
     await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
     const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
@@ -176,12 +182,36 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await agentJobProvider.custody.resolveOwner(messageJob.jobId)).toMatchObject({channel:parentMeta.agentId,threadId:parentMeta.threadId});
     const sent=await tools.call('send_job_message',{jobId:messageJob.jobId,message:'legacy parent message'},parentMeta);
     expect(sent).toMatchObject({success:true});
+    const {GraphRegistry}=await import('../../../services/GraphRegistry');
+    const topLevelThread=`legacy-non-spawner-${stamp}`;
+    const topLevelGraph=await GraphRegistry.getOrCreate(`legacy-non-spawner-${stamp}`,topLevelThread);
+    Object.assign(topLevelGraph.state.metadata,{wsChannel:`legacy-non-spawner-${stamp}`,agentId:`legacy-non-spawner-${stamp}`,threadId:topLevelThread,isSubAgent:false,subAgentDepth:0,managerThreadId:undefined});
+    const steered=await tools.call('send_job_message',{jobId:messageJob.jobId,message:'legacy top-level steering'},
+      {wsChannel:`legacy-non-spawner-${stamp}`,agentId:`legacy-non-spawner-${stamp}`,threadId:topLevelThread,isSubAgent:false,subAgentDepth:0});
+    expect(steered).toMatchObject({success:true});
+    expect((await agentJobProvider.messaging.pendingMessagesForThread(`legacy-message-${stamp}`)).map(item=>item.message)).toContain('legacy top-level steering');
+    GraphRegistry.delete(topLevelThread);
     const stopped=await tools.call('stop_agent_job',{jobId:stopJob.jobId,reason:'legacy parent stop'},parentMeta);
     expect(stopped).toMatchObject({success:true});
     const {JobCompletionDelivery}=await import('../../../tools/agents/jobDelivery');
+    const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');
+    const completionInboxStore=agentCompletionProvider.inbox;completionInboxStore.dispose();completionInboxStore.registerIdleDispatcher(()=>{});
     const delivery=new JobCompletionDelivery(agentJobProvider.service,{build:async()=>undefined} as any,agentJobProvider.custody);
     expect(await delivery.deliver(messageJob,[{label:'W',status:'completed',output:'legacy result'} as any])).toBe(true);
     expect(completionInboxStore.take(parentMeta.agentId,parentMeta.threadId).some(entry=>entry.jobId===messageJob.jobId)).toBe(true);
+  });
+
+  it('keeps main behavior for legacy blockers by recording check-ins without routing a new notice',async()=>{
+    // risk: a custody rollout must not change no-custody blocker notification behavior.
+    const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');
+    const inbox=agentCompletionProvider.inbox;inbox.dispose();inbox.registerIdleDispatcher(()=>{});
+    const stamp=Date.now(),parent=`legacy-blocker-parent-${stamp}`,child=`legacy-blocker-worker-${stamp}`;
+    const job=await registry.createJob([{agentId:'legacy-worker',label:'W',prompt:'work',status:'running',threadId:child}],parent,parent,{parentAgentId:parent});
+    const result=await tools.call('report_progress',{step:'blocked',summary:'Need input',blockers:['select option']},{wsChannel:'legacy-worker',agentId:'legacy-worker',threadId:child,subAgentDepth:1});
+    expect(result).toMatchObject({success:true});
+    expect(await inbox.take(parent,parent)).toHaveLength(0);
+    const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+    expect(await agentJobProvider.custody.resolveOwner(job.jobId)).toMatchObject({version:0,threadId:parent});
   });
 
 
@@ -218,9 +248,9 @@ dbDescribe('registered custody transfer tools',()=>{
 
   it('H4 serializes registered return_result with reassign_job in both commit orders',async()=>{
     // risk: lost/duplicated contracts; guards jobDelivery.ts:188-195 and AgentJobCustodyRepository.ts:20-28
-    const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');const repository=(agentJobProvider.custody as any).repository;const originalObserver=repository.observer;const stamp=Date.now();
+    const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');const completionInboxStore=agentCompletionProvider.inbox;const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');const repository=(agentJobProvider.custody as any).repository;const originalObserver=repository.observer;const stamp=Date.now();
     for(const order of ['return-first','move-first'] as const){
-      completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});
+      completionInboxStore.dispose();completionInboxStore.registerIdleDispatcher(()=>{});
       const old=`h4-old-${order}-${stamp}`,next=`h4-new-${order}-${stamp}`,child=`h4-child-${order}-${stamp}`;
       await registry.createJob([{agentId:next,label:'N',prompt:'manage',status:'running',threadId:next}],'root','root-thread',{parentAgentId:'root'});
       const job=await registry.createJob([{agentId:'worker',label:'W',prompt:'work',status:'running',threadId:child}],old,old,{parentAgentId:old});
@@ -248,8 +278,8 @@ dbDescribe('registered custody transfer tools',()=>{
 
   it('H4 keeps a nested worker completion with its manager during concurrent manager adoption',async()=>{
     // risk: adopter steals nested contracts; guards JobCompletionDelivery custody scope in jobDelivery.ts:188-195
-    const {GraphRegistry}=await import('../../../services/GraphRegistry');const {completionInboxStore}=await import('../../../services/AgentCompletionInbox');const stamp=Date.now();
-    completionInboxStore.clear();completionInboxStore.registerIdleDispatcher(()=>{});
+    const {GraphRegistry}=await import('../../../services/GraphRegistry');const {agentCompletionProvider}=await import('../../../app/Providers/AgentCompletionServiceProvider');const completionInboxStore=agentCompletionProvider.inbox;const stamp=Date.now();
+    completionInboxStore.dispose();completionInboxStore.registerIdleDispatcher(()=>{});
     const owner=`h4po-owner-${stamp}`,adopter=`h4po-adopter-${stamp}`,managerThread=`h4po-manager-${stamp}`,workerThread=`h4po-worker-${stamp}`;
     for(const [agent,thread] of [[owner,owner],[adopter,adopter]] as const){const graph=await GraphRegistry.getOrCreate(agent,thread);Object.assign(graph.state.metadata,{agentId:agent,wsChannel:agent,threadId:thread,isSubAgent:false,subAgentDepth:0});}
     const manager=await registry.createJob([{agentId:'nested-manager',label:'M',prompt:'manage',status:'parked',threadId:managerThread}],owner,owner,{parentAgentId:owner});

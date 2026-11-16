@@ -11,6 +11,7 @@ import type { CustodyAuditRecord,CustodyChangeNotifier,CustodyMoveInput,CustodyM
 export class JobCustodyService implements JobCustodyPort {
   constructor(private readonly repository:AgentJobCustodyRepository,private readonly policy:JobCustodyAuthorityPolicy,private readonly notifier:CustodyChangeNotifier,private readonly clock:Clock){}
   authorizeReplacement(current:CustodyRecord,actor:VerifiedCustodyActor):Promise<CustodyMoveResult|undefined>{return this.policy.authorizeReplacement(current,actor);}
+  authorizeControl(current:CustodyRecord,actor:VerifiedCustodyActor):Promise<boolean>{return this.policy.authorizeControl(current,actor);}
   async move(input:CustodyMoveInput):Promise<CustodyMoveResult>{
     input.actor.assertVerified();
     const changedAt=this.clock.now();
@@ -23,6 +24,7 @@ export class JobCustodyService implements JobCustodyPort {
     return result;
   }
   resolveOwner(jobId:string,taskIndex?:number):Promise<CustodyRecord|undefined>{return this.repository.resolveOwner(jobId,taskIndex);}
+  resolveOwners(jobIds:string[]):Promise<Map<string,CustodyRecord>>{return this.repository.resolveOwners(jobIds);}
   withOwner<T>(jobId:string,taskIndex:number|undefined,operation:(client:CustodyTransactionClient,owner:CustodyRecord)=>Promise<T>):Promise<T|undefined>{return this.repository.withCustodyLock(jobId,taskIndex,operation);}
   history(jobId:string):Promise<CustodyAuditRecord[]>{return this.repository.history(jobId);}
 }

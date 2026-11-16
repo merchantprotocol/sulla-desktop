@@ -9,7 +9,6 @@ import type { AgentStateService } from './AgentStateService';
 import type { AgentJob } from '../../tools/agents/jobRegistry';
 import type { CustodyOwner, CustodyRecord, CustodyTransactionClient, JobCustodyPort } from './JobCustodyTypes';
 import type { CustodyLineagePort } from './JobCustodyAuthorityPolicy';
-import type { TaskTeardownOutcome, TaskTeardownPort } from './TaskTeardownPort';
 
 export type StopOutcome = 'stopped' | 'not-found' | 'already-finished' | 'forbidden';
 export type StopAuthorization = { outcome: 'allowed' | 'not-found' | 'forbidden'; owner?: CustodyOwner };
@@ -42,21 +41,8 @@ export class JobStopService extends Service {
     private readonly taskLocator: JobTaskLocator,
     private readonly custody?: Pick<JobCustodyPort, 'resolveOwner' | 'withOwner'>,
     private readonly custodyLineage?: Pick<CustodyLineagePort, 'isAncestor'>,
-    private readonly taskTeardown?: TaskTeardownPort,
     private readonly scopedWriter?: CustodyScopedJobStateWriter,
   ) { super(); }
-
-  /** Idempotent provider/process boundary. Durable callers acknowledge only after this returns. */
-  async teardownTask(jobId: string, taskIndex: number, generation: string): Promise<TaskTeardownOutcome> {
-    // Abort is a same-process hint, never evidence that an external CLI exited.
-    this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);
-    return this.taskTeardown?.teardown(jobId, taskIndex, generation) ?? 'unavailable';
-  }
-
-  /** Applies the wrap-up outbox's terminal stop in the job's state queue so readers and writers see it. */
-  applyDurableStop(jobId: string, write: () => Promise<boolean>): Promise<boolean> {
-    return this.states.applyExternalWrite(jobId, write);
-  }
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
     const job = this.runtime.jobs.get(jobId); if (!job) return 'not-found';

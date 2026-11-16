@@ -24,15 +24,20 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
   const taskIndex = options.taskIndex;
   if (taskIndex !== undefined && (!Number.isInteger(taskIndex) || taskIndex < 0)) return { successBoolean: false, responseString: 'taskIndex must be a non-negative integer.' };
   if (options.mode === 'wrap_up') {
-    const targets = taskIndex === undefined ? (job?.tasks ?? []).map((_, index) => index) : [taskIndex];
+    const targets = taskIndex === undefined ? (job?.tasks ?? []).flatMap((task,index) => ['queued','running','parked'].includes(task.status) ? [index] : []) : [taskIndex];
     const stoppedBy = StopPrincipal.attribution(principal);
     const who = stoppedBy === 'human' ? 'human' : 'agentId' in stoppedBy ? stoppedBy.agentId : stoppedBy.system;
     const message = `[Stop requested by ${ who }] Finish your current step and return your contract now with what you have`;
     const graceSeconds = Math.max(1, options.gracePeriodSeconds ?? 120);
     const {sendJobMessage}=await import('./send_job_message');
-    const sent=await sendJobMessage({jobId,...(taskIndex===undefined?{}:{taskIndex}),message},callerMetadata);
-    if(!sent.successBoolean)return sent;
-    await agentJobProvider.wrapUp.request(jobId, targets, principal, reason, graceSeconds, message,true);
+    const unscheduled=agentJobProvider.wrapUp.unscheduledTaskIndexes(jobId,targets);
+    const messaged:number[]=[];
+    for(const targetIndex of unscheduled){
+      const sent=await sendJobMessage({jobId,taskIndex:targetIndex,message},callerMetadata);
+      if(!sent.successBoolean){agentJobProvider.wrapUp.scheduleAfterMessage(jobId,messaged,principal,reason,graceSeconds);return sent;}
+      messaged.push(targetIndex);
+    }
+    agentJobProvider.wrapUp.scheduleAfterMessage(jobId, messaged, principal, reason, graceSeconds);
     return { successBoolean: true, responseString: `Wrap-up requested for job "${ jobId }"${ taskIndex === undefined ? '' : ` task ${ taskIndex }`}; it has ${ graceSeconds } seconds to return before hard stop.` };
   }
   const outcome = taskIndex === undefined
@@ -99,7 +104,7 @@ export class StopAgentJobWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const metadata = this.state?.metadata;
     const verified=await agentJobProvider.custodyCallerVerifier.verify(metadata);
-    const caller = StopPrincipal.agent(verified.agentId, verified.threadId);
+    const caller = StopPrincipal.agent(verified.agentId || metadata?.routedAgentId, verified.threadId || metadata?.threadId);
     return stopAgentJob(typeof input.jobId === 'string' ? input.jobId : '', caller, typeof input.reason === 'string' && input.reason.trim() ? input.reason.trim() : 'agent request (no reason given)', {
       taskIndex: input.taskIndex === undefined ? undefined : Number(input.taskIndex),
       mode: input.mode === 'wrap_up' ? 'wrap_up' : 'hard',

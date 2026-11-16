@@ -13,7 +13,8 @@ export class ReassignJobWorker extends BaseTool {
     const actor=await agentJobProvider.custodyCallerVerifier.verify((this.state as any)?.metadata);
     const destination=await agentJobProvider.custodyDestinations.resolve(String(input.to??''),actor);
     if(!destination.ok)return {successBoolean:false,responseString:destination.message};
-    const result=await agentJobProvider.custody.move({jobId:String(input.jobId),...(taskIndex===undefined?{}:{taskIndex}),to:destination.owner,actor,reason:String(input.reason).trim()});
+    const reason=typeof input.reason==='string'?input.reason.trim():'';
+    const result=await agentJobProvider.custody.move({jobId:String(input.jobId),...(taskIndex===undefined?{}:{taskIndex}),to:destination.owner,actor,reason});
     return result.ok?{successBoolean:true,responseString:JSON.stringify({jobId:input.jobId,taskIndex,previous:result.previous,current:result.current})}:{successBoolean:false,responseString:result.message};
   }
 }

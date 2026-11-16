@@ -33,12 +33,11 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   // Review-item writes and message rows commit in the same custody transaction.
   const caller=metadata?await agentJobProvider.custodyCallerVerifier.verify(metadata):undefined;
   const snapshot=caller?await agentJobProvider.custody.resolveOwner(jobId,taskIndex):undefined;
-  const snapshotAncestor=caller&&snapshot&&caller.threadId!==snapshot.threadId?await agentJobProvider.custodyLineage.isAncestor(caller.threadId,snapshot.threadId):false;
   const locked=await agentJobProvider.custody.withOwner(jobId,taskIndex,async(client,owner)=>{
-    if(caller){
-      const same=caller.threadId===owner.threadId;
-      const unchanged=snapshot?.threadId===owner.threadId&&snapshot.version===owner.version;
-      if(!same&&!(unchanged&&snapshotAncestor))return {kind:'forbidden',owner} as const;
+    if(owner.version>0){
+      const unchanged=snapshot?.threadId===owner.threadId&&snapshot.channel===owner.channel&&snapshot.agentId===owner.agentId&&snapshot.version===owner.version;
+      const authorized=caller&&unchanged?await agentJobProvider.custody.authorizeControl(owner,caller):false;
+      if(!authorized)return {kind:'forbidden',owner} as const;
     }
     const targets=await agentJobProvider.messaging.openTargetsWithClient(client,jobId,taskIndex);
     if(targets.length===0)return {kind:'no-targets'} as const;

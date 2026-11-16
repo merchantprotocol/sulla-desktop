@@ -171,7 +171,7 @@ export class JobCompletionDelivery {
   private readonly orphanedChildResults: OrphanedChildResultService;
   private readonly orphanedChildRerouter: OrphanedChildRerouter;
 
-  constructor(jobs: OrphanedChildJobStore, private readonly cards = new AgentResultCardBuilder(subconsciousResultModel), private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'>) {
+  constructor(jobs: OrphanedChildJobStore, private readonly cards = new AgentResultCardBuilder(subconsciousResultModel), private readonly custody?: Pick<JobCustodyPort, 'withOwner'>) {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
     this.orphanedChildRerouter = new OrphanedChildRerouter();
   }
@@ -193,6 +193,16 @@ export class JobCompletionDelivery {
     // Intentional stops are audit state, not completions. Never notify or wake
     // the parent; the repository marks them consumed before runtime abort.
     if (terminal?.status === 'stopped' && terminal.stoppedBy) return true;
+    if(this.custody){
+      const routed=await this.custody.withOwner(job.jobId,taskIndex,async(_client,owner)=>owner.version>0
+        ?this.deliverToOwner(job,results,taskIndex,failureReason,terminal,owner.channel,owner.threadId)
+        :this.deliverLegacy(job,results,taskIndex,failureReason,terminal));
+      if(routed!==undefined)return routed;
+    }
+    return this.deliverLegacy(job,results,taskIndex,failureReason,terminal);
+  }
+
+  private async deliverLegacy(job:AgentJob,results:AgentJobResult[],taskIndex:number,failureReason:string|undefined,terminal:AgentTerminalNotice|undefined):Promise<boolean>{
     const orphan = await this.orphanedChildResults.capture(job, results, taskIndex);
     if (orphan) {
       if (orphan.duplicate || !orphan.route) return true;
@@ -200,9 +210,12 @@ export class JobCompletionDelivery {
       const orphanReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
       return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, orphanReason, taskIndex, terminal);
     }
-    const owner = await this.custody?.resolveOwner(job.jobId, taskIndex);
-    const channel = owner?.channel ?? job.parentChannel ?? 'sulla-desktop';
-    const threadId = owner?.threadId ?? job.parentThreadId;
+    const channel = job.parentChannel || 'sulla-desktop';
+    const threadId = job.parentThreadId;
+    return this.deliverToOwner(job,results,taskIndex,failureReason,terminal,channel,threadId);
+  }
+
+  private async deliverToOwner(job:AgentJob,results:AgentJobResult[],taskIndex:number,failureReason:string|undefined,terminal:AgentTerminalNotice|undefined,channel:string,threadId:string|undefined):Promise<boolean>{
     // Bounded (a few seconds at most) and never fatal: a plain card is the fallback.
     const card = results.length && !failureReason
       ? await this.cards.build(job, results, taskIndex).catch(() => undefined)
