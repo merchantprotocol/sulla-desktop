@@ -376,6 +376,10 @@ describe.sequential('E9 LocalVaultAuthority scenarios (legacy == current)', () =
     const transcript = await E9Equivalence.assertSame(E9Scripts.password());
     const exported = (transcript.steps as Array<{ step: string; ok: boolean }>).find(entry => entry.step === 'export backup');
     expect(exported?.ok).toBe(true);
+    // The human session from the async unlock must carry through: these steps must really run, not all fail as 401.
+    for (const name of ['change password', 'configure recovery', 'save item']) {
+      expect((transcript.steps as Array<{ step: string; ok: boolean }>).find(entry => entry.step === name)).toMatchObject({ ok: true });
+    }
   }, SLOW);
 
   it('restores an exported backup identically', async() => {
