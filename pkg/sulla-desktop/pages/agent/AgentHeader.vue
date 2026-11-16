@@ -6,7 +6,7 @@
 -->
 <template>
   <header
-    class="app-titlebar relative flex flex-none items-end justify-between pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 transition duration-500 z-99"
+    class="app-titlebar relative flex flex-none items-end justify-between pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
     <div class="relative flex shrink-0 items-center self-stretch">
@@ -904,8 +904,12 @@ function handleMoreMenuAction(
     openNewBrowserTab();
     break;
   case 'chatHistory':
-    // The visible chat tab toggles its history panel (same as the old header History button).
-    window.dispatchEvent(new CustomEvent('sulla:toggle-chat-history'));
+    // Chat owns its inline history panel; from other tabs show History mode.
+    if (orderedTabs.value.find(tab => tab.isActive)?.mode === 'chat') {
+      window.dispatchEvent(new CustomEvent('sulla:toggle-chat-history'));
+    } else {
+      openModeTab('history');
+    }
     break;
   case 'integrations':
     openModeTab('integrations');
@@ -2402,8 +2406,9 @@ function handleTabContextMenuAction(
 .app-titlebar {
   position: relative;
   z-index: 20;
-  width: calc(100% + 64px);
-  margin-left: -64px;
+  width: calc(100% + var(--rail-width, 64px));
+  margin-left: calc(-1 * var(--rail-width, 64px));
+  transition: width var(--dur-move) var(--spring), margin-left var(--dur-move) var(--spring);
   min-height: 44px;
   height: 44px;
   padding-top: 0;

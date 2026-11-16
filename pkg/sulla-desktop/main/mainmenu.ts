@@ -340,9 +340,9 @@ function getEditMenu(isMac: boolean): MenuItem {
       ...(!isMac ? [{ type: 'separator' } as MenuItemConstructorOptions] : []),
       { role: 'selectAll', label: 'Select &All' },
       { type: 'separator' },
-      // The renderer's own ⌘P keydown handles the same key; the chat page
-      // de-duplicates the two so one press toggles the palette once.
-      { label: 'Find Chat…', accelerator: 'CmdOrCtrl+P', click: () => sendAgentCommand('find-chat') },
+      // Keep the shortcut visible without registering it on the whole window:
+      // browser tabs must receive ⌘P, while ChatPage handles it in chat.
+      { label: 'Find Chat…', accelerator: 'CmdOrCtrl+P', registerAccelerator: false, click: () => sendAgentCommand('find-chat') },
     ],
   });
 }

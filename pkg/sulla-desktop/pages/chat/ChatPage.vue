@@ -684,16 +684,11 @@ const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
 // The right drawer (side dock) holds the agent lanes, results, decisions and files.
 // It never takes the message box: that stays at the bottom of the chat.
 // Find chat (⌘P): past chats, pins, and this chat's decisions and results.
-// The Electron menu bar's "Find Chat…" (⌘P) fires `sulla:find-chat` through the
-// AgentRouter; the renderer keydown below covers the same key. Both route
-// through toggleFindChat, and the short guard stops one keypress toggling twice.
+// The Electron menu item is display-only for its shortcut; ChatPage owns ⌘P
+// in chat tabs, while the menu click remains an explicit `sulla:find-chat` event.
 const switcherOpen = ref(false);
-let lastFindChatToggleAt = 0;
 function toggleFindChat(): void {
   if (props.isActive === false) return;
-  const now = Date.now();
-  if (now - lastFindChatToggleAt < 150) return;
-  lastFindChatToggleAt = now;
   switcherOpen.value = !switcherOpen.value;
 }
 function onFindChatKey(event: KeyboardEvent): void {

@@ -6,7 +6,7 @@
 -->
 <template>
   <div class="agent-router-root">
-    <div class="agent-router-body">
+    <div class="agent-router-body" :class="{ 'has-titlebar': hasTitlebar }">
       <!--
         Global ModeRail — lives at the window level so it stays visible
         across every tab and every mode (chat, browser, secretary,
@@ -198,6 +198,14 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+// Only the browser tab and these named pages render AgentHeader. Defaulting
+// unknown/full-screen routes to false avoids relying on kept-alive DOM nodes.
+const hasTitlebar = computed(() => isBrowserRoute.value || [
+  'AgentCalendar',
+  'AgentIntegrations',
+  'AgentIntegrationDetail',
+  'ExtensionView',
+].includes(String(route.name)));
 
 // Persist active tab ID whenever the route changes so restarts can resume it
 watch(() => route.path, (path) => {
@@ -841,6 +849,7 @@ onUnmounted(() => {
  * to the footer, beside the tab strip (VS Code activity-bar style).
  */
 .agent-router-body {
+  --rail-width: 64px;
   display: flex;
   flex-direction: row;
   flex: 1;
@@ -848,15 +857,17 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.agent-router-rail {
-  flex-shrink: 0;
-  margin-top: 44px;
-  height: calc(100% - 44px);
+.agent-router-body:has(.agent-router-rail.expanded) {
+  --rail-width: 212px;
 }
 
-.agent-router-body:has(.agent-router-rail.expanded) .agent-router-content :deep(.app-titlebar) {
-  width: calc(100% + 212px);
-  margin-left: -212px;
+.agent-router-rail {
+  flex-shrink: 0;
+}
+
+.agent-router-body.has-titlebar .agent-router-rail {
+  margin-top: 44px;
+  height: calc(100% - 44px);
 }
 
 .agent-router-content {
