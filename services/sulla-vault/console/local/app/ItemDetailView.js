@@ -9,13 +9,14 @@ import { Icons, VaultFormat } from './VaultFormat.js';
 export class ItemDetailView {
   static MASK = '••••••••••••';
 
-  constructor(dom, api, state, list, auditFormatter, customFields) {
+  constructor(dom, api, state, list, auditFormatter, customFieldRules) {
     this.dom = dom;
     this.api = api;
     this.state = state;
     this.list = list;
     this.auditFormatter = auditFormatter;
-    this.customFields = customFields;
+    // globalThis.SullaVaultCustomFields (customFields.js): isSecret, valueError, ...
+    this.customFieldRules = customFieldRules;
     this.onEdit = () => {};
   }
 
@@ -46,7 +47,7 @@ export class ItemDetailView {
   }
 
   customFieldDetail(field) {
-    const CF = this.customFields;
+    const CF = this.customFieldRules;
     const secret = CF.isSecret(field);
     const row = this.field(field.label, field.type === 'boolean' ? (field.value === 'true' ? 'Yes' : 'No') : field.value, secret);
     row.classList.add('custom-field-detail'); row.dataset.customType = field.type;

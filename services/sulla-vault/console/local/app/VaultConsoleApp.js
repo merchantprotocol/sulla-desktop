@@ -30,7 +30,7 @@ export class VaultConsoleApp {
     const auditFormatter = new AuditEventFormatter(this.state);
     const customFields = new CustomFieldEditor(this.dom, this.state, customFieldRules);
     this.list = new ItemListView(this.dom, this.state);
-    this.detail = new ItemDetailView(this.dom, this.api, this.state, this.list, auditFormatter, customFields);
+    this.detail = new ItemDetailView(this.dom, this.api, this.state, this.list, auditFormatter, customFieldRules);
     this.editor = new ItemEditorView(this.dom, this.api, this.state, customFields, new IntegrationPropertiesEditor(this.dom), new ProxyRulesEditor(this.dom));
     this.connect = new ConnectView(this.dom, this.api, this.state, this.launch, this.editor, window.location);
     this.audit = new AuditView(this.dom, this.api, auditFormatter);
