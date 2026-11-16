@@ -71,17 +71,7 @@
           @pick="onSuggestion"
         />
         <Transcript v-else />
-
-        <!--
-          One Composer, moved (not remounted) into the side dock when the dock
-          is on the side, so the draft, attachments and queue come along.
-        -->
-        <Teleport
-          :to="sideBox ?? 'body'"
-          :disabled="!dockSide || !sideBox"
-        >
-          <Composer />
-        </Teleport>
+        <Composer />
       </main>
 
       <template v-if="!dockSide">
@@ -712,14 +702,16 @@ const chatFilesOpen = ref(false);
 const { position: dockPosition, sideRatio, setPosition: setDockPosition } = DockPositions.use();
 const dockSide = computed(() => dockPosition.value === 'side');
 const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
-const sideBox = computed(() => sideDock.value?.boxEl ?? null);
-// The agents drawer is the side dock's Sulla tab: the header's Sub-agents button
-// moves the dock to the side (if it isn't already) and opens that tab.
+// The right drawer (side dock) holds the agent lanes, results, decisions and files.
+// It never takes the message box: that stays at the bottom of the chat. The header's
+// Sub-agents button opens the drawer on its Sulla tab, or closes it when it is open.
 async function openAgentsDrawer(): Promise<void> {
-  if (!dockSide.value) {
-    setDockPosition('side');
-    await nextTick();
+  if (dockSide.value) {
+    setDockPosition('bottom');
+    return;
   }
+  setDockPosition('side');
+  await nextTick();
   sideDock.value?.selectTab('sulla');
 }
 // Find chat (⌘P): past chats, pins, and this chat's decisions and results.
@@ -946,13 +938,10 @@ onBeforeUnmount(() => {
   .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
 }
 
-/* ─── Side dock: the right column holds the tabs and the message box ─── */
+/* ─── Side dock: the right drawer holds the tabs; the message box stays at the bottom ─── */
 /* Its width is a saved share of the chat area (dragged on its edge), kept between 340px and 70%. */
 .chat-root { --side-dock-w: clamp(340px, calc(var(--side-ratio, 0.32) * 100%), 70%); }
 .chat-root.dock-side .main { right: var(--side-dock-w, 440px); }
-/* useResizeSync sets these inline from the bottom box; on the side nothing sits over the transcript. */
-.chat-root.dock-side .main { --composer-h: 0px !important; --scroller-pad-b: 48px !important; }
-.chat-root.dock-side .composer-backdrop { display: none; }
 .chat-root.dock-side .shell :deep(.sdk-embed .chat-files-drawer) {
   position: static; display: flex; width: auto; height: 100%; border-left: 0; background: none; backdrop-filter: none;
 }
