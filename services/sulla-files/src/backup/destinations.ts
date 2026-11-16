@@ -85,17 +85,17 @@ export class LocalBackupObjectStore implements BackupObjectStore {
 
 class S3ObjectStore implements BackupObjectStore {
   readonly description:string;
-  constructor(private readonly config:Extract<BackupDestinationConfig,{kind:'s3'}>,private readonly client:S3BackupClient) {
+  constructor(private readonly config:Extract<BackupDestinationConfig,{kind:'s3'}>,private readonly transport:S3BackupClient) {
     const endpoint = new URL(config.endpoint); if (endpoint.protocol !== 'https:') throw new Error('S3 backup destinations require HTTPS');
     this.description = `s3:${ endpoint.origin }/${ config.bucket }`;
   }
   private key(key:string):string { return [this.config.prefix?.replace(/^\/+|\/+$/g,''), safeKey(key)].filter(Boolean).join('/') }
-  has(key:string):Promise<boolean> { return this.client.head(this.config.bucket,this.key(key)) }
-  putImmutable(key:string,value:Buffer|string):Promise<void> { return this.client.put(this.config.bucket,this.key(key),Buffer.isBuffer(value) ? value : Buffer.from(value)) }
-  putFileImmutable(key:string,source:string):Promise<void> { return this.client.putFile(this.config.bucket,this.key(key),source) }
-  get(key:string):Promise<Buffer> { return this.client.get(this.config.bucket,this.key(key)) }
-  remove(key:string):Promise<void> { return this.client.delete(this.config.bucket,this.key(key)) }
-  async close():Promise<void> { this.client.close?.() }
+  has(key:string):Promise<boolean> { return this.transport.head(this.config.bucket,this.key(key)) }
+  putImmutable(key:string,value:Buffer|string):Promise<void> { return this.transport.put(this.config.bucket,this.key(key),Buffer.isBuffer(value) ? value : Buffer.from(value)) }
+  putFileImmutable(key:string,source:string):Promise<void> { return this.transport.putFile(this.config.bucket,this.key(key),source) }
+  get(key:string):Promise<Buffer> { return this.transport.get(this.config.bucket,this.key(key)) }
+  remove(key:string):Promise<void> { return this.transport.delete(this.config.bucket,this.key(key)) }
+  async close():Promise<void> { this.transport.close?.() }
 }
 
 export async function openBackupDestination(config:Exclude<BackupDestinationConfig,{kind:'nas'}>, dependencies:{ s3?:S3BackupClient } = {}):Promise<BackupObjectStore> {

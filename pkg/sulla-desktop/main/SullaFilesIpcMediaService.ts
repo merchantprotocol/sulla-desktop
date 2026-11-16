@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { Protocol } from 'electron';
 import type { SullaFilesClient } from './sullaFilesClient';
 
+/** Media URLs stay valid for a long playback session (matches main before the split). */
 const MEDIA_CAPABILITY_TTL_MS = 4 * 60 * 60_000;
 
 interface MediaCapability { fileId:string; versionId?:string; expiresAt:number }
@@ -15,10 +16,10 @@ interface MediaCapability { fileId:string; versionId?:string; expiresAt:number }
 export class SullaFilesIpcMediaService {
   private readonly capabilities = new Map<string, MediaCapability>();
 
-  constructor(private readonly protocol:Protocol, private readonly filesClient:SullaFilesClient) {}
+  constructor(private readonly protocol:Protocol, private readonly filesClient:SullaFilesClient, private readonly now:() => number = () => Date.now()) {}
 
   capability(input:{fileId:string;versionId?:string}):string {
-    const now = Date.now();
+    const now = this.now();
     for (const [token, capability] of this.capabilities) if (capability.expiresAt <= now) this.capabilities.delete(token);
     const token = randomUUID();
     this.capabilities.set(token, { ...input, expiresAt:now + MEDIA_CAPABILITY_TTL_MS });
@@ -33,7 +34,7 @@ export class SullaFilesIpcMediaService {
       const parts = url.pathname.split('/').filter(Boolean);
       if (parts.length !== 1) return new Response(null, { status:404, headers:{ 'cache-control':'no-store' } });
       const capability = this.capabilities.get(parts[0]);
-      if (!capability || capability.expiresAt <= Date.now()) {
+      if (!capability || capability.expiresAt <= this.now()) {
         this.capabilities.delete(parts[0]);
         return new Response(null, { status:404, headers:{ 'cache-control':'no-store' } });
       }
@@ -51,7 +52,7 @@ export class SullaFilesIpcMediaService {
     });
   }
 
-  passiveMedia(mime:string):boolean {
+  private passiveMedia(mime:string):boolean {
     return /^(?:video\/|audio\/)/i.test(mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(mime);
   }
 }
