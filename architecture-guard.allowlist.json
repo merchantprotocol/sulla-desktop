@@ -841,12 +841,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/agent/services/ArtifactCustodyPolicy.ts": {
-      "rules": {
-        "raw-sql": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "pkg/sulla-desktop/agent/services/AudioDriverClient.ts": {
       "rules": {
         "mutable-state": 1
@@ -892,12 +886,6 @@
         "procedural-module": 3
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/services/DecisionService.ts": {
-      "rules": {
-        "raw-sql": 9
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "pkg/sulla-desktop/agent/services/ExtensionService.ts": {
       "rules": {
@@ -993,12 +981,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/services/RoutineConcurrencyPolicy.ts": {
-      "rules": {
-        "raw-sql": 8
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "pkg/sulla-desktop/agent/services/RunActivity.ts": {
       "rules": {
