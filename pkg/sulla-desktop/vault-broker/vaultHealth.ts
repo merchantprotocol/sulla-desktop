@@ -44,3 +44,16 @@ export class VaultHealthMonitor {
 
 /** Process-wide monitor shared by the provider bridge and CLI recovery (same main process). */
 export const vaultHealthMonitor = new VaultHealthMonitor();
+
+/** @deprecated use vaultHealthMonitor.record(); removed in the final OOP cleanup PR. */
+export const recordVaultFailure = (kind: VaultFailureKind, now?: number): void => vaultHealthMonitor.record(kind, now);
+
+/** @deprecated use vaultHealthMonitor.recordSuccess(); removed in the final OOP cleanup PR. */
+export const recordVaultSuccess = (): void => vaultHealthMonitor.recordSuccess();
+
+/** @deprecated use vaultHealthMonitor.failureSince(); removed in the final OOP cleanup PR. */
+export const vaultFailureSince = (since: number): VaultFailureKind | undefined => vaultHealthMonitor.failureSince(since);
+
+/** @deprecated use VaultHealthMonitor.failureKind(); removed in the final OOP cleanup PR. */
+export const vaultFailureKind = (status: number | undefined, reason: string | undefined): VaultFailureKind | undefined =>
+  VaultHealthMonitor.failureKind(status, reason);

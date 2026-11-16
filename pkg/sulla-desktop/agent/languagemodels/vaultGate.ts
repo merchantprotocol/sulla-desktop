@@ -64,3 +64,7 @@ export class VaultAvailabilityGate implements VaultGate {
     return false;
   }
 }
+
+/** @deprecated use new VaultAvailabilityGate(); removed in the final OOP cleanup PR. */
+export const createVaultGate = (timeoutMs = VAULT_WAIT_TIMEOUT_MS, pollMs = VAULT_POLL_MS): VaultGate =>
+  new VaultAvailabilityGate(vaultHealthMonitor, timeoutMs, pollMs);
