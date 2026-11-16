@@ -50,6 +50,7 @@ import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialSer
 import { SessionBindSigner } from './cloud/device/SessionBindSigner';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
 import { CloudSessionStartupRestorer, VaultNotReadyError } from './cloud/session/CloudSessionStartupRestorer';
+import { cloudSessionStartupRestoreProvider } from './cloud/session/CloudSessionStartupRestoreCoordinator';
 import { cloudSessionKeyProvider } from './cloud/session/CloudSessionKeyServiceProvider';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
@@ -192,8 +193,6 @@ const SIGN_IN_AGAIN = 'Sign in to Sulla Cloud again.';
 let startupAdoptionComplete = false;
 let startupAdoptionPromise: Promise<void> | null = null;
 let startupAdoptionError: string | undefined;
-let wakeStartupRestore: (() => void) | undefined;
-let restartStartupRestore: (() => void) | undefined;
 
 /**
  * Something changed that may make a Cloud session loadable (e.g. the first-run
@@ -201,8 +200,7 @@ let restartStartupRestore: (() => void) | undefined;
  * again if it already finished: otherwise nothing ever loads that session.
  */
 export function signalSullaCloudStartupRestore(): void {
-  if (wakeStartupRestore) wakeStartupRestore();
-  else restartStartupRestore?.();
+  cloudSessionStartupRestoreProvider.signal();
 }
 
 function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): string {
@@ -1152,115 +1150,17 @@ export function initSullaCloudAuthEvents(): void {
     return buildStatus();
   });
 
-  // Auto-pair relay on startup if we have a signed-in session.
-  //
-  // This needs to be resilient to a DB that isn't ready yet. On a fresh app
-  // launch the Sulla Postgres container can take 30-60s to come up while
-  // The runtime provisions the VM and docker compose brings up the service, so
-  // loadSession() — which reads from integration_values — throws
-  // ECONNREFUSED if we fire it too early. Previously the IIFE ran once,
-  // caught the error, and gave up. That left the relay permanently
-  // disconnected for the entire app session even though the user was
-  // signed in, which surfaced as mobile peer-offline errors until the
-  // user manually re-signed-in.
-  //
-  // Retry strategy: backoff 2s → 60s cap, up to ~10 minutes total. Only
-  // retries on transient connection errors (ECONNREFUSED, ETIMEDOUT, etc.
-  // plus generic network failures). Stops on the first successful
-  // loadSession() call — whether that returns a session (pair + start
-  // services) or null (no signed-in user — nothing to do).
-  let restoreRunning = false;
-  const runStartupRestore = () => {
-    if (restoreRunning) return;
-    restoreRunning = true;
-    const lifecycle = getServiceLifecycleManager();
-    let restoreWakeVersion = 0;
-    let wakeRestore: (() => void) | undefined;
-    const signalRestore = () => {
-      restoreWakeVersion++;
-      wakeRestore?.();
-      wakeRestore = undefined;
-    };
-    wakeStartupRestore = signalRestore;
-    const onVaultState = (unlocked: boolean) => { if (unlocked) signalRestore() };
-    const onServiceReady = (name: string) => { if (name === 'vault') signalRestore() };
-
-    lifecycle.on('vault:state', onVaultState);
-    lifecycle.on('service:ready', onServiceReady);
-
-    (async() => {
-      const RETRY_BASE_MS  = 2_000;
-      const RETRY_MAX_MS   = 60_000;
-      const RETRY_GIVEUP_MS = 10 * 60_000;
-      const startedAt = Date.now();
-      let delay = RETRY_BASE_MS;
-
-      const isTransient = (err: any): boolean => {
-        if (err instanceof VaultNotReadyError) return true;
-        const code = err?.code ?? err?.cause?.code;
-        if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' || code === 'ECONNRESET') return true;
-        const msg = String(err?.message || err || '').toLowerCase();
-        return /econnrefused|etimedout|enotfound|econnreset|connect.*failed|pool.*shutting down|database.*not ready/.test(msg);
-      };
-
-      while (true) {
-        const attemptWakeVersion = restoreWakeVersion;
-        try {
-          const session = await loadSessionIdentityForRestore();
-          if (session) {
-            await getDesktopRelayClient().setPairedUserId(session.userId);
-            // Always connected while signed in: registration, heartbeat,
-            // secure channel, and whichever syncs the owner opted into.
-            try {
-              const { startCloudServices } = await import('./cloud/cloudLifecycle');
-              await startCloudServices();
-            } catch (err) {
-              console.warn('[SullaCloudAuth] Failed to start cloud services on restore:', err);
-              throw new VaultNotReadyError(`cloud services unavailable: ${ (err as Error)?.message || err }`);
-            }
-            console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
-            firstRunTrace('account', 'startup restore: Cloud session found in the vault', { userId: session.userId });
-          } else {
-            console.log('[SullaCloudAuth] Startup restore: no signed-in session');
-            firstRunTrace('account', 'startup restore: no Cloud session in the vault');
-          }
-          // Success (either a session was restored or none exists) — stop retrying.
-          return;
-        } catch (err) {
-          // A locked vault waits for the owner to unlock it, however long that takes.
-          const giveUp = !(err instanceof VaultNotReadyError) && (Date.now() - startedAt) >= RETRY_GIVEUP_MS;
-          if (!isTransient(err) || giveUp) {
-            console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
-            firstRunTrace('account', 'startup restore gave up', { error: err });
-            startupAdoptionError = `Sulla Cloud restore stopped: ${ (err as Error)?.message || err }`;
-            return;
-          }
-          console.log(`[SullaCloudAuth] Startup restore not ready yet (${ (err as Error)?.message || err }); retrying in ${ delay }ms or on vault readiness`);
-          if (restoreWakeVersion === attemptWakeVersion) {
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(() => {
-                if (wakeRestore === wake) wakeRestore = undefined;
-                resolve();
-              }, delay);
-              const wake = () => {
-                clearTimeout(timer);
-                resolve();
-              };
-              wakeRestore = wake;
-              // Close the event/listener registration gap.
-              if (restoreWakeVersion !== attemptWakeVersion) wake();
-            });
-          }
-          delay = Math.min(delay * 2, RETRY_MAX_MS);
-        }
-      }
-    })().finally(() => {
-      restoreRunning = false;
-      if (wakeStartupRestore === signalRestore) wakeStartupRestore = undefined;
-      lifecycle.off('vault:state', onVaultState);
-      lifecycle.off('service:ready', onServiceReady);
-    });
-  };
-  restartStartupRestore = runStartupRestore;
-  runStartupRestore();
+  // Restore the signed-in Cloud session when vault and storage are ready.
+  void cloudSessionStartupRestoreProvider.start({
+    lifecycle: getServiceLifecycleManager(),
+    restoreIdentity: loadSessionIdentityForRestore,
+    pairRelay: userId => getDesktopRelayClient().setPairedUserId(userId),
+    startCloudServices: async() => {
+      const { startCloudServices } = await import('./cloud/cloudLifecycle');
+      await startCloudServices();
+    },
+    trace: (message, metadata) => firstRunTrace('account', message, metadata),
+    logger: console,
+    setLastError: message => { startupAdoptionError = message; },
+  });
 }
