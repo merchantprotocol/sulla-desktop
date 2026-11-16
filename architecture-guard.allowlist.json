@@ -3473,12 +3473,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/store/action-menu.js": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
     "pkg/sulla-desktop/store/container-engine.ts": {
       "rules": {
         "long-file": 419,
