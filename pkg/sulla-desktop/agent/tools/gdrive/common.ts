@@ -6,7 +6,7 @@
 import { BaseTool, type ToolResponse } from '../base';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 
 /** Integration id the Google Drive card stores its OAuth tokens under. */
 export const GDRIVE_INTEGRATION_ID = 'google_drive';
@@ -100,7 +100,7 @@ export abstract class DriveTool extends BaseTool {
       if (!ctx || ctx.credential_scope?.integration_id !== GDRIVE_INTEGRATION_ID || ctx.credential_scope.account_id !== account) {
         throw new Error('Google Drive requires a verified credential scope for the selected account');
       }
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       res = await broker.executeStream(broker.requestFor(ctx, {
         operation:    'catalog.http',
         ref:          { integrationId: GDRIVE_INTEGRATION_ID, accountId: account },

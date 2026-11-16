@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { issueLocalBrokerContext, requireConfiguredCredentialBroker } from '@pkg/vault-broker';
+import { configuredVaultBrokerProvider } from '@pkg/vault-broker';
 
 export type GrokTranscriber = (wav: Buffer, language: string, filename: string, signal: AbortSignal) => Promise<string>;
 
@@ -14,13 +14,13 @@ export async function createGrokTranscriber(): Promise<GrokTranscriber> {
   if (!accountId) throw new Error('No active Grok account is configured');
 
   return async(wav, language, filename, signal) => {
-    const ctx = await issueLocalBrokerContext({
+    const ctx = await configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId:         'desktop-transcription',
       podId:           'desktop-main',
       credentialScope: { integration_id: 'grok', account_id: accountId },
       signal,
     });
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const result = await broker.execute(broker.requestFor(ctx, {
       operation: 'provider.transcription',
       ref:       { integrationId: 'grok', accountId },
