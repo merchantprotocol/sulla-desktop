@@ -83,7 +83,7 @@ export class MainIpcControllersProvider {
       bus:            () => IpcMessageBus.getInstance(),
       allWebContents: () => webContents.getAllWebContents(),
       send:           (wc, channel, ...args) => safeSend(wc, channel, ...args),
-      log:            (...args) => log.log(...args),
+      log:            (message, ...rest) => log.log(message, ...rest),
     });
     this.extensionUi = new ExtensionUiIpcController(raw, {
       readGuard:   { run: (label, read, fallback) => getDatabaseReadGuard().run(label, read, fallback) },
