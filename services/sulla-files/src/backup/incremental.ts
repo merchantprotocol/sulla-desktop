@@ -12,6 +12,8 @@ import { BackupInventoryRepository } from '../Repositories/BackupInventoryReposi
 import { BackupFileDigest, type BackupEntry } from './container.js';
 import { BackupDatabase, EPHEMERAL_TABLE_DATA, type BackupDatabaseOperations, type SchemaEvidence } from './database.js';
 
+import { CapabilityKeyCandidates } from '../CapabilityKeyCandidates.js';
+
 import type { BackupObjectStore } from './destinations.js';
 import type { Config } from '../config.js';
 
@@ -31,6 +33,12 @@ export class IncrementalManifestSigner {
 
   signed(manifest:IncrementalManifest):SignedIncrementalManifest { return { manifest, signature: { algorithm: 'hmac-sha256', value: this.sign(manifest) } } }
 
+  /** Constant-time check of a hex signature against this key. */
+  verifies(manifest:IncrementalManifest, value:string):boolean {
+    const expected = Buffer.from(this.sign(manifest), 'hex'); const actual = Buffer.from(value, 'hex');
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  }
+
   static objectKey(digest:string):string { return `objects/sha256/${ digest.slice(0, 2) }/${ digest }` }
 
   static manifestKey(manifest:IncrementalManifest):string { return `snapshots/${ manifest.createdAt.slice(0, 10) }/${ manifest.id }.json` }
@@ -42,13 +50,19 @@ export class IncrementalManifestSigner {
  */
 export class IncrementalBackupService {
   private readonly signer:IncrementalManifestSigner;
+  private readonly verifiers:readonly IncrementalManifestSigner[];
 
+  /** New manifests are signed with the current key; verification also accepts the pre-#2369 key. */
   constructor(
     private readonly config:Config,
     private readonly database:BackupDatabaseOperations = new BackupDatabase(),
     private readonly inventory = new BackupInventoryRepository(),
     private readonly digest = new BackupFileDigest(),
-  ) { this.signer = new IncrementalManifestSigner(config.capabilitySigningKey) }
+    keys:CapabilityKeyCandidates = CapabilityKeyCandidates.fromConfig(config),
+  ) {
+    this.signer = new IncrementalManifestSigner(keys.current);
+    this.verifiers = keys.all.map(key => new IncrementalManifestSigner(key));
+  }
 
   async create(store:BackupObjectStore, tier:IncrementalManifest['tier'] = 'manual'):Promise<IncrementalBackupResult> {
     const workspace = await mkdtemp(join(tmpdir(), 'sulla-files-incremental-'));
@@ -112,8 +126,8 @@ export class IncrementalBackupService {
   async verifyManifest(store:BackupObjectStore, key:string):Promise<SignedIncrementalManifest> {
     const signed = JSON.parse((await store.get(key)).toString('utf8')) as SignedIncrementalManifest;
     if (signed?.manifest?.format !== 'sulla-files-incremental-backup' || signed.manifest.version !== 1 || signed.signature?.algorithm !== 'hmac-sha256') throw new Error('Backup manifest format is invalid');
-    const expected = Buffer.from(this.signer.sign(signed.manifest), 'hex'); const actual = Buffer.from(signed.signature.value ?? '', 'hex');
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw new Error('Backup manifest signature is invalid');
+    const value = typeof signed.signature.value === 'string' ? signed.signature.value : '';
+    if (!this.verifiers.some(verifier => verifier.verifies(signed.manifest, value))) throw new Error('Backup manifest signature is invalid');
     for (const entry of signed.manifest.entries) {
       if (entry.objectKey !== IncrementalManifestSigner.objectKey(entry.sha256) || !(await store.has(entry.objectKey))) throw new Error(`Backup object is missing: ${ entry.path }`);
     }
