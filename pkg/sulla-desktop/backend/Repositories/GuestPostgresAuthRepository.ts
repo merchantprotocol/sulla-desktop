@@ -88,12 +88,28 @@ export class GuestPostgresAuthRepository {
     return this.check(await this.docker.run(['exec', '-u', 'postgres', this.container, 'cat', '--', path]), 'reading the hba file').stdout;
   }
 
-  /** Replaces the hba file atomically as the postgres user: owner-only temp file, then rename. */
+  /**
+   * Replaces the hba file atomically and durably as the postgres user: owner-only
+   * temp file, flushed to disk, renamed, and the rename flushed (busybox `sync`).
+   */
   async writeHbaFile(path: string, content: string): Promise<void> {
     const temp = GuestPostgresAuthRepository.TEMP_SUFFIX;
 
     this.check(await this.docker.run(['exec', '-i', '-u', 'postgres', this.container, 'sh', '-c',
-      `umask 077 && cat > "$1${ temp }" && mv -f "$1${ temp }" "$1"`, 'sh', path], content), 'writing the hba file');
+      `umask 077 && cat > "$1${ temp }" && sync && mv -f "$1${ temp }" "$1" && sync`, 'sh', path], content), 'writing the hba file');
+  }
+
+  /**
+   * True when the server loaded the hba file after its last change: the file's
+   * mtime (whole seconds) is before the second of the last configuration load.
+   * Same-second edits count as not loaded, so a doubt never reads as "live".
+   */
+  async hbaFileLoaded(path: string): Promise<boolean> {
+    const literal = path.split("'").join("''");
+
+    return await this.query(
+      `SELECT (pg_stat_file('${ literal }')).modification < date_trunc('second', pg_conf_load_time())`,
+    ) === 't';
   }
 
   /** Copies the hba file to `<path>.sulla-pre-scram` unless that copy exists. True when it was created now. */
@@ -149,15 +165,6 @@ export class GuestPostgresAuthRepository {
     }
 
     return GuestPostgresAuthRepository.probeOutcome(result);
-  }
-
-  /** Ends idle sessions from other containers so their pools reconnect under the current rules. Returns how many. */
-  async terminateIdleRemoteBackends(): Promise<number> {
-    const count = Number(await this.query(
-      "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE client_addr IS NOT NULL AND state = 'idle' AND pid <> pg_backend_pid()",
-    ));
-
-    return Number.isFinite(count) ? count : 0;
   }
 
   static probeOutcome(result: GuestDockerResult): PostgresProbeOutcome {
