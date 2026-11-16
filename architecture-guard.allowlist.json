@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1041,
+  "entries": 1037,
   "files": {
     "background.ts": {
       "rules": {
@@ -42,30 +42,6 @@
     "packages/runtime-protocol/src/executionTargets.ts": {
       "rules": {
         "mutable-state": 5
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "packages/vault-crypto/src/customFields.ts": {
-      "rules": {
-        "procedural-module": 4
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "packages/vault-crypto/src/filesKeyBundle.ts": {
-      "rules": {
-        "procedural-module": 5
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "packages/vault-crypto/src/index.ts": {
-      "rules": {
-        "procedural-module": 20
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "packages/vault-crypto/src/itemSchema.ts": {
-      "rules": {
-        "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
