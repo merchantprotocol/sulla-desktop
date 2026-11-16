@@ -241,15 +241,20 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   /**
    * Live Agents projection input: every running/parked job, jobs that ended within `recentMs`, and the
    * ancestor chain of each (so root threads still resolve). Replaces a full-table read of every job
-   * ever run, which parsed tens of MB on each state change.
+   * ever run, which parsed tens of MB on each state change. `liveChildren` also seeds every direct child
+   * of a running/parked job regardless of age: stranded-manager supervision needs a parked manager's
+   * long-finished children (idx_agent_jobs_parent_task keeps that a bounded index read).
    */
-  async jobsForProjection(recentMs: number): Promise<AgentJob[]> {
+  async jobsForProjection(recentMs: number, options: { liveChildren?: boolean } = {}): Promise<AgentJob[]> {
     const rows = await this.connection.select(`WITH RECURSIVE seeds AS (
       SELECT job_id FROM agent_jobs WHERE status IN ('running', 'parked')
       UNION
       SELECT job_id FROM agent_jobs
       WHERE finished_at > now() - ($1::bigint * interval '1 millisecond')
         OR (finished_at IS NULL AND created_at > now() - ($1::bigint * interval '1 millisecond'))
+      UNION
+      SELECT child.job_id FROM agent_jobs parent JOIN agent_jobs child ON child.parent_job_id = parent.job_id
+      WHERE $2::boolean AND parent.status IN ('running', 'parked')
     ), related(job_id) AS (
       SELECT job_id FROM seeds
       UNION
@@ -271,7 +276,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         'completion', CASE WHEN t.completion_status IS NULL THEN NULL
           ELSE jsonb_build_object('status', t.completion_status) END
       ) ORDER BY t.task_index) FROM agent_job_tasks t WHERE t.job_id = j.job_id), '[]'::jsonb) AS tasks
-    FROM agent_jobs j JOIN related r ON r.job_id = j.job_id ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs))]);
+    FROM agent_jobs j JOIN related r ON r.job_id = j.job_id ORDER BY j.created_at, j.job_id`, [Math.max(0, Math.trunc(recentMs)), options.liveChildren === true]);
     return rows.map(row => this.map(row));
   }
 

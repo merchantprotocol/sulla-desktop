@@ -18,7 +18,7 @@ export interface AgentStateStore {
   lineageForParentThread?(parentThreadId: string, limit?: number): Promise<AgentJob[]>;
   job(jobId: string): Promise<AgentJob | undefined>;
   jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]>;
-  jobsForProjection?(recentMs: number): Promise<AgentJob[]>;
+  jobsForProjection?(recentMs: number, options?: { liveChildren?: boolean }): Promise<AgentJob[]>;
   insertJob(job: AgentJob): Promise<void>;
   replaceState(job: AgentJob): Promise<void>;
   cascadeJobs(jobId: string): Promise<AgentJob[]>;
@@ -139,9 +139,9 @@ export class AgentStateService {
    * (Docker) inventory: showing agents must never depend on container inspection succeeding, and it must not
    * load every historical job. Status is derived in memory only; reconciliation still owns persisted changes.
    */
-  async jobsForProjection(recentMs: number): Promise<AgentJob[]> {
+  async jobsForProjection(recentMs: number, options: { liveChildren?: boolean } = {}): Promise<AgentJob[]> {
     if (!this.store.jobsForProjection) return this.jobsBeforeReady();
-    return (await this.store.jobsForProjection(recentMs)).map(job => this.withDerivedStatus(job));
+    return (await this.store.jobsForProjection(recentMs, options)).map(job => this.withDerivedStatus(job));
   }
   async job(jobId: string): Promise<AgentJob | undefined> { await this.ready(); return this.loadJob(jobId); }
   private async loadJob(jobId: string): Promise<AgentJob | undefined> {
