@@ -20,6 +20,9 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke } }));
 
 import StudioLivePage from '@pkg/components/studio/StudioLivePage.vue';
 
+// AgentDetailFeed polls the selected run every 15 s since #2304 slowed it from 3 s to cut load.
+const DETAIL_POLL_MS = 15_000;
+
 
 class FakeAgentStateClient {
   readonly snapshot = shallowRef<AgentStateSnapshot>({ version: 0, generatedAt: new Date(0).toISOString(), rows: [] });
@@ -111,7 +114,7 @@ describe('StudioLivePage activity refresh', () => {
     expect(wrapper.text()).not.toContain('Loading activity…');
     expect(wrapper.text()).toContain(fixture.firstEntry.text);
 
-    await vi.advanceTimersByTimeAsync(6_000);
+    await vi.advanceTimersByTimeAsync(DETAIL_POLL_MS * 2);
     await flushPromises();
 
     expect(wrapper.get('.tl').element).toBe(timeline);
@@ -133,7 +136,7 @@ describe('StudioLivePage activity refresh', () => {
     const timeline = wrapper.get('.tl').element;
 
     fixture.vanishSelectedRun();
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(DETAIL_POLL_MS);
     await flushPromises();
 
     expect(wrapper.get('.tl').element).toBe(timeline);
@@ -143,7 +146,7 @@ describe('StudioLivePage activity refresh', () => {
     expect(wrapper.find('.hero .btn.danger').exists()).toBe(false);
     const readsAfterFinalFetch = fixture.conversationReads;
 
-    await vi.advanceTimersByTimeAsync(6_000);
+    await vi.advanceTimersByTimeAsync(DETAIL_POLL_MS * 2);
     await flushPromises();
     expect(fixture.conversationReads).toBe(readsAfterFinalFetch);
     wrapper.unmount();
@@ -193,7 +196,7 @@ describe('StudioLivePage activity refresh', () => {
     expect(wrapper.text()).not.toContain('Finished — no longer running');
     expect(wrapper.find('.hero .btn.danger').exists()).toBe(true);
     const readsBeforeNextPoll = fixture.conversationReads;
-    await vi.advanceTimersByTimeAsync(3_000); await flushPromises();
+    await vi.advanceTimersByTimeAsync(DETAIL_POLL_MS); await flushPromises();
     expect(fixture.conversationReads).toBeGreaterThan(readsBeforeNextPoll);
     wrapper.unmount();
   });

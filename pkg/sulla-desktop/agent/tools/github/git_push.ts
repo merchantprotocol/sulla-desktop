@@ -9,6 +9,27 @@ import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
 
+class GitPushNameValidator {
+  static isBranchName(value: unknown): value is string {
+    return typeof value === 'string'
+      && value.length > 0
+      && value.length <= 255
+      && /^[A-Za-z0-9._/-]+$/.test(value)
+      && !value.startsWith('-')
+      && !value.includes('..')
+      && !value.includes('//')
+      && !value.endsWith('/')
+      && !value.toLowerCase().endsWith('.lock');
+  }
+
+  static isRemoteName(value: unknown): value is string {
+    return typeof value === 'string'
+      && value.length > 0
+      && /^[A-Za-z0-9._-]+$/.test(value)
+      && !value.startsWith('-');
+  }
+}
+
 /**
  * Git Push Tool - Push commits to a remote repository.
  * Runs inside the Sulla VM for filesystem consistency with exec tool.
@@ -26,6 +47,9 @@ export class GitPushWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch, tags = false, force = false } = input;
+    if (!GitPushNameValidator.isRemoteName(remote) || (branch !== undefined && !GitPushNameValidator.isBranchName(branch))) {
+      return { successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' };
+    }
     const localAuthority = usesContainerVaultAuthority();
     if (localAuthority && !this.executionContext) {
       return { successBoolean: false, responseString: 'Git push failed: github.git requires a verified tool execution context' };
@@ -34,6 +58,7 @@ export class GitPushWorker extends BaseTool {
     const redact = (s: string, secret?: string): string =>
       secret ? (s || '').split(secret).join('***') : (s || '');
 
+    let token: string | undefined;
     try {
       // Get repo root
       const rootResult = await runCommand(
@@ -58,13 +83,15 @@ export class GitPushWorker extends BaseTool {
         );
         targetBranch = branchResult.stdout.trim();
       }
+      if (!GitPushNameValidator.isBranchName(targetBranch)) {
+        return { successBoolean: false, responseString: 'Git push failed: invalid branch/remote name' };
+      }
 
       // Fetch PAT from vault and build an authenticated (token-free-on-the-wire)
       // push target for GitHub remotes.
-      let pushTarget = remote;
+      let pushTarget = `"${ remote }"`;
       let authPrefix = '';
       let credFlags = '';
-      let token: string | undefined;
       if (!localAuthority) {
         const integrationService = getIntegrationService();
         const tokenValue = await integrationService.getIntegrationValue('github', 'token');
@@ -73,7 +100,7 @@ export class GitPushWorker extends BaseTool {
 
       if (token) {
         const remoteUrlResult = await runCommand(
-          `git -C "${ repoRoot }" remote get-url ${ remote }`,
+          `git -C "${ repoRoot }" remote get-url "${ remote }"`,
           [],
           { runInGuest: true, timeoutMs: 10_000 },
         );
@@ -101,7 +128,7 @@ export class GitPushWorker extends BaseTool {
         // refs/remotes/<remote>/<branch> and rejects every existing branch as
         // stale. Pin the lease explicitly to the ref refreshed by git_fetch.
         const leaseResult = await runCommand(
-          `git -C "${ repoRoot }" rev-parse --verify refs/remotes/${ remote }/${ targetBranch }`,
+          `git -C "${ repoRoot }" rev-parse --verify "refs/remotes/${ remote }/${ targetBranch }"`,
           [],
           { runInGuest: true, timeoutMs: 10_000 },
         );
@@ -111,23 +138,47 @@ export class GitPushWorker extends BaseTool {
             responseString: `Git push failed: force push requires a fetched ${ remote }/${ targetBranch } ref`,
           };
         }
-        forceFlag = ` --force-with-lease=refs/heads/${ targetBranch }:${ leaseResult.stdout.trim() }`;
+        forceFlag = ` --force-with-lease="refs/heads/${ targetBranch }:${ leaseResult.stdout.trim() }"`;
       }
       const cmd = tags
         ? `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
-        : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
+        : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } "${ targetBranch }"${ forceFlag }`;
       const result = localAuthority
         ? await (async() => {
-          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInGuest: true, timeoutMs: 10_000 });
+          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url "${ remote }"`, [], { runInGuest: true, timeoutMs: 10_000 });
           if (remoteUrl.exitCode !== 0) return remoteUrl;
           return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), (proxyUrl) => {
             const brokerCommand = tags
               ? `git -C "${ repoRoot }" push "${ proxyUrl }" --tags${ forceFlag }`
-              : `git -C "${ repoRoot }" push "${ proxyUrl }" ${ targetBranch }${ forceFlag }`;
+              : `git -C "${ repoRoot }" push "${ proxyUrl }" "${ targetBranch }"${ forceFlag }`;
             return runCommand(brokerCommand, [], { runInGuest: true, timeoutMs: 120_000 });
           });
         })()
         : await runCommand(cmd, [], { runInGuest: true, timeoutMs: 120_000 });
+
+      // Verify the target ref rather than trusting a transport exit code: a
+      // broker can fail after the remote accepted the push, or report success
+      // without updating it.
+      if (!tags) {
+        const expectedRef = branch ? `refs/heads/${ targetBranch }^{commit}` : 'HEAD';
+        const localHead = await runCommand(`git -C "${ repoRoot }" rev-parse --verify "${ expectedRef }"`, [], { runInGuest: true, timeoutMs: 10_000 });
+        const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url "${ remote }"`, [], { runInGuest: true, timeoutMs: 10_000 });
+        let remoteHead = { stdout: '', stderr: '', exitCode: 1 };
+        if (remoteUrl.exitCode === 0) {
+          const verify = (proxyUrl: string) => runCommand(`git -C "${ repoRoot }" ls-remote "${ proxyUrl }" "refs/heads/${ targetBranch }"`, [], { runInGuest: true, timeoutMs: 30_000 });
+          remoteHead = localAuthority
+            ? await withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), verify)
+            : await runCommand(`${ authPrefix }git ${ credFlags }-C "${ repoRoot }" ls-remote ${ pushTarget } "refs/heads/${ targetBranch }"`, [], { runInGuest: true, timeoutMs: 30_000 });
+        }
+        const expectedHead = localHead.stdout.trim();
+        const actualHead = remoteHead.exitCode === 0 ? remoteHead.stdout.trim().split(/\s+/)[0] : '';
+        if (localHead.exitCode === 0 && remoteHead.exitCode === 0 && actualHead === expectedHead) {
+          const note = result.exitCode === 0 ? `Pushed to ${ remote }/${ targetBranch }` : `Push reported an error, but ${ remote }/${ targetBranch } now points to local HEAD ${ expectedHead }`;
+          return { successBoolean: true, responseString: redact(`${ note }.`, token) };
+        }
+        const failure = result.stderr || result.stdout || 'remote ref did not match local HEAD';
+        return { successBoolean: false, responseString: redact(`Git push failed: ${ failure } (remote ref did not match local HEAD)`, token) };
+      }
 
       if (result.exitCode !== 0) {
         return { successBoolean: false, responseString: redact(`Git push failed: ${ result.stderr || result.stdout }`, token) };
@@ -138,7 +189,7 @@ export class GitPushWorker extends BaseTool {
         responseString: redact(result.stderr.trim() || result.stdout.trim() || `Pushed to ${ remote }/${ targetBranch }`, token),
       };
     } catch (error: any) {
-      return { successBoolean: false, responseString: `Git push failed: ${ error.message }` };
+      return { successBoolean: false, responseString: redact(`Git push failed: ${ error.message }`, token) };
     }
   }
 }

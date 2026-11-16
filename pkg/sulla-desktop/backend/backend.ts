@@ -106,7 +106,7 @@ export type RestartReasons = Partial<Record<RecursiveKeys<Settings>, {
  */
 export interface VMBackend extends EventEmitter<BackendEvents> {
   /** The name of the VM backend */
-  readonly backend: 'sulla-runtime' | 'mock';
+  readonly backend: 'sulla-runtime' | 'linux-docker' | 'mock';
 
   readonly state: State;
 
