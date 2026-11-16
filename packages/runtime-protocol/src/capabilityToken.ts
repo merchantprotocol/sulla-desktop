@@ -110,11 +110,15 @@ export async function verifyCapabilityToken(
   if (!Number.isFinite(claims.exp)) throw new CapabilityTokenError('malformed', 'Capability token expiry is invalid');
   if (claims.exp + tolerance < now) {
     const skew = Math.ceil(now - claims.exp);
-    throw new CapabilityTokenError('expired', `Capability token expired ${skew}s ago (clock skew exceeds ${tolerance}s tolerance)`);
+    const reason = `Capability token expired ${skew}s ago (clock skew exceeds ${tolerance}s tolerance)`;
+    console.warn(`[auth] capability token rejected: ${reason}`);
+    throw new CapabilityTokenError('expired', reason);
   }
   if (Number.isFinite(claims.iat) && claims.iat - tolerance > now) {
     const skew = Math.ceil(claims.iat - now);
-    throw new CapabilityTokenError('not_yet_valid', `Capability token issued ${skew}s in the future (clock skew exceeds ${tolerance}s tolerance)`);
+    const reason = `Capability token issued ${skew}s in the future (clock skew exceeds ${tolerance}s tolerance)`;
+    console.warn(`[auth] capability token rejected: ${reason}`);
+    throw new CapabilityTokenError('not_yet_valid', reason);
   }
   if (!claims.iss || !claims.sub || !claims.jti || !Number.isFinite(claims.iat) || !Array.isArray(claims.scopes) || !claims.scopes.every(scope => typeof scope === 'string')) {
     throw new CapabilityTokenError('malformed', 'Capability token is missing required claims');

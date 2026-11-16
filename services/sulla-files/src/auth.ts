@@ -28,8 +28,16 @@ export function verifyCapabilityToken(token:string | undefined, key:string | Buf
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as CapabilityClaims;
   if (!Number.isFinite(toleranceSeconds) || toleranceSeconds < 0 || toleranceSeconds > 300) throw new RangeError('clock tolerance must be between 0 and 300 seconds');
   if (claims.v !== 1 || claims.aud !== 'sulla-tools' || !Number.isFinite(claims.exp) || !claims.sub) throw new Error('Invalid capability claims');
-  if (claims.exp + toleranceSeconds < nowSeconds) throw new Error(`Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds ${toleranceSeconds}s tolerance`);
-  if (Number.isFinite(claims.iat) && claims.iat! - toleranceSeconds > nowSeconds) throw new Error(`Capability issued ${Math.ceil(claims.iat! - nowSeconds)}s in the future; clock skew exceeds ${toleranceSeconds}s tolerance`);
+  if (claims.exp + toleranceSeconds < nowSeconds) {
+    const reason = `Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds ${toleranceSeconds}s tolerance`;
+    console.warn(`[auth] Files capability rejected: ${reason}`);
+    throw new Error(reason);
+  }
+  if (Number.isFinite(claims.iat) && claims.iat! - toleranceSeconds > nowSeconds) {
+    const reason = `Capability issued ${Math.ceil(claims.iat! - nowSeconds)}s in the future; clock skew exceeds ${toleranceSeconds}s tolerance`;
+    console.warn(`[auth] Files capability rejected: ${reason}`);
+    throw new Error(reason);
+  }
   if (!claims.scopes?.some(scope => scope === '*' || scope === 'files/*' || scope === 'files/fuse')) throw new Error('Capability does not allow files');
   return claims;
 }
