@@ -3832,24 +3832,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-vault/src/filesCloudEscrow.ts": {
-      "rules": {
-        "raw-sql": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-vault/src/filesKeyBundleAuthority.ts": {
-      "rules": {
-        "raw-sql": 12
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-vault/src/filesKeyBundleRoutes.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-vault/src/localAuthority.ts": {
       "rules": {
         "long-file": 3769,
