@@ -12,22 +12,43 @@
  */
 export type BudgetOutcome<T> = { timedOut: false; value: T } | { timedOut: true };
 
-export async function awaitWithBudget<T>(label: string, work: Promise<T>, budgetMs: number): Promise<BudgetOutcome<T>> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const budget = new Promise<{ timedOut: true }>((resolve) => {
-    timer = setTimeout(() => resolve({ timedOut: true }), budgetMs);
-  });
+export interface StartupBudgetLogger {
+  warn(...args: unknown[]): void;
+}
 
-  try {
-    const outcome = await Promise.race([work.then(value => ({ timedOut: false as const, value })), budget]);
+export class StartupBudget {
+  private static sharedInstance: StartupBudget | undefined;
 
-    if (outcome.timedOut) {
-      console.warn(`[Startup] ${ label } is still running after ${ budgetMs } ms; continuing startup while it finishes in the background`);
-      work.catch(error => console.warn(`[Startup] ${ label } failed after the startup budget:`, error));
-    }
+  static get shared(): StartupBudget {
+    StartupBudget.sharedInstance ??= new StartupBudget();
 
-    return outcome;
-  } finally {
-    if (timer) clearTimeout(timer);
+    return StartupBudget.sharedInstance;
   }
+
+  constructor(private readonly logger: StartupBudgetLogger = console) {}
+
+  async await<T>(label: string, work: Promise<T>, budgetMs: number): Promise<BudgetOutcome<T>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), budgetMs);
+    });
+
+    try {
+      const outcome = await Promise.race([work.then(value => ({ timedOut: false as const, value })), budget]);
+
+      if (outcome.timedOut) {
+        this.logger.warn(`[Startup] ${ label } is still running after ${ budgetMs } ms; continuing startup while it finishes in the background`);
+        work.catch(error => this.logger.warn(`[Startup] ${ label } failed after the startup budget:`, error));
+      }
+
+      return outcome;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+}
+
+/** @deprecated use StartupBudget.shared.await */
+export function awaitWithBudget<T>(label: string, work: Promise<T>, budgetMs: number): Promise<BudgetOutcome<T>> {
+  return StartupBudget.shared.await(label, work, budgetMs);
 }

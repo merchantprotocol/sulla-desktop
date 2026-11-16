@@ -12,37 +12,58 @@
  * so idle canvases don't burn a timer they'll never read.
  */
 
-import { onBeforeUnmount, ref } from 'vue';
+import { onBeforeUnmount, ref, type Ref } from 'vue';
 
-const now = ref(Date.now());
-let timer: ReturnType<typeof setInterval> | null = null;
-let subscribers = 0;
+/** One window-wide 1 Hz clock shared by every live elapsed counter. */
+export class LiveClock {
+  private static instance: LiveClock | null = null;
 
-function start() {
-  if (timer) return;
-  now.value = Date.now();
-  timer = setInterval(() => {
-    now.value = Date.now();
-  }, 1000);
-}
+  /** The single clock every component in this window shares. */
+  static shared(): LiveClock {
+    if (!LiveClock.instance) LiveClock.instance = new LiveClock();
 
-function stop() {
-  if (!timer) return;
-  clearInterval(timer);
-  timer = null;
+    return LiveClock.instance;
+  }
+
+  readonly now: Ref<number> = ref(Date.now());
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private subscribers = 0;
+
+  /** Count one subscriber and make sure the timer runs. */
+  subscribe(): void {
+    this.subscribers += 1;
+    this.start();
+  }
+
+  /** Drop one subscriber; stop the timer when nobody is left. */
+  unsubscribe(): void {
+    this.subscribers -= 1;
+    if (this.subscribers <= 0) {
+      this.subscribers = 0;
+      this.stop();
+    }
+  }
+
+  private start(): void {
+    if (this.timer) return;
+    this.now.value = Date.now();
+    this.timer = setInterval(() => {
+      this.now.value = Date.now();
+    }, 1000);
+  }
+
+  private stop(): void {
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = null;
+  }
 }
 
 export function useLiveClock() {
-  subscribers += 1;
-  start();
+  const clock = LiveClock.shared();
 
-  onBeforeUnmount(() => {
-    subscribers -= 1;
-    if (subscribers <= 0) {
-      subscribers = 0;
-      stop();
-    }
-  });
+  clock.subscribe();
+  onBeforeUnmount(() => clock.unsubscribe());
 
-  return now;
+  return clock.now;
 }

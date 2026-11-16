@@ -3,52 +3,85 @@ import Electron from 'electron';
 
 import { spawnFile } from '@pkg/utils/childProcess';
 
-export function getProductionVersion() {
-  try {
-    return Electron.app.getVersion();
-  } catch (err) {
-    console.log(`Can't get app version: ${ err }`);
+type SpawnFile = (command: string, args: string[], options: { stdio: ['ignore', 'pipe', 'inherit'] }) => Promise<{ stdout: string }>;
 
-    return '?';
-  }
-}
+/** Reads the running app's version (packaged, dev git tag or mock) and maps it to a docs version. */
+export class AppVersionService {
+  private static sharedInstance: AppVersionService | undefined;
 
-async function getDevVersion() {
-  try {
-    const { stdout } = await spawnFile('git', ['describe', '--tags'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  static get shared(): AppVersionService {
+    AppVersionService.sharedInstance ??= new AppVersionService();
 
-    return stdout.trim();
-  } catch (err) {
-    console.log(`Can't get app version: ${ err }`);
-
-    return '?';
-  }
-}
-
-export async function getVersion() {
-  if (process.env.SULLA_MOCK_VERSION) {
-    return process.env.SULLA_MOCK_VERSION;
+    return AppVersionService.sharedInstance;
   }
 
-  if (process.env.NODE_ENV === 'production' || process.env.SULLA_MOCK_FOR_SCREENSHOTS) {
-    return getProductionVersion();
+  constructor(
+    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly runFile: SpawnFile = (command, args, options) => spawnFile(command, args, options),
+  ) {}
+
+  getProductionVersion(): string {
+    try {
+      return Electron.app.getVersion();
+    } catch (err) {
+      console.log(`Can't get app version: ${ err }`);
+
+      return '?';
+    }
   }
 
-  return await getDevVersion();
-}
+  async getDevVersion(): Promise<string> {
+    try {
+      const { stdout } = await this.runFile('git', ['describe', '--tags'], { stdio: ['ignore', 'pipe', 'inherit'] });
 
-export function parseDocsVersion(version: string) {
-  // Match '1.9.0-tech-preview' (returns '1.9-tech-preview'), but not '1.9.0-123-g1234567' (returns 'next')
-  const releasePattern = /^v?(\d+\.\d+)\.\d+(-[a-z].*)?$/;
-  const matches = releasePattern.exec(version);
+      return stdout.trim();
+    } catch (err) {
+      console.log(`Can't get app version: ${ err }`);
 
-  if (matches) {
-    if (matches[2]) {
-      return matches[1].concat(matches[2]);
+      return '?';
+    }
+  }
+
+  async getVersion(): Promise<string> {
+    if (this.env.SULLA_MOCK_VERSION) {
+      return this.env.SULLA_MOCK_VERSION;
     }
 
-    return matches[1];
+    if (this.env.NODE_ENV === 'production' || this.env.SULLA_MOCK_FOR_SCREENSHOTS) {
+      return this.getProductionVersion();
+    }
+
+    return await this.getDevVersion();
   }
 
-  return 'next';
+  parseDocsVersion(version: string): string {
+    // Match '1.9.0-tech-preview' (returns '1.9-tech-preview'), but not '1.9.0-123-g1234567' (returns 'next')
+    const releasePattern = /^v?(\d+\.\d+)\.\d+(-[a-z].*)?$/;
+    const matches = releasePattern.exec(version);
+
+    if (matches) {
+      if (matches[2]) {
+        return matches[1].concat(matches[2]);
+      }
+
+      return matches[1];
+    }
+
+    return 'next';
+  }
+}
+
+/** @deprecated use AppVersionService.shared.getProductionVersion */
+export function getProductionVersion() {
+  return AppVersionService.shared.getProductionVersion();
+}
+
+/** @deprecated use AppVersionService.shared.getVersion */
+export function getVersion() {
+  return AppVersionService.shared.getVersion();
+}
+
+/** @deprecated use AppVersionService.shared.parseDocsVersion */
+export function parseDocsVersion(version: string) {
+  return AppVersionService.shared.parseDocsVersion(version);
 }

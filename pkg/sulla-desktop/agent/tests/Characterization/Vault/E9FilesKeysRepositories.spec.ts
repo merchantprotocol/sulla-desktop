@@ -88,7 +88,7 @@ describe.sequential('E9 Files keys: PostgresFilesKeyBundleRepository', () => {
     const repo = fx.repository;
     await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findEnvelope(connection, fx.ctx(1, 1)))).resolves.toBeUndefined();
     await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentForUpdate(connection, PRINCIPAL, 'col-r'))).resolves.toBeUndefined();
-    await expect(repo.findCurrentEnvelope(fx.ctx(1, 1))).resolves.toBeUndefined();
+    await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentEnvelopeForUpdate(connection, fx.ctx(1, 1)))).resolves.toBeUndefined();
 
     await repo.withCollectionLock(PRINCIPAL, 'col-r', async connection => {
       await repo.insertEnvelope(connection, { context: fx.ctx(1, 1), authorityKeyId: 'key-1', envelope: fx.envelope(fx.ctx(1, 1)) });
@@ -97,7 +97,7 @@ describe.sequential('E9 Files keys: PostgresFilesKeyBundleRepository', () => {
     const stored = await repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findEnvelope(connection, fx.ctx(1, 1)));
     expect(stored).toMatchObject({ principal_id: PRINCIPAL, collection_id: 'col-r', authority_key_id: 'key-1', authority_bundle: fx.envelope(fx.ctx(1, 1)) });
     expect(new FilesKeyBundlePolicy().rowContext(stored!)).toEqual(fx.ctx(1, 1));
-    await expect(repo.findCurrentEnvelope(fx.ctx(1, 1))).resolves.toMatchObject({ authority_key_id: 'key-1' });
+    await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentEnvelopeForUpdate(connection, fx.ctx(1, 1)))).resolves.toMatchObject({ authority_key_id: 'key-1' });
 
     await repo.withCollectionLock(PRINCIPAL, 'col-r', async connection => {
       await repo.insertEnvelope(connection, { context: fx.ctx(2, 1), authorityKeyId: 'key-1', envelope: fx.envelope(fx.ctx(2, 1)) });
@@ -105,9 +105,9 @@ describe.sequential('E9 Files keys: PostgresFilesKeyBundleRepository', () => {
     });
     const current = await repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentForUpdate(connection, PRINCIPAL, 'col-r'));
     expect(new FilesKeyBundlePolicy().rowContext(current!)).toEqual(fx.ctx(2, 1));
-    await expect(repo.findCurrentEnvelope(fx.ctx(1, 1))).resolves.toBeUndefined();
-    await expect(repo.findCurrentEnvelope(fx.ctx(2, 1))).resolves.toMatchObject({ authority_key_id: 'key-1' });
-    await expect(repo.findCurrentEnvelope(fx.ctx(2, 1, 'col-other'))).resolves.toBeUndefined();
+    await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentEnvelopeForUpdate(connection, fx.ctx(1, 1)))).resolves.toBeUndefined();
+    await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentEnvelopeForUpdate(connection, fx.ctx(2, 1)))).resolves.toMatchObject({ authority_key_id: 'key-1' });
+    await expect(repo.withCollectionLock(PRINCIPAL, 'col-r', connection => repo.findCurrentEnvelopeForUpdate(connection, fx.ctx(2, 1, 'col-other')))).resolves.toBeUndefined();
   });
 
   it('rejects a duplicate immutable envelope and rolls back the whole transaction', async() => { // risk: envelope overwrite or partial commit
