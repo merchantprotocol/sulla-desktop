@@ -23,7 +23,7 @@ export class ArtifactCreateWorker extends ChatArtifactTool {
     const created = result.created === true;
     return {
       ...this.response(created ? 'Created artifact' : 'Updated existing artifact with the same name', result.artifact, true),
-      result: { artifact: result.artifact, created, updated: !created },
+      artifact: { record: result.artifact, created, updated: !created },
     };
   }
 }
