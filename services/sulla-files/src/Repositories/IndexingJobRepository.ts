@@ -5,7 +5,10 @@
 
 import type pg from 'pg';
 
-export type SearchQueryable = Pick<pg.Pool | pg.PoolClient, 'query'>;
+/** A pool or a checked-out (transaction) client: anything that runs a parameterized statement. */
+export interface SearchQueryable {
+  query<R extends pg.QueryResultRow = any>(text:string, values?:unknown[]):Promise<pg.QueryResult<R>>;
+}
 
 /** A file's indexing eligibility, read after both of its scope rows are locked. */
 export interface IndexEligibility {

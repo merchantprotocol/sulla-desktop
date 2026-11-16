@@ -65,7 +65,7 @@ export class IndexingQueue {
   private activeJob:string | null = null;
   get diagnosticJob():string | null { return this.activeJob }
 
-  constructor(private readonly db:pg.Pool, private readonly source:IndexSource, model:PotionEmbedder | string, dependencies:IndexingQueueDependencies = {}) {
+  constructor(db:pg.Pool, private readonly source:IndexSource, model:PotionEmbedder | string, dependencies:IndexingQueueDependencies = {}) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
     if (this.embedder.dim !== 512) throw new Error(`Expected 512-dimensional Potion model, got ${ this.embedder.dim }`);
     this.jobs = dependencies.jobs ?? new IndexingJobRepository(db);
