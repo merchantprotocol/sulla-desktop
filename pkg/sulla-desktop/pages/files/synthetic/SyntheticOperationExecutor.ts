@@ -80,7 +80,7 @@ export class SyntheticOperationExecutor {
       receipt.displacedBefore = target.displacedBefore; receipt.displacedAfter = this.store.fileState(target.displaced, targetCollection.id);
     }
     if (item.action === 'copy') {
-      const copy = { ...clone(file), id: this.store.nextId('synthetic-copy'), path: target.path, currentVersionId: this.store.nextId('version-copy'), operationRevision: this.store.nextRevision(), updatedAt: new Date().toISOString(), deletedAt: undefined };
+      const copy = { ...SyntheticValues.clone(file), id: this.store.nextId('synthetic-copy'), path: target.path, currentVersionId: this.store.nextId('version-copy'), operationRevision: this.store.nextRevision(), updatedAt: new Date().toISOString(), deletedAt: undefined };
 
       targetCollection.files.push(copy); receipt.after = this.store.fileState(copy, targetCollection.id);
     } else {
@@ -202,8 +202,8 @@ export class SyntheticOperationExecutor {
       }
       if (item.action === 'copy') {
         mappedFolders.forEach(value => targetCollection.folders.push({ folderId: this.store.nextId('synthetic-folder-copy'), path: value.path, revision: this.store.nextRevision() }));
-        mappedFiles.forEach(value => targetCollection.files.push({ ...clone(value.file), id: this.store.nextId('synthetic-copy'), path: value.path, currentVersionId: this.store.nextId('version-copy'), operationRevision: this.store.nextRevision(), updatedAt: new Date().toISOString() }));
-        sourceFolderShares.forEach(share => this.store.folderShares.push({ ...clone(share), id: this.store.nextId('synthetic-folder-share-copy'), collectionId: targetCollection.id, folderPath: targetPath + share.folderPath.slice(sourcePath.length) }));
+        mappedFiles.forEach(value => targetCollection.files.push({ ...SyntheticValues.clone(value.file), id: this.store.nextId('synthetic-copy'), path: value.path, currentVersionId: this.store.nextId('version-copy'), operationRevision: this.store.nextRevision(), updatedAt: new Date().toISOString() }));
+        sourceFolderShares.forEach(share => this.store.folderShares.push({ ...SyntheticValues.clone(share), id: this.store.nextId('synthetic-folder-share-copy'), collectionId: targetCollection.id, folderPath: targetPath + share.folderPath.slice(sourcePath.length) }));
         const copied = targetCollection.folders.find(value => value.path === targetPath) ?? { folderId: this.store.nextId('synthetic-folder-copy'), path: targetPath, revision: this.store.nextRevision() };
 
         if (!targetCollection.folders.includes(copied)) targetCollection.folders.push(copied);

@@ -74,10 +74,10 @@ export class SyntheticMutationJournal {
     for (const saved of mutation[side]) {
       const collection = this.store.collection(saved.id);
 
-      collection.files.push(...clone(saved.files.filter(file => mutation.fileIds.includes(file.id))));
-      collection.folders.push(...clone(saved.folders.filter(folder => mutation.folderIds.includes(folder.folderId))));
+      collection.files.push(...SyntheticValues.clone(saved.files.filter(file => mutation.fileIds.includes(file.id))));
+      collection.folders.push(...SyntheticValues.clone(saved.folders.filter(folder => mutation.folderIds.includes(folder.folderId))));
     }
     this.store.folderShares = this.store.folderShares.filter(share => !mutation.folderShareIds.includes(this.folderShareId(share)));
-    this.store.folderShares.push(...clone(mutation[side === 'before' ? 'beforeFolderShares' : 'afterFolderShares'].filter(share => mutation.folderShareIds.includes(this.folderShareId(share)))));
+    this.store.folderShares.push(...SyntheticValues.clone(mutation[side === 'before' ? 'beforeFolderShares' : 'afterFolderShares'].filter(share => mutation.folderShareIds.includes(this.folderShareId(share)))));
   }
 }
