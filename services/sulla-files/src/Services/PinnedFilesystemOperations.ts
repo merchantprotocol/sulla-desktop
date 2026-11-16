@@ -5,7 +5,7 @@
 
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { link, lstat, open, readdir, realpath, unlink } from 'node:fs/promises';
+import { link, lstat, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import { basename, sep } from 'node:path';
 
 import { FileFingerprints } from './FileFingerprint.js';
@@ -111,6 +111,16 @@ export class PinnedFilesystemOperations {
   async link(source:string, target:string):Promise<void> {
     const from = await this.paths.pinParent(source); const to = await this.paths.pinParent(target);
     try { await link(from.child, to.child); await to.handle.sync() } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
+  }
+
+  /**
+   * Replacing rename for FilesMutationCoordinator.replaceVerified ONLY: the caller has just pinned and
+   * identity-verified `target` as the expected regular file and hard-linked it to a recovery backup, so
+   * replacing it is the intended outcome. Every other move must use renameNoReplace.
+   */
+  async renameReplacing(source:string, target:string):Promise<void> {
+    const from = await this.paths.pinParent(source); const to = await this.paths.pinParent(target);
+    try { await rename(from.child, to.child); await to.handle.sync(); await from.handle.sync() } finally { await Promise.all([from.handle.close(), to.handle.close()]) }
   }
 
   /** Linux renameat2 is required: fs.rename can overwrite an unknown empty dir. */
