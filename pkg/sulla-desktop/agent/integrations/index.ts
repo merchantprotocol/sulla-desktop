@@ -13,9 +13,6 @@ export const registry = new IntegrationRegistry();
 // Token properties that should trigger a full hot-reload (invalidate + re-init)
 const CREDENTIAL_PROPERTIES = new Set([
   'bot_token',
-  'scopes_token',
-  'app_token',
-  'app_level_token',
 ]);
 let integrationListenerSubscribed = false;
 

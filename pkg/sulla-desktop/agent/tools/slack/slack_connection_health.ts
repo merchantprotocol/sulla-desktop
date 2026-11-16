@@ -58,19 +58,11 @@ export class SlackConnectionHealthWorker extends BaseTool {
       // Container authority deliberately exposes no token-presence oracle. A
       // real brokered auth.test below is the only credential health signal.
       const botToken = containerAuthority ? null : (await service.getIntegrationValue(SLACK_ID, 'bot_token'))?.value;
-      const appToken = containerAuthority
-        ? null
-        : (
-          (await service.getIntegrationValue(SLACK_ID, 'scopes_token'))?.value ||
-        (await service.getIntegrationValue(SLACK_ID, 'app_token'))?.value ||
-        (await service.getIntegrationValue(SLACK_ID, 'app_level_token'))?.value
-        );
 
       console.log('[slack_connection_health] Integration values fetched', {
         invocationId,
         connectedInDb: !!connectionStatus?.connected,
         hasBotToken:   containerAuthority ? 'vault-owned' : !!botToken,
-        hasAppToken:   containerAuthority ? 'vault-owned' : !!appToken,
       });
 
       console.log('[slack_connection_health] Pre-check state:', {
@@ -256,7 +248,6 @@ export class SlackConnectionHealthWorker extends BaseTool {
         singletonConnected,
         credentialCustody:     containerAuthority ? 'container-vault' : 'legacy-desktop',
         hasBotToken:           containerAuthority ? null : !!botToken,
-        hasAppToken:           containerAuthority ? null : !!appToken,
         registryClientPresent: !!slack,
         validateAuth,
         authOk,

@@ -7,7 +7,7 @@ import type NodeWebSocket from 'ws';
 
 import type { BrokerRelaySendRequest } from '../contracts.js';
 
-export type VaultRelayOperation = 'slack.socket-mode' | 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
+export type VaultRelayOperation = 'discord.gateway' | 'enterprise.gateway' | 'sulla-cloud.relay';
 
 export interface VaultRelayOpenRequest {
   relayId:     string;
