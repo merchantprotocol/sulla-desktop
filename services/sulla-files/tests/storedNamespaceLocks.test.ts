@@ -16,8 +16,11 @@ class AdvisoryLockRecorder {
 }
 
 describe('stored namespace locks', () => {
-  // risk: unrelated FUSE creates in the same collection must not queue behind one collection-wide exclusive lock.
-  it('lets sibling creates use shared parent slots, distinct target locks and a shared collection gate', async () => {
+  // risk: concurrent creates must not deadlock. The files/file_folders namespace trigger
+  // (migration 027) takes the collection key exclusively on every insert, so a shared
+  // app-level gate only set up a shared->exclusive upgrade deadlock between writers.
+  // The gate is exclusive; parent slots stay shared and target slots stay distinct.
+  it('lets sibling creates use shared parent slots, distinct target locks and an exclusive collection gate', async () => {
     const first = new AdvisoryLockRecorder();
     const second = new AdvisoryLockRecorder();
     await Promise.all([
@@ -25,8 +28,9 @@ describe('stored namespace locks', () => {
       lockStoredNamespace(second.client, 'collection-a', 'alpha/two.txt'),
     ]);
 
-    expect(first.statements[0]).toContain('pg_advisory_xact_lock_shared');
-    expect(second.statements[0]).toContain('pg_advisory_xact_lock_shared');
+    expect(first.statements[0]).toContain('pg_advisory_xact_lock(');
+    expect(first.statements[0]).not.toContain('_shared');
+    expect(second.statements[0]).toContain('pg_advisory_xact_lock(');
     expect(first.values[0]).toEqual(second.values[0]);
     expect(first.values[1]).toEqual(second.values[1]);
     expect(first.statements[1]).toContain('pg_advisory_xact_lock_shared');
