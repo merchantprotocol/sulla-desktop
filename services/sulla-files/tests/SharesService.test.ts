@@ -69,7 +69,7 @@ describe.skipIf(!databaseUrl)('share links (real Postgres)', () => {
   }
   const link = async(id:string) => (await pool.query('SELECT * FROM file_share_links WHERE id=$1', [id])).rows[0];
   const events = async(id:string) => (await pool.query('SELECT action,detail FROM file_share_events WHERE share_id=$1 ORDER BY occurred_at,action', [id])).rows;
-  const folderShare = (extra:Record<string, unknown> = {}) => shares.create(owner, { collectionId, folderPath: 'docs', ...extra });
+  const folderShare = (extra:Partial<Parameters<SharesService['create']>[1]> = {}) => shares.create(owner, { collectionId, folderPath: 'docs', ...extra });
   async function readAll(body:AsyncIterable<Buffer>) { const parts:Buffer[] = []; for await (const part of body) parts.push(part); return Buffer.concat(parts) }
 
   // risk: security — a share password must be stored only as a salted hash and never returned to the owner.
