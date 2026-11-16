@@ -39,3 +39,23 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- The app's path-scoped gate in one round trip (StoredNamespaceGuard.lock with a
+-- path): the collection key shared, then every ancestor slot shared and the
+-- target slot exclusive, shallowest first (the same ascending order in every
+-- transaction), then the scope declaration the trigger above reads. Keys are
+-- byte-identical to the ones StoredNamespaceGuard used to take one by one.
+CREATE OR REPLACE FUNCTION files_lock_namespace_scope(cid TEXT, scoped_path TEXT) RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE parts TEXT[] := string_to_array(scoped_path,'/'); depth INT; slot TEXT;
+BEGIN
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('stored-namespace:'||cid,0));
+  depth := COALESCE(array_length(parts,1),0);
+  FOR i IN 1..depth LOOP
+    slot := 'stored-namespace-path:'||cid||':'||array_to_string(parts[1:i],'/');
+    IF i < depth THEN PERFORM pg_advisory_xact_lock_shared(hashtextextended(slot,0));
+    ELSE PERFORM pg_advisory_xact_lock(hashtextextended(slot,0));
+    END IF;
+  END LOOP;
+  PERFORM set_config('sulla_files.namespace_scopes',
+    concat_ws(E'\n',NULLIF(current_setting('sulla_files.namespace_scopes',TRUE),''),cid||':'||scoped_path),TRUE);
+END $$;

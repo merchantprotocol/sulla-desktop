@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, lstatSync } from 'node:fs';
 import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -26,6 +26,17 @@ export class Store {
       handle = await open(this.path(collectionId, id), constants.O_RDONLY | constants.O_NOFOLLOW);
       return (await handle.stat()).isFile();
     } catch { return false } finally { await handle?.close() }
+  }
+
+  /**
+   * Whether the chunk is in the store, answered by one synchronous lstat. For checks made while a
+   * database transaction is open: the async has() needs three libuv threadpool jobs (open, fstat,
+   * close) that queue behind other requests' chunk fsyncs, so under concurrent writes the
+   * transaction sat idle, holding its locks, for as long as those fsyncs took. A single local
+   * lstat does not wait on that queue. Symlinks are refused, as has() refuses them via O_NOFOLLOW.
+   */
+  presentNow(collectionId:string, id:string):boolean {
+    try { return lstatSync(this.path(collectionId, id)).isFile() } catch { return false }
   }
 
   /** Stored (encrypted) size of a chunk, or undefined when it is not in the store. */

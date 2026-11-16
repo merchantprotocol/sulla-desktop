@@ -95,8 +95,9 @@ export class VersionWriter {
     await this.versions.referenceChunks(client, input.collectionId, chunkIds);
     // Chunk GC takes a table lock on file_versions, so once the version row above is in, no GC that
     // could still delete these chunks is running. One that finished between staging and now could
-    // have reclaimed a deduplicated chunk: check the blobs (a local stat each) before committing.
-    for (const chunk of chunks) if (!await this.store.has(input.collectionId, chunk.id)) throw Object.assign(new HttpError(503, 'Files storage changed while saving; retry the request'), { code: 'FILES_DB_RETRYABLE' });
+    // have reclaimed a deduplicated chunk: check the blobs (one synchronous local lstat each, so
+    // the open transaction never queues behind other writers' fsyncs) before committing.
+    for (const chunk of chunks) if (!this.store.presentNow(input.collectionId, chunk.id)) throw Object.assign(new HttpError(503, 'Files storage changed while saving; retry the request'), { code: 'FILES_DB_RETRYABLE' });
     await this.versions.journalPut(client, input.collectionId, file.id, version.id);
     return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status: version.publication_status };
   };

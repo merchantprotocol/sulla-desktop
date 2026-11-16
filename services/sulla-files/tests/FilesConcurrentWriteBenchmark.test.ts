@@ -6,7 +6,8 @@
 // Concurrent mount creates into ONE collection on real Postgres, with the indexer and the audit
 // drainer running beside them. Always asserts that no file is lost, duplicated or refused.
 // SULLA_FILES_BENCH_TARGETS=1 also asserts the throughput targets (>= 50 files/s, p99 < 1 s,
-// no transaction open > 1 s). SULLA_FILES_BENCH_WRITERS / _FILES size the run (default 8 x 200).
+// no transaction open > 1 s). SULLA_FILES_BENCH_WRITERS / _FILES size the run (default 8 x 200);
+// SULLA_FILES_BENCH_WAITS=1 prints the most-sampled wait events.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -16,9 +17,11 @@ const databaseUrl = process.env.SULLA_FILES_TEST_DATABASE_URL ?? '';
 const writers = Number(process.env.SULLA_FILES_BENCH_WRITERS ?? 8);
 const filesPerWriter = Number(process.env.SULLA_FILES_BENCH_FILES ?? 200);
 const assertTargets = process.env.SULLA_FILES_BENCH_TARGETS === '1';
+// SULLA_FILES_BENCH_BACKGROUND=0 isolates the writers; =indexer or =audit runs only that one.
+const background = process.env.SULLA_FILES_BENCH_BACKGROUND ?? 'all';
 
 describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real Postgres)', () => {
-  const bench = new FilesWriteBenchmark(databaseUrl, { writers, filesPerWriter, directories: 10, indexer: true, audit: true });
+  const bench = new FilesWriteBenchmark(databaseUrl, { writers, filesPerWriter, directories: 10, indexer: ['all', 'indexer'].includes(background), audit: ['all', 'audit'].includes(background) });
 
   beforeAll(async() => { await bench.start(); bench.startBackground() }, 120_000);
   afterAll(async() => { await bench.stop() }, 120_000);
@@ -29,7 +32,8 @@ describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real
     const result = await bench.run(runId);
     console.log(`[files-bench] writers=${ writers } files=${ result.files } seconds=${ result.seconds.toFixed(2) } files/s=${ result.filesPerSecond.toFixed(1) } `
       + `p50=${ result.p50.toFixed(0) }ms p95=${ result.p95.toFixed(0) }ms p99=${ result.p99.toFixed(0) }ms max=${ result.max.toFixed(0) }ms `
-      + `maxTransaction=${ result.maxTransactionMs.toFixed(0) }ms failures=${ result.failures.length }`);
+      + `maxTransaction=${ result.maxTransactionMs.toFixed(0) }ms failures=${ result.failures.length } `
+      + `auditBacklog=${ await bench.scalar('SELECT COUNT(*) n FROM files_audit_spool') } indexBacklog=${ await bench.scalar("SELECT COUNT(*) n FROM file_index_jobs WHERE status IN ('pending','indexing')") }`);
 
     expect(result.failures).toEqual([]);
     const stored = await bench.storedPaths(runId);

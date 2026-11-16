@@ -47,13 +47,9 @@ export class StoredNamespaceGuard {
     // the target row and its parent folders, so it takes none; any other row it still gates
     // with the exclusive key. Never insert or move a file/folder outside the declared scope
     // after a scoped lock: lock broadly (no path) for that transaction instead.
-    await this.repository.lockShared(client, collectionKey);
-    const ancestors = new Set(StoredNamespaceGuard.parentPaths(scopedPath));
-    const paths = [...new Set([...ancestors, scopedPath])].sort();
-    for (const path of paths) {
-      await this.repository.lockPath(client, `stored-namespace-path:${ collectionId }:${ path }`, path !== scopedPath);
-    }
-    await this.repository.declareScope(client, `${ collectionId }:${ scopedPath }`);
+    // One round trip (migration 067's files_lock_namespace_scope) takes the collection key
+    // shared, the ancestor slots shared and the target slot exclusive, then declares the scope.
+    await this.repository.lockScope(client, collectionId, scopedPath);
   }
 
   async assertFilePath(client:pg.PoolClient, collectionId:string, path:string, sameFileId?:string):Promise<void> {
