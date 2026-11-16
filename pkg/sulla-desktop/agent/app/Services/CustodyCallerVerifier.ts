@@ -27,8 +27,7 @@ export class VerifiedCustodyActor {
 
   assertVerified(): void { if (!this.#verified) throw new Error('Unverified custody actor.'); }
 
-  /** Reserved for a future direct UI/IPC adapter. Agent tools must never call this factory. */
-  /** UI/IPC-only: never call from agent tools or agent-controlled code. */
+  /** Reserved for UI/IPC adapters only; agent tools and agent-controlled code must never call this factory. */
   static humanForUiIpc(): VerifiedCustodyActor {
     return new VerifiedCustodyActor('human', '', '', '', 'top-level', VERIFIED_ACTOR_TOKEN);
   }

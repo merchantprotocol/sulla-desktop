@@ -38,6 +38,7 @@ import { JobCustodyService } from '../Services/JobCustodyService';
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
 import { CustodyCallerVerifier } from '../Services/CustodyCallerVerifier';
 import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegistryTopLevelConversationRegistry';
+import { GraphRegistryOwnerPresence } from '../Services/GraphRegistryOwnerPresence';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
 import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
 
@@ -80,9 +81,10 @@ export class AgentJobServiceProvider {
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const conversations = new GraphRegistryTopLevelConversationRegistry();
-    const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) }, {
-      matches: async owner => { const { GraphRegistry } = await import('../../services/GraphRegistry'); const entry = GraphRegistry.get(owner.threadId); if (!entry) return false; const metadata = entry.state.metadata; return String(metadata.wsChannel ?? '') === owner.channel && resolveAgentIdentity(metadata) === owner.agentId; },
-    }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
+    const { GraphRegistry } = await import('../../services/GraphRegistry');
+    const ownerPresence = new GraphRegistryOwnerPresence(GraphRegistry);
+    const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) },
+      { matches: async owner => ownerPresence.matches(owner) }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);

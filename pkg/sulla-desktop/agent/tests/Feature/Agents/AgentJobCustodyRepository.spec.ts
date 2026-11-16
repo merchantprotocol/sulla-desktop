@@ -27,6 +27,12 @@ const move=(instance:JobCustodyService,id:string)=>instance.move({jobId:id,to:ta
 
 suite('AgentJobCustodyRepository',()=>{
  beforeAll(async()=>{await database.initialize();pool=new Pool({connectionString:database.appUrl()});}); afterAll(async()=>{await pool?.end();await database.dispose();});
+ it('preserves the parent job id on fallback custody resolution and move',async()=>{ // risk: ownership operations lose job identity without a custody row
+   const id=`custody-fallback-id-${Date.now()}`;await createJob(id);const repository=new AgentJobCustodyRepository(new PgDatabase(pool) as any);
+   expect(await repository.resolveOwner(id)).toMatchObject({jobId:id});
+   const instance=service();let scopedOwner:any;await instance.withOwner(id,undefined,async(_client,owner)=>{scopedOwner=owner;});expect(scopedOwner).toMatchObject({jobId:id});
+   expect(await move(instance,id)).toMatchObject({ok:true,previous:{jobId:id}});
+ });
  it('allows exactly one of two concurrent adopts and writes one audit row',async()=>{ // risk: concurrent ownership split
    const id=`custody-concurrent-${Date.now()}`;await createJob(id);const [a,b]=await Promise.all([move(service(),id),move(service(),id)]);expect([a.ok,b.ok].filter(Boolean)).toHaveLength(1);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
  });
@@ -96,9 +102,15 @@ suite('AgentJobCustodyRepository',()=>{
    const id=`custody-gate-${Date.now()}`;await createJob(id);let received:PoolClient|undefined;
    const redirected:CustodyOwner={channel:'redirect-channel',threadId:'redirect-thread',agentId:'redirect-agent'};
    const gate:CustodyDestinationGate={resolve:async(client,destination)=>{received=client;return {owner:redirected,retry:false};}};
-   const repository=new AgentJobCustodyRepository(new PgDatabase(pool) as any,undefined,gate);const instance=new JobCustodyService(repository,new JobCustodyAuthorityPolicy(new Alive(),new NoCycles()),new NoopCustodyChangeNotifier(),new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
-   expect((await move(instance,id)).ok).toBe(true);expect(received).toBeDefined();expect(await instance.resolveOwner(id)).toMatchObject(redirected);expect((await instance.history(id))[0].to).toMatchObject(redirected);
-   expect(await database.query(`SELECT message_id FROM agent_inbox_messages WHERE message_id LIKE $1`,[`custody:${id}:job:1:%`])).toHaveLength(2);
+   let transactionClient:PoolClient|undefined;const pg=new PgDatabase(pool);const observedDatabase={query:pg.query.bind(pg),transaction:async<T>(callback:(client:PoolClient)=>Promise<T>)=>pg.transaction(async client=>{transactionClient=client;return callback(client);})};
+   const repository=new AgentJobCustodyRepository(observedDatabase as any,undefined,gate);const instance=new JobCustodyService(repository,new JobCustodyAuthorityPolicy(new Alive(),new NoCycles()),new NoopCustodyChangeNotifier(),new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
+   expect((await move(instance,id)).ok).toBe(true);expect(received).toBe(transactionClient);expect(await instance.resolveOwner(id)).toMatchObject(redirected);expect((await instance.history(id))[0].to).toMatchObject(redirected);
+   expect(await database.query<any>(`SELECT receiver_channel FROM agent_inbox_messages WHERE message_id=$1`,[`custody:${id}:job:1:new`])).toEqual([{receiver_channel:'redirect-channel'}]);
+ });
+ it('does not send whole-job manager-change notices to task-scoped owners',async()=>{ // risk: overriding delegated custody with a whole-job handoff
+   const id=`custody-task-override-${Date.now()}`;await createJob(id,2);const instance=service();const taskOwner:CustodyOwner={channel:'task-channel',threadId:'task-thread',agentId:'task-agent'};
+   expect((await instance.move({jobId:id,taskIndex:1,to:taskOwner,actor:human,reason:'task scope'})).ok).toBe(true);expect((await move(instance,id)).ok).toBe(true);
+   expect(await database.query<any>(`SELECT id FROM agent_job_messages WHERE job_id=$1 AND task_index=1 AND message LIKE '[Manager changed]%'`,[id])).toHaveLength(0);
  });
  it('cascades custody and audit history when the parent job is deleted',async()=>{ // risk: orphaned sensitive audit rows after retention
    const id=`custody-cascade-${Date.now()}`;await createJob(id);expect((await move(service(),id)).ok).toBe(true);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
