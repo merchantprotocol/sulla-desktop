@@ -88,6 +88,12 @@ export class FilesBrowserNavigation {
 
   readonly openDisplayEntry = (entry:DisplayEntry):void => { if (supportsDocumentEditor(entry.path)) this.state.emit('open-editor', entry, this.state.snapshot.value?.collection.id); else this.selectEntry(entry) };
 
+  /** FileDetail's close button returns to the listing. */
+  readonly closeDetail = ():void => { this.state.selected.value = null };
+
+  /** FileDetail restored a version: back to the listing and reload it. */
+  readonly onDetailRestored = ():void => { this.state.selected.value = null; void this.browser.refresher.refresh(true) };
+
   /** FileDetail's "Open" button. */
   readonly openDetail = ():void => { if (this.state.selected.value) this.openDisplayEntry(this.state.selected.value) };
 

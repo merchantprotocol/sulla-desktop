@@ -27,6 +27,9 @@ export class FilesBrowserDialogs {
 
   readonly saveFolderGuidance = async():Promise<void> => { const source = this.browser.state.props.dataSource; const details = this.folderDetails.value; const folderState = details?.folderState; if (!details || !folderState || !source.updateFolderDescription || !this.folderDescription.value.trim()) return; const saved = await this.browser.refresher.runMutation(() => source.updateFolderDescription!(folderState.folderId, this.folderDescription.value.trim(), this.folderNamingHint.value.trim() || undefined)); if (saved) { this.folderDialog.value?.close(); this.folderDetails.value = null } };
 
+  /** The folder dialog's native close event. */
+  readonly closeFolderDetails = ():void => { this.folderDetails.value = null };
+
   readonly onFolderBackdrop = (event:MouseEvent):void => { const dialog = this.folderDialog.value; if (dialog && event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close() } };
 
   readonly openCloudRestore = async():Promise<void> => { const state = this.browser.state; this.cloudRestoreError.value = ''; state.operationError.value = ''; try { this.cloudCollections.value = await state.props.dataSource.listCloudCollections?.() ?? [] } catch (cause) { state.operationError.value = `Sulla Cloud backups could not be listed: ${ FilesBrowserState.messageOf(cause) }`; return } this.cloudRestoreDialog.value?.showModal() };

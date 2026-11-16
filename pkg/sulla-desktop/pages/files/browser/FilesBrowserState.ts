@@ -47,6 +47,8 @@ export class FilesBrowserState {
 
   constructor(readonly props:FilesBrowserProps, readonly emit:FilesBrowserEmit) {}
 
+  readonly dismissOperationError = ():void => { this.operationError.value = '' };
+
   /** The message a caught failure shows, as the browser has always rendered it. */
   static messageOf(cause:unknown):string {
     return cause instanceof Error ? cause.message : String(cause);
