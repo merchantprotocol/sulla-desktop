@@ -73,8 +73,10 @@ describe.skipIf(!databaseUrl)('VersionWriter and Automerge text store (real Post
     expect((await pool.query('SELECT refcount FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, manifest.chunk_ids])).rows.map(row => Number(row.refcount))).toEqual([1]);
     expect((await pool.query("SELECT op FROM journal WHERE file_id=$1 AND version_id=$2", [file.id, version.id])).rows).toEqual([{ op: 'put' }]);
     expect(version.manifest_hash).toBe(await writer.manifestHashFor(collectionId, Buffer.from('hello')));
+    // Residency records the encrypted on-disk size, the same value the chunks row stores.
+    const storedSize = (await pool.query('SELECT stored_size FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, manifest.chunk_ids])).rows[0].stored_size;
     expect((await pool.query('SELECT state,stored_bytes FROM files_chunk_cache WHERE collection_id=$1 AND chunk_id=ANY($2::text[])', [collectionId, manifest.chunk_ids])).rows)
-      .toEqual([{ state: 'resident', stored_bytes: '21' }]);
+      .toEqual([{ state: 'resident', stored_bytes: String(storedSize) }]);
   });
 
   it('rolls cache residency back with an aborted version transaction', async() => {
