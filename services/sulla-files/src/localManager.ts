@@ -23,7 +23,6 @@ import { queryNativeSourcePage, type NativeSourcePage, type NativeSourcePageRow 
 import { streamFileContent } from './fileStream.js';
 import type { DatabaseOperationAccess } from './databaseOperations.js';
 import { Store } from './store.js';
-import { collectionIdFor } from './systemAreas.js';
 import { assertStoredFilePath, assertStoredFolderPath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace } from './storedNamespace.js';
 
 import type { FilesIdentity } from './auth.js';
@@ -36,6 +35,8 @@ import { NativeRootScanner } from './NativeRootScanner.js';
 import { WatchedFolderRepository, type WatchedRow } from './Repositories/WatchedFolderRepository.js';
 import { ScanProgress } from './ScanProgress.js';
 import { TrackedPathFilter } from './TrackedPathFilter.js';
+import { FileRootRepository } from './Repositories/FileRootRepository.js';
+import { TrackedRootCatalog, type BrokeredRootInput, type FileRootStatus } from './TrackedRootCatalog.js';
 import { WatchedFileIngestor } from './WatchedFileIngestor.js';
 import { NativeSourceOperations } from './NativeSourceOperations.js';
 import type { FuseTrackedFile, NativePublicationAction, NativePublicationCompletionProof, NativeSourceIngestResult, NativeSourceOperationInput } from './NativeSourceOperations.js';
@@ -46,11 +47,7 @@ interface RuntimeState {
   lastScanAt?: string; lastSyncAt?: string; serverConfigured: boolean;
   legacyImport?: Config['legacyPreflight'];
 }
-export interface FileRootStatus {
-  id: string; name: string; collectionId: string; syncMode: 'local' | 'server'; paused: boolean;
-  exclusions: string[]; state: 'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
-  pendingFiles: number; serverConfigured: boolean; lastError?: string; lastScanAt?: string; lastSyncAt?: string;
-}
+export type { FileRootStatus } from './TrackedRootCatalog.js';
 interface PathOperationPlanEntry {
   rootId: string;
   fileId: string;
@@ -131,6 +128,8 @@ export class LocalFilesManager {
   private readonly roots:FileRootConfig[];
   private readonly nativeSources:NativeSourceOperations;
   private readonly progress = new ScanProgress();
+  private readonly rootRepository:FileRootRepository;
+  private readonly catalog:TrackedRootCatalog;
   private readonly ingestor:WatchedFileIngestor;
   private readonly scanner:NativeRootScanner;
   private nativeJournalInstance?:NativeOperationJournal;
@@ -277,6 +276,8 @@ export class LocalFilesManager {
       .filter(root => !TrackedPathFilter.isSensitive(root.path));
     this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
     for (const root of this.roots) this.rootMutations.set(root.id, root.primary ? this.mutations : new FilesMutationCoordinator(root.path));
+    this.rootRepository = new FileRootRepository(db);
+    this.catalog = new TrackedRootCatalog(db, config, this.roots, this.rootCollections, this.rootRepository);
     this.ingestor = new WatchedFileIngestor(db, config, this.store, indexer);
     this.scanner = new NativeRootScanner(config, this.roots, this.rootCollections, new WatchedFolderRepository(db), this.ingestor, this.progress);
     this.nativeSources = new NativeSourceOperations(db, { serial: operation => this.serial(operation), fuseRow: fileId => this.fuseRow(fileId) });
@@ -290,29 +291,20 @@ export class LocalFilesManager {
       this.collectionId = await this.ensureCollection({
         id: 'default', name: 'Sulla Files', path: '', syncMode: this.config.serverUrl ? 'server' : 'local', paused: false, exclusions: [], primary: true,
       });
-      await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW()");
+      await this.catalog.detachAll();
       await this.reconcileNativeSourceOperations();
       await beforeScan?.();
       return;
     }
     for (const root of this.roots) await mkdir(root.path, { recursive: true, mode: 0o700 });
     for (const root of this.roots) await assertSeparateStorageRoots(root.path, this.config.dataRoot, this.config.chunkRoot);
-    for (const root of this.roots) {
-      const collectionId = await this.ensureCollection(root);
-      this.rootCollections.set(root.id, collectionId);
-      if (root.primary) this.collectionId = collectionId;
-      await this.db.query(`INSERT INTO file_roots(id,collection_id,display_name,mount_path,sync_mode,paused,exclusions,enabled,state)
-        VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8)
-        ON CONFLICT(id) DO UPDATE SET collection_id=EXCLUDED.collection_id,display_name=EXCLUDED.display_name,mount_path=EXCLUDED.mount_path,
-          sync_mode=EXCLUDED.sync_mode,paused=EXCLUDED.paused,exclusions=EXCLUDED.exclusions,enabled=TRUE,state=EXCLUDED.state,updated_at=NOW()`,
-      [root.id, collectionId, root.name, root.path, root.syncMode, root.paused, JSON.stringify(root.exclusions), root.paused ? 'paused' : 'idle']);
-    }
-    await this.db.query("UPDATE file_roots SET enabled=FALSE,state='detached',updated_at=NOW() WHERE NOT(id=ANY($1::text[]))", [this.roots.map(root => root.id)]);
+    const primaryCollection = await this.catalog.registerConfigured();
+    if (primaryCollection) this.collectionId = primaryCollection;
     await this.recoverPathOperations();
     await this.reconcileNativeSourceOperations();
     await beforeScan?.();
-    const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
-    if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.progress.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.progress.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
+    const saved = await this.rootRepository.savedRuntimeState();
+    if (saved) { this.paused ||= saved.paused; this.lastError = saved.last_error as string | undefined; this.progress.lastScanAt = (saved.last_scan_at as any)?.toISOString?.(); this.progress.lastSyncAt = (saved.last_sync_at as any)?.toISOString?.() }
     await this.rescan();
     this.syncTimer = setInterval(() => this.sync().catch(error => this.fail(error)), 15_000);
     this.syncTimer.unref();
@@ -365,40 +357,16 @@ export class LocalFilesManager {
 
   private reconcileNativeSourceOperations():Promise<void> { return this.nativeSources.reconcileAfterRestart() }
 
-  async listRoots():Promise<FileRootStatus[]> {
-    const rows = await this.db.query(`SELECT id,display_name,collection_id,sync_mode,paused,exclusions,state,pending_files,last_error,last_scan_at,last_sync_at
-      FROM file_roots WHERE enabled=TRUE ORDER BY created_at`);
-    return rows.rows.map(row => ({
-      id: row.id, name: row.display_name, collectionId: row.collection_id, syncMode: row.sync_mode, paused: row.paused,
-      exclusions: row.exclusions ?? [], state: row.paused ? 'paused' : row.state, pendingFiles: row.pending_files,
-      serverConfigured: Boolean(this.config.serverUrl),
-      lastError: row.last_error ?? undefined, lastScanAt: row.last_scan_at?.toISOString?.(), lastSyncAt: row.last_sync_at?.toISOString?.(),
-    }));
-  }
+  listRoots():Promise<FileRootStatus[]> { return this.catalog.list() }
 
   /** Register a Desktop-brokered host root without exposing its host path to the container. */
-  async attachBrokeredRoot(input:{ id:string; name:string; syncMode:'local'|'server'; paused:boolean; exclusions:string[] }):Promise<FileRootStatus> {
-    if (!input || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(input.id) || typeof input.name!=='string' || !input.name || !['local','server'].includes(input.syncMode) || typeof input.paused!=='boolean' || !Array.isArray(input.exclusions) || input.exclusions.length>200 || input.exclusions.some(value=>typeof value!=='string'||value.length>500||value.includes('\0'))) throw Object.assign(new Error('Invalid Files root'), { status:400 });
-    const collectionId = await this.ensureCollection({ ...input, path:`/brokered/${input.id}`, primary:input.id === 'default' });
-    await this.db.query(`INSERT INTO file_roots(id,collection_id,display_name,mount_path,sync_mode,paused,exclusions,enabled,state)
-      VALUES($1,$2,$3,$4,$5,$6,$7,TRUE,$8)
-      ON CONFLICT(id) DO UPDATE SET collection_id=EXCLUDED.collection_id,display_name=EXCLUDED.display_name,
-        mount_path=EXCLUDED.mount_path,sync_mode=EXCLUDED.sync_mode,paused=EXCLUDED.paused,exclusions=EXCLUDED.exclusions,
-        enabled=TRUE,state=EXCLUDED.state,last_error=NULL,updated_at=NOW()`,
-    [input.id,collectionId,input.name,`/brokered/${input.id}`,input.syncMode,input.paused,JSON.stringify(input.exclusions),input.paused?'paused':'scanning']);
-    this.rootCollections.set(input.id,collectionId);
-    if (input.id === 'default') this.collectionId=collectionId;
-    return (await this.listRoots()).find(root=>root.id===input.id)!;
+  async attachBrokeredRoot(input:BrokeredRootInput):Promise<FileRootStatus> {
+    const { root, collectionId } = await this.catalog.attachBrokered(input);
+    if (input.id === 'default') this.collectionId = collectionId;
+    return root;
   }
 
-  async brokeredScanState(id:string, input:{ state:'scanning'|'idle'|'error'; pendingFiles?:number; lastError?:string }):Promise<FileRootStatus> {
-    if(!input||!['scanning','idle','error'].includes(input.state)||!Number.isSafeInteger(input.pendingFiles??0)||(input.pendingFiles??0)<0||typeof (input.lastError??'')!=='string'||(input.lastError??'').length>2000)throw Object.assign(new Error('Invalid scan state'),{status:400});
-    const result=await this.db.query(`UPDATE file_roots SET state=$2,pending_files=$3,last_error=$4,
-      last_scan_at=CASE WHEN $2 IN ('idle','error') THEN NOW() ELSE last_scan_at END,updated_at=NOW()
-      WHERE id=$1 AND enabled=TRUE RETURNING id`,[id,input.state,input.pendingFiles??0,input.lastError??null]);
-    if(!result.rowCount) throw Object.assign(new Error('File root was not found'),{status:404});
-    return (await this.listRoots()).find(root=>root.id===id)!;
-  }
+  brokeredScanState(id:string, input:{ state:'scanning'|'idle'|'error'; pendingFiles?:number; lastError?:string }):Promise<FileRootStatus> { return this.catalog.brokeredScanState(id, input) }
 
   /** Experimental Files mount view over watched roots and indexed native sources. */
   async fuseSnapshot(collectionId:string):Promise<FuseTrackedFile[]> {
@@ -546,43 +514,11 @@ export class LocalFilesManager {
     if (hash.digest('hex') !== expected) throw Object.assign(new Error('Tracked source hash changed'), { status: 409 });
   }
 
-  async configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<FileRootStatus> {
-    const configured = this.roots.find(root => root.id === id);
-    const existing=(await this.db.query('SELECT paused,sync_mode,exclusions,mount_path FROM file_roots WHERE id=$1 AND enabled=TRUE',[id])).rows[0];
-    if (!existing) throw Object.assign(new Error('File root is not registered'), { status: 409 });
-    if (input.syncMode === 'server' && !this.config.serverUrl) throw Object.assign(new Error('No Files server is configured'), { status: 409 });
-    const paused=input.paused ?? configured?.paused ?? existing.paused;
-    const syncMode=input.syncMode ?? configured?.syncMode ?? existing.sync_mode;
-    const exclusions=input.exclusions ?? configured?.exclusions ?? existing.exclusions ?? [];
-    if(configured){configured.paused=paused;configured.syncMode=syncMode;configured.exclusions=exclusions;}
-    await this.db.query(`UPDATE file_roots SET paused=$2,sync_mode=$3,exclusions=$4,state=$5,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE`,
-      [id, paused, syncMode, JSON.stringify(exclusions), paused ? 'paused' : 'idle']);
-    if (configured && !paused) await this.rescan();
-    const root = (await this.listRoots()).find(item => item.id === id);
-    if (!root) throw Object.assign(new Error('File root is unavailable'), { status: 404 });
-    return root;
+  configureRoot(id:string, input:{ paused?:boolean; syncMode?:'local' | 'server'; exclusions?:string[] }):Promise<FileRootStatus> {
+    return this.catalog.configure(id, input, () => this.rescan());
   }
 
-  async detachRoot(id:string):Promise<void> {
-    if (id === 'default') throw Object.assign(new Error('The default Files root cannot be removed'), { status: 409 });
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await client.query("UPDATE file_roots SET enabled=FALSE,paused=TRUE,state='detached',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1 AND enabled=TRUE RETURNING collection_id", [id]);
-      if (!result.rowCount) throw Object.assign(new Error('File root was not found'), { status: 404 });
-      // Detaching forgets scan custody only. Source files, encrypted versions,
-      // search records and journal history remain untouched and no delete versions
-      // are emitted.
-      await client.query('DELETE FROM watched_folder_state WHERE root_id=$1', [id]);
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally { client.release() }
-    const configuredIndex = this.roots.findIndex(root => root.id === id);
-    if (configuredIndex >= 0) this.roots.splice(configuredIndex, 1);
-    this.rootCollections.delete(id);
-  }
+  detachRoot(id:string):Promise<void> { return this.catalog.detach(id) }
 
   async recent(limit:number, exactPath?:string):Promise<any[]> {
     const result = await this.db.query(`SELECT f.id,f.path,f.mime,f.size,f.updated_at,(f.path ILIKE '%conflicted copy%') AS conflict,m.duration_seconds,r.state AS residency_state
@@ -595,7 +531,7 @@ export class LocalFilesManager {
   }
 
   async setPaused(paused:boolean):Promise<RuntimeState> {
-    this.paused = paused; await this.db.query('UPDATE files_runtime_state SET paused=$1,state=$2,updated_at=NOW() WHERE id=TRUE', [paused, paused ? 'paused' : 'synced']);
+    this.paused = paused; await this.rootRepository.setRuntimePaused(paused);
     if (!paused) await this.sync();
     return this.status();
   }
@@ -958,26 +894,9 @@ export class LocalFilesManager {
     });
   }
 
-  private fail(error:unknown):void { this.lastError = error instanceof Error ? error.message : String(error); this.db.query("UPDATE files_runtime_state SET state='error',last_error=$1,updated_at=NOW() WHERE id=TRUE", [this.lastError]).catch(dbError => console.error('[SullaFiles] failed to record runtime error', dbError)) }
+  private fail(error:unknown):void { this.lastError = error instanceof Error ? error.message : String(error); this.rootRepository.markRuntimeError(this.lastError).catch(dbError => console.error('[SullaFiles] failed to record runtime error', dbError)) }
 
-  private async ensureCollection(root:FileRootConfig):Promise<string> {
-    const id = collectionIdFor(this.config.userId, root.id);
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      const existing = await client.query(`SELECT c.id FROM collections c WHERE c.owner_user_id=$2 AND c.kind='knowledge' AND c.published=TRUE AND c.legacy_source=FALSE
-        AND (c.id=$1 OR c.id=(SELECT shadow_collection_id FROM files_legacy_collection_map WHERE source_collection_id=$1)
-          OR ($3 AND c.system_area IS NULL AND c.explorer_path=''))
-        ORDER BY (c.id=$1) DESC,c.created_at LIMIT 1`, [id, this.config.userId, root.primary]);
-      if (!existing.rows[0]) {
-        await client.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy)
-          VALUES($1,$2,$3,$4,'knowledge',$5,'{}','{}',$6)`, [id, this.config.orgId ?? null, this.config.userId, root.primary ? 'Files' : root.name, root.syncMode === 'server' && this.config.serverUrl ? 'synced' : 'desktop-only', { trashDays: 90 }]);
-        const wrapped = await this.config.keyring!.create(id, client);
-        await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
-      } else if (this.config.orgId) await client.query('UPDATE collections SET org_id=$2,updated_at=NOW() WHERE id=$1', [id, this.config.orgId]);
-      await client.query('COMMIT'); return existing.rows[0]?.id ?? id;
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-  }
+  private ensureCollection(root:FileRootConfig):Promise<string> { return this.catalog.ensureCollection(root) }
 
   private safe(relativePath:string, root = this.roots.find(item => item.primary)!):string { return TrackedPathFilter.inside(root, relativePath) }
   private rootForCollection(collectionId:string):FileRootConfig {
