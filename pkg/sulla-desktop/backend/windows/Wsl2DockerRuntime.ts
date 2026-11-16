@@ -41,6 +41,8 @@ class Wsl2ReadinessTimeout extends Error {}
  */
 export class Wsl2DockerRuntime {
   private child?: ChildProcess;
+  private childErrorListener?: (error: Error) => void;
+  private starting?: Promise<void>;
   private started = false;
 
   constructor(
@@ -49,14 +51,21 @@ export class Wsl2DockerRuntime {
     private readonly sleep: RuntimeSleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
   ) {}
 
+  /**
+   * Builds a GNU `env` invocation. `--` must come first: env stops option
+   * parsing at the first NAME=VALUE, so a later `--` would be run as the
+   * command. The command must be absolute and contain no `=`, so env can
+   * never mistake it for another assignment.
+   */
   private withEnvironment(command: string, args: string[]): [string, string[]] {
+    if (!/^\/[^=\0\r\n]*$/.test(command)) throw new Error(`Invalid WSL runtime command: ${ command }`);
     const assignments = Object.entries(this.options.environment).map(([name, value]) => {
       if (!/^[A-Z_][A-Z0-9_]*$/.test(name) || /[\0\r\n]/.test(value)) throw new Error(`Invalid WSL runtime environment entry: ${ name }`);
 
       return `${ name }=${ value }`;
     });
 
-    return ['/usr/bin/env', [...assignments, '--', command, ...args]];
+    return ['/usr/bin/env', ['--', ...assignments, command, ...args]];
   }
 
   private runProbe(command: string, args: string[], timeoutMs: number, description: string): Promise<WslCommandResult> {
@@ -93,8 +102,17 @@ export class Wsl2DockerRuntime {
     return this.started && !!this.child && this.child.exitCode === null && this.child.signalCode === null;
   }
 
-  async start(): Promise<void> {
-    if (this.running) return;
+  /** Concurrent callers share one in-flight start instead of spawning two daemons. */
+  start(): Promise<void> {
+    if (this.running) return Promise.resolve();
+    if (!this.starting) {
+      this.starting = this.startOnce().finally(() => { this.starting = undefined; });
+    }
+
+    return this.starting;
+  }
+
+  private async startOnce(): Promise<void> {
     if (this.child) await this.stop();
 
     const readyBy = Date.now() + (this.options.readyTimeoutMs ?? 60_000);
@@ -112,8 +130,11 @@ export class Wsl2DockerRuntime {
     this.child = child;
     const pollMs = this.options.pollIntervalMs ?? 500;
     let processError: Error | undefined;
+    // Kept for the child's whole lifetime: an unhandled late 'error' would crash the main process.
+    const onError = (error: Error) => { processError ??= error; };
 
-    child.once('error', error => { processError = error; });
+    child.on('error', onError);
+    this.childErrorListener = onError;
 
     try {
       while (Date.now() < readyBy) {
@@ -170,6 +191,8 @@ export class Wsl2DockerRuntime {
         child.kill('SIGTERM');
       });
     }
+    if (child && this.childErrorListener) child.removeListener('error', this.childErrorListener);
+    this.childErrorListener = undefined;
     this.child = undefined;
     await this.host.terminateDistribution();
   }

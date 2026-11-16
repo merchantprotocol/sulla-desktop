@@ -202,7 +202,7 @@ export function verifyFileSha256(file: string, expectedSha256: string): Promise<
     input.once('end', () => {
       const actual = hash.digest('hex');
 
-      if (actual !== expectedSha256) reject(new Error('Bundled WSL rootfs SHA-256 does not match its package manifest'));
+      if (actual !== expectedSha256.toLowerCase()) reject(new Error('Bundled WSL rootfs SHA-256 does not match its package manifest'));
       else resolve();
     });
   });

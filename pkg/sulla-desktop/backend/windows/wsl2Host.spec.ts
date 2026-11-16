@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { decodeWslOutput, parseWslDistributionList, SULLA_WSL_DISTRIBUTION, Wsl2Host } from './wsl2Host';
+import { decodeWslOutput, parseWslDistributionList, SULLA_WSL_DISTRIBUTION, verifyFileSha256, Wsl2Host } from './wsl2Host';
 
 describe('WSL2 host adapter', () => {
   it('parses UTF-8 output and keeps distro names, state, version, and default marker', () => {
@@ -172,5 +175,30 @@ describe('WSL2 host adapter', () => {
     host.spawnInDistribution('/usr/bin/dockerd-rootless.sh', [], {}, '1000');
 
     expect(processSpawner.spawn.mock.calls[0][1]).toEqual(['--distribution', SULLA_WSL_DISTRIBUTION, '--user', '1000', '--exec', '/usr/bin/dockerd-rootless.sh']);
+  });
+});
+
+describe('verifyFileSha256', () => {
+  // risk: a tampered or corrupted rootfs would be imported as Sulla's WSL distro.
+  it('accepts a file matching its digest (in either case) and rejects a one-byte change', async() => {
+    const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sulla-wsl-sha-'));
+
+    try {
+      const file = path.join(directory, 'rootfs.tar');
+      const contents = Buffer.from('sulla wsl rootfs fixture\n');
+      const digest = createHash('sha256').update(contents).digest('hex');
+
+      await fs.promises.writeFile(file, contents);
+      await expect(verifyFileSha256(file, digest)).resolves.toBeUndefined();
+      await expect(verifyFileSha256(file, digest.toUpperCase())).resolves.toBeUndefined();
+
+      const tampered = Buffer.from(contents);
+
+      tampered[0] ^= 0x01;
+      await fs.promises.writeFile(file, tampered);
+      await expect(verifyFileSha256(file, digest)).rejects.toThrow(/SHA-256 does not match/);
+    } finally {
+      await fs.promises.rm(directory, { recursive: true, force: true });
+    }
   });
 });

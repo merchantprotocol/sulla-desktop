@@ -23,6 +23,36 @@ class FakeProcess extends EventEmitter {
   });
 }
 
+/**
+ * Parses argv the way GNU coreutils `env` does: options are recognised only
+ * before the first NAME=VALUE (getopt '+' mode), `--` ends options, then
+ * NAME=VALUE pairs are read until the first word without '='; that word is
+ * the command. Asserting on this result checks meaning, not argv order.
+ */
+function parseGnuEnv(argv: string[]): { options: string[]; env: Record<string, string>; command?: string; args: string[] } {
+  const parsed = { options: [] as string[], env: {} as Record<string, string>, command: undefined as string | undefined, args: [] as string[] };
+  let index = 0;
+
+  while (index < argv.length && argv[index].startsWith('-') && argv[index] !== '-') {
+    if (argv[index] === '--') {
+      index += 1;
+      break;
+    }
+    parsed.options.push(argv[index]);
+    index += 1;
+  }
+  while (index < argv.length && argv[index].includes('=')) {
+    const separator = argv[index].indexOf('=');
+
+    parsed.env[argv[index].slice(0, separator)] = argv[index].slice(separator + 1);
+    index += 1;
+  }
+  parsed.command = argv[index];
+  parsed.args = argv.slice(index + 1);
+
+  return parsed;
+}
+
 const options: Wsl2DockerRuntimeOptions = {
   daemonCommand: '/usr/bin/dockerd-rootless.sh',
   daemonArgs: ['--host=unix:///run/user/1000/docker.sock'],
@@ -49,19 +79,19 @@ describe('Wsl2DockerRuntime', () => {
     await expect(runtime.run('/usr/bin/docker', ['ps', '--format', '{{.ID}}'])).resolves.toEqual({ stdout: 'ready' });
     expect(runtime.running).toBe(true);
     expect(host.spawnInDistribution).toHaveBeenCalledWith('/usr/bin/env', [
-      'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '--', options.daemonCommand, ...options.daemonArgs,
+      '--', 'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', options.daemonCommand, ...options.daemonArgs,
     ], { windowsHide: true }, 'sulla');
     expect(runInDistribution).toHaveBeenNthCalledWith(1, '/usr/bin/env', [
-      'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '--', '/usr/bin/id', '-u',
+      '--', 'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '/usr/bin/id', '-u',
     ], 'sulla', expect.any(AbortSignal));
     expect(runInDistribution).toHaveBeenNthCalledWith(2, '/usr/bin/env', [
-      'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '--', options.readinessCommand, ...options.readinessArgs,
+      '--', 'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', options.readinessCommand, ...options.readinessArgs,
     ], 'sulla', expect.any(AbortSignal));
     expect(runInDistribution).toHaveBeenNthCalledWith(3, '/usr/bin/env', [
-      'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '--', options.readinessCommand, ...options.readinessArgs,
+      '--', 'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', options.readinessCommand, ...options.readinessArgs,
     ], 'sulla', expect.any(AbortSignal));
     expect(runInDistribution).toHaveBeenNthCalledWith(4, '/usr/bin/env', [
-      'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '--', '/usr/bin/docker', 'ps', '--format', '{{.ID}}',
+      '--', 'DOCKER_HOST=unix:///run/user/1000/docker.sock', 'XDG_RUNTIME_DIR=/run/user/1000', '/usr/bin/docker', 'ps', '--format', '{{.ID}}',
     ], 'sulla');
   });
 
@@ -251,5 +281,116 @@ describe('Wsl2DockerRuntime', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('builds env argv that GNU env executes as the intended command with the intended environment', async() => {
+    // risk: an env argv with a misplaced '--' runs '--' as the command (exit 127) and the daemon never starts.
+    const child = new FakeProcess();
+    const host: Wsl2RuntimeHost = {
+      runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '1000' }).mockResolvedValue({ stdout: 'ready' }),
+      spawnInDistribution: vi.fn(() => child as any),
+      terminateDistribution: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = new Wsl2DockerRuntime(host, options, async() => undefined);
+
+    await runtime.start();
+    await runtime.run('/usr/bin/docker', ['ps', 'FILTER=a=b']);
+
+    const [spawnCommand, spawnArgv] = (host.spawnInDistribution as any).mock.calls[0];
+    const daemon = parseGnuEnv(spawnArgv);
+
+    expect(spawnCommand).toBe('/usr/bin/env');
+    expect(daemon).toEqual({ options: [], env: options.environment, command: options.daemonCommand, args: options.daemonArgs });
+
+    const calls = (host.runInDistribution as any).mock.calls as [string, string[]][];
+
+    expect(calls.map(([command]) => command)).toEqual(['/usr/bin/env', '/usr/bin/env', '/usr/bin/env']);
+    expect(parseGnuEnv(calls[0][1])).toEqual({ options: [], env: options.environment, command: '/usr/bin/id', args: ['-u'] });
+    expect(parseGnuEnv(calls[1][1])).toEqual({ options: [], env: options.environment, command: options.readinessCommand, args: options.readinessArgs });
+    expect(parseGnuEnv(calls[2][1])).toEqual({ options: [], env: options.environment, command: '/usr/bin/docker', args: ['ps', 'FILTER=a=b'] });
+  });
+
+  it('refuses relative or assignment-shaped commands that env could misread', async() => {
+    // risk: a relative or NAME=VALUE-shaped command would be parsed by env as an assignment or resolved via PATH.
+    const host: Wsl2RuntimeHost = {
+      runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '1000' }).mockResolvedValue({ stdout: 'ready' }),
+      spawnInDistribution: vi.fn(() => new FakeProcess() as any),
+      terminateDistribution: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = new Wsl2DockerRuntime(host, options, async() => undefined);
+
+    await runtime.start();
+    await expect(runtime.run('docker', ['ps'])).rejects.toThrow(/Invalid WSL runtime command/);
+    await expect(runtime.run('/usr/bin/FOO=bar', [])).rejects.toThrow(/Invalid WSL runtime command/);
+    expect(host.runInDistribution).toHaveBeenCalledTimes(2);
+
+    const badDaemonHost: Wsl2RuntimeHost = {
+      runInDistribution: vi.fn().mockResolvedValue({ stdout: '1000' }),
+      spawnInDistribution: vi.fn(() => new FakeProcess() as any),
+      terminateDistribution: vi.fn().mockResolvedValue(undefined),
+    };
+    const badDaemon = new Wsl2DockerRuntime(badDaemonHost, { ...options, daemonCommand: 'dockerd-rootless.sh' }, async() => undefined);
+
+    await expect(badDaemon.start()).rejects.toThrow(/Invalid WSL runtime command/);
+    expect(badDaemonHost.spawnInDistribution).not.toHaveBeenCalled();
+  });
+
+  it('keeps one error listener on the daemon while it runs and removes it on stop', async() => {
+    // risk: a late child 'error' with no listener throws and crashes the Electron main process; a leaked listener pins the old child.
+    const child = new FakeProcess();
+    const host: Wsl2RuntimeHost = {
+      runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '1000' }).mockResolvedValue({ stdout: 'ready' }),
+      spawnInDistribution: vi.fn(() => child as any),
+      terminateDistribution: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = new Wsl2DockerRuntime(host, options, async() => undefined);
+
+    await runtime.start();
+    expect(child.listenerCount('error')).toBe(1);
+    expect(() => child.emit('error', new Error('late failure one'))).not.toThrow();
+    expect(() => child.emit('error', new Error('late failure two'))).not.toThrow();
+    expect(child.listenerCount('error')).toBe(1);
+
+    await runtime.stop();
+    expect(child.listenerCount('error')).toBe(0);
+  });
+
+  it('shares one in-flight start between concurrent callers and spawns a single daemon', async() => {
+    // risk: two concurrent starts would spawn two daemons in one distro and orphan one of them.
+    const child = new FakeProcess();
+    const host: Wsl2RuntimeHost = {
+      runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '1000' }).mockResolvedValue({ stdout: 'ready' }),
+      spawnInDistribution: vi.fn(() => child as any),
+      terminateDistribution: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = new Wsl2DockerRuntime(host, options, async() => undefined);
+
+    const first = runtime.start();
+    const second = runtime.start();
+
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(host.spawnInDistribution).toHaveBeenCalledTimes(1);
+    expect(runtime.running).toBe(true);
+
+    // After it settles, a fresh start on a running runtime is a no-op rather than a second spawn.
+    await runtime.start();
+    expect(host.spawnInDistribution).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a new start run after a failed in-flight start settles', async() => {
+    // risk: a stuck in-flight promise would make every later start return the old failure.
+    const child = new FakeProcess();
+    const host: Wsl2RuntimeHost = {
+      runInDistribution: vi.fn().mockResolvedValueOnce({ stdout: '0' }).mockResolvedValueOnce({ stdout: '1000' }).mockResolvedValue({ stdout: 'ready' }),
+      spawnInDistribution: vi.fn(() => child as any),
+      terminateDistribution: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = new Wsl2DockerRuntime(host, options, async() => undefined);
+
+    await expect(runtime.start()).rejects.toThrow(/non-root numeric UID/);
+    await runtime.start();
+    expect(runtime.running).toBe(true);
+    expect(host.spawnInDistribution).toHaveBeenCalledTimes(1);
   });
 });
