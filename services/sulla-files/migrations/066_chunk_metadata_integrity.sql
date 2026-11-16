@@ -41,3 +41,10 @@ CREATE TRIGGER files_guard_version_chunks
 CREATE TRIGGER files_guard_chunk_delete
   BEFORE DELETE ON chunks
   FOR EACH ROW EXECUTE FUNCTION files_guard_chunk_delete();
+
+-- Both guards (and the reconciler) look up "which retained versions reference
+-- chunk X". Without these, every chunk delete scans every manifest, which
+-- stalls GC once a library reaches hundreds of thousands of files.
+CREATE INDEX IF NOT EXISTS idx_manifests_chunk_ids_gin ON manifests USING gin (chunk_ids);
+CREATE INDEX IF NOT EXISTS idx_file_versions_collection_manifest
+  ON file_versions (chunk_collection_id, manifest_hash) WHERE manifest_hash IS NOT NULL;
