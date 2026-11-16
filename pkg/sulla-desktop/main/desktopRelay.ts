@@ -56,6 +56,7 @@ import { logVoiceSpan, voiceTurnRoute } from '@pkg/agent/utils/voiceTurn';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 import { RelayLivenessWatchdog } from '@pkg/main/relayLivenessWatchdog';
+import { DesktopRelayStartupRestorer } from '@pkg/main/cloud/session/DesktopRelayStartupRestorer';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
 
 
@@ -1383,59 +1384,51 @@ export class DesktopRelayClient {
   }
 }
 
-let instance: DesktopRelayClient | null = null;
+export class DesktopRelayServiceProvider {
+  constructor(private readonly client: DesktopRelayClient) {}
 
+  getClient(): DesktopRelayClient {
+    return this.client;
+  }
+
+  registerEvents(): void {
+    const ipcMainProxy = getIpcMainProxy(console);
+    const client = this.client;
+
+    ipcMainProxy.handle('desktop-relay:get-status', async() => client.getStatus());
+
+    ipcMainProxy.handle('desktop-relay:set-paired-user-id', async(_event: unknown, userId: string) => {
+      await client.setPairedUserId(userId);
+      return client.getStatus();
+    });
+
+    // Broadcast status changes to renderer
+    client.onStatusChange((status) => {
+      try {
+        const { BrowserWindow } = require('electron') as typeof import('electron');
+        for (const win of BrowserWindow.getAllWindows()) {
+          try { win.webContents.send('desktop-relay:status-changed', status); } catch { /* ignore */ }
+        }
+      } catch { /* electron not ready */ }
+    });
+
+    // Cold-start restore retries while local settings are booting.
+    const startupRestorer = new DesktopRelayStartupRestorer(this.client, {
+      failed: error => console.warn('[DesktopRelay] start() failed (retrying in 10s):', error instanceof Error ? error.message : error),
+      exhausted: error => console.error('[DesktopRelay] start() still failing after 5min — giving up until next app start:', error),
+    });
+    void startupRestorer.restore();
+  }
+}
+
+// Main-process service-provider binding. Relay state belongs to the client instance, never a module-level object graph.
+export const desktopRelayProvider = new DesktopRelayServiceProvider(new DesktopRelayClient());
+
+/** Compatibility exports retained for current main-process callers. */
 export function getDesktopRelayClient(): DesktopRelayClient {
-  if (!instance) instance = new DesktopRelayClient();
-  return instance;
+  return desktopRelayProvider.getClient();
 }
 
 export function initDesktopRelayEvents(): void {
-  const ipcMainProxy = getIpcMainProxy(console);
-  const client = getDesktopRelayClient();
-
-  ipcMainProxy.handle('desktop-relay:get-status', async() => {
-    return client.getStatus();
-  });
-
-  ipcMainProxy.handle('desktop-relay:set-paired-user-id', async(_event: unknown, userId: string) => {
-    await client.setPairedUserId(userId);
-    return client.getStatus();
-  });
-
-  // Broadcast status changes to renderer
-  client.onStatusChange((status) => {
-    try {
-      const { BrowserWindow } = require('electron') as typeof import('electron');
-      for (const win of BrowserWindow.getAllWindows()) {
-        try { win.webContents.send('desktop-relay:status-changed', status); } catch { /* ignore */ }
-      }
-    } catch { /* electron not ready */ }
-  });
-
-  // Kick off the connection on load if a pairing already exists. start()
-  // reads the pairing from Postgres, which may still be coming up inside the
-  // VM on a cold boot — retry with a flat backoff instead of dying once and
-  // leaving the relay offline until the next app restart.
-  (async() => {
-    const RETRY_MS = 10_000;
-    const DEADLINE_MS = 5 * 60_000;
-    const t0 = Date.now();
-
-    for (;;) {
-      try {
-        await client.start();
-
-        return;
-      } catch (err) {
-        if (Date.now() - t0 >= DEADLINE_MS) {
-          console.error('[DesktopRelay] start() still failing after 5min — giving up until next app start:', err);
-
-          return;
-        }
-        console.warn(`[DesktopRelay] start() failed (retrying in ${ RETRY_MS / 1000 }s):`, err instanceof Error ? err.message : err);
-        await new Promise(resolve => setTimeout(resolve, RETRY_MS));
-      }
-    }
-  })();
+  desktopRelayProvider.registerEvents();
 }

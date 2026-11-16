@@ -13,6 +13,7 @@ describe('CloudSessionStartupRestorer', () => {
   });
 
   it('restores the connected active account after legacy adoption', async() => {
+    // risk: session recovery — restore only a connected account and adopt legacy data before resolving the identity.
     const broker = brokerWith({ activeAccountId: 'user-1', accounts: [{ accountId: 'user-1', connected: true }] });
     const adopt = vi.fn().mockResolvedValue(undefined);
     const setError = vi.fn();
