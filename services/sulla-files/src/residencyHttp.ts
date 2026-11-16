@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 
 import { issueCapabilityToken } from './auth.js';
+import { ResidencySyncBundleRepository } from './Repositories/ResidencySyncBundleRepository.js';
 
 import type {
   AuthenticatedResidencyTransport,
@@ -181,42 +182,40 @@ export class HttpResidencyTransport implements AuthenticatedResidencyTransport {
 }
 
 /** Loads the exact existing Files sync bundle; no key material is included. */
-export async function loadResidencySyncBundle(db: pg.Pool, expected: RemoteVersionDescriptor): Promise<ResidencySyncBundle> {
-  const row = (await db.query(
-    `SELECT row_to_json(c.*) AS collection,row_to_json((SELECT x FROM (SELECT f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extraction_status,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.retention_mode,f.retain_until,f.record_lock_type,f.lifecycle_generation,f.operation_revision) x)) AS file,row_to_json(v.*) AS version,row_to_json(m.*) AS manifest
-       FROM files f JOIN file_versions v ON v.id=$1 AND v.file_id=f.id
-       JOIN collections c ON c.id=f.collection_id
-       JOIN manifests m ON m.hash=v.manifest_hash
-      WHERE f.id=$2 AND f.collection_id=$3 AND f.current_version_id=v.id AND NOT v.deleted`,
-    [expected.versionId, expected.fileId, expected.collectionId],
-  )).rows[0];
-  if (row?.version.chunk_collection_id !== expected.chunkCollectionId ||
-      row.manifest.hash !== expected.manifestHash || Number(row.version.size) !== expected.size) {
-    throw new Error('Current database version changed before remote publication');
-  }
-  const chunks = (await db.query(
-    `SELECT id,size,stored_size,location FROM chunks
-      WHERE collection_id=$1 AND id=ANY($2::text[])`,
-    [expected.chunkCollectionId, expected.chunks.map(chunk => chunk.id)],
-  )).rows;
-  const byId = new Map(chunks.map(chunk => [String(chunk.id), chunk]));
-  const ordered = expected.chunks.map(chunk => {
-    const rowChunk = byId.get(chunk.id);
-    if (!rowChunk || Number(rowChunk.size) !== chunk.size || Number(rowChunk.stored_size) !== chunk.storedSize) {
-      throw new Error('Chunk metadata changed before remote publication');
+export class ResidencySyncBundleLoader {
+  constructor(private readonly rows:ResidencySyncBundleRepository) {}
+
+  async load(expected:RemoteVersionDescriptor):Promise<ResidencySyncBundle> {
+    const row = await this.rows.findCurrentVersionBundle(expected.versionId, expected.fileId, expected.collectionId);
+    if (!row || row.version.chunk_collection_id !== expected.chunkCollectionId ||
+        row.manifest.hash !== expected.manifestHash || Number(row.version.size) !== expected.size) {
+      throw new Error('Current database version changed before remote publication');
     }
-    return rowChunk;
-  });
-  return {
-    collectionId:        expected.collectionId,
-    collection:          row.collection,
-    file:                row.file,
-    version:             row.version,
-    manifest:            row.manifest,
-    chunks:              ordered,
-    baseServerVersionId: row.version.base_server_version_id ?? row.version.parent_version_id ?? null,
-    keyContext:          expected.keyContext,
-  };
+    const chunks = await this.rows.findChunks(expected.chunkCollectionId, expected.chunks.map(chunk => chunk.id));
+    const byId = new Map<string, Record<string, any>>(chunks.map(chunk => [String(chunk.id), chunk]));
+    const ordered = expected.chunks.map(chunk => {
+      const rowChunk = byId.get(chunk.id);
+      if (!rowChunk || Number(rowChunk.size) !== chunk.size || Number(rowChunk.stored_size) !== chunk.storedSize) {
+        throw new Error('Chunk metadata changed before remote publication');
+      }
+      return rowChunk;
+    });
+    return {
+      collectionId:        expected.collectionId,
+      collection:          row.collection,
+      file:                row.file,
+      version:             row.version,
+      manifest:            row.manifest,
+      chunks:              ordered,
+      baseServerVersionId: row.version.base_server_version_id ?? row.version.parent_version_id ?? null,
+      keyContext:          expected.keyContext,
+    };
+  }
+}
+
+/** @deprecated Compose a ResidencySyncBundleLoader at startup instead; kept for index.ts until the E5 cleanup PR. */
+export function loadResidencySyncBundle(db:pg.Pool, expected:RemoteVersionDescriptor):Promise<ResidencySyncBundle> {
+  return new ResidencySyncBundleLoader(new ResidencySyncBundleRepository(db)).load(expected);
 }
 
 /** Mount after the standard Files authentication and unlocked middleware. */

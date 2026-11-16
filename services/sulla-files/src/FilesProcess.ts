@@ -26,6 +26,7 @@ import { IndexingQueue } from './indexing.js';
 import { FilesKeyBundleRecovery } from './keyBundleRecovery.js';
 import { SecureCollectionKeyExchange } from './keyExchange.js';
 import { FilesKeyring } from './keyring.js';
+import { LegacySigningKeySelector } from './Services/LegacySigningKeySelector.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { FilesLifecycle } from './lifecycle.js';
 import { LocalFilesManager } from './localManager.js';
@@ -39,7 +40,7 @@ import { Store } from './store.js';
 import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCache/index.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
-import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { VaultPrincipalAdoption } from './vaultPrincipal.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { MemoryTelemetry } from './MemoryTelemetry.js';
 import { FilesCloudBroker } from './cloudBroker.js';
@@ -55,6 +56,7 @@ interface FilesServices {
   chunkStore:ReturnType<typeof createChunkStore>;
   vaultAuthority:ReturnType<typeof configuredVaultFilesKeyBundleAuthority>;
   keyRecovery?:FilesKeyBundleRecovery;
+  vaultPrincipalAdoption:VaultPrincipalAdoption;
   indexer:IndexingQueue;
   manager?:LocalFilesManager;
   residency?:FileResidencyManager;
@@ -122,7 +124,7 @@ export class FilesProcess {
   }
 
   private async composeServices(db:pg.Pool, config:Config):Promise<FilesServices> {
-    const keyring = config.keyring = new FilesKeyring(db);
+    const keyring = config.keyring = new FilesKeyring(db, undefined, undefined, undefined, new LegacySigningKeySelector(new Store(config.chunkRoot)));
     // Cloud sync and its chunk source exist only when the vault broker identity is configured.
     const cloudBroker = config.mode === 'desktop' && config.vaultBrokerServiceToken ? new FilesCloudBroker(config) : undefined;
     const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
@@ -130,6 +132,7 @@ export class FilesProcess {
       : undefined;
     const chunkStore = createChunkStore({ db, root: config.chunkRoot, keyring: config.keyring, source: config.mode === 'desktop' && !config.filesRoot ? cloudChunkSource : undefined });
     const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
+    const vaultPrincipalAdoption = new VaultPrincipalAdoption(db);
     const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
       ? new FilesKeyBundleRecovery(db, config.keyring, vaultAuthority)
       : undefined;
@@ -156,17 +159,17 @@ export class FilesProcess {
     // Search has a separate, deliberately small pool so expensive recall cannot starve FUSE or listings.
     const searchDb = await connect(config.databaseUrl, 2);
     const search = new FileSearch(searchDb, embedder);
-    return { keyring, cloudBroker, chunkStore, vaultAuthority, keyRecovery, indexer, manager, residency, enrichment, search };
+    return { keyring, cloudBroker, chunkStore, vaultAuthority, keyRecovery, vaultPrincipalAdoption, indexer, manager, residency, enrichment, search };
   }
 
   /** Brings up identity, collections, the watched folder, indexing and enrichment once per unlock. */
   private initialize(db:pg.Pool, config:Config, services:FilesServices, reportStage:(stage:FilesStartupStage)=>void):Promise<void> {
-    const { vaultAuthority, manager, keyRecovery, residency, indexer, enrichment } = services;
+    const { vaultAuthority, vaultPrincipalAdoption, manager, keyRecovery, residency, indexer, enrichment } = services;
     this.initialization ??= (async() => {
       if (vaultAuthority) {
         reportStage('identity-adoption');
         const { principalId } = await vaultAuthority.unlockedPrincipal();
-        await adoptVaultPrincipal(db, config, principalId);
+        await vaultPrincipalAdoption.adopt(config, principalId);
       }
       await migrateSullaCollection(db, config);
       await trashStrayDocs(db, config).catch(error => console.warn('[SullaFiles] stray Docs cleanup failed:', error));
