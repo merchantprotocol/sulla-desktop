@@ -21,6 +21,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'
  */
 const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Legacy server sync push queue (moved from localManager.ts): one device's unpushed journal per pass.
+  'Repositories/LegacySyncRepository.ts': 1,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
   'app.ts': 9,
@@ -28,7 +30,7 @@ const ALLOWED:Record<string, number> = {
   'fileOperations.ts': 1,
   'folderOperationBatches.ts': 12,
   'legacyImport.ts': 3,
-  'localManager.ts': 3,
+  'localManager.ts': 2,
   'shares.ts': 1,
   'sullaCollectionMigration.ts': 4,
 };

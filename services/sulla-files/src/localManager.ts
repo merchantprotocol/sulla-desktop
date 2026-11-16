@@ -6,11 +6,9 @@
 import { TransactionRunner } from './FilesTransaction.js';
 
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, realpath, rename, stat } from 'node:fs/promises';
-import { basename, dirname, extname, sep } from 'node:path';
+import { mkdir, realpath } from 'node:fs/promises';
+import { basename, sep } from 'node:path';
 
-import { issueCapabilityToken } from './auth.js';
 import { decryptChunk } from './crypto.js';
 import { CloudRenameSuccessor } from './Repositories/CloudRenameSuccessor.js';
 import { copyLockedFile } from './fileOperations.js';
@@ -29,7 +27,7 @@ import type { FilesIdentity } from './auth.js';
 import type { Config, FileRootConfig } from './config.js';
 import type { IndexingQueue } from './indexing.js';
 import type { OriginalRevealTarget } from './originalReveal.js';
-import type { EvictionReceipt, FileFingerprint, PinnedRegularFile, PublicationReceipt, ReplacementReceipt } from './safeFilesystem.js';
+import type { EvictionReceipt, PinnedRegularFile, PublicationReceipt, ReplacementReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
 import { NativeRootScanner } from './NativeRootScanner.js';
 import { WatchedFolderRepository, type WatchedRow } from './Repositories/WatchedFolderRepository.js';
@@ -38,7 +36,14 @@ import { TrackedPathFilter } from './TrackedPathFilter.js';
 import { PathOperationRecovery } from './PathOperationRecovery.js';
 import { PathOperationRepository } from './Repositories/PathOperationRepository.js';
 import { TrashReceiptExpiry } from './TrashReceiptExpiry.js';
-import { OperationFingerprint, type PathOperationPlanEntry, type PathOperationRow, type RemotePurgePlan } from './PathOperationPlan.js';
+import { LegacyFolderSync } from './LegacyFolderSync.js';
+import { RemoteFilesClient } from './RemoteFilesClient.js';
+import { RemotePurgeApplier } from './RemotePurgeApplier.js';
+import { ReplicationPuller } from './ReplicationPuller.js';
+import { LegacySyncRepository } from './Repositories/LegacySyncRepository.js';
+import { RemotePurgeRepository } from './Repositories/RemotePurgeRepository.js';
+import { ReplicationRepository } from './Repositories/ReplicationRepository.js';
+import { OperationFingerprint, type PathOperationPlanEntry, type PathOperationRow } from './PathOperationPlan.js';
 import { FileRootRepository } from './Repositories/FileRootRepository.js';
 import { TrackedRootCatalog, type BrokeredRootInput, type FileRootStatus } from './TrackedRootCatalog.js';
 import { WatchedFileIngestor } from './WatchedFileIngestor.js';
@@ -54,11 +59,6 @@ interface RuntimeState {
 export type { FileRootStatus } from './TrackedRootCatalog.js';
 export type { FuseTrackedFile, NativePublicationAction, NativePublicationCompletionProof, NativeSourceIngestResult, NativeSourceOperationInput } from './NativeSourceOperations.js';
 
-function conflictPath(path:string, device:string):string {
-  const extension = extname(path); const stem = extension ? path.slice(0, -extension.length) : path;
-  const date = new Date().toISOString().replace(/T.*/, '');
-  return `${ stem } (conflicted copy ${ device.replace(/[^\w-]/g, '-') } ${ date })${ extension }`;
-}
 /** Resolve symlinks before allowing plaintext watched files beside private storage. */
 export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:string, chunkRoot:string):Promise<void> {
   const [files, data, chunks] = await Promise.all([realpath(filesRoot), realpath(dataRoot), realpath(chunkRoot)]);
@@ -88,6 +88,8 @@ export class LocalFilesManager {
   private readonly catalog:TrackedRootCatalog;
   private readonly recovery:PathOperationRecovery;
   private readonly trashExpiry:TrashReceiptExpiry;
+  private readonly puller:ReplicationPuller;
+  private readonly legacySync:LegacyFolderSync;
   private readonly ingestor:WatchedFileIngestor;
   private readonly scanner:NativeRootScanner;
   private nativeJournalInstance?:NativeOperationJournal;
@@ -210,6 +212,11 @@ export class LocalFilesManager {
     const pathOperations = new PathOperationRepository(db);
     this.recovery = new PathOperationRecovery(pathOperations, this.mutations, this.rootMutations, () => this.nativeJournal);
     this.trashExpiry = new TrashReceiptExpiry(pathOperations, new TransactionRunner(db), () => this.nativeJournal);
+    const transactions = new TransactionRunner(db); const remote = new RemoteFilesClient(config); const rootFor = (collectionId:string) => this.rootForCollection(collectionId);
+    const purges = new RemotePurgeApplier(new RemotePurgeRepository(db), pathOperations, this.recovery, transactions, this.rootMutations, rootFor, () => this.nativeJournal);
+    this.puller = new ReplicationPuller(db, config, this.store, remote, new ReplicationRepository(db), purges, transactions, this.collectionPolicyRepository, this.publicationLifecyclePolicy, rootFor, indexer);
+    this.legacySync = new LegacyFolderSync(db, config, this.store, this.roots, this.rootCollections, this.progress, remote, new LegacySyncRepository(db), this.puller, transactions,
+      this.collectionPolicyRepository, { homeCollectionId: () => this.collectionId, rootFor });
     this.catalog = new TrackedRootCatalog(db, config, this.roots, this.rootCollections, this.rootRepository);
     this.ingestor = new WatchedFileIngestor(db, config, this.store, indexer);
     this.scanner = new NativeRootScanner(config, this.roots, this.rootCollections, new WatchedFolderRepository(db), this.ingestor, this.progress);
@@ -343,7 +350,7 @@ export class LocalFilesManager {
     const operationId = randomUUID();
     const stagedPath = `.sulla-trash/.operations/${ operationId }/${ basename(initial.path) }.write`;
     const backupPath = `.sulla-trash/.operations/${ operationId }/${ basename(initial.path) }.source`;
-    const conflict = conflictPath(initial.path, `${ actor.deviceId || 'fuse' }-${ operationId.slice(0, 8) }`);
+    const conflict = TrackedPathFilter.conflictPath(initial.path, `${ actor.deviceId || 'fuse' }-${ operationId.slice(0, 8) }`);
     const desiredHash = createHash('sha256').update(bytes).digest('hex');
     return this.serial(() => mutations.runExclusive([initial.path, stagedPath, backupPath, conflict], async() => {
       const current = await this.fuseRow(fileId);
@@ -721,288 +728,6 @@ export class LocalFilesManager {
     return this.ingestor.ingest(root, collectionId, filePath, mtimeMs, old, missing);
   }
 
-  private headers(extra:Record<string, string> = {}):Record<string, string> { return { authorization: `Bearer ${ issueCapabilityToken({ sub: this.config.userId, device_id: this.config.deviceId, scopes: ['files/*'] }, this.config.capabilitySigningKey) }`, ...extra } }
-  private async remote(path:string, init:RequestInit = {}):Promise<any> { const response = await fetch(new URL(path, this.config.serverUrl), { ...init, headers: { ...this.headers({ 'content-type': 'application/json' }), ...(init.headers as any) } }); if (!response.ok) { const body:any = await response.json().catch(() => ({})); throw Object.assign(new Error(body.error ?? `sync HTTP ${ response.status }`), { status: response.status, body }) } return response.status === 204 ? undefined : response.json() }
-  private async syncNow():Promise<void> {
-    if (!this.config.serverUrl) return;
-    const syncRoots = this.roots.filter(root => !root.paused && root.syncMode === 'server');
-    if (!syncRoots.length) return;
-    await this.db.query("UPDATE files_runtime_state SET state='syncing',last_error=NULL,updated_at=NOW() WHERE id=TRUE");
-    for (const root of syncRoots) {
-      const collectionId = this.rootCollections.get(root.id)!;
-      await this.config.keyring!.requireLegacySync(collectionId);
-      await this.db.query("UPDATE file_roots SET state='syncing',last_error=NULL,updated_at=NOW() WHERE id=$1", [root.id]);
-      const collection = (await this.db.query('SELECT * FROM collections WHERE id=$1', [collectionId])).rows[0];
-      await this.remote('/v1/collections', { method: 'POST', body: JSON.stringify({ collection }) });
-    }
-    const remoteCollections:any[] = await this.remote('/v1/collections');
-    for (const remote of remoteCollections.filter(remote=>!remote.systemArea)) await this.config.keyring!.requireLegacySync(remote.id);
-    for (const remote of remoteCollections.filter(remote=>!remote.systemArea)) {
-      if (remote.id !== this.collectionId) {
-        await this.db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy)
-          VALUES($1,$2,$3,$4,$5,'synced',$6,$7,$8,$9)
-          ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,org_id=EXCLUDED.org_id,updated_at=NOW()`, [remote.id, remote.org_id, remote.owner_user_id, remote.name, remote.kind, remote.encryption, remote.encrypted_data_key, remote.dedup_key_ciphertext, remote.retention_policy ?? {}]);
-      }
-      const localRoot = syncRoots.find(root => this.rootCollections.get(root.id) === remote.id);
-      await this.syncCollection(remote.id, true);
-    }
-    this.progress.pendingFiles = 0; this.progress.lastSyncAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=TRUE");
-    await this.db.query("UPDATE file_roots SET state='idle',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=ANY($1::text[])", [syncRoots.map(root => root.id)]);
-  }
-
-  private async syncCollection(collectionId:string, canPush:boolean):Promise<void> {
-    await this.db.query('INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [collectionId, this.config.deviceId]);
-    let cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
-    const entries = await this.remote(`/v1/collections/${ collectionId }/journal?after=${ cursor.last_seq }`);
-    for (const entry of entries) {
-      const entryCollectionId=String(entry?.file?.collection_id??'');
-      const localCollection=await this.collectionPolicyRepository.findPublicationPolicy(this.db,entryCollectionId);
-      if (!localCollection) {
-        console.warn(`[SullaFiles] quarantined sync journal entry ${ String(entry?.seq??'unknown') } (file ${ String(entry?.file?.id??'unknown') }) for missing local collection ${ entryCollectionId||'unknown' }`);
-      } else await this.pull(entry); await this.db.query('UPDATE file_sync_cursors SET last_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, entry.seq]);
-    }
-    cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
-    if (canPush) {
-      const pending = (await this.db.query(`SELECT j.seq,j.op,row_to_json((SELECT x FROM (SELECT f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extraction_status,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.lifecycle_generation,f.operation_revision) x)) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
-      this.progress.pendingFiles += pending.length;
-      for (const item of pending) { await this.push(item, collectionId); await this.db.query('UPDATE file_sync_cursors SET last_push_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, item.seq]) }
-    }
-  }
-
-  private async push(item:any, collectionId = item.file.collection_id):Promise<void> {
-    if (item.op === 'lifecycle') {
-      await this.remote(`/v1/files/${ item.file.id }/lifecycle-state`, { method: 'PATCH', body: JSON.stringify({ file: item.file }) });
-      return;
-    }
-    const chunks = item.manifest ? (await this.db.query('SELECT * FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [item.version.chunk_collection_id, item.manifest.chunk_ids])).rows : [];
-    const payload = { collectionId, file: item.file, version: item.version, manifest: item.manifest, chunks, baseServerVersionId: item.version.base_server_version_id ?? item.version.parent_version_id };
-    const prep = await this.remote('/v1/versions/prepare', { method: 'POST', body: JSON.stringify(payload) });
-    if (prep.conflict) { await this.keepConflict(item, prep.currentVersionId); return }
-    for (const id of prep.missing ?? []) { const response = await fetch(new URL(`/v1/chunks/${ item.version.chunk_collection_id }/${ id }`, this.config.serverUrl), { method: 'PUT', headers: this.headers({ 'content-type': 'application/octet-stream' }), body: new Uint8Array(await this.store.get(item.version.chunk_collection_id, id)) }); if (!response.ok) throw new Error(`chunk upload failed ${ response.status }`); }
-    await this.remote('/v1/versions/commit', { method: 'POST', body: JSON.stringify(payload) }); await this.db.query('UPDATE file_versions SET base_server_version_id=id WHERE id=$1', [item.version.id]);
-  }
-
-  private async keepConflict(item:any, remoteVersionId:string):Promise<void> {
-    const collectionId = item.file.collection_id;
-    const root = this.rootForCollection(collectionId);
-    const nextPath = conflictPath(item.file.path, this.config.deviceId); const source = this.safe(item.file.path, root); const target = this.safe(nextPath, root); await mkdir(dirname(target), { recursive: true }); await rename(source, target);
-    const fileId = randomUUID(); const versionId = randomUUID(); const info = await stat(target); const hash = createHash('sha256'); for await (const part of createReadStream(target)) hash.update(part);
-    const client = await this.db.connect(); await client.query('BEGIN');
-    try {
-      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6,$7)`, [fileId, collectionId, nextPath, item.file.created_by_type, item.file.created_by_id, item.file.mime, item.file.size]);
-      await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
-        VALUES($1,$2,$3,NULL,$4,$5,FALSE,$6,$7,$8,$9,NULL)`, [versionId, fileId, item.version.chunk_collection_id, item.version.manifest_hash, item.version.size, item.version.created_by_type, item.version.created_by_id, `Conflict copy of ${ item.file.path }`, this.config.deviceId]);
-      await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, versionId]);
-      await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [item.version.chunk_collection_id, item.manifest.chunk_ids]);
-      await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'conflict')", [collectionId, fileId, versionId]);
-      await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, item.file.path]);
-      await client.query('INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)', [collectionId, nextPath, fileId, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs), root.id]);
-      await client.query('COMMIT');
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-    const conflict = { ...item, file: { ...item.file, id: fileId, path: nextPath }, version: { ...item.version, id: versionId, file_id: fileId, parent_version_id: null, base_server_version_id: null, message: `Conflict copy of ${ item.file.path }` } };
-    await this.push(conflict); const bundle = await this.remote(`/v1/versions/${ remoteVersionId }`); await this.pull({ ...bundle, seq: 0 });
-  }
-
-  private async materialize(bundle:any):Promise<void> {
-    const root = this.rootForCollection(bundle.file.collection_id);
-    const keys = await this.config.keyring!.keys(bundle.version.chunk_collection_id); const target = this.safe(bundle.file.path, root); await mkdir(dirname(target), { recursive: true }); const temp = `${ target }.sulla-conflict-${ randomUUID() }`; const output = createWriteStream(temp, { mode: 0o600 });
-    let lastId:string | undefined; let lastPlain:Buffer | undefined;
-    try { for (const id of bundle.manifest.chunk_ids) { let plain:Buffer; if (id === lastId && lastPlain) plain = lastPlain; else { let encrypted:Uint8Array; if (await this.store.has(bundle.version.chunk_collection_id, id)) encrypted = await this.store.get(bundle.version.chunk_collection_id, id); else { const response = await fetch(new URL(`/v1/chunks/${ bundle.version.chunk_collection_id }/${ id }`, this.config.serverUrl), { headers: this.headers() }); if (!response.ok) throw new Error(`chunk download failed ${ response.status }`); encrypted = new Uint8Array(await response.arrayBuffer()); await this.store.put(bundle.version.chunk_collection_id, id, encrypted) } plain = await decryptChunk(encrypted, keys.data, id); lastId = id; lastPlain = plain } if (!output.write(plain)) await new Promise<void>(resolve => output.once('drain', () => resolve())); } output.end(); await new Promise<void>((resolve, reject) => { output.once('finish', resolve); output.once('error', reject) }); await rename(temp, target) } catch (error) { output.destroy(); throw error }
-  }
-
-  private async pull(entry:any):Promise<void> {
-    const collectionId = entry.file.collection_id;
-    if (entry.op === 'purge') {
-      if (entry.syncAuthority?.canMaterialize !== true) return;
-      const active=await this.db.query(`SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed')
-        AND (plan->>'collectionId'=$1 OR plan::text LIKE $2) LIMIT 1`,[collectionId,`%${entry.file.id}%`]);
-      if (active.rowCount) throw new Error(`Remote purge is held by active Files path operation ${active.rows[0].operation_id}`);
-      const existing=(await this.db.query(`SELECT f.path,f.current_version_id,f.operation_revision,w.root_id,w.content_hash,w.size,w.mtime_ms
-        FROM files f LEFT JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id WHERE f.id=$1 AND f.collection_id=$2`,[entry.file.id,collectionId])).rows[0];
-      const root=this.rootForCollection(collectionId); const mutations=this.rootMutations.get(existing?.root_id??root.id);
-      let remoteOperationId:string|undefined; let remotePlan:RemotePurgePlan|undefined;
-      if (existing?.path && existing.content_hash) {
-        if (!mutations) throw new Error('Remote purge root is unavailable; local bytes were preserved');
-        const pinned=await mutations.pinVerified(existing.path,p=>this.verifyOperationPinned(p,existing.content_hash));
-        const expected:FileFingerprint=pinned.fingerprint;
-        try {
-          if (expected.size!==Number(existing.size) || expected.mtimeMs!==Number(existing.mtime_ms)) throw new Error('Remote purge cannot prove current watched-file ownership; local bytes were preserved');
-        } finally { await pinned.close() }
-        remoteOperationId=randomUUID();
-        remotePlan={kind:'remote-purge-v1',rootId:existing.root_id,collectionId,fileId:entry.file.id,sourcePath:existing.path,
-          stagePath:`.sulla-trash/.operations/${remoteOperationId}/remote-purge`,versionId:existing.current_version_id,
-          revision:String(existing.operation_revision),contentHash:existing.content_hash,fingerprint:OperationFingerprint.serialize(expected),
-          lifecycleGeneration:Number(entry.file.lifecycle_generation??0)};
-        await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,'trash','planned',$2)`,[remoteOperationId,remotePlan]);
-        await this.db.query("UPDATE files_path_operations SET state='publishing',updated_at=NOW() WHERE operation_id=$1",[remoteOperationId]);
-        let eviction:EvictionReceipt;
-        try { eviction=await mutations.evictVerified({source:remotePlan.sourcePath,quarantine:remotePlan.stagePath,verify:p=>this.verifyOperationPinned(p,remotePlan!.contentHash)}) }
-        catch(error) {
-          try { await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'publishing',plan:remotePlan,receipts:[]}) }
-          catch(recoveryError:any) {
-            await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1',[remoteOperationId,String(recoveryError?.message??recoveryError).slice(0,2000)]).catch(()=>undefined);
-            throw recoveryError;
-          }
-          throw error;
-        }
-        if (!OperationFingerprint.same(eviction.fingerprint,expected)) {
-          await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'publishing',plan:remotePlan,receipts:[]});
-          throw new Error('Remote purge source identity changed before eviction; bytes were restored');
-        }
-      } else if (existing?.path) throw new Error('Remote purge cannot prove ownership of local bytes; they were preserved');
-      let committedReceipt:any;
-      try {
-        await new TransactionRunner(this.db).run('remote-purge', async client => {
-        await client.query("SET LOCAL sulla.trusted_replication='on'");
-        if (existing && !(await client.query('SELECT 1 FROM files WHERE id=$1 AND collection_id=$2 AND path=$3 AND current_version_id=$4 AND operation_revision=$5 FOR UPDATE',[entry.file.id,collectionId,existing.path,existing.current_version_id,existing.operation_revision])).rowCount) throw new Error('Remote purge target changed; retained bytes were preserved');
-        if (remoteOperationId && !(await client.query("SELECT 1 FROM files_path_operations WHERE operation_id=$1 AND state='publishing' AND plan->>'fileId'=$2 AND plan->>'versionId'=$3 AND plan->>'revision'=$4 FOR UPDATE",[remoteOperationId,entry.file.id,existing.current_version_id,String(existing.operation_revision)])).rowCount) throw new Error('Remote purge journal changed; retained bytes were preserved');
-        const receipt=existing?(await client.query(`SELECT * FROM files_database_operation_receipts WHERE file_id=$1 AND action='trash'
-          AND after_state->>'versionId'=$2 ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,[entry.file.id,existing.current_version_id])).rows[0]:null;
-        if (receipt?.state==='completed') {
-          const invalidation={undoInvalidatedAt:new Date().toISOString(),invalidatedBy:'remote-authority',reason:'replicated-disposal'};
-          const receiptPlan=receipt.folder_plan??{}; receiptPlan.lifecycle={...(receiptPlan.lifecycle??{}),disposal:invalidation};
-          await client.query('UPDATE files_database_operation_receipts SET folder_plan=$2 WHERE id=$1',[receipt.id,receiptPlan]);
-          const operation=(await client.query('SELECT * FROM files_path_operations WHERE operation_id=$1 FOR UPDATE',[receipt.id])).rows[0];
-          if (operation) { operation.plan.disposal=invalidation; await client.query('UPDATE files_path_operations SET plan=$2,updated_at=NOW() WHERE operation_id=$1',[receipt.id,operation.plan]) }
-        }
-        await client.query(`INSERT INTO file_purge_tombstones(collection_id,file_id,path,lifecycle_generation,audience,purged_at)
-          VALUES($1,$2,$3,$4,'{"users":[],"groups":[]}'::jsonb,COALESCE($5,NOW()))
-          ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,lifecycle_generation=GREATEST(file_purge_tombstones.lifecycle_generation,EXCLUDED.lifecycle_generation),purged_at=EXCLUDED.purged_at`,
-        [collectionId, entry.file.id, existing?.path??entry.file.path, entry.file.lifecycle_generation ?? 0, entry.at ?? null]);
-        await client.query('UPDATE audit_log SET file_id=NULL,version_id=NULL WHERE file_id=$1 OR version_id IN(SELECT id FROM file_versions WHERE file_id=$1)', [entry.file.id]);
-        await client.query(`UPDATE files SET record_lock_type='none',retention_mode='none',retain_until=NULL,retention_event_type=NULL,retention_event_at=NULL,
-          retention_duration_days=NULL,disposal_status='approved',draft_version_id=NULL,published_version_id=NULL,current_version_id=NULL,
-          lifecycle_generation=GREATEST(lifecycle_generation,$2) WHERE id=$1`, [entry.file.id, entry.file.lifecycle_generation ?? 0]);
-        await client.query('DELETE FROM journal WHERE file_id=$1', [entry.file.id]);
-        await client.query('DELETE FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId]);
-        await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
-        if (remoteOperationId && (await client.query("UPDATE files_path_operations SET state='db-committed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='publishing'",[remoteOperationId])).rowCount!==1) throw new Error('Remote purge journal commit proof could not be recorded');
-        committedReceipt = receipt;
-        });
-        if (remoteOperationId && remotePlan) await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'db-committed',plan:remotePlan,receipts:[]});
-        if (committedReceipt?.state==='completed') {
-          const disposed=await this.nativeJournal.dispose(committedReceipt.id);
-          if (disposed.state==='recovery-required') throw new Error(disposed.error??'Remote purge retained artifacts require recovery');
-        }
-      } catch (error) {
-        if (remoteOperationId) {
-          const durable=(await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1',[remoteOperationId])).rows[0];
-          if (durable && ['planned','publishing','db-committed'].includes(durable.state)) await this.recoverRemotePurgeOperation(durable).catch(async recoveryError=>{
-            await this.db.query('UPDATE files_path_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1',[remoteOperationId,String((recoveryError as any)?.message??recoveryError).slice(0,2000)]).catch(()=>undefined);
-            throw recoveryError;
-          });
-        }
-        throw error;
-      }
-      return;
-    }
-    if (entry.op === 'lifecycle') {
-      if (!entry.file.path) return;
-      const client = await this.db.connect(); await client.query('BEGIN');
-      try {
-      await client.query("SET LOCAL sulla.trusted_replication='on'");
-      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,lifecycle_generation)
-        VALUES($1,$2,$3,$4,$5,$6,$7,-1) ON CONFLICT(id) DO NOTHING`, [entry.file.id, collectionId, entry.file.path,
-        entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size]);
-      await client.query(`UPDATE files SET
-        draft_version_id=CASE WHEN EXISTS(SELECT 1 FROM file_versions WHERE id=$2 AND file_id=$1) THEN $2 ELSE draft_version_id END,
-        published_version_id=CASE WHEN EXISTS(SELECT 1 FROM file_versions WHERE id=$3 AND file_id=$1) THEN $3 ELSE published_version_id END,
-        versioning_enabled=$4,major_minor_enabled=$5,require_approval=$6,require_checkout=$7,
-        checked_out_by_user_id=$8,checked_out_by_device_id=$9,checked_out_at=$10,retention_mode=$11,retain_until=$12,
-        retention_event_type=$13,retention_event_at=$14,retention_duration_days=$15,record_lock_type=$16,record_locked_at=$17,
-        record_locked_by=$18,disposal_status=$19,disposal_review_at=$20,disposal_extended_until=$21,lifecycle_generation=$22,updated_at=NOW()
-        WHERE id=$1 AND lifecycle_generation < $22`, [entry.file.id, entry.file.draft_version_id, entry.file.published_version_id, entry.file.versioning_enabled, entry.file.major_minor_enabled,
-        entry.file.require_approval, entry.file.require_checkout, entry.file.checked_out_by_user_id, entry.file.checked_out_by_device_id, entry.file.checked_out_at,
-        entry.file.retention_mode, entry.file.retain_until, entry.file.retention_event_type, entry.file.retention_event_at, entry.file.retention_duration_days,
-        entry.file.record_lock_type, entry.file.record_locked_at, entry.file.record_locked_by, entry.file.disposal_status, entry.file.disposal_review_at,
-        entry.file.disposal_extended_until, entry.file.lifecycle_generation]);
-      await client.query('COMMIT');
-      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-      return;
-    }
-    if (entry.version?.device_id === this.config.deviceId) return;
-    if (entry.syncAuthority?.canMaterialize !== true) return;
-    const root = this.rootForCollection(collectionId);
-    if (entry.version.deleted) {
-      const existing = (await this.db.query('SELECT path FROM files WHERE id=$1', [entry.file.id])).rows[0];
-      if (existing) {
-        const source = this.safe(existing.path, root); const trash = this.safe(`.sulla-trash/${ entry.file.id }/${ Date.now() }-${ basename(existing.path) }`, root);
-        try { await mkdir(dirname(trash), { recursive: true }); await rename(source, trash) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
-        const client = await this.db.connect(); await client.query('BEGIN');
-        try {
-          await client.query("SET LOCAL sulla.trusted_replication='on'");
-          await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
-            VALUES($1,$2,$3,$4,NULL,0,TRUE,$5,$6,$7,$8,$9,$1) ON CONFLICT DO NOTHING`, [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id]);
-          await client.query('UPDATE files SET current_version_id=$2,deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [entry.file.id, entry.version.id]);
-          await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]); await client.query('COMMIT');
-        } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-      }
-      return;
-    }
-    const client = await this.db.connect(); await client.query('BEGIN');
-    try {
-      await client.query("SET LOCAL sulla.trusted_replication='on'");
-      const prior = (await client.query('SELECT path,current_version_id,record_lock_type,lifecycle_generation FROM files WHERE id=$1 FOR UPDATE', [entry.file.id])).rows[0];
-      if (prior?.current_version_id && prior.record_lock_type !== 'none' && Number(entry.file.lifecycle_generation ?? 0) <= Number(prior.lifecycle_generation)) { await client.query('ROLLBACK'); return }
-      if (prior?.path && prior.path !== entry.file.path) {
-        try { await mkdir(dirname(this.safe(entry.file.path, root)), { recursive: true }); await rename(this.safe(prior.path, root), this.safe(entry.file.path, root)) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
-      }
-      await this.materialize(entry);
-      const info = await stat(this.safe(entry.file.path, root)); const hash = createHash('sha256');
-      for await (const part of createReadStream(this.safe(entry.file.path, root))) hash.update(part);
-      await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [entry.manifest.hash, JSON.stringify(entry.manifest.chunk_ids), entry.manifest.total_size]);
-      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size,versioning_enabled,major_minor_enabled,require_approval,require_checkout,
-        checked_out_by_user_id,checked_out_by_device_id,checked_out_at,retention_mode,retain_until,retention_event_type,retention_event_at,retention_duration_days,
-        record_lock_type,record_locked_at,record_locked_by,disposal_status,disposal_review_at,disposal_extended_until,lifecycle_generation)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
-        ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=NULL,
-        versioning_enabled=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.versioning_enabled ELSE files.versioning_enabled END,
-        major_minor_enabled=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.major_minor_enabled ELSE files.major_minor_enabled END,
-        require_approval=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.require_approval ELSE files.require_approval END,
-        require_checkout=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.require_checkout ELSE files.require_checkout END,
-        checked_out_by_user_id=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_by_user_id ELSE files.checked_out_by_user_id END,
-        checked_out_by_device_id=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_by_device_id ELSE files.checked_out_by_device_id END,
-        checked_out_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.checked_out_at ELSE files.checked_out_at END,
-        retention_mode=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_mode ELSE files.retention_mode END,
-        retain_until=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retain_until ELSE files.retain_until END,
-        retention_event_type=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_event_type ELSE files.retention_event_type END,
-        retention_event_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_event_at ELSE files.retention_event_at END,
-        retention_duration_days=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.retention_duration_days ELSE files.retention_duration_days END,
-        record_lock_type=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_lock_type ELSE files.record_lock_type END,
-        record_locked_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_locked_at ELSE files.record_locked_at END,
-        record_locked_by=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.record_locked_by ELSE files.record_locked_by END,
-        disposal_status=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_status ELSE files.disposal_status END,
-        disposal_review_at=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_review_at ELSE files.disposal_review_at END,
-        disposal_extended_until=CASE WHEN EXCLUDED.lifecycle_generation>=files.lifecycle_generation THEN EXCLUDED.disposal_extended_until ELSE files.disposal_extended_until END,
-        lifecycle_generation=GREATEST(files.lifecycle_generation,EXCLUDED.lifecycle_generation),updated_at=NOW()`,
-      [entry.file.id, collectionId, entry.file.path, entry.file.created_by_type, entry.file.created_by_id, entry.file.mime, entry.file.size,
-        entry.file.versioning_enabled ?? false, entry.file.major_minor_enabled ?? false, entry.file.require_approval ?? false, entry.file.require_checkout ?? false,
-        entry.file.checked_out_by_user_id ?? null, entry.file.checked_out_by_device_id ?? null, entry.file.checked_out_at ?? null, entry.file.retention_mode ?? 'none', entry.file.retain_until ?? null,
-        entry.file.retention_event_type ?? null, entry.file.retention_event_at ?? null, entry.file.retention_duration_days ?? null, entry.file.record_lock_type ?? 'none',
-        entry.file.record_locked_at ?? null, entry.file.record_locked_by ?? null, entry.file.disposal_status ?? 'none', entry.file.disposal_review_at ?? null,
-        entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
-      const collection = entry.collection ?? await this.collectionPolicyRepository.findPublicationPolicy(client, collectionId);
-      if (!collection) throw new Error(`Replication collection ${ collectionId } is unavailable`);
-      const replicatedLifecycle = this.publicationLifecyclePolicy.sanitizeReplication({
-        collection, path:entry.file.path, createdByType:entry.version.created_by_type,
-        lifecycle:{ publication_status:entry.version.publication_status ?? 'draft', published_at:entry.version.published_at ?? null, published_by:entry.version.published_by ?? null },
-      });
-      await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id,
-        major_version,minor_version,version_kind,publication_status,published_at,published_by,version_comment)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(id) DO UPDATE SET
-        major_version=EXCLUDED.major_version,minor_version=EXCLUDED.minor_version,version_kind=EXCLUDED.version_kind,
-        publication_status=EXCLUDED.publication_status,published_at=EXCLUDED.published_at,published_by=EXCLUDED.published_by,
-        version_comment=EXCLUDED.version_comment,base_server_version_id=EXCLUDED.id`,
-      [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.manifest_hash, entry.version.size,
-        entry.version.deleted, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id,
-        entry.version.major_version ?? 0, entry.version.minor_version ?? 1, entry.version.version_kind ?? 'minor', replicatedLifecycle.publication_status ?? 'draft',
-        replicatedLifecycle.published_at ?? null, replicatedLifecycle.published_by ?? null, entry.version.version_comment ?? null]);
-      await client.query(`UPDATE files SET current_version_id=$2,
-        draft_version_id=CASE WHEN $3='draft' THEN $2 ELSE draft_version_id END,
-        published_version_id=CASE WHEN $3='published' THEN $2 WHEN $3='draft' AND published_version_id=$2 THEN NULL ELSE published_version_id END WHERE id=$1`, [entry.file.id, entry.version.id, replicatedLifecycle.publication_status ?? 'draft']);
-      await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, entry.file.path, entry.file.id, hash.digest('hex'), info.size, Math.trunc(info.mtimeMs), root.id]);
-      await client.query('COMMIT'); this.indexer?.wake();
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-  }
+  private syncNow():Promise<void> { return this.legacySync.syncNow() }
+  private pull(entry:any):Promise<void> { return this.puller.pull(entry) }
 }

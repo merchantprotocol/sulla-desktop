@@ -4122,7 +4122,7 @@
     "services/sulla-files/src/localManager.ts": {
       "rules": {
         "long-file": 1669,
-        "raw-sql": 185
+        "raw-sql": 62
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
