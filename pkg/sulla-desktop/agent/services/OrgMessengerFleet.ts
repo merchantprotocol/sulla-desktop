@@ -5,6 +5,7 @@
 import type { MessageEnvelope } from '@sulla/domain';
 import { OrgMembershipRequiredError, type OrgMembership, type OrgMembershipDirectory } from './OrgMembershipDirectory';
 import type { OrgMessenger, OrgMessagingSession } from './OrgMessenger';
+import { OrgHostingResolver, type OrgHosting, type OrgHostingSource } from './OrgHostingResolver';
 
 /** Who is signed in, and which org the human has selected as active in Desktop. */
 export interface OrgFleetIdentity {
@@ -12,21 +13,24 @@ export interface OrgFleetIdentity {
   activeOrgId(): Promise<string>;
 }
 
-/** Builds the OrgMessenger (with its own transport, cursor, outbox and host lease) for one org. */
+/** Builds the OrgMessenger (with its own transport, cursor, outbox and host lease) for one org on its resolved host. */
 export interface OrgMessengerFactory {
-  create(membership: OrgMembership, session: OrgMessagingSession): OrgMessenger;
+  create(membership: OrgMembership, session: OrgMessagingSession, hosting: OrgHosting): OrgMessenger;
 }
 
-/** Session pinned to one member org; the org name follows the membership directory. */
+/**
+ * Session pinned to one member org; the org name follows the membership directory. The user id is the caller's id
+ * on the org's host (the Cloud user id, or the Server subject).
+ */
 export class MemberOrgMessagingSession implements OrgMessagingSession {
   constructor(
     private readonly membership: OrgMembership,
-    private readonly identity: OrgFleetIdentity,
+    private readonly hosting: OrgHosting,
     private readonly directory: OrgMembershipDirectory,
   ) {}
 
   async orgId(): Promise<string> { return this.membership.orgId; }
-  async userId(): Promise<string> { return this.identity.userId(); }
+  async userId(): Promise<string> { return this.hosting.credentials.userId(); }
   async orgName(): Promise<string> {
     return this.directory.list().find(org => org.orgId === this.membership.orgId)?.name ?? this.membership.name;
   }
@@ -35,12 +39,16 @@ export class MemberOrgMessagingSession implements OrgMessagingSession {
 /**
  * Runs one OrgMessenger per organization the signed-in human belongs to. Each org
  * keeps its own cursor, outbox, host lease and contact-prompt throttle (all keyed by
- * orgId in state). Orgs with no other member are not polled; leaving an org or
- * signing out stops that org's loop.
+ * orgId in state). Each org's transport is built on the host its OrgHostingSource
+ * resolves (Sulla Cloud by default, or the Sulla Server it lives on); an org whose
+ * host cannot be resolved is skipped until a later refresh. Orgs with no other
+ * member are not polled; leaving an org or signing out stops that org's loop.
  */
 export class OrgMessengerFleet {
   private readonly messengers = new Map<string, OrgMessenger>();
   private readonly loops = new Map<string, AbortController>();
+  private readonly hostKeys = new Map<string, string>();
+  private readonly creating = new Map<string, Promise<OrgMessenger | undefined>>();
   private signedInUserId = '';
   private fleetWake?: () => void;
 
@@ -48,6 +56,7 @@ export class OrgMessengerFleet {
     private readonly directory: OrgMembershipDirectory,
     private readonly factory: OrgMessengerFactory,
     private readonly identity: OrgFleetIdentity,
+    private readonly hosting: OrgHostingSource = new OrgHostingResolver(),
     private readonly refreshMs = 60_000,
   ) {}
 
@@ -74,7 +83,7 @@ export class OrgMessengerFleet {
       if (!current.has(orgId)) this.forget(orgId);
     }
     for (const membership of memberships) {
-      if (membership.memberCount > 1) this.start(membership);
+      if (membership.memberCount > 1) await this.start(membership);
       else this.stopLoop(membership.orgId);
     }
   }
@@ -117,7 +126,9 @@ export class OrgMessengerFleet {
     if (envelope.data.orgId !== membership.orgId) {
       throw new Error('Message organization does not match the organization it is being sent to');
     }
-    await this.messengerFor(membership).send(envelope);
+    const messenger = await this.messengerFor(membership);
+    if (!messenger) throw new Error(`Organization "${membership.name}" is not reachable right now; its host could not be resolved`);
+    await messenger.send(envelope);
   }
 
   /** LiveEvents hook: wakes one org (or all) on new conversation activity, and the fleet on membership changes. */
@@ -139,18 +150,42 @@ export class OrgMessengerFleet {
     for (const orgId of [...this.loops.keys()]) this.stopLoop(orgId);
   }
 
-  private messengerFor(membership: OrgMembership): OrgMessenger {
-    let messenger = this.messengers.get(membership.orgId);
-    if (!messenger) {
-      messenger = this.factory.create(membership, new MemberOrgMessagingSession(membership, this.identity, this.directory));
-      this.messengers.set(membership.orgId, messenger);
+  /**
+   * The org's messenger on its current host, or undefined when the host cannot be resolved. Re-resolves on every
+   * call, so an org that moved between Cloud and a Server gets a fresh messenger (and loop) on the new host.
+   */
+  private messengerFor(membership: OrgMembership): Promise<OrgMessenger | undefined> {
+    const inFlight = this.creating.get(membership.orgId);
+    if (inFlight) return inFlight;
+    const pending = this.buildMessenger(membership).finally(() => this.creating.delete(membership.orgId));
+    this.creating.set(membership.orgId, pending);
+    return pending;
+  }
+
+  private async buildMessenger(membership: OrgMembership): Promise<OrgMessenger | undefined> {
+    let hosting: OrgHosting | undefined;
+    try {
+      hosting = await this.hosting.resolve(membership);
+    } catch (error) {
+      console.warn(`[OrgMessengerFleet] Could not resolve where organization ${membership.orgId} is hosted:`, error instanceof Error ? error.message : error);
     }
+    if (!hosting) {
+      this.forget(membership.orgId);
+      return undefined;
+    }
+    const hostKey = `${hosting.kind}:${hosting.baseUrl}`;
+    const existing = this.messengers.get(membership.orgId);
+    if (existing && this.hostKeys.get(membership.orgId) === hostKey) return existing;
+    if (existing) this.forget(membership.orgId);
+    const messenger = this.factory.create(membership, new MemberOrgMessagingSession(membership, hosting, this.directory), hosting);
+    this.messengers.set(membership.orgId, messenger);
+    this.hostKeys.set(membership.orgId, hostKey);
     return messenger;
   }
 
-  private start(membership: OrgMembership): void {
-    if (this.loops.has(membership.orgId)) return;
-    const messenger = this.messengerFor(membership);
+  private async start(membership: OrgMembership): Promise<void> {
+    const messenger = await this.messengerFor(membership);
+    if (!messenger || this.loops.has(membership.orgId)) return;
     const controller = new AbortController();
     this.loops.set(membership.orgId, controller);
     messenger.run(controller.signal)
@@ -168,6 +203,7 @@ export class OrgMessengerFleet {
   private forget(orgId: string): void {
     this.stopLoop(orgId);
     this.messengers.delete(orgId);
+    this.hostKeys.delete(orgId);
   }
 
   private wait(signal: AbortSignal, milliseconds: number): Promise<void> {
