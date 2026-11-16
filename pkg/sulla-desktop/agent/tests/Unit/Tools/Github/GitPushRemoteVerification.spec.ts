@@ -13,11 +13,14 @@ vi.mock('../../../../services/IntegrationService', () => ({ getIntegrationServic
 
 const localHead = 'a'.repeat(40);
 const checkedOutHead = 'c'.repeat(40);
-const mockCommands = (remoteHead: string, pushExitCode = 0) => (runCommand as any).mockImplementation(async(command: string) => {
+// headSha is what `rev-parse --verify "HEAD"` returns (the checked-out commit).
+// Explicit branch tips (`refs/heads/<name>^{commit}`) return localHead, so a
+// test that passes headSha = checkedOutHead proves the code used the branch tip.
+const mockCommands = (remoteHead: string, pushExitCode = 0, headSha = localHead) => (runCommand as any).mockImplementation(async(command: string) => {
   if (command.includes('rev-parse --show-toplevel')) return { stdout: '/repo', stderr: '', exitCode: 0 };
   if (command.includes('rev-parse --abbrev-ref')) return { stdout: 'main', stderr: '', exitCode: 0 };
   if (command.includes('remote get-url')) return { stdout: 'https://github.com/org/repo.git', stderr: '', exitCode: 0 };
-  if (command.includes('rev-parse --verify')) return { stdout: `${ command.includes('refs/heads/feature') ? localHead : checkedOutHead }\n`, stderr: '', exitCode: 0 };
+  if (command.includes('rev-parse --verify')) return { stdout: `${ command.includes('^{commit}') ? localHead : headSha }\n`, stderr: '', exitCode: 0 };
   if (command.includes('ls-remote')) return { stdout: remoteHead ? `${ remoteHead }\trefs/heads/${ command.match(/refs\/heads\/([^\s]+)/)?.[1] || 'main' }\n` : '', stderr: '', exitCode: 0 };
   if (command.includes(' push ')) return { stdout: '', stderr: pushExitCode ? 'transport failed' : '', exitCode: pushExitCode };
   return { stdout: '', stderr: `unexpected command: ${ command }`, exitCode: 1 };
@@ -37,7 +40,7 @@ describe('GitPushWorker remote verification', () => {
 
   it('verifies the tip of an explicitly pushed branch rather than checked-out HEAD', async() => {
     // risk: data integrity — success must describe the exact non-checked-out branch tip that was pushed.
-    mockCommands(localHead);
+    mockCommands(localHead, 0, checkedOutHead);
     const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch: 'feature' });
     expect(result.successBoolean).toBe(true);
     expect(runCommand).toHaveBeenCalledWith(expect.stringContaining('rev-parse --verify "refs/heads/feature^{commit}"'), [], expect.any(Object));
@@ -45,7 +48,7 @@ describe('GitPushWorker remote verification', () => {
 
   it('fails when an explicitly pushed branch tip differs from its remote ref', async() => {
     // risk: data integrity — a stale remote must not be reported as a successful branch push.
-    mockCommands('b'.repeat(40));
+    mockCommands('b'.repeat(40), 0, checkedOutHead);
     const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch: 'feature' });
     expect(result.successBoolean).toBe(false);
   });
