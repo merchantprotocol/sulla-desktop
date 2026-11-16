@@ -83,16 +83,18 @@ describe('vaultBootstrapProcess entry module', () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const { runVaultBootstrapProcess } = await import('./vaultBootstrapProcess');
     void runVaultBootstrapProcess();
+    let calls: unknown[][] = [];
     try {
       await vi.waitFor(() => expect(electron.app.exit).toHaveBeenCalledOnce());
     } finally {
+      calls = [...stdout.mock.calls];
       stdout.mockRestore();
     }
     expect(electron.app.whenReady).toHaveBeenCalledOnce();
     // No TLS fingerprint env in tests, so the helper must fail closed rather than report success.
     expect(electron.app.exit).toHaveBeenCalledWith(1);
-    expect(stdout).toHaveBeenCalledOnce();
-    expect(String(stdout.mock.calls[0][0])).toContain('"ok":false');
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0][0])).toContain('"ok":false');
   });
 
   it('wires the real runtime to the module-level bootstrap operations', async() => {
