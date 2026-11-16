@@ -30,7 +30,7 @@ import { LocalVaultCrypto } from '../../../../../../services/sulla-vault/src/loc
 import { LocalVaultCryptoProvider } from '../../../../../../services/sulla-vault/src/localCrypto/LocalVaultCryptoProvider';
 import type { VaultRelayEvent, VaultRelayHandle, VaultRelayManager, VaultRelayOpenRequest } from '../../../../../../services/sulla-vault/src/relays';
 import { LegacyVaultDatabase } from '../LegacyVaultHarness';
-import { E9Clock, E9CounterRandom, E9FakeUpstream, E9NodeDeterminism } from './E9TestDoubles';
+import { E9Clock, E9CounterRandom, E9FakeUpstream, E9NodeDeterminism, E9SodiumDeterminism } from './E9TestDoubles';
 
 export const E9_USER_ID = 'e9a00000-0000-4000-8000-000000000001';
 
@@ -168,8 +168,14 @@ export class E9Context {
   get sessionId(): string | undefined { return this.session?.sessionId }
   get csrf(): string | undefined { return this.session?.csrf }
 
-  /** Remembers the newest human session grant returned by a step. */
+  /**
+   * Remembers the newest human session grant returned by a step. Async grants (unlockHumanSession,
+   * lockHumanSession, recoverHumanSession) are remembered once they resolve.
+   */
   remember<T>(value: T): T {
+    if (value && typeof (value as { then?: unknown }).then === 'function') {
+      return (value as unknown as Promise<unknown>).then(resolved => this.remember(resolved)) as unknown as T;
+    }
     const grant = value as { sessionId?: unknown; csrf?: unknown };
     if (typeof grant?.sessionId === 'string' && typeof grant.csrf === 'string') this.session = { sessionId: grant.sessionId, csrf: grant.csrf };
     return value;
@@ -208,6 +214,7 @@ export class E9ScenarioRunner {
 
   async run(constructor: E9AuthorityConstructor, steps: E9Step[], prepare?: (database: LegacyVaultDatabase) => Promise<void>): Promise<E9Transcript> {
     const database = await new LegacyVaultDatabase().open();
+    await E9ScenarioRunner.pinUuidDefaults(database);
     await database.db.query(`ALTER TABLE users ALTER COLUMN id SET DEFAULT '${ E9_USER_ID }'::uuid`);
     if (prepare) await prepare(database);
     const determinism = E9NodeDeterminism.shared();
@@ -215,6 +222,10 @@ export class E9ScenarioRunner {
     const clock = new E9Clock();
     const relays = new E9RelayManagerDouble();
     const sodium = await loadSodium();
+    const sodiumRandom = new E9SodiumDeterminism().install(
+      sodium as unknown as Record<string, unknown>,
+      (await import('libsodium-wrappers-sumo' as string) as { default?: Record<string, unknown> }).default,
+    );
     const provider = new LocalVaultCryptoProvider(LocalVaultCrypto.compose(new SodiumCryptoPrimitives(sodium, new NobleCryptoPrimitives()), new E9CounterRandom()));
     upstream.reset();
     determinism.reset();
@@ -243,8 +254,25 @@ export class E9ScenarioRunner {
       return transcript;
     } finally {
       now.mockRestore();
+      sodiumRandom.restore();
       determinism.enabled = false;
       await database.close();
+    }
+  }
+
+  /**
+   * Postgres `gen_random_uuid()` column defaults (e.g. local_vault_migration_batches.id, returned as `batchId`)
+   * become a per-database sequence, so ids the database generates are identical on both sides. Every side
+   * opens a fresh database, so the sequence restarts at 1.
+   */
+  static async pinUuidDefaults(database: LegacyVaultDatabase): Promise<void> {
+    await database.db.query('CREATE SEQUENCE e9_uuid_default_seq');
+    const columns = await database.db.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND column_default LIKE '%gen_random_uuid()%' ORDER BY table_name, column_name`);
+    for (const column of columns.rows) {
+      await database.db.query(`ALTER TABLE "${ column.table_name }" ALTER COLUMN "${ column.column_name }" SET DEFAULT `
+        + `('e9e00000-0000-4000-8000-' || lpad(to_hex(nextval('e9_uuid_default_seq')), 12, '0'))::uuid`);
     }
   }
 

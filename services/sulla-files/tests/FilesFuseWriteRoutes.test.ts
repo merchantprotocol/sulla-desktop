@@ -99,11 +99,14 @@ describe.skipIf(!databaseUrl)('Files mount write routes (real app, real Postgres
     expect(await put({ set: { approvedBy: 'x' } }, fixture.token({ agent_id: 'agent-m', job_id: 'job-m' }))).toMatchObject({ status: 403 });
     expect(await put({ unset: ['status'], set: { owner: 'me' }, baseRevision: 1 })).toMatchObject({ status: 200, body: { revision: 2, metadata: { owner: 'me' } } });
     expect((await fixture.pool.query("SELECT details->>'key' AS key FROM audit_log WHERE action='metadata-set' AND details->>'path'='meta/doc.txt' ORDER BY id", [])).rows.map(row => row.key)).toEqual(['status', 'owner', 'status']);
-    // main behaviour; see follow-up: the child-listing query binds an untyped $3 to substring(path from $3), which
-    // Postgres resolves to the regex form substring(text,text), so no child file metadata is ever listed.
+    // Regression: the child-listing offset must bind as an integer (substring(path from $3::int)); untyped it resolved
+    // to the regex form substring(text,text) and every child was filtered out. Grandchildren and bare files stay out.
+    await fixture.createFile('meta/plain.txt');
+    await fixture.createFile('meta/sub/deep.txt');
+    expect((await fixture.request('/v1/fuse/metadata', 'PUT', { body: { collectionId: fixture.collectionId, path: 'meta/sub/deep.txt', set: { owner: 'deep' } } })).status).toBe(200);
     const listed = await fixture.request(`/v1/fuse/folder-metadata?collectionId=${ fixture.collectionId }&path=meta`);
     expect(listed.status).toBe(200);
-    expect(listed.body.files).toEqual({});
+    expect(listed.body.files).toEqual({ 'doc.txt': { owner: 'me' } });
     expect(await fixture.request(`/v1/fuse/folder-metadata?collectionId=${ fixture.collectionId }&path=meta/doc.txt`)).toMatchObject({ status: 400, body: { error: 'path is not a folder' } });
     expect(await fixture.request(`/v1/fuse/metadata?collectionId=${ fixture.collectionId }&path=meta/missing.txt`)).toMatchObject({ status: 404, body: { error: 'Files path not found' } });
   });
