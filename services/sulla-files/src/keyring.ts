@@ -82,9 +82,10 @@ export class FilesKeyring {
             const data = createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ row.id }`).digest();
             const dedup = createHmac('sha256', legacySigningKey).update(`sulla:files:dedup-key:v1:${ row.id }`).digest();
             try {
-              const wrapped = [await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`), await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`)] as const;
+              const wrappedData = await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`);
+              const wrappedDedup = await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`);
               if (!row.data_key && !row.dedup_key) {
-                await this.collectionKeys.insertLegacySigningKeys(client, row.id, ...wrapped);
+                await this.collectionKeys.insertLegacySigningKeys(client, row.id, wrappedData, wrappedDedup);
               } else {
                 throw new Error('Existing Files key state cannot be migrated automatically');
               }

@@ -28,9 +28,9 @@ describe.skipIf(!databaseUrl)('Vault principal adoption (real Postgres)', () => 
     const a = await schema.collection('desktop-user');
     const b = await schema.collection('desktop-user');
     const file = (await schema.pool.query("INSERT INTO files(collection_id,path) VALUES($1,'/x') RETURNING id", [b])).rows[0].id;
-    await schema.pool.query("INSERT INTO file_share_links(id,owner_user_id,collection_id) VALUES('l1','desktop-user',$1)", [a]);
-    await schema.pool.query("INSERT INTO file_share_links(id,owner_user_id,file_id) VALUES('l2','desktop-user',$1)", [file]);
-    await schema.pool.query("INSERT INTO file_share_links(id,owner_user_id,collection_id) VALUES('l3','someone-else',$1)", [a]);
+    await schema.shareLink('l1', 'desktop-user', { collectionId: a });
+    await schema.shareLink('l2', 'desktop-user', { fileId: file });
+    await schema.shareLink('l3', 'someone-else', { collectionId: a });
     const config = { userId: 'desktop-user' };
     await adoption.adopt(config, 'principal-1');
     expect(config.userId).toBe('principal-1');
@@ -68,7 +68,7 @@ describe.skipIf(!databaseUrl)('Vault principal adoption (real Postgres)', () => 
     const id = await schema.collection('desktop-user');
     await schema.pool.query(`INSERT INTO files_collection_key_bundles(collection_id,principal_id,key_version,key_epoch,authority_key_id,authority_bundle)
       VALUES($1,'someone-else',1,1,'a','{}'::jsonb)`, [id]);
-    await schema.pool.query("INSERT INTO file_share_links(id,owner_user_id,collection_id) VALUES('l1','desktop-user',$1)", [id]);
+    await schema.shareLink('l1', 'desktop-user', { collectionId: id });
     const config = { userId: 'desktop-user' };
     await expect(adoption.adopt(config, 'principal-1')).rejects.toThrow(FOREIGN);
     expect(config.userId).toBe('desktop-user');
