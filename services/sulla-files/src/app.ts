@@ -519,7 +519,7 @@ export function createApp(
         const stamp=(await tx.query('SELECT updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0]?.stamp;
         if(locked.current_version_id!==current.current_version_id||locked.path!==current.path||stamp!==latest?.stamp) return undefined;
         if(!changed){await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[fileId,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);return {};}
-        const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged,actor,message:'Live document edit',baseVersionId:current.current_version_id});
+        const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged:staged!,actor,message:'Live document edit',baseVersionId:current.current_version_id});
         await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);
         return {result};
       });
