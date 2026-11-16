@@ -845,6 +845,13 @@ onUnmounted(() => {
 
 .agent-router-rail {
   flex-shrink: 0;
+  margin-top: 44px;
+  height: calc(100% - 44px);
+}
+
+.agent-router-body:has(.agent-router-rail.expanded) .agent-router-content :deep(.app-titlebar) {
+  width: calc(100% + 212px);
+  margin-left: -212px;
 }
 
 .agent-router-content {
@@ -852,7 +859,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /*
