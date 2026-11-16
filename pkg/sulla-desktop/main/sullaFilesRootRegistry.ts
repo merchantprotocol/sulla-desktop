@@ -202,5 +202,9 @@ export class SullaFilesRootRegistry {
   }
 }
 
-let registry:SullaFilesRootRegistry | undefined;
-export function getSullaFilesRootRegistry():SullaFilesRootRegistry { registry ??= new SullaFilesRootRegistry(); return registry }
+export class SullaFilesRootRegistryProvider {
+  private registry?:SullaFilesRootRegistry;
+  resolve():SullaFilesRootRegistry { return this.registry ??= new SullaFilesRootRegistry(); }
+}
+export const sullaFilesRootRegistryProvider = new SullaFilesRootRegistryProvider();
+export function getSullaFilesRootRegistry():SullaFilesRootRegistry { return sullaFilesRootRegistryProvider.resolve() }

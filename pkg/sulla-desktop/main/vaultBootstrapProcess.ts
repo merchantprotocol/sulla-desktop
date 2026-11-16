@@ -17,6 +17,10 @@ import path from 'node:path';
 
 import { app, safeStorage, session } from 'electron';
 
+import { VaultBootstrapProcess, type VaultBootstrapProcessRuntime } from './vaultBootstrapLifecycle';
+export { VaultBootstrapProcess } from './vaultBootstrapLifecycle';
+export type { VaultBootstrapProcessRuntime } from './vaultBootstrapLifecycle';
+
 import {
   bootstrapChallengeProofInput,
   bootstrapServerProofInput,
@@ -206,21 +210,28 @@ async function updateMasterCache(): Promise<void> {
   }
 }
 
-export async function runVaultBootstrapProcess(): Promise<never> {
-  try {
-    await app.whenReady();
-    configurePinnedTls();
-    if (process.argv.includes('--sulla-vault-cache-update-helper')) {
-      await updateMasterCache();
-      process.stdout.write(`${ JSON.stringify({ ok: true, updated: true }) }\n`);
-    } else {
-      const result = await bootstrap();
-      process.stdout.write(`${ JSON.stringify({ ok: true, state: result.state }) }\n`);
-    }
-    app.exit(0);
-  } catch (error) {
-    process.stdout.write(`${ JSON.stringify({ ok: false, error: (error as Error).message }) }\n`);
-    app.exit(1);
+
+/** Wires the real Electron-backed runtime into the one-shot bootstrap helper. No work happens until run(). */
+export class VaultBootstrapEntry {
+  createRuntime(): VaultBootstrapProcessRuntime {
+    return {
+      whenReady:   () => app.whenReady(),
+      exit:        code => app.exit(code),
+      argv:        process.argv,
+      writeStdout: (value) => { process.stdout.write(value); },
+      waitForExit: () => new Promise<never>(() => undefined),
+      configurePinnedTls,
+      bootstrap,
+      updateMasterCache,
+    };
   }
-  return await new Promise<never>(() => undefined);
+
+  run(): Promise<never> {
+    return new VaultBootstrapProcess(this.createRuntime()).run();
+  }
+}
+
+/** The only entry point: bootstrapEntry calls this once. Importing this module has no side effects. */
+export function runVaultBootstrapProcess(): Promise<never> {
+  return new VaultBootstrapEntry().run();
 }
