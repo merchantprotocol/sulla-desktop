@@ -5,6 +5,8 @@
 
 import os from 'node:os';
 
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${ name } is required`);
@@ -37,6 +39,8 @@ export function loadConfig(): RelayConfig {
     internalToken:        required('SULLA_RELAY_INTERNAL_TOKEN'),
     maxInFlightPerDevice: positiveInteger('SULLA_RELAY_MAX_IN_FLIGHT', 16),
     presenceTtlSeconds:   positiveInteger('SULLA_RELAY_PRESENCE_TTL_SECONDS', 45),
-    maxDeadlineMs:        positiveInteger('SULLA_RELAY_MAX_DEADLINE_MS', 120_000),
+    // Default to the longest deadline the shared policy hands out (git_clone, long exec)
+    // so the relay never silently cuts a call below its own tool deadline.
+    maxDeadlineMs:        positiveInteger('SULLA_RELAY_MAX_DEADLINE_MS', new ToolDeadlinePolicy().maxDeadlineMs),
   };
 }
