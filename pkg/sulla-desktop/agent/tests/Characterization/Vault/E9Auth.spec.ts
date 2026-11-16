@@ -94,8 +94,11 @@ describe('E9 auth.ts login verifiers match the pre-refactor implementation', () 
     expect(current.verifyLoginHash(loginHash, salt, verifier)).toBe(true);
     expect(current.verifyLoginHash('login-hash-texT', salt, verifier)).toBe(false);
     expect(current.verifyLoginHash(loginHash, salt, flipped)).toBe(false);
-    // scrypt(…, 16) is not a prefix of scrypt(…, 32): a truncated verifier does not verify.
-    expect(current.verifyLoginHash(loginHash, salt, verifier.subarray(0, 16))).toBe(false);
+    // Pinned current behaviour (latent weakness, not fixed in E9): scrypt output is prefix-consistent
+    // (scrypt(x, s, 16) equals the first 16 bytes of scrypt(x, s, 32)) and the verifier length comes from the
+    // stored verifier, so a truncated verifier is accepted. verifyLoginHash is not used in production.
+    expect(current.verifyLoginHash(loginHash, salt, verifier.subarray(0, 16))).toBe(true);
+    expect(legacy.verifyLoginHash(loginHash, salt, verifier.subarray(0, 16))).toBe(true);
     // Pinned current behaviour (reported as a latent bug, not fixed in E9): an empty stored verifier verifies any hash.
     expect(current.verifyLoginHash('anything', salt, new Uint8Array(0))).toBe(true);
   });
