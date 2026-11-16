@@ -198,9 +198,14 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
-// All AgentRouter browser tabs and named agent pages render AgentHeader.
-// FirstRun is a SimpleHeader page, so the global rail must start at the top.
-const hasTitlebar = computed(() => route.path !== '/FirstRun' && route.path !== '/');
+// Only the browser tab and these named pages render AgentHeader. Defaulting
+// unknown/full-screen routes to false avoids relying on kept-alive DOM nodes.
+const hasTitlebar = computed(() => isBrowserRoute.value || [
+  'AgentCalendar',
+  'AgentIntegrations',
+  'AgentIntegrationDetail',
+  'ExtensionView',
+].includes(String(route.name)));
 
 // Persist active tab ID whenever the route changes so restarts can resume it
 watch(() => route.path, (path) => {
