@@ -6,7 +6,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { isLegacyInternalPath } from './legacyPreflight.js';
+import { LegacyPreflightService } from './legacyPreflight.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { TrackedPathFilter } from './TrackedPathFilter.js';
 
@@ -42,7 +42,7 @@ export class NativeRootScanner {
     }
     for (const entry of entries) {
       const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name;
-      if (isProtectedPath(rel) || TrackedPathFilter.isSensitive(rel) || (configuredRoot.primary && isLegacyInternalPath(rel, this.config.legacyPreflight)) || TrackedPathFilter.matchIgnore(rel, ignores)) continue;
+      if (isProtectedPath(rel) || TrackedPathFilter.isSensitive(rel) || (configuredRoot.primary && LegacyPreflightService.isLegacyInternalPath(rel, this.config.legacyPreflight)) || TrackedPathFilter.matchIgnore(rel, ignores)) continue;
       if (entry.isDirectory()) {
         const nested = await this.diskFiles(configuredRoot, join(current, entry.name), rel, ignores);
         output.paths.push(...nested.paths); output.complete &&= nested.complete; output.errors.push(...nested.errors);
@@ -69,7 +69,7 @@ export class NativeRootScanner {
     const collectionId = this.rootCollections.get(root.id)!;
     await this.repository.markRootScanning(root.id);
     const patterns = await this.ignores(root); const scanned = await this.diskFiles(root, root.path, '', patterns); const diskSet = new Set(scanned.paths);
-    const states = (await this.repository.localStates(root.id)).filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
+    const states = (await this.repository.localStates(root.id)).filter(row => !root.primary || !LegacyPreflightService.isLegacyInternalPath(row.path, this.config.legacyPreflight));
     const reconciledStates = states.filter(row => !isProtectedPath(row.path) && !TrackedPathFilter.isSensitive(row.path) && !TrackedPathFilter.matchIgnore(row.path, patterns));
     const missingRows = reconciledStates.filter(row => !diskSet.has(row.path));
     if (scanned.complete && reconciledStates.length > 0 && (scanned.paths.length === 0 || (missingRows.length >= 100 && missingRows.length / reconciledStates.length >= 0.8))) {
