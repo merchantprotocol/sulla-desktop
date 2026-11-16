@@ -158,7 +158,7 @@ export class AgentJobCustodyRepository {
       input.actor.kind,input.actor.kind==='agent'?input.actor.channel:null,input.actor.kind==='agent'?input.actor.threadId:null,input.actor.kind==='agent'?input.actor.agentId:null,input.reason,nextVersion,changedAt]);
   }
 
-  private resolveSql(): string { return `SELECT j.job_id, c.*, COALESCE(c.version,0) AS version,
+  private resolveSql(): string { return `SELECT j.job_id, c.changed_at, COALESCE(c.version,0) AS version,
       COALESCE(c.owner_channel,j.parent_channel) AS owner_channel, COALESCE(c.owner_thread_id,j.parent_thread_id) AS owner_thread_id,
       COALESCE(c.owner_agent_id,j.parent_agent_id) AS owner_agent_id
     FROM agent_jobs j LEFT JOIN LATERAL (
