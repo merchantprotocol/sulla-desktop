@@ -4,6 +4,7 @@
 
 import { EventEmitter } from 'node:events';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
+import type { AgentJobFailureObserver } from './AgentJobFailureLogger';
 
 
 /** A blocked task is live only while its blocker is open; a returned blocked result is settled. */
@@ -62,7 +63,7 @@ export class AgentStateService {
   private readonly pendingTerminalPromises = new Map<string, Promise<void>>();
 
   constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now,
-    private readonly mutations = new AgentJobMutationQueue()) {
+    private readonly mutations = new AgentJobMutationQueue(), private readonly failures?: AgentJobFailureObserver) {
     this.versionValue = now();
     this.clock = now;
   }
@@ -267,6 +268,7 @@ export class AgentStateService {
       this.trimTerminalCache();
       this.emitChange();
       this.pendingTerminalWrites.delete(next.jobId);
+      this.failures?.observe(current, next);
       return next;
     });
   }
