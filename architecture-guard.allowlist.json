@@ -3563,12 +3563,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/utils/safeSend.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
     "pkg/sulla-desktop/utils/startupProgress.ts": {
       "rules": {
         "long-file": 661,
