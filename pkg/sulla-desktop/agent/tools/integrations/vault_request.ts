@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { requireConfiguredCredentialBroker } from '../../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../../vault-broker';
 import { BaseTool, type ToolResponse } from '../base';
 import { scopeItemExecutionContext } from '../credentialScope';
 
@@ -13,7 +13,7 @@ export class VaultRequestWorker extends BaseTool {
   protected async _validatedCall(input: Record<string, unknown>): Promise<ToolResponse> {
     if (!this.executionContext) throw new Error('Vault item tools require a verified execution context');
     const context = await scopeItemExecutionContext(this.executionContext, String(input.item));
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const headers = (input.headers ?? {}) as Record<string, string>;
     if (Object.values(headers).some(value => typeof value !== 'string')) throw new Error('Headers must contain string values');
     const result = await broker.execute(broker.requestFor(context, {

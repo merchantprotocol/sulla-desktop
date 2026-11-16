@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { issueLocalBrokerContext, requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '../../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
 import { providerFailureFromHttp } from './failures';
 
@@ -43,7 +43,7 @@ export async function issueProviderExecutionContext(
   const threadId = String(metadata.threadId ?? '').trim();
   if (!agentId || !threadId) throw new Error('provider.inference requires trusted graph identity');
 
-  return issueLocalBrokerContext({
+  return configuredVaultBrokerProvider.issueLocalBrokerContext({
     agentId,
     podId:               String(metadata.podId ?? `desktop:${ threadId }`),
     credentialScope:     { integration_id: providerId, account_id: accountId },
@@ -63,7 +63,7 @@ export async function issueServiceProviderExecutionContext(
   signal?: AbortSignal,
 ): Promise<ToolExecutionContext> {
   if (!serviceId.trim()) throw new Error('provider.inference requires a trusted service identity');
-  return issueLocalBrokerContext({
+  return configuredVaultBrokerProvider.issueLocalBrokerContext({
     agentId:         serviceId,
     podId:           'desktop-main',
     credentialScope: { integration_id: providerId, account_id: accountId },
@@ -127,7 +127,7 @@ export async function providerFetch(
     try { body = JSON.parse(rawBody) } catch { /* provider body is text */ }
   }
 
-  const broker = requireConfiguredCredentialBroker();
+  const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
   const request = broker.requestFor(ctx, {
     operation:    options.operation ?? 'provider.inference',
     ref:          { integrationId: providerId, accountId: scope.account_id },

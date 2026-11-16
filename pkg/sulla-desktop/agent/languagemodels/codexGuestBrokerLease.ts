@@ -5,11 +5,7 @@
 
 import crypto from 'node:crypto';
 
-import {
-  createProviderCliBridge,
-  issueLocalBrokerContext,
-  type ProviderCliBridgeLease,
-} from '../../vault-broker';
+import { ProviderCliBridgeService, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
@@ -43,7 +39,7 @@ export async function createGuestCodexBrokerLease(input: {
   // doing so rejected every vault-mode Codex spawn (regression from #1843).
 
   const metadata = (input.state?.metadata ?? {}) as { agentId?: string; wsChannel?: string; orgId?: string };
-  const base = await issueLocalBrokerContext({
+  const base = await configuredVaultBrokerProvider.issueLocalBrokerContext({
     agentId:         metadata.agentId ?? metadata.wsChannel ?? 'sulla',
     podId:           `sulla-guest-codex-${ crypto.randomUUID() }`,
     credentialScope: { integration_id: 'codex', account_id: accountId },
@@ -57,7 +53,7 @@ export async function createGuestCodexBrokerLease(input: {
     return { ...context, iat: now, exp: now + CONTEXT_TTL_S };
   };
 
-  return createProviderCliBridge({
+  return new ProviderCliBridgeService().create({
     context:        renewed(),
     provider:       'codex',
     accountId,

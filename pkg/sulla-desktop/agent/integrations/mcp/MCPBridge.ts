@@ -19,7 +19,7 @@ import {
   type GenerateResult,
   type DiffResult,
 } from './MCPConfigGenerator';
-import { issueLocalBrokerContext, usesContainerVaultAuthority } from '../../../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type { MCPToolDefinition, MCPToolCallResult } from './MCPClient';
@@ -137,7 +137,7 @@ export class MCPBridge {
       ? undefined
       : (await svc.getIntegrationValue(INTEGRATION_ID, 'auth_token', accountId))?.value || undefined;
     const defaultExecutionContext = usesContainerVaultAuthority() && !credentialFree
-      ? await issueLocalBrokerContext({
+      ? await configuredVaultBrokerProvider.issueLocalBrokerContext({
         agentId:         'mcp-bridge',
         podId:           'desktop-main',
         credentialScope: { integration_id: INTEGRATION_ID, account_id: accountId },

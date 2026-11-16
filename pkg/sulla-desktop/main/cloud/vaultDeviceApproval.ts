@@ -5,7 +5,7 @@
 
 import { BrowserWindow, dialog } from 'electron';
 
-import { getConfiguredApprovalClient } from '@pkg/vault-broker';
+import { configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import { DesktopVaultEnrollment } from './enrollment/DesktopVaultEnrollmentModule';
 
 interface ApprovalRequest {
@@ -35,7 +35,7 @@ class VaultDeviceApprovalService {
     if (this.inFlight) return;
     this.inFlight = true;
     try {
-      const client = getConfiguredApprovalClient();
+      const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
       if (!client) return;
       const response = await client.sullaCloudRequest({ method: 'GET', path: '/auth/password/device-approval/requests', responseType: 'json' });
       const body = response.status === 200 ? response.body as { requests?: ApprovalRequest[] } : { requests: [] };
