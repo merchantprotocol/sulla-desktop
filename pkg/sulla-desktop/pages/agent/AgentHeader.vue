@@ -901,6 +901,10 @@ function handleMoreMenuAction(
   case 'newTab':
     openNewBrowserTab();
     break;
+  case 'chatHistory':
+    // The visible chat tab toggles its history panel (same as the old header History button).
+    window.dispatchEvent(new CustomEvent('sulla:toggle-chat-history'));
+    break;
   case 'integrations':
     openModeTab('integrations');
     break;

@@ -54,15 +54,7 @@
           bottom edge looks the same).
         -->
         <div class="composer-backdrop" aria-hidden="true" />
-        <ChatHeader
-          :sub-agents="subAgentCounts"
-          :sub-agents-open="dockSide"
-          :files-open="chatFilesOpen"
-          @toggle-subagents="openAgentsDrawer"
-          @toggle-files="setChatFilesOpen(!chatFilesOpen)"
-          :dock-side="dockSide"
-          @find-chat="switcherOpen = true"
-        />
+        <ChatHeader />
         <SearchBar />
 
         <EmptyState
@@ -123,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import Canvas             from './components/chrome/Canvas.vue';
 import ChatHeader         from './components/chrome/ChatHeader.vue';
@@ -144,9 +136,6 @@ import SideDock          from './components/sidedock/SideDock.vue';
 import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
 import { DockPositions } from './composables/useDockPosition';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
-import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
-import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
-import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -386,16 +375,6 @@ watch(artifactCollapsed, artifact => {
 });
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
-// Agents in this chat, for the header's Sub-agents button.
-const agentStateClient = inject(AGENT_STATE_CLIENT_KEY);
-const LIVE_AGENT_STATES = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
-const subAgentCounts = computed(() => {
-  const threadId = subAgentParentThreadId.value;
-  if (!agentStateClient || !threadId) return { total: 0, live: 0 };
-  const builder = new AgentTreeBuilder(agentStateClient.snapshot.value.rows);
-  const rows = builder.flatten(builder.forThread(threadId));
-  return { total: rows.length, live: rows.filter(node => LIVE_AGENT_STATES.has(node.row.state)).length };
-});
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
 
@@ -699,30 +678,44 @@ const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
 // ─── Dock position: bottom of the chat, or the right-hand side column ───
-const { position: dockPosition, sideRatio, setPosition: setDockPosition } = DockPositions.use();
+const { position: dockPosition, sideRatio } = DockPositions.use();
 const dockSide = computed(() => dockPosition.value === 'side');
 const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
 // The right drawer (side dock) holds the agent lanes, results, decisions and files.
-// It never takes the message box: that stays at the bottom of the chat. The header's
-// Sub-agents button opens the drawer on its Sulla tab, or closes it when it is open.
-async function openAgentsDrawer(): Promise<void> {
-  if (dockSide.value) {
-    setDockPosition('bottom');
-    return;
-  }
-  setDockPosition('side');
-  await nextTick();
-  sideDock.value?.selectTab('sulla');
-}
+// It never takes the message box: that stays at the bottom of the chat.
 // Find chat (⌘P): past chats, pins, and this chat's decisions and results.
+// The Electron menu bar's "Find Chat…" (⌘P) fires `sulla:find-chat` through the
+// AgentRouter; the renderer keydown below covers the same key. Both route
+// through toggleFindChat, and the short guard stops one keypress toggling twice.
 const switcherOpen = ref(false);
+let lastFindChatToggleAt = 0;
+function toggleFindChat(): void {
+  if (props.isActive === false) return;
+  const now = Date.now();
+  if (now - lastFindChatToggleAt < 150) return;
+  lastFindChatToggleAt = now;
+  switcherOpen.value = !switcherOpen.value;
+}
 function onFindChatKey(event: KeyboardEvent): void {
   if (props.isActive === false || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== 'p') return;
   event.preventDefault();
-  switcherOpen.value = !switcherOpen.value;
+  toggleFindChat();
 }
-onMounted(() => window.addEventListener('keydown', onFindChatKey));
-onBeforeUnmount(() => window.removeEventListener('keydown', onFindChatKey));
+// The header ⋯ menu's "Chat history" item fires this on the window; only the visible chat answers.
+function onToggleChatHistory(): void {
+  if (props.isActive === false) return;
+  controller.toggleHistory();
+}
+onMounted(() => {
+  window.addEventListener('keydown', onFindChatKey);
+  window.addEventListener('sulla:find-chat', toggleFindChat);
+  window.addEventListener('sulla:toggle-chat-history', onToggleChatHistory);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onFindChatKey);
+  window.removeEventListener('sulla:find-chat', toggleFindChat);
+  window.removeEventListener('sulla:toggle-chat-history', onToggleChatHistory);
+});
 
 function setChatFilesOpen(open:boolean):void {
   chatFilesOpen.value = open;

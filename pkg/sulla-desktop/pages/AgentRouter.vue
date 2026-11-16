@@ -478,6 +478,11 @@ function onAgentCommand(_event: any, args: any) {
   if (!args?.command) return;
 
   switch (args.command) {
+  case 'find-chat': {
+    // Menu bar Find Chat (⌘P): the visible chat tab toggles its find palette.
+    window.dispatchEvent(new CustomEvent('sulla:find-chat'));
+    break;
+  }
   case 'open-agent-chat-tab': {
     const threadId = typeof args.threadId === 'string' ? args.threadId.trim() : '';
     const agentId = typeof args.agentId === 'string' ? args.agentId.trim() : '';

@@ -339,6 +339,10 @@ function getEditMenu(isMac: boolean): MenuItem {
       { role: 'delete', label: 'De&lete' },
       ...(!isMac ? [{ type: 'separator' } as MenuItemConstructorOptions] : []),
       { role: 'selectAll', label: 'Select &All' },
+      { type: 'separator' },
+      // The renderer's own ⌘P keydown handles the same key; the chat page
+      // de-duplicates the two so one press toggles the palette once.
+      { label: 'Find Chat…', accelerator: 'CmdOrCtrl+P', click: () => sendAgentCommand('find-chat') },
     ],
   });
 }

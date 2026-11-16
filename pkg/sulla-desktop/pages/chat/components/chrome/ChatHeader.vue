@@ -5,11 +5,10 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  Chat header: the editable chat title centred (the agent picker lives in the
-  message box, so the header does not repeat it),
-  and sub-agents, files and history toggles on the right. Replaces the centred italic
-  SessionMark and the StatusBadges pills (connection status now lives as a
-  dot in the app's top bar).
+  Chat header: the editable chat title centred, with the agent-origin chip on
+  the left when an agent launched this tab. Sub-agents, files and history live
+  in the side panel, the left rail, and the header ⋯ menu; Find chat is in the
+  menu bar (⌘P).
 -->
 <template>
   <header class="chat-header">
@@ -42,104 +41,18 @@
       >{{ controller.thread.value.title }}</span>
     </div>
 
-    <div class="ch-actions">
-      <button
-        class="ch-btn"
-        type="button"
-        :class="{ on: subAgentsOpen && subAgents.total > 0, off: subAgents.total === 0 }"
-        :aria-pressed="subAgentsOpen && subAgents.total > 0"
-        :title="subAgents.total ? 'Show sub-agents in the side panel' : 'No sub-agents in this chat yet'"
-        @click="subAgents.total && emit('toggle-subagents')"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        ><rect
-          x="3.5"
-          y="4.5"
-          width="17"
-          height="15"
-          rx="3"
-        /><path d="M9.5 4.5v15" /></svg>
-        Sub-agents
-        <span
-          v-if="subAgents.total"
-          class="ch-count"
-          :class="{ live: subAgents.live > 0 }"
-        >{{ subAgents.live ? `${subAgents.live} live` : subAgents.total }}</span>
-        <span
-          v-else
-          class="ch-none"
-        >none yet</span>
-      </button>
-      <button
-        v-if="!dockSide"
-        class="ch-btn"
-        type="button"
-        :class="{ on: filesOpen }"
-        :aria-pressed="filesOpen"
-        title="Files in this chat"
-        @click="emit('toggle-files')"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        ><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5" /></svg>
-        Files
-      </button>
-      <button
-        class="ch-btn"
-        type="button"
-        :class="{ on: historyOpen }"
-        :aria-pressed="historyOpen"
-        title="Chat history"
-        @click="controller.toggleHistory()"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        ><path d="M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2" /></svg>
-        <span class="ch-label">History</span>
-      </button>
-      <button
-        class="ch-btn"
-        type="button"
-        title="Find a chat, pin, decision or result (⌘P)"
-        @click="emit('find-chat')"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        ><circle
-          cx="11"
-          cy="11"
-          r="6"
-        /><path d="M20 20l-4.5-4.5" /></svg>
-        <span class="ch-label">Find chat</span> <kbd class="ch-kbd">⌘P</kbd>
-      </button>
-    </div>
   </header>
 </template>
 
 <script setup lang="ts">
-import { computed, inject, ref, type Ref } from 'vue';
+import { inject, ref, type Ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
-
-defineProps<{
-  subAgents:     { total: number; live: number };
-  subAgentsOpen: boolean;
-  filesOpen:     boolean;
-  /** The dock is on the side: its tabs replace the Sub-agents and Files buttons. */
-  dockSide?:     boolean;
-}>();
-const emit = defineEmits<{ (e: 'toggle-subagents'): void; (e: 'toggle-files'): void; (e: 'find-chat'): void }>();
 
 const controller = useChatController();
 /** Set when this chat is an agent's own tab: who launched it, and a way back. */
 const origin = inject<Ref<{ name: string; back: () => void } | null>>('chat:agent-origin', ref(null));
 const titleEl = ref<HTMLElement | null>(null);
-const historyOpen = computed(() => controller.sidebar.value.historyOpen);
 
 function commitTitle(): void {
   const next = (titleEl.value?.textContent || '').trim() || 'New chat';
@@ -175,25 +88,6 @@ function cancelTitle(): void {
 }
 .ch-title:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
 .ch-title:focus { text-overflow: clip; background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--accent); }
-.ch-actions { display: flex; align-items: center; gap: 6px; justify-self: end; }
-.ch-btn {
-  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
-  border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--border-default); background: var(--bg-surface);
-  color: var(--text-primary); font: 500 12.5px var(--font-body);
-}
-.ch-btn:hover { border-color: var(--accent); }
-.ch-btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface)); }
-.ch-btn.off { color: var(--text-muted); cursor: default; }
-.ch-btn.off:hover { border-color: var(--border-default); }
-.ch-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ch-count { padding: 0 7px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--text-primary) 10%, transparent); }
-.ch-count.live { color: var(--status-success); background: color-mix(in srgb, var(--status-success) 15%, transparent); }
-.ch-none { font-size: 11px; color: var(--text-muted); }
-@media (max-width: 760px) {
-  .ch-btn { padding: 0 8px; }
-}
-.ch-kbd { margin-left: 2px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 4px; color: color-mix(in srgb, var(--text-primary) 58%, var(--bg-surface)); font: 10.5px var(--font-mono, ui-monospace, monospace); }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
@@ -202,10 +96,4 @@ function cancelTitle(): void {
 .ch-origin:hover { color: var(--accent); border-color: var(--accent); }
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Buttons never wrap their labels; in a narrow header (side dock open) they drop to icons, with their names in the tooltip. */
-.chat-header { container-type: inline-size; }
-.ch-btn { white-space: nowrap; }
-@container (max-width: 760px) {
-  .ch-label, .ch-kbd { display: none; }
-}
 </style>
