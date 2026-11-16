@@ -8,6 +8,7 @@
 import crypto from 'crypto';
 import * as fs from 'fs/promises';
 
+import { ServiceSecretGenerator } from '../../app/Services/ServiceSecret/ServiceSecretGenerator';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
 
@@ -240,6 +241,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
             const content = await fs.readFile(this.getFallbackFilePath(), 'utf8');
             const data = JSON.parse(content) as Record<string, any>;
             for (const [property, value] of Object.entries(data)) {
+              // The service secret's provider converges it (the database wins on a mismatch).
+              if (property === 'sullaServicePassword') continue;
               await this.setSetting(property, value);
             }
             console.log(`SullaSettingsModel: synced ${ Object.keys(data).length } settings from lock file`);
@@ -454,6 +457,11 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       this.redisStale.add(property);
     }
     this.invalidateLocal(property);
+  }
+
+  /** @deprecated use ServiceSecretGenerator (ServiceSecretProvider) — removed in the final OOP cleanup PR */
+  public static generatePassword(_length = 16): string {
+    return new ServiceSecretGenerator().generate();
   }
 
   /**

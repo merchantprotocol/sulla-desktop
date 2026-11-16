@@ -20,7 +20,9 @@ export class ServiceSecretUnavailableError extends Error {
   static notStored(detail: string): ServiceSecretUnavailableError {
     return new ServiceSecretUnavailableError(`${ detail }. This install already has a database, so a new secret would no longer match `
       + 'the data that derives from it (Files keys, backups, recipes). Restore "sullaServicePassword" in the settings file '
-      + '(a damaged copy is kept beside it as *.corrupt-*) or in the settings database, then start Sulla again.');
+      + '(a damaged copy is kept beside it as *.corrupt-*) or in the settings database, then start Sulla again. '
+      + 'Installs created before this setting existed used the legacy development password; '
+      + 'if this install is that old, restore that legacy value.');
   }
 }
 
@@ -49,6 +51,11 @@ export interface ServiceSecretWaitPolicy {
   maxWaitMs:   number;
   baseDelayMs: number;
   maxDelayMs:  number;
+  /**
+   * How long a corrupt bootstrap file is re-read before it is repaired.
+   * Writes are atomic, so corruption is not transient: no need for the full wait.
+   */
+  corruptGraceMs?: number;
 }
 
 /** What only the runtime knows: whether this install has a database yet, and what it stores. */
@@ -86,6 +93,8 @@ type SettledRead = Exclude<ServiceSecretRead, { kind: 'unreadable' }>;
  */
 export class ServiceSecretProvider {
   static readonly DEFAULT_POLICY: ServiceSecretWaitPolicy = { maxWaitMs: 60_000, baseDelayMs: 250, maxDelayMs: 4_000 };
+
+  static readonly DEFAULT_CORRUPT_GRACE_MS = 2_000;
 
   /** The public password older builds wrote when a settings read failed. */
   static readonly DEVELOPMENT_PASSWORD = 'sulla_dev_password';
@@ -195,7 +204,7 @@ export class ServiceSecretProvider {
     return stored ? { kind: 'found', value: stored, store: 'database' } : { kind: 'absent', store: 'database' };
   }
 
-  /** Read until the store answers; a file still corrupt after the whole wait is repaired once. */
+  /** Read until the store answers; a file still corrupt after a short grace is repaired once. */
   private async settle(read: () => Promise<ServiceSecretRead>, repairCorrupt: boolean): Promise<SettledRead> {
     const startedAt = this.clock.now();
     let repaired = false;
@@ -206,12 +215,12 @@ export class ServiceSecretProvider {
       if (result.kind !== 'unreadable') return result;
       const waited = this.clock.now() - startedAt;
 
+      if (repairCorrupt && result.corrupt && !repaired && waited >= this.corruptGraceMs) {
+        repaired = true;
+        await this.repository.repairBootstrapFile();
+        continue;
+      }
       if (waited >= this.policy.maxWaitMs) {
-        if (repairCorrupt && result.corrupt && !repaired) {
-          repaired = true;
-          await this.repository.repairBootstrapFile();
-          continue;
-        }
         throw ServiceSecretUnavailableError.afterWait(waited, `${ result.store }: ${ result.reason }`);
       }
       const delay = Math.min(this.policy.baseDelayMs * 2 ** attempt, this.policy.maxDelayMs, this.policy.maxWaitMs - waited);
@@ -219,6 +228,10 @@ export class ServiceSecretProvider {
       if (attempt === 0) this.logger.warn(`[ServiceSecret] Settings ${ result.store } not readable yet (${ result.reason }); waiting`);
       await this.clock.sleep(Math.max(delay, 0));
     }
+  }
+
+  private get corruptGraceMs(): number {
+    return Math.min(this.policy.corruptGraceMs ?? ServiceSecretProvider.DEFAULT_CORRUPT_GRACE_MS, this.policy.maxWaitMs);
   }
 
   private async waitForInstallState(): Promise<ServiceSecretInstallState> {

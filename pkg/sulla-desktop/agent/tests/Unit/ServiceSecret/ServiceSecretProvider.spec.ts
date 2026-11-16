@@ -97,6 +97,18 @@ describe('ServiceSecretProvider', () => {
     expect(generator.calls).toBe(0);
   });
 
+  // risk: sign-in — installs older than the setting ran on the legacy value; the guidance says so without printing it
+  it('the not-stored guidance points at the legacy value for old installs and never prints a secret', async() => {
+    const { stores, provider } = build();
+
+    stores.file = {};
+
+    const error = await provider.get().catch((caught: unknown) => caught as Error);
+
+    expect(error.message).toMatch(/created before this setting existed used the legacy development password/);
+    expect(error.message).not.toContain(DEV_PASSWORD);
+  });
+
   // risk: irreversible side effect (B1) — a database that cannot be read is not "absent"
   it('throws when the database cannot be read, and generates nothing', async() => {
     const { stores, generator, provider, install } = build();
@@ -189,12 +201,15 @@ describe('ServiceSecretProvider', () => {
 
   // risk: availability / data accuracy (B3) — a corrupt file keeps its readable secret
   it('repairs a file that stays corrupt and keeps the secret still readable from it', async() => {
-    const { stores, generator, provider } = build();
+    const { stores, generator, provider, clock } = build();
 
     stores.filePermanentFailure = corruptFileError();
     stores.salvageable = { [PROPERTY]: REAL, sullaInstalled: true };
 
     expect(await provider.get()).toBe(REAL);
+    // risk: availability — atomic writes mean corruption is not transient: repair after the short grace, not the 10s wait
+    expect(clock.current).toBeGreaterThanOrEqual(ServiceSecretProvider.DEFAULT_CORRUPT_GRACE_MS);
+    expect(clock.current).toBeLessThan(4_000);
     expect(stores.quarantined).toBe(1);
     expect(stores.file).toEqual({ [PROPERTY]: REAL, sullaInstalled: true });
     expect(generator.calls).toBe(0);

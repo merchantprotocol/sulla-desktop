@@ -13,6 +13,7 @@ const COMPOSE = ['compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'
 
 const TARGETS: ComposeServiceTarget[] = [
   { service: 'postgres', container: 'sulla_postgres' },
+  { service: 'redis', container: 'sulla_redis' },
   { service: 'sulla_vault', container: 'sulla_vault' },
   { service: 'workflow_manager', container: 'sulla_workflow_manager' },
   { service: 'tools', container: 'sulla_tools' },
@@ -71,7 +72,7 @@ function regenerationWith(guest: Guest, nextFile: Record<string, string>) {
   }, drift, silent);
 }
 
-const BOOT = { postgres: 'pg-1', sulla_vault: 'vault-1', workflow_manager: 'wm-1', tools: 'tools-1', sulla_files: 'files-1' };
+const BOOT = { postgres: 'pg-1', redis: 'redis-1', sulla_vault: 'vault-1', workflow_manager: 'wm-1', tools: 'tools-1', sulla_files: 'files-1' };
 
 describe('SullaComposeRegeneration (mid-session compose rewrite)', () => {
   // risk: sign-in — 07:26 regeneration: tools/vault/workflow_manager kept running on a definition other than the file's
@@ -85,8 +86,23 @@ describe('SullaComposeRegeneration (mid-session compose rewrite)', () => {
 
     expect(guest.recreated.sort()).toEqual(['sulla_vault', 'tools', 'workflow_manager']);
     expect(outcomes.find(outcome => outcome.service === 'sulla_files')?.kind).toBe('unchanged');
-    expect(outcomes.find(outcome => outcome.service === 'postgres')?.kind).toBe('unchanged');
+    expect(outcomes.find(outcome => outcome.service === 'postgres')).toBeUndefined();
     for (const target of TARGETS) expect(guest.running.get(target.container)).toBe(guest.desired.get(target.service));
+  });
+
+  // risk: availability — recreating PostgreSQL/Redis mid-session is a pure outage (the password does not apply to existing PGDATA)
+  it('a secret-change sweep never recreates postgres or redis, even when their hash drifted', async() => {
+    const guest = new Guest();
+
+    guest.boot(BOOT);
+    const outcomes = await regenerationWith(guest, {
+      ...BOOT, postgres: 'pg-2', redis: 'redis-2', tools: 'tools-2',
+    }).run('service secret changed');
+
+    expect(guest.recreated).toEqual(['tools']);
+    expect(guest.running.get('sulla_postgres')).toBe('pg-1');
+    expect(guest.running.get('sulla_redis')).toBe('redis-1');
+    expect(outcomes.map(outcome => outcome.service)).not.toContain('postgres');
   });
 
   // risk: availability — a regeneration that changed nothing must not restart anything

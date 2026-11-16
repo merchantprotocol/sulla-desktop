@@ -12,12 +12,17 @@ class Docker implements DockerCli {
   volumes: string[] = [];
   containers: string[] = [];
   failing = false;
+  /** Commands that never answer (a hung Docker daemon). */
+  hanging = new Set<string>();
+  startFailure?: Error;
   stored: string | null = null;
   readonly calls: string[][] = [];
 
   async run(args: string[]): Promise<string> {
     this.calls.push(args);
     if (this.failing) throw new Error('Cannot connect to the Docker daemon');
+    if (this.hanging.has(args[0])) return new Promise<string>(() => undefined);
+    if (args[0] === 'start' && this.startFailure) throw this.startFailure;
     if (args[0] === 'volume') return `${ this.volumes.join('\n') }\n`;
     if (args[0] === 'ps') return `${ this.containers.join('\n') }\n`;
     if (args[0] === 'start') return '';
@@ -26,10 +31,10 @@ class Docker implements DockerCli {
   }
 }
 
-function state(docker: Docker, events: string[] = []) {
+function state(docker: Docker, events: string[] = [], timeoutMs?: number) {
   return new GuestServiceSecretInstallState(docker, async(target) => {
     events.push(`healthy ${ target.container }`);
-  });
+  }, timeoutMs);
 }
 
 describe('GuestServiceSecretInstallState', () => {
@@ -54,6 +59,35 @@ describe('GuestServiceSecretInstallState', () => {
 
     docker.failing = true;
     expect(await state(docker).isFresh()).toBe(false);
+  });
+
+  // risk: irreversible side effect — a hung Docker call is doubt, never "fresh" (and never a wait forever)
+  it('counts as installed when a Docker call times out', async() => {
+    const docker = new Docker();
+
+    docker.hanging.add('ps');
+    expect(await state(docker, [], 20).isFresh()).toBe(false);
+  });
+
+  // risk: sign-in — a hung psql read is unreadable, never "no stored secret"
+  it('fails the stored-secret read when a Docker call times out', async() => {
+    const docker = new Docker();
+
+    docker.stored = 'Stored_Secret';
+    docker.hanging.add('exec');
+    await expect(state(docker, [], 20).readDatabaseSecret()).rejects.toThrow(/did not answer/);
+  });
+
+  // risk: sign-in — PostgreSQL that cannot be started gets actionable guidance, never a secret
+  it('says PostgreSQL must be started when it cannot be started', async() => {
+    const docker = new Docker();
+
+    docker.stored = 'Stored_Secret';
+    docker.startFailure = new Error('Error response from daemon: container is marked for removal');
+    const error = await state(docker).readDatabaseSecret().catch((caught: unknown) => caught as Error);
+
+    expect(error.message).toMatch(/PostgreSQL \(sulla_postgres\) must be started/);
+    expect(error.message).not.toContain('Stored_Secret');
   });
 
   // risk: sign-in — the stored secret is read in the guest, after PostgreSQL is healthy, byte for byte

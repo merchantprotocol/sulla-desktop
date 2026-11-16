@@ -123,6 +123,33 @@ describe('SullaSettingsModel bootstrap file (pre-database store)', () => {
     expect(data.sullaInstalled).toBe(false);
   });
 
+  // risk: security — the deprecated alias must yield the compose/URL-safe secret, never the old `$@#%` charset
+  it('the deprecated generatePassword alias delegates to the base64url generator', () => {
+    const password = SullaSettingsModel.generatePassword();
+
+    expect(password).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(SullaSettingsModel.generatePassword()).not.toBe(password);
+  });
+
+  // risk: sign-in (B2) — first bootstrap must not overwrite the database's secret with the file's; the provider converges it
+  it('first bootstrap syncs the file into the database except the service secret', async() => {
+    await fs.writeFile(file, JSON.stringify({ sullaServicePassword: 'File_Secret', heartbeatEnabled: true }));
+    const written: string[] = [];
+
+    vi.spyOn(SullaSettingsModel, 'initialize').mockResolvedValue();
+    vi.spyOn(SullaSettingsModel, 'getSetting').mockResolvedValue(false);
+    vi.spyOn(SullaSettingsModel, 'setSetting').mockImplementation(async(property: string) => {
+      written.push(property);
+    });
+    try {
+      await SullaSettingsModel.bootstrap();
+    } finally {
+      (SullaSettingsModel as unknown as { isReady: boolean }).isReady = false;
+    }
+
+    expect(written).toEqual(['heartbeatEnabled', 'sullaInstalled']);
+  });
+
   // risk: irreversible side effect (B1) — an installed system never gets a new secret because the file lacks it
   it('on an installed system without the secret and no database to ask, fails instead of generating', async() => {
     await fs.writeFile(file, JSON.stringify({ sullaInstalled: true }));

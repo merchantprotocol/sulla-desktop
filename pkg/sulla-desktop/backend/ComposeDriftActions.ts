@@ -34,7 +34,12 @@ export class ComposeDriftActions {
   /**
    * Before a drifted container is recreated: if it is still in its start
    * period (Files may be applying a schema migration), give it a bounded wait
-   * to become healthy so the recreate never interrupts a migration. Never throws.
+   * to become healthy so the recreate never interrupts a migration.
+   *
+   * A service that may be migrating (one with its own settle timeout) and is
+   * still not healthy after it throws, which skips the recreate (the
+   * BeforeRecreate contract); the next sweep or boot applies it. Other
+   * services are only logged and recreated.
    */
   async settle(target: ComposeServiceTarget): Promise<void> {
     const health = (await this.docker.run([
@@ -42,10 +47,18 @@ export class ComposeDriftActions {
     ]).catch(() => '')).trim();
 
     if (health !== 'starting') return;
+    const migrating = target.service in ComposeDriftActions.SETTLE_TIMEOUT_SEC;
     const timeout = ComposeDriftActions.SETTLE_TIMEOUT_SEC[target.service] ?? ComposeDriftActions.DEFAULT_SETTLE_TIMEOUT_SEC;
 
-    await this.waitHealthy(target, timeout).catch((error: unknown) => {
-      this.logger.warn(`[Sulla] ${ target.service } did not become healthy before its recreate: ${ (error instanceof Error ? error.message : String(error)).split('\n')[0] }`);
-    });
+    try {
+      await this.waitHealthy(target, timeout);
+    } catch (error) {
+      const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0];
+
+      if (migrating) {
+        throw new Error(`${ target.service } is still starting after ${ timeout }s (it may be migrating); leaving its recreate to the next sweep: ${ reason }`);
+      }
+      this.logger.warn(`[Sulla] ${ target.service } did not become healthy before its recreate: ${ reason }`);
+    }
   }
 }

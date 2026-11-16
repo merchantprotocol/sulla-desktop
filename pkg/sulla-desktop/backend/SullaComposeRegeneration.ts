@@ -27,8 +27,14 @@ export interface RegenerationOptions {
  * repair recreated it from the new file at an arbitrary time. Here the sweep
  * covers all of them, now. Containers that are not running are left alone.
  * Runs are serialised.
+ *
+ * PostgreSQL and Redis are never swept: POSTGRES_PASSWORD has no effect on an
+ * existing data directory (trust auth inside the guest), so recreating them
+ * mid-session is a pure outage. Boot applies their definition.
  */
 export class SullaComposeRegeneration {
+  static readonly NEVER_SWEPT: ReadonlySet<string> = new Set(['postgres', 'redis']);
+
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -53,7 +59,7 @@ export class SullaComposeRegeneration {
       await beforeSweep();
       checkpoint();
     }
-    const outcomes = await this.drift.reconcileAll(targets);
+    const outcomes = await this.drift.reconcileAll(targets.filter(target => !SullaComposeRegeneration.NEVER_SWEPT.has(target.service)));
     const recreated = outcomes.filter(outcome => outcome.kind === 'recreated').map(outcome => outcome.service);
 
     this.logger.log(`[Sulla] Compose regenerated (${ reason }); ${ recreated.length ? `recreated drifted: ${ recreated.join(', ') }` : 'no running container drifted' }`);

@@ -220,10 +220,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** Every compose service with a fixed container_name, from the last prepared compose file. */
   #composeTargets: ComposeServiceTarget[] = [];
   readonly #guestDocker: DockerCli = { run: args => this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', ...args) };
-  /** Guest Docker that never logs command output: used where stdout carries the service secret. */
+  /**
+   * Guest Docker that never logs command output: used where stdout carries the service secret.
+   * Bounded; SIGKILL because spawnFile treats a SIGTERM exit as success (empty output would read as "fresh").
+   */
   readonly #quietGuestDocker: DockerCli = {
     run: async args => (await childProcess.spawnFile(paths.sullaRuntime, this.guestExecArgs({ root: true }, ['docker', ...args]),
-      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })).stdout,
+      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'], timeout: GuestServiceSecretInstallState.DOCKER_TIMEOUT_MS, killSignal: 'SIGKILL' })).stdout,
   };
   /** Finds compose containers by label and heals names left by an interrupted re-create. */
   readonly #composeContainers = new ComposeContainerNameReconciler(this.#guestDocker, 'sulla', console);
