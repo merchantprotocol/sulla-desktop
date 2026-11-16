@@ -14,7 +14,7 @@
  */
 
 import type { ToolExecutionContext } from '../executionContext';
-import { requireConfiguredCredentialBroker } from '../../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../../vault-broker';
 
 const DEFAULT_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
 
@@ -26,7 +26,7 @@ export class MobileApiClient {
     if (ctx.credential_scope?.integration_id !== 'sulla-cloud' || ctx.credential_scope.account_id !== accountId) {
       throw new Error('Sulla Cloud requires an exact signed credential scope from the trusted tool boundary');
     }
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const result = await broker.execute(broker.requestFor(ctx, {
       operation: 'sulla-cloud.api',
       ref:       { integrationId: 'sulla-cloud', accountId },

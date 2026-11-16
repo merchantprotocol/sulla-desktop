@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 
 import {
-  createProviderCliBridge,
+  ProviderCliBridgeService,
   type BrokerClaims,
   type BrokerExecuteRequest,
   type ProviderCliBridgeLease,
@@ -102,7 +102,7 @@ export async function createCodexPendingMemoryBridge(
   };
 
   try {
-    const lease = await createProviderCliBridge({
+    const lease = await new ProviderCliBridgeService().create({
       context:        renewed(),
       provider:       'codex',
       accountId:      'first-run',

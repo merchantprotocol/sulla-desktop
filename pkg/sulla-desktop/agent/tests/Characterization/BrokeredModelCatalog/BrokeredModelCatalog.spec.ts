@@ -21,6 +21,7 @@ vi.mock('../../../services/IntegrationService', () => ({
 }));
 
 vi.mock('../../../../vault-broker', () => ({
+  configuredVaultBrokerProvider: {
   issueLocalBrokerContext: async(input: Record<string, unknown>) => ({ ...input, brokered: true }),
   requireConfiguredCredentialBroker: () => ({
     requestFor: (_context: unknown, request: Record<string, unknown>) => request,
@@ -29,6 +30,7 @@ vi.mock('../../../../vault-broker', () => ({
       return { status: 200, body: { provider: (request.ref as { integrationId: string }).integrationId, models: ['synthetic-model'] } };
     },
   }),
+  },
 }));
 
 vi.mock('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: async() => 'synthetic-device' }));

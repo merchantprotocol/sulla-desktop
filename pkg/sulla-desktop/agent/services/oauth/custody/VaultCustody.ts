@@ -5,7 +5,7 @@
 
 import { getIntegrationService } from '../../IntegrationService';
 import type { OAuthTokenSet } from '../../../integrations/oauth';
-import { requireConfiguredCredentialBroker } from '@pkg/vault-broker';
+import { configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import type { TokenAccount, TokenCustody, TokenMetadata } from './TokenCustody';
 
 export class VaultCustody implements TokenCustody {
@@ -22,7 +22,7 @@ export class VaultCustody implements TokenCustody {
   }
   async listRefreshable(): Promise<TokenMetadata[]> {
     const { integrations } = await import('../../../integrations/catalog');
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const result: TokenMetadata[] = [];
     for (const [integrationId, integration] of Object.entries(integrations)) {
       const fallbackProviderId = integration.oauthProviderId;

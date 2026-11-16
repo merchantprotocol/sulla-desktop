@@ -9,7 +9,7 @@ import { withGitHubBrokerRemote } from '../../../../tools/github/gitBrokerTransp
 const { executeStream, info } = vi.hoisted(() => ({ executeStream: vi.fn(), info: vi.fn() }));
 vi.mock('@pkg/utils/logging', () => ({ default: { background: { info } } }));
 vi.mock('../../../../../vault-broker', () => ({
-  requireConfiguredCredentialBroker: () => ({ requestFor: (_ctx: unknown, request: unknown) => request, executeStream }),
+  configuredVaultBrokerProvider: { requireConfiguredCredentialBroker: () => ({ requestFor: (_ctx: unknown, request: unknown) => request, executeStream }) },
 }));
 vi.mock('../../../../services/IntegrationService', () => ({
   getIntegrationService: () => ({ getActiveAccountId: async() => 'account' }),
