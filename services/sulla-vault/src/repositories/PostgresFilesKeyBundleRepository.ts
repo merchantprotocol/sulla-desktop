@@ -39,6 +39,9 @@ export class PostgresFilesKeyBundleRepository {
    */
   async withCollectionLock<T>(principalId: string, collectionId: string, work: (connection: Queryable) => Promise<T>): Promise<T> {
     const client = await this.db.connect();
+    // A connection whose ROLLBACK failed may still hold the transaction and advisory lock:
+    // release it with the error so the pool destroys it instead of handing it out again.
+    let brokenConnection: Error | undefined;
     try {
       await client.query('BEGIN');
       await client.query(
@@ -49,10 +52,14 @@ export class PostgresFilesKeyBundleRepository {
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query('ROLLBACK');
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        brokenConnection = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError));
+      }
       throw error;
     } finally {
-      client.release();
+      client.release(brokenConnection);
     }
   }
 

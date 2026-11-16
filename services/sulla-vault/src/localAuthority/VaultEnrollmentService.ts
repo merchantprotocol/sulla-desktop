@@ -14,12 +14,20 @@ import { transportWrap } from '../filesCloudEscrow.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { LocalVaultError } from './LocalVaultError.js';
 
+type StagedEnrollment = LocalAuthorityHost['pendingVaultEnrollments'] extends Map<string, infer S> ? S : never;
+
 /**
  * Device enrollment hand-offs: wraps the unlocked user key for an approved Cloud enrollment or
  * device-approval request, and adopts/commits a vault received from another device.
  * Moved verbatim from LocalVaultAuthority (E9); vault state lives on the host.
  */
 export class VaultEnrollmentService {
+  /** How long an adopted enrollment waits for its commit before its keys are zeroed. */
+  private static readonly STAGED_TTL_MS = 60_000;
+
+  /** One expiry timer per staged enrollment, so its keys are zeroed at the TTL even if nothing else runs. */
+  private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   constructor(private readonly host: LocalAuthorityHost) {}
 
   async wrapVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:TransportEnvelope}> {
@@ -43,6 +51,11 @@ export class VaultEnrollmentService {
 
   async adoptVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}> {
     this.host.requireApprovalIdentity(serviceId,token);
+    // A lock while any await below is pending wipes staged enrollments: never stage after that.
+    const generation=this.host.generation;
+    this.discardExpiredEnrollments();
+    // A repeat adopt replaces the staged copy; if it fails, nothing stale for this request survives.
+    this.discardPendingEnrollment(input.requestId);
     if(!await this.host.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists');
     const masterKey=Buffer.from(input.masterKey||'','base64url');
     if(masterKey.byteLength!==32)throw new LocalVaultError('invalid_unlock_material',400,'Account master key is invalid');
@@ -55,17 +68,18 @@ export class VaultEnrollmentService {
       userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
       const env=await this.host.codecProvider.get(); env.verifyBundle(payload.bundle,userKey);
       if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
-      const wrapped=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
+      const wrapped=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); const keysMatch=timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)); wrapped.fill(0); if(!keysMatch)throw new Error('bundle key mismatch');
       privateKey=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
+      this.host.requireStableGeneration(generation);
       this.discardPendingEnrollment(input.requestId);
       this.discardExpiredEnrollments();
-      this.host.pendingVaultEnrollments.set(input.requestId,{expiresAt:Date.now()+60_000,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
+      this.stage(input.requestId,{expiresAt:Date.now()+VaultEnrollmentService.STAGED_TTL_MS,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
       return{bundleMac:payload.bundle.mac,headMac:payload.head.mac};
     }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0)}
   }
 
   async commitVaultEnrollment(serviceId:string,token:string|undefined,requestId:string):Promise<{adopted:true}>{
-    this.host.requireApprovalIdentity(serviceId,token); const staged=this.host.pendingVaultEnrollments.get(requestId); this.host.pendingVaultEnrollments.delete(requestId);
+    this.host.requireApprovalIdentity(serviceId,token); this.discardExpiredEnrollments(); const staged=this.take(requestId);
     if(!staged||staged.expiresAt<Date.now()){
       if(staged)VaultEnrollmentService.erase(staged);
       throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
@@ -123,21 +137,45 @@ export class VaultEnrollmentService {
   discardAllPendingEnrollments(): void {
     for (const staged of this.host.pendingVaultEnrollments.values()) VaultEnrollmentService.erase(staged);
     this.host.pendingVaultEnrollments.clear();
+    for (const timer of this.expiryTimers.values()) clearTimeout(timer);
+    this.expiryTimers.clear();
+  }
+
+  private stage(requestId: string, staged: StagedEnrollment): void {
+    this.host.pendingVaultEnrollments.set(requestId, staged);
+    const timer = setTimeout(() => this.expire(requestId, staged), VaultEnrollmentService.STAGED_TTL_MS);
+    timer.unref?.();
+    this.expiryTimers.set(requestId, timer);
+  }
+
+  /** Removes a staged enrollment from the map and cancels its expiry timer; the caller owns erasing it. */
+  private take(requestId: string): StagedEnrollment | undefined {
+    const staged = this.host.pendingVaultEnrollments.get(requestId);
+    this.host.pendingVaultEnrollments.delete(requestId);
+    const timer = this.expiryTimers.get(requestId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.expiryTimers.delete(requestId);
+    return staged;
+  }
+
+  /** Expiry timer callback: zeroes the enrollment it was armed for, unless it was already replaced or taken. */
+  private expire(requestId: string, staged: StagedEnrollment): void {
+    if (this.host.pendingVaultEnrollments.get(requestId) !== staged) return;
+    this.take(requestId);
+    VaultEnrollmentService.erase(staged);
   }
 
   private discardPendingEnrollment(requestId: string): void {
-    const staged = this.host.pendingVaultEnrollments.get(requestId);
-    if (!staged) return;
-    VaultEnrollmentService.erase(staged);
-    this.host.pendingVaultEnrollments.delete(requestId);
+    const staged = this.take(requestId);
+    if (staged) VaultEnrollmentService.erase(staged);
   }
 
   private discardExpiredEnrollments(): void {
     const now = Date.now();
-    for (const [requestId, staged] of this.host.pendingVaultEnrollments) {
+    for (const [requestId, staged] of [...this.host.pendingVaultEnrollments]) {
       if (staged.expiresAt < now) {
+        this.take(requestId);
         VaultEnrollmentService.erase(staged);
-        this.host.pendingVaultEnrollments.delete(requestId);
       }
     }
   }
