@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { requireConfiguredCredentialBroker } from '../../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../../vault-broker';
 import { BaseTool, ToolResponse } from '../base';
 
 export class VaultUpdatePasswordWorker extends BaseTool {
@@ -12,7 +12,7 @@ export class VaultUpdatePasswordWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     if (!this.executionContext) throw new Error('Vault writes require a verified execution context');
     if (input.password === undefined && input.generate !== true) return { successBoolean: false, responseString: 'Provide password or generate:true.' };
-    const result = await requireConfiguredCredentialBroker().updateItem(this.executionContext, {
+    const result = await configuredVaultBrokerProvider.requireConfiguredCredentialBroker().updateItem(this.executionContext, {
       itemId: input.item_id, password: input.password, generate: input.generate === true,
       title: input.title, username: input.username, url: input.url, notes: input.notes, folder: input.folder, tags: input.tags,
     });

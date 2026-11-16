@@ -17,7 +17,7 @@ vi.mock('../../../../main/deviceIdentity', () => ({ getDesktopDeviceId: async() 
 vi.mock('../../../../main/cloud/deviceKey', () => ({ getDevicePublicKey: () => { throw new Error('interim key store must not be used') } }));
 vi.mock('../../../../main/sullaCloudAuth', () => ({ getCurrentUserId: async() => 'user-0001' }));
 vi.mock('../../../../main/cloud/cloudFetch', () => ({ cloudRequest: (method: string, url: string, options: any) => env.cloud.request(method, url, options) }));
-vi.mock('@pkg/vault-broker', () => ({ getConfiguredApprovalClient: () => env.broker }));
+vi.mock('@pkg/vault-broker', () => ({ configuredVaultBrokerProvider: { getConfiguredApprovalClient: () => env.broker } }));
 vi.mock('@pkg/sulla', () => ({ onVaultUnlocked: async() => undefined }));
 vi.mock('electron', () => ({ BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] }, dialog: { showMessageBox: async() => ({ response: 1 }) } }));
 

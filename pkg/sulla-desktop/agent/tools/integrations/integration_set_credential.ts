@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { integrations } from '../../integrations/catalog';
-import { requireConfiguredCredentialBroker, usesContainerVaultAuthority } from '../../../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 import { AGENT_PROTECTED_PROPERTIES } from '../../services/vaultAccessPolicy';
 import { BaseTool, ToolResponse } from '../base';
@@ -28,7 +28,7 @@ export class IntegrationSetCredentialWorker extends BaseTool {
       };
     }
 
-    if (AGENT_PROTECTED_PROPERTIES.has(String(property).trim())) {
+    if (AGENT_PROTECTED_PROPERTIES.includes(String(property).trim())) {
       return {
         successBoolean: false,
         responseString: `"${ property }" controls what the AI may access and can only be changed by the user in the vault UI.`,
@@ -41,7 +41,7 @@ export class IntegrationSetCredentialWorker extends BaseTool {
 
       if (usesContainerVaultAuthority()) {
         if (!this.executionContext) throw new Error('Vault writes require a verified execution context');
-        const result = await requireConfiguredCredentialBroker().setIntegrationCredential(this.executionContext, {
+        const result = await configuredVaultBrokerProvider.requireConfiguredCredentialBroker().setIntegrationCredential(this.executionContext, {
           integrationId: String(account_type), accountId: account_id || 'default', property: String(property), value: String(value),
         });
         return {

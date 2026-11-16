@@ -3,17 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+// Delegating shims for callers outside the E5 S5 slice. The policy is Services/ProtectedFilePolicy.ts
+// and its SQL is Repositories/ProtectedFileRepository.ts; each call builds them from the passed-in db.
+import { ProtectedFileRepository } from './Repositories/ProtectedFileRepository.js';
+import { ProtectedFilePolicy } from './Services/ProtectedFilePolicy.js';
+
 import type pg from 'pg';
 
-export function isProtectedPath(path:string):boolean {
-  return path.replaceAll('\\', '/').split('/').some(part => {
-    const value = part.toLowerCase();
-    return value === 'master.key' || value.includes('wallet') || value === 'vault' || value === 'vaults';
-  });
-}
-export function protectedPathError():Error { return Object.assign(new Error('Protected system file'), { status: 403 }) }
-export function isAuditLogPath(path:string):boolean { return /^audit\/(files|vault)\/[A-Za-z0-9_-]+\.jsonl$/.test(path) }
-export async function assertUnprotectedFile(db:Pick<pg.Pool, 'query'>, file:{ id:string; path:string }):Promise<void> {
-  const systemLog=isAuditLogPath(file.path) && Boolean((await db.query("SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1 AND c.system_area='logs'",[file.id])).rowCount);
-  if ((isProtectedPath(file.path) && !systemLog) || (await db.query('SELECT 1 FROM files_protected_files WHERE file_id=$1', [file.id])).rowCount) throw protectedPathError();
+export { ProtectedFilePolicy } from './Services/ProtectedFilePolicy.js';
+
+export function isProtectedPath(path:string):boolean { return ProtectedFilePolicy.isProtectedPath(path) }
+export function protectedPathError():Error { return ProtectedFilePolicy.error() }
+export function isAuditLogPath(path:string):boolean { return ProtectedFilePolicy.isAuditLogPath(path) }
+export function assertUnprotectedFile(db:Pick<pg.Pool, 'query'>, file:{ id:string; path:string }):Promise<void> {
+  return new ProtectedFilePolicy(new ProtectedFileRepository(db)).assertUnprotected(file);
 }
