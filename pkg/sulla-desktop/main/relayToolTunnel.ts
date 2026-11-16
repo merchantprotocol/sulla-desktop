@@ -14,7 +14,7 @@ import { getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 import type { RelayToolExecutionContext, RelayToolResult } from '@pkg/runtime/relayProtocol';
 import { RelayToolTunnel } from '@pkg/runtime/relayTunnelClient';
 import Logging from '@pkg/utils/logging';
-import { getLocalVaultPrincipalId, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.background;
@@ -113,7 +113,7 @@ export async function startLocalToolTunnel(): Promise<RelayToolTunnel> {
   if (!secret) throw new Error('Local tool relay cannot start before the Desktop API token is ready');
   const deviceId = await getDesktopDeviceId();
   const userId = usesContainerVaultAuthority()
-    ? await getLocalVaultPrincipalId()
+    ? await configuredVaultBrokerProvider.getLocalVaultPrincipalId()
     : await getRelayUserId();
   if (!userId) throw new Error('Local tool relay requires an authenticated owner identity');
   localTunnel = new RelayToolTunnel({

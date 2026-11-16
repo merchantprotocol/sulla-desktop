@@ -5,7 +5,7 @@
 
 import { FileContentIntegrityError } from './fileStream.js';
 
-export interface ContentReadFailure { route:string; fileId?:string; versionId?:string | null }
+export interface ContentReadFailure { route:string; fileId?:string; versionId?:string | null; shareId?:string }
 type Sink = (line:string) => void;
 
 /**
@@ -41,6 +41,6 @@ export class ContentReadFailureLog {
     const chunkId = error instanceof FileContentIntegrityError ? error.chunkId : undefined;
     const message = String((error as { message?:unknown })?.message ?? error).slice(0, 300);
     this.sink(`[SullaFiles] content read failed ${ JSON.stringify({ cause: ContentReadFailureLog.causeClass(error), route: failure.route,
-      fileId: failure.fileId ?? null, versionId: failure.versionId ?? null, ...(chunkId ? { chunkId } : {}), error: message }) }`);
+      fileId: failure.fileId ?? null, versionId: failure.versionId ?? null, ...(failure.shareId ? { shareId: failure.shareId } : {}), ...(chunkId ? { chunkId } : {}), error: message }) }`);
   }
 }

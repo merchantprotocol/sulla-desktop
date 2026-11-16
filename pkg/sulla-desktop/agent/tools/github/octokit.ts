@@ -5,11 +5,7 @@
 
 import { Octokit } from '@octokit/rest';
 
-import {
-  issueLocalBrokerContext,
-  requireConfiguredCredentialBroker,
-  usesContainerVaultAuthority,
-} from '../../../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import { GitHubLogStreamFetcher } from './githubLogStreamFetcher';
@@ -31,7 +27,7 @@ export async function createGitHubOctokit(ctx: ToolExecutionContext | undefined)
     return new Octokit({ auth: token.value });
   }
   if (!ctx) throw new Error('GitHub vault routing requires a verified tool execution context');
-  const broker = requireConfiguredCredentialBroker();
+  const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
   const logStreams = new GitHubLogStreamFetcher();
   if (ctx.credential_scope?.integration_id !== 'github' || ctx.credential_scope.account_id !== accountId) {
     throw new Error('GitHub vault routing requires a signed credential scope for the active account');
@@ -76,7 +72,7 @@ export async function createGitHubOctokit(ctx: ToolExecutionContext | undefined)
 export async function createGitHubServiceOctokit(agentId: string): Promise<Octokit> {
   if (!usesContainerVaultAuthority()) return createGitHubOctokit(undefined);
   const accountId = await getIntegrationService().getActiveAccountId('github');
-  const ctx = await issueLocalBrokerContext({
+  const ctx = await configuredVaultBrokerProvider.issueLocalBrokerContext({
     agentId,
     podId:          'desktop-main',
     credentialScope: { integration_id: 'github', account_id: accountId },

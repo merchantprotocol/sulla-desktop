@@ -15,12 +15,7 @@
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
-import {
-  issueLocalBrokerContext,
-  requireConfiguredCredentialBroker,
-  usesContainerVaultAuthority,
-  VaultBrokerError,
-} from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, VaultBrokerError, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import type { LocalVaultBrokerClient, ToolExecutionContext } from '@pkg/vault-broker';
 
 export const SULLA_CLOUD_INTEGRATION_ID = 'sulla-cloud';
@@ -51,8 +46,8 @@ export function cloudRelayUsesVault(): boolean {
 }
 
 const defaultDeps: VaultRelayDeps = {
-  broker:       () => requireConfiguredCredentialBroker(),
-  issueContext: (accountId, signal) => issueLocalBrokerContext({
+  broker:       () => configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
+  issueContext: (accountId, signal) => configuredVaultBrokerProvider.issueLocalBrokerContext({
     agentId:         'sulla',
     podId:           'desktop-relay',
     credentialScope: { integration_id: SULLA_CLOUD_INTEGRATION_ID, account_id: accountId },

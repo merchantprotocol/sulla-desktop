@@ -15,7 +15,7 @@ import { ClaudeOAuthCoordinator } from '@pkg/main/oauth/claude/ClaudeOAuthCoordi
 import { claudeOAuthFailure, type ClaudeOAuthResult } from '@pkg/utils/claudeOAuthContract';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
-import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 
 const CLAUDE_INTEGRATION_ID = 'claude-code';
 const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
@@ -29,7 +29,7 @@ function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
 
 async function persistTokenToVault(token: string): Promise<void> {
   if (usesContainerVaultAuthority()) {
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
 
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.importIntegrationAccount(CLAUDE_INTEGRATION_ID, {
