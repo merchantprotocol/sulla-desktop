@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { LocalVaultState } from './LocalVaultStatusContracts.js';
+
 /** Bootstrap and cache-update handshake wire shapes and the exact HMAC / key-derivation input strings. */
 export interface BootstrapChallengeRequest {
   callerId:    string;

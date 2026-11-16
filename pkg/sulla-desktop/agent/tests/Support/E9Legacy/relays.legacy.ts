@@ -1,6 +1,5 @@
 // verbatim copy of services/sulla-vault/src/relays.ts at ddbe28884 for E9 equivalence specs; delete in final cleanup
 // Only relative import paths are rewritten to point at the real modules under services/sulla-vault/src.
-/* eslint-disable */
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
