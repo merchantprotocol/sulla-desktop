@@ -19,7 +19,13 @@ const packDir = path.resolve(arg('--pack') || path.join(here, '../../examples/us
 const slug = path.basename(packDir);
 const cues: { cue:string; skills:string[] }[] = JSON.parse(fs.readFileSync(arg('--cues') || path.join(here, 'pack-cues.json'), 'utf8'));
 const database = `sulla_pack_test_${ process.pid }`;
-const adminUrl = process.env.SULLA_SEED_EVAL_DATABASE_URL || 'postgresql://sulla:sulla_dev_password@192.168.5.2:30116/postgres';
+// Required: an admin URL carrying the install's service secret. There is no
+// default password; PostgreSQL network logins use scram-sha-256.
+const adminUrl = process.env.SULLA_SEED_EVAL_DATABASE_URL || '';
+if (!adminUrl) {
+  console.error('Set SULLA_SEED_EVAL_DATABASE_URL to an admin URL, e.g. postgresql://sulla:<service secret>@192.168.5.2:30116/postgres');
+  process.exit(2);
+}
 const scratch = new URL(adminUrl); scratch.pathname = `/${ database }`;
 process.env.SULLA_DATABASE_URL = scratch.toString();
 process.env.SULLA_MEMORY_SEED_DIR ||= path.resolve(here, '../../resources/memory-seed');

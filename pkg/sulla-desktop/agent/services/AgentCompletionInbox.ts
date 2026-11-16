@@ -34,6 +34,12 @@ export const setCompletionInboxStopped = (...args: Parameters<typeof agentComple
   agentCompletionProvider.inbox.setStopped(...args);
 export const requeueAgentCompletion = (...args: Parameters<typeof agentCompletionProvider.inbox.requeue>) =>
   agentCompletionProvider.inbox.requeue(...args);
+export const requeueAgentCompletionAfterFailure = (...args: Parameters<typeof agentCompletionProvider.inbox.requeueAfterFailure>) =>
+  agentCompletionProvider.inbox.requeueAfterFailure(...args);
+export const requeueAgentCompletionQuietly = (...args: Parameters<typeof agentCompletionProvider.inbox.requeueQuietly>) =>
+  agentCompletionProvider.inbox.requeueQuietly(...args);
+export const releaseAgentCompletionClaim = (...args: Parameters<typeof agentCompletionProvider.inbox.releaseClaim>) =>
+  agentCompletionProvider.inbox.releaseClaim(...args);
 export const takeAgentCompletions = (...args: Parameters<typeof agentCompletionProvider.inbox.take>) =>
   agentCompletionProvider.inbox.take(...args);
 export const formatCompletionBatch = (...args: Parameters<typeof agentCompletionProvider.inbox.format>) =>

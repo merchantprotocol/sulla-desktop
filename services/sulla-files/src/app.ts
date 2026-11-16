@@ -284,7 +284,8 @@ export class FilesApplication {
     const fuseFiles = new FuseFileRoutes(db, accessGate, managers, versionWriter, transactions, fuseWrites, requestAudit, operationAccess);
     fuseFiles.registerSnapshot(app);
     const fuseTree = new FuseTreeRepository(db);
-    new FuseReadRoutes(accessGate, fuseTree, new FuseTreeSnapshotCache(fuseTree, config.userId), managers.fuseExperiment, config.userId).register(app);
+    // Pass the live config, never config.userId: Vault unlock re-owns Files after the app is built.
+    new FuseReadRoutes(accessGate, fuseTree, new FuseTreeSnapshotCache(fuseTree, config), managers.fuseExperiment, config).register(app);
     fuseFiles.register(app);
     new FuseContentRoutes(db, config, store, accessGate, managers, versionWriter, transactions, fuseWrites, textMerger, automergeTexts, liveText, requestAudit, contentReadFailures).register(app);
     new FuseMetadataRoutes(db, accessGate, transactions, new FileMetadataRepository(db)).register(app);

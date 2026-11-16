@@ -180,5 +180,20 @@ describe('ContainerDriftReconciler', () => {
 
     expect(order).toEqual(['settle sulla_files', 'recreate sulla_files']);
   });
-});
 
+  // risk: data exposure — the postgres-auth gate must see an unreadable hash as "unknown", not as "unchanged"
+  it('reports drift status without recreating, and an unreadable desired hash as unknown', async() => {
+    const { docker, recreated, reconciler } = setup();
+
+    docker.desired.set('sulla_files', 'new').set('tools', 'same');
+    docker.containers.set('sulla_files', { running: true, hash: 'old' })
+      .set('sulla_tools', { running: true, hash: 'same' })
+      .set('sulla_vault', { running: true, hash: 'vault' });
+
+    expect(await reconciler.status(FILES)).toBe('drifted');
+    expect(await reconciler.status(TOOLS)).toBe('unchanged');
+    expect(await reconciler.status(VAULT)).toBe('unknown');
+    expect(await reconciler.status({ service: 'gone', container: 'sulla_gone' })).toBe('not-running');
+    expect(recreated).toEqual([]);
+  });
+});

@@ -1124,18 +1124,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/tools/github/heartbeat_claim_issue.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "pkg/sulla-desktop/agent/tools/github/heartbeat_new_issues.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "pkg/sulla-desktop/agent/tools/github/manifests.ts": {
       "rules": {
         "long-file": 791
@@ -1153,12 +1141,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/tools/marketplace/list_local.ts": {
-      "rules": {
-        "raw-sql": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "pkg/sulla-desktop/agent/tools/memorypacks/common.ts": {
       "rules": {
@@ -2004,12 +1986,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/main/cloudEmailContinueDecision.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/cloudflaredBinary.ts": {
       "rules": {
         "mutable-state": 1,
@@ -2073,12 +2049,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/main/e2eTrace.ts": {
-      "rules": {
-        "procedural-module": 2
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/errorReporter.ts": {
       "rules": {
         "mutable-state": 1,
@@ -2111,12 +2081,6 @@
         "long-file": 1435
       },
       "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "pkg/sulla-desktop/main/failureLifecycle.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/fileSearchService.ts": {
       "rules": {
@@ -2170,19 +2134,6 @@
       "rules": {
         "mutable-state": 3,
         "procedural-module": 3
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/installId.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/installPing.ts": {
-      "rules": {
-        "mutable-state": 1,
-        "procedural-module": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
@@ -2372,12 +2323,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/main/statefulCliWorkflowTool.ts": {
-      "rules": {
-        "procedural-module": 2
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/sullaAccountsClient.ts": {
       "rules": {
         "long-file": 494,
@@ -2499,24 +2444,12 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/main/support/supportIdentity.ts": {
-      "rules": {
-        "procedural-module": 3
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/supportRemote.ts": {
       "rules": {
         "long-file": 553,
         "mutable-state": 1
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/main/supportTimeline.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/sync/syncDispatcher.ts": {
       "rules": {
@@ -2736,7 +2669,7 @@
     "pkg/sulla-desktop/main/update/index.ts": {
       "rules": {
         "long-file": 443,
-        "mutable-state": 6,
+        "mutable-state": 4,
         "procedural-module": 3
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
@@ -3058,13 +2991,6 @@
         "long-file": 507
       },
       "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "pkg/sulla-desktop/pages/chat/composables/useArtifactMentions.ts": {
-      "rules": {
-        "mutable-state": 1,
-        "procedural-module": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/pages/chat/composables/useDragDrop.ts": {
       "rules": {
