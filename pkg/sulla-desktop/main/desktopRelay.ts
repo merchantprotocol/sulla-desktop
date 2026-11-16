@@ -57,6 +57,7 @@ import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 import { RelayLivenessWatchdog } from '@pkg/main/relayLivenessWatchdog';
 import { DesktopRelayStartupRestorer } from '@pkg/main/cloud/session/DesktopRelayStartupRestorer';
+import { DesktopRelayInboundMessageRouter } from '@pkg/main/cloud/session/DesktopRelayInboundMessageRouter';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
 
 
@@ -552,119 +553,52 @@ export class DesktopRelayClient {
   }
 
   private async handleMessage(raw: string, sourceSocket = this.ws, sourceGeneration = this.openGeneration) {
-    let msg: IncomingMessage;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      console.warn('[DesktopRelay] Non-JSON message received');
-      return;
-    }
-
-    if (msg.type === 'other_device_signin_code') {
-      if (!msg.requestId || !/^\d{6}$/.test(msg.code ?? '') || !msg.expiresAt || !msg.requestingDeviceId) return;
-      if (msg.requestingDeviceId === await getDesktopDeviceId()) return;
-      const payload = { requestId: msg.requestId, code: msg.code!, expiresAt: msg.expiresAt, requestingDeviceId: msg.requestingDeviceId, requestingDeviceName: msg.requestingDeviceName ?? 'another device' };
-      try {
-        const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
-        if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY(payload.requestingDeviceName) }).show();
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
-        }
-      } catch (err) { console.warn('[DesktopRelay] Could not surface sign-in approval:', err); }
-      console.info(`[DesktopRelay] Received other-device sign-in approval ${msg.requestId}`);
-      return;
-    }
-
-    if (msg.type === 'connected') {
-      // ACK from the DO — already handled via 'open'. Also means we (re)joined
-      // the room; if mobile is already there keepalives can resume.
-      this.mobilePeerOnline = true;
-      for (const convId of this.activeConversations) {
-        this.startKeepalive(convId);
-      }
-      return;
-    }
-
-    if (msg.type === 'pong') {
-      // Keepalive reply from the DO's auto-response. Watchdog already
-      // reset lastInboundAt on the message event above; nothing else to do.
-      return;
-    }
-
-    if (msg.type === 'error') {
-      if (msg.reason === 'peer_offline') {
-        // Mobile dropped out of the room. Keep the agent run alive and queue
-        // completion frames; just stop burning keepalive traffic until the
-        // peer rejoins (connected frame / next successful send).
-        if (this.mobilePeerOnline) {
-          console.warn('[DesktopRelay] Mobile peer offline — pausing keepalives until reconnect');
-        }
-        this.mobilePeerOnline = false;
-        for (const t of this.keepaliveTimers.values()) clearInterval(t);
-        this.keepaliveTimers.clear();
-        return;
-      }
-      console.warn(`[DesktopRelay] Relay error: ${ msg.reason }`);
-      return;
-    }
-
-    if (msg.type === 'companion_request') {
-      if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      await this.runCompanionRequest(msg, frame => this.send(frame));
-      return;
-    }
-
-    if (msg.type === 'share_fetch') {
-      if (!msg.requestId || !msg.linkId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      if (!sourceSocket) return;
-      await this.serveShare(msg, sourceSocket, sourceGeneration);
-      return;
-    }
-
-    if (msg.type === 'share_fetch_cancel') {
-      if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      const request = this.shareRequests.get(msg.requestId);
-      if (request && request.socket === sourceSocket && request.generation === sourceGeneration && this.isActiveShareRequest(request)) {
-        request.controller.abort();
-        this.shareRequests.delete(msg.requestId);
-      }
-      return;
-    }
-
-    if (msg.type === 'chat') {
-      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
-      // When mobile targets a specific desktop, only the matching device
-      // should handle the request. This is enforced client-side because the
-      // relay DO broadcasts to every desktop peer in the room.
-      if (msg.targetDeviceId) {
+    const router = new DesktopRelayInboundMessageRouter({
+      deviceId: getDesktopDeviceId,
+      surfaceSignInCode: payload => {
         try {
-          const myId = await getDesktopDeviceId();
-          if (msg.targetDeviceId !== myId) {
-            console.log(`[DesktopRelay] Ignoring chat — addressed to ${ msg.targetDeviceId }, I am ${ myId }`);
-            return;
+          const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
+          if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY(payload.requestingDeviceName) }).show();
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
           }
-        } catch (err) {
-          console.warn('[DesktopRelay] device_id lookup failed; refusing targeted chat:', err);
+        } catch (err) { console.warn('[DesktopRelay] Could not surface sign-in approval:', err); }
+      },
+      connected: () => {
+        this.mobilePeerOnline = true;
+        for (const convId of this.activeConversations) this.startKeepalive(convId);
+      },
+      error: reason => {
+        if (reason === 'peer_offline') {
+          if (this.mobilePeerOnline) console.warn('[DesktopRelay] Mobile peer offline — pausing keepalives until reconnect');
+          this.mobilePeerOnline = false;
+          for (const timer of this.keepaliveTimers.values()) clearInterval(timer);
+          this.keepaliveTimers.clear();
           return;
         }
-      }
-      await this.handleChatRequest(msg);
-      return;
-    }
-
-    if (msg.type === 'cancel') {
-      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
-      this.handleCancel(msg);
-      return;
-    }
-
-    if (msg.type === 'inject') {
-      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
-      await this.handleInject(msg);
-      return;
-    }
-
-    console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
+        console.warn(`[DesktopRelay] Relay error: ${ reason }`);
+      },
+      companion: async message => this.runCompanionRequest(message as IncomingMessage, frame => this.send(frame)),
+      shareFetch: (message, socket, generation) => this.serveShare(message as IncomingMessage, socket, generation),
+      shareFetchCancel: (message, socket, generation) => {
+        const requestId = message.requestId;
+        if (typeof requestId !== 'string') return;
+        const request = this.shareRequests.get(requestId);
+        if (request && request.socket === socket && request.generation === generation && this.isActiveShareRequest(request)) {
+          request.controller.abort();
+          this.shareRequests.delete(requestId);
+        }
+      },
+      chat: message => this.handleChatRequest(message as IncomingMessage),
+      cancel: message => this.handleCancel(message as IncomingMessage),
+      inject: message => this.handleInject(message as IncomingMessage),
+      clearSecureRoute: conversationId => this.secureRoutes.delete(conversationId),
+      log: {
+        info: message => console.info(message), warn: (message, error) => console.warn(message, error),
+        error: message => console.error(message), log: message => console.log(message),
+      },
+    });
+    await router.route(raw, sourceSocket ?? undefined, sourceGeneration);
   }
 
   private async serveShare(
