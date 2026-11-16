@@ -5,8 +5,22 @@
 import { describe, expect, it } from 'vitest';
 
 import { VaultFilesStartup } from './VaultFilesStartup';
+import { VaultFilesStartupServiceProvider } from '@pkg/agent/app/Providers/VaultFilesStartupServiceProvider';
 
 describe('VaultFilesStartup', () => {
+  it('keeps one application-owned startup state instance for injected lifecycle consumers', () => {
+    // risk: availability — lifecycle reads and startup mutations must address the same shared state.
+    const provider = new VaultFilesStartupServiceProvider();
+    const lifecycleState = provider.startup;
+
+    lifecycleState.filesUnlocking();
+    lifecycleState.filesUnlocked();
+    lifecycleState.mountTokenWritten();
+
+    expect(provider.startup).toBe(lifecycleState);
+    expect(provider.startup.snapshot()).toMatchObject({ ready: true, phase: 'mount-token-written' });
+  });
+
   it('does not become ready until Files is unlocked and the mount token is written', () => {
     // risk: availability — lifecycle must not report Files ready while locked or without mount credentials.
     const startup = new VaultFilesStartup();
