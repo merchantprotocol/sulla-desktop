@@ -202,7 +202,9 @@ export class PostgresAuthHardening {
 
     const path = await this.repository.hbaPath();
 
-    if (await this.repository.readHbaFile(path) === PostgresAuthHardening.MANAGED_HBA) {
+    // Already managed and live: nothing to do. Managed on disk but not live (a
+    // switch interrupted before its reload) falls through and finishes the switch.
+    if (await this.repository.readHbaFile(path) === PostgresAuthHardening.MANAGED_HBA && await this.verifyWith(secret)) {
       return { kind: 'scram', changed: false };
     }
 

@@ -216,8 +216,23 @@ describe('PostgresAuthHardening', () => {
     events.length = 0;
 
     expect(await hardening.apply()).toEqual({ kind: 'scram', changed: false });
-    expect(events).toEqual([]);
+    expect(events).toEqual(['probe', 'probe']);
     expect(logger.lines).toContain('[PostgresAuth] state=scram');
+  });
+
+  // risk: permissions — a managed file that was written but never loaded is not reported as scram
+  it('finishes a switch that was interrupted after the write and before the reload', async() => {
+    const { events, server, hardening } = setup();
+
+    await hardening.converge();
+    server.hba = PostgresAuthHardening.MANAGED_HBA;
+    server.backup = TRUST_INSTALL_HBA;
+    events.length = 0;
+
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
+    expect(events).toEqual(['probe', 'probe', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'terminate', 'health']);
+    expect(server.loaded).toBe(PostgresAuthHardening.MANAGED_HBA);
+    expect(server.backup).toBe(TRUST_INSTALL_HBA);
   });
 
   // risk: outage — a consumer still running the old secret would lose the database
