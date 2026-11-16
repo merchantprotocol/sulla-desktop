@@ -25,6 +25,8 @@ const ALLOWED:Record<string, number> = {
   'Repositories/LegacySyncRepository.ts': 1,
   // Folder move/copy plan lock (moved from localManager.ts): one user-selected folder subtree.
   'Repositories/PathOperationPublishRepository.ts': 1,
+  // FUSE mount listing (moved from localManager.ts): one collection's mountable files.
+  'Repositories/TrackedFileRepository.ts': 1,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
   'app.ts': 9,
@@ -32,7 +34,6 @@ const ALLOWED:Record<string, number> = {
   'fileOperations.ts': 1,
   'folderOperationBatches.ts': 12,
   'legacyImport.ts': 3,
-  'localManager.ts': 1,
   'shares.ts': 1,
   'sullaCollectionMigration.ts': 4,
 };

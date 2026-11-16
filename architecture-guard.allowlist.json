@@ -4119,13 +4119,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-files/src/localManager.ts": {
-      "rules": {
-        "long-file": 1669,
-        "raw-sql": 18
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/nativeOperationJournal.ts": {
       "rules": {
         "long-file": 771,
