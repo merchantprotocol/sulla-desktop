@@ -905,7 +905,7 @@ function handleMoreMenuAction(
     break;
   case 'chatHistory':
     // Chat owns its inline history panel; from other tabs show History mode.
-    if (activeTabInfo.value?.mode === 'chat') {
+    if (orderedTabs.value.find(tab => tab.isActive)?.mode === 'chat') {
       window.dispatchEvent(new CustomEvent('sulla:toggle-chat-history'));
     } else {
       openModeTab('history');
