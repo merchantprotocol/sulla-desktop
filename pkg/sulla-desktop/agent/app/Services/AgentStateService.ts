@@ -290,7 +290,7 @@ export class AgentStateService {
     return Boolean(changed);
   }
 
-  async stopCascade(jobId: string, stoppedBy?: AgentJob['stoppedBy'], reason = 'Stopped'): Promise<string[]> {
+  async stopCascade(jobId: string, stoppedBy?: AgentJob['stoppedBy'], reason = 'Stopped', persist?: (job: AgentJob) => Promise<boolean>): Promise<string[]> {
     const jobs = await this.store.cascadeJobs(jobId);
     const finishedAt = Date.now(); const stoppedIds: string[] = [];
     for (const job of jobs) {
@@ -299,7 +299,7 @@ export class AgentStateService {
         return { ...current, status: 'stopped', finishedAt, waitingOnChildren: 0, completionDeliveredAt: finishedAt,
           stoppedBy, stopReason: reason, tasks: current.tasks.map(task => ['queued', 'running', 'parked'].includes(task.status)
             ? { ...task, status: 'stopped', finishedAt } : task) };
-      }, undefined, false);
+      }, persist, false);
       if (stopped) stoppedIds.push(job.jobId);
     }
     return stoppedIds;

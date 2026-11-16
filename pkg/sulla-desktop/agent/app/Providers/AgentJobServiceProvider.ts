@@ -8,6 +8,7 @@ import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
 import { AgentJobReviewItemRepository } from '../Repositories/AgentJobReviewItemRepository';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
+import { AgentJobCustodyStateWriter } from '../Repositories/AgentJobCustodyStateWriter';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
 import { CompletionAcknowledgementService } from '../Services/CompletionAcknowledgementService';
@@ -92,11 +93,11 @@ export class AgentJobServiceProvider {
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new CustodyChangeNotificationService(this.jobs, completionInboxStore), clock);
-    const receiverResolver = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadByChannel(channel), this.custody);
+    const receiverResolver = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel), this.custody);
     this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receiverResolver, async channel => GraphRegistry.findThreadByChannel(channel));
     this.completionRequeue = new CustodyCompletionRequeueService(completionInboxStore, this.custody);
     this.custodyCallerVerifier = new CustodyCallerVerifier(taskLocator, conversations);
-    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator);
+    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator, this.custody, this.custodyLineage, undefined, new AgentJobCustodyStateWriter());
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);

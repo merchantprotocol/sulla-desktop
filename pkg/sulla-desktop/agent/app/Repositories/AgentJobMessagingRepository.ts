@@ -7,6 +7,7 @@ import { Repository } from '@sulla/foundation';
 
 import { AgentJobMessage as AgentJobMessageModel } from '../Models/AgentJobMessage';
 import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
+import type { CustodyTransactionClient } from '../Services/JobCustodyTypes';
 
 export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel> {
   protected readonly model = AgentJobMessageModel;
@@ -59,6 +60,29 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
       (requestedTaskIndex === undefined || target.taskIndex === requestedTaskIndex) &&
       ['queued', 'running', 'parked'].includes(target.taskStatus),
     );
+  }
+
+  /** Read active delivery targets while the caller holds the custody producer lock. */
+  async openTargetsWithClient(client: CustodyTransactionClient, jobId: string, requestedTaskIndex?: number): Promise<AgentJobTaskTarget[]> {
+    const rows = await client.query<any>(`SELECT j.job_id,j.status AS job_status,j.parent_channel,j.parent_thread_id,
+        t.task_index,t.task_status,t.thread_id,t.label
+      FROM agent_jobs j JOIN agent_job_tasks t ON t.job_id=j.job_id
+      WHERE j.job_id=$1 AND ($2::int IS NULL OR t.task_index=$2)
+        AND t.task_status IN ('queued','running','parked') ORDER BY t.task_index`, [jobId, requestedTaskIndex ?? null]);
+    return rows.rows.map(row => this.rowToTarget(row));
+  }
+
+  /** Queue messages in the same transaction that checked the current custody owner. */
+  async queueForTargetsWithClient(client: CustodyTransactionClient, jobId: string, targets: AgentJobTaskTarget[], messageForTarget: (target: AgentJobTaskTarget) => string): Promise<Array<{target:AgentJobTaskTarget;record:AgentJobMessage}>> {
+    const queued: Array<{target:AgentJobTaskTarget;record:AgentJobMessage}> = [];
+    for (const target of targets) {
+      const id = crypto.randomUUID();
+      const rows = await client.query<any>(`INSERT INTO agent_job_messages (id,job_id,task_index,message)
+        VALUES ($1,$2,$3,$4) RETURNING *`, [id, jobId, target.taskIndex, messageForTarget(target)]);
+      queued.push({target,record:this.rowToMessage(rows.rows[0])});
+    }
+    this.telemetryChanged();
+    return queued;
   }
 
   async queueMessage(target: AgentJobTaskTarget, message: string): Promise<AgentJobMessage> {
