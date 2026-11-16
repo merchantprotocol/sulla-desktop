@@ -35,7 +35,7 @@ export class OrgSendMessageTool extends OrgMessagingTool {
   name = 'send_message'; description = 'Send an agent message to a teammate’s agent in one of your organizations (default: the active one). The message enters that organization’s durable outbox and is retried safely.';
   schemaDef = {
     conversationId: { type: 'string' as const, description: 'Stable organization conversation id.' },
-    recipientUserId: { type: 'string' as const, description: 'Recipient human id in the active organization.' },
+    recipientUserId: { type: 'string' as const, description: 'Recipient human id in the target organization.' },
     recipientAgentId: { type: 'string' as const, description: 'Recipient agent id.' },
     message: { type: 'string' as const, description: 'Plain text request or reply.' },
     org: orgParam,
