@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ChunkRegistryRepository } from './Repositories/ChunkRegistryRepository.js';
+
 import type pg from 'pg';
 
 type Queryable = Pick<pg.PoolClient, 'query'>;
@@ -23,10 +25,12 @@ export class UnregisteredChunkError extends Error {
  * fails loudly and leaves the previous version current instead of silently breaking the file.
  */
 export class ManifestChunkRegistry {
+  constructor(private readonly chunks = new ChunkRegistryRepository()) {}
+
   async assertRegistered(client:Queryable, collectionId:string, chunkIds:readonly string[]):Promise<void> {
     const wanted = [...new Set(chunkIds)];
     if (!wanted.length) return;
-    const found = new Set((await client.query('SELECT id FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, wanted])).rows.map(row => String(row.id)));
+    const found = await this.chunks.registeredIds(client, collectionId, wanted);
     const missing = wanted.filter(id => !found.has(id));
     if (missing.length) throw new UnregisteredChunkError(collectionId, missing);
   }

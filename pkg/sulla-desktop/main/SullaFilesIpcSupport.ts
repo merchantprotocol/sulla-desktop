@@ -44,7 +44,7 @@ export interface SullaFilesIpcDesktop {
 
 /** Lazily resolved Files collaborators: each is looked up when a handler runs, as before. */
 export interface SullaFilesIpcServices {
-  watcher():Pick<SullaFilesWatcher, 'status' | 'setPaused' | 'requestNativeFiles' | 'prepareNativeSourceSession' | 'ingestNativeSource' | 'listNativeSources' | 'reselectInterruptedNativePublication' | 'planNativePublication' | 'finishNativePublication'>;
+  watcher():Pick<SullaFilesWatcher, 'status' | 'setPaused' | 'requestNativeFiles' | 'prepareNativeSourceSession' | 'ingestNativeSource' | 'listNativeSources' | 'reselectInterruptedNativePublication' | 'planNativePublication' | 'finishNativePublication' | 'queryUseCaseSuggestions'>;
   rootRegistry():Pick<SullaFilesRootRegistry, 'list' | 'add' | 'update' | 'remove' | 'rootForCollection'>;
   isProtectedTrackedPath(value:string):boolean;
   linkService():LinkService;

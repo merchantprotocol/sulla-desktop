@@ -10,7 +10,7 @@ import { ProviderBridgeRevokedError, PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, Provid
 import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
 import { vaultHealthMonitor, VaultHealthMonitor } from './vaultHealth';
 import type { ToolExecutionContext } from './index';
-import type { ProviderCliBridgeOptions, ProviderCliBridgeLease, ProviderCliBridgeIdentity } from './providerCliBridge';
+import type { ProviderCliBridgeOptions, ProviderCliBridgeLease, ProviderCliBridgeIdentity, ProviderCliOpaqueConfig } from './providerCliBridge';
 
 const console = globalThis.console;
 
