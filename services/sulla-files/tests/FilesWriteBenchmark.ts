@@ -46,14 +46,22 @@ export class LatencySample {
 export class TransactionHoldSampler {
   private timer?:NodeJS.Timeout;
   maxMs = 0;
-  constructor(private readonly admin:pg.Pool, private readonly applicationName:string) {}
+  /** With SULLA_FILES_BENCH_WAITS=1: how often each (wait event, statement) pair was seen. */
+  readonly waits = new Map<string, number>();
+  constructor(private readonly admin:pg.Pool, private readonly applicationName:string, private readonly recordWaits = process.env.SULLA_FILES_BENCH_WAITS === '1') {}
   start():void {
     this.timer = setInterval(() => {
-      this.admin.query(`SELECT COALESCE(MAX(EXTRACT(EPOCH FROM clock_timestamp()-xact_start)*1000),0) AS ms
+      this.admin.query(`SELECT EXTRACT(EPOCH FROM clock_timestamp()-xact_start)*1000 AS ms,state,wait_event_type,wait_event,left(regexp_replace(query,'\\s+',' ','g'),70) AS q
         FROM pg_stat_activity WHERE application_name=$1 AND xact_start IS NOT NULL AND state<>'idle'`, [this.applicationName])
-        .then(result => { this.maxMs = Math.max(this.maxMs, Number(result.rows[0].ms)) }).catch(() => undefined);
+        .then(result => {
+          for (const row of result.rows) {
+            this.maxMs = Math.max(this.maxMs, Number(row.ms));
+            if (this.recordWaits) { const key = `${ row.state }|${ row.wait_event_type ?? '-' }:${ row.wait_event ?? '-' }|${ row.q }`; this.waits.set(key, (this.waits.get(key) ?? 0) + 1) }
+          }
+        }).catch(() => undefined);
     }, 20);
   }
+  topWaits(limit = 25):string { return [...this.waits].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([key, n]) => `${ String(n).padStart(6) } ${ key }`).join('\n') }
   stop():void { if (this.timer) clearInterval(this.timer) }
 }
 
@@ -163,6 +171,7 @@ export class FilesWriteBenchmark {
       }
     }));
     const seconds = (performance.now() - started) / 1000; sampler.stop();
+    if (sampler.waits.size) console.log(`[files-bench] top waits (samples every 20ms):\n${ sampler.topWaits() }`);
     const files = this.options.writers * this.options.filesPerWriter;
     return { files, seconds, filesPerSecond: files / seconds, p50: latencies.percentile(50), p95: latencies.percentile(95), p99: latencies.percentile(99),
       max: latencies.percentile(100), maxTransactionMs: sampler.maxMs, failures };

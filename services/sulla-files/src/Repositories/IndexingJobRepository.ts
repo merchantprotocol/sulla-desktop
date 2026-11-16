@@ -46,7 +46,11 @@ export class IndexingJobRepository {
    */
   async lockEligibility(fileId:string):Promise<IndexEligibility | undefined> {
     const locked = (await this.db.query('SELECT collection_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
-    if (locked) await this.db.query('SELECT id FROM collections WHERE id=$1 FOR UPDATE', [locked.collection_id]);
+    // FOR SHARE, not FOR UPDATE: it still waits for and blocks any change to the collection row
+    // (system area, publication), but it does not conflict with the FOR KEY SHARE lock that every
+    // file/version/chunk INSERT takes on its collection through the foreign key. FOR UPDATE made
+    // each indexing pass queue behind, and then block, every write into the collection.
+    if (locked) await this.db.query('SELECT id FROM collections WHERE id=$1 FOR SHARE', [locked.collection_id]);
     return (await this.db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,
     EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
     FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1`, [fileId])).rows[0];
