@@ -39,8 +39,6 @@ export class HostServiceIdentityStore {
   ) {}
 
   async loadOrCreateVaultServiceIdentities(): Promise<VaultServiceIdentities> {
-    bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
-  }> {
     if (!this.storage().isEncryptionAvailable()) {
       throw new Error('OS-protected storage is required for the local vault service identities');
     }
@@ -128,12 +126,6 @@ export class HostServiceIdentityStore {
   }
 
   async prepareAccountsSecrets(databasePassword: string): Promise<AccountsSecretPaths> {
-    bootstrap:        string;
-    databasePassword: string;
-    databaseUsername: string;
-    encryption:       string;
-    session:          string;
-  }> {
     const directory = path.join(this.appHome(), 'accounts');
 
     const directoryInfo = await fs.promises.lstat(directory).catch(error => {

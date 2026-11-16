@@ -45,6 +45,7 @@ describe('GuestTlsIdentityProvisioner', () => {
     provisioner = new GuestTlsIdentityProvisioner(guest as any, { vault: 'VAULT-SCRIPT', files: 'FILES-SCRIPT' }, sessions, () => home);
   });
   afterEach(async() => {
+    vi.restoreAllMocks();
     await fs.promises.rm(home, { recursive: true, force: true });
   });
 
@@ -70,11 +71,12 @@ describe('GuestTlsIdentityProvisioner', () => {
   });
 
   it('provisions the Files identity for the host user and refreshes the Files sessions', async() => {
-    const { uid, gid } = os.userInfo();
+    // A fixed host user keeps this deterministic in containers with no passwd entry (userInfo throws ENOENT there).
+    vi.spyOn(os, 'userInfo').mockReturnValue({ uid: 501, gid: 20, username: 'u', homedir: '/h', shell: null } as any);
     const { fingerprint } = await provisioner.prepareFilesTlsIdentity();
 
     expect(guest.execCommand).toHaveBeenCalledWith({ capture: true, root: true }, 'sh', '-c', 'FILES-SCRIPT', '--',
-      expect.any(String), String(uid), String(gid));
+      expect.any(String), '501', '20');
     expect(guest.writeFile).toHaveBeenCalledWith('/etc/sulla-console/files.crt', pem, 0o644);
     expect(fs.readFileSync(path.join(home, 'files-tls-fingerprint'), 'utf8')).toBe(`${ fingerprint }\n`);
     expect(sessions.refreshFiles).toHaveBeenCalledOnce();
