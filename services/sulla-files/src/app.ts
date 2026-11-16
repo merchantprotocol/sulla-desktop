@@ -14,9 +14,7 @@ import { LiveTextSessions } from './liveText.js';
 import { auditContext } from './auditContext.js';
 import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, textDocumentHeads, utf8Text, versionCheckedTextSave, type TextDocument } from './automergeText.js';
 import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
-import { assertSystemAreaWritable } from './systemAreas.js';
 
-import { CollectionRoleGate, resolveCollectionAccess } from './acl.js';
 import { FilesPathResolver } from './filesPathResolver.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
@@ -63,12 +61,17 @@ import type { CloudSyncService } from './cloudSync/service.js';
 import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import { homeQuery } from './sullaCollectionMigration.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
-import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 import { ListingPage } from './ListingPage.js';
 import { DatabaseFailureClassifier, RetryableDatabaseError, TransactionRunner } from './FilesTransaction.js';
 import { VersionContentStager, type StagedVersionContent } from './VersionContentStager.js';
 import { FileListingQuery } from './FileListingQuery.js';
+import { HttpError } from './Http/HttpError.js';
+import { FilesRequestInput } from './Http/FilesRequestInput.js';
+import { FilesAccessGate, type RequestWithIdentity, type Right } from './Http/FilesAccessGate.js';
+import { FileListingRepository } from './Repositories/FileListingRepository.js';
+import { FileListingRoutes } from './routes/FileListingRoutes.js';
+import { ShareRoutes } from './routes/ShareRoutes.js';
 import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -77,47 +80,7 @@ const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
 const FILE_ROW_JSON_SQL = `row_to_json((SELECT x FROM (SELECT ${FILE_COLUMNS_SQL}) x))`;
-type RequestWithIdentity = express.Request<Record<string, string>> & { filesIdentity?: FilesIdentity };
-type Right = 'view' | 'edit' | 'manage';
-
-class HttpError extends Error { constructor(public readonly status:number, message:string) { super(message) } }
-
-function cleanPath(value:unknown, allowEmpty = true):string {
-  if (typeof value !== 'string') throw new HttpError(400, 'path must be a string');
-  const path = value.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
-  if (!path && allowEmpty) return '';
-  if ((!allowEmpty && !path) || path.split('/').some(part => !part || part === '.' || part === '..')) throw new HttpError(400, 'invalid Files path');
-  return path;
-}
-
-function folderGuidance(value:unknown, field:'description'|'namingHint', required = false):string | null {
-  if (value === undefined || value === null || value === '') {
-    if (required) throw new HttpError(400, `${ field } is required when an agent creates a folder`);
-    return null;
-  }
-  if (typeof value !== 'string') throw new HttpError(400, `${ field } must be a string`);
-  const text=value.trim(); const limit=field==='description'?2000:500;
-  if (!text || text.length>limit) throw new HttpError(400, `${ field } must be between 1 and ${ limit } characters`);
-  return text;
-}
-
-function suggestedFileName(what:string, kind?:string):string {
-  const stem=what.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60) || 'new-file';
-  const normalized=(kind??'').toLowerCase().replace(/^\./,'');
-  const extensions:Record<string,string>={markdown:'md',document:'md',text:'txt',json:'json',yaml:'yaml',csv:'csv',image:'png',screenshot:'png',video:'mp4',audio:'m4a'};
-  const extension=extensions[normalized] ?? (/^[a-z0-9]{1,8}$/.test(normalized)?normalized:'');
-  return extension && !stem.endsWith(`.${ extension }`) ? `${ stem }.${ extension }` : stem;
-}
-
-function numberedPath(path:string, index:number):string {
-  const slash = path.lastIndexOf('/');
-  const folder = slash >= 0 ? path.slice(0, slash + 1) : '';
-  const name = path.slice(slash + 1);
-  const dot = name.lastIndexOf('.');
-  const stem = dot > 0 ? name.slice(0, dot) : name;
-  const extension = dot > 0 ? name.slice(dot) : '';
-  return `${ folder }${ stem } (${ index })${ extension }`;
-}
+const { cleanPath, folderGuidance, suggestedFileName, numberedPath, bearer, idempotencyUuid, validateKeyContext } = FilesRequestInput;
 
 async function availableStoredPath(client:pg.PoolClient, collectionId:string, requestedPath:string, keepBoth:boolean):Promise<string> {
   const blockedParent = await client.query('SELECT path FROM files WHERE collection_id=$1 AND path=ANY($2::text[]) ORDER BY length(path),path LIMIT 1', [collectionId, storedParentPaths(requestedPath)]);
@@ -132,25 +95,38 @@ async function availableStoredPath(client:pg.PoolClient, collectionId:string, re
   throw new HttpError(409, 'Files could not reserve a distinct path for this upload.');
 }
 
-function bearer(request:express.Request):string | undefined { return request.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] }
-function idempotencyUuid(scope:string):string {
-  const hex = createHash('sha256').update(scope).digest('hex').slice(0, 32).split('');
-
-  hex[12] = '5';
-  hex[16] = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
-  return `${ hex.slice(0, 8).join('') }-${ hex.slice(8, 12).join('') }-${ hex.slice(12, 16).join('') }-${ hex.slice(16, 20).join('') }-${ hex.slice(20).join('') }`;
+/** Everything the Files HTTP API is composed from (built once by the process entry). */
+export interface FilesApplicationDependencies {
+  db:pg.Pool;
+  config:Config;
+  manager?:LocalFilesManager;
+  search?:FileSearch;
+  onUnlock?:()=>Promise<void>;
+  onLock?:()=>Promise<void>;
+  onRecover?:(master:Buffer)=>Promise<number>;
+  residency?:FileResidencyManager;
+  filesLifecycle?:FilesLifecycle;
+  bootstrapAuthority?:FilesBootstrapAuthority;
+  indexer?:IndexingQueue;
+  chunkStore?:Store;
+  cloudSync?:CloudSyncService;
 }
-function validateKeyContext(value:unknown, collectionId:string, principalId:string):FilesKeyBundleContext {
-  if (!value || typeof value !== 'object') throw new HttpError(400, 'valid version key context is required');
-  const context = value as Record<string, unknown>;
-  if (context.collectionId !== collectionId || context.principalId !== principalId ||
-      !Number.isSafeInteger(context.keyVersion) || Number(context.keyVersion) < 1 ||
-      !Number.isSafeInteger(context.epoch) || Number(context.epoch) < 1) {
-    throw new HttpError(400, 'version key context does not match the authenticated collection owner');
+
+/**
+ * Composition root of the Files HTTP API. Route groups live as classes under routes/ and take
+ * their repositories and services by constructor; composeFilesApp still holds the groups that
+ * have not moved there yet, in their original mount order.
+ */
+export class FilesApplication {
+  constructor(private readonly dependencies:FilesApplicationDependencies) {}
+
+  build():express.Express {
+    const d = this.dependencies;
+    return composeFilesApp(d.db, d.config, d.manager, d.search, d.onUnlock, d.onLock, d.onRecover, d.residency, d.filesLifecycle, d.bootstrapAuthority, d.indexer, d.chunkStore, d.cloudSync);
   }
-  return context as unknown as FilesKeyBundleContext;
 }
 
+/** Positional entry kept for the process entry and specs; delegates to FilesApplication. */
 export function createApp(
   db:pg.Pool,
   config:Config,
@@ -166,6 +142,24 @@ export function createApp(
   chunkStore?:Store,
   cloudSync?:CloudSyncService,
 ) {
+  return new FilesApplication({ db, config, manager, search, onUnlock, onLock, onRecover, residency, filesLifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync }).build();
+}
+
+function composeFilesApp(
+  db:pg.Pool,
+  config:Config,
+  manager?:LocalFilesManager,
+  search?:FileSearch,
+  onUnlock?:()=>Promise<void>,
+  onLock?:()=>Promise<void>,
+  onRecover?:(master:Buffer)=>Promise<number>,
+  residency?:FileResidencyManager,
+  filesLifecycle?:FilesLifecycle,
+  bootstrapAuthority?:FilesBootstrapAuthority,
+  indexer?:IndexingQueue,
+  chunkStore?:Store,
+  cloudSync?:CloudSyncService,
+):express.Express {
   const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }); const transactions = new TransactionRunner(db); const contentReadFailures = new ContentReadFailureLog(); const chunkRegistry = new ManifestChunkRegistry(); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
@@ -261,60 +255,12 @@ export function createApp(
     response.status(202).json({ok:true});
     void auditWriter.drain().catch(error=>console.error('[SullaFiles] audit delivery failed; retry pending',error));
   } catch(error) {next(error)} });
-  const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
+  const accessGate = new FilesAccessGate(db);
+  const { identity, collectionRow, collectionAccess, requireCollection, requirePath, fileRow, requireFile, visibleVersion } = accessGate;
   const actorScope = (actor:FilesIdentity):string => actor.jobId
     ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
     : `device:${ actor.deviceId || config.deviceId }`;
   const mountIdentity = (request:RequestWithIdentity, _operation:string, _resource:Record<string,unknown> = {}) => identity(request);
-  async function collectionRow(collectionId:string, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
-    const result = await queryable.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]);
-    if (!result.rows[0]) throw new HttpError(404, 'collection not found');
-    return result.rows[0];
-  }
-  async function collectionAccess(
-    request:RequestWithIdentity,
-    collectionId:string,
-    queryable:pg.Pool | pg.PoolClient = db,
-  ) {
-    return resolveCollectionAccess(queryable, identity(request), collectionId);
-  }
-  const roleGate = new CollectionRoleGate();
-  async function requireCollection(
-    request:RequestWithIdentity,
-    collectionId:string,
-    right:Right,
-    _allowShared = false,
-    _allowExactFiles = false,
-    queryable:pg.Pool | pg.PoolClient = db,
-  ) {
-    const access = await collectionAccess(request, collectionId, queryable);
-    if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
-    if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
-    return access;
-  }
-  async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right, queryable:pg.Pool | pg.PoolClient = db) {
-    identity(request);
-    const access = await collectionAccess(request, collectionId, queryable);
-    // Every edit/move/delete/upload path funnels through here (requireFile too), so the level is checked here.
-    if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
-    if (isProtectedPath(path) && !(access.collection.system_area === 'logs' && (isAuditLogPath(path) || path === 'audit/vault'))) throw protectedPathError();
-    if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
-    return access;
-  }
-  async function fileRow(fileId:string, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
-    const result = await queryable.query('SELECT * FROM files WHERE id=$1', [fileId]);
-    if (!result.rows[0]) throw new HttpError(404, 'file not found');
-    await assertUnprotectedFile(queryable, result.rows[0]);
-    return result.rows[0];
-  }
-  async function requireFile(request:RequestWithIdentity, fileId:string, right:Right, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
-    const file = await fileRow(fileId, queryable);
-    await requirePath(request, file.collection_id, file.path, right, queryable);
-    return file;
-  }
-  async function visibleVersion(request:RequestWithIdentity, file:any, requested?:string):Promise<string> {
-    return authorizedVersionId(db, file, true, requested);
-  }
   const originalReveals = new OriginalRevealAttestations();
   // Both the native-only local secret and a fresh principal capability are
   // required. The local secret alone must never bypass Files authorization.
@@ -1369,47 +1315,7 @@ export function createApp(
     else throw new HttpError(409, 'The selection mixes watched and stored-only Files. Move or copy them in separate operations.');
     response.json({ ok: true, count: expanded.length + folderMoves.length, undoSupported: false, undoUnsupportedReason: 'Legacy path operations do not issue database receipts; native undo requires custody-coordinated publication.' });
   } catch (error) { next(error) } });
-  app.get('/v1/local/shares/:id/content', async(request, response, next) => {
-    const controller = new AbortController(); const abort = () => controller.abort();
-    request.once('aborted', abort); response.once('close', abort);
-    try {
-      const content = await shares.streamContent(request.params.id, String(request.query.path ?? ''), request.header('range'), controller.signal);
-      response.status(content.status).type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name));
-      response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Length', content.contentLength);
-      if (content.contentRange) response.setHeader('Content-Range', content.contentRange);
-      for await (const part of content.body) {
-        if (!response.write(part)) await new Promise<void>((resolve, reject) => {
-          const cleanup = () => { response.off('drain', drained); response.off('close', closed) };
-          const drained = () => { cleanup(); resolve() };
-          const closed = () => { cleanup(); reject(Object.assign(new Error('Share stream cancelled'), { name: 'AbortError' })) };
-          response.once('drain', drained); response.once('close', closed);
-        });
-      }
-      response.end();
-    } catch (error) {
-      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'share-content', shareId: request.params.id });
-      if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.setHeader('Content-Length', '0'); response.end(); return }
-      if (!controller.signal.aborted && !response.headersSent) next(error); else if (!controller.signal.aborted) response.destroy(error as Error);
-    } finally { request.off('aborted', abort); response.off('close', abort) }
-  });
-  // Narrow contract for the future public viewer/relay. It validates the link
-  // policy and returns metadata only; content stays on the authenticated local
-  // relay route above until the visitor viewer lands.
-  app.post('/v1/local/shares/:id/authorize', async(request, response, next) => { try { response.json(await shares.authorize(request.params.id, { password: typeof request.body.password === 'string' ? request.body.password : undefined, wantsDownload: request.body.download === true })) } catch (error) { next(error) } });
-  app.post('/v1/links', async(request:RequestWithIdentity, response, next) => {
-    try {
-      if (request.body.fileId) await requireFile(request, String(request.body.fileId), 'view');
-      else await requirePath(request, String(request.body.collectionId ?? ''), cleanPath(request.body.folderPath, false), 'view');
-      const actor = identity(request);
-      response.status(201).json(await shares.create({ user: actor.userId, device: actor.deviceId || '' }, request.body));
-    } catch (error) { next(error) }
-  });
-  app.get('/v1/links', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.list({ user: actor.userId, device: actor.deviceId || '' })) } catch (error) { next(error) } });
-  app.get('/v1/links/activity', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.activity({ user: actor.userId, device: actor.deviceId || '' })) } catch (error) { next(error) } });
-  app.get('/v1/links/:id/activity', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.activity({ user: actor.userId, device: actor.deviceId || '' }, request.params.id)) } catch (error) { next(error) } });
-  app.delete('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.revoke({ user: actor.userId, device: actor.deviceId || '' }, request.params.id)) } catch (error) { next(error) } });
-  app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body)) } catch (error) { next(error) } });
-  app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
+  new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 
   app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try {
     const rows = await db.query("SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla' ORDER BY explorer_path,name");
@@ -1909,28 +1815,7 @@ export function createApp(
     }
     response.json(visible);
   } catch (error) { next(error) } });
-  app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
-    const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
-    let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
-    const scope=listingQuery.build({ collectionId, path, childrenOnly:request.query.children==='true', trash, deviceId:typeof request.query.deviceId==='string'?request.query.deviceId:undefined, after:pageRequest.after, limit:(paged ? pageRequest.limit : ListingPage.legacyMaxRows)+1 });
-    const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
-      FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
-      WHERE ${ scope.where } ${ scope.orderLimit }`, scope.values);
-    if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
-    const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
-    const actor = identity(request); const visible = [];
-    for (const row of page.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
-      const role = access.role;
-      const versionId = row.current_version_id;
-      if (!versionId) continue;
-      const version = row;
-      const draftVisible = true;
-      visible.push({ ...lifecycleFields({ ...row, current_version_id: versionId, size: Number(version?.size ?? row.size), version_created_at: version?.created_at, version_created_by_type: version?.created_by_type, version_created_by_id: version?.created_by_id }), capabilities: lifecycleCapabilities(role, draftVisible) });
-    }
-    response.json(visible);
-  } catch (error) { next(error) } });
+  new FileListingRoutes(accessGate, new FileListingRepository(db, FILE_COLUMNS_SQL), listingQuery).register(app);
   app.post('/v1/files/:id/conflicts/keep-both', async(request:RequestWithIdentity, response, next) => { try {
     const conflictFileId = request.params.id;
     const conflictVersionId = String(request.body.currentVersionId ?? '');
