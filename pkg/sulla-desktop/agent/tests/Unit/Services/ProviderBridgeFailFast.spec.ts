@@ -9,9 +9,7 @@ import { ModelRecoveryPolicy } from '../../../languagemodels/ModelRecoveryPolicy
 import { CliFaultError, runWithCliFaultRecovery } from '../../../languagemodels/cliFaultRecovery';
 import { AuthExpired, AuthRevoked, legacyProviderFailure } from '../../../languagemodels/failures';
 import { ProviderBridgeDeniedFailure, classifyLLMFailure } from '../../../languagemodels/providerRecovery';
-import { ProviderBridgeRevokedError, createProviderCliBridge } from '../../../../vault-broker/providerCliBridge';
-
-vi.mock('../../../../vault-broker/index', () => ({ requireConfiguredCredentialBroker: vi.fn() }));
+import { ProviderBridgeRevokedError, ProviderCliBridgeService } from '../../../../vault-broker/providerCliBridge';
 
 const policy = new ModelRecoveryPolicy();
 const denied = 'Claude Code: Failed to authenticate. API Error: 403 Provider bridge request denied (provider_model_denied)';
@@ -71,7 +69,7 @@ describe('revoked bridge lifecycle', () => {
     const lifecycle = new AbortController();
     lifecycle.abort();
     const authorize = vi.fn(() => true);
-    const error = await createProviderCliBridge({
+    const error = await new ProviderCliBridgeService().create({
       context, provider: 'codex', accountId: 'acct-1', authorize, signal: lifecycle.signal,
     }).catch(e => e);
     expect(error).toBeInstanceOf(ProviderBridgeRevokedError);

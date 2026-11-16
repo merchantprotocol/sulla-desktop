@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1021,
+  "entries": 1004,
   "files": {
     "background.ts": {
       "rules": {
@@ -924,12 +924,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "pkg/sulla-desktop/agent/services/DesktopVaultClient.ts": {
-      "rules": {
-        "mutable-state": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
     "pkg/sulla-desktop/agent/services/ExtensionService.ts": {
       "rules": {
         "long-file": 423,
@@ -1082,24 +1076,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/services/VaultBackupService.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/services/VaultImportService.ts": {
-      "rules": {
-        "procedural-module": 2
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/services/VaultKeyService.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
     "pkg/sulla-desktop/agent/services/WorkflowContainerEventBridge.ts": {
       "rules": {
         "mutable-state": 1
@@ -1135,12 +1111,6 @@
         "procedural-module": 1
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/services/vaultAccessPolicy.ts": {
-      "rules": {
-        "mutable-state": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/agent/tools/agents/agentConversations.ts": {
       "rules": {
@@ -1795,13 +1765,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/composables/useVaultUnlock.ts": {
-      "rules": {
-        "mutable-state": 1,
-        "procedural-module": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/composables/useWorkflowHistory.ts": {
       "rules": {
         "procedural-module": 1
@@ -2278,12 +2241,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "pkg/sulla-desktop/main/configureSignedInVaultBroker.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/containedAuthWindow.ts": {
       "rules": {
         "mutable-state": 1
@@ -2665,12 +2622,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/main/silentVaultRestoreTransport.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/main/startupProgressHub.ts": {
       "rules": {
         "mutable-state": 1
@@ -2742,6 +2693,14 @@
         "procedural-module": 2
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
+    },
+    "pkg/sulla-desktop/main/sullaFilesIpc.ts": {
+      "rules": {
+        "long-file": 970,
+        "mutable-state": 1,
+        "procedural-module": 1
+      },
+      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/sullaFunctionEvents.ts": {
       "rules": {
@@ -3102,19 +3061,6 @@
         "procedural-module": 1
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/vaultBootstrapProcess.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/main/vaultTls.ts": {
-      "rules": {
-        "mutable-state": 3,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/voice/kokoroTts.ts": {
       "rules": {
@@ -3790,44 +3736,11 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/utils/vaultTransient.ts": {
-      "rules": {
-        "procedural-module": 2
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/utils/version.ts": {
       "rules": {
         "procedural-module": 3
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/vault-broker/desktopTransport.ts": {
-      "rules": {
-        "mutable-state": 1,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/vault-broker/index.ts": {
-      "rules": {
-        "long-file": 577,
-        "mutable-state": 2
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/vault-broker/providerCliBridge.ts": {
-      "rules": {
-        "long-file": 620,
-        "mutable-state": 4
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/vault-broker/toolsTransport.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "pkg/sulla-desktop/window/browserContextMenu.ts": {
       "rules": {

@@ -1024,8 +1024,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     requireTrustedVaultRenderer(event);
     const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
     const accountId = input?.accountId === undefined ? undefined : vaultMetadataId(input.accountId, 'accountId');
-    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
-    return requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
+    const { configuredVaultBrokerProvider } = await import('@pkg/vault-broker');
+    return configuredVaultBrokerProvider.requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
   });
 
   ipcMainProxy.handle('vault:integration-active-account', async(
@@ -1035,8 +1035,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     requireTrustedVaultRenderer(event);
     const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
     const accountId = vaultMetadataId(input?.accountId, 'accountId');
-    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
-    return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
+    const { configuredVaultBrokerProvider } = await import('@pkg/vault-broker');
+    return configuredVaultBrokerProvider.requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
   });
 
   // First OAuth sign-in: the vault creates the empty account it will store
@@ -1049,8 +1049,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     const integrationId = vaultMetadataId(input?.integrationId, 'integrationId');
     const accountId = vaultMetadataId(input?.accountId, 'accountId');
     const label = typeof input?.label === 'string' ? input.label.slice(0, 120) : '';
-    const { getConfiguredApprovalClient } = await import('@pkg/vault-broker');
-    const client = getConfiguredApprovalClient();
+    const { configuredVaultBrokerProvider } = await import('@pkg/vault-broker');
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault service is unavailable');
     return client.ensureOAuthAccount(integrationId, accountId, label);
   });

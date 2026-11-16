@@ -8,7 +8,7 @@ import http from 'node:http';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { requireConfiguredCredentialBroker } from '../../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../../vault-broker';
 import Logging from '@pkg/utils/logging';
 import { getIntegrationService } from '../../services/IntegrationService';
 
@@ -102,7 +102,7 @@ export async function withGitHubBrokerRemote<T>(
   // that path exists only in the worker. The canonical Git worker resolves the
   // remote first; narrow the already-verified caller context here from that URL.
   const brokerContext = scopeGitHubRepositoryContext(ctx, accountId, repository);
-  const broker = requireConfiguredCredentialBroker();
+  const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
 
   const server = http.createServer(async(request, response) => {
     const requestId = crypto.randomUUID();
