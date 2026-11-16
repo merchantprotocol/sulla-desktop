@@ -36,7 +36,7 @@ import { RunActivity } from './RunActivity';
 import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
-import { ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
+import { ProviderBridgeAuthorizeUnavailableError, ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
@@ -912,10 +912,10 @@ async function cleanupContainerResources(
       let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
       try {
         decision = await inspectGuestWorkspaceForCleanup(workspacePath);
-      } catch {
+      } catch (error) {
         decision = {
           remove: false,
-          reason: 'workspace retained because its cleanup state could not be inspected safely',
+          reason: `workspace retained because its cleanup state could not be inspected safely: ${ (error as Error)?.message ?? error }`,
         };
       }
       receipt.workspaceDecisionReason = decision.reason;
@@ -926,7 +926,7 @@ async function cleanupContainerResources(
         } catch (error) {
           failures.push(error);
         }
-      } else {
+      } else if (!decision.persistent) {
         receipt.retainedGuestPaths.push(workspacePath);
         receipt.recoveryWorkspacePath = workspacePath;
       }
@@ -1505,7 +1505,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           authorize:      async() => {
             const context = bridgeContext();
             requireAgentContainerRuntime(context);
-            if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
+            // A Redis blip is not a revocation: answer 503 and keep the lease (the lifecycle signal still revokes locally).
+            const revoked = await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`).catch((error: unknown) => { throw new ProviderBridgeAuthorizeUnavailableError('revocation_check_unavailable', { cause: error }) });
+            if (revoked) return false;
             return context;
           },
           // Codex runs on a ChatGPT OAuth session; refresh it in the vault

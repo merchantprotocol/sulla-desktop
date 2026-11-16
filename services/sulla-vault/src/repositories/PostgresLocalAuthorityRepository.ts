@@ -8,38 +8,31 @@ import type { QueryResult, QueryResultRow } from 'pg';
 
 import type { Database } from '../db.js';
 
+import { PgTransactionRunner, type TransactionPool } from './PgTransactionRunner.js';
+
 /**
  * Transaction control and the two integration-state reads that LocalVaultAuthority issued
  * directly. Moved verbatim from localAuthority.ts (E9): same SQL text, same statement order,
- * same ROLLBACK error handling, so callers keep their exact transaction boundaries.
+ * so callers keep their exact transaction boundaries.
  */
 export class PostgresLocalAuthorityRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly transactions: PgTransactionRunner = new PgTransactionRunner(),
+  ) {}
 
-  /** One BEGIN … COMMIT unit on a pooled client; a failed ROLLBACK is swallowed so the original error surfaces. */
-  async transaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await operation(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+  /**
+   * One BEGIN … COMMIT unit on a pooled client; the original error surfaces, and a client whose
+   * ROLLBACK failed is released with that error so the pool destroys it (PgTransactionRunner).
+   */
+  transaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.transactions.run(this.db, operation);
   }
 
-  begin(client: pg.PoolClient): Promise<unknown> { return client.query('BEGIN') }
-
-  beginReadOnly(client: pg.PoolClient): Promise<unknown> { return client.query('BEGIN READ ONLY') }
-
-  commit(client: pg.PoolClient): Promise<unknown> { return client.query('COMMIT') }
-
-  /** ROLLBACK whose failure propagates (callers that never swallowed it). */
-  rollback(client: pg.PoolClient): Promise<unknown> { return client.query('ROLLBACK') }
+  /** One BEGIN READ ONLY … COMMIT unit on a client of another pool (the legacy credential source), same guarantees. */
+  readOnlyTransaction<T>(pool: TransactionPool, operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.transactions.run(pool, operation, 'BEGIN READ ONLY');
+  }
 
   /** Serializes legacy credential imports across vault processes for the current transaction. */
   lockLegacyImport(client: pg.PoolClient): Promise<unknown> {

@@ -1454,9 +1454,10 @@ export class ChatCompletionsServer {
         // calls to a fresh detached graph and start that graph only after the
         // tool has attached an active playbook. Read-only checkpoint listing
         // remains stateless and does not create a graph.
-        const { callStatefulWorkflowTool, needsStatefulWorkflowDispatch } = await import('./statefulCliWorkflowTool');
-        if (needsStatefulWorkflowDispatch(toolName, params)) {
-          const result = await callStatefulWorkflowTool(tool, toolName, params);
+        const { StatefulCliWorkflowDispatcher } = await import('./statefulCliWorkflowTool');
+        const statefulDispatcher = new StatefulCliWorkflowDispatcher();
+        if (statefulDispatcher.needsDispatch(toolName, params)) {
+          const result = await statefulDispatcher.call(tool, toolName, params);
           return res.json({ success: true, result });
         }
 

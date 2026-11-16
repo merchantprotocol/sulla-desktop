@@ -126,7 +126,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
   }
 
   let status = 200;
-  const deadlineMs = toolDeadlines.deadlineMs(tool.name, tool.operationTypes);
+  const deadlineMs = toolDeadlines.deadlineMs(tool.name, tool.operationTypes, { category: tool.category, manifestDeadlineMs: tool.deadlineMs, args });
   const startedAt = Date.now();
   try {
     const result = tool.executionTarget === 'catalog'

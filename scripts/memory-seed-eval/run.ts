@@ -13,7 +13,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtureMode = process.argv.includes('--fixtures');
 const seedDir = fixtureMode ? path.join(here,'fixtures') : path.resolve(here,'../../resources/memory-seed');
 const database = `sulla_seed_eval_${ process.pid }`;
-const adminUrl = process.env.SULLA_SEED_EVAL_DATABASE_URL || 'postgresql://sulla:sulla_dev_password@192.168.5.2:30116/postgres';
+// Required: an admin URL carrying the install's service secret. There is no
+// default password; PostgreSQL network logins use scram-sha-256.
+const adminUrl = process.env.SULLA_SEED_EVAL_DATABASE_URL || '';
+if (!adminUrl) {
+  console.error('Set SULLA_SEED_EVAL_DATABASE_URL to an admin URL, e.g. postgresql://sulla:<service secret>@192.168.5.2:30116/postgres');
+  process.exit(2);
+}
 const scratchUrl = new URL(adminUrl); scratchUrl.pathname = `/${ database }`;
 process.env.SULLA_DATABASE_URL = scratchUrl.toString();
 process.env.SULLA_MEMORY_SEED_DIR = seedDir;

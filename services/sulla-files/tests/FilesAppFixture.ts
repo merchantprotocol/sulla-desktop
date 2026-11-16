@@ -25,7 +25,6 @@ export interface Reply { status:number; body:any; headers:Record<string, string 
 /** The real Files app on its own Postgres schema, driven over HTTP. */
 export class FilesRoutesFixture {
   readonly schema = `files_routes_${ randomUUID().replaceAll('-', '') }`;
-  readonly userId = 'routes-user';
   readonly signingKey = Buffer.alloc(32, 7);
   readonly admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   pool!:pg.Pool;
@@ -36,6 +35,9 @@ export class FilesRoutesFixture {
   private root = '';
   private server?:Server;
   private baseUrl = '';
+
+  /** `userId` is the owner the app starts with; pass 'desktop-user' for the pre-Vault-adoption sentinel. */
+  constructor(readonly userId = 'routes-user') {}
 
   async start():Promise<void> {
     await this.admin.query(`CREATE SCHEMA "${ this.schema }"`);

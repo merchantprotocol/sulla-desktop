@@ -4,6 +4,7 @@
 
 import { EventEmitter } from 'node:events';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
+import type { AgentJobFailureObserver } from './AgentJobFailureLogger';
 
 
 /** A blocked task is live only while its blocker is open; a returned blocked result is settled. */
@@ -17,7 +18,7 @@ export interface AgentStateStore {
   lineageForParentThread?(parentThreadId: string, limit?: number): Promise<AgentJob[]>;
   job(jobId: string): Promise<AgentJob | undefined>;
   jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]>;
-  jobsForProjection?(recentMs: number): Promise<AgentJob[]>;
+  jobsForProjection?(recentMs: number, options?: { liveChildren?: boolean }): Promise<AgentJob[]>;
   insertJob(job: AgentJob): Promise<void>;
   replaceState(job: AgentJob): Promise<void>;
   cascadeJobs(jobId: string): Promise<AgentJob[]>;
@@ -62,7 +63,7 @@ export class AgentStateService {
   private readonly pendingTerminalPromises = new Map<string, Promise<void>>();
 
   constructor(private readonly store: AgentStateStore, private readonly cache: AgentStateCache, now: () => number = Date.now,
-    private readonly mutations = new AgentJobMutationQueue()) {
+    private readonly mutations = new AgentJobMutationQueue(), private readonly failures?: AgentJobFailureObserver) {
     this.versionValue = now();
     this.clock = now;
   }
@@ -101,7 +102,7 @@ export class AgentStateService {
     const jobs: AgentJob[] = [];
     for (const persisted of durable) {
       const derived = this.withDerivedStatus(persisted);
-      const current = derived.status !== persisted.status
+      const current = derived !== persisted
         ? await this.mutateJob(persisted.jobId, current => this.withDerivedStatus(current)) : persisted;
       if (!current) continue;
       this.cache.jobs.set(current.jobId, current);
@@ -138,16 +139,16 @@ export class AgentStateService {
    * (Docker) inventory: showing agents must never depend on container inspection succeeding, and it must not
    * load every historical job. Status is derived in memory only; reconciliation still owns persisted changes.
    */
-  async jobsForProjection(recentMs: number): Promise<AgentJob[]> {
+  async jobsForProjection(recentMs: number, options: { liveChildren?: boolean } = {}): Promise<AgentJob[]> {
     if (!this.store.jobsForProjection) return this.jobsBeforeReady();
-    return (await this.store.jobsForProjection(recentMs)).map(job => this.withDerivedStatus(job));
+    return (await this.store.jobsForProjection(recentMs, options)).map(job => this.withDerivedStatus(job));
   }
   async job(jobId: string): Promise<AgentJob | undefined> { await this.ready(); return this.loadJob(jobId); }
   private async loadJob(jobId: string): Promise<AgentJob | undefined> {
     const persisted = await this.store.job(jobId);
     if (!persisted) { this.cache.jobs.delete(jobId); return undefined; }
     const derived = this.withDerivedStatus(persisted);
-    const current = derived.status !== persisted.status
+    const current = derived !== persisted
       ? await this.mutateJob(jobId, job => this.withDerivedStatus(job)) : persisted;
     if (current) this.cache.jobs.set(jobId, current);
     this.trimTerminalCache();
@@ -267,6 +268,7 @@ export class AgentStateService {
       this.trimTerminalCache();
       this.emitChange();
       this.pendingTerminalWrites.delete(next.jobId);
+      this.failures?.observe(current, next);
       return next;
     });
   }
@@ -320,7 +322,15 @@ export class AgentStateService {
     else if (job.tasks.some(task => task.status === 'error' && task.completion?.status !== 'completed')) status = 'failed';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';
     else status = 'completed';
-    return status === job.status ? job : { ...job, status };
+    // A terminal rollup always carries finishedAt: a task settling as error/completed flips the job
+    // terminal here, and persisting it with finished_at NULL leaves history rows that never finished.
+    const finishedAt = status === 'running' || status === 'parked' || job.finishedAt != null ? job.finishedAt : this.terminalFinishedAt(job);
+    return status === job.status && finishedAt === job.finishedAt ? job : { ...job, status, finishedAt };
+  }
+  /** The latest task finish time is when the job actually ended; the clock covers tasks without one. */
+  private terminalFinishedAt(job: AgentJob): number {
+    const taskFinishes = job.tasks.map(task => task.finishedAt).filter((value): value is number => typeof value === 'number');
+    return taskFinishes.length > 0 ? Math.max(...taskFinishes) : this.clock();
   }
   private emitChange(): void { this.versionValue = Math.max(this.versionValue + 1, Date.now()); this.changes.emit('change', this.versionValue); }
 }

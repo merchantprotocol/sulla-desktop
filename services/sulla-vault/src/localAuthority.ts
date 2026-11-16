@@ -16,7 +16,6 @@ import type { VaultConfig } from './config.js';
 import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from './filesKeyBundleAuthority.js';
 import type { LocalVaultState } from './contracts.js';
 import { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
-import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultRelayManager } from './relays.js';
@@ -49,13 +48,13 @@ import type { BrokerExecutionService } from './localAuthority/BrokerExecutionSer
 import type { ServiceIdentityGuard } from './localAuthority/ServiceIdentityGuard.js';
 import type { CacheUpdateStager } from './localAuthority/CacheUpdateStager.js';
 import { LocalAuthorityCollaborators } from './localAuthority/LocalAuthorityCollaborators.js';
-import type { LocalAuthorityHost } from './localAuthority/LocalAuthorityHost.js';
+import type { LocalAuthorityHost, LocalAuthoritySeam, LocalAuthorityVaultSecrets } from './localAuthority/LocalAuthorityHost.js';
 import type { VaultKeyActivation } from './localAuthority/VaultKeyActivation.js';
 import { BrokerAddressPolicy } from './localAuthority/BrokerAddressPolicy.js';
 import { BrokerCredentialFields } from './localAuthority/BrokerCredentialFields.js';
 import { BrokerHttpBody } from './localAuthority/BrokerHttpBody.js';
 import { LocalAuthorityCrypto } from './localAuthority/LocalAuthorityCrypto.js';
-import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './localAuthority/LocalAuthorityTypes.js';
+import type { UnlockedKeys } from './localAuthority/LocalAuthorityTypes.js';
 import { LocalVaultError } from './localAuthority/LocalVaultError.js';
 import { StreamingRedactor } from './localAuthority/StreamingRedactor.js';
 import { SullaCloudDesktopRoutePolicy } from './localAuthority/SullaCloudDesktopRoutePolicy.js';
@@ -83,28 +82,30 @@ export const localAuthorityTestHooks = {
 /**
  * The local Desktop vault authority. It owns all vault state (unlocked keys, generation, grants,
  * challenges, in-flight requests) and the shared guards; the behaviour lives in collaborators
- * under ./localAuthority/ that receive this instance as their LocalAuthorityHost (E9). Members
- * without `private` below are the collaborator surface, not part of the HTTP-facing API.
+ * under ./localAuthority/ that receive this instance as their LocalAuthorityHost (E9). Key material
+ * and grants (LocalAuthorityVaultSecrets) are `private`: only the collaborators reach them, through
+ * collaboratorHost(). Other members without `private` are the collaborator surface, not part of the
+ * HTTP-facing API.
  */
-export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAuthorityHost {
+export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAuthoritySeam {
   readonly filesTransport = new FilesTransportEnvelopeService();
-  keys: UnlockedKeys | null = null;
+  private keys: LocalAuthorityVaultSecrets['keys'] = null;
   generation = 0;
   readonly inFlight = new Set<ReturnType<typeof https.request>>();
-  readonly challenges = new Map<string, Challenge>();
-  readonly cacheChallenges = new Map<string, Challenge>();
-  readonly challengeRate = new Map<string, { count: number; resetAt: number }>();
-  readonly pendingApprovals = new Map<string, number>();
-  readonly pendingVaultEnrollments = new Map<string,{expiresAt:number;bundle:SyncBundle;head:SyncHead;userKey:Uint8Array;privateKey:Uint8Array;masterKey:Uint8Array;cloudUserId:string}>();
-  readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
-  readonly humanSessions = new Map<string, HumanSession>();
+  private readonly challenges: LocalAuthorityVaultSecrets['challenges'] = new Map();
+  private readonly cacheChallenges: LocalAuthorityVaultSecrets['cacheChallenges'] = new Map();
+  private readonly challengeRate: LocalAuthorityVaultSecrets['challengeRate'] = new Map();
+  private readonly pendingApprovals: LocalAuthorityVaultSecrets['pendingApprovals'] = new Map();
+  private readonly pendingVaultEnrollments: LocalAuthorityVaultSecrets['pendingVaultEnrollments'] = new Map();
+  private readonly approvals: LocalAuthorityVaultSecrets['approvals'] = new Map();
+  private readonly humanSessions: LocalAuthorityVaultSecrets['humanSessions'] = new Map();
   readonly oauthRefreshQueues = new Map<string, Promise<void>>();
   sullaCloudSessionManager: SullaCloudSessionManager | null = null;
   agentMailboxCloudLane: AgentMailboxCloudLane | null = null;
-  readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
+  private readonly relaySessions: LocalAuthorityVaultSecrets['relaySessions'] = new Map();
   securityOperationTail: Promise<void> = Promise.resolve();
   migrationState: LocalVaultState = 'locked';
-  stagedCacheUpdate: StagedCacheUpdate | null = null;
+  private stagedCacheUpdate: LocalAuthorityVaultSecrets['stagedCacheUpdate'] = null;
   readonly filesAudit: FilesAuditEmitter;
   readonly outboundAuditSink: AuditFileSink;
   readonly outboundAudit: OutboundAuditRecorder;
@@ -155,8 +156,16 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
 
   get parts(): LocalAuthorityCollaborators {
-    this.collaborators ??= new LocalAuthorityCollaborators(this);
+    this.collaborators ??= new LocalAuthorityCollaborators(this.collaboratorHost());
     return this.collaborators;
+  }
+
+  /**
+   * @internal The collaborator view of this instance: the public seam plus the private vault
+   * secrets. Handed only to LocalAuthorityCollaborators; never returned to callers.
+   */
+  private collaboratorHost(): LocalAuthorityHost {
+    return this as unknown as LocalAuthorityHost;
   }
 
   get localStore(): PostgresLocalAuthorityRepository {

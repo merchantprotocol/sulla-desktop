@@ -10,7 +10,8 @@ import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, releaseAgentCompletionClaim, requeueAgentCompletionAfterFailure, requeueAgentCompletionQuietly, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { CompletionKey } from '../app/Services/CompletionKey';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -20,6 +21,7 @@ import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
+import { ChatErrorDiagnostics } from './ChatErrorDiagnostics';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
@@ -217,7 +219,7 @@ export class BackendGraphWebSocketService {
           : [])),
     ] as PendingCompletion[];
     const unique = new Map<string, PendingCompletion>();
-    for (const entry of entries) unique.set(entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`, entry);
+    for (const entry of entries) unique.set(CompletionKey.of(entry), entry);
     return [...unique.values()];
   }
 
@@ -279,6 +281,16 @@ export class BackendGraphWebSocketService {
     return this.orgMessengerFleet.resolveOrg(org);
   }
 
+  /** The target org and the caller's id on that org's host (Cloud user id, or the Server subject). */
+  orgMessagingParticipant(org?: string): Promise<{ membership: OrgMembership; userId: string }> {
+    return this.orgMessengerFleet.participant(org);
+  }
+
+  /** The target org's people and agent addresses, read from the org's own host. */
+  loadOrgDirectory(org?: string): Promise<{ membership: OrgMembership; directory: { people: readonly unknown[] } }> {
+    return this.orgMessengerFleet.loadDirectory(org);
+  }
+
   /** LiveEvents wake hook for org messaging; polling every 60 s remains the fallback. */
   onOrgLiveEvent(topic: string, orgId?: string): void {
     this.orgMessengerFleet.onLiveEvent(topic, orgId);
@@ -331,14 +343,20 @@ export class BackendGraphWebSocketService {
     void parkedAgentRehydrator.isTerminalDelegatedThread(threadId).then(async(terminal) => {
       // A human stop is final. Child results remain readable and durably
       // undelivered, but must never resurrect the stopped parent thread.
-      if (terminal) return;
+      // Drop the in-memory claim so a later recovery enqueue is not discarded as a duplicate.
+      if (terminal) {
+        for (const entry of entries) releaseAgentCompletionClaim(entry);
+        return;
+      }
       const parked = await parkedAgentRehydrator.resolve(threadId);
       const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
       return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
         source: 'sub_agent_completion', completionEntries: entries,
       });
     }).catch(err => {
-      for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
+      // Requeue (enqueue would drop these claimed entries as duplicates) with
+      // backoff, so a persistent failure is retried later, not hot-looped.
+      for (const entry of entries) requeueAgentCompletionAfterFailure(channelId, threadId, entry);
       console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
 
     });
@@ -908,7 +926,9 @@ export class BackendGraphWebSocketService {
       // pending once the active run ends.
       if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey)) {
         if (metadata?.source === 'sub_agent_completion') {
-          for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+          // Claimed by the caller's take: requeue clears that claim (enqueue would drop them).
+          // No wake: the active run drains the inbox when it ends.
+          for (const entry of metadata.completionEntries ?? []) requeueAgentCompletionQuietly(channelId, threadId, entry);
         }
         return 'deferred';
       }
@@ -1082,7 +1102,12 @@ export class BackendGraphWebSocketService {
         const content = err?.name === 'AgentLaunchError'
           ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
           : `Agent error: ${ err.message || String(err) }`;
-        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
+        firstRunTrace('chat', 'chat error surfaced', {
+          shown: content,
+          ...new ChatErrorDiagnostics().describe(err, {
+            channelId, threadId, agentId, state, wakeTurnJobId: wakeTurnToRepark?.jobId, wakeTurnTaskIdx: wakeTurnToRepark?.taskIndex,
+          }),
+        });
         this.emitMessage(channelId, 'assistant_message', {
           content,
           role:      'assistant',
@@ -1107,8 +1132,12 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
+          // Results the model already answered stay acknowledged; only unseen ones go back to the inbox.
+          completionConsumption.confirmAnswered(state?.messages ?? []);
           await completionConsumption.releaseOnAbort(async entry => {
-            requeueAgentCompletion(channelId, threadId, entry);
+            // A failed turn retries with backoff; a stopped one waits quietly (stop means stop).
+            if (runAbort?.signal.aborted) requeueAgentCompletionQuietly(channelId, threadId, entry);
+            else requeueAgentCompletionAfterFailure(channelId, threadId, entry);
             await agentJobProvider.completionAcknowledgements.release(entry);
           });
           for (const message of state?.messages ?? []) {

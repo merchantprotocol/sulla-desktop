@@ -58,26 +58,17 @@ describe.sequential('PostgresLocalAuthorityRepository', () => {
     expect(await fixture.label()).toBe('committed@example.test');
   });
 
-  it('runs explicit begin/lock/commit and rollback steps on the caller client', async() => {
-    // risk: data accuracy — the legacy import and backup restore keep their own transaction boundaries.
+  it('takes the legacy import lock inside a unit and opens read-only units on another pool', async() => {
+    // risk: data accuracy — the legacy import keeps its lock in-transaction and its source read can never write.
     const repository = fixture.repository;
-    const client = await fixture.database.db.connect();
-    try {
-      await repository.begin(client);
+    await repository.transaction(async client => {
       await repository.lockLegacyImport(client);
       await client.query('UPDATE users SET email=$1 WHERE id=$2', ['explicit@example.test', LocalAuthorityRepositoryFixture.OWNER]);
-      await repository.rollback(client);
-      expect(await fixture.label()).toBe('committed@example.test');
-      await repository.begin(client);
-      await client.query('UPDATE users SET email=$1 WHERE id=$2', ['explicit@example.test', LocalAuthorityRepositoryFixture.OWNER]);
-      await repository.commit(client);
-      expect(await fixture.label()).toBe('explicit@example.test');
-      await repository.beginReadOnly(client);
-      await expect(client.query('UPDATE users SET email=$1 WHERE id=$2', ['read-only@example.test', LocalAuthorityRepositoryFixture.OWNER])).rejects.toThrow();
-      await repository.rollback(client);
-    } finally {
-      client.release();
-    }
+    });
+    expect(await fixture.label()).toBe('explicit@example.test');
+    await expect(repository.readOnlyTransaction(fixture.database.db, client => client.query(
+      'UPDATE users SET email=$1 WHERE id=$2', ['read-only@example.test', LocalAuthorityRepositoryFixture.OWNER],
+    ))).rejects.toThrow();
     expect(await fixture.label()).toBe('explicit@example.test');
   });
 });

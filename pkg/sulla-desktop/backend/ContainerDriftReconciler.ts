@@ -14,6 +14,9 @@ export type DriftOutcome =
   | { kind: 'not-running'; service: string }
   | { kind: 'unknown'; service: string; reason: string };
 
+/** A container's drift as seen without acting on it. */
+export type DriftStatus = 'drifted' | Exclude<DriftOutcome['kind'], 'recreated'>;
+
 export interface DriftLogger {
   log(message: string): void;
   warn(message: string): void;
@@ -94,7 +97,12 @@ export class ContainerDriftReconciler {
 
   /** True when the target's running container must be recreated. */
   async hasDrifted(target: ComposeServiceTarget): Promise<boolean> {
-    return (await this.detect(target)).kind === 'drifted';
+    return (await this.status(target)) === 'drifted';
+  }
+
+  /** What the hashes say about the target, without recreating anything. */
+  async status(target: ComposeServiceTarget): Promise<DriftStatus> {
+    return (await this.detect(target)).kind;
   }
 
   private async detect(target: ComposeServiceTarget): Promise<

@@ -8,13 +8,15 @@ Sulla uses PostgreSQL as its primary data store and Redis as a caching/pub-sub l
 
 ### PostgreSQL (Port 30116)
 
-- **Image**: `postgres:16-alpine`
+- **Image**: `ghcr.io/merchantprotocol/sulla-postgres` (`postgres:16-alpine` + pgvector)
 - **Container**: `sulla_postgres`
 - **Port mapping**: Host `30116` -> Container `5432`
 - **Database**: `sulla`
 - **User**: `sulla`
 - **Data volume**: `/var/lib/sulla/postgres` (persistent inside the VM)
-- **Auth method**: `trust` (no password required within the VM network)
+- **Auth method**: network clients (host port `30116`, and every container on `sulla_default`) authenticate with `scram-sha-256` using the install's service secret. The container's local socket stays `trust`, so `docker exec sulla_postgres psql -U sulla` needs no password. Agent containers share `sulla_default` and get no credentials, so they cannot log in.
+  - Fresh installs: the compose file sets no `POSTGRES_HOST_AUTH_METHOD`, so the image entrypoint appends `host all all all scram-sha-256` at initdb, and `POSTGRES_PASSWORD` is the service secret. `ComposeSecretGuard` refuses any compose file that sets `POSTGRES_HOST_AUTH_METHOD=trust`.
+  - Volumes initialised by older builds keep the `pg_hba.conf` stored in the volume (`host all all all trust`) until Desktop's Postgres auth migration rewrites it to the managed form (`# managed-by: sulla-desktop postgres-auth v1`, backup `pg_hba.conf.sulla-pre-scram`). An install whose stored secret is still the legacy development password stays on trust until that secret is rotated.
 - **Health check**: `pg_isready -U sulla` every 10 seconds
 
 ### Redis (Port 30117)
@@ -42,7 +44,7 @@ A singleton wrapper around `pg.Pool` that provides connection pooling and query 
 - Host: `127.0.0.1`
 - Port: `30116`
 - User: `sulla`
-- Password: Retrieved from `SullaSettingsModel.get('sullaServicePassword', 'sulla_dev_password')`
+- Password: the install's service secret, from `serviceSecretProvider.value()` (`agent/app/Providers/ServiceSecretServiceProvider.ts`); there is no fallback password. `SULLA_DATABASE_URL`, when set, replaces these settings.
 - Database: `sulla`
 - Max pool size: 20 connections
 - Idle timeout: 30 seconds
@@ -84,10 +86,12 @@ A singleton wrapper around `ioredis` with lazy connection, automatic reconnectio
 
 ## Credential Management
 
-Database passwords are managed through `SullaSettingsModel`:
+The PostgreSQL password is the install's **service secret**, owned by `ServiceSecretProvider` (`agent/app/Services/ServiceSecret/ServiceSecretProvider.ts`):
 
-- The `sullaServicePassword` setting stores the PostgreSQL password.
-- Default fallback is `sulla_dev_password` (matches the Docker Compose environment variable).
+- It is generated once on a fresh install (32 random bytes, base64url). There is no default or fallback password.
+- It is stored as the `sullaServicePassword` setting, both in the local settings bootstrap file and in the `sulla_settings` table; the database copy wins on a mismatch. On an installed system Desktop reads it over the container's local socket.
+- `ServiceSecretComposeValues` is the only place that writes it into the compose file (`POSTGRES_PASSWORD` and every service `DATABASE_URL`), and `ComposeSecretGuard` refuses to write a compose file with a missing, wrong or fallback credential.
+- Never put the secret in a command line or a log. For manual SQL, use `docker exec sulla_postgres psql -U sulla` (`just pg-conn`).
 - `SullaSettingsModel.generatePassword(length)` generates cryptographically random passwords.
 - `SullaSettingsModel.generateEncryptionKey(length)` generates base64 encryption keys.
 

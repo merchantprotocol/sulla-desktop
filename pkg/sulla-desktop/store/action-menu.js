@@ -164,14 +164,33 @@ export const actions = {
 
 // -----------------------------
 
-let anon = 0;
+/**
+ * Hands out ids for actions that have no `action` name. The counter lives on
+ * the instance instead of in module scope.
+ */
+class AnonymousActionIds {
+  static #shared = new AnonymousActionIds();
+
+  static get shared() {
+    return AnonymousActionIds.#shared;
+  }
+
+  #next = 0;
+
+  next() {
+    const id = `anon${ this.#next }`;
+
+    this.#next++;
+
+    return id;
+  }
+}
 
 function _add(map, act, incrementCounts = true) {
   let id = act.action;
 
   if ( !id ) {
-    id = `anon${ anon }`;
-    anon++;
+    id = AnonymousActionIds.shared.next();
   }
 
   let obj = map[id];
