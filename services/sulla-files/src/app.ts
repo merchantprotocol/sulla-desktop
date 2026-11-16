@@ -35,7 +35,6 @@ import { SharesService } from './shares.js';
 import { CatalogSyncService } from './cloudRemote/catalogSync.js';
 import { DesktopRequestSyncService } from './cloudRemote/desktopRequests.js';
 import { Store } from './store.js';
-import { ChunkMetadataReconciler } from './ChunkMetadataReconciler.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload, streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
@@ -72,6 +71,13 @@ import { FilesAccessGate, type RequestWithIdentity, type Right } from './Http/Fi
 import { FileListingRepository } from './Repositories/FileListingRepository.js';
 import { FileListingRoutes } from './routes/FileListingRoutes.js';
 import { ShareRoutes } from './routes/ShareRoutes.js';
+import { LocalMaintenanceRoutes } from './routes/LocalMaintenanceRoutes.js';
+import { LocalRootRoutes } from './routes/LocalRootRoutes.js';
+import { SearchRoutes } from './routes/SearchRoutes.js';
+import { StarRoutes } from './routes/StarRoutes.js';
+import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
+import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
+import { StarRepository } from './Repositories/StarRepository.js';
 import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -1175,94 +1181,11 @@ function composeFilesApp(
     }
     throw new HttpError(404,'Files path not found');
   }catch(error){next(error)}});
-  app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.listRoots()) } catch (error) { next(error) } });
-  app.post('/v1/local/roots', async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.status(201).json(await manager.attachBrokeredRoot(request.body))}catch(error){next(error)}});
-  app.post('/v1/local/roots/:id/scan-state',async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.json(await manager.brokeredScanState(String(request.params.id),request.body))}catch(error){next(error)}});
-  app.patch('/v1/local/roots/:id', async(request, response, next) => { try {
-    if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
-    const exclusions = request.body.exclusions;
-    if (exclusions !== undefined && (!Array.isArray(exclusions) || exclusions.length > 200 || exclusions.some((item:unknown) => typeof item !== 'string' || item.length > 500 || item.includes('\0')))) {
-      return response.status(400).json({ error: 'exclusions must be an array of safe patterns' });
-    }
-    if (request.body.syncMode !== undefined && !['local', 'server'].includes(request.body.syncMode)) return response.status(400).json({ error: 'syncMode must be local or server' });
-    response.json(await manager.configureRoot(String(request.params.id), {
-      paused: request.body.paused === undefined ? undefined : Boolean(request.body.paused),
-      syncMode: request.body.syncMode,
-      exclusions,
-    }));
-  } catch (error) { next(error) } });
-  app.delete('/v1/local/roots/:id', async(request, response, next) => { try {
-    if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
-    await manager.detachRoot(String(request.params.id));
-    response.status(204).end();
-  } catch (error) { next(error) } });
-  app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
-  app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
-  app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
-  app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
-  app.post('/v1/local/maintenance', async(_request, response, next) => { try {
-    const now = new Date();
-    const {expired,disposal}=await transactions.run('maintenance-expiry',async client=>{
-    const disposal = await client.query(`UPDATE files SET disposal_status='pending',disposal_review_at=NOW(),lifecycle_generation=lifecycle_generation+1
-      WHERE deleted_at IS NOT NULL AND disposal_status='none' AND retention_mode<>'none' AND NOT files_retention_active(files) RETURNING id`);
-    const expired = (await client.query('SELECT * FROM files WHERE expires_at<$1 AND deleted_at IS NULL FOR UPDATE', [now])).rows;
-    for (const file of expired) {
-      const deleted = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id)
-        VALUES($1,$2,$3,NULL,0,TRUE,'agent-run','scratch-maintenance','Scratch TTL expired','scratch-maintenance') RETURNING id`, [file.id, file.collection_id, file.current_version_id])).rows[0];
-      await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3,updated_at=$3 WHERE id=$1', [file.id, deleted.id, now]);
-      await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [file.collection_id, file.id, deleted.id]);
-    }
-    return {expired,disposal}; });
-    await drainPendingChunkGc(db, (collectionId, chunkId) => store.delete(collectionId, chunkId));
-    const chunkMetadataRepair = config.keyring
-      ? await new ChunkMetadataReconciler(db, store, config.keyring).run({ apply:true })
-      : undefined;
-    const receiptGc=manager?await manager.expireTrashReceipts(now):{invalidated:0,disposed:0,preserved:0};
-    response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc,chunkMetadataRepair });
-  } catch (error) { next(error) } });
+  new LocalRootRoutes(manager).register(app);
+  new LocalMaintenanceRoutes(db, config, store, transactions, new ScratchMaintenanceRepository(), manager).register(app);
 
-  app.post('/v1/local/chunk-metadata/reconcile', async(request, response, next) => { try {
-    if (!config.keyring) return response.status(503).json({ error:'Files keyring is unavailable' });
-    const report = await new ChunkMetadataReconciler(db, store, config.keyring).run({ apply:request.body?.apply === true });
-    response.json(report);
-  } catch (error) { next(error) } });
-
-  app.post('/v1/search', async(request:RequestWithIdentity, response, next) => {
-    const abort = new AbortController();
-    const disconnected = () => { if (!response.writableEnded) abort.abort() };
-    request.once('aborted', disconnected); response.once('close', disconnected);
-    try {
-      if (!search) return response.status(503).json({ error: 'search unavailable' });
-      const scopes = (await db.query("SELECT id FROM collections WHERE published=TRUE AND legacy_source=FALSE")).rows.map(row => ({ collectionId: row.id }));
-      const result = await search.search(request.body, scopes, abort.signal);
-      if (!abort.signal.aborted) response.json(result);
-    } catch (error) { if (!abort.signal.aborted) next(error) }
-    finally { request.off('aborted', disconnected); response.off('close', disconnected) }
-  });
-  const starPrincipal = (request:RequestWithIdentity) => { const actor = identity(request); return actor.agentId || actor.jobId ? { type: 'agent', id: actor.agentId || actor.jobId! } : { type: 'user', id: actor.userId } };
-  app.get('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); await requireCollection(request, collectionId, 'view', true, true); const principal = starPrincipal(request);
-    const rows = await db.query(`SELECT s.collection_id,s.file_id,s.folder_path FROM file_stars s LEFT JOIN files f ON f.id=s.file_id
-      WHERE s.principal_type=$1 AND s.principal_id=$2 AND s.collection_id=$3 AND (s.file_id IS NULL OR (f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))) ORDER BY s.created_at`, [principal.type, principal.id, collectionId]);
-    const visible = []; for (const row of rows.rows) { try { if (row.file_id) await requireFile(request, row.file_id, 'view'); else await requirePath(request, collectionId, row.folder_path, 'view'); visible.push({ collectionId, fileId: row.file_id ?? undefined, folderPath: row.folder_path ?? undefined }) } catch { /* inaccessible stars are hidden */ } }
-    response.json(visible);
-  } catch (error) { next(error) } });
-  app.put('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? cleanPath(request.body.folderPath, false) : undefined;
-    if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
-    const file = fileId ? await requireFile(request, fileId, 'view') : undefined; if (file && file.collection_id !== collectionId) throw new HttpError(400, 'file belongs to another collection');
-    if (!file) await requirePath(request, collectionId, folderPath!, 'view'); const principal = starPrincipal(request);
-    if (fileId) await db.query(`INSERT INTO file_stars(principal_type,principal_id,collection_id,file_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [principal.type, principal.id, collectionId, fileId]);
-    else await db.query(`INSERT INTO file_stars(principal_type,principal_id,collection_id,folder_path) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [principal.type, principal.id, collectionId, folderPath]);
-    response.status(204).end();
-  } catch (error) { next(error) } });
-  app.delete('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? cleanPath(request.body.folderPath, false) : undefined;
-    if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
-    await requireCollection(request, collectionId, 'view', true, true); const principal = starPrincipal(request);
-    await db.query(`DELETE FROM file_stars WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND (($4::uuid IS NOT NULL AND file_id=$4) OR ($5::text IS NOT NULL AND folder_path=$5))`, [principal.type, principal.id, collectionId, fileId ?? null, folderPath ?? null]);
-    response.status(204).end();
-  } catch (error) { next(error) } });
+  new SearchRoutes(new SearchScopeRepository(db), search).register(app);
+  new StarRoutes(accessGate, new StarRepository(db)).register(app);
   const operationAccess = (request:RequestWithIdentity) => ({
     custody: manager?.operationCustody(),
     prepare: async(collectionId:string) => { await requireCollection(request, collectionId, 'edit') },

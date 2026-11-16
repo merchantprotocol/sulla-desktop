@@ -21,9 +21,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'
  */
 const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Maintenance-only scratch TTL sweep (moved from app.ts).
+  'Repositories/ScratchMaintenanceRepository.ts': 1,
+  // One principal's stars in one collection (moved from app.ts).
+  'Repositories/StarRepository.ts': 1,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
-  'app.ts': 9,
+  'app.ts': 7,
   'cloudSync/repository.ts': 1,
   'fileOperations.ts': 1,
   'folderOperationBatches.ts': 12,
