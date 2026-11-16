@@ -1386,7 +1386,7 @@ export class ChatCompletionsServer {
                 sub: executionContext.sub, org_id: executionContext.org_id,
                 group_ids: executionContext.group_ids, agent_id: executionContext.agent_id,
                 pod_id: executionContext.pod_id, thread_id: executionContext.thread_id,
-                job_id: executionContext.job_id, workflow_execution_id: executionContext.workflow_execution_id,
+                job_id: executionContext.job_id, task_index: executionContext.task_index, workflow_execution_id: executionContext.workflow_execution_id,
                 device_id: executionContext.device_id, credential_scope: executionContext.credential_scope,
                 scopes: executionContext.scopes.length ? executionContext.scopes : [`${ canonicalCategory }/*`],
                 expiresInSeconds: Math.max(1, Math.min(60, executionContext.exp - now)),
