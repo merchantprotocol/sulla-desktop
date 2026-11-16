@@ -61,7 +61,7 @@ withDefaults(defineProps<{ size?: number; forceDark?: boolean }>(), { size: 20, 
   display: flex;
   align-items: center;
   gap: calc(var(--logo-size) * 0.22);
-  padding: 4px;
+  padding: 0;
   flex-shrink: 0;
   height: calc(var(--logo-size) + 8px);
   user-select: none;
