@@ -168,7 +168,7 @@ export class OrgMessenger {
   }
 
   private async loadDirectoryIfDue(): Promise<{ people: readonly unknown[] }> {
-    const directoryTransport = this.transport as OrgMessagingDirectory;
+    const directoryTransport = this.transport as Partial<OrgMessagingDirectory>;
     const orgId = await this.session.orgId();
     if (typeof directoryTransport.loadDirectory === 'function' && (orgId !== this.directoryOrgId || Date.now() - this.lastDirectoryRefresh >= this.directoryRefreshMs)) {
       const directory = await directoryTransport.loadDirectory();
