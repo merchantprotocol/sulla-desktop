@@ -56,6 +56,8 @@ import { logVoiceSpan, voiceTurnRoute } from '@pkg/agent/utils/voiceTurn';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import Logging from '@pkg/utils/logging';
 import { RelayLivenessWatchdog } from '@pkg/main/relayLivenessWatchdog';
+import { DesktopRelayStartupRestorer } from '@pkg/main/cloud/session/DesktopRelayStartupRestorer';
+import { DesktopRelayInboundMessageRouter } from '@pkg/main/cloud/session/DesktopRelayInboundMessageRouter';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
 
 
@@ -551,119 +553,49 @@ export class DesktopRelayClient {
   }
 
   private async handleMessage(raw: string, sourceSocket = this.ws, sourceGeneration = this.openGeneration) {
-    let msg: IncomingMessage;
-    try {
-      msg = JSON.parse(raw);
-    } catch {
-      console.warn('[DesktopRelay] Non-JSON message received');
-      return;
-    }
-
-    if (msg.type === 'other_device_signin_code') {
-      if (!msg.requestId || !/^\d{6}$/.test(msg.code ?? '') || !msg.expiresAt || !msg.requestingDeviceId) return;
-      if (msg.requestingDeviceId === await getDesktopDeviceId()) return;
-      const payload = { requestId: msg.requestId, code: msg.code!, expiresAt: msg.expiresAt, requestingDeviceId: msg.requestingDeviceId, requestingDeviceName: msg.requestingDeviceName ?? 'another device' };
-      try {
-        const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
-        if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY(payload.requestingDeviceName) }).show();
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
-        }
-      } catch (err) { console.warn('[DesktopRelay] Could not surface sign-in approval:', err); }
-      console.info(`[DesktopRelay] Received other-device sign-in approval ${msg.requestId}`);
-      return;
-    }
-
-    if (msg.type === 'connected') {
-      // ACK from the DO — already handled via 'open'. Also means we (re)joined
-      // the room; if mobile is already there keepalives can resume.
-      this.mobilePeerOnline = true;
-      for (const convId of this.activeConversations) {
-        this.startKeepalive(convId);
-      }
-      return;
-    }
-
-    if (msg.type === 'pong') {
-      // Keepalive reply from the DO's auto-response. Watchdog already
-      // reset lastInboundAt on the message event above; nothing else to do.
-      return;
-    }
-
-    if (msg.type === 'error') {
-      if (msg.reason === 'peer_offline') {
-        // Mobile dropped out of the room. Keep the agent run alive and queue
-        // completion frames; just stop burning keepalive traffic until the
-        // peer rejoins (connected frame / next successful send).
-        if (this.mobilePeerOnline) {
-          console.warn('[DesktopRelay] Mobile peer offline — pausing keepalives until reconnect');
-        }
-        this.mobilePeerOnline = false;
-        for (const t of this.keepaliveTimers.values()) clearInterval(t);
-        this.keepaliveTimers.clear();
-        return;
-      }
-      console.warn(`[DesktopRelay] Relay error: ${ msg.reason }`);
-      return;
-    }
-
-    if (msg.type === 'companion_request') {
-      if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      await this.runCompanionRequest(msg, frame => this.send(frame));
-      return;
-    }
-
-    if (msg.type === 'share_fetch') {
-      if (!msg.requestId || !msg.linkId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      if (!sourceSocket) return;
-      await this.serveShare(msg, sourceSocket, sourceGeneration);
-      return;
-    }
-
-    if (msg.type === 'share_fetch_cancel') {
-      if (!msg.requestId || !msg.targetDeviceId || msg.targetDeviceId !== await getDesktopDeviceId()) return;
-      const request = this.shareRequests.get(msg.requestId);
-      if (request && request.socket === sourceSocket && request.generation === sourceGeneration && this.isActiveShareRequest(request)) {
-        request.controller.abort();
-        this.shareRequests.delete(msg.requestId);
-      }
-      return;
-    }
-
-    if (msg.type === 'chat') {
-      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
-      // When mobile targets a specific desktop, only the matching device
-      // should handle the request. This is enforced client-side because the
-      // relay DO broadcasts to every desktop peer in the room.
-      if (msg.targetDeviceId) {
+    const router = new DesktopRelayInboundMessageRouter({
+      deviceId: getDesktopDeviceId,
+      surfaceSignInCode: payload => {
         try {
-          const myId = await getDesktopDeviceId();
-          if (msg.targetDeviceId !== myId) {
-            console.log(`[DesktopRelay] Ignoring chat — addressed to ${ msg.targetDeviceId }, I am ${ myId }`);
-            return;
+          const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
+          if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: OTHER_DEVICE_VISIBLE_NOTIFICATION_BODY(payload.requestingDeviceName) }).show();
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
           }
-        } catch (err) {
-          console.warn('[DesktopRelay] device_id lookup failed; refusing targeted chat:', err);
+        } catch (err) { console.warn('[DesktopRelay] Could not surface sign-in approval:', err); }
+      },
+      connected: () => {
+        this.mobilePeerOnline = true;
+        for (const convId of this.activeConversations) this.startKeepalive(convId);
+      },
+      error: reason => {
+        if (reason === 'peer_offline') {
+          if (this.mobilePeerOnline) console.warn('[DesktopRelay] Mobile peer offline — pausing keepalives until reconnect');
+          this.mobilePeerOnline = false;
+          for (const timer of this.keepaliveTimers.values()) clearInterval(timer);
+          this.keepaliveTimers.clear();
           return;
         }
-      }
-      await this.handleChatRequest(msg);
-      return;
-    }
-
-    if (msg.type === 'cancel') {
-      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
-      this.handleCancel(msg);
-      return;
-    }
-
-    if (msg.type === 'inject') {
-      if (msg.conversationId) this.secureRoutes.delete(msg.conversationId);
-      await this.handleInject(msg);
-      return;
-    }
-
-    console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
+        console.warn(`[DesktopRelay] Relay error: ${ reason }`);
+      },
+      companion: async message => this.runCompanionRequest(message as IncomingMessage, frame => this.send(frame)),
+      shareFetch: (message, socket, generation) => this.serveShare(message as IncomingMessage, socket, generation),
+      shareFetchCancel: (message, socket, generation) => {
+        const requestId = message.requestId;
+        if (typeof requestId !== 'string') return;
+        const request = this.shareRequests.get(requestId);
+        if (request && request.socket === socket && request.generation === generation && this.isActiveShareRequest(request)) {
+          request.controller.abort();
+          this.shareRequests.delete(requestId);
+        }
+      },
+      chat: message => this.handleChatRequest(message as IncomingMessage),
+      cancel: message => this.handleCancel(message as IncomingMessage),
+      inject: message => this.handleInject(message as IncomingMessage),
+      clearSecureRoute: conversationId => this.secureRoutes.delete(conversationId),
+      log: console,
+    });
+    await router.route(raw, sourceSocket ?? undefined, sourceGeneration);
   }
 
   private async serveShare(
@@ -1383,59 +1315,51 @@ export class DesktopRelayClient {
   }
 }
 
-let instance: DesktopRelayClient | null = null;
+export class DesktopRelayServiceProvider {
+  constructor(private readonly client: DesktopRelayClient) {}
 
+  getClient(): DesktopRelayClient {
+    return this.client;
+  }
+
+  registerEvents(): void {
+    const ipcMainProxy = getIpcMainProxy(console);
+    const client = this.client;
+
+    ipcMainProxy.handle('desktop-relay:get-status', async() => client.getStatus());
+
+    ipcMainProxy.handle('desktop-relay:set-paired-user-id', async(_event: unknown, userId: string) => {
+      await client.setPairedUserId(userId);
+      return client.getStatus();
+    });
+
+    // Broadcast status changes to renderer
+    client.onStatusChange((status) => {
+      try {
+        const { BrowserWindow } = require('electron') as typeof import('electron');
+        for (const win of BrowserWindow.getAllWindows()) {
+          try { win.webContents.send('desktop-relay:status-changed', status); } catch { /* ignore */ }
+        }
+      } catch { /* electron not ready */ }
+    });
+
+    // Cold-start restore retries while local settings are booting.
+    const startupRestorer = new DesktopRelayStartupRestorer(this.client, {
+      failed: error => console.warn('[DesktopRelay] start() failed (retrying in 10s):', error instanceof Error ? error.message : error),
+      exhausted: error => console.error('[DesktopRelay] start() still failing after 5min — giving up until next app start:', error),
+    });
+    void startupRestorer.restore();
+  }
+}
+
+// Main-process service-provider binding. Relay state belongs to the client instance, never a module-level object graph.
+export const desktopRelayProvider = new DesktopRelayServiceProvider(new DesktopRelayClient());
+
+/** Compatibility exports retained for current main-process callers. */
 export function getDesktopRelayClient(): DesktopRelayClient {
-  if (!instance) instance = new DesktopRelayClient();
-  return instance;
+  return desktopRelayProvider.getClient();
 }
 
 export function initDesktopRelayEvents(): void {
-  const ipcMainProxy = getIpcMainProxy(console);
-  const client = getDesktopRelayClient();
-
-  ipcMainProxy.handle('desktop-relay:get-status', async() => {
-    return client.getStatus();
-  });
-
-  ipcMainProxy.handle('desktop-relay:set-paired-user-id', async(_event: unknown, userId: string) => {
-    await client.setPairedUserId(userId);
-    return client.getStatus();
-  });
-
-  // Broadcast status changes to renderer
-  client.onStatusChange((status) => {
-    try {
-      const { BrowserWindow } = require('electron') as typeof import('electron');
-      for (const win of BrowserWindow.getAllWindows()) {
-        try { win.webContents.send('desktop-relay:status-changed', status); } catch { /* ignore */ }
-      }
-    } catch { /* electron not ready */ }
-  });
-
-  // Kick off the connection on load if a pairing already exists. start()
-  // reads the pairing from Postgres, which may still be coming up inside the
-  // VM on a cold boot — retry with a flat backoff instead of dying once and
-  // leaving the relay offline until the next app restart.
-  (async() => {
-    const RETRY_MS = 10_000;
-    const DEADLINE_MS = 5 * 60_000;
-    const t0 = Date.now();
-
-    for (;;) {
-      try {
-        await client.start();
-
-        return;
-      } catch (err) {
-        if (Date.now() - t0 >= DEADLINE_MS) {
-          console.error('[DesktopRelay] start() still failing after 5min — giving up until next app start:', err);
-
-          return;
-        }
-        console.warn(`[DesktopRelay] start() failed (retrying in ${ RETRY_MS / 1000 }s):`, err instanceof Error ? err.message : err);
-        await new Promise(resolve => setTimeout(resolve, RETRY_MS));
-      }
-    }
-  })();
+  desktopRelayProvider.registerEvents();
 }
