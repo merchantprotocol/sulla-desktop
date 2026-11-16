@@ -48,6 +48,7 @@ MAX_CONFLICT_RETRIES = 3
 # Those are retried (bounded, ~3 s in total) before a mount client ever sees EIO.
 MAX_TRANSIENT_RETRIES = 5
 TRANSIENT_STATUSES = (500, 502, 503, 504)
+AUTH_RETRY_WINDOW_SECONDS = 20
 MAX_RETRY_AFTER_SECONDS = 2.0
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
@@ -254,6 +255,7 @@ class FilesApi:
         self.token_file = token_file
         self.actor_resolver = actor_resolver
         self.http = urllib3.PoolManager(num_pools=4, maxsize=64, block=True)
+        self._last_auth_retry_log = 0.0
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -282,12 +284,25 @@ class FilesApi:
         try:
             attempt = 0
             transient_attempts = 0
+            auth_retry_started = None
+            auth_attempts = 0
             while True:
                 try:
                     result = self._send(path, method, body, headers)
                     outcome["status"], outcome["bytes"] = result[0], len(result[2])
                     return result
                 except OSError as error:
+                    if getattr(error, "status", None) == 401:
+                        auth_retry_started = time.monotonic() if auth_retry_started is None else auth_retry_started
+                        elapsed = time.monotonic() - auth_retry_started
+                        if elapsed < AUTH_RETRY_WINDOW_SECONDS:
+                            auth_attempts += 1
+                            now = time.monotonic()
+                            if now - self._last_auth_retry_log >= 1:
+                                self._last_auth_retry_log = now
+                                emit("files-auth-retry", logging.WARNING, method=method, path=path.split("?", 1)[0], attempt=auth_attempts, elapsed=round(elapsed, 1))
+                            time.sleep(min(2.0, 0.25 * (2 ** min(auth_attempts - 1, 3))))
+                            continue
                     if transient_attempts:
                         error.after_retry = True
                     detail = getattr(error, "detail", None) or {}

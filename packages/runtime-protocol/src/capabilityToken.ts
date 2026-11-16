@@ -63,7 +63,9 @@ export function issueCapabilityToken(input: CapabilityTokenInput, signingKey: st
     v:      1,
     iss:    issuer,
     aud:    'sulla-tools',
-    iat:    now,
+    // Desktop and the isolated runtime can briefly disagree while the runtime
+    // clock is being stepped back into sync. Expiry remains anchored to now.
+    iat:    now - 300,
     exp:    now + Math.max(1, Math.min(input.expiresInSeconds ?? 900, 3600)),
     jti:    input.jti ?? crypto.randomUUID(),
     scopes: [...new Set(input.scopes)],
@@ -106,12 +108,14 @@ export async function verifyCapabilityToken(
   } catch { throw new CapabilityTokenError('malformed', 'Malformed capability token') }
   if (claims.v !== 1 || claims.aud !== 'sulla-tools') throw new CapabilityTokenError('audience', 'Capability audience is not sulla-tools');
   const now = options.now ?? Math.floor(Date.now() / 1000);
-  const tolerance = options.clockToleranceSeconds ?? 60;
+  const tolerance = options.clockToleranceSeconds ?? 300;
   if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 300) throw new RangeError('clockToleranceSeconds must be between 0 and 300');
   if (!Number.isFinite(claims.exp)) throw new CapabilityTokenError('malformed', 'Capability token expiry is invalid');
-  if (claims.exp + tolerance < now) {
+  // Keep expiry grace at the original 60 seconds; the wider tolerance only
+  // addresses future iat values while clocks converge.
+  if (claims.exp + 60 < now) {
     const skew = Math.ceil(now - claims.exp);
-    const reason = `Capability token expired ${skew}s ago (clock skew exceeds ${tolerance}s tolerance)`;
+    const reason = `Capability token expired ${skew}s ago (clock skew exceeds 60s tolerance)`;
     console.warn(`[auth] capability token rejected: ${reason}`);
     throw new CapabilityTokenError('expired', reason);
   }
