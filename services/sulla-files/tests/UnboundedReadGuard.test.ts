@@ -35,6 +35,12 @@ const ALLOWED:Record<string, number> = {
   'Repositories/CollectionFilesFeedRepository.ts': 1,
   // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
   'Repositories/FolderSubtreeRepository.ts': 7,
+  // Maintenance-only scratch TTL sweep (moved from app.ts).
+  'Repositories/ScratchMaintenanceRepository.ts': 1,
+  // One principal's stars in one collection (moved from app.ts).
+  'Repositories/StarRepository.ts': 1,
+  // One collection's trashed files and top-level trashed folders (moved from app.ts).
+  'Repositories/TrashListingRepository.ts': 2,
   // Legacy stored folder move: the moved folder's own subtree, locked for update.
   'Repositories/StoredFileOperationRepository.ts': 1,
   // Bounded by the caller's path array: the ancestors of one path being created (moved from storedNamespace.ts).
@@ -43,7 +49,7 @@ const ALLOWED:Record<string, number> = {
   'Repositories/SullaCollectionMigrationRepository.ts': 4,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
-  'app.ts': 9,
+  'app.ts': 5,
   'localManager.ts': 2,
 };
 
