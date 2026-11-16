@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
-import { VaultBootstrapProcess, type VaultBootstrapProcessRuntime } from './vaultBootstrapProcess';
+import { VaultBootstrapProcess, type VaultBootstrapProcessRuntime } from './vaultBootstrapLifecycle';
 
 const EXIT = new Error('bootstrap process exited');
 
