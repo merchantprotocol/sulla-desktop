@@ -8,7 +8,9 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, rename, stat } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 
+import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { TransactionControlRepository } from './Repositories/TransactionControlRepository.js';
+import { VersionWriteRepository } from './Repositories/VersionWriteRepository.js';
 import { TrackedPathFilter } from './TrackedPathFilter.js';
 import { decryptChunk } from './crypto.js';
 
@@ -21,6 +23,9 @@ import type { RemotePurgeApplier } from './RemotePurgeApplier.js';
 import type { CollectionPolicyRepository } from './Repositories/CollectionPolicyRepository.js';
 import type { ReplicationRepository } from './Repositories/ReplicationRepository.js';
 import type { Store } from './store.js';
+
+/** A chunk the puller verified (decrypted) while materializing a version. */
+export interface PulledChunk { id:string; size:number; storedSize:number }
 import type pg from 'pg';
 
 /**
@@ -41,6 +46,8 @@ export class ReplicationPuller {
     private readonly rootFor:(collectionId:string)=>FileRootConfig,
     private readonly indexer?:IndexingQueue,
     private readonly control = new TransactionControlRepository(),
+    private readonly chunkMetadata = new VersionWriteRepository(),
+    private readonly chunkRegistry = new ManifestChunkRegistry(),
   ) {}
 
   async pull(entry:any):Promise<void> {
@@ -86,10 +93,15 @@ export class ReplicationPuller {
       if (prior?.path && prior.path !== entry.file.path) {
         try { await mkdir(dirname(TrackedPathFilter.inside(root, entry.file.path)), { recursive: true }); await rename(TrackedPathFilter.inside(root, prior.path), TrackedPathFilter.inside(root, entry.file.path)) } catch (error:any) { if (error?.code !== 'ENOENT') throw error; }
       }
-      await this.materialize(entry);
+      const chunks = await this.materialize(entry);
       const info = await stat(TrackedPathFilter.inside(root, entry.file.path)); const hash = createHash('sha256');
       for await (const part of createReadStream(TrackedPathFilter.inside(root, entry.file.path))) hash.update(part);
+      // Migration 066 refuses a version whose manifest names a chunk with no `chunks` row in its chunk
+      // collection, so register the manifest and every verified chunk first, exactly as VersionWriter does.
+      const chunkCollectionId = entry.version.chunk_collection_id;
       await this.repository.insertManifest(client, entry.manifest);
+      for (const chunk of chunks) await this.chunkMetadata.recordChunk(client, chunkCollectionId, chunk);
+      await this.chunkRegistry.assertRegistered(client, chunkCollectionId, entry.manifest.chunk_ids);
       await this.repository.upsertFile(client, entry, collectionId);
       const collection = entry.collection ?? await this.collectionPolicyRepository.findPublicationPolicy(client, collectionId);
       if (!collection) throw new Error(`Replication collection ${ collectionId } is unavailable`);
@@ -97,18 +109,23 @@ export class ReplicationPuller {
         collection, path:entry.file.path, createdByType:entry.version.created_by_type,
         lifecycle:{ publication_status:entry.version.publication_status ?? 'draft', published_at:entry.version.published_at ?? null, published_by:entry.version.published_by ?? null },
       });
-      await this.repository.upsertVersion(client, entry, replicatedLifecycle);
+      const inserted = await this.repository.upsertVersion(client, entry, replicatedLifecycle);
+      // Only a newly recorded version takes a reference; re-pulling the same entry must not count twice.
+      if (inserted) await this.chunkMetadata.referenceChunks(client, chunkCollectionId, entry.manifest.chunk_ids);
       await this.repository.activateVersion(client, entry.file.id, entry.version.id, replicatedLifecycle.publication_status ?? 'draft');
       await this.repository.upsertWatchedState(client, { collectionId, path: entry.file.path, fileId: entry.file.id, contentHash: hash.digest('hex'), size: info.size, mtimeMs: info.mtimeMs, rootId: root.id });
       await this.control.commit(client); this.indexer?.wake();
     } catch (error) { await this.control.rollback(client); throw error } finally { client.release() }
   }
 
-  /** Decrypt the version's chunks (local store first, then the server) into a temp file and rename it into place. */
-  async materialize(bundle:any):Promise<void> {
+  /**
+   * Decrypt the version's chunks (local store first, then the server) into a temp file and rename it
+   * into place. Returns each distinct chunk it verified so its metadata can be registered (066).
+   */
+  async materialize(bundle:any):Promise<PulledChunk[]> {
     const root = this.rootFor(bundle.file.collection_id);
     const keys = await this.config.keyring!.keys(bundle.version.chunk_collection_id); const target = TrackedPathFilter.inside(root, bundle.file.path); await mkdir(dirname(target), { recursive: true }); const temp = `${ target }.sulla-conflict-${ randomUUID() }`; const output = createWriteStream(temp, { mode: 0o600 });
-    let lastId:string | undefined; let lastPlain:Buffer | undefined;
+    let lastId:string | undefined; let lastPlain:Buffer | undefined; const verified = new Map<string, PulledChunk>();
     try {
       for (const id of bundle.manifest.chunk_ids) {
         let plain:Buffer;
@@ -118,10 +135,12 @@ export class ReplicationPuller {
           if (await this.store.has(bundle.version.chunk_collection_id, id)) encrypted = await this.store.get(bundle.version.chunk_collection_id, id);
           else { encrypted = await this.remote.getChunk(bundle.version.chunk_collection_id, id); await this.store.put(bundle.version.chunk_collection_id, id, encrypted) }
           plain = await decryptChunk(encrypted, keys.data, id); lastId = id; lastPlain = plain;
+          verified.set(id, { id, size: plain.length, storedSize: encrypted.byteLength });
         }
         if (!output.write(plain)) await new Promise<void>(resolve => output.once('drain', () => resolve()));
       }
       output.end(); await new Promise<void>((resolve, reject) => { output.once('finish', resolve); output.once('error', reject) }); await rename(temp, target);
+      return [...verified.values()];
     } catch (error) { output.destroy(); throw error }
   }
 }

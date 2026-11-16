@@ -6,11 +6,12 @@
 // root and chunk store. Only the sync server is faked, at the RemoteFilesClient boundary.
 // Requires SULLA_FILES_TEST_DATABASE_URL.
 import { createHash, randomUUID } from 'node:crypto';
-import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { chunkId, encryptChunk } from '../src/crypto.js';
 import { TransactionRunner } from '../src/FilesTransaction.js';
 import { LegacyFolderSync } from '../src/LegacyFolderSync.js';
 import { ReplicationPuller } from '../src/ReplicationPuller.js';
@@ -31,6 +32,9 @@ class FakeSyncServer {
   prepareReply:any = { missing: [] };
   readonly calls:{ path:string; method:string; body?:any }[] = [];
   readonly uploaded:string[] = [];
+  /** Encrypted chunks the server holds for download, by chunk id. */
+  readonly served = new Map<string, Uint8Array>();
+  readonly downloaded:string[] = [];
   constructor(private readonly collections:()=>any[]) {}
   async json(path:string, init:RequestInit = {}):Promise<any> {
     this.calls.push({ path, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : undefined });
@@ -40,7 +44,12 @@ class FakeSyncServer {
     return {};
   }
   async putChunk(_collectionId:string, id:string):Promise<void> { this.uploaded.push(id) }
-  async getChunk():Promise<Uint8Array> { throw new Error('unexpected chunk download') }
+  async getChunk(_collectionId:string, id:string):Promise<Uint8Array> {
+    const bytes = this.served.get(id);
+    if (!bytes) throw new Error('unexpected chunk download');
+    this.downloaded.push(id);
+    return bytes;
+  }
 }
 
 describe.skipIf(!databaseUrl)('legacy folder sync + replication (real Postgres, fake sync server)', () => {
@@ -56,6 +65,8 @@ describe.skipIf(!databaseUrl)('legacy folder sync + replication (real Postgres, 
   let puller:ReplicationPuller;
   const progress = new ScanProgress();
   const deviceId = 'this-device';
+  const dataKey = Buffer.alloc(32, 1);
+  const dedupKey = Buffer.alloc(32, 2);
 
   beforeAll(async() => {
     await admin.query(`CREATE SCHEMA "${ schema }"`);
@@ -75,7 +86,7 @@ describe.skipIf(!databaseUrl)('legacy folder sync + replication (real Postgres, 
     root = { id: 'default', name: 'Files', path: join(temp, 'files'), syncMode: 'server', paused: false, exclusions: [], primary: true };
     store = new Store(join(temp, 'chunks'));
     server = new FakeSyncServer(() => [{ id: collectionId, name: 'Files' }]);
-    const config:any = { serverUrl: 'http://sync.invalid', deviceId, userId: 'sync-user', keyring: { requireLegacySync: async() => undefined, keys: async() => ({ data: Buffer.alloc(32, 1), dedup: Buffer.alloc(32, 2) }) } };
+    const config:any = { serverUrl: 'http://sync.invalid', deviceId, userId: 'sync-user', keyring: { requireLegacySync: async() => undefined, keys: async() => ({ data: dataKey, dedup: dedupKey }) } };
     const transactions = new TransactionRunner(pool);
     const rootFor = () => root;
     puller = new ReplicationPuller(pool, config, store, server as any, new ReplicationRepository(pool), { apply: async() => undefined } as any, transactions,
@@ -140,5 +151,74 @@ describe.skipIf(!databaseUrl)('legacy folder sync + replication (real Postgres, 
     expect(file.current_version_id).toBe(deleteVersion);
     expect(file.deleted_at).not.toBeNull();
     expect((await pool.query('SELECT 1 FROM watched_folder_state WHERE file_id=$1', [local.fileId])).rowCount).toBe(0);
+  });
+
+  /** A remote device's version as the legacy server journals it: encrypted chunks plus its manifest. */
+  async function remoteVersion(path:string, parts:string[], fileId:string = randomUUID()) {
+    const chunks = await Promise.all(parts.map(async part => {
+      const plain = Buffer.from(part); const id = chunkId(plain, dedupKey);
+      return { id, plain, encrypted: await encryptChunk(plain, dataKey, id) };
+    }));
+    const chunkIds = chunks.map(chunk => chunk.id);
+    const content = parts.join(''); const manifestHash = sha256(`remote:${ chunkIds.join(',') }`);
+    const versionId = randomUUID();
+    const entry = {
+      seq: 1, op: 'put', syncAuthority: { canMaterialize: true },
+      file: { id: fileId, collection_id: collectionId, path, created_by_type: 'user', created_by_id: 'sync-user', mime: 'text/plain', size: content.length, lifecycle_generation: 0 },
+      version: { id: versionId, chunk_collection_id: collectionId, parent_version_id: null, manifest_hash: manifestHash, size: content.length, deleted: false,
+        created_by_type: 'user', created_by_id: 'sync-user', created_at: new Date().toISOString(), message: 'Changed on another device', device_id: 'other' },
+      manifest: { hash: manifestHash, chunk_ids: chunkIds, total_size: content.length },
+    };
+    return { entry, chunks, content, fileId, versionId };
+  }
+  const chunkRows = async(ids:string[]) => (await pool.query('SELECT id,size,stored_size,location,refcount FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[]) ORDER BY id', [collectionId, ids])).rows;
+
+  // risk: data loss (migration 066) — a pulled version whose chunks this device has never seen must register those chunks
+  // before its version row; otherwise the 066 guard refuses it (23503) and the remote change never lands.
+  it('pulls a remote version whose chunks are new: chunk rows are registered before the version, refcounted once', async() => {
+    // 'alpha-' repeats non-adjacently: one chunk row, one reference from this version.
+    const remote = await remoteVersion('notes/new.txt', ['alpha-', 'beta-', 'alpha-']);
+    for (const chunk of remote.chunks) server.served.set(chunk.id, chunk.encrypted);
+    await puller.pull(remote.entry);
+
+    expect(await readFile(join(root.path, 'notes/new.txt'), 'utf8')).toBe(remote.content);
+    const file = (await pool.query('SELECT current_version_id,deleted_at FROM files WHERE id=$1', [remote.fileId])).rows[0];
+    expect(file.current_version_id).toBe(remote.versionId);
+    const distinct = [...new Set(remote.chunks.map(chunk => chunk.id))];
+    const rows = await chunkRows(distinct);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      const chunk = remote.chunks.find(candidate => candidate.id === row.id)!;
+      expect(row).toMatchObject({ size: chunk.plain.length, stored_size: chunk.encrypted.byteLength, location: `chunks/${ collectionId }/${ chunk.id }` });
+      expect(Number(row.refcount)).toBe(1);
+      expect(await store.has(collectionId, chunk.id)).toBe(true);
+    }
+
+    // Re-pulling the same journal entry is idempotent: no second reference.
+    await puller.pull(remote.entry);
+    expect((await chunkRows(distinct)).map(row => Number(row.refcount))).toEqual([1, 1]);
+  });
+
+  // risk: data accuracy — chunks this device already holds and has registered are reused, not duplicated or downloaded.
+  it('pulls a remote version whose chunks already exist locally and adds one reference', async() => {
+    const remote = await remoteVersion('shared.txt', ['already here']);
+    const [chunk] = remote.chunks;
+    await store.put(collectionId, chunk.id, chunk.encrypted);
+    await pool.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1)', [collectionId, chunk.id, chunk.plain.length, chunk.encrypted.byteLength, `chunks/${ collectionId }/${ chunk.id }`]);
+    await puller.pull(remote.entry);
+
+    expect(server.downloaded).toEqual([]);
+    expect(await readFile(join(root.path, 'shared.txt'), 'utf8')).toBe('already here');
+    expect((await pool.query('SELECT current_version_id FROM files WHERE id=$1', [remote.fileId])).rows[0].current_version_id).toBe(remote.versionId);
+    expect((await chunkRows([chunk.id])).map(row => Number(row.refcount))).toEqual([2]);
+  });
+
+  // risk: data accuracy — a chunk that fails to decrypt (wrong bytes from the server) must not register metadata or a version.
+  it('rolls back without chunk rows or a version when a downloaded chunk fails verification', async() => {
+    const remote = await remoteVersion('bad.txt', ['tampered']);
+    server.served.set(remote.chunks[0].id, Buffer.from('not the encrypted chunk'));
+    await expect(puller.pull(remote.entry)).rejects.toThrow();
+    expect(await chunkRows([remote.chunks[0].id])).toHaveLength(0);
+    expect((await pool.query('SELECT 1 FROM file_versions WHERE id=$1', [remote.versionId])).rowCount).toBe(0);
   });
 });
