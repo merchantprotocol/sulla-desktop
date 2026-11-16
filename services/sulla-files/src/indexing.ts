@@ -136,7 +136,11 @@ export class IndexingQueue {
    * their eligibility without locks and indexes them a few at a time. Returns how many it claimed.
    */
   private async processOne():Promise<number> {
-    const batch = await this.jobs.claimBatch(INDEX_CLAIM_BATCH); if (!batch.length) return 0;
+    // The claim and the indexing-state mirror are derived queue state. A lost claim is
+    // retried by reconciliation; keeping the batch in one transaction avoids one durable
+    // flush per batch without weakening the file/version durability boundary.
+    const batch = await this.transactions.run('index-job-claim', client => this.jobs.on(client).claimBatch(INDEX_CLAIM_BATCH));
+    if (!batch.length) return 0;
     const snapshots = await this.jobs.readEligibility([...new Set(batch.map(job => String(job.file_id)))]);
     let next = 0;
     const worker = async() => { while (next < batch.length) { const job = batch[next++]; await this.processJob(job, snapshots.get(String(job.file_id))) } };

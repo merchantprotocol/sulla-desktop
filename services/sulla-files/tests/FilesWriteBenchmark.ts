@@ -30,6 +30,7 @@ export interface BenchmarkResult {
   started:number; ended:number; files:number; seconds:number; filesPerSecond:number;
   p50:number; p95:number; p99:number; max:number;
   maxTransactionMs:number; failures:string[];
+  walSyncs:number; walSyncsPerFile:number;
 }
 
 /** Percentiles over request latencies (milliseconds). */
@@ -172,6 +173,7 @@ export class FilesWriteBenchmark {
   async run(runId:string):Promise<BenchmarkResult> {
     const latencies = new LatencySample(); const failures:string[] = [];
     const sampler = new TransactionHoldSampler(this.admin, this.applicationName);
+    const walBefore = Number((await this.admin.query('SELECT wal_sync FROM pg_stat_wal')).rows[0]?.wal_sync ?? 0);
     const token = issueCapabilityToken({ sub: this.userId, device_id: 'bench-device', scopes: ['files/*'], job_id: 'bench-job' }, this.signingKey);
     const started = performance.now(); sampler.start();
     await Promise.all(this.paths(runId).map(async paths => {
@@ -184,10 +186,12 @@ export class FilesWriteBenchmark {
       }
     }));
     const ended = performance.now(); const seconds = (ended - started) / 1000; sampler.stop();
+    const walAfter = Number((await this.admin.query('SELECT wal_sync FROM pg_stat_wal')).rows[0]?.wal_sync ?? walBefore);
     if (sampler.waits.size) console.log(`[files-bench] top waits (samples every 20ms):\n${ sampler.topWaits() }`);
     const files = this.options.writers * this.options.filesPerWriter;
     return { started, ended, files, seconds, filesPerSecond: files / seconds, p50: latencies.percentile(50), p95: latencies.percentile(95), p99: latencies.percentile(99),
-      max: latencies.percentile(100), maxTransactionMs: sampler.maxMs, failures };
+      max: latencies.percentile(100), maxTransactionMs: sampler.maxMs, failures,
+      walSyncs: Math.max(0, walAfter - walBefore), walSyncsPerFile: Math.max(0, walAfter - walBefore) / files };
   }
 
   /** Waits (bounded) until every job for the run's files is finished, then reports lag and drain rate. */

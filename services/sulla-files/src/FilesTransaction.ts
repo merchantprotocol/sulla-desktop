@@ -48,6 +48,20 @@ export class DatabaseFailureClassifier {
 
 type TransactionPool = Pick<pg.Pool, 'connect'>;
 
+/**
+ * These transactions contain only reconstructible search/index state. Losing an acknowledged
+ * commit can delay search until the next index-queue reconciliation, but cannot lose file data.
+ * Keep this allowlist exact: all file/version/manifest/chunk and audit-spool writes stay durable.
+ */
+export class TransactionDurabilityPolicy {
+  private readonly asynchronousCommitNames = new Set([
+    'index-accounting-reconcile', 'index-job-claim', 'index-manual-retry',
+    'index-eligibility', 'index-content-commit', 'index-failure',
+  ]);
+
+  usesAsynchronousCommit(name:string):boolean { return this.asynchronousCommitNames.has(name) }
+}
+
 export interface TransactionObserver {
   slowTransaction(name:string, milliseconds:number):void;
 }
@@ -73,6 +87,7 @@ export class TransactionRunner {
     private readonly observer:TransactionObserver = { slowTransaction: (name, ms) => console.warn(`[SullaFiles] slow transaction ${ name } held ${ ms }ms`) },
     private readonly slowMs = 1_000,
     private readonly control = new TransactionControlRepository(),
+    private readonly durability = new TransactionDurabilityPolicy(),
   ) {}
 
   async run<T>(name:string, work:(client:pg.PoolClient) => Promise<T>):Promise<T> {
@@ -82,6 +97,9 @@ export class TransactionRunner {
     let began = 0; let committing = false;
     try {
       await this.control.begin(client); began = Date.now();
+      if (this.durability.usesAsynchronousCommit(name)) {
+        await client.query('SET LOCAL synchronous_commit = off');
+      }
       // While `work` runs, a pool acquire or chunk staging anywhere below it is a scope violation.
       const result = await TransactionScope.within(name, () => work(client));
       committing = true;

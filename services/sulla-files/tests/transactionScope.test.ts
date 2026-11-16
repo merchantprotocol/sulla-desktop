@@ -27,6 +27,19 @@ describe('Files transaction resource guard',()=>{
     const open=TransactionScope.within('other-request',async()=>{await gate});
     expect(()=>TransactionScope.assertOutside('independent-request','throw')).not.toThrow();release();await open;
   });
+  // risk: data loss — only derived index state may acknowledge before its WAL flush; file content and audit spool remain synchronous.
+  it('disables synchronous commit only inside explicitly reconstructible indexing transactions',async()=>{
+    const calls:string[]=[];
+    const runner=new TransactionRunner({connect:async()=>({query:async(sql:string)=>{calls.push(sql)},release:()=>undefined})} as any);
+    await runner.run('index-content-commit',async()=>undefined);
+    expect(calls).toEqual(['BEGIN','SET LOCAL synchronous_commit = off','COMMIT']);
+    calls.length=0;
+    await runner.run('fuse-write',async()=>undefined);
+    expect(calls).toEqual(['BEGIN','COMMIT']);
+    calls.length=0;
+    await runner.run('audit-spool-insert',async()=>undefined);
+    expect(calls).toEqual(['BEGIN','COMMIT']);
+  });
   it('bounds the configured backend budget',()=>{
     expect(filesPoolMax(undefined)).toBe(12);expect(filesPoolMax('24')).toBe(24);
     for(const bad of ['0','65','NaN','1.5',''])expect(()=>filesPoolMax(bad)).toThrow();

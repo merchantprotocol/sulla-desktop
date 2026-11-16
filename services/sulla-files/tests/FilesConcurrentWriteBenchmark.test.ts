@@ -18,6 +18,7 @@ const writers = Number(process.env.SULLA_FILES_BENCH_WRITERS ?? 8);
 const filesPerWriter = Number(process.env.SULLA_FILES_BENCH_FILES ?? 200);
 const assertTargets = process.env.SULLA_FILES_BENCH_TARGETS === '1';
 // SULLA_FILES_BENCH_BACKGROUND=0 isolates the writers; =indexer or =audit runs only that one.
+// wal_sync is cluster-wide pg_stat_wal delta, so run against an otherwise quiet test Postgres.
 const background = process.env.SULLA_FILES_BENCH_BACKGROUND ?? 'all';
 
 describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real Postgres)', () => {
@@ -33,6 +34,7 @@ describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real
     console.log(`[files-bench] writers=${ writers } files=${ result.files } seconds=${ result.seconds.toFixed(2) } files/s=${ result.filesPerSecond.toFixed(1) } `
       + `p50=${ result.p50.toFixed(0) }ms p95=${ result.p95.toFixed(0) }ms p99=${ result.p99.toFixed(0) }ms max=${ result.max.toFixed(0) }ms `
       + `maxTransaction=${ result.maxTransactionMs.toFixed(0) }ms failures=${ result.failures.length } `
+      + `walSyncs=${ result.walSyncs } walSyncs/file=${ result.walSyncsPerFile.toFixed(3) } `
       + `auditBacklog=${ await bench.scalar('SELECT COUNT(*) n FROM files_audit_spool') } indexBacklog=${ await bench.scalar("SELECT COUNT(*) n FROM file_index_jobs WHERE status IN ('pending','indexing')") }`);
 
     const index = background === 'all' || background === 'indexer' ? await bench.indexing(runId, result.started, result.ended) : undefined;
