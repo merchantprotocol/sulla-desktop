@@ -90,6 +90,7 @@ import {
   cacheUpdateSessionKeyInput,
 } from './contracts.js';
 import type { Database, Queryable } from './db.js';
+import { PostgresLocalAuthorityRepository } from './repositories/PostgresLocalAuthorityRepository.js';
 import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
 import { PostgresSullaCloudRevocationRepository } from './repositories/PostgresSullaCloudRevocationRepository.js';
 import { AgentMailboxCloudLane } from './sullaCloudSession/AgentMailboxCloudLane.js';
@@ -606,6 +607,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private codecProvider = new DomainVaultSyncCodecProvider();
 
   private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
+  /** Created on first use from `db`, so instances built without the constructor (specs) still work. */
+  private localAuthorityRepository?: PostgresLocalAuthorityRepository;
 
   constructor(
     private readonly db: Database,
@@ -644,6 +647,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
+
+  private get localStore(): PostgresLocalAuthorityRepository {
+    this.localAuthorityRepository ??= new PostgresLocalAuthorityRepository(this.db);
+    return this.localAuthorityRepository;
+  }
 
   /** Seals one item for its `items` row (domain `LocalItemCipher`: fresh item key, AAD binds owner + item id). */
   private async sealItem(plaintext: string, userKey: Uint8Array, context: LocalItemContext): Promise<LocalEncryptedItem> {
@@ -1391,10 +1399,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
     }
     if (!currentOwner) {
-      const priorCloud = await this.db.query<{ active_account_id: string }>(
-        `SELECT active_account_id FROM local_integration_state
-          WHERE owner_user_id=$1 AND integration_id='sulla-cloud' LIMIT 1`, [keys.userId],
-      );
+      const priorCloud = await this.localStore.findPriorSullaCloudAccount<{ active_account_id: string }>(keys.userId);
       if (priorCloud.rows[0]?.active_account_id && priorCloud.rows[0].active_account_id !== cloudUserId) {
         throw new LocalVaultError('invalid_credentials', 409, 'This Mac has a vault for a different Sulla account. Sign in with that account.');
       }
@@ -1604,7 +1609,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       const asBuffer = DesktopHumanBackup.bytea;
       const client = await this.db.connect();
       try {
-        await client.query('BEGIN');
+        await this.localStore.begin(client);
         await this.userRepository.importBackup(
           [payload.user.id, payload.user.email, asBuffer(payload.user.login_hash_salt), asBuffer(payload.user.login_hash_verifier),
             payload.user.public_key, payload.user.encrypted_private_key, payload.user.encrypted_user_key, payload.user.kdf],
@@ -1622,9 +1627,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
         }
         this.requireStableGeneration(attemptGeneration);
         await this.auditHumanAction(client, payload.user.id, 'human_backup_imported');
-        await client.query('COMMIT');
+        await this.localStore.commit(client);
       } catch (error) {
-        await client.query('ROLLBACK');
+        await this.localStore.rollback(client);
         throw error;
       } finally {
         client.release();
@@ -1797,10 +1802,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const generation = this.generation;
     const result = await this.itemRepository.listIntegrationMetadata<ItemRow & { integration_ref: string }>([keys.userId, integrationId, accountFilter ?? null]);
     this.requireGeneration(generation);
-    const active = await this.db.query<{ active_account_id: string | null }>(
-      'SELECT active_account_id FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=$2',
-      [keys.userId, integrationId],
-    );
+    const active = await this.localStore.findActiveAccount<{ active_account_id: string | null }>(keys.userId, integrationId);
     this.requireGeneration(generation);
     const availableIds = result.rows.map(item => item.integration_ref.slice(integrationId.length + 1));
     const configuredActive = active.rows[0]?.active_account_id;
@@ -2175,12 +2177,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     try {
       const client = await legacy.connect();
       try {
-        await client.query('BEGIN READ ONLY');
+        await this.localStore.beginReadOnly(client);
         const result = await this.legacyCredentialRepository.list(client);
         rows = result.rows;
-        await client.query('COMMIT');
+        await this.localStore.commit(client);
       } catch (error) {
-        await client.query('ROLLBACK');
+        await this.localStore.rollback(client);
         throw error;
       } finally {
         client.release();
@@ -2211,8 +2213,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     const client = await this.db.connect();
     let batchId = '';
     try {
-      await client.query('BEGIN');
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-vault-legacy-import'))");
+      await this.localStore.begin(client);
+      await this.localStore.lockLegacyImport(client);
       const batch = await this.migrationRepository.start<{ id: string }>(sourceFingerprint, client);
       batchId = batch.rows[0].id;
       let imported = 0;
@@ -2258,13 +2260,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       }
       this.requireGeneration(generation);
       await this.migrationRepository.commit(batchId, imported, skipped, client);
-      await client.query('COMMIT');
+      await this.localStore.commit(client);
       keys.legacyVmk?.fill(0);
       keys.legacyVmk = undefined;
       this.migrationState = 'unlocked';
       return { batchId, imported, skipped, state: 'unlocked' };
     } catch (error) {
-      await client.query('ROLLBACK');
+      await this.localStore.rollback(client);
       this.migrationState = 'migration_failed';
       if (batchId) {
         await this.migrationRepository.fail(batchId).catch(() => undefined);
@@ -2952,18 +2954,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   private async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await operation(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+    return this.localStore.transaction(operation);
   }
 
   private async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
