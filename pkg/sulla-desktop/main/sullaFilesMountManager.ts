@@ -28,6 +28,8 @@ const RETRY_STEADY_MS = 5 * 60_000;
 const ADAPTER_STATUS_FILE = '/tmp/sulla-files-fuse-status.json';
 /** Upper bound while the adapter keeps reporting progress (token wait, tree load). */
 const ADAPTER_WAIT_MS = 120_000;
+const ADAPTER_TOKEN_REPAIR_AFTER_MS = 30_000;
+const ADAPTER_TOKEN_REPAIR_INTERVAL_MS = 5_000;
 /** The adapter refreshes updatedAt every ~5s; this much silence means it is wedged. */
 const ADAPTER_STATUS_STALE_MS = 20_000;
 /** How long a container may run without any status (starting, or an image that predates status). */
@@ -212,7 +214,7 @@ export class SullaFilesMountManager extends EventEmitter {
         { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
         'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
       ));
-      await traceAsync('mount: wait for adapter', () => this.waitForAdapter(executor));
+      await traceAsync('mount: wait for adapter', () => this.waitForAdapter(executor, credentialGeneration));
       // Prove adapter health with a real Files-backed directory read.
       // This does not authorize an agent; that admission remains disabled
       // until Files can enforce a grant-scoped per-agent/job view.
@@ -409,10 +411,12 @@ export class SullaFilesMountManager extends EventEmitter {
    * while a failed or wedged one stops at once with its own reason, instead of
    * being killed on a fixed timer.
    */
-  private async waitForAdapter(executor:VMExecutor):Promise<void> {
+  private async waitForAdapter(executor:VMExecutor, credentialGeneration:number):Promise<void> {
     const started = Date.now();
     let lastPhase:string | undefined;
     let mountedSince:number | undefined;
+    let waitingTokenSince:number | undefined;
+    let lastTokenRepairAt = 0;
 
     for (;;) {
       if (await this.isAdapterMounted(executor)) return;
@@ -424,6 +428,23 @@ export class SullaFilesMountManager extends EventEmitter {
         traceEvent(`mount: adapter phase ${ phase ?? 'unreported' }`);
         if (phase) console.log(`[SullaFiles] Files adapter ${ phase }${ status?.reason ? `: ${ status.reason }` : '' }`);
         lastPhase = phase;
+      }
+      if (phase === 'waiting-token') {
+        waitingTokenSince ??= now;
+        if (now - waitingTokenSince >= ADAPTER_TOKEN_REPAIR_AFTER_MS &&
+            now - lastTokenRepairAt >= ADAPTER_TOKEN_REPAIR_INTERVAL_MS) {
+          lastTokenRepairAt = now;
+          const tokenPresent = await executor.execCommand(
+            { root: true, capture: true, expectFailure: true },
+            'docker', 'exec', 'sulla_files_fuse', 'sh', '-c', 'test -s "$1" && echo present', 'sh', '/run/sulla-files-fuse/token',
+          ).then(output => output.trim() === 'present', () => false);
+          if (!tokenPresent) {
+            traceEvent('mount: adapter waiting-token watchdog is rewriting missing token');
+            await this.refreshCredentials(credentialGeneration);
+          }
+        }
+      } else {
+        waitingTokenSince = undefined;
       }
       if (phase === 'failed') {
         throw new Error(`The Files adapter failed: ${ status?.reason ?? 'unknown' }${ status?.error ? ` (${ status.error })` : '' }`);

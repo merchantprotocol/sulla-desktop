@@ -12,6 +12,7 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
+import { NativeSourceRevalidator } from './NativeSourceRevalidator';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { FilesListingPager } from './FilesListingPager';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
@@ -153,6 +154,9 @@ class SullaFilesWatcher {
   private badgeTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
   private nativeTimer?: NodeJS.Timeout;
+  private nativeRevalidationTimer?: NodeJS.Timeout;
+  private nativeRevalidationFailures = 0;
+  private nativeRevalidationRun?: Promise<void>;
   private nativePolling = false;
   private unlocking = 0;
   private nativePollRunning = false;
@@ -168,6 +172,9 @@ class SullaFilesWatcher {
   private unlockPermitted = false;
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
+  private readonly nativeSourceRevalidator = new NativeSourceRevalidator({
+    post: handles => this.rawLocalRequest('/v1/local/native-sources/revalidate', { method: 'POST', body: JSON.stringify({ handles }) }),
+  });
   private readonly nativeBroker = new SullaFilesNativeBroker({
     actions: async() => {
       const response = await this.rawLocalRequest('/v1/local/native-sources/actions');
@@ -201,6 +208,8 @@ class SullaFilesWatcher {
   async lockService(): Promise<void> {
     if (this.lockPromise) return this.lockPromise;
     this.unlockRetryEpoch++;
+    if (this.nativeRevalidationTimer) clearTimeout(this.nativeRevalidationTimer);
+    this.nativeRevalidationTimer = undefined;
     this.useCases.stop();
     this.lockGeneration++;
     this.unlockPermitted = false;
@@ -293,15 +302,9 @@ class SullaFilesWatcher {
     this.assertUnlockGeneration(generation);
     unlockSullaFilesSourceGateway();
     if (this.nativeEnabled) {
-      const handles = getSullaFilesSourceGateway().activeHandles();
-      const revalidated = await traceAsync('files native-sources revalidate', () => this.rawLocalRequest('/v1/local/native-sources/revalidate', { method: 'POST', body: JSON.stringify({ handles }) }));
-
-      this.assertUnlockGeneration(generation);
-      if (!revalidated.ok) throw new Error('Native source sessions could not be revalidated');
-      if (!this.nativePolling) {
-        this.nativeBroker.resume();
-        this.nativePolling = true;
-      }
+      // Revalidation is optional native-source capability, not a prerequisite
+      // for Files itself. Retry it independently if Files is still starting.
+      void this.revalidateNativeSources(generation);
       // The Files service remains usable when the optional guest FUSE adapter
       // cannot start (for example, an older VM kernel lacks /dev/fuse). The
       // mount reports its own error state and can be retried on the next
@@ -313,6 +316,38 @@ class SullaFilesWatcher {
         console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
       });
     }
+  }
+
+  private revalidateNativeSources(generation:number):Promise<void> {
+    if (this.nativeRevalidationRun) return this.nativeRevalidationRun;
+    if (this.nativeRevalidationTimer) clearTimeout(this.nativeRevalidationTimer);
+    this.nativeRevalidationTimer = undefined;
+    const run = traceAsync('files native-sources revalidate', async() => {
+      await this.nativeSourceRevalidator.revalidate(getSullaFilesSourceGateway().activeHandles());
+      this.assertUnlockGeneration(generation);
+      this.nativeRevalidationFailures = 0;
+      if (!this.nativePolling) {
+        this.nativeBroker.resume();
+        this.nativePolling = true;
+      }
+    }).catch(error => {
+      if (!this.unlockPermitted || generation !== this.lockGeneration || this.stopped) return;
+      const failures = ++this.nativeRevalidationFailures;
+      if (failures === 1 || failures % 5 === 0) {
+        console.warn(`[SullaFiles] native source features degraded; revalidation attempt ${ failures } failed:`, error);
+      }
+      const delay = UNLOCK_RETRY_DELAYS_MS[Math.min(failures - 1, UNLOCK_RETRY_DELAYS_MS.length - 1)];
+
+      if (this.nativeRevalidationTimer) clearTimeout(this.nativeRevalidationTimer);
+      this.nativeRevalidationTimer = setTimeout(() => {
+        this.nativeRevalidationTimer = undefined;
+        void this.revalidateNativeSources(generation);
+      }, delay);
+      this.nativeRevalidationTimer.unref();
+    }).finally(() => { if (this.nativeRevalidationRun === run) this.nativeRevalidationRun = undefined });
+
+    this.nativeRevalidationRun = run;
+    return run;
   }
 
   private assertUnlockGeneration(generation:number):void {
