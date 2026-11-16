@@ -31,6 +31,8 @@ export class FilesRoutesFixture {
   pool!:pg.Pool;
   collectionId = randomUUID();
   unpublishedCollectionId = randomUUID();
+  /** The live config the app was built with (specs flip keyring.unlocked to exercise the ready gate). */
+  config:any;
   private root = '';
   private server?:Server;
   private baseUrl = '';
@@ -46,6 +48,7 @@ export class FilesRoutesFixture {
     const config:any = { port: 0, databaseUrl, chunkRoot, dataRoot: this.root, filesRoot, caseInsensitiveRoot: false,
       capabilitySigningKey: this.signingKey, mode: 'desktop', deviceId: 'local-device', userId: this.userId, localToken: 'test-local', cloudUrl: '', paused: true, modelDir: this.root,
       fuseExperiment: true, keyring, fileRoots: [{ id: 'default', name: 'Files', path: filesRoot, syncMode: 'local', paused: true, exclusions: [], primary: true }] };
+    this.config = config;
     for (const [id, published] of [[this.collectionId, true], [this.unpublishedCollectionId, false]] as const) {
       // Each collection of one owner needs its own explorer_path (unique per owner/org).
       await this.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
