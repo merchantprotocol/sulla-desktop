@@ -1,0 +1,96 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import path from 'node:path';
+
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
+import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
+import { validateChatSelection } from '@pkg/main/chatSelection';
+import { cloudRelayUsesVault, VaultRelaySocket } from '@pkg/main/cloudRelayTransport';
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { persistMobileAttachments } from '@pkg/main/mobileRelayContent';
+import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
+import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
+import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import Logging from '@pkg/utils/logging';
+
+import type { DesktopRelayLog, DesktopRelayPortSet, DesktopRelaySignInNotifier, DesktopRelayTimers } from './DesktopRelayPorts';
+
+/** Surfaces another device's sign-in approval code as a notification and a renderer event. */
+class ElectronSignInNotifier implements DesktopRelaySignInNotifier {
+  constructor(private readonly log: DesktopRelayLog) {}
+
+  surface(payload: Parameters<DesktopRelaySignInNotifier['surface']>[0]): void {
+    try {
+      const { BrowserWindow, Notification } = require('electron') as typeof import('electron');
+      if (Notification.isSupported()) new Notification({ title: 'Approve a Sulla sign-in', body: `Someone is signing in on ${ payload.requestingDeviceName }. Open Sulla to see the code.` }).show();
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send('sulla-cloud:other-device-signin-code', payload);
+      }
+    } catch (err) { this.log.warn('[DesktopRelay] Could not surface sign-in approval:', err) }
+  }
+}
+
+/** Real clock and timers; each call reads the global so test fake timers apply. */
+class GlobalRelayTimers implements DesktopRelayTimers {
+  now(): number { return Date.now() }
+  setTimeout(callback: () => void, delayMs: number) { return setTimeout(callback, delayMs) }
+  clearTimeout(timer: ReturnType<typeof setTimeout>): void { clearTimeout(timer) }
+  setInterval(callback: () => void, delayMs: number) { return setInterval(callback, delayMs) }
+  clearInterval(timer: ReturnType<typeof setInterval>): void { clearInterval(timer) }
+}
+
+/**
+ * Production wiring for the desktop relay: settings, Sulla Cloud session,
+ * device identity, vault relay sockets, the local agent channel, the sync
+ * log and Sulla Files. Every port reads its module at call time, never at
+ * construction, so import order between these modules does not matter.
+ */
+export class DesktopRelayRuntimePorts {
+  create(): DesktopRelayPortSet {
+    const log: DesktopRelayLog = Logging.background;
+    return {
+      log,
+      timers:  new GlobalRelayTimers(),
+      sockets: {
+        usesVault:  () => cloudRelayUsesVault(),
+        openVault:  (room, deviceId) => new VaultRelaySocket(room, deviceId),
+        openNative: url => new WebSocket(url),
+        vaultView:  socket => socket instanceof VaultRelaySocket ? socket : null,
+      },
+      session: {
+        accessToken:     () => getCurrentAccessToken(),
+        deviceId:        () => getDesktopDeviceId(),
+        acquireLiveness: holder => acquireRelayLiveness(holder),
+        releaseLiveness: holder => releaseRelayLiveness(holder),
+      },
+      pairing: {
+        read:  async() => (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '',
+        ready: () => SullaSettingsModel.ready,
+        save:  async(userId) => { await SullaSettingsModel.set('pairedMobileUserId', userId, 'string') },
+      },
+      agent:   () => getWebSocketClientService(),
+      history: {
+        scribe:          turn => scribeRelayTurn(turn),
+        messageExists:   id => claudeMessageExists(id),
+        deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
+      },
+      chat: {
+        validateSelection:  message => validateChatSelection(message),
+        persistAttachments: (conversationId, messageId, turn) => persistMobileAttachments(path.join(resolveSullaHomeDir(), 'uploads', 'mobile'), conversationId, messageId, turn.files),
+        companionRequest:   async(method, params) => (await import('@pkg/main/mobileCompanion')).mobileCompanionRequest(method, params),
+        registerMobileCard: async(threadId, kind, data) => { (await import('@pkg/main/mobileCompanion')).registerMobileCard(threadId, kind, data) },
+      },
+      files: {
+        serviceToken: () => SullaSettingsModel.getServicePassword(),
+        fetch:        (url, init) => desktopFilesFetch(url, init),
+        origin:       () => FILES_HTTPS_ORIGIN,
+      },
+      signIn: new ElectronSignInNotifier(log),
+    };
+  }
+}

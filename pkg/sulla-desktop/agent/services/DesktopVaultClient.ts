@@ -1,7 +1,6 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-// "Sulla" is a trademark. See TRADEMARK.md.
 
 /** Container-owned local vault control client. It never handles key material. */
 import fs from 'node:fs/promises';
@@ -18,25 +17,14 @@ import type {
 } from '../../../../services/sulla-vault/src/contracts';
 
 import paths from '@pkg/utils/paths';
-import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
+import { vaultTlsPins, VAULT_HTTPS_ORIGIN, VaultTlsPinService } from '@pkg/main/vaultTls';
 
 const DEFAULT_API = VAULT_HTTPS_ORIGIN;
 const REQUEST_TIMEOUT_MS = 15_000;
-let controlSession: Promise<Electron.Session> | undefined;
-
-async function getControlSession(): Promise<Electron.Session> {
-  controlSession ??= (async() => {
-    const value = session.fromPartition('sulla-vault-control', { cache: false });
-    await configureVaultPinnedSession(value);
-    return value;
-  })();
-  try {
-    return await controlSession;
-  } catch (error) {
-    controlSession = undefined;
-    throw error;
-  }
-}
+const CONTROL_TOKEN_FILE = 'vault-control-token.enc';
+const CONTROL_PARTITION = 'sulla-vault-control';
+const CONTROL_SERVICE_ID = 'sulla-desktop-control';
+const MIN_CONTROL_TOKEN_LENGTH = 32;
 
 export class LocalVaultError extends Error {
   constructor(public readonly code: string, message: string, public readonly status: number, public readonly operationId?: string) {
@@ -49,20 +37,61 @@ export interface VaultControlIdentity { serviceId: string; token: string }
 export interface HumanVaultSession { url: string; expiresAt: number; phase: HumanSessionResponse['phase'] }
 type DesktopVaultStatus = LocalVaultStatusResponse & { setup?: { required: boolean } };
 
-async function defaultControlIdentity(): Promise<VaultControlIdentity> {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new LocalVaultError('vault_unavailable', 'OS key storage is unavailable', 503);
+/** Reads the OS-protected control capability the runtime provisions. Decrypts per call; never caches plaintext. */
+export class VaultControlIdentityRepository {
+  constructor(
+    private readonly safeStorageApi: () => Electron.SafeStorage = () => safeStorage,
+    private readonly appHome: () => string = () => paths.appHome,
+    private readonly readFile: (filePath: string) => Promise<Buffer> = filePath => fs.readFile(filePath),
+  ) {}
+
+  async load(): Promise<VaultControlIdentity> {
+    const storage = this.safeStorageApi();
+    if (!storage.isEncryptionAvailable()) {
+      throw new LocalVaultError('vault_unavailable', 'OS key storage is unavailable', 503);
+    }
+    const encrypted = await this.readFile(path.join(this.appHome(), CONTROL_TOKEN_FILE));
+    const token = storage.decryptString(encrypted).trim();
+    if (token.length < MIN_CONTROL_TOKEN_LENGTH) throw new LocalVaultError('vault_unavailable', 'Vault control capability is not provisioned', 503);
+
+    return { serviceId: CONTROL_SERVICE_ID, token };
   }
-  const encrypted = await fs.readFile(path.join(paths.appHome, 'vault-control-token.enc'));
-  const token = safeStorage.decryptString(encrypted).trim();
-  if (token.length < 32) throw new LocalVaultError('vault_unavailable', 'Vault control capability is not provisioned', 503);
-  return { serviceId: 'sulla-desktop-control', token };
+}
+
+/** Holds the one control session, pinned to the local vault certificate. A failed setup is retried on the next call. */
+export class VaultControlSessionProvider {
+  private controlSession: Promise<Electron.Session> | undefined;
+
+  constructor(
+    private readonly createSession: () => Electron.Session = () => session.fromPartition(CONTROL_PARTITION, { cache: false }),
+    private readonly pins: VaultTlsPinService = vaultTlsPins,
+  ) {}
+
+  get(): Promise<Electron.Session> {
+    this.controlSession ??= this.createPinnedSession().catch((error) => {
+      this.controlSession = undefined;
+      throw error;
+    });
+
+    return this.controlSession;
+  }
+
+  private async createPinnedSession(): Promise<Electron.Session> {
+    const value = this.createSession();
+    await this.pins.configureSession(value);
+
+    return value;
+  }
 }
 
 export class DesktopVaultClient {
   private lastStatus: DesktopVaultStatus = { state: 'locked', unlocked: false, cacheUpdateRequired: false, migration: { required: false } };
 
-  constructor(private readonly api = DEFAULT_API, private readonly identity: () => Promise<VaultControlIdentity> = defaultControlIdentity) {}
+  constructor(
+    private readonly api = DEFAULT_API,
+    private readonly identity: () => Promise<VaultControlIdentity> = () => new VaultControlIdentityRepository().load(),
+    private readonly sessions: VaultControlSessionProvider = vaultControlSessions,
+  ) {}
 
   private async request<T>(requestPath: string, init: RequestInit = {}, authenticated = true): Promise<T> {
     const headers = new Headers(init.headers);
@@ -75,7 +104,7 @@ export class DesktopVaultClient {
     }
     let response: Response;
     try {
-      response = await (await getControlSession()).fetch(`${ this.api }${ requestPath }`, {
+      response = await (await this.sessions.get()).fetch(`${ this.api }${ requestPath }`, {
         ...init,
         headers,
         redirect: 'error',
@@ -151,8 +180,30 @@ export class DesktopVaultClient {
   }
 }
 
-let client: DesktopVaultClient | null = null;
-export function configureDesktopVaultClient(identity: () => Promise<VaultControlIdentity>): DesktopVaultClient {
-  return client = new DesktopVaultClient(DEFAULT_API, identity);
+/** Owns the process-wide Desktop vault client. Created on first use, replaced only by `configure`. */
+export class DesktopVaultClientProvider {
+  private client: DesktopVaultClient | null = null;
+
+  constructor(private readonly sessions: VaultControlSessionProvider = vaultControlSessions) {}
+
+  configure(identity: () => Promise<VaultControlIdentity>): DesktopVaultClient {
+    return this.client = new DesktopVaultClient(DEFAULT_API, identity, this.sessions);
+  }
+
+  get(): DesktopVaultClient {
+    return this.client ??= new DesktopVaultClient(DEFAULT_API, undefined, this.sessions);
+  }
 }
-export function getDesktopVaultClient(): DesktopVaultClient { return client ?? (client = new DesktopVaultClient()) }
+
+const vaultControlSessions = new VaultControlSessionProvider();
+const desktopVaultClients = new DesktopVaultClientProvider(vaultControlSessions);
+
+/** Compatibility seam for `sulla.ts`, `sullaCloudAuth.ts` and other callers; prefer injecting a `DesktopVaultClient`. */
+export function configureDesktopVaultClient(identity: () => Promise<VaultControlIdentity>): DesktopVaultClient {
+  return desktopVaultClients.configure(identity);
+}
+
+/** Compatibility seam for existing callers; prefer injecting a `DesktopVaultClient`. */
+export function getDesktopVaultClient(): DesktopVaultClient {
+  return desktopVaultClients.get();
+}

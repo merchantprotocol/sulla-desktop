@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /** Container-owned backup/recovery facade; Desktop never exports keys or decrypts snapshots. */
-import { getDesktopVaultClient, type HumanVaultSession } from './DesktopVaultClient';
+import { DesktopVaultClient, getDesktopVaultClient, type HumanVaultSession } from './DesktopVaultClient';
 
 export const SNAPSHOT_FORMAT = 'sulla-vault-snapshot';
 export type RestoreMode = 'merge' | 'overwrite';
@@ -29,6 +29,8 @@ export function isVaultSnapshot(value: unknown): value is VaultSnapshot {
 export function selectSnapshotsToKeep(_names: string[]): Set<string> { return new Set() }
 
 export class VaultBackupService {
+  constructor(private readonly client: () => DesktopVaultClient = () => getDesktopVaultClient()) {}
+
   get backupDir(): string { return '' }
   start(_onValueChange?: (callback: () => void) => void): void { /* container-owned */ }
   stop(): void { /* container-owned */ }
@@ -38,9 +40,14 @@ export class VaultBackupService {
   listSnapshots(): string[] { return [] }
   async buildExport(): Promise<string> { throw this.uiRequired() }
   async restoreSnapshot(_snapshot: VaultSnapshot, _options?: unknown): Promise<RestoreResult> { throw this.uiRequired() }
-  async openBackupUi(): Promise<HumanVaultSession> { return await getDesktopVaultClient().createHumanSession() }
+  async openBackupUi(): Promise<HumanVaultSession> { return await this.client().createHumanSession() }
   private uiRequired(): Error { return new Error('VAULT_UI_REQUIRED: manage backups in the isolated vault window') }
 }
 
-let instance: VaultBackupService | null = null;
-export function getVaultBackupService(): VaultBackupService { return instance ?? (instance = new VaultBackupService()) }
+/** The process-wide backup facade. It holds no state of its own; the client is resolved per call. */
+export const vaultBackups = new VaultBackupService();
+
+/** Compatibility seam for existing callers; prefer injecting a `VaultBackupService`. */
+export function getVaultBackupService(): VaultBackupService {
+  return vaultBackups;
+}

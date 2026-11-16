@@ -13,7 +13,7 @@ import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pk
 import { PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
 import { ElectronCloudAccountTransport } from '@pkg/main/cloud/account/ElectronCloudAccountTransport';
 import { SessionBindSigner } from '@pkg/main/cloud/device/SessionBindSigner';
-import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 import {
   deleteFirstRunCredential,
@@ -236,7 +236,7 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
     await pendingSessionRefresher.refreshIfExpiring(entry);
     const accessToken = entry.values.access_token;
     const refreshToken = entry.values.refresh_token;
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.adoptSullaCloudSession({
       userId:             entry.values.user_id,
