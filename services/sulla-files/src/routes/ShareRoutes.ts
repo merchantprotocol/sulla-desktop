@@ -45,7 +45,7 @@ export class ShareRoutes {
     return { user: actor.userId, device: actor.deviceId || '' };
   }
 
-  private async streamContent(request:express.Request, response:express.Response, next:express.NextFunction):Promise<void> {
+  private async streamContent(request:express.Request<{ id:string }>, response:express.Response, next:express.NextFunction):Promise<void> {
     const controller = new AbortController(); const abort = () => controller.abort();
     request.once('aborted', abort); response.once('close', abort);
     try {
