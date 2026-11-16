@@ -13,6 +13,7 @@ import type { Config } from '../config.js';
 import type { ShareLinkRepository, ShareQueryable } from '../Repositories/ShareLinkRepository.js';
 import type { Store } from '../store.js';
 import type pg from 'pg';
+import { LikePattern } from '../LikePattern.js';
 
 export interface ShareStreamContent {
   body:          AsyncIterable<Buffer>;
@@ -66,8 +67,7 @@ export class ShareContentReader {
     if (!share) throw Object.assign(new Error('share not found or inactive'), { status: 404 });
     if (share.target_type === 'folder' && !requestedPath) {
       const prefix = `${ share.folder_path }/`;
-      const escapedPrefix = prefix.replace(/[\\%_]/g, '\\$&');
-      const files = (await this.links.folderFiles(queryable, share.collection_id, `${ escapedPrefix }%`))
+      const files = (await this.links.folderFiles(queryable, share.collection_id, LikePattern.prefix(prefix)))
         .filter(row => !isProtectedPath(row.path)).map(row => ({ ...row, path: row.path.slice(prefix.length) }));
       return { bytes: Buffer.from(JSON.stringify({ name: share.display_name, files })), mime: 'application/json', name: `${ share.display_name }.json` };
     }

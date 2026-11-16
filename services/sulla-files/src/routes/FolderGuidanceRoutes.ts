@@ -14,6 +14,7 @@ import { ListingPage } from '../ListingPage.js';
 import type { CollectionSettingsRepository } from '../Repositories/CollectionSettingsRepository.js';
 import type { FolderGuidanceRepository } from '../Repositories/FolderGuidanceRepository.js';
 import { ensureStoredFolder, lockStoredNamespace, storedParentPaths } from '../storedNamespace.js';
+import { LikePattern } from '../LikePattern.js';
 
 type FolderDetails = { folderId:string; path:string; revision:string; description:string | null; namingHint:string | null; needsDescription:boolean };
 
@@ -90,7 +91,7 @@ export class FolderGuidanceRoutes {
     const tokens=[what,kind,project].join(' ').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>1);
     const roots=await this.folders.rootCandidates();
     // Only folders matching at least one token are ranked, capped; ranking needs candidates, not every folder.
-    const patterns=tokens.map(token=>`%${token.replace(/[\\%_]/g,'\\$&')}%`);
+    const patterns=tokens.map(token=>LikePattern.contains(token));
     const folders=await this.folders.folderCandidates(patterns);
     const ranked=[...roots,...folders].map(row=>{const haystack=`${row.name} ${row.path} ${row.description} ${row.naming_hint??''}`.toLowerCase();return{collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description'),score:tokens.reduce((score,token)=>score+(haystack.includes(token)?1:0),0)}}).sort((a,b)=>b.score-a.score||a.path.localeCompare(b.path)).slice(0,10);
     const suggested=ranked[0]??null; const filename=FilesRequestInput.suggestedFileName(what,kind);
