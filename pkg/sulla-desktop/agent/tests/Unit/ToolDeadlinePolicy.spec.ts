@@ -13,15 +13,16 @@ describe('tool deadline policy', () => {
   it('returns an explicit unknown-side-effect warning for a timed-out writer', () => {
     // risk: irreversible tool side effects may have completed despite a timeout
     expect(policy.timeoutDetails('create_pr', 120_000, 120_010, ['create'])).toEqual({
-      tool: 'create_pr', deadlineMs: 120_000, elapsedMs: 120_010, sideEffectUnknown: true,
-      hint: 'check state before retrying, e.g. github/list_prs for create_pr',
+      tool: 'create_pr', deadlineMs: 120_000, elapsedMs: 120_010, sideEffectUnknown: true, retryable: true,
+      hint: 'timed out after 120010 ms; the call may still have completed, check state before retrying, e.g. github/list_prs for create_pr',
     });
   });
 
   it('gives a read-only timeout a safe single-retry hint', () => {
     // risk: read-only calls are unnecessarily treated as uncertain writes and workers stall
     expect(policy.timeoutDetails('list_prs', 15_000, 15_001, ['read'])).toEqual({
-      tool: 'list_prs', deadlineMs: 15_000, elapsedMs: 15_001, hint: 'safe to retry once',
+      tool: 'list_prs', deadlineMs: 15_000, elapsedMs: 15_001, retryable: true,
+      hint: 'timed out after 15001 ms; read-only, safe to retry once',
     });
   });
 
@@ -40,7 +41,8 @@ describe('tool deadline policy', () => {
   it('does not clamp a writer request below its 120 s deadline', () => {
     // risk: Desktop aborted writers at 60 s, so the longer writer deadline never took effect
     expect(policy.requestedDeadlineMs(120_000)).toBe(120_000);
-    expect(policy.requestedDeadlineMs(999_999)).toBe(305_000);
+    expect(policy.requestedDeadlineMs(999_999)).toBe(999_999);
+    expect(policy.requestedDeadlineMs(99_999_999)).toBe(policy.maxDeadlineMs);
     expect(policy.requestedDeadlineMs(undefined)).toBe(30_000);
     expect(policy.requestedDeadlineMs('not-a-number')).toBe(30_000);
     expect(policy.requestedDeadlineMs(0)).toBe(1);

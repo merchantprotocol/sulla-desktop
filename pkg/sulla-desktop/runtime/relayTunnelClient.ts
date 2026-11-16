@@ -162,8 +162,10 @@ export class RelayToolTunnel {
         deviceId:  call.deviceId,
         error:     timedOut
           ? {
-            code: 'DEADLINE_EXCEEDED', message: 'Desktop tool call deadline exceeded', retryable: true,
-            details: this.deadlinePolicy.timeoutDetails(call.tool!, delay, elapsedMs, operationTypes),
+            code:      'DEADLINE_EXCEEDED',
+            message:   `Desktop tool call deadline exceeded: ${ call.category }/${ call.tool } ran ${ elapsedMs } ms of its ${ delay } ms deadline; retryable, a late result is kept on Desktop for 10 minutes`,
+            retryable: true,
+            details:   this.deadlinePolicy.timeoutDetails(call.tool!, delay, elapsedMs, operationTypes),
           }
           : { code: 'INTERNAL', message: cause instanceof Error ? cause.message : String(cause) },
       });

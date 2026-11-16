@@ -11,28 +11,54 @@ import fs from 'fs';
 
 import { app } from 'electron';
 
-const tracePath = !(app?.isPackaged ?? true) && process.env.SULLA_E2E === '1' ? process.env.SULLA_E2E_MAIN_LOG || '' : '';
-
-/** Append one line to stderr and the harness trace file, synchronously. */
-export function e2eTrace(message: string): void {
-  if (!tracePath) return;
-  const line = `[sulla-e2e] ${ new Date().toISOString() } pid=${ process.pid } ${ message }\n`;
-
-  process.stderr.write(line);
-  try {
-    fs.appendFileSync(tracePath, line);
-  } catch {}
+export interface E2eTraceSinks {
+  appendFileSync(file: string, line: string): void;
+  writeStderr(line: string): void;
+  onProcess(event: 'uncaughtException' | 'unhandledRejection', listener: (value: unknown) => void): void;
 }
 
-/**
- * Report main-process crashes instead of letting Electron's default handler
- * open a native error box. That box blocks the main thread under xvfb, so the
- * process stays alive with no window and prints nothing.
- */
-export function installE2eCrashTrace(): void {
-  if (!tracePath) return;
-  const describe = (error: unknown) => error instanceof Error ? error.stack || `${ error.name }: ${ error.message }` : String(error);
+const processSinks: E2eTraceSinks = {
+  appendFileSync: (file, line) => fs.appendFileSync(file, line),
+  writeStderr:    line => { process.stderr.write(line) },
+  onProcess:      (event, listener) => { process.on(event as 'uncaughtException', listener) },
+};
 
-  process.on('uncaughtException', error => e2eTrace(`uncaughtException: ${ describe(error) }`));
-  process.on('unhandledRejection', reason => e2eTrace(`unhandledRejection: ${ describe(reason) }`));
+/** Synchronous E2E harness trace writer. An empty trace path turns every method into a no-op. */
+export class E2eTraceWriter {
+  /** The trace path the current process should use: set only for unpackaged E2E runs. */
+  static tracePathFor(isPackaged: boolean | undefined, env: NodeJS.ProcessEnv): string {
+    return !(isPackaged ?? true) && env.SULLA_E2E === '1' ? env.SULLA_E2E_MAIN_LOG || '' : '';
+  }
+
+  constructor(
+    private readonly tracePath: string = E2eTraceWriter.tracePathFor(app?.isPackaged, process.env),
+    private readonly sinks: E2eTraceSinks = processSinks,
+  ) {}
+
+  /** Append one line to stderr and the harness trace file, synchronously. */
+  write(message: string): void {
+    if (!this.tracePath) return;
+    const line = `[sulla-e2e] ${ new Date().toISOString() } pid=${ process.pid } ${ message }\n`;
+
+    this.sinks.writeStderr(line);
+    try {
+      this.sinks.appendFileSync(this.tracePath, line);
+    } catch {}
+  }
+
+  /**
+   * Report main-process crashes instead of letting Electron's default handler
+   * open a native error box. That box blocks the main thread under xvfb, so the
+   * process stays alive with no window and prints nothing.
+   */
+  installCrashTrace(): void {
+    if (!this.tracePath) return;
+    const describe = (error: unknown) => error instanceof Error ? error.stack || `${ error.name }: ${ error.message }` : String(error);
+
+    this.sinks.onProcess('uncaughtException', error => this.write(`uncaughtException: ${ describe(error) }`));
+    this.sinks.onProcess('unhandledRejection', reason => this.write(`unhandledRejection: ${ describe(reason) }`));
+  }
 }
+
+/** Shared main-process trace writer; the trace path is read once, as before. */
+export const e2eTrace = new E2eTraceWriter();
