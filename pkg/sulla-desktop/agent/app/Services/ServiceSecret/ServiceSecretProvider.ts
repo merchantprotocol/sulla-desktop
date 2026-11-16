@@ -51,12 +51,16 @@ export interface ServiceSecretWaitPolicy {
   maxDelayMs:  number;
 }
 
-/** What only the runtime knows: whether this install has a database yet, and how to open it. */
+/** What only the runtime knows: whether this install has a database yet, and what it stores. */
 export interface ServiceSecretInstallState {
   /** True only when the install has never initialised its database (nothing can derive from a secret yet). */
   isFresh(): Promise<boolean>;
-  /** Bring the settings database up so it can be read. Throws when it cannot. */
-  openDatabase(): Promise<void>;
+  /**
+   * The secret stored in the settings database, read inside the guest (never
+   * through Desktop's own database client, which needs this secret to
+   * connect); null when the database has none. Throws when it cannot be read.
+   */
+  readDatabaseSecret(): Promise<string | null>;
 }
 
 /** Called (not awaited) when the in-use secret changed, so compose can be regenerated. */
@@ -71,7 +75,7 @@ type SettledRead = Exclude<ServiceSecretRead, { kind: 'unreadable' }>;
  * - Never returns a hardcoded credential as a fallback.
  * - A store that cannot answer yet is retried with bounded backoff, then fails.
  * - PostgreSQL is authoritative. A secret missing from the bootstrap file is
- *   generated only on a fresh install; otherwise the database is opened and
+ *   generated only on a fresh install; otherwise the database is read (in the guest) and
  *   its value adopted; nothing stored on an installed system is an error.
  * - When the database holds a different value than the one first read from
  *   the file, the database wins and change listeners are told.
@@ -112,13 +116,24 @@ export class ServiceSecretProvider {
   }
 
   async get(): Promise<string> {
+    await this.value();
+    await this.converge();
+
+    return this.resolved!.value;
+  }
+
+  /**
+   * The secret without syncing it to the database. Desktop's PostgreSQL
+   * client uses this to connect: the sync itself goes through that client,
+   * so waiting on it there would wait on itself.
+   */
+  async value(): Promise<string> {
     if (!this.resolved) {
       this.resolving ??= this.resolve().finally(() => {
         this.resolving = undefined;
       });
       await this.resolving;
     }
-    await this.converge();
 
     return this.resolved!.value;
   }
@@ -168,15 +183,16 @@ export class ServiceSecretProvider {
   }
 
   private async consultDatabase(state: ServiceSecretInstallState): Promise<SettledRead> {
-    if (!this.repository.databaseReady) {
-      try {
-        await state.openDatabase();
-      } catch (error) {
-        throw new ServiceSecretUnavailableError(`the settings database could not be opened to read it (${ ServiceSecretProvider.reasonOf(error) })`);
-      }
+    if (this.repository.databaseReady) return this.settle(() => this.repository.readDatabase(), false);
+    let stored: string | null;
+
+    try {
+      stored = await state.readDatabaseSecret();
+    } catch (error) {
+      throw new ServiceSecretUnavailableError(`the settings database could not be read (${ ServiceSecretProvider.reasonOf(error) })`);
     }
 
-    return this.settle(() => this.repository.readDatabase(), false);
+    return stored ? { kind: 'found', value: stored, store: 'database' } : { kind: 'absent', store: 'database' };
   }
 
   /** Read until the store answers; a file still corrupt after the whole wait is repaired once. */

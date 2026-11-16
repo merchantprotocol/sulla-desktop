@@ -71,11 +71,11 @@ describe('ServiceSecretProvider', () => {
     expect(results[0]).toBe('generated-secret-1');
     expect(generator.calls).toBe(1);
     expect(stores.file).toEqual({ [PROPERTY]: 'generated-secret-1' });
-    expect(install.opened).toBe(0);
+    expect(install.databaseReads).toBe(0);
   });
 
   // risk: sign-in / data accuracy (B1) — file without the key on an installed system: the database decides
-  it('on an installed system whose file lacks the secret, opens the database and adopts its value', async() => {
+  it('on an installed system whose file lacks the secret, reads the database and adopts its value', async() => {
     const { stores, generator, provider, install } = build();
 
     stores.file = {};
@@ -83,7 +83,7 @@ describe('ServiceSecretProvider', () => {
 
     expect(await provider.get()).toBe(REAL);
     expect(generator.calls).toBe(0);
-    expect(install.opened).toBe(1);
+    expect(install.databaseReads).toBe(1);
     expect(stores.file?.[PROPERTY]).toBe(REAL);
   });
 
@@ -97,12 +97,12 @@ describe('ServiceSecretProvider', () => {
     expect(generator.calls).toBe(0);
   });
 
-  // risk: irreversible side effect (B1) — a database that cannot be opened is not "absent"
-  it('throws when the database cannot be opened to look, and generates nothing', async() => {
+  // risk: irreversible side effect (B1) — a database that cannot be read is not "absent"
+  it('throws when the database cannot be read, and generates nothing', async() => {
     const { stores, generator, provider, install } = build();
 
     stores.file = {};
-    install.openFailure = new Error('No such container: sulla_postgres');
+    install.readFailure = new Error('No such container: sulla_postgres');
 
     await expect(provider.get()).rejects.toBeInstanceOf(ServiceSecretUnavailableError);
     expect(generator.calls).toBe(0);
@@ -220,6 +220,21 @@ describe('ServiceSecretProvider', () => {
     await expect(provider.get()).rejects.toBeInstanceOf(ServiceSecretUnavailableError);
     expect(stores.quarantined).toBe(1);
     expect(generator.calls).toBe(0);
+  });
+
+  // risk: availability — Desktop's PostgreSQL client gets the secret to connect without waiting on a sync that needs that connection
+  it('value() returns the secret without touching the database, even when the database is ready', async() => {
+    const { stores, provider } = build();
+
+    stores.file = { [PROPERTY]: REAL };
+    // First resolution while settings are still file-backed, as at boot.
+    expect(await provider.value()).toBe(REAL);
+
+    stores.ready = true;
+    stores.databaseFailures = [new Error('would need the connection being opened')];
+    expect(await provider.value()).toBe(REAL);
+    expect(stores.databaseFailures).toHaveLength(1);
+    expect(stores.database.has(PROPERTY)).toBe(false);
   });
 
   // risk: data accuracy — mid-session reads never touch a store that may be mid-write or offline

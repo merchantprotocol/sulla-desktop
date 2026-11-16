@@ -12,6 +12,7 @@ class Docker implements DockerCli {
   volumes: string[] = [];
   containers: string[] = [];
   failing = false;
+  stored: string | null = null;
   readonly calls: string[][] = [];
 
   async run(args: string[]): Promise<string> {
@@ -20,6 +21,7 @@ class Docker implements DockerCli {
     if (args[0] === 'volume') return `${ this.volumes.join('\n') }\n`;
     if (args[0] === 'ps') return `${ this.containers.join('\n') }\n`;
     if (args[0] === 'start') return '';
+    if (args[0] === 'exec') return this.stored === null ? '\n' : `${ this.stored }\n`;
     throw new Error(`unexpected docker ${ args.join(' ') }`);
   }
 }
@@ -27,9 +29,7 @@ class Docker implements DockerCli {
 function state(docker: Docker, events: string[] = []) {
   return new GuestServiceSecretInstallState(docker, async(target) => {
     events.push(`healthy ${ target.container }`);
-  }, { bootstrap: async() => {
-    events.push('bootstrap');
-  } });
+  });
 }
 
 describe('GuestServiceSecretInstallState', () => {
@@ -56,14 +56,22 @@ describe('GuestServiceSecretInstallState', () => {
     expect(await state(docker).isFresh()).toBe(false);
   });
 
-  // risk: data accuracy — the database is read only after PostgreSQL and Redis are healthy
-  it('opens the database: starts PostgreSQL and Redis, waits for both, then bootstraps settings', async() => {
+  // risk: sign-in — the stored secret is read in the guest, after PostgreSQL is healthy, byte for byte
+  it('reads the stored secret with psql after starting PostgreSQL and waiting for it', async() => {
     const docker = new Docker();
     const events: string[] = [];
 
-    await state(docker, events).openDatabase();
+    docker.stored = 'Stored|Secret with spaces';
+    expect(await state(docker, events).readDatabaseSecret()).toBe('Stored|Secret with spaces');
+    expect(docker.calls[0]).toEqual(['start', 'sulla_postgres']);
+    expect(events).toEqual(['healthy sulla_postgres']);
+    expect(docker.calls[1].slice(0, 2)).toEqual(['exec', 'sulla_postgres']);
+  });
 
-    expect(docker.calls).toContainEqual(['start', 'sulla_postgres', 'sulla_redis']);
-    expect(events).toEqual(['healthy sulla_postgres', 'healthy sulla_redis', 'bootstrap']);
+  // risk: irreversible side effect — an empty answer is "absent", never an empty password
+  it('reports no stored secret as null', async() => {
+    const docker = new Docker();
+
+    expect(await state(docker).readDatabaseSecret()).toBeNull();
   });
 });

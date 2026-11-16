@@ -56,9 +56,10 @@ export class PostgresClient {
     const connectionString = process.env.SULLA_DATABASE_URL;
     let password: string | undefined;
     if (!connectionString) {
-      // The provider reads settings, whose model imports this client. Load it only on use.
+      // The provider reads settings, whose model imports this client. Load it only on use;
+      // value() never syncs through this client, so it cannot wait on itself.
       const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
-      password = await serviceSecretProvider.get();
+      password = await serviceSecretProvider.value();
     }
 
     this.pool = new Pool({
@@ -234,7 +235,7 @@ export class PostgresClient {
   async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
     // The provider reads settings, whose model imports this client. Load it only on use.
     const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
-    const password = await serviceSecretProvider.get();
+    const password = await serviceSecretProvider.value();
 
     for (let i = 1; i <= maxAttempts; i++) {
       let probe: Pool | null = null;

@@ -191,7 +191,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // The service secret: tell the provider how to inspect and open the guest
     // database, and regenerate compose when the database's value wins.
     serviceSecretProvider.useInstallState(new GuestServiceSecretInstallState(
-      this.#guestDocker, target => this.waitForDockerServiceHealthy(target, 300), SullaSettingsModel,
+      this.#quietGuestDocker, target => this.waitForDockerServiceHealthy(target, 300),
     ));
     serviceSecretProvider.onChange(reason => this.regenerateComposeAfterSecretChange(reason));
   }
@@ -220,6 +220,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** Every compose service with a fixed container_name, from the last prepared compose file. */
   #composeTargets: ComposeServiceTarget[] = [];
   readonly #guestDocker: DockerCli = { run: args => this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', ...args) };
+  /** Guest Docker that never logs command output: used where stdout carries the service secret. */
+  readonly #quietGuestDocker: DockerCli = {
+    run: async args => (await childProcess.spawnFile(paths.sullaRuntime, this.guestExecArgs({ root: true }, ['docker', ...args]),
+      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })).stdout,
+  };
   /** Finds compose containers by label and heals names left by an interrupted re-create. */
   readonly #composeContainers = new ComposeContainerNameReconciler(this.#guestDocker, 'sulla', console);
   readonly #composeHealth = new ComposeServiceHealthWaiter(this.#guestDocker, this.#composeContainers);

@@ -41,8 +41,8 @@ describe('SullaSettingsModel bootstrap file (pre-database store)', () => {
       new FakeClock(), new RecordingLogger(), { maxWaitMs: 1_000, baseDelayMs: 100, maxDelayMs: 500 });
 
     result.useInstallState({
-      isFresh:      async() => fresh,
-      openDatabase: async() => {
+      isFresh:            async() => fresh,
+      readDatabaseSecret: async() => {
         throw new Error('no database in this test');
       },
     });
@@ -127,7 +127,7 @@ describe('SullaSettingsModel bootstrap file (pre-database store)', () => {
   it('on an installed system without the secret and no database to ask, fails instead of generating', async() => {
     await fs.writeFile(file, JSON.stringify({ sullaInstalled: true }));
 
-    await expect(provider(false).get()).rejects.toThrow(/settings database could not be opened/);
+    await expect(provider(false).get()).rejects.toThrow(/settings database could not be read/);
     expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ sullaInstalled: true });
   });
 });

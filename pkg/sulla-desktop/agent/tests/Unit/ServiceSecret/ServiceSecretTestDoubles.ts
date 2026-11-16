@@ -114,13 +114,13 @@ export class SequenceGenerator {
 }
 
 /**
- * The runtime's answers: is this a fresh install, and open the database
- * (which flips the fake settings to database-backed, as bootstrap() does).
+ * The runtime's answers: is this a fresh install, and what does the settings
+ * database store (read in the guest, without Desktop's database client).
  */
 export class FakeInstallState implements ServiceSecretInstallState {
   fresh = false;
-  openFailure?: Error;
-  opened = 0;
+  readFailure?: Error;
+  databaseReads = 0;
 
   constructor(private readonly stores: FakeSettingsStores) {}
 
@@ -128,9 +128,11 @@ export class FakeInstallState implements ServiceSecretInstallState {
     return this.fresh;
   }
 
-  async openDatabase(): Promise<void> {
-    this.opened++;
-    if (this.openFailure) throw this.openFailure;
-    this.stores.ready = true;
+  async readDatabaseSecret(): Promise<string | null> {
+    this.databaseReads++;
+    if (this.readFailure) throw this.readFailure;
+    const value = this.stores.database.get('sullaServicePassword');
+
+    return typeof value === 'string' && value.length > 0 ? value : null;
   }
 }

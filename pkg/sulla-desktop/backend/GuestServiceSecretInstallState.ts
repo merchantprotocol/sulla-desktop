@@ -5,12 +5,8 @@
 
 import type { ServiceSecretInstallState } from '@pkg/agent/app/Services/ServiceSecret/ServiceSecretProvider';
 
+import { GuestSettingsSecretRepository } from './Repositories/GuestSettingsSecretRepository';
 import type { ComposeServiceTarget, DockerCli } from './sullaComposeContainers';
-
-/** Opens the settings database (SullaSettingsModel.bootstrap). */
-export interface SettingsDatabase {
-  bootstrap(): Promise<void>;
-}
 
 export type ServiceHealthWait = (target: ComposeServiceTarget) => Promise<void>;
 
@@ -20,28 +16,26 @@ export type ServiceHealthWait = (target: ComposeServiceTarget) => Promise<void>;
  * - Fresh: neither the PostgreSQL data volume nor a PostgreSQL container
  *   exists yet, so nothing can have been derived from a service secret. Any
  *   doubt (Docker not answering) counts as installed: never a new secret.
- * - Open the database: start the existing PostgreSQL and Redis containers
- *   (trust auth inside the guest, so no secret is needed), wait until they are
- *   healthy, then bootstrap settings so PostgreSQL can be read.
+ * - The stored secret: start the existing PostgreSQL container, wait until it
+ *   is healthy, and read the setting in the guest (GuestSettingsSecretRepository).
+ *   The Docker runner must not log stdout: it carries the secret.
  */
 export class GuestServiceSecretInstallState implements ServiceSecretInstallState {
   /** Compose project `sulla` + volume `sulla_postgres_data`. */
   static readonly POSTGRES_DATA_VOLUME = 'sulla_sulla_postgres_data';
-  static readonly DATA_SERVICES: readonly ComposeServiceTarget[] = [
-    { service: 'postgres', container: 'sulla_postgres' },
-    { service: 'redis', container: 'sulla_redis' },
-  ];
+  static readonly POSTGRES: ComposeServiceTarget = { service: 'postgres', container: 'sulla_postgres' };
 
   constructor(
-    private readonly docker: DockerCli,
+    /** Must not log command output. */
+    private readonly quietDocker: DockerCli,
     private readonly waitHealthy: ServiceHealthWait,
-    private readonly settings: SettingsDatabase,
+    private readonly settings = new GuestSettingsSecretRepository(quietDocker),
   ) {}
 
   async isFresh(): Promise<boolean> {
     try {
-      const volumes = GuestServiceSecretInstallState.lines(await this.docker.run(['volume', 'ls', '--quiet']));
-      const containers = GuestServiceSecretInstallState.lines(await this.docker.run(['ps', '--all', '--format', '{{.Names}}']));
+      const volumes = GuestServiceSecretInstallState.lines(await this.quietDocker.run(['volume', 'ls', '--quiet']));
+      const containers = GuestServiceSecretInstallState.lines(await this.quietDocker.run(['ps', '--all', '--format', '{{.Names}}']));
 
       return !volumes.includes(GuestServiceSecretInstallState.POSTGRES_DATA_VOLUME) && !containers.includes('sulla_postgres');
     } catch {
@@ -53,11 +47,12 @@ export class GuestServiceSecretInstallState implements ServiceSecretInstallState
     return output.split('\n').map(line => line.trim()).filter(Boolean);
   }
 
-  async openDatabase(): Promise<void> {
-    const targets = GuestServiceSecretInstallState.DATA_SERVICES;
+  async readDatabaseSecret(): Promise<string | null> {
+    const postgres = GuestServiceSecretInstallState.POSTGRES;
 
-    await this.docker.run(['start', ...targets.map(target => target.container)]);
-    for (const target of targets) await this.waitHealthy(target);
-    await this.settings.bootstrap();
+    await this.quietDocker.run(['start', postgres.container]);
+    await this.waitHealthy(postgres);
+
+    return this.settings.read();
   }
 }
