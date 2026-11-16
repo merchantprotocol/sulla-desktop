@@ -25,6 +25,8 @@ const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
   // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
   'Repositories/FolderSubtreeRepository.ts': 7,
+  // Legacy stored folder move: the moved folder's own subtree, locked for update.
+  'Repositories/StoredFileOperationRepository.ts': 1,
   // Bounded by the caller's path array: the ancestors of one path being created (moved from storedNamespace.ts).
   'Repositories/StoredNamespaceRepository.ts': 1,
   // One-time Sulla-collection merge and stray-Docs cleanup, moved row by row (moved from sullaCollectionMigration.ts).
@@ -32,7 +34,6 @@ const ALLOWED:Record<string, number> = {
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
   'app.ts': 9,
-  'fileOperations.ts': 1,
   'legacyImport.ts': 3,
   'localManager.ts': 3,
   'shares.ts': 1,
