@@ -18,7 +18,7 @@ import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 import { FilesPathResolver } from './filesPathResolver.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
-import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
+import { chunkId, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { trashFileWithoutReceipt } from './databaseOperations.js';
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
@@ -91,6 +91,8 @@ import { AgentFileRepository } from './Repositories/AgentFileRepository.js';
 import { FuseReadRoutes } from './routes/FuseReadRoutes.js';
 import { FuseTreeRepository } from './Repositories/FuseTreeRepository.js';
 import { FuseTreeSnapshotCache } from './Services/FuseTreeSnapshotCache.js';
+import { ChunkRoutes } from './routes/ChunkRoutes.js';
+import { ChunkAccessRepository } from './Repositories/ChunkAccessRepository.js';
 import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
 import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
@@ -1193,44 +1195,7 @@ function composeFilesApp(
   } catch (error) { next(error) } });
   agentFiles.register(app);
   collectionSync.register(app);
-  app.use('/v1/chunks/:collection/:id', async(request, _response, next) => {
-    try {
-      const protectedChunk = await db.query('SELECT 1 FROM files_protected_chunks WHERE collection_id=$1 AND chunk_id=$2', [request.params.collection, request.params.id]);
-      if (protectedChunk.rowCount) throw protectedPathError();
-      next();
-    } catch (error) { next(error) }
-  });
-  async function requireChunkRead(request:RequestWithIdentity, collectionId:string, chunkId:string):Promise<void> {
-    const files = await db.query(`SELECT DISTINCT f.*,v.id version_id,v.publication_status FROM file_versions v JOIN files f ON f.id=v.file_id JOIN manifests m ON m.hash=v.manifest_hash
-      WHERE v.chunk_collection_id=$1 AND m.chunk_ids ? $2`, [collectionId, chunkId]);
-    for (const file of files.rows) {
-      try { const authorized = await requireFile(request, file.id, 'view'); await visibleVersion(request, authorized, file.version_id); return } catch { /* Check every file/version that references this deduplicated chunk. */ }
-    }
-    throw new HttpError(403, 'access denied');
-  }
-  async function requireChunkWrite(request:RequestWithIdentity, collectionId:string, chunkId:string):Promise<{ scoped: boolean; plainSize?: number; versionIds?: string[] }> {
-    try { await requireCollection(request, collectionId, 'edit'); return { scoped: false } } catch (error:any) { if (error.status !== 403) throw error }
-    const actor = identity(request);
-    const scope = actorScope(actor);
-    const upload = await db.query(`SELECT file_id::text,target_collection_id::text,file_path,plain_size,version_id::text FROM file_share_chunk_uploads
-      WHERE chunk_collection_id=$1 AND chunk_id=$2 AND principal_id=$3 AND actor_scope=$4 AND expires_at>NOW() ORDER BY expires_at DESC`, [collectionId, chunkId, actor.userId, scope]);
-    const authorized:{ plainSize: number; versionId: string }[] = [];
-    for (const intent of upload.rows) {
-      try {
-        const file = await requireFile(request, intent.file_id, 'edit');
-        if (file.collection_id !== intent.target_collection_id || file.path !== intent.file_path) throw new HttpError(409, 'upload intent no longer matches its file');
-      } catch (error:any) {
-        if (error.status !== 404) { if (error.status === 403) continue; throw error }
-        try { await requirePath(request, intent.target_collection_id, intent.file_path, 'edit') } catch (pathError:any) { if (pathError.status === 403) continue; throw pathError }
-      }
-      authorized.push({ plainSize: Number(intent.plain_size), versionId: intent.version_id });
-    }
-    if (!authorized.length) throw new HttpError(403, 'access denied');
-    if (authorized.some(intent => intent.plainSize !== authorized[0].plainSize)) throw new HttpError(409, 'concurrent upload intents disagree on chunk geometry');
-    return { scoped: true, plainSize: authorized[0].plainSize, versionIds: authorized.map(intent => intent.versionId) };
-  }
-  app.get('/v1/chunks/:collection/:id', async(request:RequestWithIdentity, response, next) => { try { await requireChunkRead(request, request.params.collection, request.params.id); response.type('application/octet-stream').send(await store.get(request.params.collection, request.params.id)) } catch (error) { next(error) } });
-  app.put('/v1/chunks/:collection/:id', express.raw({ type: 'application/octet-stream', limit: '8mb' }), async(request:RequestWithIdentity, response, next) => { try { const authorization = await requireChunkWrite(request, request.params.collection, request.params.id); if (authorization.scoped) { const keys = await config.keyring!.keys(request.params.collection); await decryptAndVerifyChunk(request.body as Buffer, keys.data, keys.dedup, request.params.id, authorization.plainSize!); } await store.put(request.params.collection, request.params.id, request.body as Buffer); if (authorization.scoped) { const actor = identity(request); await db.query('UPDATE file_share_chunk_uploads SET uploaded_at=NOW() WHERE version_id=ANY($1::uuid[]) AND chunk_id=$2 AND principal_id=$3 AND actor_scope=$4', [authorization.versionIds, request.params.id, actor.userId, actorScope(actor)]); } response.sendStatus(204) } catch (error) { next(error) } });
+  new ChunkRoutes(config, store, accessGate, new ChunkAccessRepository(db), actorScope).register(app);
   function validateRemoteBundle(bundle:any):Map<string, { size: number; storedSize: number; location: string }> {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     if (!uuid.test(String(bundle?.file?.id ?? '')) || !uuid.test(String(bundle?.version?.id ?? ''))) throw new HttpError(400, 'valid file and version ids are required');

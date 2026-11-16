@@ -55,7 +55,9 @@ const ALLOWED:Record<string, number> = {
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
   // One thread's inventory of up to 100 agent runs' live files (moved from app.ts).
   'Repositories/AgentFileRepository.ts': 1,
-  'app.ts': 4,
+  // Every version referencing one deduplicated chunk, read to authorize a chunk fetch (moved from app.ts).
+  'Repositories/ChunkAccessRepository.ts': 1,
+  'app.ts': 3,
 };
 
 function sources(directory:string):string[] {
