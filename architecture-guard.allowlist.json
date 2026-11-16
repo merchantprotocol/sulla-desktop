@@ -3834,13 +3834,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-vault/src/auth.ts": {
-      "rules": {
-        "raw-sql": 4,
-        "procedural-module": 5
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-vault/src/browserEnvelope/routes.ts": {
       "rules": {
         "mutable-state": 1,
@@ -3874,14 +3867,6 @@
         "long-file": 450
       },
       "reason": "pre-existing file over the line limit; split into classes"
-    },
-    "services/sulla-vault/src/db.ts": {
-      "rules": {
-        "mutable-state": 2,
-        "raw-sql": 11,
-        "procedural-module": 7
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
     "services/sulla-vault/src/filesCloudEscrow.ts": {
       "rules": {
