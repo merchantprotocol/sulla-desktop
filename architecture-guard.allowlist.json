@@ -2271,12 +2271,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/main/desktopRelay.ts": {
-      "rules": {
-        "long-file": 1430
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
     "pkg/sulla-desktop/main/deviceIdentity.ts": {
       "rules": {
         "procedural-module": 3
