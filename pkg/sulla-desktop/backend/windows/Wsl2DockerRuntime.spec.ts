@@ -143,11 +143,20 @@ describe('Wsl2DockerRuntime', () => {
       spawnInDistribution: vi.fn(() => child as any),
       terminateDistribution: vi.fn().mockResolvedValue(undefined),
     };
-    const runtime = new Wsl2DockerRuntime(host, { ...options, readyTimeoutMs: 5, stopTimeoutMs: 1 });
+    vi.useFakeTimers();
+    try {
+      // Fake clock: the probe deadline and the forced-stop timer fire only when advanced.
+      const runtime = new Wsl2DockerRuntime(host, { ...options, readyTimeoutMs: 5, stopTimeoutMs: 1 });
+      const started = expect(runtime.start()).rejects.toThrow(/readiness probe timed out/);
 
-    await expect(runtime.start()).rejects.toThrow(/readiness probe timed out/);
-    expect(probeSignal?.aborted).toBe(true);
-    expect(host.terminateDistribution).toHaveBeenCalledTimes(1);
+      await vi.runAllTimersAsync();
+      await started;
+      expect(probeSignal?.aborted).toBe(true);
+      expect(host.terminateDistribution).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('re-checks that the daemon process is alive after a successful readiness probe', async() => {
@@ -227,13 +236,20 @@ describe('Wsl2DockerRuntime', () => {
       spawnInDistribution: vi.fn(() => child as any),
       terminateDistribution: vi.fn().mockResolvedValue(undefined),
     };
-    const runtime = new Wsl2DockerRuntime(host, { ...options, stopTimeoutMs: 20 }, async() => undefined);
+    vi.useFakeTimers();
+    try {
+      const runtime = new Wsl2DockerRuntime(host, { ...options, stopTimeoutMs: 20 }, async() => undefined);
 
-    await runtime.start();
-    await runtime.stop();
-    await new Promise(resolve => setTimeout(resolve, 40));
+      await runtime.start();
+      await runtime.stop();
+      // A clean SIGTERM exit must clear the forced-stop timer, not leave it pending.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(40);
 
-    expect(child.kill).toHaveBeenCalledTimes(1);
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
