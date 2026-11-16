@@ -237,6 +237,7 @@ async function startRun(params: {
   triggerKey?:               string;
   parentExecutionId?:        string;
   playbookState?:            WorkflowPlaybookState;
+}, identity: RequestIdentity): Promise<{ executionId: string; runnerId: string; deduplicated?: boolean }> {
   if (identity.kind === 'runner' && params.parentExecutionId !== identity.executionId) {
     throw new Error('runner may only start an explicitly linked child workflow');
   }
