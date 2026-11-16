@@ -31,6 +31,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
@@ -247,6 +248,22 @@ export class BackendGraphWebSocketService {
     this.initialize();
   }
 
+  private completionHandoff?: DelegatedCompletionHandoff;
+
+  /** Lazy so bare test instances (Object.create) still get one. */
+  private get delegatedCompletionHandoff(): DelegatedCompletionHandoff {
+    return this.completionHandoff ??= new DelegatedCompletionHandoff(
+      { take: takeAgentCompletions, format: formatCompletionBatch },
+      agentJobLifecycle,
+      {
+        firstDelivered: entry => agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now()),
+        acknowledge:    entry => agentJobProvider.completionAcknowledgements.acknowledge(entry),
+      },
+      (state, message) => { injectSteer(state as any, message) },
+      nextMessageId,
+    );
+  }
+
   sendOrgMessage(envelope: import('@sulla/domain').MessageEnvelope): Promise<void> {
     return this.orgMessenger.send(envelope);
   }
@@ -283,34 +300,12 @@ export class BackendGraphWebSocketService {
   private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
     if (this.hasActiveRun(channelId, threadId)) return;
     const delegated = GraphRegistry.get(threadId);
-    if ((delegated?.state.metadata as any)?.delegatedRunActive && !agentJobLifecycle.hasLiveWaiter(threadId)) return;
+    // A runner-owned delegated manager (parked or mid-turn) gets the batch
+    // injected and its runner woken; never a second, disconnected turn.
+    if (await this.delegatedCompletionHandoff.deliver(channelId, threadId, delegated?.state as any)) return;
     const entries = takeAgentCompletions(channelId, threadId);
     if (!entries.length) return;
     const content = formatCompletionBatch(entries);
-    // A parent that is itself a hidden delegated child runs under its
-    // spawn_agent runner, not activeAborts. Starting a second execution on
-    // that state would race the runner, so hand it the batch as one steer.
-    if (agentJobLifecycle.hasLiveWaiter(threadId)) {
-      if (delegated) {
-        injectSteer(delegated.state, {
-          id:        nextMessageId(),
-          role:      'user',
-          content,
-          timestamp: Date.now(),
-          metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
-        } as any);
-        for (const entry of entries) {
-          await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
-          await agentJobProvider.completionAcknowledgements.acknowledge(entry);
-        }
-      } else {
-        // No live graph state to inject into — should not happen alongside
-        // a live waiter, but requeue rather than drop the completion.
-        for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
-      }
-      agentJobLifecycle.wake(threadId);
-      return;
-    }
     // Same trigger mapping as handleChannelMessage: only heartbeat has its own
     // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
     const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
