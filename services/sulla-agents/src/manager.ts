@@ -113,6 +113,7 @@ app.use((error: any, _request: express.Request, response: express.Response, _nex
 });
 
 async function main(): Promise<void> {
+  if (!config.databaseUrl) throw new Error('SULLA_DATABASE_URL is required');
   app.listen(config.port, '0.0.0.0', () => console.log(`[agents-service] listening on :${ config.port }`));
 }
 

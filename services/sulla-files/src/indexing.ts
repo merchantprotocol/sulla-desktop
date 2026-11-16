@@ -4,22 +4,15 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { TransactionRunner } from './FilesTransaction.js';
-import { vectorSearchReady, vectorTableExists } from './vectorState.js';
-import { extractIndexText } from './extractor.js';
+import { IndexTextExtractor } from './extractor.js';
 import { UNINDEXED_SYSTEM_AREAS } from './systemAreaIngest.js';
 import { PotionEmbedder, vectorLiteral } from './potionEmbedder.js';
+import { IndexingAccountingRepository } from './Repositories/IndexingAccountingRepository.js';
+import { IndexingJobRepository, type ClaimedIndexJob, type IndexEligibility } from './Repositories/IndexingJobRepository.js';
+import { SearchContentRepository } from './Repositories/SearchContentRepository.js';
+import { VectorCapability } from './Services/VectorCapability.js';
 
 import type pg from 'pg';
-
-export async function lockIndexingEligibility(client:pg.PoolClient, fileId:string):Promise<any> {
-  // Acquire both scope locks first, then evaluate eligibility in a new statement.
-  // PostgreSQL keeps a locking statement's pre-wait snapshot for subqueries.
-  const locked = (await client.query('SELECT collection_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
-  if (locked) await client.query('SELECT id FROM collections WHERE id=$1 FOR UPDATE', [locked.collection_id]);
-  return (await client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,
-    EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
-    FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1`, [fileId])).rows[0];
-}
 
 const CHUNK_CHARS = 3_500;
 const CHUNK_OVERLAP = 300;
@@ -39,78 +32,61 @@ export function* chunks(text:string):Generator<string> {
   }
 }
 
-export async function reconcileIndexingAccounting(db:pg.Pool):Promise<void> {
-  const excluded = [...UNINDEXED_SYSTEM_AREAS];
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-files:indexing-accounting'))");
-    await client.query(`DELETE FROM file_search_text st USING files f,collections c
-    WHERE st.file_id=f.id AND c.id=f.collection_id
-      AND (f.deleted_at IS NOT NULL OR c.system_area=ANY($1::text[])
-        OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))`, [excluded]);
-    await client.query(`DELETE FROM file_search_chunks ch USING files f,collections c
-    WHERE ch.file_id=f.id AND c.id=f.collection_id
-      AND (f.deleted_at IS NOT NULL OR f.current_version_id IS DISTINCT FROM ch.version_id
-        OR c.system_area=ANY($1::text[]) OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))`, [excluded]);
-    await client.query(`DELETE FROM file_index_jobs j USING files f,collections c
-    WHERE j.file_id=f.id AND c.id=f.collection_id
-      AND (f.deleted_at IS NOT NULL OR f.current_version_id IS DISTINCT FROM j.version_id
-        OR c.system_area=ANY($1::text[]) OR EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))`, [excluded]);
-    await client.query(`UPDATE file_index_jobs j SET status='pending',reason_code='interrupted',reason='Indexing was interrupted and will retry.',available_at=NOW()
-    FROM files f,collections c WHERE j.file_id=f.id AND c.id=f.collection_id AND j.status='indexing'
-      AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [excluded]);
-    await client.query(`UPDATE files f SET extraction_status='pending',extracted_at=NULL,extraction_reason_code='interrupted',extraction_reason='Indexing was interrupted and will retry.'
-    FROM collections c WHERE c.id=f.collection_id AND f.deleted_at IS NULL AND f.current_version_id IS NOT NULL AND f.extraction_status='indexing'
-      AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [excluded]);
-    await client.query(`UPDATE files f SET extraction_status='failed',extracted_at=NOW(),extraction_reason_code='accounting_repaired',extraction_reason='The prior indexing outcome was invalid. Re-index this file.'
-    FROM collections c WHERE c.id=f.collection_id AND f.deleted_at IS NULL AND f.current_version_id IS NOT NULL
-      AND f.extraction_status NOT IN('pending','indexed','failed','unsupported')
-      AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [excluded]);
-    await client.query(`UPDATE files f SET
-      extraction_reason_code=coalesce(nullif(f.extraction_reason_code,''),CASE f.extraction_status WHEN 'pending' THEN 'queue_repaired' WHEN 'indexed' THEN 'indexed_outcome_repaired' WHEN 'unsupported' THEN 'unsupported_outcome_repaired' ELSE 'failed_outcome_repaired' END),
-      extraction_reason=coalesce(nullif(f.extraction_reason,''),CASE f.extraction_status WHEN 'pending' THEN 'Waiting for local indexing.' WHEN 'indexed' THEN 'Indexed locally.' WHEN 'unsupported' THEN 'This file type is not supported by the local indexer.' ELSE 'Local indexing failed. Re-index to try again.' END)
-    FROM collections c WHERE c.id=f.collection_id AND f.deleted_at IS NULL AND f.current_version_id IS NOT NULL
-      AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)`, [excluded]);
-    await client.query(`INSERT INTO file_index_jobs(file_id,version_id,status,reason_code,reason,finished_at)
-    SELECT f.id,f.current_version_id,f.extraction_status,f.extraction_reason_code,f.extraction_reason,
-      CASE WHEN f.extraction_status IN('indexed','failed','unsupported') THEN coalesce(f.extracted_at,NOW()) END
-    FROM files f JOIN collections c ON c.id=f.collection_id
-    WHERE f.deleted_at IS NULL AND f.current_version_id IS NOT NULL
-      AND f.extraction_status IN('pending','indexed','failed','unsupported')
-      AND NOT coalesce(c.system_area=ANY($1::text[]),FALSE) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-    ON CONFLICT(version_id) DO UPDATE SET
-      file_id=EXCLUDED.file_id,status=EXCLUDED.status,reason_code=EXCLUDED.reason_code,reason=EXCLUDED.reason,
-      attempts=CASE WHEN EXCLUDED.status='pending' THEN 0 ELSE file_index_jobs.attempts END,
-      last_error=NULL,available_at=CASE WHEN EXCLUDED.status='pending' THEN NOW() ELSE file_index_jobs.available_at END,
-      started_at=NULL,finished_at=EXCLUDED.finished_at`, [excluded]);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+export type IndexSource = (file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>;
+
+/** The collaborators IndexingQueue uses; each defaults to the production implementation on `db`. */
+export interface IndexingQueueDependencies {
+  jobs?:         IndexingJobRepository;
+  content?:      SearchContentRepository;
+  accounting?:   IndexingAccountingRepository;
+  transactions?: TransactionRunner;
+  vectors?:      VectorCapability;
+  extractor?:    IndexTextExtractor;
+}
+
+type Eligibility = 'ineligible' | 'stale' | 'current';
+
+function eligibility(file:IndexEligibility | undefined, versionId:string):Eligibility {
+  if (!file || file.deleted_at || UNINDEXED_SYSTEM_AREAS.has(file.system_area as string) || file.protected) return 'ineligible';
+  return file.current_version_id === versionId ? 'current' : 'stale';
 }
 
 export class IndexingQueue {
-  private readonly embedder: PotionEmbedder;
+  private readonly embedder:     PotionEmbedder;
+  private readonly jobs:         IndexingJobRepository;
+  private readonly content:      SearchContentRepository;
+  private readonly accounting:   IndexingAccountingRepository;
+  private readonly transactions: TransactionRunner;
+  private readonly vectors:      VectorCapability;
+  private readonly extractor:    IndexTextExtractor;
   private timer?:            NodeJS.Timeout;
   private running = false;
   private stopped = false;
   private activeJob:string | null = null;
   get diagnosticJob():string | null { return this.activeJob }
 
-  constructor(private readonly db:pg.Pool, private readonly source:(file:any) => Promise<{ path: string; cleanup?: () => Promise<void> }>, model:PotionEmbedder | string) {
+  constructor(db:pg.Pool, private readonly source:IndexSource, model:PotionEmbedder | string, dependencies:IndexingQueueDependencies = {}) {
     this.embedder = typeof model === 'string' ? PotionEmbedder.load(model) : model;
     if (this.embedder.dim !== 512) throw new Error(`Expected 512-dimensional Potion model, got ${ this.embedder.dim }`);
+    this.jobs = dependencies.jobs ?? new IndexingJobRepository(db);
+    this.content = dependencies.content ?? new SearchContentRepository(db);
+    this.accounting = dependencies.accounting ?? new IndexingAccountingRepository(db);
+    this.transactions = dependencies.transactions ?? new TransactionRunner(db);
+    this.vectors = dependencies.vectors ?? VectorCapability.forPool(db);
+    this.extractor = dependencies.extractor ?? new IndexTextExtractor();
   }
 
   async start():Promise<void> {
     this.stopped = false;
-    await reconcileIndexingAccounting(this.db);
+    await this.reconcileAccounting();
     this.timer = setInterval(() => this.drain().catch(error => console.error('[SullaFiles] index queue failed', error)), 500);
     this.timer.unref(); this.wake();
+  }
+
+  /** Startup repair of jobs and extraction statuses (see IndexingAccountingRepository). */
+  async reconcileAccounting():Promise<void> {
+    const excluded = [...UNINDEXED_SYSTEM_AREAS];
+    await this.transactions.run('index-accounting-reconcile', client => this.accounting.on(client).reconcile(excluded));
   }
 
   async close():Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); while (this.running) await new Promise(resolve => setTimeout(resolve, 10)); }
@@ -121,24 +97,15 @@ export class IndexingQueue {
   }
 
   async retry(fileId:string):Promise<void> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      const file = await lockIndexingEligibility(client, fileId);
-      if (UNINDEXED_SYSTEM_AREAS.has(file?.system_area) || file?.protected) throw new Error('This file is excluded from indexing.');
+    await this.transactions.run('index-manual-retry', async client => {
+      const jobs = this.jobs.on(client);
+      const file = await jobs.lockEligibility(fileId);
+      if (UNINDEXED_SYSTEM_AREAS.has(file?.system_area as string) || file?.protected) throw new Error('This file is excluded from indexing.');
       if (!file || file.deleted_at || !file.current_version_id) throw new Error('Only a current, active file can be re-indexed.');
-      await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [fileId, file.current_version_id]);
-      await client.query(`INSERT INTO file_index_jobs(file_id,version_id,status,attempts,last_error,available_at,started_at,finished_at,reason_code,reason)
-        VALUES($1,$2,'pending',0,NULL,NOW(),NULL,NULL,'manual_retry','Waiting for local indexing.')
-        ON CONFLICT(version_id) DO UPDATE SET status='pending',attempts=0,last_error=NULL,available_at=NOW(),started_at=NULL,finished_at=NULL,reason_code='manual_retry',reason='Waiting for local indexing.'`, [fileId, file.current_version_id]);
-      await client.query('UPDATE file_search_text SET search_text=NULL WHERE file_id=$1', [fileId]);
-      await client.query("UPDATE files SET extracted_at=NULL,extraction_status='pending',extraction_reason_code='manual_retry',extraction_reason='Waiting for local indexing.' WHERE id=$1", [fileId]);
-      await client.query('COMMIT');
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      await jobs.requeueManually(fileId, file.current_version_id);
+    });
     this.wake();
   }
-
-
 
   private async drain():Promise<void> {
     if (this.stopped || this.running) return;
@@ -154,100 +121,76 @@ export class IndexingQueue {
     } finally { this.running = false }
   }
 
+  /** Drops the job's derived rows when the file is no longer indexable or the job is superseded. */
+  private async discard(jobs:IndexingJobRepository, job:ClaimedIndexJob, state:Exclude<Eligibility, 'current'>):Promise<void> {
+    if (state === 'ineligible') await jobs.discardIneligible(job.file_id, job.version_id);
+    else await jobs.discardStale(job.file_id, job.version_id);
+  }
+
   private async processOne():Promise<boolean> {
-    const claimed = await this.db.query(`UPDATE file_index_jobs SET status='indexing',attempts=attempts+1,started_at=NOW(),last_error=NULL,reason_code='indexing',reason='Local extraction is in progress.'
-      WHERE version_id=(SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
-      RETURNING file_id,version_id,attempts`);
-    const job = claimed.rows[0]; if (!job) return false;
+    const job = await this.jobs.claimNext(); if (!job) return false;
     this.activeJob = String(job.file_id);
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
-      const eligibilityClient = await this.db.connect();
-      let file:any;
-      try {
-        await eligibilityClient.query('BEGIN');
-        file = await lockIndexingEligibility(eligibilityClient, job.file_id);
-        if (!file || file.deleted_at || UNINDEXED_SYSTEM_AREAS.has(file.system_area) || file.protected) {
-          await eligibilityClient.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
-          await eligibilityClient.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
-          await eligibilityClient.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          await eligibilityClient.query('COMMIT');
-          return true;
-        }
-        if (file.current_version_id !== job.version_id) {
-          await eligibilityClient.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [job.file_id, job.version_id]);
-          await eligibilityClient.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          await eligibilityClient.query('COMMIT');
-          return true;
-        }
-        await eligibilityClient.query('COMMIT');
-      } catch (error) { await eligibilityClient.query('ROLLBACK'); throw error } finally { eligibilityClient.release() }
-      await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
+      const file = await this.transactions.run('index-eligibility', async client => {
+        const jobs = this.jobs.on(client);
+        const current = await jobs.lockEligibility(job.file_id);
+        const state = eligibility(current, job.version_id);
+        if (state !== 'current') { await this.discard(jobs, job, state); return undefined }
+        return current;
+      });
+      if (!file) return true;
+      await this.jobs.markFileIndexing(job.file_id, job.version_id);
       source = await this.source(file);
-      const extracted = await extractIndexText(source.path, file.mime);
+      const extracted = await this.extractor.extract(source.path, file.mime);
       // Capability lookups acquire through the pool; embeddings can be CPU-heavy. Stage
       // both before checkout, then revalidate version/eligibility under the row locks.
-      const vectorTable=await vectorTableExists(this.db);
-      const vectorReady=vectorTable&&await vectorSearchReady(this.db);
-      const staged=extracted.status==='indexed'&&extracted.text
-        ? [...chunks(extracted.text)].map(content=>({content,embedding:this.embedder.embed(content)})) : [];
-      await new TransactionRunner(this.db).run('index-content-commit',async client=>{
-        const current = await lockIndexingEligibility(client, file.id);
-        if (!current || current.deleted_at || UNINDEXED_SYSTEM_AREAS.has(current.system_area) || current.protected) {
-          await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
-          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
-          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          return true;
-        }
-        if (current.current_version_id !== job.version_id) {
-          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [job.file_id, job.version_id]);
-          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          return true;
-        }
-        const activeJob = (await client.query('SELECT status,attempts FROM file_index_jobs WHERE version_id=$1 FOR UPDATE', [job.version_id])).rows[0];
+      const vectorTable = await this.vectors.tableExists();
+      const vectorReady = vectorTable && await this.vectors.searchReady();
+      const staged = extracted.status === 'indexed' && extracted.text
+        ? [...chunks(extracted.text)].map(content => ({ content, embedding: this.embedder.embed(content) })) : [];
+      await this.transactions.run('index-content-commit', async client => {
+        const jobs = this.jobs.on(client); const content = this.content.on(client);
+        const state = eligibility(await jobs.lockEligibility(file.id), job.version_id);
+        if (state !== 'current') { await this.discard(jobs, job, state); return true }
+        const activeJob = await jobs.lockJob(job.version_id);
         if (activeJob?.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
           return true;
         }
-        await client.query('DELETE FROM file_search_chunks WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)', [file.id]);
+        await content.deleteChunksForFile(file.id);
         if (extracted.status === 'indexed' && extracted.text) {
           let ordinal = 0;
-          for (const {content,embedding} of staged) {
-            const inserted = await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
-              VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, vectorReady ? null : JSON.stringify(Array.from(embedding))]);
-            if (vectorTable) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::halfvec)', [inserted.rows[0].id, vectorLiteral(embedding)]);
+          for (const { content: text, embedding } of staged) {
+            const chunkId = await content.insertChunk(file.id, job.version_id, ordinal, text, vectorReady ? null : JSON.stringify(Array.from(embedding)));
+            if (vectorTable) await content.insertVector(chunkId, vectorLiteral(embedding));
             ordinal++;
           }
         }
-        await client.query('INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3) ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text', [file.id, file.path, extracted.text]);
-        await client.query('UPDATE files SET extracted_at=NOW(),extraction_status=$2,extraction_reason_code=$3,extraction_reason=$4 WHERE id=$1', [file.id, extracted.status, extracted.reasonCode, extracted.reason]);
-        await client.query('UPDATE file_index_jobs SET status=$2,finished_at=NOW(),reason_code=$3,reason=$4,last_error=NULL WHERE version_id=$1', [job.version_id, extracted.status, extracted.reasonCode, extracted.reason]);
+        await content.upsertText(file.id, file.path, extracted.text);
+        await jobs.complete(file.id, job.version_id, extracted);
       });
-    } catch (error) {
-      const terminal = job.attempts >= 3;
-      const status = terminal ? 'failed' : 'pending';
-      const reason = terminal ? 'Indexing failed after three local attempts. Re-index to try again.' : 'Indexing hit a temporary local error and will retry.';
-      const client = await this.db.connect();
-      try {
-        await client.query('BEGIN');
-        const current = await lockIndexingEligibility(client, job.file_id);
-        if (current && !current.deleted_at && current.current_version_id === job.version_id && !UNINDEXED_SYSTEM_AREAS.has(current.system_area) && !current.protected) {
-          const updated = await client.query(`UPDATE file_index_jobs SET status=$2,last_error=$3,reason_code=$4,reason=$5,available_at=NOW()+INTERVAL '5 seconds',finished_at=CASE WHEN $2='failed' THEN NOW() END
-            WHERE version_id=$1 AND status='indexing' AND attempts=$6`, [job.version_id, status, 'Local indexing operation failed', terminal ? 'retry_exhausted' : 'retry_scheduled', reason, job.attempts]);
-          if (updated.rowCount) await client.query('UPDATE files SET extraction_status=$3,extraction_reason_code=$4,extraction_reason=$5,extracted_at=CASE WHEN $3=\'failed\' THEN NOW() ELSE NULL END WHERE id=$1 AND current_version_id=$2', [job.file_id, job.version_id, status, terminal ? 'retry_exhausted' : 'retry_scheduled', reason]);
-        } else if (!current || current.deleted_at || UNINDEXED_SYSTEM_AREAS.has(current.system_area) || current.protected) {
-          await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
-          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
-          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-        } else {
-          await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [job.file_id, job.version_id]);
-          await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-        }
-        await client.query('COMMIT');
-      } catch (failureError) { await client.query('ROLLBACK'); throw failureError } finally { client.release() }
+    } catch {
+      await this.recordFailure(job);
     } finally {
       this.activeJob = null;
       try { await source?.cleanup?.() } catch { console.warn('[SullaFiles] index source cleanup failed') }
     }
     return true;
+  }
+
+  /** Re-queues a failed job (or fails it after three attempts) while this worker still owns it. */
+  private async recordFailure(job:ClaimedIndexJob):Promise<void> {
+    const terminal = job.attempts >= 3;
+    const outcome = {
+      status:     terminal ? 'failed' : 'pending',
+      reasonCode: terminal ? 'retry_exhausted' : 'retry_scheduled',
+      reason:     terminal ? 'Indexing failed after three local attempts. Re-index to try again.' : 'Indexing hit a temporary local error and will retry.',
+    };
+    await this.transactions.run('index-failure', async client => {
+      const jobs = this.jobs.on(client);
+      const state = eligibility(await jobs.lockEligibility(job.file_id), job.version_id);
+      if (state !== 'current') { await this.discard(jobs, job, state); return }
+      if (await jobs.rescheduleOwnedJob(job, outcome, 'Local indexing operation failed')) await jobs.markFileRetry(job.file_id, job.version_id, outcome);
+    });
   }
 }
