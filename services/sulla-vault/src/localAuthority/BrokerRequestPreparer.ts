@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { agentPolicyAllows, validateVaultItemProxy, type VaultItemPlaintext } from '@sulla/vault-crypto';
+import { validateVaultItemProxy, type VaultItemPlaintext } from '@sulla/vault-crypto';
 
 import { validateCatalogRequest } from '../catalogPolicy.js';
 import type { BrokerExecuteRequest } from '../contracts.js';
@@ -18,6 +18,7 @@ import { LocalVaultError } from './LocalVaultError.js';
 import { BrokerCredentialFields } from './BrokerCredentialFields.js';
 import { BrokerHttpBody } from './BrokerHttpBody.js';
 import { LocalAuthorityCrypto } from './LocalAuthorityCrypto.js';
+import { AgentPolicyGate } from './AgentPolicyGate.js';
 
 /**
  * Turns a signed broker request into an upstream call: caller identity and scope checks, item
@@ -115,7 +116,7 @@ export class BrokerRequestPreparer {
       if (!checked.proxy.hosts.some(host => BrokerCredentialFields.proxyHostMatches(target.hostname.toLowerCase(), host))) {
         throw new LocalVaultError('destination_denied', 403, `Vault item is not allowed on ${ target.hostname }`);
       }
-      const decision = agentPolicyAllows(itemPolicy, {
+      const decision = AgentPolicyGate.shared().allows(itemPolicy, {
         agentId: input.claims.agent_id, level: 'autofill', host: target.hostname, onServer: false,
       });
       if (!decision.allowed) throw new LocalVaultError('policy_denied', 403, decision.reason ?? 'Credential policy denied the operation');
@@ -174,7 +175,7 @@ export class BrokerRequestPreparer {
     }
     // The Files service acts for the owner on their own Cloud account, so the
     // owner-only agent policy doesn't apply; its operation policy still does.
-    const decision: { allowed: boolean; reason?: string } = isTrustedFilesCloudCall(input) ? { allowed: true } : agentPolicyAllows(effectivePolicy, {
+    const decision: { allowed: boolean; reason?: string } = isTrustedFilesCloudCall(input) ? { allowed: true } : AgentPolicyGate.shared().allows(effectivePolicy, {
       agentId: input.claims.agent_id,
       level: 'autofill',
       host: target.hostname,
@@ -316,7 +317,7 @@ export class BrokerRequestPreparer {
     }
     const trustedFirstParty = bypassAgentPolicy || isTrustedFilesCloudCall(input);
     if (host && input.operation !== 'item.http' && !trustedFirstParty) {
-      const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
+      const siteDecision = AgentPolicyGate.shared().allows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
       if (!siteDecision.allowed) {
         throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');
       }
