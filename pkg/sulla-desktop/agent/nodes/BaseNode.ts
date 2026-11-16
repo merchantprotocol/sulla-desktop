@@ -1422,6 +1422,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const hasToolUseBlocks = Array.isArray(rawProviderContent) &&
             rawProviderContent.some((b: any) => b?.type === 'tool_use');
 
+    // Real model output for DelegatedTurnProgressProbe, counted before the
+    // dedup/blank-after-strip early returns below (a wrapper-only or repeated
+    // reply is still the model answering).
+    if (contentStr.trim() || hasToolUseBlocks) new TurnOutputCounter(state.metadata as any).record();
+
     // If pure tool_use response with no text, still store the native content
     if (!normalizedContent && !hasToolUseBlocks && !keepPrivateOverheardContext) {
       return;

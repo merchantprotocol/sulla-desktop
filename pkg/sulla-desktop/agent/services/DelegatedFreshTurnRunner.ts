@@ -31,7 +31,7 @@ export interface DelegatedFreshTurnResult { finalState: any; returned: any }
 /**
  * Runs one delegated turn after a wake, reminder or resume, retrying once when
  * the turn did nothing. Only real output (a non-blank token, a tool call or
- * a new output message, see DelegatedTurnProgressProbe) is progress. A
+ * an appended reply, see DelegatedTurnProgressProbe) is progress. A
  * truly empty turn parks while something can wake it, hands back to the
  * settlement loop when nothing was waiting to be consumed, and fails only when
  * child completions would be stranded or the empty-turn bound is exceeded.

@@ -42,6 +42,20 @@ class FakeDelegatedTask {
     new TurnOutputCounter(state.metadata).record();
   }
 
+  /** BaseNode.appendResponse: store a non-blank reply and count it as output. */
+  reply(state: any, content: string): void {
+    this.heartbeat(state);
+    state.messages.push({ role: 'assistant', content });
+    new TurnOutputCounter(state.metadata).record();
+  }
+
+  /** ToolExecutor: store a tool result and count the batch as output. */
+  toolResult(state: any): void {
+    this.heartbeat(state);
+    state.messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }], metadata: { kind: 'tool_result' } });
+    new TurnOutputCounter(state.metadata).record();
+  }
+
   ports(): DelegatedFreshTurnPorts {
     return {
       jobId:     'job-e1',
@@ -109,7 +123,8 @@ describe('DelegatedFreshTurnRunner', () => {
     // risk: false failure. Token-budget trimming replaces state.messages, so the
     // assistant count can stay equal even though the model answered.
     const task = new FakeDelegatedTask([...history(), completionWake()], [state => {
-      state.messages = [state.messages[state.messages.length - 1], { role: 'assistant', content: 'reviewed child result' }];
+      state.messages = [state.messages[state.messages.length - 1]];
+      task.reply(state, 'reviewed child result');
     }]);
     await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
 
@@ -173,15 +188,35 @@ describe('DelegatedFreshTurnRunner', () => {
 
   it('counts a Sulla tool result as progress even when the model wrote no text', async() => {
     // risk: false failure for a tool-only turn on the non-CLI path
-    const task = new FakeDelegatedTask([...history(), completionWake()], [state => {
-      task.heartbeat(state);
-      state.messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }], metadata: { kind: 'tool_result' } });
-    }]);
+    const task = new FakeDelegatedTask([...history(), completionWake()], [state => task.toolResult(state)]);
     await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
 
     expect(task.executions).toBe(1);
     expect(task.acknowledged).toHaveLength(1);
     expect(task.rerouted).toEqual([]);
+  });
+
+  it('does not count history rewritten as JSON-cloned copies as progress (no false ACK)', async() => {
+    // risk: lost delegated work. SubconsciousMiddleware.applyPendingBackground splices
+    // JSON-cloned snapshot messages into state.messages at the start of every turn, so
+    // old assistant/tool messages become new objects. An empty wake turn must still
+    // reroute the child completions instead of marking them delivered unread.
+    const rewrite = (state: any) => {
+      task.heartbeat(state);
+      state.messages = JSON.parse(JSON.stringify(state.messages));
+    };
+    const task = new FakeDelegatedTask([
+      ...history(),
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: 'ok' }], metadata: { kind: 'tool_result' } },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 't0', name: 'spawn', input: {} }] },
+      completionWake(),
+    ], [rewrite, rewrite]);
+    await expect(new DelegatedFreshTurnRunner(task.ports()).run(task.state))
+      .rejects.toThrow('wake=sub_agent_completion, unconsumedCompletionJobs=child-1');
+
+    expect(task.executions).toBe(2);
+    expect(task.rerouted).toHaveLength(1);
+    expect(task.acknowledged).toEqual([]);
   });
 
   it('fails once truly empty turns repeat past the bound, even with nothing to consume', async() => {
