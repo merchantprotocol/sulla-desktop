@@ -21,7 +21,8 @@ export class AgentJobCustodyRepository {
 
   async resolveOwner(jobId: string, taskIndex?: number): Promise<CustodyRecord|undefined> {
     const rows = await this.database.query<any>(this.resolveSql(), [jobId, taskIndex ?? null]);
-    return rows[0] ? this.mapRecord(rows[0], taskIndex) : undefined;
+    if (rows[0]) return this.mapRecord(rows[0], taskIndex);
+    return this.legacyParentOwner(this.database, jobId, taskIndex);
   }
 
   /**
@@ -83,7 +84,15 @@ export class AgentJobCustodyRepository {
     if (taskIndex !== undefined) await client.query(`SELECT pg_advisory_xact_lock(hashtext($1), $2)`, [jobId, taskIndex]);
     await this.observe(kind,'locked',jobId,taskIndex);
     const result = await client.query(this.resolveSql(), [jobId, taskIndex ?? null]);
-    return result.rows[0] ? this.mapRecord(result.rows[0], taskIndex) : undefined;
+    if (result.rows[0]) return this.mapRecord(result.rows[0], taskIndex);
+    return kind === 'producer' ? this.legacyParentOwner(client, jobId, taskIndex) : undefined;
+  }
+
+  private async legacyParentOwner(client: { query<T=any>(sql:string, values?:unknown[]):Promise<{rows:T[]}> }, jobId:string, taskIndex?:number):Promise<CustodyRecord|undefined> {
+    const result=await client.query<any>(`SELECT parent_channel,parent_thread_id,parent_agent_id,created_at FROM agent_jobs WHERE job_id=$1`,[jobId]);
+    const row=result.rows[0];
+    if(!row?.parent_channel||!row?.parent_thread_id)return undefined;
+    return {jobId,...(taskIndex===undefined?{}:{taskIndex}),channel:row.parent_channel,threadId:row.parent_thread_id,agentId:row.parent_agent_id??row.parent_channel,version:0,changedAt:new Date(row.created_at??0)};
   }
 
   private observe(kind:CustodyTransactionKind,phase:CustodyTransactionPhase,jobId:string,taskIndex?:number):Promise<void>{
