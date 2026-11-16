@@ -21,7 +21,9 @@ describe.skipIf(!databaseUrl)('Files agent-file routes (real app, real Postgres)
   let agentFileId = ''; let agentVersionId = ''; let userFileId = ''; let scratchId = '';
 
   const writeAgentFile = async(path:string, job:string, content:string) => {
-    const written = await fixture.request('/v1/agent-files', 'POST', { token: fixture.token({ agent_id: 'agent-1', job_id: job }), body: { collectionId: fixture.collectionId, path, content, mime: 'text/plain' } });
+    // A job-only token, as the run writer: app.ts insertVersion records a token carrying agent_id as created_by_type
+    // 'agent', and the run inventory (like main) only matches created_by_type='agent-run' rows by run id.
+    const written = await fixture.request('/v1/agent-files', 'POST', { token: fixture.token({ job_id: job }), body: { collectionId: fixture.collectionId, path, content, mime: 'text/plain' } });
     if (written.status !== 201) throw new Error(`agent write ${ path }: ${ written.status } ${ JSON.stringify(written.body) }`);
     return written.body as { fileId:string; versionId:string };
   };
