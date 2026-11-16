@@ -25,11 +25,13 @@ export class FilesCloudEscrowService {
     private readonly repository:PostgresFilesCloudEscrowRepository=new PostgresFilesCloudEscrowRepository(db), private readonly keyCrypto:FilesEscrowKeyCrypto=new FilesEscrowKeyCrypto()){}
   async wrapMemoryKey(memoryKey:string){
     const raw=new Uint8Array(Buffer.from(memoryKey,'base64'));if(raw.byteLength!==32)throw new FilesCloudEscrowError('invalid_request',400);
-    return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{try{const wrappedKey=await wrapMemorySyncKey(userKey,userId,raw);assertCurrent();return{wrappedKey}}finally{raw.fill(0)}})
-      .catch(error=>{if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423);throw error});
+    // raw is zeroed even when the vault is locked before the callback runs.
+    return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{const wrappedKey=await wrapMemorySyncKey(userKey,userId,raw);assertCurrent();return{wrappedKey}})
+      .catch(error=>{if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423);throw error})
+      .finally(()=>raw.fill(0));
   }
   async unwrapMemoryKey(wrappedKey:string){
-    return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{const raw=await unwrapMemorySyncKey(userKey,userId,wrappedKey);assertCurrent();try{return{memoryKey:Buffer.from(raw).toString('base64')}}finally{raw.fill(0)}})
+    return this.authority.withUnlockedUserKey(async({userId,userKey,assertCurrent})=>{const raw=await unwrapMemorySyncKey(userKey,userId,wrappedKey);try{assertCurrent();return{memoryKey:Buffer.from(raw).toString('base64')}}finally{raw.fill(0)}})
       .catch(error=>{if((error as {code?:string}).code==='vault_locked')throw new FilesCloudEscrowError('vault_locked',423);throw error});
   }
   async key(requestId:string,recipientPublicKey:string){
@@ -60,6 +62,8 @@ export class FilesCloudEscrowService {
     if(fetched.status!==200)throw new FilesCloudEscrowError('cloud_bundle_unavailable',fetched.status||502);
     const body=typeof fetched.body==='string'?JSON.parse(fetched.body):fetched.body as any;
     const bundle=body?.bundle??body;
+    // The cached key is bound to bundle.vaultId/epoch; refuse a bundle for any vault but the one status named.
+    if(bundle?.vaultId!==vaultId)throw new FilesCloudEscrowError('cloud_vault_mismatch',409,'The Sulla Cloud backup belongs to a different vault.');
     const envelope=await this.codecProvider.get();
     let userKey:Uint8Array;
     try { userKey=envelope.unlockBundle(bundle,password) }

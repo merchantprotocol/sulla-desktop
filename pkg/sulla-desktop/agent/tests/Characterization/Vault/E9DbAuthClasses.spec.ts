@@ -121,8 +121,9 @@ describe('E9 db/auth classes work through injected dependencies', () => {
     expect(accounts.inserted).toHaveLength(1);
     const row = accounts.inserted[0] as { email: string; loginHashSalt: Buffer; loginHashVerifier: Buffer; publicKey: string; kdf: unknown };
     expect(row).toMatchObject({ email: 'desktop@local.sulla', publicKey: 'pk', kdf: { c: 3 } });
-    expect(verifiers.verify('h', row.loginHashSalt, row.loginHashVerifier)).toBe(true);
-    expect(verifiers.verify('H', row.loginHashSalt, row.loginHashVerifier)).toBe(false);
+    expect(row.loginHashVerifier.byteLength).toBe(32);
+    expect(verifiers.make('h', row.loginHashSalt).verifier.equals(row.loginHashVerifier)).toBe(true);
+    expect(verifiers.make('H', row.loginHashSalt).verifier.equals(row.loginHashVerifier)).toBe(false);
 
     const existing = new InMemoryAccounts(true);
     await new DesktopAccountBootstrapper(existing as unknown as PostgresDesktopAccountRepository, verifiers).ensure(config);
