@@ -16,13 +16,13 @@ describe('ArtifactCreateWorker', () => {
     const artifact = { id: 'artifact-1', name: 'Plan', kind: 'document', status: 'open', version: 2, content: 'body', filesRegistrationStatus: 'synced', filesFileId: 'file-1', filesVersionId: 'version-1', filesPath: 'Plan.md' };
     create.mockResolvedValueOnce({ artifact, created: true }).mockResolvedValueOnce({ artifact, created: false });
 
-    const newlyCreated = await worker._validatedCall({ name: 'Plan', kind: 'document', content: 'body' });
-    const updated = await worker._validatedCall({ name: 'Plan', kind: 'document', content: 'body' });
+    const newlyCreated = await worker.call({ name: 'Plan', kind: 'document', content: 'body' });
+    const updated = await worker.call({ name: 'Plan', kind: 'document', content: 'body' });
 
-    expect(newlyCreated.responseString).toContain('inlineReference: sulla-file://file-1?version=version-1');
-    expect(newlyCreated.responseString).toContain('Created artifact: Plan');
+    expect(newlyCreated.result).toContain('inlineReference: sulla-file://file-1?version=version-1');
+    expect(newlyCreated.result).toContain('Created artifact: Plan');
     expect(newlyCreated.artifact).toMatchObject({ record: artifact, created: true, updated: false });
-    expect(updated.responseString).toContain('inlineReference: sulla-file://file-1?version=version-1');
+    expect(updated.result).toContain('inlineReference: sulla-file://file-1?version=version-1');
     expect(updated.artifact).toMatchObject({ record: artifact, created: false, updated: true });
     expect(create).toHaveBeenCalledTimes(2);
   });
