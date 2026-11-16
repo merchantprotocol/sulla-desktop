@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promises as dns } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
@@ -60,7 +60,6 @@ import type {
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
-  BrowserFillTarget,
   HumanBackupEnvelope,
   LegacyMigrationResponse,
   LocalVaultState,
@@ -70,7 +69,8 @@ import type {
   AccountPasswordRewrapRequest,
   AccountPasswordRewrapResponse,
   VaultDeviceApprovalWrapRequest,
-  VaultEnrollmentWrapRequest, VaultEnrollmentAdoptRequest,
+  VaultEnrollmentWrapRequest,
+  VaultEnrollmentAdoptRequest,
 } from './contracts.js';
 import { transportWrap } from './filesCloudEscrow.js';
 import { FilesTransportEnvelopeService, type FilesTransportEnvelope as TransportEnvelope } from '@sulla/vault-crypto';
@@ -78,16 +78,6 @@ import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
-import {
-  bootstrapChallengeProofInput,
-  bootstrapServerProofInput,
-  bootstrapSessionKeyInput,
-  bootstrapUnlockProofInput,
-  cacheUpdateChallengeProofInput,
-  cacheUpdateFetchProofInput,
-  cacheUpdateServerProofInput,
-  cacheUpdateSessionKeyInput,
-} from './contracts.js';
 import type { Database, Queryable } from './db.js';
 import { PostgresLocalAuthorityRepository } from './repositories/PostgresLocalAuthorityRepository.js';
 import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
@@ -104,14 +94,26 @@ import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 import { DesktopHumanBackup } from './localCrypto/DesktopHumanBackup.js';
 import type { VaultUserBackupRow } from './localCrypto/DesktopHumanBackup.js';
 import { LocalVaultCryptoProvider } from './localCrypto/LocalVaultCryptoProvider.js';
+import type { BootstrapUnlockService } from './localAuthority/BootstrapUnlockService.js';
+import type { HumanSessionService } from './localAuthority/HumanSessionService.js';
+import { LocalAuthorityCollaborators } from './localAuthority/LocalAuthorityCollaborators.js';
+import type { LocalAuthorityHost } from './localAuthority/LocalAuthorityHost.js';
+import type { VaultKeyActivation } from './localAuthority/VaultKeyActivation.js';
 import { BrokerAddressPolicy } from './localAuthority/BrokerAddressPolicy.js';
 import { BrokerCredentialFields } from './localAuthority/BrokerCredentialFields.js';
 import { BrokerHttpBody } from './localAuthority/BrokerHttpBody.js';
 import { LocalAuthorityCrypto } from './localAuthority/LocalAuthorityCrypto.js';
 import {
-  APPROVAL_TTL_MS, BROKER_IDENTIFIER_PATTERN, CACHE_UPDATE_TTL_MS, CHALLENGE_RATE_LIMIT, CHALLENGE_RATE_WINDOW_MS, CHALLENGE_TTL_MS,
-  CREDENTIAL_PROPERTY_PATTERN, HUMAN_SESSION_TTL_MS, MAX_CREDENTIAL_BYTES, MAX_FILES_SYNC_UPLOAD_BYTES, MAX_GIT_STREAM_BYTES,
-  MAX_RESPONSE_BYTES, MAX_STREAM_BYTES, UUID_PATTERN,
+  APPROVAL_TTL_MS,
+  BROKER_IDENTIFIER_PATTERN,
+  CACHE_UPDATE_TTL_MS,
+  CREDENTIAL_PROPERTY_PATTERN,
+  MAX_CREDENTIAL_BYTES,
+  MAX_FILES_SYNC_UPLOAD_BYTES,
+  MAX_GIT_STREAM_BYTES,
+  MAX_RESPONSE_BYTES,
+  MAX_STREAM_BYTES,
+  UUID_PATTERN,
 } from './localAuthority/LocalAuthorityLimits.js';
 import type {
   BrokerStreamSink, Challenge, HumanSession, ItemRow, LegacyIntegrationRow, PreparedBrokerRequest, StagedCacheUpdate, UnlockedKeys,
@@ -163,51 +165,59 @@ export const localAuthorityTestHooks = {
   StreamingRedactor,
 };
 
-export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
-  private readonly filesTransport = new FilesTransportEnvelopeService();
-  private keys: UnlockedKeys | null = null;
-  private generation = 0;
-  private readonly inFlight = new Set<ReturnType<typeof https.request>>();
-  private readonly challenges = new Map<string, Challenge>();
-  private readonly cacheChallenges = new Map<string, Challenge>();
-  private readonly challengeRate = new Map<string, { count: number; resetAt: number }>();
-  private readonly pendingApprovals = new Map<string, number>();
-  private readonly pendingVaultEnrollments = new Map<string,{expiresAt:number;bundle:SyncBundle;head:SyncHead;userKey:Uint8Array;privateKey:Uint8Array;masterKey:Uint8Array;cloudUserId:string}>();
-  private readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
-  private readonly humanSessions = new Map<string, HumanSession>();
-  private readonly oauthRefreshQueues = new Map<string, Promise<void>>();
-  private sullaCloudSessionManager: SullaCloudSessionManager | null = null;
-  private agentMailboxCloudLane: AgentMailboxCloudLane | null = null;
-  private readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
-  private securityOperationTail: Promise<void> = Promise.resolve();
-  private migrationState: LocalVaultState = 'locked';
-  private stagedCacheUpdate: StagedCacheUpdate | null = null;
-  private readonly filesAudit: FilesAuditEmitter;
+/**
+ * The local Desktop vault authority. It owns all vault state (unlocked keys, generation, grants,
+ * challenges, in-flight requests) and the shared guards; the behaviour lives in collaborators
+ * under ./localAuthority/ that receive this instance as their LocalAuthorityHost (E9). Members
+ * without `private` below are the collaborator surface, not part of the HTTP-facing API.
+ */
+export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAuthorityHost {
+  readonly filesTransport = new FilesTransportEnvelopeService();
+  keys: UnlockedKeys | null = null;
+  generation = 0;
+  readonly inFlight = new Set<ReturnType<typeof https.request>>();
+  readonly challenges = new Map<string, Challenge>();
+  readonly cacheChallenges = new Map<string, Challenge>();
+  readonly challengeRate = new Map<string, { count: number; resetAt: number }>();
+  readonly pendingApprovals = new Map<string, number>();
+  readonly pendingVaultEnrollments = new Map<string,{expiresAt:number;bundle:SyncBundle;head:SyncHead;userKey:Uint8Array;privateKey:Uint8Array;masterKey:Uint8Array;cloudUserId:string}>();
+  readonly approvals = new Map<string, { digest: string; expiresAt: number }>();
+  readonly humanSessions = new Map<string, HumanSession>();
+  readonly oauthRefreshQueues = new Map<string, Promise<void>>();
+  sullaCloudSessionManager: SullaCloudSessionManager | null = null;
+  agentMailboxCloudLane: AgentMailboxCloudLane | null = null;
+  readonly relaySessions = new Map<string, { generation: number; controller: AbortController }>();
+  securityOperationTail: Promise<void> = Promise.resolve();
+  migrationState: LocalVaultState = 'locked';
+  stagedCacheUpdate: StagedCacheUpdate | null = null;
+  readonly filesAudit: FilesAuditEmitter;
   readonly outboundAuditSink: AuditFileSink;
-  private readonly outboundAudit: OutboundAuditRecorder;
-  private codecProvider = new DomainVaultSyncCodecProvider();
+  readonly outboundAudit: OutboundAuditRecorder;
+  codecProvider = new DomainVaultSyncCodecProvider();
 
-  private readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
+  readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
   /** Created on first use from `db`, so instances built without the constructor (specs) still work. */
   private localAuthorityRepository?: PostgresLocalAuthorityRepository;
+  /** Created on first use for the same reason. */
+  private collaborators?: LocalAuthorityCollaborators;
 
   constructor(
-    private readonly db: Database,
-    private readonly config: VaultConfig,
-    private readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
-    private readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
-    private readonly itemRepository: PostgresVaultItemRepository = new PostgresVaultItemRepository(db),
-    private readonly auditLogRepository: PostgresVaultAuditLogRepository = new PostgresVaultAuditLogRepository(db),
-    private readonly userRepository: PostgresVaultUserRepository = new PostgresVaultUserRepository(db),
-    private readonly recoveryRepository: PostgresVaultRecoveryRepository = new PostgresVaultRecoveryRepository(db),
-    private readonly integrationStateRepository: PostgresIntegrationStateRepository = new PostgresIntegrationStateRepository(db),
-    private readonly migrationRepository: PostgresVaultMigrationRepository = new PostgresVaultMigrationRepository(db),
-    private readonly syncStateRepository: PostgresVaultSyncStateRepository = new PostgresVaultSyncStateRepository(db),
-    private readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
-    private readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
-    private readonly revocationRepository: PostgresSullaCloudRevocationRepository = new PostgresSullaCloudRevocationRepository(db),
-    private readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
-    private readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
+    readonly db: Database,
+    readonly config: VaultConfig,
+    readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
+    readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
+    readonly itemRepository: PostgresVaultItemRepository = new PostgresVaultItemRepository(db),
+    readonly auditLogRepository: PostgresVaultAuditLogRepository = new PostgresVaultAuditLogRepository(db),
+    readonly userRepository: PostgresVaultUserRepository = new PostgresVaultUserRepository(db),
+    readonly recoveryRepository: PostgresVaultRecoveryRepository = new PostgresVaultRecoveryRepository(db),
+    readonly integrationStateRepository: PostgresIntegrationStateRepository = new PostgresIntegrationStateRepository(db),
+    readonly migrationRepository: PostgresVaultMigrationRepository = new PostgresVaultMigrationRepository(db),
+    readonly syncStateRepository: PostgresVaultSyncStateRepository = new PostgresVaultSyncStateRepository(db),
+    readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
+    readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
+    readonly revocationRepository: PostgresSullaCloudRevocationRepository = new PostgresSullaCloudRevocationRepository(db),
+    readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
+    readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
     this.filesAudit = new FilesAuditEmitter(config);
     this.outboundAuditSink = new AuditFileSink({ dir: join(config.auditSpoolDir ?? '/var/lib/sulla-vault', 'audit-logs') });
@@ -229,18 +239,23 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
 
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
 
-  private get localStore(): PostgresLocalAuthorityRepository {
+  get parts(): LocalAuthorityCollaborators {
+    this.collaborators ??= new LocalAuthorityCollaborators(this);
+    return this.collaborators;
+  }
+
+  get localStore(): PostgresLocalAuthorityRepository {
     this.localAuthorityRepository ??= new PostgresLocalAuthorityRepository(this.db);
     return this.localAuthorityRepository;
   }
 
   /** Seals one item for its `items` row (domain `LocalItemCipher`: fresh item key, AAD binds owner + item id). */
-  private async sealItem(plaintext: string, userKey: Uint8Array, context: LocalItemContext): Promise<LocalEncryptedItem> {
+  async sealItem(plaintext: string, userKey: Uint8Array, context: LocalItemContext): Promise<LocalEncryptedItem> {
     return (await this.localCryptoProvider.get()).sealItem(plaintext, userKey, context);
   }
 
   /** Opens one `items` row to its exact UTF-8 plaintext. */
-  private async openItemText(item: LocalEncryptedItem, userKey: Uint8Array, context: LocalItemContext): Promise<string> {
+  async openItemText(item: LocalEncryptedItem, userKey: Uint8Array, context: LocalItemContext): Promise<string> {
     return (await this.localCryptoProvider.get()).openItemText(item, userKey, context);
   }
 
@@ -253,6 +268,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       cacheUpdateRequired: Boolean(this.stagedCacheUpdate),
     };
   }
+
+  createCacheUpdateChallenge(...args: Parameters<BootstrapUnlockService['createCacheUpdateChallenge']>) { return this.parts.bootstrap.createCacheUpdateChallenge(...args) }
+  fetchCacheUpdate(...args: Parameters<BootstrapUnlockService['fetchCacheUpdate']>) { return this.parts.bootstrap.fetchCacheUpdate(...args) }
+  createChallenge(...args: Parameters<BootstrapUnlockService['createChallenge']>) { return this.parts.bootstrap.createChallenge(...args) }
+  unlock(...args: Parameters<BootstrapUnlockService['unlock']>) { return this.parts.bootstrap.unlock(...args) }
+  unlockWithPassword(...args: Parameters<VaultKeyActivation['unlockWithPassword']>) { return this.parts.keyActivation.unlockWithPassword(...args) }
+  activateMasterKey(...args: Parameters<VaultKeyActivation['activateMasterKey']>) { return this.parts.keyActivation.activateMasterKey(...args) }
+  createHumanSession(...args: Parameters<HumanSessionService['createHumanSession']>) { return this.parts.humanSessions.createHumanSession(...args) }
+  validateHumanSession(...args: Parameters<HumanSessionService['validateHumanSession']>) { return this.parts.humanSessions.validateHumanSession(...args) }
+  unlockHumanSession(...args: Parameters<HumanSessionService['unlockHumanSession']>) { return this.parts.humanSessions.unlockHumanSession(...args) }
+  exchangeHumanGrant(...args: Parameters<HumanSessionService['exchangeHumanGrant']>) { return this.parts.humanSessions.exchangeHumanGrant(...args) }
+  humanSessionStatus(...args: Parameters<HumanSessionService['humanSessionStatus']>) { return this.parts.humanSessions.humanSessionStatus(...args) }
+  lockHumanSession(...args: Parameters<HumanSessionService['lockHumanSession']>) { return this.parts.humanSessions.lockHumanSession(...args) }
 
   /**
    * Lend a bounded copy of the unlocked user X25519 identity to another
@@ -325,251 +353,11 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return result;
   }
 
-  createCacheUpdateChallenge(callerId: string, clientNonce: string, clientProof: string): {
-    challengeId: string; serverNonce: string; serverProof: string; expiresAt: number;
-  } {
-    this.expireStagedCacheUpdate();
-    if (!this.stagedCacheUpdate || callerId !== this.config.bootstrapServiceId ||
-        !/^[A-Za-z0-9_-]{32,128}$/.test(clientNonce) ||
-        !constantEqual(clientProof, hmac(this.bootstrapToken(), cacheUpdateChallengeProofInput(callerId, clientNonce)))) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Cache helper proof is invalid');
-    }
-    const challengeId = randomBytes(32).toString('base64url');
-    const serverNonce = randomBytes(32).toString('base64url');
-    const expiresAt = Math.min(Date.now() + CHALLENGE_TTL_MS, this.stagedCacheUpdate.expiresAt);
-    this.cacheChallenges.set(challengeId, { callerId, clientNonce, serverNonce, expiresAt });
-    return {
-      challengeId,
-      serverNonce,
-      serverProof: hmac(this.bootstrapToken(), cacheUpdateServerProofInput(callerId, clientNonce, serverNonce, challengeId, expiresAt)),
-      expiresAt,
-    };
-  }
-
-  fetchCacheUpdate(input: { callerId: string; challengeId: string; clientProof: string; sealedLegacyVmk?: string }): { sealedMaster: string } {
-    this.expireStagedCacheUpdate();
-    const challenge = this.cacheChallenges.get(input.challengeId);
-    this.cacheChallenges.delete(input.challengeId);
-    const staged = this.stagedCacheUpdate;
-    const sealedLegacySha256 = input.sealedLegacyVmk
-      ? createHash('sha256').update(input.sealedLegacyVmk).digest('base64url')
-      : '-';
-    if (!challenge || !staged || challenge.callerId !== input.callerId || challenge.expiresAt <= Date.now() ||
-        staged.generation !== this.generation ||
-        !constantEqual(input.clientProof, hmac(this.bootstrapToken(), cacheUpdateFetchProofInput(
-          input.callerId, challenge.clientNonce, challenge.serverNonce, input.challengeId, challenge.expiresAt, sealedLegacySha256)))) {
-      throw new LocalVaultError('invalid_bootstrap_challenge', 401, 'Cache update challenge is invalid or expired');
-    }
-    const sessionKey = createHmac('sha256', this.bootstrapToken())
-      .update(cacheUpdateSessionKeyInput(input.callerId, challenge.clientNonce, challenge.serverNonce,
-        input.challengeId, challenge.expiresAt)).digest();
-    const clear = Buffer.from(JSON.stringify({ masterKey: staged.masterKey.toString('base64url') }));
-    let legacyPacked: Buffer | undefined;
-    let legacyVmk: Buffer | undefined;
-    try {
-      if (input.sealedLegacyVmk) {
-        if (this.migrationState !== 'migration_required') {
-          throw new LocalVaultError('invalid_unlock_material', 409, 'Legacy migration material is not expected');
-        }
-        legacyPacked = Buffer.from(input.sealedLegacyVmk, 'base64url');
-        if (legacyPacked.byteLength < 29) throw new LocalVaultError('invalid_unlock_material', 400, 'Sealed legacy material is truncated');
-        const decipher = createDecipheriv('aes-256-gcm', sessionKey, legacyPacked.subarray(0, 12));
-        decipher.setAuthTag(legacyPacked.subarray(12, 28));
-        legacyVmk = Buffer.concat([decipher.update(legacyPacked.subarray(28)), decipher.final()]);
-        if (legacyVmk.byteLength !== 32) throw new LocalVaultError('invalid_unlock_material', 400, 'Legacy material has an invalid length');
-        this.requireGeneration(staged.generation);
-        this.keys!.legacyVmk?.fill(0);
-        this.keys!.legacyVmk = Buffer.from(legacyVmk);
-      }
-      const nonce = randomBytes(12);
-      return { sealedMaster: sealCacheUpdate(clear, sessionKey, nonce) };
-    } finally {
-      clear.fill(0);
-      sessionKey.fill(0);
-      staged.masterKey.fill(0);
-      this.stagedCacheUpdate = null;
-      this.cacheChallenges.clear();
-      legacyPacked?.fill(0);
-      legacyVmk?.fill(0);
-    }
-  }
-
-  createChallenge(callerId: string, clientNonce: string, clientProof: string): {
-    challengeId: string; serverNonce: string; serverProof: string; expiresAt: number;
-  } {
-    const now = Date.now();
-    for (const [id, challenge] of this.challenges) if (challenge.expiresAt <= now) this.challenges.delete(id);
-    if (callerId !== this.config.bootstrapServiceId || !/^[A-Za-z0-9_-]{32,128}$/.test(clientNonce) ||
-        !constantEqual(clientProof, hmac(this.bootstrapToken(), bootstrapChallengeProofInput(callerId, clientNonce)))) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Bootstrap service proof is invalid');
-    }
-    const current = this.challengeRate.get(callerId);
-    if (!current || current.resetAt <= now) this.challengeRate.set(callerId, { count: 1, resetAt: now + CHALLENGE_RATE_WINDOW_MS });
-    else {
-      if (current.count >= CHALLENGE_RATE_LIMIT) throw new LocalVaultError('invalid_service_identity', 429, 'Bootstrap challenge rate exceeded');
-      current.count += 1;
-    }
-    const challengeId = randomBytes(32).toString('base64url');
-    const serverNonce = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + CHALLENGE_TTL_MS;
-    this.challenges.set(challengeId, { callerId, clientNonce, serverNonce, expiresAt });
-    return {
-      challengeId,
-      serverNonce,
-      serverProof: hmac(this.bootstrapToken(), bootstrapServerProofInput(callerId, clientNonce, serverNonce, challengeId, expiresAt)),
-      expiresAt,
-    };
-  }
-
-  async unlock(input: {
-    callerId: string;
-    challengeId: string;
-    clientProof: string;
-    sealedUnlock: string;
-  }): Promise<{ state: LocalVaultState }> {
-    return this.runSecurityOperation(async() => {
-    const attemptGeneration = this.generation;
-    const challenge = this.challenges.get(input.challengeId);
-    this.challenges.delete(input.challengeId);
-    const sealedDigest = createHash('sha256').update(input.sealedUnlock).digest('base64url');
-    if (!challenge || challenge.callerId !== input.callerId || challenge.expiresAt <= Date.now() ||
-        !constantEqual(input.clientProof, hmac(this.bootstrapToken(), bootstrapUnlockProofInput(
-          input.callerId, challenge.clientNonce, challenge.serverNonce, input.challengeId, challenge.expiresAt, sealedDigest)))) {
-      throw new LocalVaultError('invalid_bootstrap_challenge', 401, 'Bootstrap challenge is invalid or expired');
-    }
-    const sessionKey = createHmac('sha256', this.bootstrapToken())
-      .update(bootstrapSessionKeyInput(input.callerId, challenge.clientNonce, challenge.serverNonce, input.challengeId, challenge.expiresAt)).digest();
-    const sealed = Buffer.from(input.sealedUnlock, 'base64url');
-    let clear: Buffer | undefined;
-    let material: { masterKey?: unknown; legacyVmk?: unknown };
-    try {
-      if (sealed.byteLength < 29) throw new Error('sealed payload is truncated');
-      const decipher = createDecipheriv('aes-256-gcm', sessionKey, sealed.subarray(0, 12));
-      decipher.setAuthTag(sealed.subarray(12, 28));
-      clear = Buffer.concat([decipher.update(sealed.subarray(28)), decipher.final()]);
-      material = JSON.parse(clear.toString('utf8')) as { masterKey?: unknown; legacyVmk?: unknown };
-    } catch {
-      throw new LocalVaultError('invalid_unlock_material', 400, 'Sealed unlock material is invalid');
-    } finally {
-      sessionKey.fill(0);
-      clear?.fill(0);
-      sealed.fill(0);
-    }
-    if (typeof material.masterKey !== 'string' || (material.legacyVmk !== undefined && typeof material.legacyVmk !== 'string')) {
-      throw new LocalVaultError('invalid_unlock_material', 400, 'Sealed unlock material has an invalid shape');
-    }
-    const masterKey = Buffer.from(material.masterKey, 'base64url');
-    const legacyVmk = typeof material.legacyVmk === 'string' ? Buffer.from(material.legacyVmk, 'base64url') : undefined;
-    if (masterKey.byteLength !== 32 || (legacyVmk && legacyVmk.byteLength !== 32)) {
-      masterKey.fill(0);
-      legacyVmk?.fill(0);
-      throw new LocalVaultError('invalid_unlock_material', 400, 'Unlock material has an invalid length');
-    }
-
-    try {
-      return await this.activateMasterKey(masterKey, legacyVmk, { authority: 'container', version: 1 }, attemptGeneration);
-    } finally {
-      masterKey.fill(0);
-      if (legacyVmk && this.keys?.legacyVmk !== legacyVmk) legacyVmk.fill(0);
-    }
-    });
-  }
-
-  async unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }> {
-    const attemptGeneration = this.generation;
-    if (!password || password.length > 1024) throw new LocalVaultError('invalid_credentials', 400, 'Password is required');
-    const existing = await this.userRepository.findActiveKdf<{ kdf: unknown }>();
-    const crypto = await this.localCryptoProvider.get();
-    const stored = existing.rowCount ? crypto.readKdf(existing.rows[0]?.kdf) : undefined;
-    const storedPasswordKdf = stored?.passwordKdf();
-    if (existing.rowCount && !storedPasswordKdf) {
-      throw new LocalVaultError('invalid_credentials', 409, 'This vault requires the OS-protected unlock cache');
-    }
-    // A fresh vault draws a new salt; an existing one reuses its stored salt and cost exactly.
-    const passwordKdf = storedPasswordKdf ?? crypto.credential.newPasswordKdf();
-    const masterKey = crypto.credential.deriveMasterKey(password, passwordKdf);
-    try {
-      const result = await this.activateMasterKey(masterKey, undefined, crypto.kdfColumn(passwordKdf), attemptGeneration);
-      // Older builds stored a flat {salt, parameters}; it is upgraded once to the current shape (same key bytes).
-      if (stored?.isLegacyFlat) {
-        const keys = this.requireKeys();
-        await this.userRepository.updateKdf(keys.userId, crypto.kdfColumn(passwordKdf));
-      }
-      this.stageCacheUpdate(masterKey);
-      return { ...result, cacheUpdateRequired: true };
-    } finally {
-      masterKey.fill(0);
-    }
-  }
-
-  private async activateMasterKey(
-    masterKey: Uint8Array,
-    legacyVmk?: Buffer,
-    newAccountKdf: unknown = { authority: 'container', version: 1 },
-    attemptGeneration = this.generation,
-  ): Promise<{ state: LocalVaultState }> {
-      const existing = await this.userRepository.findActive<{
-        id: string; login_hash_salt: Buffer; login_hash_verifier: Buffer; public_key: string;
-        encrypted_private_key: EncryptedEnvelope; encrypted_user_key: EncryptedEnvelope;
-      }>();
-
-      const crypto = await this.localCryptoProvider.get();
-      let next: UnlockedKeys;
-      if (!existing.rowCount) {
-        const created = crypto.createAccount(masterKey);
-        try {
-          const result = await this.userRepository.create<{ id: string }>(
-            [created.verifier.salt, created.verifier.verifier, created.publicKey, created.encryptedPrivateKey, created.encryptedUserKey, newAccountKdf],
-          );
-          next = { userId: result.rows[0].id, publicKey: created.publicKey, userKey: created.userKey, privateKey: created.privateKey, legacyVmk };
-        } catch (error) {
-          created.userKey.fill(0);
-          created.privateKey.fill(0);
-          throw error;
-        }
-      } else {
-        const account = existing.rows[0];
-        if (!crypto.verifyPassword(masterKey, account.login_hash_salt, account.login_hash_verifier)) {
-          throw new LocalVaultError('invalid_credentials', 401, 'Unlock material did not match the vault');
-        }
-        const userKey = crypto.credential.openUserKey(masterKey, account.encrypted_user_key);
-        try {
-          next = {
-            userId: account.id,
-            publicKey: account.public_key,
-            userKey,
-            privateKey: crypto.credential.openPrivateKey(userKey, account.encrypted_private_key),
-            legacyVmk,
-          };
-        } catch (error) {
-          userKey.fill(0);
-          throw error;
-        }
-      }
-      if (attemptGeneration !== this.generation) {
-        next.userKey.fill(0);
-        next.privateKey.fill(0);
-        next.legacyVmk?.fill(0);
-        throw new LocalVaultError('vault_locked', 423, 'Unlock was cancelled by a concurrent lock');
-      }
-      this.lockNow();
-      this.keys = next;
-      this.generation += 1;
-      const activeGeneration = this.generation;
-      const committed = this.config.legacyDatabaseUrl
-        ? await this.migrationRepository.hasCommitted()
-        : { rowCount: 1 };
-      this.requireGeneration(activeGeneration);
-      this.migrationState = committed.rowCount ? 'unlocked' : 'migration_required';
-      this.retryPendingSullaCloudRevocations();
-      return { state: this.migrationState };
-  }
-
   async lock(): Promise<void> {
     await this.runSecurityOperation(async() => this.lockNow());
   }
 
-  private lockNow(): void {
+  lockNow(): void {
     this.generation += 1;
     for (const request of this.inFlight) request.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
     this.inFlight.clear();
@@ -591,65 +379,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     this.stagedCacheUpdate = null;
   }
 
-  createHumanSession(callerId: string, token: string | undefined, browserTarget?: BrowserFillTarget): { sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked'; browserTarget?: BrowserFillTarget } {
-    this.requireControlIdentity(callerId, token);
-    if (browserTarget) {
-      if (!/^[A-Za-z0-9._:-]{1,160}$/.test(browserTarget.tabId)) throw new LocalVaultError('invalid_operation', 400, 'Browser target is invalid');
-      let parsed: URL;
-      try { parsed = new URL(browserTarget.origin); } catch { throw new LocalVaultError('invalid_destination', 400, 'Browser origin is invalid') }
-      if (!['https:', 'http:'].includes(parsed.protocol) || parsed.origin !== browserTarget.origin) {
-        throw new LocalVaultError('invalid_destination', 400, 'Browser origin is invalid');
-      }
-    }
-    return this.issueHumanSession(browserTarget);
-  }
-
-  private issueHumanSession(browserTarget?: BrowserFillTarget): { sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked'; browserTarget?: BrowserFillTarget } {
-    const sessionId = randomBytes(32).toString('base64url');
-    const session = {
-      csrf: randomBytes(32).toString('base64url'),
-      expiresAt: Date.now() + HUMAN_SESSION_TTL_MS,
-      phase: this.keys ? 'unlocked' as const : 'pre-unlock' as const,
-      browserTarget,
-    };
-    this.humanSessions.set(sessionId, session);
-    return { sessionId, ...session };
-  }
-
-  validateHumanSession(sessionId: string | undefined, csrf?: string): HumanSession {
-    const session = sessionId ? this.humanSessions.get(sessionId) : undefined;
-    if (!session || session.expiresAt <= Date.now()) {
-      if (sessionId) this.humanSessions.delete(sessionId);
-      throw new LocalVaultError('invalid_human_session', 401, 'Human vault session is invalid or expired');
-    }
-    if (!csrf || !constantEqual(csrf, session.csrf)) {
-      throw new LocalVaultError('invalid_csrf', 403, 'CSRF token is invalid');
-    }
-    return session;
-  }
-
-  async unlockHumanSession(sessionId: string | undefined, csrf: string | undefined, password: string): Promise<{
-    sessionId: string; csrf: string; expiresAt: number; phase: 'unlocked'; state: LocalVaultState; cacheMode: 'helper-update-required';
-  }> {
-    return this.runSecurityOperation(async() => {
-    const session = this.validateHumanSession(sessionId, csrf);
-    if (session.phase !== 'pre-unlock') throw new LocalVaultError('invalid_human_session', 409, 'Vault is already unlocked');
-    const result = await this.unlockWithPassword(password);
-    // activateMasterKey invalidates every pre-unlock grant before installing keys.
-    const next = this.issueHumanSession(session.browserTarget);
-    if (next.phase !== 'unlocked') throw new LocalVaultError('vault_unavailable', 503, 'Vault unlock did not establish an unlocked session');
-    return { ...next, phase: 'unlocked', state: result.state, cacheMode: 'helper-update-required' };
-    });
-  }
-
-  exchangeHumanGrant(sessionId: string | undefined, csrf: string | undefined): {
-    sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked'; browserTarget?: BrowserFillTarget;
-  } {
-    const session = this.validateHumanSession(sessionId, csrf);
-    this.humanSessions.delete(sessionId!);
-    return this.issueHumanSession(session.browserTarget);
-  }
-
   /**
    * True while no vault user exists yet. The first password submitted to
    * /v1/human/unlock then creates the vault, so the page asks the person to
@@ -658,25 +387,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   async isSetupRequired(): Promise<boolean> {
     const existing = await this.userRepository.existsActive();
     return !existing.rowCount;
-  }
-
-  humanSessionStatus(sessionId: string | undefined, csrf: string | undefined): {
-    csrf: string; expiresAt: number; phase: 'pre-unlock' | 'unlocked';
-  } {
-    const session = this.validateHumanSession(sessionId, csrf);
-    return { csrf: session.csrf, expiresAt: session.expiresAt, phase: session.phase };
-  }
-
-  async lockHumanSession(sessionId: string | undefined, csrf: string | undefined): Promise<{
-    sessionId: string; csrf: string; expiresAt: number; phase: 'pre-unlock'; state: 'locked';
-  }> {
-    return this.runSecurityOperation(async() => {
-      const session = this.validateHumanSession(sessionId, csrf);
-      this.lockNow();
-      const next = this.issueHumanSession(session.browserTarget);
-      if (next.phase !== 'pre-unlock') throw new LocalVaultError('vault_unavailable', 503, 'Vault did not lock');
-      return { ...next, phase: 'pre-unlock', state: 'locked' };
-    });
   }
 
   async listHumanItems(sessionId: string | undefined, csrf: string | undefined): Promise<Array<Record<string, unknown>>> {
@@ -1141,7 +851,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
       });
       const unlocked = await this.activateMasterKey(next, undefined, crypto.kdfColumn(nextKdf), attemptGeneration);
       this.stageCacheUpdate(next);
-      const rotated = this.issueHumanSession();
+      const rotated = this.parts.humanSessions.issueHumanSession();
       if (rotated.phase !== 'unlocked') throw new LocalVaultError('vault_unavailable', 503, 'Recovery did not unlock the vault');
       return { ...rotated, phase: 'unlocked', state: unlocked.state, cacheMode: 'helper-update-required' };
     } finally {
@@ -2085,7 +1795,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   }
 
   /** Offline sign-outs queue their revoke; it is retried after unlock and after the next sign-in. Never blocks or throws. */
-  private retryPendingSullaCloudRevocations(): void {
+  retryPendingSullaCloudRevocations(): void {
     this.sullaCloudSessions().retryPendingRevocations().catch(() => undefined);
   }
 
@@ -2482,7 +2192,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     };
   }
 
-  private bootstrapToken(): string {
+  bootstrapToken(): string {
     if (!this.config.bootstrapServiceToken || Buffer.byteLength(this.config.bootstrapServiceToken) < 32) {
       throw new LocalVaultError('vault_unavailable', 503, 'Bootstrap identity is not configured');
     }
@@ -2498,24 +2208,24 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     return relay;
   }
 
-  private requireKeys(): UnlockedKeys {
+  requireKeys(): UnlockedKeys {
     if (!this.keys) throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     return this.keys;
   }
 
-  private requireGeneration(generation: number): void {
+  requireGeneration(generation: number): void {
     if (!this.keys || generation !== this.generation) {
       throw new LocalVaultError('vault_locked', 423, 'Vault locked during request');
     }
   }
 
-  private requireStableGeneration(generation: number): void {
+  requireStableGeneration(generation: number): void {
     if (generation !== this.generation) {
       throw new LocalVaultError('vault_locked', 423, 'Vault state changed during request');
     }
   }
 
-  private runSecurityOperation<T>(operation: () => Promise<T>): Promise<T> {
+  runSecurityOperation<T>(operation: () => Promise<T>): Promise<T> {
     const previous = this.securityOperationTail;
     let release!: () => void;
     this.securityOperationTail = new Promise<void>(resolve => { release = resolve; });
@@ -2529,12 +2239,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     })();
   }
 
-  private async auditHumanAction(db: Queryable, actorId: string, action: string, itemId: string | null = null, path?: string): Promise<void> {
+  async auditHumanAction(db: Queryable, actorId: string, action: string, itemId: string | null = null, path?: string): Promise<void> {
     await this.auditLogRepository.recordHumanAction([actorId, itemId, action], db);
     if (itemId) this.filesAudit.emit({ subjectKind: 'vault-secret', subjectId: itemId, action, actor: actorId, result: 'allowed', ...(path ? { path } : {}) });
   }
 
-  private async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     return this.localStore.transaction(operation);
   }
 
@@ -3097,7 +2807,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     };
   }
 
-  private stageCacheUpdate(masterKey: Uint8Array): void {
+  stageCacheUpdate(masterKey: Uint8Array): void {
     this.stagedCacheUpdate?.masterKey.fill(0);
     this.cacheChallenges.clear();
     this.stagedCacheUpdate = {
@@ -3107,7 +2817,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
     };
   }
 
-  private expireStagedCacheUpdate(): void {
+  expireStagedCacheUpdate(): void {
     if (this.stagedCacheUpdate &&
         (this.stagedCacheUpdate.expiresAt <= Date.now() || this.stagedCacheUpdate.generation !== this.generation)) {
       this.stagedCacheUpdate.masterKey.fill(0);
