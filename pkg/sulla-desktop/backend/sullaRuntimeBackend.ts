@@ -36,6 +36,7 @@ import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import { ContainerDriftReconciler } from './ContainerDriftReconciler';
 import {
   ComposeContainerNameReconciler, ComposeServiceHealthWaiter, type ComposeServiceTarget, type DockerCli,
 } from './sullaComposeContainers';
@@ -51,6 +52,7 @@ import {
   SullaRuntimeUnsupportedError, takeSullaRuntimeSuspendRequest,
 } from './sullaRuntime/state';
 
+import { serviceSecretProvider } from '@pkg/agent/app/Providers/ServiceSecretServiceProvider';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import PROVISION_VAULT_TLS from '@pkg/assets/scripts/provision-vault-tls';
 import PROVISION_FILES_TLS from '@pkg/assets/scripts/provision-files-tls';
@@ -1310,8 +1312,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
-    const rawSullaServicePassword = await SullaSettingsModel.getServicePassword();
+    // Waits for a readable settings store; never a hardcoded fallback credential.
+    const rawSullaServicePassword = await serviceSecretProvider.get();
     const sullaServicePassword = escapeForCompose(rawSullaServicePassword);
+    // Inside postgresql:// URLs the secret is percent-encoded: older generated
+    // passwords can hold `#`, `%` or `@`, which break URL parsing when raw.
+    const sullaServiceUrlPassword = escapeForCompose(encodeURIComponent(rawSullaServicePassword));
     const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
     let sullaApiToken = '';
     try {
@@ -1421,9 +1427,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           // 256 MB at moderate cost) lives outside the heap, so the limit stays.
           NODE_OPTIONS: serviceNodeOptions(256),
           SULLA_VAULT_MODE: 'desktop',
-          SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
-          SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
-          SULLA_VAULT_LEGACY_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+          SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
+          SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla_vault`,
+          SULLA_VAULT_LEGACY_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
           SULLA_VAULT_BOOTSTRAP_TOKEN: vaultIdentities.bootstrapToken,
           SULLA_VAULT_DESKTOP_CONTROL_TOKEN: vaultIdentities.controlToken,
           SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
@@ -1490,7 +1496,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       environment: {
         NODE_OPTIONS: serviceNodeOptions(256),
         SULLA_WORKFLOW_ROLE: 'manager',
-        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
         SULLA_TOOL_API_URL: `http://host.docker.internal:${ chatApiPort }`,
@@ -1575,7 +1581,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // The agent tool code in this image opens its own PostgresClient pool
         // (default 20) next to the service pool above; one caller needs few.
         SULLA_DATABASE_POOL_MAX: '5',
-        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
@@ -1627,7 +1633,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // 512 is the real heap; the rest of mem_limit covers the Potion table,
         // chunk buffers and the OCR/Whisper/ffmpeg child processes.
         NODE_OPTIONS:                      serviceNodeOptions(512, 4),
-        SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
         SULLA_FILES_STORED_ONLY:           '1',
@@ -1962,6 +1968,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         }
       };
 
+      // Desktop leaves some running containers alone below (a live Files
+      // starter, a service still in its start period). Compose's own diff never
+      // runs for those, so compare their config hash with the file just written:
+      // a drifted one (e.g. stale env after the service secret changed) is
+      // recreated; an unchanged one is left alone.
+      const configDrift = new ContainerDriftReconciler(this.#guestDocker, composeCommand.slice(1), startOptionalService, console);
+
       // Retire the old Desktop board container; preserve all database data.
       await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);
 
@@ -2140,9 +2153,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                   await startOptionalService(service);
                 } else if (await this.sullaServiceImageIsStale(container, service, generation)) {
                   await startOptionalService(service);
+                } else {
+                  await configDrift.reconcile(entry);
                 }
               } else if (state !== 'running starting') {
                 await startOptionalService(service);
+              } else {
+                await configDrift.reconcile(entry);
               }
               await this.waitForDockerServiceHealthy(entry, service === 'sulla_files' ? 600 : 20, generation);
               this.#activeOptionalSullaServices.add(service);

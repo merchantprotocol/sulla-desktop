@@ -56,9 +56,9 @@ export class PostgresClient {
     const connectionString = process.env.SULLA_DATABASE_URL;
     let password: string | undefined;
     if (!connectionString) {
-      // Settings extends BaseModel, which imports this client. Load it only on use.
-      const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-      password = await SullaSettingsModel.getServicePassword();
+      // The provider reads settings, whose model imports this client. Load it only on use.
+      const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
+      password = await serviceSecretProvider.get();
     }
 
     this.pool = new Pool({
@@ -232,9 +232,9 @@ export class PostgresClient {
    * explicit maxAttempts value.
    */
   async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
-    // Settings extends BaseModel, which imports this client. Load it only on use.
-    const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-    const password = await SullaSettingsModel.getServicePassword();
+    // The provider reads settings, whose model imports this client. Load it only on use.
+    const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
+    const password = await serviceSecretProvider.get();
 
     for (let i = 1; i <= maxAttempts; i++) {
       let probe: Pool | null = null;

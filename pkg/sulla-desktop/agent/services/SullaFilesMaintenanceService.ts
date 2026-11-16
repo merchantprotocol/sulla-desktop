@@ -5,7 +5,7 @@
 
 import schedule from 'node-schedule';
 
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { serviceSecretProvider } from '../app/Providers/ServiceSecretServiceProvider';
 
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 
@@ -18,7 +18,7 @@ export class SullaFilesMaintenanceService {
     if (this.job) return;
     this.job = schedule.scheduleJob('0 3 * * *', async() => {
       try {
-        const token = await SullaSettingsModel.getServicePassword();
+        const token = await serviceSecretProvider.get();
         const init = { method: 'POST', headers: { 'x-sulla-files-token': token }, signal: AbortSignal.timeout(30_000) };
         // Local Files only listens on pinned TLS; plain HTTP to the Files TLS port always failed.
         const response = FILES_API ? await fetch(`${ FILES_API }/v1/local/maintenance`, init) : await desktopFilesFetch(`${ FILES_HTTPS_ORIGIN }/v1/local/maintenance`, init);

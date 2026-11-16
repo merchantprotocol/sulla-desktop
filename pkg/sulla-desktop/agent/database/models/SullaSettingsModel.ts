@@ -11,6 +11,14 @@ import * as fs from 'fs/promises';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
 
+/** The pre-database settings file exists but cannot be parsed. */
+export class SettingsBootstrapFileCorruptError extends Error {
+  constructor(readonly detail: string) {
+    super(`Settings bootstrap file ${ detail }`);
+    this.name = 'SettingsBootstrapFileCorruptError';
+  }
+}
+
 interface SettingsAttributes {
   property: string;
   value:    any;
@@ -387,18 +395,93 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       return;
     }
 
-    // Fallback: read-modify-write JSON file
-    const filePath = this.getFallbackFilePath();
-    console.log(`[SullaSettingsModel] Fallback path set to: ${ filePath }`);
-    let data: Record<string, any> = {};
+    await this.writeBootstrapSetting(property, value);
+  }
+
+  // Serialises read-modify-write updates of the pre-database settings file.
+  private static bootstrapFileWrites: Promise<void> = Promise.resolve();
+
+  /**
+   * Read the pre-database settings file. Returns null only when the file does
+   * not exist; throws when it exists but cannot be read or parsed, so callers
+   * can tell "not readable yet" apart from "value absent".
+   */
+  public static async readBootstrapFile(): Promise<Record<string, unknown> | null> {
+    let content: string;
+
     try {
-      const content = await fs.readFile(filePath, 'utf8');
+      content = await fs.readFile(this.getFallbackFilePath(), 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      throw err;
+    }
+    let data: unknown;
+
+    try {
       data = JSON.parse(content);
-    } catch {} // file missing → start empty
+    } catch {
+      throw new SettingsBootstrapFileCorruptError('is not valid JSON');
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new SettingsBootstrapFileCorruptError('does not hold a JSON object');
+    }
 
-    data[property] = value;
+    return data as Record<string, unknown>;
+  }
 
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+  /**
+   * Move a corrupt bootstrap file aside (kept as `<file>.corrupt-<ms>` for
+   * recovery) so the next write starts a fresh one. Returns the new path.
+   */
+  public static async quarantineBootstrapFile(): Promise<string> {
+    const filePath = this.getFallbackFilePath();
+    const quarantined = `${ filePath }.corrupt-${ Date.now() }`;
+
+    await fs.rename(filePath, quarantined);
+
+    return quarantined;
+  }
+
+  /**
+   * Write one property to the pre-database settings file, whether or not the
+   * database is ready. Writes are serialised and atomic (temp file + rename):
+   * a concurrent reader never sees a half-written file, and two writers never
+   * drop each other's keys.
+   */
+  public static writeBootstrapSetting(property: string, value: unknown): Promise<void> {
+    return this.updateBootstrapFile((data) => {
+      data[property] = value;
+    });
+  }
+
+  private static updateBootstrapFile(mutate: (data: Record<string, any>) => void): Promise<void> {
+    const write = this.bootstrapFileWrites.then(async() => {
+      const filePath = this.getFallbackFilePath();
+      let data: Record<string, any> = {};
+
+      try {
+        data = (await this.readBootstrapFile()) ?? {};
+      } catch (err) {
+        if (!(err instanceof SettingsBootstrapFileCorruptError)) throw err;
+        // Writes are atomic, so a corrupt file is not a write in progress. Keep
+        // it aside for recovery rather than silently dropping its keys.
+        console.warn(`[SullaSettingsModel] Settings bootstrap file ${ err.detail }; moved aside to ${ await this.quarantineBootstrapFile() }`);
+      }
+      mutate(data);
+      const temporary = `${ filePath }.${ process.pid }.${ crypto.randomUUID() }.tmp`;
+
+      await fs.writeFile(temporary, JSON.stringify(data, null, 2));
+      try {
+        await fs.rename(temporary, filePath);
+      } catch (err) {
+        await fs.unlink(temporary).catch(() => undefined);
+        throw err;
+      }
+    });
+
+    this.bootstrapFileWrites = write.catch(() => undefined);
+
+    return write;
   }
 
   /**
@@ -430,14 +513,9 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       return getIpcRenderer().invoke('sulla-settings-delete', property);
     }
     if (!this.isReady) {
-      const filePath = this.getFallbackFilePath();
-      let data: Record<string, any> = {};
-      try {
-        const content = await fs.readFile(filePath, 'utf8');
-        data = JSON.parse(content);
-      } catch {} // file missing → do nothing
-      delete data[property];
-      await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+      await this.updateBootstrapFile((data) => {
+        delete data[property];
+      });
       return;
     }
 
@@ -452,35 +530,18 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     this.invalidateLocal(property);
   }
 
-  public static generatePassword(length = 16): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+';
-    return Array.from(crypto.randomBytes(length))
-      .map(b => chars[b % chars.length])
-      .join('');
-  }
-
   /**
    * Return the installation's shared service password.
    *
-   * New installs persist a generated value during first-run setup. Older
-   * installs may predate that setting while their PostgreSQL data directory
-   * was initialized with the historical development password. Persist that
-   * legacy value when repairing such an install instead of generating a new
-   * password that would no longer match the existing database.
+   * Thin delegate kept for callers owned by other epics. The resolution
+   * (wait for a readable store, generate once on a confirmed-absent value,
+   * never a hardcoded credential) lives in ServiceSecretProvider.
    */
   public static async getServicePassword(): Promise<string> {
-    const configured = await this.get('sullaServicePassword');
+    // Loaded on use: the provider's repository imports this model.
+    const { serviceSecretProvider } = await import('../../app/Providers/ServiceSecretServiceProvider');
 
-    if (typeof configured === 'string' && configured.length > 0) {
-      return configured;
-    }
-
-    const legacyPassword = 'sulla_dev_password';
-
-    console.warn('[SullaSettingsModel] sullaServicePassword missing; persisting legacy value for data compatibility');
-    await this.set('sullaServicePassword', legacyPassword, 'string');
-
-    return legacyPassword;
+    return serviceSecretProvider.get();
   }
 
   public static generateEncryptionKey(length = 32): string {
