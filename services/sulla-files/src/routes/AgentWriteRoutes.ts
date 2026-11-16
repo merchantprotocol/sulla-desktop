@@ -97,6 +97,7 @@ export class AgentWriteRoutes {
       const file = await this.versions.insert(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, staged, actor, createdByType: 'agent-run', createdById: creatorId, message });
       await this.writes.clearDerivedSources(client, file.id);
       for (const sourceId of derived) { const source = await this.access.fileRow(sourceId, client); await this.writes.addDerivedSource(client, file.id, source.id, actor.jobId ?? actor.agentId!) }
+      await this.audit.record(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId }, client);
       return { file };
       });
       if ('prior' in outcome && outcome.prior) {
@@ -106,7 +107,6 @@ export class AgentWriteRoutes {
         return response.status(200).json({ fileId: outcome.prior.fileId, versionId: outcome.prior.versionId, collectionId: collection.id, path });
       }
       const file = (outcome as { file:any }).file;
-      await this.audit.record(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
       response.status(201).json({ fileId: file.id, versionId: file.current_version_id, collectionId: collection.id, path: file.path });
     } catch (error) { next(error) } });
     app.post('/v1/agent-files/ensure', async(request:RequestWithIdentity, response, next) => { try {

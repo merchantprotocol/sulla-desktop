@@ -57,7 +57,8 @@ export class AgentKeepRoutes {
       const kept = await this.versions.insert(client, { collectionId: targetCollectionId, fileId: lockedExisting?.id, path: targetPath, mime: source.mime, bytes: content.buffer, staged, actor, createdByType: source.created_by_type, createdById: source.created_by_id, message: `Kept from agent run ${ source.created_by_id }` });
       await this.keeps.trash(client, source.id);
       await this.keeps.recordProvenance(client, kept.id, source.created_by_id, JSON.stringify({ keptFromCollectionId: source.collection_id, sourceFileId: source.id }), actor.userId);
-      return kept; }); await this.audit.record(request, 'keep-agent-file', kept); response.json({ ...kept, provenance: { type: source.created_by_type, id: source.created_by_id } });
+      await this.audit.record(request,'keep-agent-file',kept,{},client);
+      return kept; }); response.json({ ...kept, provenance: { type: source.created_by_type, id: source.created_by_id } });
     } catch (error) { next(error) } });
     app.post('/v1/agent-runs/:runId/keep', async(request:RequestWithIdentity, response, next) => { try {
       const actor = this.access.identity(request); const source = await this.keeps.scratchRun(actor.userId, request.params.runId);

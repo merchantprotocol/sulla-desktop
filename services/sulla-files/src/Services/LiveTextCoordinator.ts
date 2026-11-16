@@ -92,9 +92,10 @@ export class LiveTextCoordinator {
         if(!changed){await this.documents.replaceDocument(tx,fileId,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot)));return {};}
         const result=await this.versions.insert(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged:staged!,actor,message:'Live document edit',baseVersionId:current.current_version_id});
         await this.texts.save(tx,current.id,result.current_version_id,snapshot);
+        await this.audit.record(request,'live-edit',result,{versionId:result.current_version_id},tx);
         return {result};
       });
-      if(outcome){if(outcome.result)await this.audit.record(request,'live-edit',outcome.result,{versionId:outcome.result.current_version_id});return;}
+      if(outcome)return;
       if(attempt>=4)throw new HttpError(409,'Files changed concurrently or are busy; retry');
     }
   }

@@ -85,6 +85,7 @@ export class TransactionHoldLog {
 
 /** How indexing kept up with a run: lag from version commit to indexed, and how fast the backlog drained. */
 export interface IndexResult { backlogAtBurstEnd:number; drainSeconds:number; jobsPerSecond:number; lagP50:number; lagP95:number; indexed:number; holds:string }
+export interface AuditDrainResult { backlogAtBurstEnd:number; remaining:number; drainSeconds:number }
 
 export class FilesWriteBenchmark {
   readonly indexHolds = new TransactionHoldLog();
@@ -224,6 +225,18 @@ export class FilesWriteBenchmark {
       WHERE f.collection_id=$1 AND starts_with(f.path,$2) AND f.extraction_status='indexed'`, [this.collectionId, prefix])).rows[0];
     return { backlogAtBurstEnd, drainSeconds: (drained - burstEnded) / 1000, jobsPerSecond: lag.n / ((drained - burstStarted) / 1000),
       lagP50: Number(lag.p50), lagP95: Number(lag.p95), indexed: lag.n, holds: this.indexHolds.describe() };
+  }
+
+  /** Measures the durable audit spool at the burst boundary and waits at most 30 seconds. */
+  async auditing(burstEnded:number, timeoutMs = 30_000):Promise<AuditDrainResult> {
+    const backlogAtBurstEnd=await this.scalar('SELECT COUNT(*) n FROM files_audit_spool');
+    const started=performance.now();
+    let remaining=backlogAtBurstEnd;
+    while (remaining>0 && performance.now()-started<timeoutMs) {
+      await new Promise(resolve=>setTimeout(resolve,100));
+      remaining=await this.scalar('SELECT COUNT(*) n FROM files_audit_spool');
+    }
+    return {backlogAtBurstEnd,remaining,drainSeconds:(performance.now()-burstEnded)/1000};
   }
 
   /** Live file rows under the run's prefix, with how many rows share each path. */

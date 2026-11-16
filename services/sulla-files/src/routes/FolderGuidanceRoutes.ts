@@ -111,8 +111,8 @@ export class FolderGuidanceRoutes {
       await ensureStoredFolder(client, collectionId, folderPath, actor);
       if (description) await this.folders.describeFolderAt(client,collectionId,folderPath,description,namingHint);
       if (agentCreated) { const fallback=`Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description`; await this.folders.markUndescribed(client,collectionId,storedParentPaths(folderPath),fallback); }
+      await this.audit.record(request,'create-folder',undefined,{collectionId,folderPath,description,namingHint},client);
     });
-    await this.audit.record(request,'create-folder',undefined,{collectionId,folderPath,description,namingHint});
     response.status(201).json({ collectionId, path: folderPath, description, namingHint, needsDescription:false });
   }
 }

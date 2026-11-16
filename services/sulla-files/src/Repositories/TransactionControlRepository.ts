@@ -6,8 +6,21 @@
 import type pg from 'pg';
 
 /** Owns the SQL control statements that define a transaction boundary. */
+export class FilesTransactionAbortedError extends Error {
+  readonly code = 'FILES_TRANSACTION_ABORTED';
+
+  constructor() {
+    super('Files transaction was rolled back by PostgreSQL instead of committed');
+    this.name = 'FilesTransactionAbortedError';
+  }
+}
+
 export class TransactionControlRepository {
   begin(client:pg.PoolClient):Promise<pg.QueryResult> { return client.query('BEGIN') }
-  commit(client:pg.PoolClient):Promise<pg.QueryResult> { return client.query('COMMIT') }
+  async commit(client:pg.PoolClient):Promise<pg.QueryResult> {
+    const result = await client.query('COMMIT');
+    if (result.command === 'ROLLBACK') throw new FilesTransactionAbortedError();
+    return result;
+  }
   rollback(client:pg.PoolClient):Promise<pg.QueryResult> { return client.query('ROLLBACK') }
 }

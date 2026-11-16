@@ -54,6 +54,24 @@ describe.skipIf(!databaseUrl)('Files mount write routes (real app, real Postgres
     expect(await write(id, v1, 'not the base', 'z')).toMatchObject({ status: 409, body: { error: 'Files mount version changed' } });
   });
 
+  // risk: data loss — failure of the optional request-audit dual-write must not roll back a successful file version.
+  it('commits the file version and durable spool row when audit_log rejects its dual-write', async() => {
+    const id = await fixture.createFile('mount/audit-failure.txt');
+    const initial = (await current(id)).current_version_id;
+    await fixture.pool.query("ALTER TABLE audit_log ADD CONSTRAINT reject_fuse_write_audit CHECK (action <> 'fuse-write') NOT VALID");
+    try {
+      const saved = await write(id, initial, 'body of mount/audit-failure.txt', 'updated despite audit failure');
+      expect(saved.status).toBe(200);
+      expect(saved.body.versionId).not.toBe(initial);
+      expect(await current(id)).toMatchObject({ path: 'mount/audit-failure.txt', current_version_id: saved.body.versionId });
+      expect((await fixture.request(`/v1/fuse/files/${ id }/content`)).body).toBe('updated despite audit failure');
+      expect((await fixture.pool.query('SELECT count(*)::int AS n FROM file_versions WHERE id=$1 AND file_id=$2', [saved.body.versionId, id])).rows[0].n).toBe(1);
+      expect((await fixture.pool.query("SELECT count(*)::int AS n FROM files_audit_spool WHERE event->>'subjectId'=$1 AND event->>'action'='write'", [id])).rows[0].n).toBeGreaterThan(0);
+    } finally {
+      await fixture.pool.query('ALTER TABLE audit_log DROP CONSTRAINT reject_fuse_write_audit');
+    }
+  });
+
   it('streams a version-checked write and enforces its headers', async() => {
     // risk: data accuracy — a streamed write must commit exactly the declared bytes on the expected base.
     const id = await fixture.createFile('mount/stream.txt'); const v1 = (await current(id)).current_version_id;

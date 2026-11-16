@@ -68,8 +68,8 @@ export class FileContentWriteRoutes {
       if(current.current_version_id!==file.current_version_id||current.path!==file.path||current.collection_id!==file.collection_id)throw new HttpError(409,'Files version changed while preparing save; retry');
       const result=await this.versions.insert(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,bytes:saved.bytes,staged,actor,
         createdByType:actor.agentId?'agent':actor.jobId?'agent-run':undefined,createdById:actor.agentId??actor.jobId??actor.userId,message:'Saved with version check',baseVersionId:file.current_version_id});
-      if(saved.document)await this.texts.save(client,file.id,result.current_version_id,saved.document); return result; }); if(saved.document)this.live.adopt(request,file.id,saved.document);
-      await this.audit.record(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id});
+      if(saved.document)await this.texts.save(client,file.id,result.current_version_id,saved.document);
+      await this.audit.record(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id},client); return result; }); if(saved.document)this.live.adopt(request,file.id,saved.document);
       response.json({status:saved.merged?'merged':'saved',fileId:result.id,path:result.path,mime:result.mime,content:saved.bytes.toString('utf8'),versionId:result.current_version_id});
     }catch(error){next(error)} });
     app.put('/v1/files/upload', async(request:RequestWithIdentity, response, next) => { const uploadId = randomUUID(); try {
@@ -98,9 +98,10 @@ export class FileContentWriteRoutes {
       if (existing?.id !== before?.id) await authorize(existing,client); else if (existing) await assertUnprotectedFile(client, existing);
       if (baseVersionId !== undefined && (existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { return {conflict:existing} }
       const file = await commitStreamedUpload(client, { uploadId, collectionId, path, mime: request.header('content-type') ?? 'application/octet-stream', expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, actor, body: request, intentDb: this.db, existingFile: existing ? { id: existing.id, current_version_id: existing.current_version_id } : undefined, message: 'Uploaded' }, streamed);
+      await this.audit.record(request,'upload',file,{},client);
       return {file}; });
       if(!outcome.file)return conflict(outcome.conflict); const file=outcome.file;
-      await completeUploadIntent(this.db, uploadId).catch(()=>undefined); await this.audit.record(request, 'upload', file); response.status(201).json(file);
+      await completeUploadIntent(this.db, uploadId).catch(()=>undefined); response.status(201).json(file);
     } catch (error) { next(error) } });
     app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const uploadId = randomUUID(); try {
       const collectionId = String(request.query.collectionId ?? '');
