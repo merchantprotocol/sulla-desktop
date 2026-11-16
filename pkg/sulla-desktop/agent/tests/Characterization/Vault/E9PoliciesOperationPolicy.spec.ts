@@ -237,6 +237,18 @@ describe('E9 policies: operationPolicy decision tables (legacy == live)', () => 
     expect(() => live.validateOperation({ ...ok, ref: { integrationId: 'github' } }, 'api.openai.com', sites)).toThrow('integration_denied');
     expect(() => live.validateOperation(ok, 'api.openai.com', RequestFactory.itemPolicy(['other.example']))).toThrow('destination_denied');
   });
+
+  it('Slack Web API injects only the bot token (SLACK-1)', () => {
+    // risk: credential leak — app-level / Socket Mode tokens must never be injected into slack.com calls.
+    const header = (field: string) => ({ field, target: 'header' as const, name: 'authorization', scheme: 'Bearer' as const });
+    const sites = RequestFactory.itemPolicy([]);
+    const call = (field: string) => RequestFactory.build('slack.web-api', 'slack', 'slack.com', '/api/chat.postMessage', 'POST', [header(field)]);
+    expect(live.validateOperation(call('bot_token'), 'slack.com', sites)).toBe(live.BROKER_OPERATION_POLICIES['slack.web-api']);
+    for (const field of ['app_token', 'app_level_token', 'scopes_token']) {
+      expect(() => live.validateOperation(call(field), 'slack.com', sites), field).toThrow('injection_denied');
+    }
+    expect(() => live.validateOperation(call('bot_token'), 'evil.example', sites)).toThrow('destination_denied');
+  });
 });
 
 describe('E9 policies: operationPolicy helpers (legacy == live)', () => {

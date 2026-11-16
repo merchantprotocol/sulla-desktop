@@ -60,6 +60,31 @@ describe('deviceKey signed message (domain DeviceMessage registry)', () => {
     }
   });
 
+  it('signs Slack purposes with the exact worker-verifier tags and rejects newline framing', async() => {
+    // risk: Slack workspace/inbound signatures must use the server-verified purpose tags and canonical fields.
+    const slackTags = {
+      'slack-inbound-v1':   'sulla-slack-inbound-v1',
+      'slack-workspace-v1': 'sulla-slack-workspace-v1',
+    } as const;
+    const publicKey = crypto.createPublicKey({
+      key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(await getDevicePublicKey(), 'base64').toString('base64url') },
+      format: 'jwk',
+    });
+    for (const [purpose, tag] of Object.entries(slackTags) as [keyof typeof slackTags, string][]) {
+      const expected = Buffer.from([tag, ...PARTS.map(String)].join('\n'));
+      const exact = await signDeviceMessageExact(purpose, PARTS);
+      expect(Buffer.from(deviceMessage(purpose, PARTS))).toEqual(expected);
+      expect(crypto.verify(null, expected, publicKey, Buffer.from(exact, 'base64'))).toBe(true);
+      const { ts, signature } = await signDeviceMessage(purpose, PARTS);
+      expect(Math.abs(ts - Math.floor(Date.now() / 1000))).toBeLessThanOrEqual(5);
+      expect(crypto.verify(null, Buffer.from([tag, ...PARTS.map(String), String(ts)].join('\n')), publicKey, Buffer.from(signature, 'base64'))).toBe(true);
+      expect(() => deviceMessage(purpose, ['bad\npart'])).toThrow('newlines');
+      await expect(signDeviceMessage(purpose, ['bad\npart'])).rejects.toThrow('newlines');
+    }
+    // risk: an inherited Object key must never be accepted as a Slack purpose.
+    expect(() => deviceMessage('constructor' as never, PARTS)).toThrow('unknown device purpose');
+  });
+
   it('signs every other registry purpose with its real tag, never an empty one', () => {
     // risk: before, these signed "\nuser-1..." (an empty tag) that Cloud could never verify.
     // The registry grows additively (0.3.3 added replica-v1), so this checks each purpose, not a count.

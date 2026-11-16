@@ -33,15 +33,6 @@ export const nativeSlackIntegration: Record<string, Integration> = {
 4. Click "Create App"`,
         },
         {
-          title:   'Enable Socket Mode',
-          content: `1. In the left menu, go to "Socket Mode"
-2. Toggle "Enable Socket Mode" to ON
-3. Click "Generate" to create a new App-Level Token
-4. No special scopes needed for this token
-5. Copy the generated token (starts with xapp-)
-6. Save this token as your "Scopes Token" in Sulla`,
-        },
-        {
           title:   'Configure Bot Permissions',
           content: `1. In the left menu, go to "OAuth & Permissions"
 2. Scroll to "Bot Token Scopes"
@@ -49,9 +40,14 @@ export const nativeSlackIntegration: Record<string, Integration> = {
    • chat:write
    • files:write
    • channels:read
+   • channels:history
    • groups:read
+   • groups:history
    • im:read
+   • im:history
    • mpim:read
+   • mpim:history
+   • reactions:write
    • users:read
    • users:read.email
 4. Click "Save Changes"`,
@@ -73,9 +69,8 @@ export const nativeSlackIntegration: Record<string, Integration> = {
         },
       ],
       importantNotes: [
-        'Keep both tokens secure - they provide full access to your workspace',
+        'Keep the bot token secure - it provides access to your workspace',
         'The bot can only see messages in channels where it\'s been invited',
-        'Socket Mode is required for local development without public webhooks',
         'You must be a workspace admin to create custom apps',
       ],
     },
@@ -89,11 +84,6 @@ export const nativeSlackIntegration: Record<string, Integration> = {
         title:       'Bot Token Documentation',
         description: 'Learn about Slack bot tokens and permissions',
         url:         'https://api.slack.com/authentication/basics',
-      },
-      {
-        title:       'Socket Mode Guide',
-        description: 'Understanding Socket Mode for local development',
-        url:         'https://api.slack.com/apis/connections/socket',
       },
     ],
     media: [
@@ -138,14 +128,6 @@ export const nativeSlackIntegration: Record<string, Integration> = {
       {
         key:         'bot_token',
         title:       'Bot User OAuth Token',
-        hint:        '',
-        type:        'password',
-        required:    true,
-        placeholder: '',
-      },
-      {
-        key:         'scopes_token',
-        title:       'Scopes Token',
         hint:        '',
         type:        'password',
         required:    true,

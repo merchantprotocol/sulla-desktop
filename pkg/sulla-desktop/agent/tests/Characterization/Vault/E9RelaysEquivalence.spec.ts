@@ -217,73 +217,6 @@ async function sullaCloudOpenFailures(mod: RelayModule): Promise<unknown[]> {
   return t;
 }
 
-const SLACK_SOCKET_URL = 'wss://wss-primary.slack.com/link/?ticket=tick-abc-123&app_id=A1';
-
-async function slackLifecycle(mod: RelayModule): Promise<unknown[]> {
-  const t: unknown[] = [];
-  const fetchLog: unknown[] = [];
-  installFetch([{ status: 200, body: JSON.stringify({ ok: true, url: SLACK_SOCKET_URL }) }], fetchLog);
-  const manager = new mod.DefaultVaultRelayManager(cloudFactory([]));
-  t.push(['open', await attempt(() => manager.open({ relayId: 'slack', operation: 'slack.socket-mode', credential: 'xoxb-slack-credential', abortSignal: new AbortController().signal }))]);
-  const socket = FakeBrowserSocket.instances[0];
-  t.push(['fetch', fetchLog]);
-  socket.emitOpen();
-  const consumer = consume(manager, 'slack');
-  socket.emitMessage(JSON.stringify({ envelope_id: 'env-1', type: 'events_api', payload: { event: { text: 'ticket tick-abc-123 xoxb-slack-credential', token: 't' }, authorization: 'x' } }));
-  socket.emitMessage(JSON.stringify({ type: 'hello', payload: {} }));
-  socket.emitMessage('{not json');
-  socket.emitMessage(JSON.stringify([1, 2]));
-  socket.emitMessage(new TextEncoder().encode(JSON.stringify({ envelope_id: 'env-2', payload: { n: 2 } })).buffer);
-  socket.emitMessage(new TextEncoder().encode(JSON.stringify({ envelope_id: 'env-3', type: 'slash_commands', response_url: 'https://hooks.slack.com/x' })));
-  socket.emitMessage(JSON.stringify({ envelope_id: '', type: 'x' }));
-  await flush();
-  const send = (command: any) => attempt(() => manager.send('slack', command));
-  t.push(['ack-1', await send({ type: 'slack.ack', sequence: 1, payload: { text: 'ok tick-abc-123', password: 'p' } })]);
-  t.push(['ack-1-again', await send({ type: 'slack.ack', sequence: 1, payload: {} })]);
-  t.push(['ack-2-array-payload', await send({ type: 'slack.ack', sequence: 2, payload: ['a'] })]);
-  t.push(['ack-no-sequence', await send({ type: 'slack.ack', payload: {} })]);
-  t.push(['ack-fractional', await send({ type: 'slack.ack', sequence: 1.5, payload: {} })]);
-  t.push(['wrong-type', await send({ type: 'discord.presence', sequence: 3, payload: {} })]);
-  t.push(['too-large', await send({ type: 'slack.ack', sequence: 3, payload: { x: 'a'.repeat(64 * 1024) } })]);
-  socket.readyState = FakeBrowserSocket.CLOSED;
-  t.push(['ack-3-socket-closed', await send({ type: 'slack.ack', sequence: 3 })]);
-  socket.readyState = FakeBrowserSocket.OPEN;
-  t.push(['ack-3', await send({ type: 'slack.ack', sequence: 3 })]);
-  // Oversized / non-text frames close the socket with 1009 (invalid_frame).
-  socket.emitMessage('z'.repeat(512 * 1024 + 1));
-  socket.readyState = FakeBrowserSocket.OPEN;
-  socket.emitMessage(12345);
-  t.push(['events', await consumer.stop()]);
-  manager.close('slack', 'done');
-  t.push(['send-after-close', await send({ type: 'slack.ack', sequence: 1 })]);
-  t.push(['socket', socket.log]);
-  return t;
-}
-
-async function slackOpenFailures(mod: RelayModule): Promise<unknown[]> {
-  const t: unknown[] = [];
-  const replies: FetchReply[] = [
-    { status: 500, body: JSON.stringify({ ok: true, url: SLACK_SOCKET_URL }) },
-    { status: 200, body: JSON.stringify({ ok: false, error: 'invalid_auth' }) },
-    { status: 200, body: JSON.stringify({ ok: true }) },
-    { status: 200, body: 'not json' },
-    { status: 200, body: JSON.stringify({ ok: true, url: SLACK_SOCKET_URL, pad: 'x'.repeat(70_000) }) },
-    { status: 200, body: JSON.stringify({ ok: true, url: 'wss://evil.example/link' }) },
-    { status: 200, body: JSON.stringify({ ok: true, url: 'ws://wss-primary.slack.com/link' }) },
-    { status: 200, body: JSON.stringify({ ok: true, url: 'wss://u:p@wss-backup.slack.com/link' }) },
-    { status: 200, body: JSON.stringify({ ok: true, url: 'wss://wss-backup.slack.com/link?ticket=t2' }) },
-  ];
-  for (const reply of replies) {
-    FakeBrowserSocket.reset();
-    const fetchLog: unknown[] = [];
-    installFetch([reply], fetchLog);
-    const manager = new mod.DefaultVaultRelayManager(cloudFactory([]));
-    t.push(['open', reply.status, await attempt(() => manager.open({ relayId: 's', operation: 'slack.socket-mode', credential: 'xoxb-cred', abortSignal: new AbortController().signal })), FakeBrowserSocket.instances.map(s => s.log)]);
-    manager.closeAll('done');
-  }
-  return t;
-}
-
 async function discordLifecycle(mod: RelayModule): Promise<unknown[]> {
   const t: unknown[] = [];
   const fetchLog: unknown[] = [];
@@ -502,19 +435,6 @@ describe('E9 relays: legacy vs current behave identically', () => {
   it('Sulla Cloud relay: invalid requests, destination checks and failed handshakes', async() => {
     // risk: SSRF / credential exfiltration — the token must only ever go to the fixed Sulla Cloud host.
     const [old, next] = await runBoth(sullaCloudOpenFailures);
-    expect(next).toEqual(old);
-  });
-
-  it('Slack socket-mode relay: bootstrap, redaction and ack allow-list', async() => {
-    // risk: credential leak + replay — only pending envelopes may be acked; ticket and token are redacted.
-    const [old, next] = await runBoth(slackLifecycle);
-    expect(next).toEqual(old);
-    expect(JSON.stringify((next as any[]).find(entry => entry[0] === 'events'))).not.toContain('tick-abc-123');
-  });
-
-  it('Slack socket-mode relay: bootstrap failures and destination checks', async() => {
-    // risk: SSRF — the socket URL from Slack must be a Slack wss host.
-    const [old, next] = await runBoth(slackOpenFailures);
     expect(next).toEqual(old);
   });
 

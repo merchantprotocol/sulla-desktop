@@ -16,7 +16,7 @@ export class SlackSearchUsersWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { query, limit = 10 } = input;
+    const { query, limit = 10, account } = input;
 
     try {
       const slack = await registry.get<SlackClient>('slack');
@@ -26,7 +26,7 @@ export class SlackSearchUsersWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      const users = await slack.searchUsers(query, limit, this.executionContext);
+      const users = await slack.searchUsers(query, limit, this.executionContext, account);
 
       if (!users || users.length === 0) {
         return {

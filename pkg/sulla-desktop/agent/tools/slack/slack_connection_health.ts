@@ -31,6 +31,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const { account } = input ?? {};
     const invocationId = `health-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
     const startedAt = Date.now();
     const reinitializeIfNeeded = input?.reinitializeIfNeeded !== false;
@@ -48,6 +49,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
     try {
       const service = getIntegrationService();
       const containerAuthority = usesContainerVaultAuthority();
+      const accountUsed = account || await service.getActiveAccountId(SLACK_ID);
       console.log('[slack_connection_health] Initializing IntegrationService...', { invocationId });
       await service.initialize();
       console.log('[slack_connection_health] IntegrationService initialized', { invocationId });
@@ -56,19 +58,11 @@ export class SlackConnectionHealthWorker extends BaseTool {
       // Container authority deliberately exposes no token-presence oracle. A
       // real brokered auth.test below is the only credential health signal.
       const botToken = containerAuthority ? null : (await service.getIntegrationValue(SLACK_ID, 'bot_token'))?.value;
-      const appToken = containerAuthority
-        ? null
-        : (
-          (await service.getIntegrationValue(SLACK_ID, 'scopes_token'))?.value ||
-        (await service.getIntegrationValue(SLACK_ID, 'app_token'))?.value ||
-        (await service.getIntegrationValue(SLACK_ID, 'app_level_token'))?.value
-        );
 
       console.log('[slack_connection_health] Integration values fetched', {
         invocationId,
         connectedInDb: !!connectionStatus?.connected,
         hasBotToken:   containerAuthority ? 'vault-owned' : !!botToken,
-        hasAppToken:   containerAuthority ? 'vault-owned' : !!appToken,
       });
 
       console.log('[slack_connection_health] Pre-check state:', {
@@ -109,7 +103,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
         }
         try {
           console.log('[slack_connection_health] Running auth.test', { invocationId });
-          const auth = await client.apiCall('auth.test', {}, this.executionContext);
+          const auth = await client.apiCall('auth.test', {}, this.executionContext, accountUsed);
           authOk = auth?.ok !== false;
           authError = authOk ? null : (auth?.error || 'auth_test_failed');
           console.log('[slack_connection_health] auth.test result', {
@@ -142,7 +136,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
 
         try {
           console.log('[slack_connection_health] Running users.list data pull', { invocationId });
-          const response = await client.apiCall('users.list', { limit: 1 }, this.executionContext);
+          const response = await client.apiCall('users.list', { limit: 1 }, this.executionContext, accountUsed);
           const members = Array.isArray((response)?.members) ? (response).members : [];
 
           dataPullCount = members.length;
@@ -246,6 +240,7 @@ export class SlackConnectionHealthWorker extends BaseTool {
       const healthy = !!slack && (!validateAuth || authOk !== false) && (!validateDataPull || dataPullOk !== false);
       const details = {
         invocationId,
+        account:                accountUsed,
         runtime:               runtimeContext(),
         durationMs:            Date.now() - startedAt,
         healthy,
@@ -253,7 +248,6 @@ export class SlackConnectionHealthWorker extends BaseTool {
         singletonConnected,
         credentialCustody:     containerAuthority ? 'container-vault' : 'legacy-desktop',
         hasBotToken:           containerAuthority ? null : !!botToken,
-        hasAppToken:           containerAuthority ? null : !!appToken,
         registryClientPresent: !!slack,
         validateAuth,
         authOk,
