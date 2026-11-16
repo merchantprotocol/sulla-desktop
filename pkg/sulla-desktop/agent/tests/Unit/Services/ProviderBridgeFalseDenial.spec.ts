@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { request as httpRequest } from 'node:http';
+import { Readable } from 'node:stream';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isProviderBridgeDenial } from '../../../languagemodels/providerRecovery';
@@ -37,6 +40,37 @@ class FakeBroker {
   };
 }
 
+/**
+ * Talks to the bridge over loopback with node:http. The agent spec setup
+ * replaces global fetch with a guard that refuses every request, and the
+ * bridge's own upstream goes through the injected FakeBroker, so no fetch
+ * is involved anywhere. The reply is wrapped in a standard Response so the
+ * assertions read the same as for a fetch client.
+ */
+class LoopbackClient {
+  post(url: string, token: string | undefined, body: string): Promise<Response> {
+    return new Promise((resolve, reject) => {
+      const request = httpRequest(url, {
+        method:  'POST',
+        agent:   false,
+        headers: { authorization: `Bearer ${ token }`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+      }, incoming => {
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(incoming.headers)) {
+          if (value === undefined) continue;
+          for (const item of Array.isArray(value) ? value : [value]) headers.append(name, item);
+        }
+        const status = incoming.statusCode ?? 0;
+        const stream = [204, 205, 304].includes(status) ? null : Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+        resolve(new Response(stream, { status, headers }));
+      });
+      request.once('error', reject);
+      request.end(body);
+    });
+  }
+}
+
+const loopback = new LoopbackClient();
 const leases: ProviderCliBridgeLease[] = [];
 afterEach(async() => {
   await Promise.all(leases.splice(0).map(lease => lease.close()));
@@ -52,11 +86,7 @@ async function openBridge(overrides: Partial<ProviderCliBridgeOptions> & { broke
     broker: (overrides.broker ?? new FakeBroker()) as any,
   });
   leases.push(lease);
-  const send = (body = '{"model":"gpt-5"}') => fetch(`${ lease.config.baseUrl }/responses`, {
-    method:  'POST',
-    headers: { authorization: `Bearer ${ lease.config.environment.SULLA_PROVIDER_BRIDGE_TOKEN }`, 'content-type': 'application/json' },
-    body,
-  });
+  const send = (body = '{"model":"gpt-5"}') => loopback.post(`${ lease.config.baseUrl }/responses`, lease.config.environment.SULLA_PROVIDER_BRIDGE_TOKEN, body);
   return { lease, send, timings };
 }
 
