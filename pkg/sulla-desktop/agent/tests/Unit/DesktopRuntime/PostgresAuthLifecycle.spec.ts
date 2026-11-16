@@ -265,13 +265,21 @@ describe('PostgresAuthLifecycle', () => {
     const recorder = new Recorder();
     const status = new Map<string, string>();
     let finish!: (state: PostgresAuthState) => void;
+    let applyStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      applyStarted = resolve;
+    });
 
+    // apply runs on the lifecycle's serial chain, so it starts a tick after afterFirstPass returns.
     recorder.hardening.apply = () => new Promise<PostgresAuthState>((resolve) => {
       finish = resolve;
+      applyStarted();
     });
     const tracked = recorder.lifecycle().afterFirstPass(1, status);
 
     expect(status.get('postgresAuth')).toBe('checking');
+    await started;
+    expect(status.get('postgresAuth')).toBe('checking'); // apply is running; the caller was not held
     finish({ kind: 'trust', reason: 'consumer-drift', detail: 'tools' });
     await tracked;
     expect(status.get('postgresAuth')).toBe('trust (consumer-drift)');
