@@ -5,7 +5,7 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { agentPolicyAllows, validateVaultItemProxy, type VaultItemPlaintext } from '@sulla/vault-crypto';
+import { validateVaultItemProxy, type VaultItemPlaintext } from '@sulla/vault-crypto';
 
 import type { BrokerCredentialRef, BrokerExecuteRequest, BrokerExecuteResponse, BrokerItemListResponse } from '../contracts.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION } from '../operationPolicy.js';
@@ -15,6 +15,7 @@ import { APPROVAL_TTL_MS, BROKER_IDENTIFIER_PATTERN, UUID_PATTERN } from './Loca
 import type { BrokerStreamSink, ItemRow } from './LocalAuthorityTypes.js';
 import { LocalVaultError } from './LocalVaultError.js';
 import { LocalAuthorityCrypto } from './LocalAuthorityCrypto.js';
+import { AgentPolicyGate } from './AgentPolicyGate.js';
 
 /**
  * The broker's HTTP entry points: one-shot and streamed execution, OAuth token mutations
@@ -86,7 +87,7 @@ export class BrokerExecutionService {
       if (!checked.ok) continue;
       const policy = row.agent_policy ?? plaintext.agentPolicy;
       if (!Array.isArray(policy?.sites)) continue;
-      const usable = agentPolicyAllows({ ...policy, sites: [] }, {
+      const usable = AgentPolicyGate.shared().allows({ ...policy, sites: [] }, {
         agentId: claims.agent_id, level: 'autofill', onServer: false,
       }).allowed;
       if (!usable) continue;

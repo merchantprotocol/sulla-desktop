@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { agentPolicyAllows, type VaultItemPlaintext } from '@sulla/vault-crypto';
+import type { VaultItemPlaintext } from '@sulla/vault-crypto';
 
 import type { BrokerExecuteRequest, BrokerRelayCreateRequest, BrokerRelayCreateResponse, BrokerRelaySendRequest } from '../contracts.js';
 import { enterpriseGatewayOrigin } from '../gatewayPolicy.js';
@@ -13,6 +13,7 @@ import { APPROVAL_TTL_MS } from './LocalAuthorityLimits.js';
 import { LocalVaultError } from './LocalVaultError.js';
 import { BrokerCredentialFields } from './BrokerCredentialFields.js';
 import { LocalAuthorityCrypto } from './LocalAuthorityCrypto.js';
+import { AgentPolicyGate } from './AgentPolicyGate.js';
 
 /**
  * Long-lived broker relays (Slack socket mode, Discord gateway, enterprise gateway, Sulla Cloud
@@ -70,7 +71,7 @@ export class BrokerRelayService {
         const pinned = await this.host.parts.upstream.validateTarget(gateway.origin);
         gatewayAddress = { address: pinned.pinnedAddress, family: pinned.pinnedFamily };
         request.url = `${ gateway.origin }/vault-relay`;
-        const siteDecision = agentPolicyAllows(item.agent_policy ?? plaintext.agentPolicy, {
+        const siteDecision = AgentPolicyGate.shared().allows(item.agent_policy ?? plaintext.agentPolicy, {
           agentId: input.claims.agent_id, level: 'autofill', host: gateway.hostname, onServer: false,
         });
         if (!siteDecision.allowed) throw new Error('policy_denied');

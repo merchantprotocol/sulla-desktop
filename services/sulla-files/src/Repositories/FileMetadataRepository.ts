@@ -5,6 +5,8 @@
 
 import type pg from 'pg';
 
+import { LikePattern } from '../LikePattern.js';
+
 type Queryable = Pick<pg.Pool, 'query'> | pg.PoolClient;
 export type MetadataTable = 'files' | 'file_folders';
 
@@ -40,6 +42,6 @@ export class FileMetadataRepository {
 
   /** Metadata of the direct child files of one folder (only files that carry any). */
   async childFileMetadata(collectionId:string, prefix:string):Promise<any[]> {
-    return (await this.db.query(`SELECT path,metadata,metadata_revision FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 AND position('/' in substring(path from $3::int))=0 AND metadata<>'{}'::jsonb`, [collectionId, `${prefix}%`, prefix.length + 1])).rows;
+    return (await this.db.query(`SELECT path,metadata,metadata_revision FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND path LIKE $2 ESCAPE '\\' AND position('/' in substring(path from $3::int))=0 AND metadata<>'{}'::jsonb`, [collectionId, LikePattern.prefix(prefix), prefix.length + 1])).rows;
   }
 }

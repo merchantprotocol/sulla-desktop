@@ -45,9 +45,14 @@ export class VaultRequestInput {
     return left.length === right.length && timingSafeEqual(left, right);
   };
 
+  /**
+   * The caller's service id and token. Only the RFC 6750 `Bearer <token>` form yields a token
+   * (scheme case-insensitive); a bare token, an empty or whitespace token, or a bare "Bearer"
+   * yields `token: undefined`, which every identity check refuses with its usual 401.
+   */
   readonly serviceIdentity = (request: Request): { serviceId: string; token?: string } => ({
     serviceId: request.header('x-sulla-service-id') ?? '',
-    token: request.header('authorization')?.replace(/^Bearer\s+/i, ''),
+    token: /^Bearer[ \t]+(\S+)$/i.exec(request.header('authorization')?.trim() ?? '')?.[1],
   });
 
   readonly humanCookie = (request: Request): string | undefined =>

@@ -7,6 +7,8 @@ import { randomUUID } from 'crypto';
 
 import { postgresClient } from '../database/PostgresClient';
 import { PendingDecisionRepository } from '../repositories/PendingDecisionRepository';
+import { HumanDecisionRepository } from '../app/Repositories/HumanDecisionRepository';
+import { ToolApprovalPolicyRepository } from '../app/Repositories/ToolApprovalPolicyRepository';
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { getWebSocketClientService } from './WebSocketClientService';
 import { LateDecisionAnswerHandler } from './LateDecisionAnswerHandler';
@@ -21,9 +23,16 @@ import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/sha
 export class DecisionService {
   private readonly pendingDecisions: PendingDecisionRepository;
   private readonly lateAnswerHandler: LateDecisionAnswerHandler;
+  private readonly decisions: HumanDecisionRepository;
+  private readonly approvalPolicies: ToolApprovalPolicyRepository;
 
-  constructor(lateAnswerHandler?: LateDecisionAnswerHandler) {
+  constructor(
+    lateAnswerHandler?: LateDecisionAnswerHandler,
+    repositories: { decisions?: HumanDecisionRepository; approvalPolicies?: ToolApprovalPolicyRepository } = {},
+  ) {
     this.pendingDecisions = new PendingDecisionRepository(postgresClient);
+    this.decisions = repositories.decisions ?? new HumanDecisionRepository(postgresClient);
+    this.approvalPolicies = repositories.approvalPolicies ?? new ToolApprovalPolicyRepository(postgresClient);
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
       { find: async conversationId => (await ConversationHistoryModel.getByThread(conversationId)) ?? await ConversationHistoryModel.getById(conversationId) },
@@ -47,8 +56,7 @@ export class DecisionService {
     if (!input.conversationId || !input.channel) throw new Error('Approval requires the original conversation. No action was executed.');
     const now = Date.now();
     const record: DecisionRecord = { ...input, id: randomUUID(), status: 'pending', createdAt: now, expiresAt: now + timeoutMs };
-    await postgresClient.query('INSERT INTO human_decisions (id, session_id, status, record) VALUES ($1, $2, $3, $4::jsonb)',
-      [record.id, this.session, record.status, JSON.stringify(record)]);
+    await this.decisions.insert(record, this.session);
     let settle!: (value: DecisionOutcome) => void;
     const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
     const timer = setTimeout(() => { this.expire(record.id) }, timeoutMs);
@@ -67,12 +75,8 @@ export class DecisionService {
 
   async list(): Promise<DecisionRecord[]> {
     // Rows from a previous process are evidence, never runnable requests.
-    await postgresClient.query(`UPDATE human_decisions SET status = 'expired',
-      record = jsonb_set(record, '{status}', '"expired"'), updated_at = NOW()
-      WHERE status IN ('pending', 'deferred') AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)`, [this.session, Date.now()]);
-    const rows = await postgresClient.query<{ record: DecisionRecord }>(
-      "SELECT record FROM human_decisions ORDER BY (status IN ('pending', 'deferred')) DESC, updated_at DESC LIMIT 500");
-    return rows.map(row => row.record);
+    await this.decisions.expireForeignOrOverdue(this.session, Date.now());
+    return this.decisions.listRecent();
   }
 
   async resolve(response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
@@ -110,10 +114,7 @@ export class DecisionService {
     entry.busy = true;
     try {
       const next: DecisionRecord = { ...entry.record, status: action, ...(answers.length ? { answers } : {}) };
-      const rows = await postgresClient.query(`UPDATE human_decisions SET status = $2, record = $3::jsonb, updated_at = NOW()
-        WHERE id = $1 AND status IN ('pending', 'deferred') AND session_id = $4 RETURNING id`,
-      [response.id, action, JSON.stringify(next), this.session]);
-      if (!rows.length) return { settled: false, reason: 'Request is no longer pending.' };
+      if (!await this.decisions.settle(response.id, action, next, this.session)) return { settled: false, reason: 'Request is no longer pending.' };
       entry.record = next;
       this.changed(next);
       if (action !== 'deferred') {
@@ -140,24 +141,21 @@ export class DecisionService {
     entry.settle({ status: 'expired', answers: [] });
     this.changed({ ...entry.record, status: 'expired' });
     try {
-      await postgresClient.query(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(record, '{status}', '"expired"'), updated_at = NOW()
-        WHERE id = $1 AND status IN ('pending', 'deferred')`, [id]);
+      await this.decisions.expirePending(id);
     } catch { /* Fail closed even if persistence is temporarily unavailable. list() reconciles below. */ }
   }
 
   async requiresApproval(toolName: string): Promise<boolean> {
-    const rows = await postgresClient.query('SELECT tool_name FROM tool_approval_policies WHERE tool_name = $1', [toolName]);
-    return rows.length > 0;
+    return this.approvalPolicies.exists(toolName);
   }
 
   async policies(): Promise<string[]> {
-    const rows = await postgresClient.query<{ tool_name: string }>('SELECT tool_name FROM tool_approval_policies ORDER BY tool_name');
-    return rows.map(row => row.tool_name);
+    return this.approvalPolicies.listToolNames();
   }
 
   async setPolicy(toolName: string, required: boolean): Promise<void> {
-    if (required) await postgresClient.query('INSERT INTO tool_approval_policies (tool_name) VALUES ($1) ON CONFLICT DO NOTHING', [toolName]);
-    else await postgresClient.query('DELETE FROM tool_approval_policies WHERE tool_name = $1', [toolName]);
+    if (required) await this.approvalPolicies.add(toolName);
+    else await this.approvalPolicies.remove(toolName);
   }
 }
 export const decisionService = new DecisionService();
