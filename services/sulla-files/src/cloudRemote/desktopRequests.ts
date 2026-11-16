@@ -21,7 +21,7 @@
 import { FilesCloudBroker } from '../cloudBroker.js';
 import { streamFileContent } from '../fileStream.js';
 import { assertUnprotectedFile } from '../protectedFiles.js';
-import { CLOUD_VISIBLE_COLLECTION } from './catalogSync.js';
+import { PgCloudCatalogRepository } from '../Repositories/CloudCatalogRepository.js';
 
 import type { Config } from '../config.js';
 import type { SharesService } from '../shares.js';
@@ -50,7 +50,13 @@ export class DesktopRequestSyncService {
   private readonly cloudDeviceId?: string;
   private ticking = false;
 
-  constructor(private readonly db: pg.Pool, private readonly config: Config, private readonly store: Store, private readonly shares: SharesService) {
+  constructor(
+    private readonly db: pg.Pool,
+    private readonly config: Config,
+    private readonly store: Store,
+    private readonly shares: SharesService,
+    private readonly catalog: Pick<PgCloudCatalogRepository, 'visibleFile'> = new PgCloudCatalogRepository(db),
+  ) {
     this.cloudDeviceId = process.env.SULLA_FILES_CLOUD_DEVICE_ID?.trim() || undefined;
     this.broker = config.mode === 'desktop' && config.vaultBrokerServiceToken && this.cloudDeviceId ? new FilesCloudBroker(config) : undefined;
   }
@@ -93,12 +99,7 @@ export class DesktopRequestSyncService {
   private async eligibleFile(catalogId: string): Promise<string> {
     const fileId = localFileId(catalogId);
     if (!fileId) throw new RequestRefused('that catalog entry is not a file');
-    const file = (await this.db.query(
-      `SELECT f.id, f.path FROM files f
-        WHERE f.id = $2 AND f.deleted_at IS NULL
-          AND f.collection_id IN (SELECT id FROM collections WHERE ${ CLOUD_VISIBLE_COLLECTION })`,
-      [this.config.userId, fileId],
-    )).rows[0];
+    const file = await this.catalog.visibleFile(this.config.userId, fileId);
     if (!file) throw new RequestRefused('file not found or no longer shown in Sulla Cloud');
     await assertUnprotectedFile(this.db, file).catch(() => { throw new RequestRefused('this file is protected and stays on the Desktop') });
     return fileId;

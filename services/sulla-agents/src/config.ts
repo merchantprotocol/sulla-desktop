@@ -13,7 +13,8 @@ const installationSecret = process.env.SULLA_API_TOKEN?.trim() ?? '';
 
 export const config = {
   port:        Number(process.env.SULLA_AGENT_SERVICE_PORT ?? 8789),
-  databaseUrl: process.env.SULLA_DATABASE_URL ?? 'postgresql://sulla:sulla_dev_password@postgres:5432/sulla',
+  // No default: a missing value stops startup (manager.ts) instead of using a public password.
+  databaseUrl: process.env.SULLA_DATABASE_URL?.trim() ?? '',
   localToken:  required('SULLA_API_TOKEN', installationSecret),
 };
 
