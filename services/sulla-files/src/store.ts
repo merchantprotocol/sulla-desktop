@@ -13,6 +13,8 @@ import { TransactionScope } from './TransactionScope.js';
 export class Store {
   constructor(private root:string) {}
 
+  get rootPath():string { return this.root }
+
   path(collectionId:string, id:string) {
     if (!/^[a-f0-9]{64}$/.test(id) || !/^[\w-]+$/.test(collectionId)) throw new Error('bad chunk');
     return join(this.root, collectionId, id.slice(0, 2), id);
