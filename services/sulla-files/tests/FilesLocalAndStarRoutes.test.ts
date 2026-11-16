@@ -47,6 +47,12 @@ describe.skipIf(!databaseUrl)('Files star, local root, maintenance and search ro
     expect(await star('PUT', { folderPath: '../x' })).toMatchObject({ status: 400, body: { error: 'invalid Files path' } });
   });
 
+  it('answers 400, not a 500, when a star change carries no body', async() => {
+    // risk: data accuracy — a bodyless PUT/DELETE used to crash with a TypeError 500 instead of a clear validation error.
+    for (const method of ['PUT', 'DELETE'] as const) expect(await fixture.request('/v1/stars', method)).toMatchObject({ status: 400, body: { error: 'provide exactly one fileId or folderPath' } });
+    expect((await stars()).status).toBe(200);
+  });
+
   it('validates watched-folder root settings and requires the local token', async() => {
     // risk: permissions — local routes must stay behind the local service token.
     expect((await fixture.request('/v1/local/roots', 'GET', { headers: { 'x-sulla-files-token': 'wrong' } })).status).toBe(401);

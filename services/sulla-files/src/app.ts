@@ -23,11 +23,11 @@ import { applyDatabaseFileOperations, type FileOperationItem } from './fileOpera
 import { trashFileWithoutReceipt } from './databaseOperations.js';
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
 import { folderOperationState } from './folderOperationBatches.js';
-import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
+import { sendFileStream, streamFileContent } from './fileStream.js';
 import { ContentReadFailureLog } from './ContentReadFailureLog.js';
 import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
-import { loadFileContent, thumbnail } from './preview.js';
+import { loadFileContent } from './preview.js';
 import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
 import { SharesService } from './shares.js';
@@ -46,7 +46,7 @@ import { PersonalBackupScheduler } from './backup/scheduler.js';
 import { BackupRuntimeRequests } from './backup/runtime.js';
 import { AwsS3BackupClient } from './backup/s3.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
-import { authorizedVersionId, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
+import { registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import { AutomergeSnapshotRetention } from './automergeSnapshotRetention.js';
 import type { FilesLifecycle } from './lifecycle.js';
 
@@ -83,6 +83,9 @@ import { LocalMaintenanceRoutes } from './routes/LocalMaintenanceRoutes.js';
 import { LocalRootRoutes } from './routes/LocalRootRoutes.js';
 import { SearchRoutes } from './routes/SearchRoutes.js';
 import { StarRoutes } from './routes/StarRoutes.js';
+import { FileDetailRoutes } from './routes/FileDetailRoutes.js';
+import { FileFeedRoutes } from './routes/FileFeedRoutes.js';
+import { FileDetailRepository } from './Repositories/FileDetailRepository.js';
 import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
 import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
@@ -269,7 +272,7 @@ function composeFilesApp(
     void auditWriter.drain().catch(error=>console.error('[SullaFiles] audit delivery failed; retry pending',error));
   } catch(error) {next(error)} });
   const accessGate = new FilesAccessGate(db);
-  const { identity, collectionRow, collectionAccess, requireCollection, requirePath, fileRow, requireFile, visibleVersion } = accessGate;
+  const { identity, collectionRow, requireCollection, requirePath, fileRow, requireFile, visibleVersion } = accessGate;
   const actorScope = (actor:FilesIdentity):string => actor.jobId
     ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
     : `device:${ actor.deviceId || config.deviceId }`;
@@ -278,12 +281,6 @@ function composeFilesApp(
   originalReveal.register(app);
   if (residency) registerResidencyRoutes(app, residency, async(request, fileId) => { await requireFile(request as RequestWithIdentity, fileId, 'edit') });
   const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db)); const audit = requestAudit.record;
-  function sendContent(request:express.Request, response:express.Response, content:{ buffer: Buffer; mime: string }, cache = 'private, max-age=300') {
-    response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', cache); response.type(content.mime); const range = request.header('range'); if (!range) return response.send(content.buffer);
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range); if (!match) return response.status(416).end(); const start = match[1] ? Number(match[1]) : 0; const end = match[2] ? Number(match[2]) : content.buffer.length - 1;
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end >= content.buffer.length) return response.status(416).end();
-    response.status(206).setHeader('Content-Range', `bytes ${ start }-${ end }/${ content.buffer.length }`); response.setHeader('Content-Length', end - start + 1); return response.send(content.buffer.subarray(start, end + 1));
-  }
   /** The manifest hash insertVersion would store for these bytes (keyed chunk ids; nothing is written). */
   async function manifestHashFor(collectionId:string, bytes:Buffer):Promise<string> {
     const { dedup: dedupKey } = await config.keyring!.keys(collectionId); const chunkIds:string[] = [];
@@ -1535,28 +1532,7 @@ function composeFilesApp(
     });
     response.status(204).end();
   } catch (error) { next(error) } });
-  // Cross-folder views read their own bounded server queries; clients only hold the open folder's rows.
-  app.get('/v1/files/recent', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    const access = await requireCollection(request, collectionId, 'view', true, true);
-    let rows:any[]; try { rows = await filesFeed.recent({ collectionId, limit: request.query.limit, createdByType: request.query.createdByType }) } catch (error) { if (error instanceof RangeError) throw new HttpError(400, error.message); throw error }
-    response.json(rows.filter(row => !isProtectedPath(row.path)).map(row => ({ ...lifecycleFields({ ...row, size: Number(row.size) }), capabilities: lifecycleCapabilities(access.role, true) })));
-  } catch (error) { next(error) } });
-  app.get('/v1/files/stats', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    await requireCollection(request, collectionId, 'view', true, true);
-    response.json(await filesFeed.stats(collectionId));
-  } catch (error) { next(error) } });
-  app.get('/v1/folders/summary', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    const path = cleanPath(String(request.query.path ?? '')); await requireCollection(request, collectionId, 'view', true, true);
-    const visible = [];
-    for (const summary of await filesFeed.folderSummaries(collectionId, path)) {
-      const folderPath = path ? `${ path }/${ summary.name }` : summary.name; if (isProtectedPath(folderPath)) continue;
-      try { await requirePath(request, collectionId, folderPath, 'view'); visible.push({ path: folderPath, ...summary }) } catch (error:any) { if (error.status !== 403) throw error }
-    }
-    response.json(visible);
-  } catch (error) { next(error) } });
+  new FileFeedRoutes(accessGate, filesFeed).register(app);
   new FileListingRoutes(accessGate, new FileListingRepository(db, FILE_COLUMNS_SQL), listingQuery).register(app);
   app.post('/v1/files/:id/conflicts/keep-both', async(request:RequestWithIdentity, response, next) => { try {
     const conflictFileId = request.params.id;
@@ -1592,59 +1568,7 @@ function composeFilesApp(
     await audit(request, 'reindex', await fileRow(request.params.id));
     response.status(202).json({ accepted: true });
   } catch (error) { next(error) } });
-  app.get('/v1/files/:id', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await requireFile(request, request.params.id, 'view');
-    const access = await collectionAccess(request, file.collection_id);
-    const effectiveRole = access.role;
-    const draftVisible = effectiveRole === 'manage';
-    // A trashed file points at a deleted tombstone. Detail remains available for
-    // retention and disposal decisions, but it must not use that tombstone to
-    // broaden version/content visibility.
-    const versionId = file.deleted_at ? undefined : await authorizedVersionId(db, file, draftVisible);
-    const [version, recording, edgeRows, activity] = await Promise.all([
-      versionId ? db.query('SELECT * FROM file_versions WHERE id=$1', [versionId]) : Promise.resolve({ rows: [] }),
-      versionId ? db.query('SELECT version_id,language,transcript,chapters,duration_seconds,generator,generated_at FROM recording_metadata WHERE file_id=$1 AND version_id=$2', [file.id, versionId]) : Promise.resolve({ rows: [] }),
-      db.query(`SELECT e.*,CASE WHEN e.src_type='file' AND e.src_id=$1 THEN e.dst_id ELSE e.src_id END linked_id
-        FROM edges e WHERE (e.src_type='file' AND e.src_id=$1) OR (e.dst_type='file' AND e.dst_id=$1) ORDER BY e.created_at DESC`, [file.id]),
-      db.query('SELECT id::text,who_type,who_id,device_or_run_id,action,at FROM audit_log WHERE file_id=$1 ORDER BY at DESC LIMIT 100', [file.id]),
-    ]);
-    const links = [];
-    for (const edge of edgeRows.rows) {
-      if (edge.src_type !== 'file' || edge.dst_type !== 'file') continue;
-      try {
-        const linked = await requireFile(request, edge.linked_id, 'view');
-        links.push({ id: linked.id, path: linked.path, mime: linked.mime, kind: edge.kind, direction: edge.src_id === file.id ? 'outgoing' : 'incoming', createdAt: edge.created_at });
-      } catch { /* A relationship never grants access to its other endpoint. */ }
-    }
-    const inherited:any[] = [];
-    response.json({ ...lifecycleFields({ ...file, current_version_id: versionId ?? file.current_version_id }), capabilities: lifecycleCapabilities(effectiveRole, draftVisible), provenance: { type: file.created_by_type, id: file.created_by_id }, version: version.rows[0] ?? null, recording: recording.rows[0] ?? null, links, activity: activity.rows, access: { role: effectiveRole, inherited } });
-  } catch (error) { next(error) } });
-  const stream = async(request:RequestWithIdentity, response:express.Response, next:express.NextFunction, download = false) => {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    request.once('aborted', abort); response.once('close', abort);
-    let readVersionId:string | undefined;
-    try {
-      const file = await requireFile(request, request.params.id, 'view');
-      const versionId = readVersionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined);
-      const content = await streamFileContent(db, config, store, file.id, versionId, request.header('range'), controller.signal);
-      if (!content) { response.sendStatus(404); return }
-      await audit(request, download ? 'download' : 'preview', { ...file, current_version_id: content.versionId });
-      const originalName = content.path.split('/').at(-1) || 'download';
-      const fallbackName = originalName.replace(/[^\x20-\x7E]|["\\]/g, '_');
-      const disposition = `attachment; filename="${ fallbackName }"; filename*=UTF-8''${ encodeURIComponent(originalName) }`;
-      await sendFileStream(request, response, content, download ? disposition : undefined);
-    } catch (error) {
-      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: download ? 'download' : 'preview', fileId: request.params.id, versionId: readVersionId });
-      if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.end(); return }
-      if (!controller.signal.aborted && !response.headersSent) next(error);
-      else if (!controller.signal.aborted) response.destroy(error as Error);
-    } finally { request.off('aborted', abort); response.off('close', abort) }
-  };
-  app.get('/v1/files/:id/preview', (request:RequestWithIdentity, response, next) => stream(request, response, next));
-  app.get('/v1/files/:id/download', (request:RequestWithIdentity, response, next) => stream(request, response, next, true));
-  app.get('/v1/files/:id/thumbnail', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const versionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined); const content = await thumbnail(db, config, store, file.id, versionId); if (!content) return response.sendStatus(404); return sendContent(request, response, content, 'private, max-age=86400') } catch (error) { next(error) } });
-  app.get('/v1/files/:id/history', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const rows = await db.query(`SELECT *,major_version::text||'.'||minor_version::text AS version_number FROM file_versions WHERE file_id=$1 ORDER BY created_at DESC`, [request.params.id]); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
+  new FileDetailRoutes(db, config, store, accessGate, new FileDetailRepository(db), requestAudit, contentReadFailures).register(app);
   app.put('/v1/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
     const baseVersionId=String(request.body?.baseVersionId??''); const content=request.body?.content;
     if(!UUID.test(baseVersionId)||typeof content!=='string') throw new HttpError(400,'baseVersionId and text content are required');
