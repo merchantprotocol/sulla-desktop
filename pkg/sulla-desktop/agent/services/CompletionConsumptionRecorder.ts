@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { CompletionKey } from '../app/Services/CompletionKey';
 import type { PendingCompletion } from './AgentCompletionInbox';
 
 /** Tracks completions injected into one turn until the model has answered them. */
@@ -19,16 +20,18 @@ export class CompletionConsumptionRecorder {
   }
 
   /**
-   * A completion whose carrying message is followed by an assistant message
+   * A completion whose carrying message is followed by a genuine model reply
    * was consumed: a model call that included it already succeeded. Such an
    * entry stays acknowledged even if a later step of the same turn fails;
-   * releasing it would hand the parent the same result again.
+   * releasing it would hand the parent the same result again. Assistant-role
+   * messages the harness injects (subconscious context, summaries, error
+   * notices) are not replies: counting them kept unseen results acknowledged.
    */
   confirmAnswered(messages: readonly any[]): void {
     let answered = false;
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
-      if (message?.role === 'assistant') {
+      if (this.isModelReply(message)) {
         answered = true;
         continue;
       }
@@ -45,6 +48,14 @@ export class CompletionConsumptionRecorder {
   }
 
   private keyOf(entry: PendingCompletion): string {
-    return entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`;
+    return CompletionKey.of(entry);
+  }
+
+  private isModelReply(message: any): boolean {
+    if (message?.role !== 'assistant') return false;
+    const metadata = message.metadata ?? {};
+    if (metadata._synthetic === true || metadata._conversationSummary === true) return false;
+    if (metadata.source === 'subconscious_context') return false;
+    return metadata.kind !== 'agent_error';
   }
 }

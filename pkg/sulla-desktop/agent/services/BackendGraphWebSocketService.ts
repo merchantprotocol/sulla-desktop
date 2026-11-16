@@ -10,7 +10,8 @@ import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, releaseAgentCompletionClaim, requeueAgentCompletionAfterFailure, requeueAgentCompletionQuietly, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { CompletionKey } from '../app/Services/CompletionKey';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -217,7 +218,7 @@ export class BackendGraphWebSocketService {
           : [])),
     ] as PendingCompletion[];
     const unique = new Map<string, PendingCompletion>();
-    for (const entry of entries) unique.set(entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`, entry);
+    for (const entry of entries) unique.set(CompletionKey.of(entry), entry);
     return [...unique.values()];
   }
 
@@ -331,15 +332,20 @@ export class BackendGraphWebSocketService {
     void parkedAgentRehydrator.isTerminalDelegatedThread(threadId).then(async(terminal) => {
       // A human stop is final. Child results remain readable and durably
       // undelivered, but must never resurrect the stopped parent thread.
-      if (terminal) return;
+      // Drop the in-memory claim so a later recovery enqueue is not discarded as a duplicate.
+      if (terminal) {
+        for (const entry of entries) releaseAgentCompletionClaim(entry);
+        return;
+      }
       const parked = await parkedAgentRehydrator.resolve(threadId);
       const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
       return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
         source: 'sub_agent_completion', completionEntries: entries,
       });
     }).catch(err => {
-      // requeue, not enqueue: these entries are claimed by the take above, so enqueue would drop them as duplicates.
-      for (const entry of entries) requeueAgentCompletion(channelId, threadId, entry);
+      // Requeue (enqueue would drop these claimed entries as duplicates) with
+      // backoff, so a persistent failure is retried later, not hot-looped.
+      for (const entry of entries) requeueAgentCompletionAfterFailure(channelId, threadId, entry);
       console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
 
     });
@@ -909,8 +915,9 @@ export class BackendGraphWebSocketService {
       // pending once the active run ends.
       if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey)) {
         if (metadata?.source === 'sub_agent_completion') {
-          // Claimed by the caller's take: requeue clears that claim, enqueue would silently drop them.
-          for (const entry of metadata.completionEntries ?? []) requeueAgentCompletion(channelId, threadId, entry);
+          // Claimed by the caller's take: requeue clears that claim (enqueue would drop them).
+          // No wake: the active run drains the inbox when it ends.
+          for (const entry of metadata.completionEntries ?? []) requeueAgentCompletionQuietly(channelId, threadId, entry);
         }
         return 'deferred';
       }
@@ -1112,7 +1119,9 @@ export class BackendGraphWebSocketService {
           // Results the model already answered stay acknowledged; only unseen ones go back to the inbox.
           completionConsumption.confirmAnswered(state?.messages ?? []);
           await completionConsumption.releaseOnAbort(async entry => {
-            requeueAgentCompletion(channelId, threadId, entry);
+            // A failed turn retries with backoff; a stopped one waits quietly (stop means stop).
+            if (runAbort?.signal.aborted) requeueAgentCompletionQuietly(channelId, threadId, entry);
+            else requeueAgentCompletionAfterFailure(channelId, threadId, entry);
             await agentJobProvider.completionAcknowledgements.release(entry);
           });
           for (const message of state?.messages ?? []) {

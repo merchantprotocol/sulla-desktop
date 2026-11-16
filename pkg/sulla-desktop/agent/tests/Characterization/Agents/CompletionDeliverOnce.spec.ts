@@ -48,7 +48,10 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     agentDefinitionService = (await import('../../../services/AgentDefinitionService')).agentDefinitionService;
   }, 60_000);
   afterAll(async() => database.dispose());
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    inbox.registerCompletionIdleDispatcher(() => undefined);
+  });
 
   function bareInstance(): InstanceType<typeof BackendGraphWebSocketService> {
     const instance = Object.create(BackendGraphWebSocketService.prototype);
@@ -98,8 +101,9 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     expect(inbox.takeAgentCompletions(channelId, threadId)).toEqual([]);
   });
 
-  it('b) a result the turn failed before any model reply is still handed back for another turn', async() => {
-    // risk: data loss — the deliver-once guard must not swallow a result the parent never read.
+  it('b) a result the turn failed before any model reply is handed back for another turn after a backoff', async() => {
+    // risk: data loss — the deliver-once guard must not swallow a result the parent never read;
+    // risk: liveness — the retry must wait, not re-run a failing parent turn immediately.
     const threadId = 'deliver-once-failed-before-reply';
     const { jobId, entry } = await finishedChild(threadId, 'tests pass');
     let calls = 0;
@@ -110,11 +114,19 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
 
     const instance = bareInstance();
     const dispatchSpy = vi.spyOn(instance as any, 'dispatchToAgent');
+    // Stand-in for handleCompletionWake: the backed-off retry re-enters through the idle dispatcher.
+    inbox.registerCompletionIdleDispatcher((channel, thread) => {
+      const entries = inbox.takeAgentCompletions(channel, thread);
+      if (entries.length) void (instance as any).dispatchToAgent(channel, 'sulla-desktop', inbox.formatCompletionBatch(entries), thread, undefined, 'coding-manager-sol', 'system', {
+        source: 'sub_agent_completion', completionEntries: entries,
+      });
+    });
     await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch([entry]), threadId, undefined, 'coding-manager-sol', 'system', {
       source: 'sub_agent_completion', completionEntries: [entry],
     });
+    expect(calls).toBe(1); // no immediate re-run of the failing turn
 
-    await vi.waitFor(() => expect(calls).toBe(2), { timeout: 2_000, interval: 10 });
+    await vi.waitFor(() => expect(calls).toBe(2), { timeout: 5_000, interval: 25 });
     await vi.waitFor(() => expect(instance.hasActiveRun(channelId, threadId)).toBe(false), { timeout: 2_000, interval: 10 });
     expect(dispatchSpy).toHaveBeenCalledTimes(2);
     expect(dispatchSpy.mock.calls[1][7]).toMatchObject({ source: 'sub_agent_completion', completionEntries: [expect.objectContaining({ jobId })] });
