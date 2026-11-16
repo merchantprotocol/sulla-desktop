@@ -5,18 +5,18 @@
 import { randomUUID } from 'node:crypto';
 import { MessageEnvelope, ParticipantAddress } from '@sulla/domain';
 import { BaseTool, type ToolResponse } from '../base';
-import { CloudOrgMessagingTransport, DesktopOrgCloudSession, PinnedOrgCloudSession } from '../../services/CloudOrgMessagingTransport';
 
 const orgParam = { type: 'string' as const, optional: true, description: 'Organization id, slug or name. Defaults to the active organization; must be one you belong to.' };
 
 abstract class OrgMessagingTool extends BaseTool {
-  protected readonly session = new DesktopOrgCloudSession();
-
-  /** Resolves the target org (default: active) and refuses orgs the human does not belong to. */
+  /**
+   * Resolves the target org (default: active) and refuses orgs the human does not belong to. `userId` is the
+   * human's id on that org's host (Cloud user id, or the Sulla Server subject).
+   */
   protected async identity(requestedOrg?: unknown): Promise<{ orgId: string; orgName: string; userId: string; agentId: string }> {
     const requested = typeof requestedOrg === 'string' ? requestedOrg.trim() : '';
     const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
-    const [org, userId] = await Promise.all([getBackendGraphWebSocketService().resolveMessagingOrg(requested || undefined), this.session.userId()]);
+    const { membership: org, userId } = await getBackendGraphWebSocketService().orgMessagingParticipant(requested || undefined);
     const state = this.state as any;
     const agentId = String(state?.metadata?.agentId ?? '').trim();
     if (!org.orgId || !userId || !agentId) throw new Error('Organization messaging requires an active organization session and agent identity');
@@ -66,9 +66,10 @@ export class OrgDirectoryTool extends OrgMessagingTool {
   schemaDef = { org: orgParam };
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const { orgId, orgName } = await this.identity(input?.org);
-      const directory = await new CloudOrgMessagingTransport(undefined, new PinnedOrgCloudSession(orgId, this.session)).loadDirectory();
-      return this.result({ orgId, orgName, ...directory });
+      const requested = typeof input?.org === 'string' ? input.org.trim() : '';
+      const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
+      const { membership, directory } = await getBackendGraphWebSocketService().loadOrgDirectory(requested || undefined);
+      return this.result({ orgId: membership.orgId, orgName: membership.name, ...directory });
     }
     catch (error) { return { successBoolean: false, responseString: error instanceof Error ? error.message : String(error) }; }
   }
