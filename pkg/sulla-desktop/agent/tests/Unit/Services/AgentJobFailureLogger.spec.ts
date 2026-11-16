@@ -29,16 +29,16 @@ const job = (tasks: AgentJobTask[], overrides: Partial<AgentJob> = {}): AgentJob
   taskCount: tasks.length, results: [], tasks, parentJobId: 'job-parent', parentThreadId: 'thread-parent', ...overrides });
 const result = (status: AgentJobResult['status'], output: string): AgentJobResult => ({ label: 'Worker', status, output, threadId: 'thread-child', contract: 'result' });
 
-function harness(jobs: AgentJob[]) {
-  const sink = new CapturingSink(); const runtime = new JobRuntimeRegistry();
-  const states = new AgentStateService(new InMemoryStore(jobs), runtime, () => 10_000, new AgentJobMutationQueue(), new AgentJobFailureLogger(sink));
+function harness(jobs: AgentJob[], sink: CapturingSink = new CapturingSink()) {
+  const runtime = new JobRuntimeRegistry(); const store = new InMemoryStore(jobs);
+  const states = new AgentStateService(store, runtime, () => 10_000, new AgentJobMutationQueue(), new AgentJobFailureLogger(sink));
   for (const item of jobs) runtime.jobs.set(item.jobId, structuredClone(item));
   const stops = new JobStopService(states, runtime, { now: () => new Date(9_000) } as never, {} as never);
   const parsed = () => sink.lines.map(line => {
     expect(line.startsWith(`${ AgentJobFailureLogger.TAG } {`)).toBe(true);
     return JSON.parse(line.slice(AgentJobFailureLogger.TAG.length + 1));
   });
-  return { sink, states, stops, parsed };
+  return { sink, store, states, stops, parsed };
 }
 
 /** Mirrors AgentJobService.recordTaskCompletion: the settled result lands on its task. */
@@ -60,6 +60,7 @@ describe('AgentJobFailureLogger at the job write boundary', () => {
       runLocation: 'container', provider: 'claude-code', model: 'claude-opus-5-5', status: 'error', reason: 'provider_transport',
       error: 'Error: provider transport closed', elapsedMs: 5_000 });
     expect(lines[0].stack).toContain('CliAgentService.ts:394');
+    expect(lines[0].stack).not.toContain('provider transport closed');
   });
 
   it('logs nothing for a completed task', async() => {
@@ -90,5 +91,47 @@ describe('AgentJobFailureLogger at the job write boundary', () => {
     const human = harness([job([task()])]);
     expect(await human.stops.stopTask('job-1', 0, StopPrincipal.human(), 'not needed')).toBe('stopped');
     expect(human.sink.lines).toEqual([]);
+  });
+
+  it('logs live tasks once when restart recovery exhausts and fails the job without touching its tasks', async() => {
+    // risk: a worker killed by restart-recovery exhaustion leaves no trace in background.log
+    const { states, parsed } = harness([job([task(), task({ label: 'Done', status: 'completed', finishedAt: 2_000 })], { restartResumeCount: 2 })]);
+    const claimed = await states.claimInterruptedJobs(2);
+    expect(claimed.exhausted.map(item => item.jobId)).toEqual(['job-1']);
+    expect(parsed()).toEqual([expect.objectContaining({ jobId: 'job-1', taskIndex: 0, status: 'running', jobStatus: 'failed',
+      reason: 'recovery_exhausted', error: 'runtime restart recovery limit exceeded' })]);
+    // A later system stop that finally settles the stranded task must not log it again.
+    expect(await states.stopCascade('job-1', StopPrincipal.attribution(StopPrincipal.system('SpawnAgentDeadRunWatcher')), 'dead run: no activity for 900s')).toEqual(['job-1']);
+    expect(parsed()).toHaveLength(1);
+  });
+
+  it('classifies a liveness-reconciler kill as lost from the task summary', async() => {
+    // risk: lost workers are miscounted as generic errors, hiding the reconciler as the killer
+    const { states, parsed } = harness([job([task()])]);
+    const reason = 'lost: no live graph or container and no activity for 900000ms';
+    expect(await states.transitionIfActivityUnchanged('job-1', 0, null, { status: 'error', summary: reason, finishedAt: 7_000 },
+      { error: reason, finishedAt: 7_000, waitingOnChildren: 0 })).toBe(true);
+    expect(parsed()).toEqual([expect.objectContaining({ taskIndex: 0, status: 'error', reason: 'lost', error: reason, elapsedMs: 6_000 })]);
+  });
+
+  it('redacts obvious credentials echoed into the error and stack', async() => {
+    // risk: provider errors leak API keys and tokens into background.log
+    const { states, sink } = harness([job([task()])]);
+    await settle(states, 0, result('error', 'Error: 401 for Bearer FAKEtoken12345678 key sk-FAKE-TEST-12345678\n'
+      + '    at call (gh.ts:1:1) ghp_FAKEFAKEFAKE1234 github_pat_FAKE_FAKE_1234 xoxb-FAKE-FAKE-1234'));
+    expect(sink.lines).toHaveLength(1);
+    for (const secret of ['FAKEtoken12345678', 'sk-FAKE-TEST-12345678', 'ghp_FAKEFAKEFAKE1234', 'github_pat_FAKE_FAKE_1234', 'xoxb-FAKE-FAKE-1234']) {
+      expect(sink.lines[0]).not.toContain(secret);
+    }
+    expect(sink.lines[0]).toContain('[REDACTED]');
+  });
+
+  it('never lets a throwing log sink break the job write', async() => {
+    // risk: a logging failure loses the durable task failure it was reporting
+    const throwing = new CapturingSink(); throwing.error = () => { throw new Error('log disk full'); };
+    const { states, store } = harness([job([task()])], throwing);
+    const written = await settle(states, 0, result('error', 'Error: boom'));
+    expect(written?.tasks[0].status).toBe('error');
+    expect(store.durable.get('job-1')?.tasks[0].status).toBe('error');
   });
 });
