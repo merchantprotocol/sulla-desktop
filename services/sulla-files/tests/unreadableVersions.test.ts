@@ -123,6 +123,22 @@ class UnreadableVersionFixture {
 
   read(fileId:string):Promise<Reply> { return this.request(`/v1/fuse/files/${ fileId }/content`, 'GET') }
 
+  /**
+   * Legacy corruption (a version whose chunks row never committed) predates migration 066, whose
+   * files_guard_chunk_delete trigger now refuses that delete. Recreate the legacy state by disabling
+   * only that trigger inside one transaction; the guard stays on for everything else.
+   */
+  async dropChunkRow(chunkId:string):Promise<void> {
+    const client = await this.pool!.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('ALTER TABLE chunks DISABLE TRIGGER files_guard_chunk_delete');
+      await client.query('DELETE FROM chunks WHERE collection_id=$1 AND id=$2', [this.collectionId, chunkId]);
+      await client.query('ALTER TABLE chunks ENABLE TRIGGER files_guard_chunk_delete');
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error } finally { client.release() }
+  }
+
   async currentChunk(fileId:string):Promise<{ versionId:string; chunkId:string }> {
     const row = (await this.pool!.query(`SELECT v.id::text version_id,m.chunk_ids->>0 chunk_id FROM files f JOIN file_versions v ON v.id=f.current_version_id
       JOIN manifests m ON m.hash=v.manifest_hash WHERE f.id=$1`, [fileId])).rows[0];
@@ -176,7 +192,7 @@ describeWithDatabase('Files that are listed but unreadable (real routes, Postgre
     const content = 'the bytes are still on disk\n'.repeat(80);
     expect((await f.write(created.fileId, created.versionId, '', content)).status).toBe(200);
     const broken = await f.currentChunk(created.fileId);
-    await f.pool!.query('DELETE FROM chunks WHERE collection_id=$1 AND id=$2', [f.collectionId, broken.chunkId]);
+    await f.dropChunkRow(broken.chunkId);
     const errors = vi.spyOn(console, 'error').mockImplementation(line => { f.logged.push(String(line)) });
     let read:Reply;
     try { read = await f.read(created.fileId) } finally { errors.mockRestore() }
@@ -213,7 +229,7 @@ describeWithDatabase('Files that are listed but unreadable (real routes, Postgre
     const good = await f.currentChunk(created.fileId);
     expect((await f.write(created.fileId, good.versionId, 'first readable version', 'second version, lost')).status).toBe(200);
     const lost = await f.currentChunk(created.fileId);
-    await f.pool!.query('DELETE FROM chunks WHERE collection_id=$1 AND id=$2', [f.collectionId, lost.chunkId]);
+    await f.dropChunkRow(lost.chunkId);
     await rm(f.blobPath(lost.chunkId));
 
     const reported = problemsFor(await f.fsck(), created.fileId);
@@ -240,7 +256,7 @@ describeWithDatabase('Files that are listed but unreadable (real routes, Postgre
     expect((await f.write(created.fileId, created.versionId, '', content)).status).toBe(200);
     const orphan = await f.currentChunk(created.fileId);
     // The state a rolled-back attempt leaves: the blob is on disk, its chunks row never committed.
-    await f.pool!.query('DELETE FROM chunks WHERE collection_id=$1 AND id=$2', [f.collectionId, orphan.chunkId]);
+    await f.dropChunkRow(orphan.chunkId);
     await writeFile(join(f.filesRoot, 'ingested.txt'), content);
     const manager = f.manager;
     await manager.ingest(manager.roots[0], f.collectionId, 'ingested.txt', Date.now(), undefined, new Map());
@@ -268,7 +284,7 @@ describeWithDatabase('Files that are listed but unreadable (real routes, Postgre
     const created = await f.create('Stress/broken/cleanup.txt');
     expect((await f.write(created.fileId, created.versionId, '', 'kept by cleanup')).status).toBe(200);
     const broken = await f.currentChunk(created.fileId);
-    await f.pool!.query('DELETE FROM chunks WHERE collection_id=$1 AND id=$2', [f.collectionId, broken.chunkId]);
+    await f.dropChunkRow(broken.chunkId);
     await f.pool!.query(`INSERT INTO file_upload_intents(id,collection_id,chunk_ids,updated_at) VALUES($1,$2,$3,NOW()-interval '2 hours')`,
       [randomUUID(), f.collectionId, JSON.stringify([broken.chunkId])]);
     const { cleanupStaleUploads } = await import(`${ SRC }/uploadCleanup.js`);
