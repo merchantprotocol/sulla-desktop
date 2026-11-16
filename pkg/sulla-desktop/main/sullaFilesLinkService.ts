@@ -160,5 +160,9 @@ export class SullaFilesLinkService implements LinkService {
   }
 }
 
-let links:LinkService | undefined;
-export function getSullaFilesLinkService():LinkService { links ??= new SullaFilesLinkService(); return links }
+export class SullaFilesLinkServiceProvider {
+  private links?:LinkService;
+  resolve():LinkService { return this.links ??= new SullaFilesLinkService(); }
+}
+export const sullaFilesLinkServiceProvider = new SullaFilesLinkServiceProvider();
+export function getSullaFilesLinkService():LinkService { return sullaFilesLinkServiceProvider.resolve() }

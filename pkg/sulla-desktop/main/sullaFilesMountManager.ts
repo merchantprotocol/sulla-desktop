@@ -528,8 +528,11 @@ export class SullaFilesMountManager extends EventEmitter {
   }
 }
 
-let instance:SullaFilesMountManager | undefined;
-export function getSullaFilesMountManager():SullaFilesMountManager {
-  instance ??= new SullaFilesMountManager();
-  return instance;
+export class SullaFilesMountManagerProvider {
+  private instance?:SullaFilesMountManager;
+  resolve():SullaFilesMountManager {
+    return this.instance ??= new SullaFilesMountManager();
+  }
 }
+export const sullaFilesMountManagerProvider = new SullaFilesMountManagerProvider();
+export function getSullaFilesMountManager():SullaFilesMountManager { return sullaFilesMountManagerProvider.resolve() }

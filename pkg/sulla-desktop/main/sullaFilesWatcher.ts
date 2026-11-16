@@ -14,7 +14,7 @@ import { app, shell } from 'electron';
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
 import { NativeSourceRevalidator } from './NativeSourceRevalidator';
 import { VaultFilesStartup, type VaultFilesStartupSnapshot } from './VaultFilesStartup';
-import { readBoundedResponse } from './sullaFilesBoundedResponse';
+import { boundedFilesResponseReader } from './sullaFilesBoundedResponse';
 import { FilesListingPager } from './FilesListingPager';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
 import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
@@ -190,7 +190,7 @@ class SullaFilesWatcher {
     content: async(operationId) => {
       const response = await this.rawLocalRequest(`/v1/local/native-sources/actions/${ encodeURIComponent(operationId) }/content`);
 
-      return readBoundedResponse(response);
+      return boundedFilesResponseReader.read(response);
     },
     read:      handle => getSullaFilesSourceGateway().read(handle),
     signature: handle => getSullaFilesSourceGateway().signature(handle),
@@ -863,8 +863,12 @@ class SullaFilesWatcher {
   async openFolder(collectionId?:string):Promise<void> { const error = await shell.openPath(await this.folderForCollection(collectionId)); if (error) throw new Error(error); }
 }
 
-let instance:SullaFilesWatcher | undefined;
-export function getSullaFilesWatcher():SullaFilesWatcher { instance ??= new SullaFilesWatcher(); return instance }
+export class SullaFilesWatcherProvider {
+  private instance?:SullaFilesWatcher;
+  resolve():SullaFilesWatcher { return this.instance ??= new SullaFilesWatcher(); }
+}
+export const sullaFilesWatcherProvider = new SullaFilesWatcherProvider();
+export function getSullaFilesWatcher():SullaFilesWatcher { return sullaFilesWatcherProvider.resolve() }
 
 /** Main-process service seam for the planned use-case-suggest:query IPC handler. */
 export function queryUseCaseSuggestions(text:string, options?:SuggestionOptions):Promise<UseCaseSuggestion[]> { return getSullaFilesWatcher().queryUseCaseSuggestions(text, options) }

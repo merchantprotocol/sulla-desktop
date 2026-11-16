@@ -462,30 +462,27 @@ export class SullaFilesSourceGateway {
   }
 }
 
-let sourceGateway:SullaFilesSourceGateway | undefined;
-
-export function startSullaFilesSourceGateway():SullaFilesSourceGateway {
-  if (sourceGateway) return sourceGateway;
-  const gateway = new SullaFilesSourceGateway();
-  sourceGateway = gateway;
-  return gateway;
+export class SullaFilesSourceGatewayProvider {
+  private sourceGateway?:SullaFilesSourceGateway;
+  start():SullaFilesSourceGateway {
+    if (this.sourceGateway) return this.sourceGateway;
+    return this.sourceGateway = new SullaFilesSourceGateway();
+  }
+  resolve():SullaFilesSourceGateway {
+    if (!this.sourceGateway) throw new Error('Experimental native Files source gateway is not running');
+    return this.sourceGateway;
+  }
+  async stop():Promise<void> {
+    const gateway = this.sourceGateway;
+    this.sourceGateway = undefined;
+    await gateway?.stop();
+  }
+  async lock():Promise<void> { await this.sourceGateway?.lock(); }
+  unlock():void { this.sourceGateway?.unlock(); }
 }
-
-export function getSullaFilesSourceGateway():SullaFilesSourceGateway {
-  if (!sourceGateway) throw new Error('Experimental native Files source gateway is not running');
-  return sourceGateway;
-}
-
-export async function stopSullaFilesSourceGateway():Promise<void> {
-  const gateway = sourceGateway;
-  sourceGateway = undefined;
-  await gateway?.stop();
-}
-
-export async function lockSullaFilesSourceGateway():Promise<void> {
-  await sourceGateway?.lock();
-}
-
-export function unlockSullaFilesSourceGateway():void {
-  sourceGateway?.unlock();
-}
+export const sullaFilesSourceGatewayProvider = new SullaFilesSourceGatewayProvider();
+export function startSullaFilesSourceGateway():SullaFilesSourceGateway { return sullaFilesSourceGatewayProvider.start() }
+export function getSullaFilesSourceGateway():SullaFilesSourceGateway { return sullaFilesSourceGatewayProvider.resolve() }
+export async function stopSullaFilesSourceGateway():Promise<void> { await sullaFilesSourceGatewayProvider.stop() }
+export async function lockSullaFilesSourceGateway():Promise<void> { await sullaFilesSourceGatewayProvider.lock() }
+export function unlockSullaFilesSourceGateway():void { sullaFilesSourceGatewayProvider.unlock() }

@@ -15,7 +15,7 @@ import { ipcMain as liveIpcMain, app, BrowserWindow, dialog, protocol, shell, we
 
 import { getIpcMainProxy } from './ipcMain';
 import { FilesChangeFeed } from './sullaFilesChangeFeed';
-import { readBoundedResponse } from './sullaFilesBoundedResponse';
+import { boundedFilesResponseReader } from './sullaFilesBoundedResponse';
 import { getSullaFilesCaptureService, type ScreenshotMode } from './sullaFilesCapture';
 import { importChatFiles, pickAndImportChatFiles } from './sullaFilesChatImport';
 import { FilesApiError, getSullaFilesClient } from './sullaFilesClient';
@@ -964,7 +964,7 @@ export function initSullaFilesIpc():void {
     if (!/^[A-Za-z0-9_-]{43}$/.test(input.handle) || !/^[a-f0-9]{64}$/i.test(input.sourceRevision) ||
         !UUID.test(input.fileId) || !UUID.test(input.versionId)) throw new Error('Native Files publication input is invalid');
     const response = await filesClient.stream(`/v1/files/${ encodeURIComponent(input.fileId) }/download?versionId=${ encodeURIComponent(input.versionId) }`);
-    const bytes = await readBoundedResponse(response);
+    const bytes = await boundedFilesResponseReader.read(response);
     const contentHash = createHash('sha256').update(bytes).digest('hex');
     const operationId = randomUUID();
     const watcher = getSullaFilesWatcher();

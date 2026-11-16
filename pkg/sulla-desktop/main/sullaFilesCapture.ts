@@ -166,16 +166,28 @@ export class SullaFilesCaptureService {
   }
 }
 
-let captureService:SullaFilesCaptureService | undefined;
-export function getSullaFilesCaptureService():SullaFilesCaptureService { captureService ??= new SullaFilesCaptureService(); return captureService }
-
-let markupWindow:BrowserWindow | undefined;
-export function openScreenshotMarkup(filePath:string):void {
-  if (markupWindow && !markupWindow.isDestroyed()) markupWindow.destroy();
-  markupWindow = new BrowserWindow({
-    width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#f4f7fb',
-    webPreferences: { contextIsolation: false, nodeIntegration: true },
-  });
-  markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
-  markupWindow.on('closed', () => { markupWindow = undefined; getSullaFilesWatcher().notifyRescan().catch(() => undefined) });
+export class SullaFilesCaptureServiceProvider {
+  private captureService?:SullaFilesCaptureService;
+  resolve():SullaFilesCaptureService { return this.captureService ??= new SullaFilesCaptureService(); }
 }
+export const sullaFilesCaptureServiceProvider = new SullaFilesCaptureServiceProvider();
+export function getSullaFilesCaptureService():SullaFilesCaptureService { return sullaFilesCaptureServiceProvider.resolve() }
+
+export class SullaFilesScreenshotMarkupService {
+  private markupWindow?:BrowserWindow;
+  constructor(private readonly watcher = getSullaFilesWatcher()) {}
+  open(filePath:string):void {
+    if (this.markupWindow && !this.markupWindow.isDestroyed()) this.markupWindow.destroy();
+    this.markupWindow = new BrowserWindow({
+      width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#f4f7fb',
+      webPreferences: { contextIsolation: false, nodeIntegration: true },
+    });
+    this.markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
+    this.markupWindow.on('closed', () => { this.markupWindow = undefined; this.watcher.notifyRescan().catch(() => undefined) });
+  }
+}
+export class SullaFilesScreenshotMarkupServiceProvider {
+  readonly service = new SullaFilesScreenshotMarkupService();
+}
+export const sullaFilesScreenshotMarkupServiceProvider = new SullaFilesScreenshotMarkupServiceProvider();
+export function openScreenshotMarkup(filePath:string):void { sullaFilesScreenshotMarkupServiceProvider.service.open(filePath) }
