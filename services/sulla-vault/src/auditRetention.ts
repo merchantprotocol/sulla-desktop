@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { PostgresLegacyAuditRepository } from './repositories/PostgresLegacyAuditRepository.js';
+import type { Queryable } from './db.js';
+import { PostgresLegacyAuditRepository } from './repositories/PostgresLegacyAuditRepository.js';
 
 export interface PruneOptions {
   batchSize?: number;
@@ -63,4 +64,9 @@ export class LegacyOutboundAuditPruner {
     this.log(`sulla-vault: audit cleanup paused after ${ deleted } rows; it resumes on next start`);
     return deleted;
   }
+}
+
+/** @deprecated Use `new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db), options).prune()`. */
+export function pruneLegacyOutboundAuditRows(db: Queryable, options: PruneOptions = {}): Promise<number> {
+  return new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db), options).prune();
 }
