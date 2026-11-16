@@ -3,11 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promises as dns } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
-import net from 'node:net';
 import { join } from 'node:path';
 
 import pg from 'pg';
@@ -105,308 +104,56 @@ import { BrokerRedirectPolicy } from './brokerRedirectPolicy.js';
 import { DesktopHumanBackup } from './localCrypto/DesktopHumanBackup.js';
 import type { VaultUserBackupRow } from './localCrypto/DesktopHumanBackup.js';
 import { LocalVaultCryptoProvider } from './localCrypto/LocalVaultCryptoProvider.js';
-
-const CHALLENGE_TTL_MS = 30_000;
-const CACHE_UPDATE_TTL_MS = 60_000;
-const CHALLENGE_RATE_WINDOW_MS = 60_000;
-const CHALLENGE_RATE_LIMIT = 10;
-const APPROVAL_TTL_MS = 2 * 60_000;
-const HUMAN_SESSION_TTL_MS = 15 * 60_000;
-const MAX_RESPONSE_BYTES = 1_048_576;
-const MAX_FILES_SYNC_UPLOAD_BYTES = 6 * 1024 * 1024;
-const MAX_STREAM_BYTES = 25 * 1024 * 1024;
-// Git pack transfers for a full fetch routinely exceed the API stream cap.
-const MAX_GIT_STREAM_BYTES = 4 * 1024 * 1024 * 1024;
-const MAX_CREDENTIAL_BYTES = 64 * 1024;
-const LEGACY_PREFIX = '$VAULT$';
-const SAFE_INTEGRATION_METADATA_FIELDS = new Set([
-  'account_label', 'connection_status', 'connected_at', 'last_sync_at', 'base_url', 'server_url',
-  'gateway_url', 'resource_url', 'project_id', 'provider', 'provider_id', 'model', 'workspace_id', 'region', 'plan', 'llm_access', 'client_id', 'oauth_client_id',
-  'expires_at', 'token_type', 'scope',
-]);
-const CREDENTIAL_PROPERTY_PATTERN = /(?:^|_)(?:token|key|secret|password|credential)$/i;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const BROKER_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
-const CHATGPT_AUTH_CLAIM = 'https://api.openai.com/auth';
-const CHATGPT_ACCOUNT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
-
-export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | undefined {
-  for (const token of tokens) {
-    if (typeof token !== 'string' || token.length > MAX_CREDENTIAL_BYTES) continue;
-    const parts = token.split('.');
-    if (parts.length !== 3 || !parts[1]) continue;
-    try {
-      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as unknown;
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
-      const auth = (payload as Record<string, unknown>)[CHATGPT_AUTH_CLAIM];
-      if (!auth || typeof auth !== 'object' || Array.isArray(auth)) continue;
-      const accountId = (auth as Record<string, unknown>).chatgpt_account_id;
-      if (typeof accountId === 'string' && accountId.trim() === accountId && CHATGPT_ACCOUNT_ID_PATTERN.test(accountId)) {
-        return accountId;
-      }
-    } catch { /* malformed tokens do not produce routing metadata */ }
-  }
-  return undefined;
-}
-
-function safeIntegrationMetadata(
-  source: Record<string, unknown>,
-  integrationId = '',
-): Record<string, string> {
-  const secrets = Object.entries(source)
-    .filter(([name, value]) => CREDENTIAL_PROPERTY_PATTERN.test(name) && typeof value === 'string' && value.length > 0)
-    .map(([, value]) => value as string);
-  const output: Record<string, string> = {};
-  for (const [name, value] of Object.entries(source)) {
-    if (!SAFE_INTEGRATION_METADATA_FIELDS.has(name) || typeof value !== 'string') continue;
-    if (name === 'base_url' || name === 'server_url' || name === 'gateway_url' || name === 'resource_url') {
-      try {
-        const parsed = new URL(value);
-        if (parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.protocol !== 'https:' && !(name === 'base_url' && ['ollama', 'lm-studio', 'local-server'].includes(integrationId) && parsed.protocol === 'http:'))) continue;
-        if (name === 'gateway_url') {
-          output[name] = parsed.origin;
-          continue;
-        }
-      } catch { continue; }
-    }
-    output[name] = redact(value, secrets);
-  }
-  return output;
-}
+import { BrokerAddressPolicy } from './localAuthority/BrokerAddressPolicy.js';
+import { BrokerCredentialFields } from './localAuthority/BrokerCredentialFields.js';
+import { BrokerHttpBody } from './localAuthority/BrokerHttpBody.js';
+import { LocalAuthorityCrypto } from './localAuthority/LocalAuthorityCrypto.js';
+import {
+  APPROVAL_TTL_MS, BROKER_IDENTIFIER_PATTERN, CACHE_UPDATE_TTL_MS, CHALLENGE_RATE_LIMIT, CHALLENGE_RATE_WINDOW_MS, CHALLENGE_TTL_MS,
+  CREDENTIAL_PROPERTY_PATTERN, HUMAN_SESSION_TTL_MS, MAX_CREDENTIAL_BYTES, MAX_FILES_SYNC_UPLOAD_BYTES, MAX_GIT_STREAM_BYTES,
+  MAX_RESPONSE_BYTES, MAX_STREAM_BYTES, UUID_PATTERN,
+} from './localAuthority/LocalAuthorityLimits.js';
+import type {
+  BrokerStreamSink, Challenge, HumanSession, ItemRow, LegacyIntegrationRow, PreparedBrokerRequest, StagedCacheUpdate, UnlockedKeys,
+} from './localAuthority/LocalAuthorityTypes.js';
+import { LocalVaultError } from './localAuthority/LocalVaultError.js';
+import { StreamingRedactor } from './localAuthority/StreamingRedactor.js';
+import { SullaCloudDesktopRoutePolicy } from './localAuthority/SullaCloudDesktopRoutePolicy.js';
 
 const { Pool } = pg;
 
-function sealCacheUpdate(clear: Buffer, key: Buffer, nonce: Buffer): string {
-  const cipher = createCipheriv('aes-256-gcm', key, nonce);
-  const ciphertext = Buffer.concat([cipher.update(clear), cipher.final()]);
-  const sealed = Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]);
-  ciphertext.fill(0);
-  try {
-    return sealed.toString('base64url');
-  } finally {
-    sealed.fill(0);
-  }
+export { LocalVaultError } from './localAuthority/LocalVaultError.js';
+export type { BrokerStreamSink } from './localAuthority/LocalAuthorityTypes.js';
+
+/** @deprecated use BrokerCredentialFields.extractBoundedChatgptAccountId — E9 alias, removed in final cleanup */
+export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | undefined {
+  return BrokerCredentialFields.extractBoundedChatgptAccountId(...tokens);
 }
 
-function serializeBrokerBody(body: unknown): Buffer {
-  if (Buffer.isBuffer(body)) return body;
-  if (body instanceof URLSearchParams) return Buffer.from(body.toString());
-  return Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
-}
-
-function headerValue(headers: Record<string, string>, name: string): string | undefined {
-  const key = Object.keys(headers).find(entry => entry.toLowerCase() === name);
-  return key === undefined ? undefined : headers[key];
-}
-
-/** Sets content-type once, dropping any differently-cased copy the caller sent. */
-function setContentType(headers: Record<string, string>, value: string): void {
-  for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key];
-  headers['content-type'] = value;
-}
-
-function formFromObject(body: unknown): URLSearchParams {
-  return new URLSearchParams(Object.entries(body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {})
-    .filter(([, entry]) => ['string', 'number', 'boolean'].includes(typeof entry))
-    .map(([name, entry]) => [name, String(entry)]));
-}
-
-export class LocalVaultError extends Error {
-  constructor(
-    public readonly code: string,
-    public readonly status: number,
-    message: string,
-    /** Non-secret diagnostic reason (e.g. `connect_ECONNREFUSED`) surfaced to broker callers. */
-    public readonly reason?: string,
-  ) {
-    super(message);
-    this.name = 'LocalVaultError';
-  }
-}
-
-interface Challenge {
-  callerId:    string;
-  clientNonce: string;
-  serverNonce: string;
-  expiresAt:   number;
-}
-
-interface StagedCacheUpdate {
-  masterKey:  Buffer;
-  expiresAt:  number;
-  generation: number;
-}
-
-interface HumanSession {
-  csrf:      string;
-  expiresAt: number;
-  phase:     'pre-unlock' | 'unlocked';
-  browserTarget?: BrowserFillTarget;
-}
-
-interface UnlockedKeys {
-  userId:     string;
-  publicKey:  string;
-  userKey:    Uint8Array;
-  privateKey: Uint8Array;
-  legacyVmk?: Buffer;
-}
-
-interface ItemRow {
-  id:                     string;
-  owner_user_id:          string | null;
-  collection_id:          string | null;
-  ciphertext:             EncryptedEnvelope;
-  encrypted_item_key:     EncryptedEnvelope;
-  agent_policy:           AgentPolicy;
-  revision:               number;
-  org_id?:                string | null;
-  role?:                  string | null;
-  can_use_by_agents?:     boolean | null;
-  group_can_use_by_agents?: boolean | null;
-}
-
-interface LegacyIntegrationRow {
-  source_kind:    'integration_value' | 'oauth_token';
-  value_id:       number;
-  integration_id: string;
-  account_id:     string;
-  property:       string;
-  value:          string;
-  is_default:     boolean;
-  created_at:     Date | string | null;
-  updated_at:     Date | string | null;
-}
-
-interface PreparedBrokerRequest {
-  target:     URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] };
-  headers:    Record<string, string>;
-  body:       unknown;
-  secrets:    string[];
-  generation: number;
-  maxRequestBytes: number;
-  item?:      ItemRow;
-  plaintext?: VaultItemPlaintext;
-}
-
-export interface BrokerStreamSink {
-  start(status: number, headers: Record<string, string>): void;
-  write(chunk: Buffer): boolean;
-  onceDrain(callback: () => void): void;
-  end(): void;
-  destroy(error: Error): void;
-  onAbort(callback: () => void): void;
-}
-
-class StreamingRedactor {
-  private carry = Buffer.alloc(0);
-  private readonly patterns: Buffer[];
-  private readonly maxPattern: number;
-
-  constructor(secrets: string[]) {
-    const variants = new Set<string>();
-    for (const secret of secrets) {
-      if (!secret) continue;
-      variants.add(secret);
-      variants.add(`Bearer ${ secret }`);
-      variants.add(`Bot ${ secret }`);
-      variants.add(`Token ${ secret }`);
-      variants.add(encodeURIComponent(secret));
-    }
-    this.patterns = [...variants].map(value => Buffer.from(value)).sort((a, b) => b.length - a.length);
-    this.maxPattern = Math.max(1, ...this.patterns.map(pattern => pattern.length));
-  }
-
-  transform(chunk: Buffer, final = false): Buffer {
-    const input = Buffer.concat([this.carry, chunk]);
-    const output: Buffer[] = [];
-    const stop = final ? input.length : Math.max(0, input.length - this.maxPattern + 1);
-    let index = 0;
-    while (index < stop) {
-      const match = this.patterns.find(pattern => index + pattern.length <= input.length && input.subarray(index, index + pattern.length).equals(pattern));
-      if (match) {
-        output.push(Buffer.from('[REDACTED]'));
-        index += match.length;
-      } else {
-        output.push(input.subarray(index, index + 1));
-        index += 1;
-      }
-    }
-    this.carry = final ? Buffer.alloc(0) : Buffer.from(input.subarray(index));
-    return Buffer.concat(output);
-  }
-
-  flush(): Buffer {
-    return this.transform(Buffer.alloc(0), true);
-  }
-}
-
-function allowsByoUsageCloudRequest(method: string, path: string): boolean {
-  return method === 'POST' && path === '/usage/byo-events';
-}
-
-const SULLA_CLOUD_DESKTOP_RULES: Array<[RegExp, readonly string[]]> = [
-  [/^\/devices\/(?:register|heartbeat)$/, ['POST']],
-  [/^\/desktop-channel\/tickets$/, ['POST']],
-  [/^\/desktop-sync\/[A-Za-z0-9._~-]{1,200}\/(?:vault|conversations)$/, ['PUT', 'DELETE']],
-  [/^\/cloud-runtime\/v1\/device\/(?:workflows|agents|skills|custom-agents|recipes|usage|memory|model-catalog)$/, ['PUT', 'DELETE']],
-  [/^\/cloud-runtime\/v1\/device\/use-cases$/, ['DELETE']],
-  [/^\/cloud-runtime\/v1\/device$/, ['DELETE']],
-  [/^\/cloud-chat-links$/, ['GET', 'POST']],
-  [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}$/, ['DELETE']],
-  [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/deltas$/, ['POST']],
-  [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/attachments\/[A-Za-z0-9._:~-]{1,200}$/, ['GET']],
-  [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/cloud-results$/, ['GET']],
-  [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/cloud-results\/[A-Za-z0-9_-]{1,200}\/ack$/, ['POST']],
-  [/^\/cloud-chat-links\/[A-Za-z0-9_-]{1,200}\/replies\/[A-Za-z0-9_-]{1,200}\/(?:fail|complete)$/, ['POST']],
-  [/^\/cloud-usecase-installs\/v1\/device-installs\/pending$/, ['GET']],
-  [/^\/cloud-usecase-installs\/v1\/device-installs\/[0-9a-f-]{36}\/report$/, ['POST']],
-  [/^\/cloud-vault-sync\/status$/, ['GET']],
-  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
-  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/bundle$/, ['GET']],
-  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/records$/, ['GET']],
-  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/(?:commit|pause|resume)$/, ['POST']],
-  [/^\/cloud-vault-sync\/enrollment\/state$/, ['GET']],
-  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/enrollment\/requests$/, ['GET', 'POST']],
-  [/^\/cloud-vault-sync\/vaults\/[0-9a-f-]{36}\/enrollment\/requests\/[0-9a-f-]{36}\/(?:respond|consume|confirm)$/, ['POST']],
-  [/^\/auth\/password\/device-approval\/requests$/, ['GET']],
-  [/^\/auth\/password\/device-approval\/requests\/[0-9a-f-]{36}\/respond$/, ['POST']],
-  [/^\/files-sync\/v1\/collections$/, ['GET']],
-  [/^\/files-sync\/v1\/usage$/, ['GET']],
-  [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}$/, ['PUT', 'DELETE']],
-  [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/(?:changes|keys)$/, ['GET']],
-  [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/keys\/[1-9][0-9]*$/, ['PUT']],
-  [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/chunks\/[0-9a-f]{64}$/, ['GET']],
-  [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/uploads$/, ['POST']],
-  [/^\/files-sync\/v1\/collections\/[0-9a-f-]{36}\/commit$/, ['POST']],
-  [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}$/, ['GET']],
-  [/^\/files-sync\/v1\/uploads\/[0-9a-f-]{36}\/chunks\/[0-9a-f]{64}$/, ['PUT']],
-  // Support Center (user side): tickets, feedback, uploads, consent, timeline.
-  // Remote support (supporter side): Workers enforces super-admin + accepted-by-caller on each route.
-  [/^\/super-admin\/support\/sessions$/, ['GET']],
-  [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:events|presence)$/, ['GET']],
-  [/^\/super-admin\/support\/sessions\/[A-Za-z0-9_-]{1,200}\/(?:rpc|end|extend)$/, ['POST']],
-  // Files catalog and just-in-time content stay scoped to the registered Desktop.
-  [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}$/, ['PUT']],
-  [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests$/, ['GET']],
-  [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests\/[A-Za-z0-9._~-]{1,200}\/content$/, ['PUT']],
-  [/^\/cloud-files\/v1\/catalog\/[A-Za-z0-9._~-]{1,200}\/desktop-requests\/[A-Za-z0-9._~-]{1,200}\/(?:link|fail)$/, ['POST']],
-  [/^\/shares$/, ['POST']],
-  [/^\/shares\/[A-Za-z0-9._~-]{1,200}$/, ['PATCH', 'DELETE']],
-  [/^\/shares\/[A-Za-z0-9._~-]{1,200}\/content$/, ['PUT']],
-  [/^\/sync\/(?:push|pull)$/, ['GET', 'POST']],
-  [/^\/marketplace\/(?:browse|topics|mine)$/, ['GET']],
-  [/^\/marketplace\/submit-manifest$/, ['POST']],
-  [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}$/, ['GET', 'DELETE']],
-  [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}\/bundle$/, ['PUT']],
-];
-function allowsSullaCloudDesktopRequest(method: string, path: string): boolean {
-  return allowsByoUsageCloudRequest(method, path) ||
-    SULLA_CLOUD_DESKTOP_RULES.some(([pattern, methods]) => pattern.test(path) && methods.includes(method));
-}
+// Local names for the moved helpers so the method bodies below stay verbatim (E9).
+const sealCacheUpdate = LocalAuthorityCrypto.sealCacheUpdate;
+const constantEqual = LocalAuthorityCrypto.constantEqual;
+const hmac = LocalAuthorityCrypto.hmac;
+const operationDigest = LocalAuthorityCrypto.operationDigest;
+const decryptLegacyValue = LocalAuthorityCrypto.decryptLegacyValue;
+const stableLegacyFingerprint = LocalAuthorityCrypto.stableLegacyFingerprint;
+const serializeBrokerBody = BrokerHttpBody.serializeBrokerBody;
+const headerValue = BrokerHttpBody.headerValue;
+const setContentType = BrokerHttpBody.setContentType;
+const formFromObject = BrokerHttpBody.formFromObject;
+const applyJsonPath = BrokerHttpBody.applyJsonPath;
+const streamResponseIsBodyless = BrokerHttpBody.streamResponseIsBodyless;
+const safeIntegrationMetadata = BrokerCredentialFields.safeIntegrationMetadata;
+const credentialField = BrokerCredentialFields.credentialField;
+const proxySource = BrokerCredentialFields.proxySource;
+const proxyHostMatches = BrokerCredentialFields.proxyHostMatches;
+const deriveChatgptAccountRoutingForRequest = BrokerCredentialFields.deriveChatgptAccountRoutingForRequest;
+const redact = BrokerCredentialFields.redact;
+const privateAddress = BrokerAddressPolicy.privateAddress;
+const allowsSullaCloudDesktopRequest = SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest;
 
 export const localAuthorityTestHooks = {
-  allowsByoUsageCloudRequest,
+  allowsByoUsageCloudRequest: SullaCloudDesktopRoutePolicy.allowsByoUsageCloudRequest,
   allowsSullaCloudDesktopRequest,
   credentialField,
   operationDigest,
@@ -415,172 +162,6 @@ export const localAuthorityTestHooks = {
   deriveChatgptAccountRoutingForRequest,
   StreamingRedactor,
 };
-
-function streamResponseIsBodyless(method: string, status: number, contentLength: string | string[] | undefined): boolean {
-  return method === 'HEAD' || [202, 204, 205, 304].includes(status) || contentLength === '0';
-}
-
-function constantEqual(left: string | undefined, right: string | undefined): boolean {
-  if (!left || !right) return false;
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
-function hmac(token: string, value: string): string {
-  return createHmac('sha256', token).update(value).digest('base64url');
-}
-
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${ value.map(canonical).join(',') }]`;
-  return `{${ Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => `${ JSON.stringify(key) }:${ canonical(child) }`).join(',') }}`;
-}
-
-function operationDigest(input: BrokerExecuteRequest): string {
-  return createHash('sha256').update(canonical({
-    claims: input.claims,
-    operation: input.operation,
-    ref: input.ref,
-    url: input.url,
-    method: input.method,
-    headers: input.headers ?? {},
-    body: input.body ?? null,
-    bodyEncoding: input.bodyEncoding ?? null,
-    injections: input.injections,
-    responseType: input.responseType ?? 'json',
-  })).digest('base64url');
-}
-
-function privateAddress(address: string): boolean {
-  if (net.isIPv4(address)) {
-    const [a, b] = address.split('.').map(Number);
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127) || a >= 224;
-  }
-  if (!net.isIPv6(address)) return true;
-  const value = address.toLowerCase().split('%')[0];
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(value);
-  if (mapped) return privateAddress(mapped[1]);
-  const expanded = expandIpv6(value);
-  if (!expanded) return true;
-  const first = expanded[0];
-  const first32 = (BigInt(expanded[0]) << 16n) | BigInt(expanded[1]);
-  // Accept only global-unicast 2000::/3 and reject documentation space.
-  return (first & 0xe000) !== 0x2000 || first32 === 0x20010db8n;
-}
-
-function expandIpv6(value: string): number[] | null {
-  const halves = value.split('::');
-  if (halves.length > 2) return null;
-  const parse = (part: string): number[] | null => {
-    if (!part) return [];
-    const output: number[] = [];
-    for (const token of part.split(':')) {
-      if (token.includes('.')) {
-        if (!net.isIPv4(token)) return null;
-        const bytes = token.split('.').map(Number);
-        output.push((bytes[0] << 8) | bytes[1], (bytes[2] << 8) | bytes[3]);
-      } else {
-        if (!/^[0-9a-f]{1,4}$/i.test(token)) return null;
-        output.push(Number.parseInt(token, 16));
-      }
-    }
-    return output;
-  };
-  const left = parse(halves[0]);
-  const right = parse(halves[1] ?? '');
-  if (!left || !right) return null;
-  const zeros = 8 - left.length - right.length;
-  if ((halves.length === 1 && zeros !== 0) || zeros < 0) return null;
-  return [...left, ...Array(zeros).fill(0), ...right];
-}
-
-function credentialField(item: VaultItemPlaintext, field: string): string | undefined {
-  return item.integration?.properties?.[field] ??
-    (field === 'username' ? item.username : undefined) ??
-    (['password', 'api_key', 'bearer_token', 'api_token', 'access_token', 'auth_token', 'token'].includes(field)
-      ? item.password
-      : undefined) ??
-    item.fields?.find(candidate => candidate.name === field)?.value ??
-    // Custom fields are usable by label at the same autofill level as the password; lowest priority.
-    item.customFields?.find(candidate => candidate.label === field && typeof candidate.value === 'string')?.value;
-}
-
-function proxySource(item: VaultItemPlaintext, source: string): string | undefined {
-  if (source === 'password') return item.password;
-  if (source === 'username') return item.username;
-  if (!source.startsWith('custom:')) return undefined;
-  const name = source.slice(7);
-  return item.fields?.find(candidate => candidate.name === name)?.value ??
-    item.customFields?.find(candidate => candidate.label === name)?.value;
-}
-
-function proxyHostMatches(host: string, allowed: string): boolean {
-  const normalized = allowed.toLowerCase().replace(/^\*\./, '');
-  return host === normalized || (allowed.startsWith('*.') && host.endsWith(`.${ normalized }`));
-}
-
-function deriveChatgptAccountRoutingForRequest(
-  input: Pick<BrokerExecuteRequest, 'operation' | 'ref'>,
-  plaintext: VaultItemPlaintext,
-): void {
-  if (input.operation !== 'provider.cli' || input.ref.integrationId !== 'codex') return;
-  const properties = plaintext.integration?.properties;
-  if (!properties || properties.chatgpt_account_id) return;
-  const accountId = extractBoundedChatgptAccountId(properties.id_token, properties.access_token);
-  if (accountId) properties.chatgpt_account_id = accountId;
-}
-
-function redact(value: string, secrets: string[]): string {
-  let next = value;
-  for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
-    next = next.split(secret).join('[REDACTED]');
-  }
-  return next;
-}
-
-function decryptLegacyValue(value: string, key: Buffer | undefined): string {
-  if (!value.startsWith(LEGACY_PREFIX)) return value;
-  if (!key) throw new LocalVaultError('migration_failed', 409, 'Legacy encrypted rows require the migration key');
-  const packed = Buffer.from(value.slice(LEGACY_PREFIX.length), 'base64');
-  if (packed.byteLength < 28) throw new LocalVaultError('migration_failed', 409, 'Legacy ciphertext is truncated');
-  const decipher = createDecipheriv('aes-256-gcm', key, packed.subarray(0, 12));
-  decipher.setAuthTag(packed.subarray(12, 28));
-  return Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]).toString('utf8');
-}
-
-function stableLegacyFingerprint(rows: LegacyIntegrationRow[]): string {
-  const hash = createHash('sha256');
-  for (const row of rows) {
-    hash.update(JSON.stringify([
-      row.value_id, row.integration_id, row.account_id, row.property, row.value,
-      row.is_default, row.created_at, row.updated_at, row.source_kind,
-    ]));
-    hash.update('\n');
-  }
-  return hash.digest('base64url');
-}
-
-function applyJsonPath(root: unknown, path: string, value: string): unknown {
-  if (!path || !/^[A-Za-z0-9_.-]+$/.test(path)) throw new LocalVaultError('invalid_injection', 400, 'Invalid JSON injection path');
-  const output = root && typeof root === 'object' && !Array.isArray(root) ? structuredClone(root) as Record<string, unknown> : {};
-  const parts = path.split('.');
-  if (parts.some(part => ['__proto__', 'prototype', 'constructor'].includes(part))) {
-    throw new LocalVaultError('invalid_injection', 400, 'Unsafe JSON injection path');
-  }
-  let current = output;
-  for (const part of parts.slice(0, -1)) {
-    const child = current[part];
-    current[part] = child && typeof child === 'object' && !Array.isArray(child) ? child : {};
-    current = current[part] as Record<string, unknown>;
-  }
-  current[parts.at(-1)!] = value;
-  return output;
-}
 
 export class LocalVaultAuthority implements FilesAuthorityIdentityLease {
   private readonly filesTransport = new FilesTransportEnvelopeService();
