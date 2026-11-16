@@ -24,6 +24,10 @@ export const MAX_EMBEDDING_BATCH_CHARS = CHUNK_CHARS;
 // Keep a worker's synchronous embedding/SQL burst short, then yield so queued
 // uploads and health checks can make progress even with a large persisted backlog.
 const INDEX_JOBS_PER_TURN = 10;
+// One statement claims a batch (one commit instead of one per job); a few jobs of the batch
+// extract and commit side by side, so one job's fsync or file read does not idle the queue.
+const INDEX_CLAIM_BATCH = 16;
+const INDEX_JOB_CONCURRENCY = 4;
 
 export function* chunks(text:string):Generator<string> {
   for (let start = 0; start < text.length; start += CHUNK_CHARS - CHUNK_OVERLAP) {
@@ -112,8 +116,8 @@ export class IndexingQueue {
     this.running = true;
     try {
       let processed = 0;
-      while (!this.stopped && await this.processOne()) {
-        if (++processed >= INDEX_JOBS_PER_TURN) {
+      for (let claimed = await this.processOne(); !this.stopped && claimed; claimed = await this.processOne()) {
+        if ((processed += claimed) >= INDEX_JOBS_PER_TURN) {
           processed = 0;
           await new Promise<void>(resolve => setImmediate(resolve));
         }
@@ -127,20 +131,37 @@ export class IndexingQueue {
     else await jobs.discardStale(job.file_id, job.version_id);
   }
 
-  private async processOne():Promise<boolean> {
-    const job = await this.jobs.claimNext(); if (!job) return false;
+  /**
+   * Claims a batch of due jobs (marking their files `indexing` in the same statement), reads
+   * their eligibility without locks and indexes them a few at a time. Returns how many it claimed.
+   */
+  private async processOne():Promise<number> {
+    const batch = await this.jobs.claimBatch(INDEX_CLAIM_BATCH); if (!batch.length) return 0;
+    const snapshots = await this.jobs.readEligibility([...new Set(batch.map(job => String(job.file_id)))]);
+    let next = 0;
+    const worker = async() => { while (next < batch.length) { const job = batch[next++]; await this.processJob(job, snapshots.get(String(job.file_id))) } };
+    await Promise.all(Array.from({ length: Math.min(INDEX_JOB_CONCURRENCY, batch.length) }, worker));
+    return batch.length;
+  }
+
+  /**
+   * Indexes one claimed job. The unlocked snapshot only decides whether to extract: no derived
+   * text is written until index-content-commit re-reads eligibility under the file and collection
+   * row locks. A job the snapshot calls stale or ineligible is re-checked under those locks (it may
+   * have been restored meanwhile) and discarded only if the locked read agrees.
+   */
+  private async processJob(job:ClaimedIndexJob, snapshot:IndexEligibility | undefined):Promise<void> {
     this.activeJob = String(job.file_id);
     let source:{ path: string; cleanup?: () => Promise<void> } | undefined;
     try {
-      const file = await this.transactions.run('index-eligibility', async client => {
+      const file = eligibility(snapshot, job.version_id) === 'current' ? snapshot : await this.transactions.run('index-eligibility', async client => {
         const jobs = this.jobs.on(client);
         const current = await jobs.lockEligibility(job.file_id);
         const state = eligibility(current, job.version_id);
         if (state !== 'current') { await this.discard(jobs, job, state); return undefined }
         return current;
       });
-      if (!file) return true;
-      await this.jobs.markFileIndexing(job.file_id, job.version_id);
+      if (!file) return;
       source = await this.source(file);
       const extracted = await this.extractor.extract(source.path, file.mime);
       // Capability lookups acquire through the pool; embeddings can be CPU-heavy. Stage
@@ -175,7 +196,6 @@ export class IndexingQueue {
       this.activeJob = null;
       try { await source?.cleanup?.() } catch { console.warn('[SullaFiles] index source cleanup failed') }
     }
-    return true;
   }
 
   /** Re-queues a failed job (or fails it after three attempts) while this worker still owns it. */

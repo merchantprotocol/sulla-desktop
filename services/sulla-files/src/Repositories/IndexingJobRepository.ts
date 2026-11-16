@@ -46,18 +46,43 @@ export class IndexingJobRepository {
    */
   async lockEligibility(fileId:string):Promise<IndexEligibility | undefined> {
     const locked = (await this.db.query('SELECT collection_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0];
-    if (locked) await this.db.query('SELECT id FROM collections WHERE id=$1 FOR UPDATE', [locked.collection_id]);
+    // FOR SHARE, not FOR UPDATE: it still waits for and blocks any change to the collection row
+    // (system area, publication), but it does not conflict with the FOR KEY SHARE lock that every
+    // file/version/chunk INSERT takes on its collection through the foreign key. FOR UPDATE made
+    // each indexing pass queue behind, and then block, every write into the collection.
+    if (locked) await this.db.query('SELECT id FROM collections WHERE id=$1 FOR SHARE', [locked.collection_id]);
     return (await this.db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,
     EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
     FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=$1`, [fileId])).rows[0];
   }
 
-  /** Claims the oldest due pending job; concurrent workers skip rows another worker holds. */
-  async claimNext():Promise<ClaimedIndexJob | undefined> {
-    const claimed = await this.db.query(`UPDATE file_index_jobs SET status='indexing',attempts=attempts+1,started_at=NOW(),last_error=NULL,reason_code='indexing',reason='Local extraction is in progress.'
-      WHERE version_id=(SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
-      RETURNING file_id,version_id,attempts`);
-    return claimed.rows[0];
+  /**
+   * Claims up to `limit` of the oldest due pending jobs (concurrent workers skip rows another
+   * holds) and marks each claimed file `indexing`, in one statement: one commit per batch.
+   */
+  async claimBatch(limit:number):Promise<ClaimedIndexJob[]> {
+    const claimed = await this.db.query(`WITH picked AS (
+        SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $1
+      ), claimed AS (
+        UPDATE file_index_jobs j SET status='indexing',attempts=j.attempts+1,started_at=NOW(),last_error=NULL,reason_code='indexing',reason='Local extraction is in progress.'
+        FROM picked WHERE j.version_id=picked.version_id RETURNING j.file_id,j.version_id,j.attempts,j.created_at
+      ), marked AS (
+        UPDATE files f SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.'
+        FROM claimed WHERE f.id=claimed.file_id AND f.current_version_id=claimed.version_id RETURNING f.id
+      )
+      SELECT file_id,version_id,attempts FROM claimed ORDER BY created_at`, [limit]);
+    return claimed.rows;
+  }
+
+  /**
+   * Eligibility of several files read WITHOUT row locks, to decide what to extract. Never enough
+   * to write derived text: the commit transaction re-reads it under lockEligibility first.
+   */
+  async readEligibility(fileIds:string[]):Promise<Map<string, IndexEligibility>> {
+    const rows = await this.db.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.current_version_id,f.deleted_at,c.system_area,
+    EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) protected
+    FROM files f JOIN collections c ON c.id=f.collection_id WHERE f.id=ANY($1::uuid[])`, [fileIds]);
+    return new Map(rows.rows.map((row:IndexEligibility) => [String(row.id), row]));
   }
 
   /** Manual re-index: drops the version's chunks, re-queues its job from zero attempts and resets the file. */
@@ -81,10 +106,6 @@ export class IndexingJobRepository {
   async discardStale(fileId:string, versionId:string):Promise<void> {
     await this.db.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [fileId, versionId]);
     await this.db.query('DELETE FROM file_index_jobs WHERE version_id=$1', [versionId]);
-  }
-
-  async markFileIndexing(fileId:string, versionId:string):Promise<void> {
-    await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [fileId, versionId]);
   }
 
   async lockJob(versionId:string):Promise<{ status:string; attempts:number } | undefined> {

@@ -14,8 +14,8 @@ export class StoredNamespaceConflict extends Error { status = 409 }
  *
  * Every stored namespace mutation takes the transaction-scoped collection lock before any
  * file/folder row lock. PostgreSQL cannot express the file-versus-folder prefix invariant as
- * a normal unique constraint, so the shared lock is the serialization point for checking and
- * changing paths.
+ * a normal unique constraint, so the collection lock (shared for one path, exclusive for broad
+ * changes) plus per-path slot locks are the serialization point for checking and changing paths.
  */
 export class StoredNamespaceGuard {
   constructor(private readonly repository:StoredNamespaceRepository) {}
@@ -25,7 +25,9 @@ export class StoredNamespaceGuard {
     return parts.slice(0, -1).map((_part, index) => parts.slice(0, index + 1).join('/'));
   }
 
-  async lock(client:pg.PoolClient, collectionId:string, scopedPath?:string):Promise<void> {
+  async lock(client:pg.PoolClient, rawCollectionId:string, scopedPath?:string):Promise<void> {
+    // The trigger builds its key from the uuid's canonical (lowercase) text; match it.
+    const collectionId = rawCollectionId.toLowerCase();
     const collectionKey = `stored-namespace:${ collectionId }`;
     if (scopedPath === undefined) {
       // Broad namespace edits (rename/move/delete, sync reconciliation) retain the
@@ -33,19 +35,21 @@ export class StoredNamespaceGuard {
       await this.repository.lockExclusive(client, collectionKey);
       return;
     }
-    // A scoped create takes the collection gate exclusively. The database's
-    // namespace trigger also takes this advisory key exclusively while inserting
-    // file/folder rows, so taking it shared here would make concurrent writers
-    // deadlock while upgrading their transaction locks in the trigger. Ancestor
-    // file slots are shared; the target slot is exclusive. This catches exact-path
-    // and file-vs-folder prefix races even for deep paths.
-    // Every transaction acquires the same sorted set of ancestor/target keys.
-    await this.repository.lockExclusive(client, collectionKey);
-    const ancestors = new Set(StoredNamespaceGuard.parentPaths(scopedPath));
-    const paths = [...new Set([...ancestors, scopedPath])].sort();
-    for (const path of paths) {
-      await this.repository.lockPath(client, `stored-namespace-path:${ collectionId }:${ path }`, path !== scopedPath);
-    }
+    // A scoped create shares the collection gate with other scoped creates and excludes broad
+    // namespace mutations and unscoped writers (both take it exclusively). Ancestor slots are
+    // shared and the target slot is exclusive, which catches exact-path and file-vs-folder
+    // prefix races at any depth while siblings in one directory proceed together. Every
+    // transaction acquires its sorted ancestor/target keys in the same order.
+    //
+    // The namespace trigger (migrations 027/067) would otherwise take the collection key
+    // exclusively for every row inserted here, upgrading this shared lock and deadlocking two
+    // concurrent creates. Declaring the scope tells the trigger these locks are already held for
+    // the target row and its parent folders, so it takes none; any other row it still gates
+    // with the exclusive key. Never insert or move a file/folder outside the declared scope
+    // after a scoped lock: lock broadly (no path) for that transaction instead.
+    // One round trip (migration 067's files_lock_namespace_scope) takes the collection key
+    // shared, the ancestor slots shared and the target slot exclusive, then declares the scope.
+    await this.repository.lockScope(client, collectionId, scopedPath);
   }
 
   async assertFilePath(client:pg.PoolClient, collectionId:string, path:string, sameFileId?:string):Promise<void> {
