@@ -8,7 +8,7 @@ import {
   legacyProviderFailure,
 } from './failures';
 import { InfrastructureFailure, ProviderBridgeDeniedFailure, isProviderBridgeDenial } from './providerRecovery';
-import { createVaultGate, type VaultGate } from './vaultGate';
+import { VaultAvailabilityGate, type VaultGate } from './vaultGate';
 
 export const CLI_RECOVERY_MAX_ATTEMPTS = 2;
 export const CLI_RECOVERY_BACKOFF_MS = 750;
@@ -197,7 +197,7 @@ export async function runWithCliFaultRecovery<T>(
   },
 ): Promise<T> {
   const maxAttempts = options.maxAttempts ?? CLI_RECOVERY_MAX_ATTEMPTS;
-  const vaultGate = options.vaultGate ?? createVaultGate();
+  const vaultGate = options.vaultGate ?? new VaultAvailabilityGate();
   let lastFault: CliFaultError | undefined;
   let vaultWaited = false;
 
