@@ -66,11 +66,13 @@ export class FuseFileRoutes {
         // creating a file where one was deleted failed with 'A file already occupies ...'. Revive the
         // trashed row instead (insertVersion un-deletes it and appends a version; history is kept).
         const trashed = await this.writes.lockTrashedAt(client, collectionId, filePath);
-        return this.versions.insert(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
+        const file = await this.versions.insert(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
           mime: request.header('content-type') ?? 'application/octet-stream', bytes, staged, actor,
           createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
+        await this.audit.record(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status},client);
+        return file;
       });
-      await this.audit.record(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
+      response.status(201).json(file);
     } catch (error) { next(error) } });
     app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
       const file = await this.access.fileRow(request.params.id); const nextPath = cleanPath(request.body.path, false);
@@ -98,8 +100,9 @@ export class FuseFileRoutes {
       await this.transactions.run('fuse-mkdir', async client => {
         await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
         await this.writes.describeNewFolders(client,collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription);
+        await this.audit.record(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription},client);
       });
-      await this.audit.record(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
+      response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
     } catch(error){next(error)} });
     app.patch('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
       const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);

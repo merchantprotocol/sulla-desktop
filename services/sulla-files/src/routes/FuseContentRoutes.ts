@@ -113,11 +113,12 @@ export class FuseContentRoutes {
           await lockStoredNamespace(client,file.collection_id,file.path);
           const current=await this.access.requireFile(request,file.id,'edit',client);
           if(current.current_version_id!==file.current_version_id||current.path!==file.path||current.collection_id!==file.collection_id) throw new HttpError(409,'Files mount version changed');
-          return commitStreamedUpload(client,uploadInput,streamed);
+          const result=await commitStreamedUpload(client,uploadInput,streamed);
+          await this.audit.record(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status},client);
+          return result;
         });
         await completeUploadIntent(this.db,uploadId).catch(()=>undefined);
         const hash=result.source_hash;
-        await this.audit.record(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status});
         response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',hash);
         response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:hash,mtimeMs:Date.now()});
       } catch(error) { next(error) }
@@ -129,7 +130,6 @@ export class FuseContentRoutes {
       const written = await this.contentWrite(request, request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer))
         .catch(error => { if (ContentReadFailureLog.isServerFailure(error)) this.contentReadFailures.report(error, { route: 'fuse-write', fileId: request.params.id, versionId: match }); throw error });
       const result = written.result;
-      if (!written.replayed) await this.audit.record(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
       if(written.merged) response.setHeader('X-Sulla-Merged','1');
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',written.sourceHash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:written.sourceHash,mtimeMs:Date.now()});
@@ -159,10 +159,11 @@ export class FuseContentRoutes {
           actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
         if(saved.document) await this.texts.save(client,target.id,result.current_version_id,saved.document);
         await this.writes.trash(client,source.id);
+        await this.audit.record(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id},client);
         return result;
       });
       if(saved.document)this.live.adopt(request,target.id,saved.document);
-      const nextHash=staged.sourceHash; await this.audit.record(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
+      const nextHash=staged.sourceHash;
       if(saved.merged) response.setHeader('X-Sulla-Merged','1'); response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
     } catch(error){next(error)} });
@@ -200,6 +201,7 @@ export class FuseContentRoutes {
           bytes: saved.bytes, staged, actor, createdByType: actor.agentId ? 'agent' : 'agent-run', createdById: actor.agentId ?? actor.jobId ?? actor.userId,
           message: 'Updated through the Files mount', baseVersionId: file.current_version_id });
         if (saved.document) await this.texts.save(client, file.id, result.current_version_id, saved.document);
+        await this.audit.record(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status},client);
         return result;
       });
       if (outcome) {

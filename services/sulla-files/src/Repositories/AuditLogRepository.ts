@@ -14,8 +14,8 @@ export interface AuditLogRow {
 export class AuditLogRepository {
   constructor(private readonly db:Pick<pg.Pool, 'query'>) {}
 
-  async insert(row:AuditLogRow):Promise<void> {
-    await this.db.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,org_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+  async insert(row:AuditLogRow, client?:pg.PoolClient):Promise<void> {
+    await (client ?? this.db).query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,org_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       [row.whoType, row.whoId, row.deviceOrRunId, row.fileId, row.versionId, row.action, row.orgId, row.details]);
   }
 }
