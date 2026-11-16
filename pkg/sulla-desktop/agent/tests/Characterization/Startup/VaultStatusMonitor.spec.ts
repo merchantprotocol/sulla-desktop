@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@pkg/utils/logging', () => ({ default: { sulla: { log: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } }));
 
+import { VaultMigrationRetry } from '../../../../main/startup/VaultMigrationRetry';
 import { VaultStatusMonitor, type VaultStatusLike } from '../../../../main/startup/VaultStatusMonitor';
 
 class FakeVaultClient {
@@ -17,6 +18,7 @@ class FakeVaultClient {
   migrateCalls = 0;
   readonly statuses: VaultStatusLike[] = [];
   migrationGate: Promise<void> = Promise.resolve();
+  migrateError: Error | undefined;
 
   async status(): Promise<VaultStatusLike> {
     this.statusCalls++;
@@ -26,6 +28,7 @@ class FakeVaultClient {
   async migrate(): Promise<unknown> {
     this.migrateCalls++;
     await this.migrationGate;
+    if (this.migrateError) throw this.migrateError;
     return {};
   }
 }
@@ -38,18 +41,19 @@ class Harness {
   cacheRefreshed = true;
   cacheRefreshes = 0;
 
-  monitor(): VaultStatusMonitor {
+  monitor(retry?: VaultMigrationRetry): VaultStatusMonitor {
     return new VaultStatusMonitor({
       client:                 async() => this.client,
       lifecycleVaultUnlocked: () => this.lifecycleUnlocked,
       refreshMasterCache:     async() => { this.cacheRefreshes++; return this.cacheRefreshed },
       publish:                async(unlocked) => { this.published.push(unlocked) },
       hasActiveVaultView:     () => this.activeView,
-    });
+    }, 1_000, retry);
   }
 }
 
 const unlocked = (extra: Partial<VaultStatusLike> = {}): VaultStatusLike => ({ unlocked: true, state: 'unlocked', ...extra });
+const failed = (): VaultStatusLike => ({ unlocked: false, state: 'migration_failed' });
 const locked = (extra: Partial<VaultStatusLike> = {}): VaultStatusLike => ({ unlocked: false, state: 'locked', ...extra });
 
 afterEach(() => { vi.useRealTimers() });
@@ -130,6 +134,75 @@ describe('VaultStatusMonitor.refresh', () => {
     await monitor.refresh();
 
     expect(h.client.statusCalls).toBe(2);
+  });
+});
+
+// risk: data accuracy — a transient database error during the legacy migration must not strand the vault in migration_failed
+describe('VaultStatusMonitor failed-migration retry', () => {
+  it('retries a failed migration once its backoff is due, then re-reads status and publishes', async() => {
+    const h = new Harness();
+    let now = 0;
+    h.client.statuses.push(failed(), failed(), unlocked());
+    const monitor = h.monitor(new VaultMigrationRetry([5_000, 15_000, 45_000], () => now));
+
+    await monitor.refresh();
+    expect(h.client.migrateCalls).toBe(0); // not before the first delay
+
+    now = 5_000;
+    const status = await monitor.refresh();
+
+    expect(h.client.migrateCalls).toBe(1);
+    expect(status.unlocked).toBe(true);
+    expect(h.published).toEqual([true]);
+  });
+
+  it('stops after three spaced attempts and never throws when every retry fails', async() => {
+    const h = new Harness();
+    let now = 0;
+    h.client.statuses.push(failed());
+    h.client.migrateError = new Error('connect ECONNREFUSED');
+    const monitor = h.monitor(new VaultMigrationRetry([5_000, 15_000, 45_000], () => now));
+    const callsAt = async(time: number) => { now = time; await monitor.refresh(); return h.client.migrateCalls };
+
+    expect(await callsAt(0)).toBe(0);
+    expect(await callsAt(5_000)).toBe(1);
+    expect(await callsAt(5_000)).toBe(1); // a second refresh in the same instant does not retry again
+    expect(await callsAt(19_999)).toBe(1);
+    expect(await callsAt(20_000)).toBe(2);
+    expect(await callsAt(64_999)).toBe(2);
+    expect(await callsAt(65_000)).toBe(3);
+    expect(await callsAt(10_000_000)).toBe(3); // budget spent for this process
+  });
+
+  it('retries while polling only after the first delay, not on every tick', async() => {
+    vi.useFakeTimers();
+    const h = new Harness();
+    h.client.statuses.push(failed());
+    h.client.migrateError = new Error('connect ETIMEDOUT');
+    const monitor = h.monitor();
+
+    monitor.startPolling();
+    await vi.advanceTimersByTimeAsync(5_000); // first poll arms the backoff at t=1s; due at t=6s
+    expect(h.client.migrateCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(h.client.migrateCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.client.migrateCalls).toBe(1);
+    h.activeView = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+
+  it('does not retry a vault that is locked or unlocked', async() => {
+    const h = new Harness();
+    let now = 0;
+    h.client.statuses.push(locked());
+    const monitor = h.monitor(new VaultMigrationRetry([5_000], () => now));
+
+    await monitor.refresh();
+    now = 1_000_000;
+    await monitor.refresh();
+
+    expect(h.client.migrateCalls).toBe(0);
   });
 });
 
