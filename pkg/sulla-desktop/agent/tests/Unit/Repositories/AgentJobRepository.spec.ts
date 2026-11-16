@@ -6,6 +6,7 @@ import { PostgresConnection } from '@sulla/foundation/postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AgentJobRepository } from '../../../app/Repositories/AgentJobRepository';
+import { AgentJobRetentionRepository } from '../../../app/Repositories/AgentJobRetentionRepository';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 import { TestDatabase } from '../../Support/TestDatabase';
 import { up as normalizeTasks } from '../../../database/migrations/0155_normalize_agent_job_tasks';
@@ -16,6 +17,7 @@ dbDescribe('AgentJobRepository', () => {
   const database = new TestDatabase();
   let queryCount = 0;
   let repository: AgentJobRepository;
+  let retention: AgentJobRetentionRepository;
 
   beforeAll(async() => {
     await database.initialize();
@@ -25,6 +27,7 @@ dbDescribe('AgentJobRepository', () => {
       return { rows, rowCount: rows.length };
     } });
     repository = new AgentJobRepository(connection);
+    retention = new AgentJobRetentionRepository(connection);
   }, 60_000);
   afterAll(async() => database.dispose());
 
@@ -443,11 +446,11 @@ dbDescribe('AgentJobRepository', () => {
     await database.query(`INSERT INTO agent_task_waits (job_id, task_index, wake_at, reason, state) VALUES ($1, 0, now(), 'x', 'cancelled')`, [eligible.jobId]);
     await database.query(`INSERT INTO agent_stranded_episodes (manager_job_id, manager_task_index, state_key, parent_channel, parent_thread_id, label, reason) VALUES ($1, 0, 'state', 'sulla-desktop', 'parent', 'lane', 'x')`, [eligible.jobId]);
 
-    expect(await repository.deleteExpiredBatch(24 * 60 * 60 * 1000, 1)).toBe(1);
+    expect(await retention.deleteExpiredBatch(24 * 60 * 60 * 1000, 1)).toBe(1);
     expect(await database.query(`SELECT job_id FROM agent_jobs WHERE job_id = ANY($1::text[]) ORDER BY job_id`, [[eligible.jobId, secondEligible.jobId, live.jobId, undelivered.jobId, parked.jobId]])).toEqual([
       expect.objectContaining({ job_id: secondEligible.jobId }), expect.objectContaining({ job_id: live.jobId }), expect.objectContaining({ job_id: parked.jobId }), expect.objectContaining({ job_id: undelivered.jobId }),
     ]);
-    expect(await repository.deleteExpiredBatch(24 * 60 * 60 * 1000, 1)).toBe(1);
+    expect(await retention.deleteExpiredBatch(24 * 60 * 60 * 1000, 1)).toBe(1);
     for (const [table, column] of [
       ['agent_job_messages', 'job_id'], ['agent_job_checkins', 'job_id'],
       ['agent_job_result_history', 'job_id'], ['agent_job_task_reopens', 'job_id'],
@@ -476,7 +479,7 @@ dbDescribe('AgentJobRepository', () => {
     await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '25 hours' WHERE job_id = ANY($1::text[])`, [[nothingPending.jobId, pendingRecent.jobId]]);
     await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '8 days' WHERE job_id = $1`, [pendingAbandoned.jobId]);
 
-    expect(await repository.drainExpired({ batchSize: 1, maxBatches: 5, pauseMs: 0 })).toBe(2);
+    expect(await retention.drainExpired({ batchSize: 1, maxBatches: 5, pauseMs: 0 })).toBe(2);
     const left = await database.query(`SELECT job_id FROM agent_jobs WHERE job_id = ANY($1::text[])`, [[nothingPending.jobId, pendingRecent.jobId, pendingAbandoned.jobId]]);
     expect(left.map((row: { job_id: string }) => row.job_id)).toEqual([pendingRecent.jobId]);
   });
