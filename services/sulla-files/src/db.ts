@@ -47,7 +47,7 @@ export class FilesDatabase {
   async connectOptional(url?:string):Promise<pg.Pool | undefined> { if (!url) return undefined; return this.connect(url) }
 }
 
-// Function exports kept for index.ts, app.ts, localManager.ts and specs (outside this slice).
+// Function exports kept for index.ts, app.ts and specs (outside this slice).
 export function filesPoolMax(value = process.env.SULLA_FILES_DB_POOL_MAX):number { return FilesDatabase.poolMax(value) }
 export function connect(url:string, max = filesPoolMax(), startup = new StartupDatabaseWait({ name: 'SullaFiles' })):Promise<pg.Pool> {
   return new FilesDatabase().connect(url, max, startup);

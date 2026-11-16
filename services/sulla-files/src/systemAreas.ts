@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-// Delegating shims for callers outside the E5 S5 slice (index.ts, app.ts, localManager.ts). The
+// Delegating shims for callers outside the E5 S5 slice (index.ts, app.ts, TrackedRootCatalog.ts). The
 // provisioning is Services/SystemAreaProvisioner.ts and its SQL Repositories/SystemAreaRepository.ts.
 import { TransactionRunner } from './FilesTransaction.js';
 import { SystemAreaRepository } from './Repositories/SystemAreaRepository.js';
