@@ -13,12 +13,12 @@ export function deriveCapabilitySigningKey(secret:string | Buffer):Buffer { retu
 export function issueCapabilityToken(input:{ sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; thread_id?: string; device_id?: string; collection_id?: string; scopes: string[] }, key:string | Buffer):string {
   const now = Math.floor(Date.now() / 1_000);
   const header = encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = encode(JSON.stringify({ ...input, v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID() }));
+  const payload = encode(JSON.stringify({ ...input, v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now - 300, exp: now + 300, jti: crypto.randomUUID() }));
   const signature = crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url');
 
   return `${ header }.${ payload }.${ signature }`;
 }
-export function verifyCapabilityToken(token:string | undefined, key:string | Buffer, nowSeconds = Math.floor(Date.now() / 1_000), toleranceSeconds = 60):CapabilityClaims {
+export function verifyCapabilityToken(token:string | undefined, key:string | Buffer, nowSeconds = Math.floor(Date.now() / 1_000), toleranceSeconds = 300):CapabilityClaims {
   if (!token) throw new Error('Missing capability token');
   const [header, payload, signature, extra] = token.split('.');
   if (!header || !payload || !signature || extra) throw new Error('Malformed capability token');
@@ -28,8 +28,8 @@ export function verifyCapabilityToken(token:string | undefined, key:string | Buf
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as CapabilityClaims;
   if (!Number.isFinite(toleranceSeconds) || toleranceSeconds < 0 || toleranceSeconds > 300) throw new RangeError('clock tolerance must be between 0 and 300 seconds');
   if (claims.v !== 1 || claims.aud !== 'sulla-tools' || !Number.isFinite(claims.exp) || !claims.sub) throw new Error('Invalid capability claims');
-  if (claims.exp + toleranceSeconds < nowSeconds) {
-    const reason = `Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds ${toleranceSeconds}s tolerance`;
+  if (claims.exp + 60 < nowSeconds) {
+    const reason = `Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds 60s tolerance`;
     console.warn(`[auth] Files capability rejected: ${reason}`);
     throw new Error(reason);
   }

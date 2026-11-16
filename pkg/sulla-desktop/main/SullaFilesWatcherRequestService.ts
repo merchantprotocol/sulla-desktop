@@ -86,7 +86,7 @@ export class SullaFilesWatcherRequestService {
       sub: userId, device_id: deviceId, scopes,
       agent_id: context.agentId, job_id: context.jobId, thread_id: context.threadId,
       ...(collectionId ? { collection_id: collectionId } : {}),
-      v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now, exp: now + 300, jti: crypto.randomUUID(),
+      v: 1, iss: 'sulla-files', aud: 'sulla-tools', iat: now - 300, exp: now + 300, jti: crypto.randomUUID(),
     }));
     return `${ header }.${ payload }.${ crypto.createHmac('sha256', key).update(`${ header }.${ payload }`).digest('base64url') }`;
   }

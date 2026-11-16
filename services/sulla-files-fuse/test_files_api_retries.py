@@ -3,11 +3,31 @@
 import errno
 import json
 import unittest
+from unittest.mock import patch
 
 from test_directory_paging import load_adapter
 
 
 class FilesApiRetryTests(unittest.TestCase):
+    # risk: authentication availability — a just-rotated capability must not make a user write fail.
+    def test_retries_401_after_rereading_rotated_token_until_request_succeeds(self):
+        adapter, _ = load_adapter()
+        api = adapter.FilesApi("http://files", "/unused")
+        calls = []
+
+        def send(path, method, body, headers):
+            calls.append(1)
+            if len(calls) < 3:
+                error = OSError(errno.EACCES, "unauthorized")
+                error.status = 401
+                raise error
+            return 200, {}, b"ok"
+
+        api._send = send
+        with patch.object(adapter.time, "sleep"):
+            self.assertEqual(api._request("/v1/fuse/files?path=a/x", "POST", b"x")[2], b"ok")
+        self.assertEqual(len(calls), 3)
+
     # risk: permission and file-size failures must preserve errno instead of collapsing into generic EIO.
     def test_maps_http_permission_and_size_errors_to_specific_errno(self):
         adapter, _ = load_adapter()
