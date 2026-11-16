@@ -28,7 +28,7 @@ export class MemorySyncKeyWrap {
     try { return new Uint8Array(await this.crypto.subtle.decrypt({ name: 'AES-GCM', iv: packed.subarray(0, 12), additionalData: this.aad(userId), tagLength: 128 }, aes, packed.subarray(12))); } catch { throw new Error('memory_key_unwrap_failed'); }
   }
 
-  private aad(userId: string): Uint8Array {
+  private aad(userId: string) {
     return this.enc.encode(`${ MemorySyncKeyWrap.AAD_PREFIX }|${ userId }`);
   }
 }
