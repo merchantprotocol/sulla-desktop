@@ -70,11 +70,7 @@ describe.skipIf(!databaseUrl)('tracked FUSE mount (real Postgres + temp folder)'
   });
 
   // risk: data accuracy — a write against the current version replaces the bytes and records a new version.
-  // KNOWN MAIN BUG (not from this refactor): since #2050 safeFilesystem's replaceVerified publishes the
-  // staged bytes with renamePinned, which is the renameat2 RENAME_NOREPLACE helper. The target always
-  // exists at that point, so the rename fails EEXIST (17) and every write-through lands as a conflict.
-  // Fixed separately by PR "fix(files): replaceVerified must replace its verified target"; flip to `it` then.
-  it.fails('writes through to the source and records a new Files version', async() => {
+  it('writes through to the source and records a new Files version', async() => {
     const [entry] = await manager.fuseSnapshot(collectionId);
     const written = await manager.fuseWrite(entry.id, entry.versionId, entry.sourceHash, Buffer.from('updated by agent'), actor);
     expect(written).toMatchObject({ id: entry.id, sourceHash: sha256('updated by agent') });
