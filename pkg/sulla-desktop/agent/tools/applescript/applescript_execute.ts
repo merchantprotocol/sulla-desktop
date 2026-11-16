@@ -149,13 +149,8 @@ async function writeAuditRow(row: {
 }): Promise<void> {
   try {
     const { postgresClient } = await import('../../database/PostgresClient');
-    const actionType = row.action_type === 'write' ? 'write' : 'read';
-    await postgresClient.query(
-      `INSERT INTO applescript_audit
-         (target_app, action_type, script, success, duration_ms, response_chars, error)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [row.target_app, actionType, row.script, row.success, row.durationMs, row.responseChars, row.error ?? null],
-    );
+    const { AppleScriptAuditRepository } = await import('../../app/Repositories/AppleScriptAuditRepository');
+    await new AppleScriptAuditRepository(postgresClient).insert(row);
   } catch (err) {
     // Audit failures must not break the tool call — just log.
     console.warn('[applescript audit] insert failed:', err);

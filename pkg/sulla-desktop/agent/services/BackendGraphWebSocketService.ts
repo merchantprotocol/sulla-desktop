@@ -10,7 +10,8 @@ import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { AbortService } from './AbortService';
 import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, requeueAgentCompletion, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, releaseAgentCompletionClaim, requeueAgentCompletionAfterFailure, requeueAgentCompletionQuietly, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { CompletionKey } from '../app/Services/CompletionKey';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { agentDefinitionService } from './AgentDefinitionService';
@@ -20,6 +21,7 @@ import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
+import { ChatErrorDiagnostics } from './ChatErrorDiagnostics';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
@@ -31,6 +33,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
@@ -45,8 +48,10 @@ import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
 import { AgentTurnStopper } from './AgentTurnStopper';
-import { CloudOrgMessagingTransport, DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
-import { OrgMessenger } from './OrgMessenger';
+import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
+import { DesktopOrgMessengerFactory } from './DesktopOrgMessengerFactory';
+import { OrgMembershipDirectory, type OrgMembership } from './OrgMembershipDirectory';
+import { OrgMessengerFleet } from './OrgMessengerFleet';
 import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 
@@ -99,7 +104,7 @@ export class BackendGraphWebSocketService {
   private readonly agentInbox: AgentInbox;
   private readonly inboxReceiverResolver: AgentInboxReceiverResolver;
   private readonly inboxRunGuard: ReceiverRunGuard;
-  private readonly orgMessenger: OrgMessenger;
+  private readonly orgMessengerFleet: OrgMessengerFleet;
   private orgMessagingAbort?: AbortController;
 
   /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
@@ -214,7 +219,7 @@ export class BackendGraphWebSocketService {
           : [])),
     ] as PendingCompletion[];
     const unique = new Map<string, PendingCompletion>();
-    for (const entry of entries) unique.set(entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`, entry);
+    for (const entry of entries) unique.set(CompletionKey.of(entry), entry);
     return [...unique.values()];
   }
 
@@ -234,21 +239,61 @@ export class BackendGraphWebSocketService {
       isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
     }, this.inboxRunGuard);
-    this.orgMessenger = new OrgMessenger(
-      new CloudOrgMessagingTransport(),
-      new DesktopOrgCloudSession(),
-      new PostgresOrgMessagingStateRepository(new DesktopPostgresConnection(postgresClient)),
-      this.agentInbox,
-      { target: async envelope => ({ channel: SULLA_DESKTOP_CHANNEL_ID, threadId: envelope.data.conversationId }) },
-      new OrgContactRequestDecisionPrompter(),
-      { halt: async target => { if (target.threadId) await new AgentTurnStopper(this.wsService).stop(target.channel, target.threadId); } },
+    const orgSession = new DesktopOrgCloudSession();
+    this.orgMessengerFleet = new OrgMessengerFleet(
+      new OrgMembershipDirectory(),
+      new DesktopOrgMessengerFactory(
+        new PostgresOrgMessagingStateRepository(new DesktopPostgresConnection(postgresClient)),
+        this.agentInbox,
+        { target: async envelope => ({ channel: SULLA_DESKTOP_CHANNEL_ID, threadId: envelope.data.conversationId }) },
+        new OrgContactRequestDecisionPrompter(),
+        { halt: async target => { if (target.threadId) await new AgentTurnStopper(this.wsService).stop(target.channel, target.threadId); } },
+      ),
+      { userId: () => orgSession.userId(), activeOrgId: () => orgSession.orgId() },
     );
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
   }
 
-  sendOrgMessage(envelope: import('@sulla/domain').MessageEnvelope): Promise<void> {
-    return this.orgMessenger.send(envelope);
+  private completionHandoff?: DelegatedCompletionHandoff;
+
+  /** Lazy so bare test instances (Object.create) still get one. */
+  private get delegatedCompletionHandoff(): DelegatedCompletionHandoff {
+    return this.completionHandoff ??= new DelegatedCompletionHandoff(
+      { take: takeAgentCompletions, format: formatCompletionBatch },
+      agentJobLifecycle,
+      {
+        firstDelivered: entry => agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now()),
+        acknowledge:    entry => agentJobProvider.completionAcknowledgements.acknowledge(entry),
+      },
+      (state, message) => { injectSteer(state as any, message) },
+      nextMessageId,
+    );
+  }
+
+  /** Sends through the target org's own outbox; `org` (id, slug or name) defaults to the active org. */
+  sendOrgMessage(envelope: import('@sulla/domain').MessageEnvelope, org?: string): Promise<void> {
+    return this.orgMessengerFleet.send(envelope, org);
+  }
+
+  /** Resolves an org the human belongs to (default: active org); refuses non-member orgs. */
+  resolveMessagingOrg(org?: string): Promise<OrgMembership> {
+    return this.orgMessengerFleet.resolveOrg(org);
+  }
+
+  /** The target org and the caller's id on that org's host (Cloud user id, or the Server subject). */
+  orgMessagingParticipant(org?: string): Promise<{ membership: OrgMembership; userId: string }> {
+    return this.orgMessengerFleet.participant(org);
+  }
+
+  /** The target org's people and agent addresses, read from the org's own host. */
+  loadOrgDirectory(org?: string): Promise<{ membership: OrgMembership; directory: { people: readonly unknown[] } }> {
+    return this.orgMessengerFleet.loadDirectory(org);
+  }
+
+  /** LiveEvents wake hook for org messaging; polling every 60 s remains the fallback. */
+  onOrgLiveEvent(topic: string, orgId?: string): void {
+    this.orgMessengerFleet.onLiveEvent(topic, orgId);
   }
 
   private inboxThread(target: AgentInboxTarget): string | undefined {
@@ -283,34 +328,12 @@ export class BackendGraphWebSocketService {
   private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
     if (this.hasActiveRun(channelId, threadId)) return;
     const delegated = GraphRegistry.get(threadId);
-    if ((delegated?.state.metadata as any)?.delegatedRunActive && !agentJobLifecycle.hasLiveWaiter(threadId)) return;
+    // A runner-owned delegated manager (parked or mid-turn) gets the batch
+    // injected and its runner woken; never a second, disconnected turn.
+    if (await this.delegatedCompletionHandoff.deliver(channelId, threadId, delegated?.state as any)) return;
     const entries = takeAgentCompletions(channelId, threadId);
     if (!entries.length) return;
     const content = formatCompletionBatch(entries);
-    // A parent that is itself a hidden delegated child runs under its
-    // spawn_agent runner, not activeAborts. Starting a second execution on
-    // that state would race the runner, so hand it the batch as one steer.
-    if (agentJobLifecycle.hasLiveWaiter(threadId)) {
-      if (delegated) {
-        injectSteer(delegated.state, {
-          id:        nextMessageId(),
-          role:      'user',
-          content,
-          timestamp: Date.now(),
-          metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
-        } as any);
-        for (const entry of entries) {
-          await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
-          await agentJobProvider.completionAcknowledgements.acknowledge(entry);
-        }
-      } else {
-        // No live graph state to inject into — should not happen alongside
-        // a live waiter, but requeue rather than drop the completion.
-        for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
-      }
-      agentJobLifecycle.wake(threadId);
-      return;
-    }
     // Same trigger mapping as handleChannelMessage: only heartbeat has its own
     // trigger; mobile-relay and custom agent channels dispatch as sulla-desktop.
     const triggerType = channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop';
@@ -320,14 +343,20 @@ export class BackendGraphWebSocketService {
     void parkedAgentRehydrator.isTerminalDelegatedThread(threadId).then(async(terminal) => {
       // A human stop is final. Child results remain readable and durably
       // undelivered, but must never resurrect the stopped parent thread.
-      if (terminal) return;
+      // Drop the in-memory claim so a later recovery enqueue is not discarded as a duplicate.
+      if (terminal) {
+        for (const entry of entries) releaseAgentCompletionClaim(entry);
+        return;
+      }
       const parked = await parkedAgentRehydrator.resolve(threadId);
       const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
       return this.dispatchToAgent(channelId, triggerType, content, threadId, undefined, threadAgentId, 'system', {
         source: 'sub_agent_completion', completionEntries: entries,
       });
     }).catch(err => {
-      for (const entry of entries) enqueueAgentCompletion(channelId, threadId, entry);
+      // Requeue (enqueue would drop these claimed entries as duplicates) with
+      // backoff, so a persistent failure is retried later, not hot-looped.
+      for (const entry of entries) requeueAgentCompletionAfterFailure(channelId, threadId, entry);
       console.error('[BackendGraphWS] Failed to dispatch completion batch:', err);
 
     });
@@ -543,7 +572,7 @@ export class BackendGraphWebSocketService {
     if ((process as any).type === 'browser') {
       this.orgMessagingAbort?.abort();
       this.orgMessagingAbort = new AbortController();
-      this.orgMessenger.run(this.orgMessagingAbort.signal).catch(error => console.warn('[BackendGraphWS] Org messaging stopped unexpectedly:', error));
+      this.orgMessengerFleet.run(this.orgMessagingAbort.signal).catch(error => console.warn('[BackendGraphWS] Org messaging stopped unexpectedly:', error));
     }
   }
 
@@ -897,7 +926,9 @@ export class BackendGraphWebSocketService {
       // pending once the active run ends.
       if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey)) {
         if (metadata?.source === 'sub_agent_completion') {
-          for (const entry of metadata.completionEntries ?? []) enqueueAgentCompletion(channelId, threadId, entry);
+          // Claimed by the caller's take: requeue clears that claim (enqueue would drop them).
+          // No wake: the active run drains the inbox when it ends.
+          for (const entry of metadata.completionEntries ?? []) requeueAgentCompletionQuietly(channelId, threadId, entry);
         }
         return 'deferred';
       }
@@ -1071,7 +1102,12 @@ export class BackendGraphWebSocketService {
         const content = err?.name === 'AgentLaunchError'
           ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
           : `Agent error: ${ err.message || String(err) }`;
-        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
+        firstRunTrace('chat', 'chat error surfaced', {
+          shown: content,
+          ...new ChatErrorDiagnostics().describe(err, {
+            channelId, threadId, agentId, state, wakeTurnJobId: wakeTurnToRepark?.jobId, wakeTurnTaskIdx: wakeTurnToRepark?.taskIndex,
+          }),
+        });
         this.emitMessage(channelId, 'assistant_message', {
           content,
           role:      'assistant',
@@ -1096,8 +1132,12 @@ export class BackendGraphWebSocketService {
             await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
           }
         } else {
+          // Results the model already answered stay acknowledged; only unseen ones go back to the inbox.
+          completionConsumption.confirmAnswered(state?.messages ?? []);
           await completionConsumption.releaseOnAbort(async entry => {
-            requeueAgentCompletion(channelId, threadId, entry);
+            // A failed turn retries with backoff; a stopped one waits quietly (stop means stop).
+            if (runAbort?.signal.aborted) requeueAgentCompletionQuietly(channelId, threadId, entry);
+            else requeueAgentCompletionAfterFailure(channelId, threadId, entry);
             await agentJobProvider.completionAcknowledgements.release(entry);
           });
           for (const message of state?.messages ?? []) {

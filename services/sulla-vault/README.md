@@ -30,7 +30,7 @@ Desktop mode has one bootstrapped user and deliberately returns 404 from `POST /
 
 The Desktop integration is flag-off by default and currently builds this service from the source checkout. A published `sulla-vault` image is required before the flag can ship in packaged apps; image publishing is not configured yet.
 
-Run the existing Desktop compose file and the vault overlay together from the repository root:
+Run the existing Desktop compose file and the vault overlay together from the repository root. The overlay has no default database password: export `SULLA_SERVICE_PASSWORD` first (compose refuses to start without it).
 
 ```sh
 docker compose \

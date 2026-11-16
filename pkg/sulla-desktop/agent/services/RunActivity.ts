@@ -81,19 +81,20 @@ export function watchForDeadRun(
     void (async() => {
       if (fired) return;
       const minutes = await deadRunMinutes();
-      const last = RunActivity.lastActivityAt(key) ?? Date.now();
       const now = Date.now();
-      if (!policy.isStalled({
+      // A tool still running (a long shell command emits nothing until it ends) is activity.
+      if (RunActivity.toolInFlight(key)) return;
+      const clock = {
         createdAt: liveness.createdAt,
         startedAt: liveness.createdAt,
-        lastActivityAt: last,
-        hasCheckin: await liveness.hasCheckin(),
+        lastActivityAt: RunActivity.lastActivityAt(key) ?? now,
         now,
-        stallMs: minutes * 60_000,
-      })) return;
+      };
+      if (!policy.isStalled({ ...clock, hasCheckin: await liveness.hasCheckin(), stallMs: minutes * 60_000 })) return;
       if (await stillAlive()) return;
       fired = true;
-      await onDead(`no agent activity for ${ minutes } minute(s)`);
+      const idleMinutes = Math.floor(policy.idleMs(clock) / 60_000);
+      await onDead(`no agent activity for ${ idleMinutes } minute(s) (limit ${ minutes })`);
     })().catch(err => console.warn(`[RunActivity] dead-run check failed for ${ key }:`, err));
   }, DEAD_RUN_CHECK_MS);
   return () => {

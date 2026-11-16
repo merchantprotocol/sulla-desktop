@@ -42,7 +42,7 @@ export class AgentMailClientFactory {
       const { getIntegrationService } = await import('../../services/IntegrationService');
       return new CloudSessionAgentMailTransport(
         this.baseUrl,
-        async() => vault.requireConfiguredCredentialBroker(),
+        async() => vault.configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
         () => getIntegrationService().getActiveAccountId(SULLA_CLOUD_INTEGRATION_ID),
       );
     }
@@ -57,7 +57,7 @@ export class AgentMailClientFactory {
     if (vault.usesContainerVaultAuthority()) {
       return new BrokerAgentMailTransport(
         this.baseUrl,
-        async() => vault.requireConfiguredCredentialBroker(),
+        async() => vault.configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
         () => getIntegrationService().getActiveAccountId(AGENT_MAIL_INTEGRATION_ID),
       );
     }

@@ -28,9 +28,7 @@ export class AgentWaitServiceProvider {
         `[Wait complete]\n${ wait.reason }`, task.agentId, { jobId: wait.jobId, taskIndex: wait.taskIndex, source: 'agent_wait_timer' });
     });
     this.parking = new AgentTaskParkingService(this.repository, async(wait) => Boolean(await agentJobProvider.states.mutateJob(wait.jobId, current =>
-      current.tasks[wait.taskIndex]?.status === 'running' ? { ...current, waitingOnChildren: 0,
-        tasks: current.tasks.map((task, index) => index === wait.taskIndex
-          ? { ...task, status: 'parked', waitReason: wait.reason, wakeAt: wait.wakeAt.getTime() } : task) } : undefined)), this.scheduler);
+      AgentTaskParkingService.parkedJob(current, wait))), this.scheduler);
   }
 
   async cancel(jobId: string, taskIndex: number): Promise<boolean> {

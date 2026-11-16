@@ -1,0 +1,125 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import type { ClientRequest } from 'node:http';
+
+import type pg from 'pg';
+import type { LocalEncryptedItem, LocalItemContext } from '@sulla/domain';
+
+import type { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
+
+import type { BitwardenExportImporter } from '../bitwarden/BitwardenExportImporter.js';
+import type { BrokerRedirectPolicy } from '../brokerRedirectPolicy.js';
+import type { DomainVaultSyncCodecProvider } from '../browserEnvelope/DomainVaultSyncCodecProvider.js';
+import type { SyncBundle, SyncHead } from '../browserEnvelope/envelope.js';
+import type { StoredKeyEnvelopeReaderProvider } from '../browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
+import type { VaultConfig } from '../config.js';
+import type {
+  BrokerIntegrationMetadataResponse,
+  LocalVaultState,
+} from '../contracts.js';
+import type { Database, Queryable } from '../db.js';
+import type { LocalVaultCryptoProvider } from '../localCrypto/LocalVaultCryptoProvider.js';
+import type { OutboundAuditRecorder } from '../outboundAudit.js';
+import type { VaultRelayManager } from '../relays.js';
+import type { PostgresLocalAuthorityRepository } from '../repositories/PostgresLocalAuthorityRepository.js';
+import type { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
+import type {
+  PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository,
+  PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository,
+} from '../repositories/PostgresVaultAuthorityRepositories.js';
+import type { PostgresSullaCloudRevocationRepository } from '../repositories/PostgresSullaCloudRevocationRepository.js';
+import type { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from '../repositories/PostgresVaultItemRepositories.js';
+import type { AgentMailboxCloudLane } from '../sullaCloudSession/AgentMailboxCloudLane.js';
+import type { SullaCloudSessionManager } from '../sullaCloudSession/SullaCloudSessionManager.js';
+import type { LocalAuthorityCollaborators } from './LocalAuthorityCollaborators.js';
+import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
+
+/**
+ * Key material and the grants that unlock it. LocalVaultAuthority keeps these `private`: only
+ * its collaborators reach them, through the LocalAuthorityHost view the authority hands to
+ * LocalAuthorityCollaborators. Routes, the app and other vault components never see them.
+ */
+export interface LocalAuthorityVaultSecrets {
+  keys:              UnlockedKeys | null;
+  stagedCacheUpdate: StagedCacheUpdate | null;
+  readonly challenges:      Map<string, Challenge>;
+  readonly cacheChallenges: Map<string, Challenge>;
+  readonly challengeRate:   Map<string, { count: number; resetAt: number }>;
+  readonly humanSessions:   Map<string, HumanSession>;
+  readonly pendingApprovals: Map<string, number>;
+  readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
+  readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
+  readonly pendingVaultEnrollments: Map<string, {
+    expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
+  }>;
+}
+
+/**
+ * What LocalVaultAuthority's collaborators may read and change on it (E9): the public seam plus
+ * the private vault secrets. The authority keeps all vault state (unlocked keys, generation,
+ * grants, challenges) so lock, generation checks and the security-operation queue stay in one
+ * place; collaborators hold only this host reference and read it at call time.
+ */
+export interface LocalAuthorityHost extends LocalAuthoritySeam, LocalAuthorityVaultSecrets {}
+
+/** The part of the collaborator host that LocalVaultAuthority exposes publicly (no key material). */
+export interface LocalAuthoritySeam {
+  // Vault state.
+  generation:        number;
+  migrationState:    LocalVaultState;
+  sullaCloudSessionManager: SullaCloudSessionManager | null;
+  agentMailboxCloudLane:    AgentMailboxCloudLane | null;
+  readonly oauthRefreshQueues: Map<string, Promise<void>>;
+  readonly inFlight:         Set<ClientRequest>;
+
+  // Dependencies.
+  readonly db:                  Database;
+  readonly config:              VaultConfig;
+  readonly userRepository:      PostgresVaultUserRepository;
+  readonly migrationRepository: PostgresVaultMigrationRepository;
+  readonly recoveryRepository:  PostgresVaultRecoveryRepository;
+  readonly itemRepository:      PostgresVaultItemRepository;
+  readonly auditLogRepository:  PostgresVaultAuditLogRepository;
+  readonly rewrapHistory:       PostgresRewrapHistoryRepository;
+  readonly syncStateRepository: PostgresVaultSyncStateRepository;
+  readonly integrationStateRepository: PostgresIntegrationStateRepository;
+  readonly legacyCredentialRepository: PostgresLegacyCredentialRepository;
+  readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider;
+  readonly filesTransport:      FilesTransportEnvelopeService;
+  readonly codecProvider:       DomainVaultSyncCodecProvider;
+  readonly relayManager:        VaultRelayManager;
+  readonly revocationRepository: PostgresSullaCloudRevocationRepository;
+  readonly brokerRedirectPolicy: BrokerRedirectPolicy;
+  readonly outboundAudit:       OutboundAuditRecorder;
+  readonly localCryptoProvider: LocalVaultCryptoProvider;
+  readonly bitwardenImporter:   BitwardenExportImporter;
+  readonly localStore:          PostgresLocalAuthorityRepository;
+  readonly parts:               LocalAuthorityCollaborators;
+
+  // Shared guards and transitions.
+  requireKeys(): UnlockedKeys;
+  requireGeneration(generation: number): void;
+  requireStableGeneration(generation: number): void;
+  runSecurityOperation<T>(operation: () => Promise<T>): Promise<T>;
+  runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T>;
+  auditHumanAction(db: Queryable, actorId: string, action: string, itemId?: string | null, path?: string): Promise<void>;
+  sealItem(plaintext: string, userKey: Uint8Array, context: LocalItemContext): Promise<LocalEncryptedItem>;
+  openItemText(item: LocalEncryptedItem, userKey: Uint8Array, context: LocalItemContext): Promise<string>;
+  bootstrapToken(): string;
+  lockNow(): void;
+  stageCacheUpdate(masterKey: Uint8Array): void;
+  expireStagedCacheUpdate(): void;
+  retryPendingSullaCloudRevocations(): void;
+  requireControlIdentity(callerId: string, token: string | undefined): void;
+  requireApprovalIdentity(callerId: string, token: string | undefined): void;
+  requireDesktopIdentity(callerId: string, token: string | undefined): void;
+  requireBrokerIdentity(callerId: string, token: string | undefined): void;
+  integrationMetadata(callerId: string, token: string | undefined, integrationId: string, accountFilter?: string): Promise<BrokerIntegrationMetadataResponse>;
+  isSetupRequired(): Promise<boolean>;
+  validateHumanSession(sessionId: string | undefined, csrf?: string): HumanSession;
+  unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }>;
+  activateMasterKey(masterKey: Uint8Array, legacyVmk?: Buffer, newAccountKdf?: unknown, attemptGeneration?: number): Promise<{ state: LocalVaultState }>;
+}

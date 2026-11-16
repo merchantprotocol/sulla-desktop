@@ -20,17 +20,49 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'
  * folder batches and migrations (bounded per operation subtree, follow-up).
  */
 const ALLOWED:Record<string, number> = {
+  // Finder badges: one row per live file of the one requested collection (moved from cloudSync/repository.ts).
+  'Repositories/CloudCollectionCatalogRepository.ts': 1,
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Legacy server sync push queue (moved from localManager.ts): one device's unpushed journal per pass.
+  'Repositories/LegacySyncRepository.ts': 1,
+  // Folder move/copy plan lock (moved from localManager.ts): one user-selected folder subtree.
+  'Repositories/PathOperationPublishRepository.ts': 1,
+  // FUSE mount listing (moved from localManager.ts): one collection's mountable files.
+  'Repositories/TrackedFileRepository.ts': 1,
+  // Legacy import: converts every legacy version once; counts and provenance checks are one-row aggregates.
+  'Repositories/LegacyImportIdentityRepository.ts': 1,
+  'Repositories/LegacyImportPublicationRepository.ts': 1,
+  'Repositories/LegacyImportReceiptRepository.ts': 1,
+  // Shared-folder listing for a public folder link (moved from shares.ts, same read).
+  'Repositories/ShareLinkRepository.ts': 1,
+  // Child-folder totals: one GROUP BY row per direct child folder of the open folder, never a row per file.
+  'Repositories/CollectionFilesFeedRepository.ts': 1,
+  // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
+  'Repositories/FolderSubtreeRepository.ts': 7,
+  // Maintenance-only scratch TTL sweep (moved from app.ts).
+  'Repositories/ScratchMaintenanceRepository.ts': 1,
+  // One principal's stars in one collection (moved from app.ts).
+  'Repositories/StarRepository.ts': 1,
+  // One collection's trashed files and top-level trashed folders (moved from app.ts).
+  'Repositories/TrashListingRepository.ts': 2,
+  // Legacy stored folder move: the moved folder's own subtree, locked for update.
+  'Repositories/StoredFileOperationRepository.ts': 1,
+  // Bounded by the caller's path array: the ancestors of one path being created (moved from storedNamespace.ts).
+  'Repositories/StoredNamespaceRepository.ts': 1,
+  // One-time Sulla-collection merge and stray-Docs cleanup, moved row by row (moved from sullaCollectionMigration.ts).
+  'Repositories/SullaCollectionMigrationRepository.ts': 4,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
-  'ChunkMetadataReconciler.ts': 1,
-  'app.ts': 9,
-  'cloudSync/repository.ts': 1,
-  'fileOperations.ts': 1,
-  'folderOperationBatches.ts': 12,
-  'legacyImport.ts': 3,
-  'localManager.ts': 3,
-  'shares.ts': 1,
-  'sullaCollectionMigration.ts': 4,
+  'Repositories/ChunkMetadataRepairRepository.ts': 1,
+  // One thread's inventory of up to 100 agent runs' live files (moved from app.ts).
+  'Repositories/AgentFileRepository.ts': 1,
+  // Every version referencing one deduplicated chunk, read to authorize a chunk fetch (moved from app.ts).
+  'Repositories/ChunkAccessRepository.ts': 1,
+  // A legacy move/copy selection: the live files under one selected folder (moved from app.ts).
+  'Repositories/FileLocatorRepository.ts': 1,
+  // One scratch run's live files, staged for keeping in a permanent collection (moved from app.ts).
+  'Repositories/AgentKeepRepository.ts': 1,
+  // The direct child files of one folder that carry metadata (moved from app.ts /v1/fuse/folder-metadata).
+  'Repositories/FileMetadataRepository.ts': 1,
 };
 
 function sources(directory:string):string[] {

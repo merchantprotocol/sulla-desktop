@@ -5,15 +5,14 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { recordVaultFailure, recordVaultSuccess, vaultFailureKind, vaultFailureSince } from '../../../../vault-broker/vaultHealth';
+import { VaultHealthMonitor } from '../../../../vault-broker/vaultHealth';
 import { ModelRecoveryPolicy } from '../../../languagemodels/ModelRecoveryPolicy';
 import { CliFaultError, CliRecoveryExhaustedError, runWithCliFaultRecovery } from '../../../languagemodels/cliFaultRecovery';
 import { VaultLocked, VaultUnreachable } from '../../../languagemodels/failures';
 import { classifyLLMFailure } from '../../../languagemodels/providerRecovery';
+import { VaultAvailabilityGate } from '../../../languagemodels/vaultGate';
 
 import type { VaultGate } from '../../../languagemodels/vaultGate';
-
-vi.mock('../../../../vault-broker/index', () => ({ requireConfiguredCredentialBroker: vi.fn() }));
 
 const exitFault = () => new CliFaultError('process_exit', 'Claude Code: claude exited with code 1');
 
@@ -32,19 +31,88 @@ function gate(kind: 'locked' | 'unreachable' | undefined, comesBack: boolean): V
 
 describe('vault health from bridge failures', () => {
   it('maps a 423 or vault_locked to locked and vault outages to unreachable', () => {
-    expect(vaultFailureKind(423, undefined)).toBe('locked');
-    expect(vaultFailureKind(502, 'vault_locked')).toBe('locked');
-    expect(vaultFailureKind(503, 'vault_unreachable_ERR_INSUFFICIENT_RESOURCES')).toBe('unreachable');
-    expect(vaultFailureKind(503, 'vault_starting')).toBe('unreachable');
-    expect(vaultFailureKind(502, 'upstream_failed')).toBeUndefined();
+    expect(VaultHealthMonitor.failureKind(423, undefined)).toBe('locked');
+    expect(VaultHealthMonitor.failureKind(502, 'vault_locked')).toBe('locked');
+    expect(VaultHealthMonitor.failureKind(503, 'vault_unreachable_ERR_INSUFFICIENT_RESOURCES')).toBe('unreachable');
+    expect(VaultHealthMonitor.failureKind(503, 'vault_starting')).toBe('unreachable');
+    expect(VaultHealthMonitor.failureKind(502, 'upstream_failed')).toBeUndefined();
   });
 
   it('only reports refusals from the current run window and clears on success', () => {
-    recordVaultFailure('locked', 1_000);
-    expect(vaultFailureSince(500)).toBe('locked');
-    expect(vaultFailureSince(2_000)).toBeUndefined();
-    recordVaultSuccess();
-    expect(vaultFailureSince(0)).toBeUndefined();
+    const health = new VaultHealthMonitor();
+
+    health.record('locked', 1_000);
+    expect(health.failureSince(500)).toBe('locked');
+    expect(health.failureSince(2_000)).toBeUndefined();
+    health.recordSuccess();
+    expect(health.failureSince(0)).toBeUndefined();
+  });
+
+  it('counts a refusal recorded exactly at the run start and keeps only the latest one', () => {
+    const health = new VaultHealthMonitor();
+
+    health.record('unreachable', 1_000);
+    expect(health.failureSince(1_000)).toBe('unreachable');
+    expect(health.failureSince(1_001)).toBeUndefined();
+    health.record('locked', 3_000);
+    expect(health.failureSince(1_000)).toBe('locked');
+  });
+
+  // risk: one run's vault refusal leaking into an unrelated monitor's state
+  it('keeps state per monitor instance', () => {
+    const first = new VaultHealthMonitor();
+    const second = new VaultHealthMonitor();
+
+    first.record('locked', 1_000);
+    expect(second.failureSince(0)).toBeUndefined();
+    second.recordSuccess();
+    expect(first.failureSince(0)).toBe('locked');
+  });
+});
+
+describe('VaultAvailabilityGate', () => {
+  // risk: a run that never resumes after the user unlocks the vault
+  it('returns true and clears the recorded failure once the probe reports unlocked', async() => {
+    const health = new VaultHealthMonitor();
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const gate = new VaultAvailabilityGate(health, 1_000, 1, probe);
+
+    health.record('locked', 0);
+    expect(gate.failureSince(0)).toBe('locked');
+    await expect(gate.waitUntilAvailable()).resolves.toBe(true);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(health.failureSince(0)).toBeUndefined();
+  });
+
+  // risk: a run waiting forever on a vault that never comes back
+  it('returns false after the deadline and keeps the failure', async() => {
+    const health = new VaultHealthMonitor();
+    const gate = new VaultAvailabilityGate(health, 5, 1, async() => false);
+
+    health.record('unreachable', 0);
+    await expect(gate.waitUntilAvailable()).resolves.toBe(false);
+    expect(health.failureSince(0)).toBe('unreachable');
+  });
+
+  it('returns false without probing when the run is already aborted', async() => {
+    const probe = vi.fn(async() => true);
+    const gate = new VaultAvailabilityGate(new VaultHealthMonitor(), 1_000, 1, probe);
+
+    await expect(gate.waitUntilAvailable(AbortSignal.abort())).resolves.toBe(false);
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it('stops polling when the run is aborted mid-wait', async() => {
+    const controller = new AbortController();
+    const probe = vi.fn(async() => {
+      controller.abort();
+
+      return false;
+    });
+    const gate = new VaultAvailabilityGate(new VaultHealthMonitor(), 60_000, 1, probe);
+
+    await expect(gate.waitUntilAvailable(controller.signal)).resolves.toBe(false);
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 });
 

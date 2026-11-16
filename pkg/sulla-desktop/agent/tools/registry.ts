@@ -44,6 +44,8 @@ export interface ToolManifest {
   category:                 string;
   schemaDef:                Record<string, any>;
   operationTypes?:          ToolOperation[];
+  /** Relayed-call deadline when the name/class default (ToolDeadlinePolicy) is wrong for this tool. */
+  deadlineMs?:              number;
   loader:                   () => Promise<any>;
   executionTarget?:         ToolExecutionTarget;
   /** Hosts eligible to run the tool (see toolPlacement.ts). Overrides tool-placement-policy.json. */
@@ -69,6 +71,7 @@ export class ToolRegistry {
   private descriptions = new Map<string, string>();
   private schemaDefs = new Map<string, Record<string, any>>();
   private operationTypesMap = new Map<string, ToolOperation[]>();
+  private deadlines = new Map<string, number>();
   private executionTargets = new Map<string, ToolExecutionTarget>();
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
@@ -173,6 +176,7 @@ export class ToolRegistry {
         this.nativeToolDefs.set(registeredName, m.anthropicToolDefinition);
       }
       this.operationTypesMap.set(registeredName, Array.isArray(m.operationTypes) ? [...m.operationTypes] : []);
+      if (m.deadlineMs !== undefined) this.deadlines.set(registeredName, m.deadlineMs);
       Object.assign(m, resolveToolPlacement(m));
       m.executionTarget ??= executionTargetFor(m.category, m.name);
       this.executionTargets.set(registeredName, m.executionTarget);
@@ -375,6 +379,10 @@ export class ToolRegistry {
 
   getOperationTypes(name: string): ToolOperation[] {
     return this.operationTypesMap.get(name) || [];
+  }
+
+  getDeadlineMs(name: string): number | undefined {
+    return this.deadlines.get(name);
   }
 
   getLLMToolsForCategory(category: string): () => Promise<any[]> {

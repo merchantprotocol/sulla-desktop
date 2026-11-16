@@ -237,6 +237,7 @@ async function startRun(params: {
   triggerKey?:               string;
   parentExecutionId?:        string;
   playbookState?:            WorkflowPlaybookState;
+}, identity: RequestIdentity): Promise<{ executionId: string; runnerId: string; deduplicated?: boolean }> {
   if (identity.kind === 'runner' && params.parentExecutionId !== identity.executionId) {
     throw new Error('runner may only start an explicitly linked child workflow');
   }
@@ -775,6 +776,7 @@ async function establishLegacyOwnership(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (!config.databaseUrl) throw new Error('SULLA_DATABASE_URL is required');
   await new StartupDatabaseWait({ name: 'workflow-manager' }).until('connect', () => pool.query('SELECT 1'));
   await migrate();
   await establishLegacyOwnership();

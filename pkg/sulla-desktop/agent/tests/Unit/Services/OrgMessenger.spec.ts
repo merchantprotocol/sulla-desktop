@@ -13,10 +13,10 @@ class MemoryState implements OrgMessagingStateRepository {
   readonly cursors = new Map<string, number>();
   readonly failures = new Map<string, string>();
   readonly askedAt = new Map<string, number>();
-  async enqueue(message: PendingOrgMessage) { this.outbox.set(message.messageId, message); }
-  async pending() { return [...this.outbox.values()].filter(item => !this.failures.has(item.messageId)); }
-  async markSent(messageId: string) { this.outbox.delete(messageId); }
-  async markFailed(messageId: string, reason: string) { this.failures.set(messageId, reason); }
+  async enqueue(message: PendingOrgMessage) { this.outbox.set(`${message.orgId}:${message.messageId}`, message); }
+  async pending(orgId: string) { return [...this.outbox.values()].filter(item => item.orgId === orgId && !this.failures.has(`${item.orgId}:${item.messageId}`)); }
+  async markSent(orgId: string, messageId: string) { this.outbox.delete(`${orgId}:${messageId}`); }
+  async markFailed(orgId: string, messageId: string, reason: string) { this.failures.set(`${orgId}:${messageId}`, reason); }
   async cursor(orgId: string, userId: string): Promise<InboxCursor> { return { orgId, userId, since: this.cursors.get(`${orgId}:${userId}`) ?? 0 }; }
   async advanceCursor(cursor: InboxCursor) { this.cursors.set(`${cursor.orgId}:${cursor.userId}`, cursor.since); }
   async lastContactPrompt(orgId: string, userId: string, senderUserId: string) { return this.askedAt.get(`${orgId}:${userId}:${senderUserId}`); }
@@ -99,7 +99,7 @@ function outboundMessage(messageId: string, conversationId = 'conversation-1'): 
 }
 
 function messenger(transport: TestTransport, state: MemoryState, delivered: string[], capturePrompt?: (resolve: (choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) => void, halt?: (target: AgentInboxTarget) => Promise<void>, inboxDeliveries?: AgentInboxEntry[], inboxRepository: AgentInboxRepository = new MemoryInboxRepository(), requestPrompt?: (prompt: OrgContactPrompt) => Promise<void>) {
-  const inbox = new AgentInbox(inboxRepository, { isRunning: () => false, wake: async (_target, _batch, entries) => { inboxDeliveries?.push(...entries); delivered.push(...entries.map(entry => entry.envelope.ids.messageId)); return 'accepted'; } });
+  const inbox = new AgentInbox(inboxRepository, { isRunning: () => false, wake: async (_target, _batch, entries) => { inboxDeliveries?.push(...entries); delivered.push(...entries.map(entry => entry.envelope.ids.remoteMessageId ?? entry.envelope.ids.messageId)); return 'accepted'; } });
   return new OrgMessenger(transport, new TestSession(), state, inbox, { target: async () => ({ channel: 'user-1', threadId: 'conversation-1' }) }, { request: async prompt => { capturePrompt?.(prompt.resolve); await requestPrompt?.(prompt); } }, { halt: async target => halt?.(target) }, { deviceId: async () => 'device-1' });
 }
 
@@ -186,7 +186,7 @@ describe('OrgMessenger', () => {
     await expect(service.send(outboundMessage('denied-id'))).rejects.toThrow('Message denied by organization host');
     await service.flushOutbox();
     expect(transport.submitted).toEqual(['denied-id']);
-    expect(state.failures.get('denied-id')).toBe('Message denied by organization host');
+    expect(state.failures.get('org-1:denied-id')).toBe('Message denied by organization host');
   });
 
   it('persists the host inbox cursor and delivers the org message once across messenger restarts', async () => {

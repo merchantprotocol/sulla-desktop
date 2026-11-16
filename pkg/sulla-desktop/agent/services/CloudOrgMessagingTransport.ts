@@ -18,9 +18,23 @@ export class DesktopOrgCloudSession implements OrgCloudSession {
   async userId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentUserId(); }
 }
 
-/** Cloud adapter. The team id is resolved from the active authenticated session for every request. */
+/**
+ * Session pinned to one organization the human belongs to, so a non-active org can sync on its own. The bearer and
+ * user id come from `base`: the Cloud sign-in by default, or the org's Server credentials.
+ */
+export class PinnedOrgCloudSession implements OrgCloudSession {
+  constructor(private readonly pinnedOrgId: string, private readonly base: Pick<OrgCloudSession, 'accessToken' | 'userId'> = new DesktopOrgCloudSession()) {}
+  accessToken(): Promise<string> { return this.base.accessToken(); }
+  async orgId(): Promise<string> { return this.pinnedOrgId; }
+  userId(): Promise<string> { return this.base.userId(); }
+}
+
+/**
+ * HTTP adapter for the `/orgs/:orgId/*` routes. Sulla Cloud and Sulla Server serve the same paths and JSON, so the
+ * same class talks to either: the http client carries the base URL and the session carries the bearer. The team id
+ * comes from its session: the active org by default, or one pinned org per fleet member.
+ */
 export class CloudOrgMessagingTransport implements OrgMessagingTransport {
-  readonly hosting = 'cloud' as const;
   private readonly codec = new EnvelopeCodec();
   private cachedDirectory: OrgDirectory = { people: [] };
 
@@ -28,11 +42,12 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
     private readonly http = new SullaCloudHttpClient(),
     private readonly session: OrgCloudSession = new DesktopOrgCloudSession(),
     private readonly pollIntervalMs = 60_000,
+    readonly hosting: 'cloud' | 'server' = 'cloud',
   ) {}
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const [orgId, token] = await Promise.all([this.session.orgId(), this.session.accessToken()]);
-    if (!orgId || !token) throw new Error('An active Sulla Cloud organization session is required');
+    if (!orgId || !token) throw new Error(`An active Sulla ${ this.hostName() } organization session is required`);
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${token}`);
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -40,9 +55,11 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
       ...init,
       headers,
     }, true);
-    if (!response.ok) throw new Error(`Cloud org messaging request failed (${response.status})`);
+    if (!response.ok) throw new Error(`${ this.hostName() } org messaging request failed (${response.status})`);
     return await response.json() as T;
   }
+
+  private hostName(): string { return this.hosting === 'server' ? 'Server' : 'Cloud'; }
 
   async submit(envelope: MessageEnvelope): Promise<SubmitReceipt> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);

@@ -24,7 +24,6 @@
   <div
     ref="wrapEl"
     class="composer-wrap"
-    :class="{ 'cw-side': side }"
   >
     <div class="composer-inner">
       <RunControls />
@@ -51,9 +50,11 @@
               <button
                 type="button"
                 class="dock-move"
-                title="Move to the side"
-                aria-label="Move the message box and activity to the side column"
-                @click="setPosition('side')"
+                :class="{ on: drawerOpen }"
+                :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
+                :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
+                :aria-pressed="drawerOpen"
+                @click="setPosition(drawerOpen ? 'bottom' : 'side')"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -311,8 +312,6 @@ const filesImportError = ref('');
 
 // ─── Placeholder + keyboard hints ──────────────────────────────────
 const placeholder = computed(() => {
-  // The side column is narrow: keep the hint to one line there.
-  if (side.value) return controller.isRunning.value ? 'Queue a message…' : 'Ask Sulla…';
   return controller.isRunning.value
     ? 'send while Sulla is working — queued'
     : 'Ask Sulla anything…';
@@ -334,9 +333,9 @@ const usagePercent = computed(() => {
   return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
 });
 
-// ─── Dock position (bottom or side column) ─────────────────────────
+// ─── Right drawer (side dock): the status row's button opens or closes it ───
 const { position: dockPosition, setPosition } = DockPositions.use();
-const side = computed(() => dockPosition.value === 'side');
+const drawerOpen = computed(() => dockPosition.value === 'side');
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -377,8 +376,6 @@ function focusFromBar(event: MouseEvent): void {
   event.preventDefault();
   inputRef.value?.focus();
 }
-// Moved to the side or back: the box is where you type next.
-watch(dockPosition, async() => { await nextTick(); inputRef.value?.focus() });
 
 // The textarea unmounts while recording; hand focus back when a spoken turn ends
 // so the next Space press or typed message works without a click.
@@ -1072,7 +1069,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 .reply-chip-x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
 
-/* ─── Side dock: the box fills the bottom of the right column ─── */
+/* ─── Side panel toggle ─── */
 /* The move button sits at the end of the status row: a hairline, then a quiet icon button. */
 .dock-divider { flex: none; width: 1px; height: 18px; background: var(--border-default); }
 .dock-move {
@@ -1084,30 +1081,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .dock-move:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
 .dock-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dock-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
-.cw-side { position: static; padding: 0; }
-.cw-side .composer-inner { max-width: none; }
-.cw-side .composer-card,
-.cw-side .composer-card:focus-within { border-radius: 0; transform: none; box-shadow: none; background: var(--bg-surface); }
-.cw-side .composer-card:has(.composer:focus-within) { box-shadow: inset 0 0 0 1.5px var(--accent); }
-/* The tabs and lanes carry the status there; the line stays mounted for the tab dots. */
-.cw-side .dock-status { display: none; }
-/* One row: + · heartbeat · agent · text · mic · send. */
-.cw-side .composer { flex-wrap: wrap; align-items: center; min-height: 0; gap: 2px; padding: 6px 8px; }
-.cw-side .usecase-strip { order: -1; flex: 0 0 calc(100% - 16px); }
-.cw-side .composer > .voice-ui { order: 5; flex: 1 1 0; min-width: 0; }
-.cw-side .composer-tools { display: contents; }
-.cw-side .composer > .input { order: 5; flex: 1 1 0; min-width: 0; min-height: 30px; padding: 6px 6px; }
-.cw-side .mic-btn, .cw-side .composer-send-wrap { order: 9; }
-.cw-side .tool-spacer, .cw-side .usage-meter { display: none; }
-.cw-side .model-btn {
-  order: 3; position: relative; flex: none; width: 30px; height: 30px; max-width: none; margin: 0 2px; padding: 0; justify-content: center;
-  border-radius: 50%; box-shadow: none;
-  background: conic-gradient(var(--accent) var(--usage, 0%), color-mix(in srgb, var(--text-primary) 14%, transparent) 0);
-}
-.cw-side .model-btn::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--bg-surface); }
-.cw-side .model-btn .model-avatar { position: relative; z-index: 1; width: 22px; height: 22px; flex-basis: 22px; font-size: 10px; }
-.cw-side .model-btn .model-name, .cw-side .model-btn .model-caret { display: none; }
-.cw-side .hints { display: none; }
-.cw-side .hints.hints-contextual { display: flex; margin: 0 0 6px; }
+.dock-move.on { color: var(--accent); }
 </style>
 <style scoped src="../../styles/composer-field.css"></style>

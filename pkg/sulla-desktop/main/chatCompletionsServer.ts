@@ -13,7 +13,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
-import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrokerContext, usesContainerVaultAuthority } from '../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
@@ -1281,7 +1281,7 @@ export class ChatCompletionsServer {
           const accountId = await getIntegrationService().getActiveAccountId('github');
           const graphPodId = String(metadata.podId ?? '').trim();
           trustedDesktopSessionFallback = !graphPodId;
-          sessionContext = await issueLocalBrokerContext({
+          sessionContext = await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId,
             podId:              graphPodId || `desktop:${ threadId }`,
             credentialScope:    { integration_id: 'github', account_id: accountId },
@@ -1302,7 +1302,7 @@ export class ChatCompletionsServer {
             return res.status(403).json({ success: false, error: 'Vault tool session is missing trusted graph identity' });
           }
           const graphPodId = String(metadata.podId ?? '').trim();
-          sessionContext = await issueLocalBrokerContext({
+          sessionContext = await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId,
             podId:              graphPodId || `desktop:${ threadId}`,
             credentialScope:    {},
@@ -1382,7 +1382,7 @@ export class ChatCompletionsServer {
                 scopes: executionContext.scopes.length ? executionContext.scopes : [`${ canonicalCategory }/*`],
                 expiresInSeconds: Math.max(1, Math.min(60, executionContext.exp - now)),
               } : {
-                sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
+                sub: await configuredVaultBrokerProvider.getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
                 scopes: [`${ canonicalCategory }/*`], expiresInSeconds: 60,
               }, deriveCapabilitySigningKey(this.apiToken!));
               const upstream = await fetch(`${ loopbackOrigin('http', 30123) }/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
@@ -1454,9 +1454,10 @@ export class ChatCompletionsServer {
         // calls to a fresh detached graph and start that graph only after the
         // tool has attached an active playbook. Read-only checkpoint listing
         // remains stateless and does not create a graph.
-        const { callStatefulWorkflowTool, needsStatefulWorkflowDispatch } = await import('./statefulCliWorkflowTool');
-        if (needsStatefulWorkflowDispatch(toolName, params)) {
-          const result = await callStatefulWorkflowTool(tool, toolName, params);
+        const { StatefulCliWorkflowDispatcher } = await import('./statefulCliWorkflowTool');
+        const statefulDispatcher = new StatefulCliWorkflowDispatcher();
+        if (statefulDispatcher.needsDispatch(toolName, params)) {
+          const result = await statefulDispatcher.call(tool, toolName, params);
           return res.json({ success: true, result });
         }
 
@@ -1481,7 +1482,7 @@ export class ChatCompletionsServer {
           ? (await getIntegrationService().getAccounts('mcp')).find(account => account.account_id === accountId)
           : undefined;
         const executionContext = usesContainerVaultAuthority() && mcpAccount?.credentialRequired !== false
-          ? await issueLocalBrokerContext({
+          ? await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId: 'desktop-integration-api', podId: 'desktop-main',
             credentialScope: { integration_id: slug, account_id: accountId },
             requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
@@ -1525,7 +1526,7 @@ export class ChatCompletionsServer {
 
       const { params = {}, body, raw } = req.body || {};
       const executionContext = usesContainerVaultAuthority() && epConfig.endpoint.auth !== 'none'
-        ? await issueLocalBrokerContext({
+        ? await configuredVaultBrokerProvider.issueLocalBrokerContext({
           agentId: 'desktop-integration-api', podId: 'desktop-main',
           credentialScope: { integration_id: slug, account_id: accountId },
           requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
@@ -1639,7 +1640,7 @@ export class ChatCompletionsServer {
         }
       }
 
-      const broker = getConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.getConfiguredCredentialBroker();
       if (broker) {
         try {
           const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
@@ -1654,7 +1655,7 @@ export class ChatCompletionsServer {
           } else if (auth?.api_key_fallback?.enabled) {
             injections.push({ field: 'api_key', target: 'query', name: auth.api_key_fallback.param_name, scheme: 'raw' });
           }
-          const ctx = await issueLocalBrokerContext({
+          const ctx = await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId: 'desktop-proxy-api', podId: 'desktop-main',
             credentialScope: { integration_id: slug, account_id: accountId },
             requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),

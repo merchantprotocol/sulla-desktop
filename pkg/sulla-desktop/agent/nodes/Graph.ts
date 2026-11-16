@@ -7,6 +7,7 @@
 // Playbook/workflow orchestration is in controllers/PlaybookController.ts.
 
 import { AgentNode } from './AgentNode';
+import { AgentGraphRouter } from './AgentGraphRouter';
 import { HeartbeatNode } from './HeartbeatNode';
 import { InputHandlerNode } from './InputHandlerNode';
 import { SubconsciousAgentNode } from './SubconsciousAgentNode';
@@ -818,70 +819,9 @@ export function createAgentGraph(): Graph<AgentGraphState> {
   // Input → Agent
   graph.addEdge('input_handler', 'agent');
 
-  // Agent routing: done/blocked → end, otherwise continue looping
-  graph.addConditionalEdge('agent', state => {
-    // If a workflow has been activated, stop the agent loop immediately.
-    // The workflow playbook will take over orchestration.
-    // BUT: during a playbook reentry (_isPlaybookReentry), the workflow is
-    // already running and we're executing on behalf of the walker. In that
-    // case, DON'T bail — let the agent finish its multi-turn tool chain
-    // (e.g. file_search → exec → text answer) before returning control.
-    const isPlaybookReentry = !!(state.metadata as any)._isPlaybookReentry;
-    if ((state.metadata as any).activeWorkflow?.status === 'running' && !isPlaybookReentry) {
-      console.log('[AgentGraph] Workflow activated — pausing agent for workflow orchestration');
-      return 'end';
-    }
-
-    const agentMeta = (state.metadata as any).agent || {};
-    const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
-
-    if (agentStatus === 'done') {
-      console.log('[AgentGraph] Agent reported DONE - ending');
-      return 'end';
-    }
-
-    if (agentStatus === 'blocked') {
-      console.log('[AgentGraph] Agent reported BLOCKED - ending');
-      return 'end';
-    }
-
-    // If the agent executed tool calls this cycle but didn't emit an explicit
-    // wrapper (status is 'in_progress'), the LLM expects to see tool results
-    // and continue — treat it as an implicit CONTINUE.
-    if (agentStatus === 'in_progress' && state.metadata.hadToolCalls) {
-      const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
-      const newLoopCount = currentLoopCount + 1;
-      (state.metadata as any).agentLoopCount = newLoopCount;
-      // Consume the flag so this decision is not sticky. normalizedChat
-      // resets hadToolCalls at the top of each LLM turn, but its
-      // last-message-is-assistant short-circuit returns BEFORE that reset
-      // — leaving the flag stuck true and looping this branch forever
-      // with no LLM activity (observed at ~4ms per cycle, thousands of
-      // iterations). If the next cycle really does run tools, ToolExecutor
-      // sets the flag back to true at the top of executeToolCalls.
-      state.metadata.hadToolCalls = false;
-      console.log(`[AgentGraph] Agent made tool calls without wrapper — implicit continue (cycle ${ newLoopCount })`);
-      return 'agent';
-    }
-
-    // Default to DONE: only an explicit <AGENT_CONTINUE> keeps the loop going.
-    // This matches LangGraph / OpenAI Assistants behaviour — the turn is over
-    // unless the agent explicitly signals it wants to continue.
-    if (agentStatus !== 'continue') {
-      console.log(`[AgentGraph] Agent status '${ agentStatus || 'unknown' }' is not CONTINUE — defaulting to DONE`);
-      (state.metadata as any).agent.status = 'done';
-      state.metadata.cycleComplete = true;
-      return 'end';
-    }
-
-    // Track loop count for diagnostics
-    const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
-    const newLoopCount = currentLoopCount + 1;
-    (state.metadata as any).agentLoopCount = newLoopCount;
-
-    console.log(`[AgentGraph] Agent cycle ${ newLoopCount } - continuing`);
-    return 'agent';
-  });
+  // Agent routing: done/blocked → end, otherwise continue looping.
+  const router = new AgentGraphRouter();
+  graph.addConditionalEdge('agent', state => router.route(state));
 
   graph.setEntryPoint('input_handler');
   graph.setEndPoints('agent');

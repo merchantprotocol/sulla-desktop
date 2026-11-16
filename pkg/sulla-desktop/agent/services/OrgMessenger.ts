@@ -6,9 +6,15 @@ import { AgentInboxBridge, EnvelopeCodec, MessageEnvelope, type ContactRequestCh
 import type { AgentInbox, AgentInboxTarget } from './AgentInbox';
 import type { OrgMessagingStateRepository } from './OrgMessagingStateRepository';
 
-export interface OrgMessagingSession { orgId(): Promise<string>; userId(): Promise<string> }
+export interface OrgMessagingSession {
+  orgId(): Promise<string>;
+  userId(): Promise<string>;
+  /** Human-readable organization name used to label inbox entries and prompts. */
+  orgName?(): Promise<string>;
+}
 export interface OrgContactPrompt {
   orgId: string;
+  orgName?: string;
   senderUserId: string;
   senderName: string;
   messages: readonly MessageEnvelope[];
@@ -59,7 +65,7 @@ export class OrgMessenger {
   async send(envelope: MessageEnvelope): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     if (envelope.data.orgId !== orgId || envelope.data.from.userId !== userId || envelope.data.provenance.actingForUserId !== userId) {
-      throw new Error('Org message must belong to the active human and organization');
+      throw new Error('Org message must belong to this organization and its signed-in human');
     }
     if (envelope.data.kind === 'agent' && this.haltedConversations.has(`${orgId}:${envelope.data.conversationId}`)) {
       throw new Error('This organization conversation is halted');
@@ -83,7 +89,7 @@ export class OrgMessenger {
     // Persist the canonical wire representation: MessageEnvelope.toJSON() keeps
     // ParticipantAddress instances, while decode() intentionally accepts only
     // canonical address strings.
-    await this.state.enqueue({ messageId: envelope.data.messageId, envelope: this.codec.encode(envelope) });
+    await this.state.enqueue({ orgId, messageId: envelope.data.messageId, envelope: this.codec.encode(envelope) });
     await this.flushOutbox();
     if (envelope.data.kind === 'control' && envelope.data.control?.action === 'halt') {
       this.haltedConversations.add(`${orgId}:${envelope.data.conversationId}`);
@@ -92,16 +98,17 @@ export class OrgMessenger {
   }
 
   async flushOutbox(): Promise<number> {
+    const orgId = await this.session.orgId();
     let sent = 0;
-    for (const item of await this.state.pending()) {
+    for (const item of await this.state.pending(orgId)) {
       const result = await this.transport.submit(this.codec.decode(item.envelope));
       if (result.status === 'denied') {
         const reason = (result as typeof result & { reason?: string }).reason || 'Message denied by organization host';
-        await this.state.markFailed(item.messageId, reason);
+        await this.state.markFailed(orgId, item.messageId, reason);
         throw new Error(reason);
       }
       if (result.status === 'accepted' || result.status === 'duplicate' || result.status === 'held') {
-        await this.state.markSent(item.messageId);
+        await this.state.markSent(orgId, item.messageId);
         sent++;
       }
     }
@@ -111,11 +118,16 @@ export class OrgMessenger {
   async pullInbox(): Promise<number> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     let cursor: InboxCursor = await this.state.cursor(orgId, userId);
+    const orgName = await this.orgName(orgId);
     let delivered = 0;
     while (true) {
       const page = await this.transport.pull(cursor, this.pageSize);
       const ordered = [...page.messages].sort((a, b) => (a.data.hostSeq ?? 0) - (b.data.hostSeq ?? 0));
       for (const envelope of ordered) {
+        if (envelope.data.orgId !== orgId) {
+          console.warn('[OrgMessenger] Ignored an inbox message addressed to another organization');
+          continue;
+        }
         const target = await this.targetResolver.target(envelope);
         if (envelope.data.kind === 'control' && envelope.data.control?.action === 'halt') {
           this.haltedConversations.add(`${orgId}:${envelope.data.conversationId}`);
@@ -125,7 +137,14 @@ export class OrgMessenger {
         }
         const local = this.bridge.toLocal(envelope, target.channel);
         await this.inbox.receive({
-          envelope: { from: local.from, kind: local.kind, body: `${this.bridge.label(envelope)}\n${local.body}`, ids: { ...local.ids, messageId: local.messageId, relayed: true } },
+          envelope: {
+            from: local.from,
+            kind: local.kind,
+            body: `[${orgName}] ${this.bridge.label(envelope)}\n${local.body}`,
+            // The local inbox dedupes by messageId across every org; the remote id
+            // is only unique inside one organization, so namespace it.
+            ids: { ...local.ids, messageId: OrgMessenger.localMessageId(orgId, local.messageId), remoteMessageId: local.messageId, orgId, orgName, relayed: true },
+          },
           target,
         });
         delivered++;
@@ -144,6 +163,7 @@ export class OrgMessenger {
   async checkContactRequests(): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     const requests = await this.transport.contactRequests(orgId, userId);
+    const orgName = await this.orgName(orgId);
     const directory = await this.loadDirectoryIfDue();
     const senders = new Map<string, MessageEnvelope[]>();
     for (const request of requests) {
@@ -160,11 +180,27 @@ export class OrgMessenger {
         return (entry.userId ?? entry.id) === sender;
       }) as { displayName?: string; name?: string } | undefined;
       void this.contactPrompter.request({
-        orgId, senderUserId: sender, senderName: person?.displayName || person?.name || sender, messages,
+        orgId, orgName, senderUserId: sender, senderName: person?.displayName || person?.name || sender, messages,
         shown: () => this.state.recordContactPrompt(orgId, userId, sender, Date.now()),
         resolve: choice => this.transport.resolveContactRequest(orgId, userId, sender, choice),
       }).catch(error => console.warn('[OrgMessenger] Could not show contact request prompt:', error));
     }
+  }
+
+  /** Local inbox id for a remote org message; remote ids are only unique within one organization. */
+  static localMessageId(orgId: string, remoteMessageId: string): string {
+    return `org:${orgId}:${remoteMessageId}`;
+  }
+
+  private async orgName(orgId: string): Promise<string> {
+    return (await this.session.orgName?.())?.trim() || orgId;
+  }
+
+  /** People and agent addresses in this org, read now from the org's host. */
+  async loadDirectory(): Promise<{ people: readonly unknown[] }> {
+    const directoryTransport = this.transport as Partial<OrgMessagingDirectory>;
+    if (typeof directoryTransport.loadDirectory !== 'function') throw new Error('This organization host has no directory');
+    return directoryTransport.loadDirectory();
   }
 
   private async loadDirectoryIfDue(): Promise<{ people: readonly unknown[] }> {

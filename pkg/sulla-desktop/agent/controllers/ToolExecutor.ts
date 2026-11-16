@@ -29,6 +29,7 @@ import { stripProtocolTags } from '../utils/stripProtocolTags';
 import Logging from '@pkg/utils/logging';
 
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import { TurnOutputCounter } from '../services/TurnOutputCounter';
 import type { NodeRunContext } from '../nodes/BaseNode';
 import type { BaseThreadState } from '../nodes/Graph';
 import type { ToolResult } from '../types';
@@ -153,6 +154,7 @@ export class ToolExecutor {
     if (!toolCalls?.length) return [];
 
     state.metadata.hadToolCalls = true;
+    new TurnOutputCounter(state.metadata as any).record();
     state.metadata.lastActivityMs = Date.now();
     RunActivity.touch(state.metadata);
     if (this.ctx.currentNodeRunContext) {

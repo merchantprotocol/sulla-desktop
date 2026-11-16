@@ -10,9 +10,15 @@ services:
     ports:
       - "127.0.0.1:${SULLA_PORT_30116:-30116}:5432"
     environment:
-      - POSTGRES_HOST_AUTH_METHOD=trust
+      # No POSTGRES_HOST_AUTH_METHOD: on a fresh volume the image entrypoint
+      # then appends `host all all all scram-sha-256`, so network clients
+      # (agent containers on sulla_default included) need the service secret.
+      # ComposeSecretGuard refuses POSTGRES_HOST_AUTH_METHOD=trust.
       - POSTGRES_USER=sulla
-      - POSTGRES_PASSWORD=sulla_dev_password
+      # Placeholder only: Desktop writes the install's service secret here
+      # (ServiceSecretComposeValues.applyTo) and refuses to write a compose
+      # file without it (ComposeSecretGuard).
+      - POSTGRES_PASSWORD=replaced-by-sulla-desktop
       - POSTGRES_DB=sulla
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:

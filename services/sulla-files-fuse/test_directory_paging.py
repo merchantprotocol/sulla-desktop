@@ -37,12 +37,19 @@ class DirectoryApi:
                 "nextCursor": str(end) if end < self.count else None}, f'"revision-{start}"'
 
 
+class FUSEError(Exception):
+    """Like pyfuse3.FUSEError: carries .errno and is not an OSError."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.errno = code
+
+
 def load_adapter():
     pyfuse3 = types.ModuleType("pyfuse3")
     pyfuse3.ROOT_INODE = 1
     pyfuse3.Operations = object
     pyfuse3.EntryAttributes = Attrs
-    pyfuse3.FUSEError = type("FUSEError", (OSError,), {})
+    pyfuse3.FUSEError = FUSEError
     pyfuse3.readdir_reply = Reply()
     trio = types.ModuleType("trio")
     yaml = types.ModuleType("yaml")

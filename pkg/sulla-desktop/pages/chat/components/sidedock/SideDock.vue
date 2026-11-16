@@ -5,12 +5,10 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  The right-hand column when the dock is moved to the side: outlined tabs
-  (Sulla, Results, Decisions, Files, and Artifacts when the chat has any) with
-  the message box pinned at the bottom under every tab. The chat page
-  teleports its one Composer into `boxEl`, so the draft, attachments and queue
-  survive moving between bottom and side. Files and Artifacts come in as slots
-  so they keep their own handlers.
+  The right drawer: outlined tabs (Sulla, Results, Decisions, Files, and
+  Artifacts when the chat has any). It holds no chat input: the message box
+  stays at the bottom of the chat. Files and Artifacts come in as slots so
+  they keep their own handlers.
 -->
 <template>
   <aside
@@ -46,7 +44,7 @@
         role="tab"
         class="sdk-tab"
         :aria-selected="current === tab.id"
-        @click="pick(tab.id, $event)"
+        @click="pick(tab.id)"
       >
         {{ tab.label }}<span
           v-if="tab.badge"
@@ -62,20 +60,14 @@
       <button
         type="button"
         class="sdk-move"
-        title="Move to the bottom"
-        aria-label="Move the message box and activity to the bottom"
+        title="Close the side panel"
+        aria-label="Close the side panel"
         @click="setPosition('bottom')"
       >
         <svg
           viewBox="0 0 24 24"
           aria-hidden="true"
-        ><rect
-          x="3"
-          y="4"
-          width="18"
-          height="16"
-          rx="2"
-        /><path d="M3 15h18" /></svg>
+        ><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>
     </div>
     <div
@@ -101,10 +93,6 @@
         <slot name="artifacts" />
       </div>
     </div>
-    <div
-      ref="boxEl"
-      class="sdk-box"
-    />
   </aside>
 </template>
 
@@ -160,7 +148,6 @@ const client = inject(AGENT_STATE_CLIENT_KEY, null);
 const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
 const current = ref<TabId>('sulla');
-const boxEl = ref<HTMLElement | null>(null);
 
 const needsYou = computed(() => controller.messages.value.filter(msg =>
   (msg.kind === 'tool_question' && msg.status === 'pending') || (msg.kind === 'tool_approval' && msg.decision === 'pending')).length);
@@ -183,12 +170,8 @@ const tabs = computed(() => [
 watch(artifactCount, count => { if (!count && current.value === 'artifacts') current.value = 'sulla'; });
 
 function selectTab(tab: TabId): void { current.value = tab }
-/** A clicked tab hands the cursor back to the message box; keyboard users stay on the tabs. */
-function pick(tab: TabId, event: MouseEvent): void {
-  current.value = tab;
-  if (event.detail > 0) boxEl.value?.querySelector('textarea')?.focus();
-}
-defineExpose({ boxEl, selectTab });
+function pick(tab: TabId): void { current.value = tab }
+defineExpose({ selectTab });
 </script>
 
 <style scoped>
@@ -238,6 +221,5 @@ defineExpose({ boxEl, selectTab });
 .sdk-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .sdk-panel { flex: 1; min-height: 0; overflow: auto; }
 .sdk-embed { height: 100%; }
-.sdk-box { flex: none; border-top: 1px solid var(--border-strong); }
 @media (prefers-reduced-motion: reduce) { .sdk-pulse { animation: none; } }
 </style>

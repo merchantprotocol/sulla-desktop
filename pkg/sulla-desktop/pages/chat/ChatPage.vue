@@ -21,7 +21,7 @@
 <template>
   <div
     class="chat-root"
-    :class="{ 'artifact-open': !dockSide && hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': !dockSide && artifactExpanded, 'subagents-open': !dockSide && subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': !dockSide && chatFilesOpen, 'dock-side': dockSide }"
+    :class="{ 'artifact-open': !dockSide && hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': !dockSide && artifactExpanded, 'chat-files-open': !dockSide && chatFilesOpen, 'dock-side': dockSide }"
     :style="{ '--side-ratio': String(sideRatio) }"
   >
     <Canvas />
@@ -37,17 +37,6 @@
         @jump-to="onJumpTo"
         @archived-click="onArchivedClick"
         @close="controller.toggleHistory()"
-      />
-
-      <SubAgentRail
-        ref="subAgentRail"
-        :parent-thread-id="subAgentParentThreadId"
-        :collapsed="subAgentsCollapsed"
-        :selected-key="selectedSubAgentKey"
-        @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
-        @select="selectSubAgent"
-        @visibility="subAgentRailVisible = $event"
-        @counts="subAgentCounts = $event"
       />
 
       <main class="main">
@@ -67,9 +56,9 @@
         <div class="composer-backdrop" aria-hidden="true" />
         <ChatHeader
           :sub-agents="subAgentCounts"
-          :sub-agents-open="!subAgentsCollapsed"
+          :sub-agents-open="dockSide"
           :files-open="chatFilesOpen"
-          @toggle-subagents="subAgentsCollapsed = !subAgentsCollapsed"
+          @toggle-subagents="openAgentsDrawer"
           @toggle-files="setChatFilesOpen(!chatFilesOpen)"
           :dock-side="dockSide"
           @find-chat="switcherOpen = true"
@@ -82,26 +71,13 @@
           @pick="onSuggestion"
         />
         <Transcript v-else />
-
-        <!--
-          One Composer, moved (not remounted) into the side dock when the dock
-          is on the side, so the draft, attachments and queue come along.
-        -->
-        <Teleport
-          :to="sideBox ?? 'body'"
-          :disabled="!dockSide || !sideBox"
-        >
-          <Composer />
-        </Teleport>
+        <Composer />
       </main>
 
       <template v-if="!dockSide">
         <ArtifactSidebar
           :collapsed="artifactCollapsed"
-          :agent="selectedSubAgent"
           @toggle-collapse="artifactCollapsed = !artifactCollapsed"
-          @open-agent="openSubAgentCard"
-          @dismiss-agent="dismissSubAgent"
         />
         <ChatFilesDrawer
           :open="chatFilesOpen"
@@ -123,10 +99,7 @@
         <template #artifacts>
           <ArtifactSidebar
             :collapsed="false"
-            :agent="selectedSubAgent"
             @toggle-collapse="sideDock?.selectTab('sulla')"
-            @open-agent="openSubAgentCard"
-            @dismiss-agent="dismissSubAgent"
           />
         </template>
       </SideDock>
@@ -150,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import Canvas             from './components/chrome/Canvas.vue';
 import ChatHeader         from './components/chrome/ChatHeader.vue';
@@ -167,12 +140,13 @@ import HistoryRail       from './components/history/HistoryRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
-import SubAgentRail      from './components/subagent/SubAgentRail.vue';
 import SideDock          from './components/sidedock/SideDock.vue';
 import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
 import { DockPositions } from './composables/useDockPosition';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
-import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
+import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -399,8 +373,6 @@ const onSupportPrompt = (event:Event) => {
 };
 window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
 onBeforeUnmount(() => window.removeEventListener('sulla:support-chat-prompt', onSupportPrompt));
-const subAgentRailVisible = ref(false);
-const subAgentCounts = ref({ total: 0, live: 0 });
 
 // Side panels can be tucked away to a tab on the edge; the choice
 // sticks across tabs and restarts.
@@ -408,43 +380,24 @@ const COLLAPSE_KEY = 'sulla.chat.collapsedPanels';
 function readCollapsed(): { subagents?: boolean; artifact?: boolean } {
   try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') } catch { return {} }
 }
-const subAgentsCollapsed = ref(!!readCollapsed().subagents);
 const artifactCollapsed  = ref(!!readCollapsed().artifact);
-watch([subAgentsCollapsed, artifactCollapsed], ([subagents, artifact]) => {
-  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ subagents, artifact })) } catch { /* storage full/unavailable */ }
+watch(artifactCollapsed, artifact => {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ ...readCollapsed(), artifact })) } catch { /* storage full/unavailable */ }
 });
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
-const subAgentRail = ref<InstanceType<typeof SubAgentRail> | null>(null);
-const selectedSubAgent = ref<ThreadAgentCard | null>(null);
-const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selectedSubAgent.value.kind }:${ selectedSubAgent.value.jobId }:${ selectedSubAgent.value.taskIndex }` : '');
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+// Agents in this chat, for the header's Sub-agents button.
+const agentStateClient = inject(AGENT_STATE_CLIENT_KEY);
+const LIVE_AGENT_STATES = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
+const subAgentCounts = computed(() => {
+  const threadId = subAgentParentThreadId.value;
+  if (!agentStateClient || !threadId) return { total: 0, live: 0 };
+  const builder = new AgentTreeBuilder(agentStateClient.snapshot.value.rows);
+  const rows = builder.flatten(builder.forThread(threadId));
+  return { total: rows.length, live: rows.filter(node => LIVE_AGENT_STATES.has(node.row.state)).length };
+});
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
-
-function selectSubAgent(card: ThreadAgentCard): void {
-  const isNewSelection = selectedSubAgentKey.value !== `${ card.kind }:${ card.jobId }:${ card.taskIndex }`;
-  selectedSubAgent.value = card;
-  if (isNewSelection) artifactCollapsed.value = false;
-}
-
-function openSubAgentCard(card: ThreadAgentCard): void {
-  if (card.kind === 'tab' && card.agentTab) {
-    const info = card.agentTab;
-    let tab = tabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === info.contractId);
-    if (!tab) {
-      tab = createTab('about:blank', { mode: 'chat', title: card.label, agentChat: { threadId: info.threadId, agentId: card.agentId, agentName: info.agentName, parentThreadId: subAgentParentThreadId.value || '', parentAgentId: info.parentAgentId, parentAgentName: info.parentAgentId, contractId: info.contractId, depth: info.depth } });
-      localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, info.threadId);
-    }
-    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
-  } else if (card.conversationId) {
-    openSubAgentConversation({ agentId: card.agentId, label: card.label, conversationId: card.conversationId });
-  }
-}
-
-function dismissSubAgent(card: ThreadAgentCard): void {
-  void subAgentRail.value?.dismiss(card);
-  selectedSubAgent.value = null;
-}
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;
@@ -458,7 +411,7 @@ onBeforeUnmount(() => {
 });
 
 // ─── Derived state ────────────────────────────────────────────────
-const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0 || !!selectedSubAgent.value);
+const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0);
 // The persona's hasSentMessage lives in a per-tab localStorage scope that is
 // LRU-evicted after 20 tabs, so a conversation reopened from History (its
 // transcript hydrated from the thread store / DB) would otherwise be hidden
@@ -746,10 +699,21 @@ const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
 // ─── Dock position: bottom of the chat, or the right-hand side column ───
-const { position: dockPosition, sideRatio } = DockPositions.use();
+const { position: dockPosition, sideRatio, setPosition: setDockPosition } = DockPositions.use();
 const dockSide = computed(() => dockPosition.value === 'side');
 const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
-const sideBox = computed(() => sideDock.value?.boxEl ?? null);
+// The right drawer (side dock) holds the agent lanes, results, decisions and files.
+// It never takes the message box: that stays at the bottom of the chat. The header's
+// Sub-agents button opens the drawer on its Sulla tab, or closes it when it is open.
+async function openAgentsDrawer(): Promise<void> {
+  if (dockSide.value) {
+    setDockPosition('bottom');
+    return;
+  }
+  setDockPosition('side');
+  await nextTick();
+  sideDock.value?.selectTab('sulla');
+}
 // Find chat (⌘P): past chats, pins, and this chat's decisions and results.
 const switcherOpen = ref(false);
 function onFindChatKey(event: KeyboardEvent): void {
@@ -942,8 +906,6 @@ onBeforeUnmount(() => {
 }
 
 .chat-root.history-open   .main { left: 260px; }
-.chat-root.subagents-open .main { left: 272px; }
-.chat-root.subagents-open.history-open .main { left: 532px; }
 .chat-root.artifact-open  .main { right: 436px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 .chat-root.chat-files-open .main { right: 300px; }
@@ -957,7 +919,6 @@ onBeforeUnmount(() => {
   width: 260px;
   z-index: 6;
 }
-.chat-root.history-open .shell :deep(.sd-agent-rail) { left: 260px; }
 /* The drawer sizes itself (420px + 8px margins = the 436px .main leaves free);
    this only docks it to the right edge. */
 .shell :deep(.sd-artifact-panel) {
@@ -968,9 +929,6 @@ onBeforeUnmount(() => {
 .chat-root.chat-files-open .shell :deep(.sd-artifact-panel) { right: 300px; }
 
 @media (max-width: 1200px) {
-  .shell :deep(.sd-agent-rail) { display: none; }
-  .chat-root.subagents-open .main { left: 0; }
-  .chat-root.subagents-open.history-open .main { left: 260px; }
 }
 @media (max-width: 1000px) {
   .shell :deep(.chat-files-drawer) { display: none; }
@@ -980,15 +938,10 @@ onBeforeUnmount(() => {
   .chat-root.chat-files-open .shell :deep(.artifact) { right: 0; }
 }
 
-/* ─── Side dock: the right column holds the tabs and the message box ─── */
+/* ─── Side dock: the right drawer holds the tabs; the message box stays at the bottom ─── */
 /* Its width is a saved share of the chat area (dragged on its edge), kept between 340px and 70%. */
 .chat-root { --side-dock-w: clamp(340px, calc(var(--side-ratio, 0.32) * 100%), 70%); }
 .chat-root.dock-side .main { right: var(--side-dock-w, 440px); }
-/* useResizeSync sets these inline from the bottom box; on the side nothing sits over the transcript. */
-.chat-root.dock-side .main { --composer-h: 0px !important; --scroller-pad-b: 48px !important; }
-.chat-root.dock-side .composer-backdrop { display: none; }
-/* The Sulla tab's lanes replace the Sub-agents rail (kept mounted for its counts). */
-.chat-root.dock-side .shell :deep(.sd-agent-rail) { display: none; }
 .chat-root.dock-side .shell :deep(.sdk-embed .chat-files-drawer) {
   position: static; display: flex; width: auto; height: 100%; border-left: 0; background: none; backdrop-filter: none;
 }

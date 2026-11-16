@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, type Ref } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { startTypography } from '@pkg/composables/useTypography';
@@ -50,28 +50,14 @@ export const themeGroups: ThemeGroup[] = [
   { scheme: 'studio', label: 'Studio', themes: availableThemes.filter(t => t.scheme === 'studio') },
 ];
 
-const validThemeIds = new Set<string>(availableThemes.map(t => t.id));
-
 /** Map legacy theme names to new IDs for backward compatibility. */
-const legacyThemeMap: Record<string, ThemeName> = {
+const legacyThemeMap: Readonly<Record<string, ThemeName>> = Object.freeze({
   light:    'default-light',
   dark:     'default-dark',
   ocean:    'ocean-dark',
   nord:     'nord-dark',
   protocol: 'protocol-dark',
-};
-
-function isValidTheme(value: unknown): value is ThemeName {
-  return typeof value === 'string' && validThemeIds.has(value);
-}
-
-function migrateLegacyTheme(value: unknown): ThemeName | null {
-  if (typeof value === 'string' && value in legacyThemeMap) {
-    return legacyThemeMap[value];
-  }
-
-  return null;
-}
+});
 
 const THEME_SETTING_KEY = 'theme';
 const THEME_STORAGE_KEY = 'agentTheme';
@@ -79,69 +65,119 @@ const THEME_STORAGE_KEY = 'agentTheme';
 /** Theme used when nothing has been saved yet (fresh installs). */
 export const DEFAULT_THEME: ThemeName = DEFAULT_THEME_ID;
 
-// Shared reactive state across all composable instances in the same window
-const currentTheme = ref<ThemeName>(DEFAULT_THEME);
-let initialized = false;
+type ThemeSettings = Pick<typeof SullaSettingsModel, 'get' | 'set'>;
 
-function applyThemeClass(theme: ThemeName): void {
-  const root = document.documentElement;
-  // Remove all theme classes
-  availableThemes.forEach(t => root.classList.remove(`theme-${ t.id }`));
-  root.classList.remove('theme-noir');
-  // Add current theme class
-  root.classList.add(`theme-${ theme }`);
-  // Toggle Tailwind dark class for backward compatibility
-  const themeInfo = availableThemes.find(t => t.id === theme);
-  if (themeInfo?.scheme === 'noir') {
-    root.classList.add('theme-noir');
-  }
-  if (themeInfo?.isDark) {
-    root.classList.add('dark');
-  } else {
-    root.classList.remove('dark');
-  }
-}
+/**
+ * Window-wide theme state. Every component that calls useTheme() shares the
+ * one instance, so changing the theme anywhere updates the whole window.
+ */
+export class ThemeStore {
+  private static instance: ThemeStore | null = null;
+  private static readonly validThemeIds: ReadonlySet<string> = new Set<string>(availableThemes.map(t => t.id));
 
-async function loadThemeFromSettings(): Promise<ThemeName> {
-  try {
-    const saved = await SullaSettingsModel.get(THEME_SETTING_KEY, null);
-    if (isValidTheme(saved)) {
-      return saved;
+  /** The single store every component in this window shares. */
+  static shared(): ThemeStore {
+    if (!ThemeStore.instance) ThemeStore.instance = new ThemeStore(SullaSettingsModel);
+
+    return ThemeStore.instance;
+  }
+
+  static isValidTheme(value: unknown): value is ThemeName {
+    return typeof value === 'string' && ThemeStore.validThemeIds.has(value);
+  }
+
+  static migrateLegacyTheme(value: unknown): ThemeName | null {
+    if (typeof value === 'string' && value in legacyThemeMap) {
+      return legacyThemeMap[value];
     }
-    const migrated = migrateLegacyTheme(saved);
-    if (migrated) {
-      return migrated;
+
+    return null;
+  }
+
+  readonly currentTheme: Ref<ThemeName> = ref<ThemeName>(DEFAULT_THEME);
+  initialized = false;
+
+  constructor(private readonly settings: ThemeSettings) {}
+
+  applyThemeClass(theme: ThemeName): void {
+    const root = document.documentElement;
+    // Remove all theme classes
+    availableThemes.forEach(t => root.classList.remove(`theme-${ t.id }`));
+    root.classList.remove('theme-noir');
+    // Add current theme class
+    root.classList.add(`theme-${ theme }`);
+    // Toggle Tailwind dark class for backward compatibility
+    const themeInfo = availableThemes.find(t => t.id === theme);
+    if (themeInfo?.scheme === 'noir') {
+      root.classList.add('theme-noir');
     }
-  } catch {
-    // SullaSettingsModel not ready yet — fall through to localStorage
+    if (themeInfo?.isDark) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
   }
 
-  // Fallback: check localStorage (legacy support)
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-  if (isValidTheme(stored)) {
-    return stored;
+  async loadThemeFromSettings(): Promise<ThemeName> {
+    try {
+      const saved = await this.settings.get(THEME_SETTING_KEY, null);
+      if (ThemeStore.isValidTheme(saved)) {
+        return saved;
+      }
+      const migrated = ThemeStore.migrateLegacyTheme(saved);
+      if (migrated) {
+        return migrated;
+      }
+    } catch {
+      // SullaSettingsModel not ready yet — fall through to localStorage
+    }
+
+    // Fallback: check localStorage (legacy support)
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (ThemeStore.isValidTheme(stored)) {
+      return stored;
+    }
+    const migratedStored = ThemeStore.migrateLegacyTheme(stored);
+    if (migratedStored) {
+      return migratedStored;
+    }
+
+    // Final fallback
+    return DEFAULT_THEME;
   }
-  const migratedStored = migrateLegacyTheme(stored);
-  if (migratedStored) {
-    return migratedStored;
+
+  async persistTheme(theme: ThemeName): Promise<void> {
+    // Always write localStorage for immediate cross-window sync
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+
+    try {
+      await this.settings.set(THEME_SETTING_KEY, theme, 'string');
+    } catch {
+      // Settings backend not ready — localStorage is sufficient for now
+    }
   }
 
-  // Final fallback
-  return DEFAULT_THEME;
-}
-
-async function persistTheme(theme: ThemeName): Promise<void> {
-  // Always write localStorage for immediate cross-window sync
-  localStorage.setItem(THEME_STORAGE_KEY, theme);
-
-  try {
-    await SullaSettingsModel.set(THEME_SETTING_KEY, theme, 'string');
-  } catch {
-    // Settings backend not ready — localStorage is sufficient for now
+  /** Follow theme changes another window writes to localStorage. */
+  listenForOtherWindows(): void {
+    window.addEventListener('storage', (e) => {
+      if (e.key === THEME_STORAGE_KEY) {
+        if (ThemeStore.isValidTheme(e.newValue)) {
+          this.currentTheme.value = e.newValue;
+        } else {
+          const migrated = ThemeStore.migrateLegacyTheme(e.newValue);
+          if (migrated) {
+            this.currentTheme.value = migrated;
+          }
+        }
+      }
+    });
   }
 }
 
 export function useTheme() {
+  const store = ThemeStore.shared();
+  const { currentTheme } = store;
+
   const isDark = computed(() => {
     const themeInfo = availableThemes.find(t => t.id === currentTheme.value);
     return themeInfo?.isDark ?? false;
@@ -154,7 +190,7 @@ export function useTheme() {
 
   function setTheme(theme: ThemeName): void {
     currentTheme.value = theme;
-    persistTheme(theme);
+    store.persistTheme(theme);
   }
 
   /** Switch scheme, preserving the current light/dark mode when possible. */
@@ -186,34 +222,23 @@ export function useTheme() {
 
   // Apply theme class to document.documentElement whenever theme changes
   watch(currentTheme, (theme) => {
-    applyThemeClass(theme);
+    store.applyThemeClass(theme);
   });
 
   onMounted(async() => {
-    if (!initialized) {
-      initialized = true;
-      currentTheme.value = await loadThemeFromSettings();
+    if (!store.initialized) {
+      store.initialized = true;
+      currentTheme.value = await store.loadThemeFromSettings();
     }
     // Apply on mount in case the watch didn't fire (value unchanged)
-    applyThemeClass(currentTheme.value);
+    store.applyThemeClass(currentTheme.value);
     // Every window mounts useTheme, so per-section typography loads here too.
     startTypography();
   });
 
   // Listen for cross-window localStorage changes
-  if (typeof window !== 'undefined' && !initialized) {
-    window.addEventListener('storage', (e) => {
-      if (e.key === THEME_STORAGE_KEY) {
-        if (isValidTheme(e.newValue)) {
-          currentTheme.value = e.newValue;
-        } else {
-          const migrated = migrateLegacyTheme(e.newValue);
-          if (migrated) {
-            currentTheme.value = migrated;
-          }
-        }
-      }
-    });
+  if (typeof window !== 'undefined' && !store.initialized) {
+    store.listenForOtherWindows();
   }
 
   return {

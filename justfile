@@ -267,9 +267,12 @@ ping-memory:
     resources/darwin/sulla-runtime/sulla-runtime exec -- \
     curl -s -m 5 http://localhost:30115/api/v2/heartbeat || echo "memory unreachable (timeout or 410)"
 
+# psql as `sulla` over the container's local socket (local trust), so no
+# password is needed or typed. Network logins on 30116 need the install's
+# service secret (scram-sha-256).
 pg-conn:
-     echo "Connecting to psql..." && \
-     PGPASSWORD=sulla_dev_password psql -h localhost -p 30116 -U sulla -d sulla
+    @echo "Connecting to psql inside sulla_postgres..."
+    resources/darwin/sulla-runtime/sulla-runtime exec -- docker exec -it sulla_postgres psql -U sulla -d sulla
 
 # Login to Docker Hub inside the VM (bypasses rate limiting for image pulls)
 docker-login:

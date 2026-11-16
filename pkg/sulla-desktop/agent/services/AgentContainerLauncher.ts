@@ -36,13 +36,7 @@ import { RunActivity } from './RunActivity';
 import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
-import {
-  createProviderCliBridge,
-  getLocalVaultPrincipalId,
-  usesContainerVaultAuthority,
-  type ProviderCliAuthMode,
-  type ProviderCliBridgeLease,
-} from '../../vault-broker';
+import { ProviderBridgeAuthorizeUnavailableError, ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
@@ -918,10 +912,10 @@ async function cleanupContainerResources(
       let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
       try {
         decision = await inspectGuestWorkspaceForCleanup(workspacePath);
-      } catch {
+      } catch (error) {
         decision = {
           remove: false,
-          reason: 'workspace retained because its cleanup state could not be inspected safely',
+          reason: `workspace retained because its cleanup state could not be inspected safely: ${ (error as Error)?.message ?? error }`,
         };
       }
       receipt.workspaceDecisionReason = decision.reason;
@@ -932,7 +926,7 @@ async function cleanupContainerResources(
         } catch (error) {
           failures.push(error);
         }
-      } else {
+      } else if (!decision.persistent) {
         receipt.retainedGuestPaths.push(workspacePath);
         receipt.recoveryWorkspacePath = workspacePath;
       }
@@ -1251,7 +1245,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
           throw new VaultLocked('claude-code', { cause: 'Vault not ready after the startup grace period' });
         }
-        return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
+        return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
       }
 
       // Other providers retain the startup grace period until their resolvers
@@ -1260,7 +1254,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         throw await lockedVaultError();
       }
 
-      return await getLocalVaultPrincipalId(signal);
+      return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal);
     });
     const toolsServiceTask = phase('toolsService', () => waitForToolsService());
     const [{ identity, deviceId }, subject, toolsReady] = await Promise.all([
@@ -1498,7 +1492,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             request_id:       crypto.randomUUID(),
           };
         };
-        const bridge = await createProviderCliBridge({
+        const bridge = await new ProviderCliBridgeService().create({
           context:        bridgeContext(),
           provider,
           accountId,
@@ -1511,7 +1505,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           authorize:      async() => {
             const context = bridgeContext();
             requireAgentContainerRuntime(context);
-            if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
+            // A Redis blip is not a revocation: answer 503 and keep the lease (the lifecycle signal still revokes locally).
+            const revoked = await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`).catch((error: unknown) => { throw new ProviderBridgeAuthorizeUnavailableError('revocation_check_unavailable', { cause: error }) });
+            if (revoked) return false;
             return context;
           },
           // Codex runs on a ChatGPT OAuth session; refresh it in the vault
@@ -1674,7 +1670,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
     const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
     const subject = usesContainerVaultAuthority()
-      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      ? await configuredVaultBrokerProvider.getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
       : metadata.userId;
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames;
