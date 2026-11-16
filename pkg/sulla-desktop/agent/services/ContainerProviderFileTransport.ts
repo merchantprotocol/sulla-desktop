@@ -13,6 +13,7 @@ import {
   removeGuestPathAtomic,
   writeGuestFileAtomic,
 } from './GuestRuntimeTransport';
+import { ContainerLifecycleLostError } from '../languagemodels/cliFaultRecovery';
 
 import type {
   ProviderFileRef,
@@ -45,6 +46,7 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
   /** Content-addressed files live for the container lifecycle. This makes an
    * unchanged system prompt a zero-I/O cache hit on subsequent turns. */
   private readonly contentFiles = new Map<string, Promise<{ storageTarget: string; providerTarget: string }>>();
+  private disposed = false;
 
   private constructor(storageRoot: string) {
     this.storageRoot = storageRoot;
@@ -60,6 +62,12 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
   }
 
   async write(request: ProviderFileRequest): Promise<ProviderFileRef> {
+    // The storage root is gone once the lifecycle ends. A late writer (a
+    // background observer that outlived the job) gets the lifecycle loss, not
+    // a shell "nonexistent directory" that reads as a model failure.
+    if (this.disposed) {
+      throw new ContainerLifecycleLostError(new Error('Container provider files were released when the agent container lifecycle ended'));
+    }
     const mode = ((request.mode ?? 0o600) & 0o700) | 0o044;
     // Only the system prompt repeats turn after turn; attachments and MCP
     // configs are one-off and keep their delete-on-dispose lifetime.
@@ -107,6 +115,8 @@ export class ContainerProviderFileTransport implements ProviderFileTransport {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
+    this.contentFiles.clear();
     await removeGuestPathAtomic(this.storageRoot);
   }
 }

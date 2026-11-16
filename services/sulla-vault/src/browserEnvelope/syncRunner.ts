@@ -15,6 +15,7 @@
 
 import { randomUUID, createHash } from 'node:crypto';
 
+import { HeadChainLinkPolicy } from '@sulla/domain';
 import {
   DEFAULT_AGENT_POLICY, decryptItemText, encryptItem,
   type AgentPolicy, type VaultItemPlaintext,
@@ -29,6 +30,11 @@ import { RemoteItemParser } from './RemoteItemParser.js';
 import { DomainVaultSyncCodecProvider } from './DomainVaultSyncCodecProvider.js';
 import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
 import { ensureSyncSchema } from './schema.js';
+import { CloudSyncRepositories } from './sync/CloudSyncRepositories.js';
+import type { SyncAuditAction } from './sync/repositories/SyncAuditEventDispatcher.js';
+import { DesktopSyncCommitBudget } from './sync/DesktopSyncCommitBudget.js';
+import type { KnownRecordRow } from './sync/repositories/PostgresVerifiedRecordSet.js';
+import type { SyncStateRow } from './sync/repositories/PostgresSyncStateRepository.js';
 
 import type { Database, Queryable } from '../db.js';
 import type pg from 'pg';
@@ -52,13 +58,8 @@ export interface CloudSyncAuthority {
 
 export { CloudSyncError };
 
-interface StateRow {
-  owner_user_id: string; vault_id: string; epoch: number; bundle_generation: number;
-  head_seq: string | number; head_mac: string; last_push_at: string | null; last_pull_at: string | null; last_error: string | null;
-  bundle_sha: string;
-}
-
-interface KnownRow { record_id: string; generation: string | number; deleted: boolean; record_mac: string; local_revision: string | number | null; policy_review_pending: boolean }
+type StateRow = SyncStateRow;
+type KnownRow = KnownRecordRow;
 
 interface PendingSend {
   handle:       string;
@@ -76,17 +77,8 @@ interface PendingSend {
 
 const HANDLE_TTL_MS = 60_000;
 const PULL_PAGE = 100;
-const MAX_WRITES = 256;
-const MAX_COMMIT_BYTES = 1_900_000;
 // Rollout gate: enable only after Cloud, Web and Mobile all advertise bundle-v2 support.
 const BUNDLE_V2_UPLOAD_ENABLED = process.env.SULLA_CLOUD_BUNDLE_VERSION === '2';
-
-/** The server head only authenticates its immediate predecessor link. */
-export class HeadChainLinkPolicy {
-  expectedPreviousMac(headSeq: number, localSeq: number, localMac: string): string | undefined {
-    return headSeq <= localSeq + 1 ? localMac : undefined;
-  }
-}
 
 const sha256Hex = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 /** Fingerprint of what the bundle wraps; changes on a password change, KDF change or key rotation. */
@@ -105,7 +97,6 @@ export class CloudVaultSyncRunner {
   private readonly pending = new Map<string, PendingSend>();
   private stateVersion = 0;
   private tail: Promise<unknown> = Promise.resolve();
-  private readonly headChainLinkPolicy = new HeadChainLinkPolicy();
   private readonly widening = new PolicyWideningDecision();
   private readonly remoteItems = new RemoteItemParser();
 
@@ -113,6 +104,9 @@ export class CloudVaultSyncRunner {
     private readonly db: Database,
     private readonly authority: CloudSyncAuthority,
     private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
+    private readonly repos: CloudSyncRepositories = new CloudSyncRepositories(),
+    private readonly headChainLinkPolicy: HeadChainLinkPolicy = new HeadChainLinkPolicy(),
+    private readonly commitBudget: DesktopSyncCommitBudget = new DesktopSyncCommitBudget(),
   ) {}
 
   private async env() {
@@ -136,46 +130,24 @@ export class CloudVaultSyncRunner {
     return { status: result.status, body: responseBody(result.body) };
   }
 
-  private async account(userId: string): Promise<LocalAccountRow | null> {
-    const result = await this.db.query<LocalAccountRow>(
-      'SELECT id,public_key,encrypted_private_key,encrypted_user_key,kdf FROM users WHERE id=$1 AND disabled_at IS NULL', [userId],
-    );
-    return result.rows[0] ?? null;
+  private account(userId: string): Promise<LocalAccountRow | null> {
+    return this.repos.accounts.account(this.db, userId);
   }
 
-  private async recovery(userId: string): Promise<LocalRecoveryRow | null> {
-    const result = await this.db.query<LocalRecoveryRow>(
-      'SELECT recovery_salt,encrypted_user_key FROM local_vault_recovery WHERE user_id=$1', [userId],
-    );
-    return result.rows[0] ?? null;
+  private recovery(userId: string): Promise<LocalRecoveryRow | null> {
+    return this.repos.accounts.recovery(this.db, userId);
   }
 
-  private async state(userId: string): Promise<StateRow | null> {
-    const result = await this.db.query<StateRow>('SELECT * FROM cloud_vault_sync_state WHERE owner_user_id=$1', [userId]);
-    return result.rows[0] ?? null;
+  private state(userId: string): Promise<StateRow | null> {
+    return this.repos.state.find(this.db, userId);
   }
 
-  private async known(userId: string): Promise<Map<string, KnownRow>> {
-    const result = await this.db.query<KnownRow>(
-      `SELECT record_id,generation,deleted,record_mac,local_revision,policy_review_pending
-         FROM cloud_vault_sync_records WHERE owner_user_id=$1 AND scope='personal'`, [userId],
-    );
-    return new Map(result.rows.map(row => [row.record_id, row]));
+  private known(userId: string): Promise<Map<string, KnownRow>> {
+    return this.repos.records.known(this.db, userId);
   }
 
-  private async transaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await operation(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+  private transaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.repos.transaction.run(this.db, operation);
   }
 
   /** Local sync status for Desktop > Profile. Metadata only. */
@@ -184,23 +156,15 @@ export class CloudVaultSyncRunner {
     return this.authority.withUnlockedUserKey(async({ userId }) => {
       const state = await this.state(userId);
       if (!state) return { configured: false };
-      const review = await this.db.query<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM cloud_vault_sync_records WHERE owner_user_id=$1 AND policy_review_pending`, [userId],
-      );
+      const review = await this.repos.pending.policyReviewCount(this.db, userId);
       // Local edits Cloud doesn't have yet: main debounces a push when this is non-zero.
-      const pending = await this.db.query<{ n: string }>(
-        `SELECT COUNT(*) AS n FROM items i
-           LEFT JOIN cloud_vault_sync_records r ON r.owner_user_id=i.owner_user_id AND r.scope='personal' AND r.record_id=i.id
-          WHERE i.owner_user_id=$1 AND i.collection_id IS NULL AND r.policy_review_pending IS NOT TRUE
-            AND ((i.deleted_at IS NULL AND (r.record_id IS NULL OR r.deleted OR r.local_revision IS DISTINCT FROM i.revision))
-              OR (i.deleted_at IS NOT NULL AND r.record_id IS NOT NULL AND NOT r.deleted))`, [userId],
-      );
+      const pending = await this.repos.pending.pendingChangeCount(this.db, userId);
       const account = await this.account(userId);
       const recovery = BUNDLE_V2_UPLOAD_ENABLED ? await this.recovery(userId) : null;
       return {
         configured: true, vaultId: state.vault_id, headSeq: num(state.head_seq), lastPushAt: state.last_push_at,
-        lastPullAt: state.last_pull_at, lastError: state.last_error, policyReviewPending: num(review.rows[0]?.n),
-        pendingChanges: num(pending.rows[0]?.n),
+        lastPullAt: state.last_pull_at, lastError: state.last_error, policyReviewPending: num(review),
+        pendingChanges: num(pending),
         // The master password (or KDF) changed since the last upload: the Cloud bundle needs a rewrap.
         bundleStale: Boolean(account && state.bundle_sha && wrapFingerprint(account, recovery) !== state.bundle_sha),
       };
@@ -275,10 +239,7 @@ export class CloudVaultSyncRunner {
           if (remoteBundle && remoteBundle.bundleGeneration > num(state.bundle_generation)) {
             // Cloud's bundle is a password-wrapped copy for other devices. This
             // Desktop must retain its locally authoritative user-key wrapping.
-            await client.query(
-              'UPDATE cloud_vault_sync_state SET bundle_generation=$2,updated_at=now() WHERE owner_user_id=$1',
-              [userId, remoteBundle.bundleGeneration],
-            );
+            await this.repos.state.recordBundleGeneration(client, userId, remoteBundle.bundleGeneration);
           }
           for (const record of deltas) {
             const prior = known.get(record.id);
@@ -287,10 +248,7 @@ export class CloudVaultSyncRunner {
             applied += 1;
             conflictCopies += outcome.conflictCopy ? 1 : 0;
           }
-          await client.query(
-            `UPDATE cloud_vault_sync_state SET head_seq=$2,head_mac=$3,last_pull_at=now(),last_error=NULL,updated_at=now() WHERE owner_user_id=$1`,
-            [userId, head!.seq, head!.mac],
-          );
+          await this.repos.state.advancePulledHead(client, userId, head!.seq, head!.mac);
           assertCurrent();
         });
         this.stateVersion += 1;
@@ -302,10 +260,7 @@ export class CloudVaultSyncRunner {
   private async applyRecord(
     client: pg.PoolClient, envelope: DomainVaultSyncCodec, userId: string, userKey: Uint8Array, record: SyncRecord, prior: KnownRow | undefined,
   ): Promise<{ conflictCopy: boolean }> {
-    const local = (await client.query<{ revision: string; deleted_at: string | null; agent_policy: AgentPolicy; integration_ref: string | null; ciphertext: unknown; encrypted_item_key: unknown; item_type: string }>(
-      `SELECT revision,deleted_at,agent_policy,integration_ref,ciphertext,encrypted_item_key,item_type
-         FROM items WHERE id=$1 AND owner_user_id=$2 AND collection_id IS NULL FOR UPDATE`, [record.id, userId],
-    )).rows[0];
+    const local = await this.repos.items.lockForApply(client, userId, record.id);
     const localChanged = Boolean(local && (!prior || num(prior.local_revision) !== num(local.revision)));
     let conflictCopy = false;
     let revision: number | null = local ? num(local.revision) : null;
@@ -317,10 +272,7 @@ export class CloudVaultSyncRunner {
         return { conflictCopy: false };
       }
       if (local && !local.deleted_at) {
-        const res = await client.query<{ revision: string }>(
-          `UPDATE items SET deleted_at=now(),revision=revision+1,updated_at=now() WHERE id=$1 AND owner_user_id=$2 RETURNING revision`, [record.id, userId],
-        );
-        revision = num(res.rows[0]?.revision);
+        revision = num(await this.repos.items.softDelete(client, userId, record.id));
         await this.audit(client, userId, 'cloud_sync_item_deleted', record.id);
       }
       await this.remember(client, userId, record, revision);
@@ -338,10 +290,7 @@ export class CloudVaultSyncRunner {
       const copyId = randomUUID();
       const copy: VaultItemPlaintext = { ...mine, name: `${ mine.name } (conflict copy)`, agentPolicy: { ...DEFAULT_AGENT_POLICY }, integration: undefined };
       const sealed = await encryptItem(JSON.stringify(copy), userKey, { itemId: copyId, ownerId: userId });
-      await client.query(
-        `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref) VALUES ($1,$2,$3,$4,$5,$6,NULL)`,
-        [copyId, userId, copy.type, sealed.ciphertext, sealed.encryptedItemKey, copy.agentPolicy],
-      );
+      await this.repos.items.insertConflictCopy(client, userId, copyId, copy.type, sealed.ciphertext, sealed.encryptedItemKey, copy.agentPolicy);
       await this.audit(client, userId, 'cloud_sync_conflict_copy', copyId);
       conflictCopy = true;
     }
@@ -355,37 +304,26 @@ export class CloudVaultSyncRunner {
       return { conflictCopy };
     }
     if (local) {
-      const res = await client.query<{ revision: string }>(
-        `UPDATE items SET item_type=$3,ciphertext=$4,encrypted_item_key=$5,agent_policy=$6,deleted_at=NULL,revision=revision+1,updated_at=now()
-          WHERE id=$1 AND owner_user_id=$2 RETURNING revision`,
-        [record.id, userId, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, plaintext.agentPolicy],
-      );
-      revision = num(res.rows[0]?.revision);
+      revision = num(await this.repos.items.replaceFromCloud(
+        client, userId, record.id, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, plaintext.agentPolicy,
+      ));
       await this.audit(client, userId, 'cloud_sync_item_updated', record.id);
     } else {
-      const res = await client.query<{ revision: string }>(
-        `INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
-         VALUES ($1,$2,$3,$4,$5,$6,NULL) RETURNING revision`,
-        [record.id, userId, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, plaintext.agentPolicy],
-      );
-      revision = num(res.rows[0]?.revision);
+      revision = num(await this.repos.items.insertFromCloud(
+        client, userId, record.id, plaintext.type, record.item!.ciphertext, record.item!.encryptedItemKey, plaintext.agentPolicy,
+      ));
       await this.audit(client, userId, 'cloud_sync_item_created', record.id);
     }
     await this.remember(client, userId, record, revision);
     return { conflictCopy };
   }
 
-  private async remember(client: pg.PoolClient, userId: string, record: Pick<SyncRecord, 'id' | 'generation' | 'deleted' | 'mac'>, localRevision: number | null, held: SyncRecord | null = null) {
-    await client.query(
-      `INSERT INTO cloud_vault_sync_records(owner_user_id,scope,record_id,generation,deleted,record_mac,local_revision,policy_review_pending,held_record)
-       VALUES ($1,'personal',$2,$3,$4,$5,$6,$7,$8::jsonb)
-       ON CONFLICT(owner_user_id,scope,record_id) DO UPDATE SET generation=$3,deleted=$4,record_mac=$5,local_revision=$6,policy_review_pending=$7,held_record=$8::jsonb`,
-      [userId, record.id, record.generation, record.deleted, record.mac, localRevision, held !== null, held ? JSON.stringify(held) : null],
-    );
+  private remember(client: pg.PoolClient, userId: string, record: Pick<SyncRecord, 'id' | 'generation' | 'deleted' | 'mac'>, localRevision: number | null, held: SyncRecord | null = null) {
+    return this.repos.records.remember(client, userId, record, localRevision, held);
   }
 
-  private async audit(client: pg.PoolClient, userId: string, action: string, itemId: string | null) {
-    await client.query(`INSERT INTO audit_log(actor_user_id,item_id,action,metadata,blocked) VALUES ($1,$2,$3,'{}'::jsonb,false)`, [userId, itemId, action]);
+  private audit(client: pg.PoolClient, userId: string, action: SyncAuditAction, itemId: string | null) {
+    return this.repos.audit.record(client, userId, action, itemId);
   }
 
   /** Items whose pulled change would widen agent access and is waiting for the owner. */
@@ -439,8 +377,8 @@ export class CloudVaultSyncRunner {
           : `/cloud-vault-sync/vaults/${ state.vault_id }/${ op }?deviceId=${ encodeURIComponent(deviceId) }`;
         return this.stash(userId, op, method, path, Buffer.alloc(0), state.vault_id, async(_res, client) => {
           if (op === 'delete') {
-            await client.query('DELETE FROM cloud_vault_sync_records WHERE owner_user_id=$1', [userId]);
-            await client.query('DELETE FROM cloud_vault_sync_state WHERE owner_user_id=$1', [userId]);
+            await this.repos.records.removeAll(client, userId);
+            await this.repos.state.remove(client, userId);
           }
         });
       });
@@ -459,22 +397,15 @@ export class CloudVaultSyncRunner {
       throw new CloudSyncError('password_kdf_missing', 409, (error as Error).message);
     }
     const bundle = envelope.buildBundle(fields, userKey);
-    const items = (await this.db.query<{ id: string; revision: string; ciphertext: unknown; encrypted_item_key: unknown }>(
-      `SELECT id,revision,ciphertext,encrypted_item_key FROM items WHERE owner_user_id=$1 AND collection_id IS NULL AND deleted_at IS NULL ORDER BY id`, [userId],
-    )).rows;
+    const items = await this.repos.items.listLive(this.db, userId);
     const records = items.map(row => envelope.buildRecord(itemRecordFields(row, { vaultId, generation: 1 }), userKey));
     const head = envelope.buildHead({ vaultId, scope: 'personal', seq: 1, records, prevHeadMac: '' }, userKey);
     const body = Buffer.from(JSON.stringify({ bundle, scope: 'personal', records, head }));
     const serverOp: ServerOp = replace ? 'replace' : 'create';
     const revisions = new Map(items.map(row => [row.id, num(row.revision)]));
     return this.stash(userId, serverOp, 'PUT', `/cloud-vault-sync/vaults/${ vaultId }?op=${ serverOp }&deviceId=${ encodeURIComponent(deviceId) }`, body, vaultId, async(_res, client) => {
-      await client.query('DELETE FROM cloud_vault_sync_records WHERE owner_user_id=$1', [userId]);
-      await client.query(
-        `INSERT INTO cloud_vault_sync_state(owner_user_id,vault_id,epoch,bundle_generation,head_seq,head_mac,bundle_sha,last_push_at)
-         VALUES ($1,$2,1,1,1,$3,$4,now())
-         ON CONFLICT(owner_user_id) DO UPDATE SET vault_id=$2,epoch=1,bundle_generation=1,head_seq=1,head_mac=$3,bundle_sha=$4,last_push_at=now(),last_error=NULL,updated_at=now()`,
-        [userId, vaultId, head.mac, wrapFingerprint(account, recovery)],
-      );
+      await this.repos.records.removeAll(client, userId);
+      await this.repos.state.saveCreated(client, userId, vaultId, head.mac, wrapFingerprint(account, recovery));
       for (const record of records) await this.remember(client, userId, record, revisions.get(record.id) ?? null);
     });
   }
@@ -494,23 +425,18 @@ export class CloudVaultSyncRunner {
     const body = Buffer.from(JSON.stringify({ bundle, expectedBundleGeneration: num(state.bundle_generation) }));
     const fingerprint = wrapFingerprint(account, recovery);
     return this.stash(userId, 'rewrap', 'PUT', `/cloud-vault-sync/vaults/${ state.vault_id }?op=rewrap&deviceId=${ encodeURIComponent(deviceId) }`, body, state.vault_id, async(_res, client) => {
-      await client.query(
-        'UPDATE cloud_vault_sync_state SET bundle_generation=$2,bundle_sha=$3,last_error=NULL,updated_at=now() WHERE owner_user_id=$1',
-        [userId, bundle.bundleGeneration, fingerprint],
-      );
+      await this.repos.state.recordRewrap(client, userId, bundle.bundleGeneration, fingerprint);
     });
   }
 
   private async prepareCommit(envelope: DomainVaultSyncCodec, userId: string, userKey: Uint8Array, state: StateRow, deviceId: string) {
     const known = await this.known(userId);
-    const rows = (await this.db.query<{ id: string; revision: string; deleted_at: string | null; ciphertext: unknown; encrypted_item_key: unknown }>(
-      `SELECT id,revision,deleted_at,ciphertext,encrypted_item_key FROM items WHERE owner_user_id=$1 AND collection_id IS NULL ORDER BY id`, [userId],
-    )).rows;
+    const rows = await this.repos.items.listForCommit(this.db, userId);
     const writes: Array<{ id: string; baseGeneration: number; record: SyncRecord }> = [];
     const revisions = new Map<string, number>();
     let bytes = 0;
     for (const row of rows) {
-      if (writes.length >= MAX_WRITES || bytes > MAX_COMMIT_BYTES) break;
+      if (this.commitBudget.isFull(writes.length, bytes)) break;
       const prior = known.get(row.id);
       // A held id waits for the owner: neither the local version nor its delete goes up meanwhile.
       if (prior?.policy_review_pending) continue;
@@ -535,10 +461,7 @@ export class CloudVaultSyncRunner {
     }, userKey);
     const body = Buffer.from(JSON.stringify({ scope: 'personal', expectedHeadSeq: num(state.head_seq), writes, head }));
     return this.stash(userId, 'commit', 'POST', `/cloud-vault-sync/vaults/${ state.vault_id }/commit?deviceId=${ encodeURIComponent(deviceId) }`, body, state.vault_id, async(_res, client) => {
-      await client.query(
-        `UPDATE cloud_vault_sync_state SET head_seq=$2,head_mac=$3,last_push_at=now(),last_error=NULL,updated_at=now() WHERE owner_user_id=$1`,
-        [userId, head.seq, head.mac],
-      );
+      await this.repos.state.advancePushedHead(client, userId, head.seq, head.mac);
       for (const write of writes) await this.remember(client, userId, write.record, revisions.get(write.id) ?? null);
     });
   }
@@ -574,7 +497,7 @@ export class CloudVaultSyncRunner {
           return { ok: true, status: res.status, detail: res.body };
         }
         const error = typeof res.body?.error === 'string' ? res.body.error : `http_${ res.status }`;
-        await this.db.query('UPDATE cloud_vault_sync_state SET last_error=$2,updated_at=now() WHERE owner_user_id=$1', [userId, error]).catch(() => undefined);
+        await this.repos.state.recordError(this.db, userId, error).catch(() => undefined);
         return { ok: false, status: res.status, error, detail: res.status === 409 ? res.body : undefined };
       });
     });
@@ -585,8 +508,8 @@ export class CloudVaultSyncRunner {
     return this.exclusive(async() => {
       await ensureSyncSchema(this.db);
       await this.authority.withUnlockedUserKey(async({ userId }) => {
-        await this.db.query('DELETE FROM cloud_vault_sync_records WHERE owner_user_id=$1', [userId]);
-        await this.db.query('DELETE FROM cloud_vault_sync_state WHERE owner_user_id=$1', [userId]);
+        await this.repos.records.removeAll(this.db, userId);
+        await this.repos.state.remove(this.db, userId);
       });
       this.stateVersion += 1;
     });

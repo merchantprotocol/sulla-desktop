@@ -17,15 +17,16 @@
  * workflow steps) unless the account allows it.
  */
 
-import { agentPolicyAllows, agentPolicyFromLegacyLlmAccess } from '../../../../packages/vault-crypto/src/itemSchema.js';
+import { agentPolicyFromLegacyLlmAccess } from '../../../../packages/vault-crypto/src/itemSchema.js';
+import { AgentPolicyGate } from '../../../../services/sulla-vault/src/localAuthority/AgentPolicyGate.js';
 
 export type LlmAccessLevel = 'none' | 'metadata' | 'autofill' | 'full';
 
 /** Properties only the human (UI) may write; agent tools must refuse them. */
-export const AGENT_PROTECTED_PROPERTIES = new Set(['llm_access']);
+export const AGENT_PROTECTED_PROPERTIES: readonly string[] = Object.freeze(['llm_access']);
 
 /** Integrations that hold human login passwords rather than service API keys. */
-const HUMAN_LOGIN_INTEGRATIONS = new Set(['website']);
+const HUMAN_LOGIN_INTEGRATIONS: readonly string[] = Object.freeze(['website']);
 
 export function resolveLlmAccess(stored: string | null | undefined): LlmAccessLevel {
   return stored === 'none' || stored === 'metadata' || stored === 'full' ? stored : 'autofill';
@@ -43,7 +44,7 @@ export function resolveLlmAccess(stored: string | null | undefined): LlmAccessLe
  */
 export function mayInjectSecretIntoAgentCode(integrationId: string, level: LlmAccessLevel): boolean {
   if (level === 'none' || level === 'metadata') return false;
-  if (HUMAN_LOGIN_INTEGRATIONS.has(integrationId)) return level === 'full';
+  if (HUMAN_LOGIN_INTEGRATIONS.includes(integrationId)) return level === 'full';
 
   return true;
 }
@@ -51,17 +52,19 @@ export function mayInjectSecretIntoAgentCode(integrationId: string, level: LlmAc
 /**
  * The one place agent tools turn a stored `llm_access` value into the level a
  * specific agent gets. It applies the same rule the vault broker uses
- * (`agentPolicyAllows`), including the item's agent allow-list: an empty or
+ * (`AgentPolicyGate`, backed by `@sulla/domain` AgentAccessPolicy), including the item's agent allow-list: an empty or
  * absent list allows every agent, a non-empty list only the listed agents
  * (owner decision 2026-11-11). An agent outside the list gets `none`.
  */
 export class AgentCredentialAccess {
+  constructor(private readonly gate: AgentPolicyGate = AgentPolicyGate.shared()) {}
+
   levelFor(input: { storedLevel: string | null | undefined; agentId: string; agents?: readonly string[] | null }): LlmAccessLevel {
     const level = resolveLlmAccess(input.storedLevel);
     if (level === 'none') return 'none';
     const policy = { ...agentPolicyFromLegacyLlmAccess(level), agents: [...(input.agents ?? [])] };
 
-    return agentPolicyAllows(policy, { agentId: input.agentId, level: 'metadata' }).allowed ? level : 'none';
+    return this.gate.allows(policy, { agentId: input.agentId, level: 'metadata' }).allowed ? level : 'none';
   }
 
   /** The calling agent's id from tool state, as the vault autofill tool already derives it. */

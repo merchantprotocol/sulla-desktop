@@ -32,6 +32,7 @@ import { bundledAssetProblems, fetchBundledAssets, skippedParts } from './fetch-
 import buildUtils from './lib/build-utils';
 import { ForeignArchExcludes, UnusedMacAddonExcludes } from './lib/foreign-arch-excludes';
 import { NativeAbiAudit, NodeAbiElectronSource, PackagedAppNativeGate, StaleRebuildMarkerRepair } from './lib/native-abi';
+import { ElectronRebuildCliLocator, NativeRebuildCommand, NativeRebuildModules } from './lib/native-rebuild';
 import { MachOArchitectureAudit } from './lib/macho-architecture-audit';
 import {
   PackageTargetAssetManifest, PackageTargetNativeBinaryAuditor, PackageTargetNativeDependencyManifest, PackageTargetPreparationService, PackageTargetProvenance, PackageTargetSpec, RuntimeArtifactSourceValidator, StagedRuntimeInstaller,
@@ -272,6 +273,24 @@ class Builder {
     const removed = repair.repair(repair.discover(path.join(process.cwd(), 'node_modules')), this.expectedNativeAbi);
 
     for (const marker of removed) log.warn({ marker }, 'Removed a stale @electron/rebuild marker so the native module is rebuilt for Electron');
+  }
+
+  /**
+   * Rebuilds native modules for this Electron and CPU in a plain Node subprocess
+   * (@electron/rebuild cannot be imported under tsx), then proves the rebuilt
+   * required addons carry Electron's ABI before electron-builder runs.
+   */
+  protected rebuildNativeModules(target: PackageTargetSpec): void {
+    const root = process.cwd();
+    const electronVersion = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', 'electron', 'package.json'), 'utf8')).version as string;
+    const modules = new NativeRebuildModules(root).list();
+
+    log.info({ modules, electronVersion, arch: target.arch }, 'Rebuilding native modules for Electron');
+    new NativeRebuildCommand(root, new ElectronRebuildCliLocator(root).locate()).run(modules, electronVersion, target.arch);
+    const required = NativeAbiAudit.REQUIRED_ADDONS.map(rel => path.join(root, 'node_modules', rel));
+    const problems = new NativeAbiAudit().problems(required, this.expectedNativeAbi);
+
+    if (problems.length) throw new Error(`Native rebuild finished but the addons do not match Electron's Node ABI ${ this.expectedNativeAbi }: ${ problems.join('; ') }`);
   }
 
   /**
@@ -537,6 +556,9 @@ class Builder {
     }
 
     await this.repairStaleRebuildMarkers();
+    this.rebuildNativeModules(target);
+    // The explicit rebuild above succeeded and was verified; electron-builder must not run a second, marker-trusting one.
+    config.npmRebuild = false;
     await build(options);
     this.checkSignedAppLoadsNativeAddons(target, String(config.productName));
 

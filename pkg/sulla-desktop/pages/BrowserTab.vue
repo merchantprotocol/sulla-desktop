@@ -15,6 +15,10 @@
       :can-toggle-mode="canToggleMode"
     />
 
+    <div v-if="browserActionError" role="alert" class="mx-4 rounded border border-red-500 p-2 text-sm">
+      {{ browserActionError }}
+      <button type="button" class="ml-3 underline" @click="browserActionError = ''">Dismiss</button>
+    </div>
     <!-- Browser toolbar — always visible in welcome and browser modes -->
     <template v-if="tabMode === 'welcome' || tabMode === 'browser'">
       <div class="flex items-center gap-2 px-4 py-2 browser-toolbar">
@@ -210,7 +214,7 @@
         <AgentIntegrations
           v-else
           embedded
-          @switch-to-vault="onSetMode('vault')"
+          @back-to-vault="onSetMode('vault')"
           @create-account="onIntegrationsCreateAccount"
         />
       </div>
@@ -251,16 +255,6 @@
     <!-- Chat mode: independent chat session per tab -->
     <template v-else-if="tabMode === 'chat'">
       <div class="flex-1 min-h-0 overflow-hidden relative">
-        <button
-          v-if="agentChat"
-          class="agent-chat-origin"
-          type="button"
-          :title="`Return to ${agentChat.parentAgentName}`"
-          @click="navigateToAgentParent"
-        >
-          <span aria-hidden="true">↩</span>
-          Launched by {{ agentChat.parentAgentName }}
-        </button>
         <BrowserTabChat
           :tab-id="props.tabId"
           :is-active="props.isVisible"
@@ -398,7 +392,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide } from 'vue';
 
 import AgentCalendar from './AgentCalendar.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
@@ -486,6 +480,12 @@ function navigateToAgentParent(): void {
   window.dispatchEvent(new CustomEvent('sulla:navigate-agent-parent', { detail: { parentThreadId } }));
 }
 
+// The chat header shows where an agent's chat came from, in its own left column,
+// so it moves with the header instead of floating over it.
+provide('chat:agent-origin', computed(() => (agentChat.value
+  ? { name: agentChat.value.parentAgentName, back: navigateToAgentParent }
+  : null)));
+
 function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'marketplace' | string) {
   // Narrow the mode string to a known BrowserTabMode. Unknown values
   // are ignored — they can only arrive from ModeRail's emit, which is
@@ -545,6 +545,7 @@ async function onNewBlankRoutine() {
     activeRoutineId.value = result.id;
   } catch (err) {
     console.error('[BrowserTab] Failed to create blank routine:', err);
+    browserActionError.value = `Couldn't create workflow: ${ err instanceof Error ? err.message : String(err) }`;
   }
 }
 
@@ -826,6 +827,7 @@ function setPageUrl(url: string) {
   if (!addressBarFocused.value) addressBarUrl.value = url;
 }
 const loading = ref(false);
+const browserActionError = ref('');
 const canGoBack = ref(false);
 const canGoForward = ref(false);
 const viewCreated = ref(false);
@@ -948,8 +950,14 @@ function ensureView(url: string) {
     // if it already exists, this navigates to `url`). Then apply the
     // chrome-derived bounds. Splitting creation from positioning means the
     // agent can open a tab before the UI knows where to render it.
-    ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds);
-    ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, bounds);
+    void ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds).catch((err: unknown) => {
+      viewCreated.value = false;
+      loading.value = false;
+      browserActionError.value = `Couldn't open browser view: ${ err instanceof Error ? err.message : String(err) }`;
+    });
+    void ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, bounds).catch((err: unknown) => {
+      browserActionError.value = `Couldn't position browser view: ${ err instanceof Error ? err.message : String(err) }`;
+    });
 
     // Do NOT call browser-tab-view:focus here. The `shouldShowView`
     // computed + watch below is the single source of truth; flipping
@@ -968,6 +976,7 @@ function ensureView(url: string) {
 }
 
 function navigate() {
+  browserActionError.value = '';
   const input = addressBarUrl.value.trim();
   if (!input) return;
 
@@ -988,7 +997,10 @@ function navigate() {
   if (!viewCreated.value) {
     ensureView(url);
   } else {
-    ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url);
+    void ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url).catch((err: unknown) => {
+      loading.value = false;
+      browserActionError.value = `Couldn't navigate: ${ err instanceof Error ? err.message : String(err) }`;
+    });
   }
 }
 
@@ -1017,6 +1029,7 @@ const canBookmarkPage = computed(() => /^(https?|file):/i.test(pageUrl.value || 
 const currentBookmark = computed(() => findByUrl(pageUrl.value));
 
 async function onStarClick() {
+  browserActionError.value = '';
   promote();
   let id = currentBookmark.value?.id;
   if (!id) {
@@ -1025,6 +1038,7 @@ async function onStarClick() {
       id = created.id;
     } catch (err) {
       console.error('[BrowserTab] Failed to bookmark page:', err);
+      browserActionError.value = `Couldn't bookmark this page: ${ err instanceof Error ? err.message : String(err) }`;
 
       return;
     }
@@ -1033,20 +1047,36 @@ async function onStarClick() {
 }
 
 function goBack() {
-  ipcRenderer.invoke('browser-tab-view:go-back', props.tabId);
+  browserActionError.value = '';
+  void ipcRenderer.invoke('browser-tab-view:go-back', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
 }
 
 function goForward() {
-  ipcRenderer.invoke('browser-tab-view:go-forward', props.tabId);
+  browserActionError.value = '';
+  void ipcRenderer.invoke('browser-tab-view:go-forward', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
 }
 
 function reload() {
+  browserActionError.value = '';
   loading.value = true;
-  ipcRenderer.invoke('browser-tab-view:reload', props.tabId);
+  void ipcRenderer.invoke('browser-tab-view:reload', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
 }
 
 function stop() {
-  ipcRenderer.invoke('browser-tab-view:stop', props.tabId);
+  browserActionError.value = '';
+  void ipcRenderer.invoke('browser-tab-view:stop', props.tabId).catch((err: unknown) => {
+    loading.value = false;
+    browserActionError.value = `Browser action failed: ${ err instanceof Error ? err.message : String(err) }`;
+  });
   loading.value = false;
 }
 
@@ -1340,31 +1370,6 @@ onUnmounted(() => {
      x/y position (right below the toolbar). */
   flex: 0 0 0px;
   overflow: hidden;
-}
-
-.agent-chat-origin {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  z-index: 12;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border: 1px solid var(--nx-border-subtle, var(--border-default));
-  border-radius: 999px;
-  background: var(--nx-surface-raised, var(--bg-surface));
-  color: var(--nx-text-secondary, var(--text-secondary));
-  font-family: var(--nx-font-mono, ui-monospace, monospace);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-}
-
-.agent-chat-origin:hover {
-  color: var(--nx-accent, var(--accent));
-  border-color: var(--nx-accent, var(--accent));
 }
 
 /* Theme-aware scrollbar styling for overflow-auto containers */

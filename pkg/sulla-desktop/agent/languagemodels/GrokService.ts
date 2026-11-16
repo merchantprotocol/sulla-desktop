@@ -37,9 +37,11 @@ export const GROK_SUBSCRIPTION_BASE_URL = 'https://cli-chat-proxy.grok.com/v1';
  * of User-Agent and rejects requests without one via HTTP 426 "version
  * (none)". Pinned to the version the official Grok CLI emits (same value
  * pi-grok-cli ships); expect xAI to ratchet the minimum over time — a 426
- * from the proxy means bump this constant.
+ * from the proxy means bump this constant. An old version also gets a shorter
+ * model list: at 1.0.13 the proxy listed only grok-4.7, while the 1.0.77 CLI
+ * lists grok-4.7, grok-4.7-build-fast, grok-4.6 and grok-4.5 (2026-11-14).
  */
-export const GROK_CLI_VERSION = '1.0.13';
+export const GROK_CLI_VERSION = '1.0.77';
 export const GROK_CLI_USER_AGENT = `grok-pager/${ GROK_CLI_VERSION } grok-shell/${ GROK_CLI_VERSION } (macos; aarch64)`;
 
 /** xAI server-side search tools. These execute remotely and never enter Sulla's ToolExecutor. */

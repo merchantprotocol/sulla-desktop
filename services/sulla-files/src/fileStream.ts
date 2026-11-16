@@ -3,16 +3,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { decryptAndVerifyChunk, maxEncryptedChunkBytes } from './crypto.js';
+import { defaultChunkCrypto, type ChunkCrypto } from './crypto.js';
 import { assertUnprotectedFile } from './protectedFiles.js';
+import { FileStreamRepository } from './Repositories/FileStreamRepository.js';
 
 import type { Config } from './config.js';
 import type { Store } from './store.js';
-import type express from 'express';
 import type pg from 'pg';
+import { sendFileStream } from './sendFileStream.js';
+export { sendFileStream } from './sendFileStream.js';
 
 export interface ByteRange { start:number; end:number }
 const CHUNK_BYTES = 4 * 1024 * 1024;
+
+/** Stored content that cannot be read as recorded. `integrityClass` matches files_fsck failure classes. */
+export class FileContentIntegrityError extends Error {
+  readonly status = 500;
+  constructor(readonly integrityClass:'manifest_geometry_invalid' | 'chunk_row_missing' | 'chunk_metadata_invalid' | 'manifest_size_mismatch', message:string, readonly chunkId?:string) { super(message) }
+}
 
 export class RangeNotSatisfiableError extends Error {
   readonly status = 416;
@@ -49,81 +57,76 @@ interface StreamDescriptor {
   chunks:{ id:string; size:number; storedSize:number; start:number; end:number }[];
 }
 
-async function descriptor(db:pg.Pool, fileId:string, versionId?:string):Promise<StreamDescriptor | undefined> {
-  const result = await db.query(
-    `SELECT f.id,f.path,f.mime,v.id AS version_id,v.chunk_collection_id,v.size,m.total_size,m.chunk_ids
-       FROM files f
-       JOIN file_versions v ON v.id=COALESCE($2::uuid,f.current_version_id) AND v.file_id=f.id
-       JOIN manifests m ON m.hash=v.manifest_hash
-      WHERE f.id=$1 AND NOT v.deleted`,
-    [fileId, versionId ?? null],
-  );
-  const row = result.rows[0];
-  if (!row) return undefined;
-  await assertUnprotectedFile(db, row);
-  const ids = Array.isArray(row.chunk_ids) ? row.chunk_ids.map(String) : [];
-  const declared = Number(row.size);
-  const expectedChunks = Math.max(1, Math.ceil(declared / CHUNK_BYTES));
-  if (!Number.isSafeInteger(declared) || declared < 0 || ids.length !== expectedChunks) throw new Error('File manifest has invalid chunk geometry');
-  const sizes = ids.length ? await db.query('SELECT id,size,stored_size FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [row.chunk_collection_id, ids]) : { rows: [] };
-  const byId = new Map(sizes.rows.map(chunk => [String(chunk.id), { size: Number(chunk.size), storedSize: Number(chunk.stored_size) }]));
-  const chunks:StreamDescriptor['chunks'] = [];
-  let offset = 0;
-  for (const [index, id] of ids.entries()) {
-    const metadata = byId.get(id);
-    const size = metadata?.size;
-    const storedSize = metadata?.storedSize;
-    const expectedSize = index < ids.length - 1 ? CHUNK_BYTES : declared - CHUNK_BYTES * (ids.length - 1);
-    if (size === undefined || storedSize === undefined || !Number.isSafeInteger(size) || size !== expectedSize || size < 0 || size > CHUNK_BYTES || !Number.isSafeInteger(storedSize) || storedSize < 0 || storedSize > maxEncryptedChunkBytes(size)) throw new Error(`Missing or invalid chunk metadata for ${ id }`);
-    chunks.push({ id, size, storedSize, start: offset, end: offset + size - 1 });
-    offset += size;
+type ProtectedFileCheck = (db:Pick<pg.Pool, 'query'>, file:{ id:string; path:string }) => Promise<void>;
+
+/**
+ * Streams one file version's plaintext, optionally a byte range. Before any byte is read the
+ * manifest geometry and every chunk row are validated; a version that cannot be read as
+ * recorded fails with FileContentIntegrityError (files_fsck classes) instead of short content.
+ */
+export class FileContentStreamer {
+  constructor(
+    private readonly db:pg.Pool,
+    private readonly config:Config,
+    private readonly store:Pick<Store, 'getBounded'>,
+    private readonly versions = new FileStreamRepository(db),
+    private readonly crypto:Pick<ChunkCrypto, 'maxEncryptedChunkBytes' | 'decryptAndVerifyChunk'> = defaultChunkCrypto,
+    private readonly assertUnprotected:ProtectedFileCheck = assertUnprotectedFile,
+  ) {}
+
+  async stream(fileId:string, versionId:string | undefined, rangeHeader:string | undefined, signal:AbortSignal) {
+    const file = await this.descriptor(fileId, versionId);
+    if (!file) return undefined;
+    const range = parseByteRange(rangeHeader, file.size);
+    const start = range?.start ?? 0;
+    const end = range?.end ?? Math.max(0, file.size - 1);
+    const keys = await this.config.keyring!.keys(file.chunkCollectionId);
+    const { store, crypto } = this;
+    async function * body():AsyncGenerator<Buffer> {
+      if (file!.size === 0) return;
+      for (const chunk of file!.chunks) {
+        if (chunk.end < start || chunk.start > end) continue;
+        signal.throwIfAborted();
+        const encrypted = await store.getBounded(file!.chunkCollectionId, chunk.id, crypto.maxEncryptedChunkBytes(chunk.size), chunk.storedSize);
+        signal.throwIfAborted();
+        const plain = await crypto.decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, chunk.id, chunk.size);
+        signal.throwIfAborted();
+        const from = Math.max(0, start - chunk.start);
+        const to = Math.min(chunk.size, end - chunk.start + 1);
+        yield plain.subarray(from, to);
+      }
+    }
+    return { ...file, range, contentLength: file.size === 0 ? 0 : end - start + 1, body: body() };
   }
-  if (!Number.isSafeInteger(declared) || declared < 0 || Number(row.total_size) !== declared || offset !== declared) throw new Error('File manifest size does not match its version');
-  return { fileId: String(row.id), versionId: String(row.version_id), path: String(row.path), mime: String(row.mime || 'application/octet-stream'), size: declared, chunkCollectionId: String(row.chunk_collection_id), chunks };
+
+  private async descriptor(fileId:string, versionId?:string):Promise<StreamDescriptor | undefined> {
+    const row = await this.versions.version(fileId, versionId);
+    if (!row) return undefined;
+    await this.assertUnprotected(this.db, row);
+    const ids = Array.isArray(row.chunk_ids) ? row.chunk_ids.map(String) : [];
+    const declared = Number(row.size);
+    const expectedChunks = Math.max(1, Math.ceil(declared / CHUNK_BYTES));
+    if (!Number.isSafeInteger(declared) || declared < 0 || ids.length !== expectedChunks) throw new FileContentIntegrityError('manifest_geometry_invalid', 'File manifest has invalid chunk geometry');
+    const sizes = ids.length ? await this.versions.chunkSizes(row.chunk_collection_id, ids) : [];
+    const byId = new Map(sizes.map(chunk => [String(chunk.id), { size: Number(chunk.size), storedSize: Number(chunk.stored_size) }]));
+    const chunks:StreamDescriptor['chunks'] = [];
+    let offset = 0;
+    for (const [index, id] of ids.entries()) {
+      const metadata = byId.get(id);
+      const size = metadata?.size;
+      const storedSize = metadata?.storedSize;
+      const expectedSize = index < ids.length - 1 ? CHUNK_BYTES : declared - CHUNK_BYTES * (ids.length - 1);
+      if (!metadata) throw new FileContentIntegrityError('chunk_row_missing', `Missing or invalid chunk metadata for ${ id }`, id);
+      if (size === undefined || storedSize === undefined || !Number.isSafeInteger(size) || size !== expectedSize || size < 0 || size > CHUNK_BYTES || !Number.isSafeInteger(storedSize) || storedSize < 0 || storedSize > this.crypto.maxEncryptedChunkBytes(size)) throw new FileContentIntegrityError('chunk_metadata_invalid', `Missing or invalid chunk metadata for ${ id }`, id);
+      chunks.push({ id, size, storedSize, start: offset, end: offset + size - 1 });
+      offset += size;
+    }
+    if (!Number.isSafeInteger(declared) || declared < 0 || Number(row.total_size) !== declared || offset !== declared) throw new FileContentIntegrityError('manifest_size_mismatch', 'File manifest size does not match its version');
+    return { fileId: String(row.id), versionId: String(row.version_id), path: String(row.path), mime: String(row.mime || 'application/octet-stream'), size: declared, chunkCollectionId: String(row.chunk_collection_id), chunks };
+  }
 }
 
-export async function streamFileContent(db:pg.Pool, config:Config, store:Store, fileId:string, versionId:string | undefined, rangeHeader:string | undefined, signal:AbortSignal) {
-  const file = await descriptor(db, fileId, versionId);
-  if (!file) return undefined;
-  const range = parseByteRange(rangeHeader, file.size);
-  const start = range?.start ?? 0;
-  const end = range?.end ?? Math.max(0, file.size - 1);
-  const keys = await config.keyring!.keys(file.chunkCollectionId);
-  async function * body():AsyncGenerator<Buffer> {
-    if (file!.size === 0) return;
-    for (const chunk of file!.chunks) {
-      if (chunk.end < start || chunk.start > end) continue;
-      signal.throwIfAborted();
-      const encrypted = await store.getBounded(file!.chunkCollectionId, chunk.id, maxEncryptedChunkBytes(chunk.size), chunk.storedSize);
-      signal.throwIfAborted();
-      const plain = await decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, chunk.id, chunk.size);
-      signal.throwIfAborted();
-      const from = Math.max(0, start - chunk.start);
-      const to = Math.min(chunk.size, end - chunk.start + 1);
-      yield plain.subarray(from, to);
-    }
-  }
-  return { ...file, range, contentLength: file.size === 0 ? 0 : end - start + 1, body: body() };
-}
-
-export async function sendFileStream(request:express.Request, response:express.Response, content:NonNullable<Awaited<ReturnType<typeof streamFileContent>>>, disposition?:string):Promise<void> {
-  response.status(content.range ? 206 : 200);
-  response.setHeader('Accept-Ranges', 'bytes');
-  response.setHeader('Cache-Control', 'private, no-store');
-  response.setHeader('Content-Type', content.mime);
-  response.setHeader('Content-Length', content.contentLength);
-  if (content.range) response.setHeader('Content-Range', `bytes ${ content.range.start }-${ content.range.end }/${ content.size }`);
-  if (disposition) response.setHeader('Content-Disposition', disposition);
-  if (request.method === 'HEAD' || content.contentLength === 0) { response.end(); return }
-  for await (const part of content.body) {
-    if (!response.write(part)) {
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => { response.off('drain', drained); response.off('close', closed) };
-        const drained = () => { cleanup(); resolve() };
-        const closed = () => { cleanup(); reject(Object.assign(new Error('Media stream cancelled'), { name: 'AbortError' })) };
-      response.once('drain', drained); response.once('close', closed);
-      });
-    }
-  }
-  response.end();
+/** Kept for app.ts, NativeCustody.ts, shares.ts and cloudRemote (outside this slice). */
+export function streamFileContent(db:pg.Pool, config:Config, store:Store, fileId:string, versionId:string | undefined, rangeHeader:string | undefined, signal:AbortSignal) {
+  return new FileContentStreamer(db, config, store).stream(fileId, versionId, rangeHeader, signal);
 }

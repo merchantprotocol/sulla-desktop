@@ -36,3 +36,23 @@ describe('DelegatedWakeSettlementPolicy', () => {
     expect(policy.completionUpdate({ emptyWakeCount: 2, waitReason: 'empty wake turn; parked with 1 live children' })).toEqual({ emptyWakeCount: 0, waitReason: undefined });
   });
 });
+
+describe('DelegatedWakeSettlementPolicy.emptyTurnAction', () => {
+  const policy = new DelegatedWakeSettlementPolicy();
+
+  it('hands an empty turn with nothing to consume back to settlement instead of failing', () => {
+    // risk: lost manager job (E1 unknown_wake, unconsumedCompletionJobs=none)
+    expect(policy.emptyTurnAction({ liveChildren: 0, pendingWait: false, consecutiveEmptyWakes: 1, pendingCompletions: 0 })).toBe('settle');
+  });
+
+  it('fails when undelivered completions have nothing left to wake the manager', () => {
+    // risk: stranded child results
+    expect(policy.emptyTurnAction({ liveChildren: 0, pendingWait: false, consecutiveEmptyWakes: 1, pendingCompletions: 1 })).toBe('fail');
+  });
+
+  it('parks while a child is live and fails past the empty-turn bound', () => {
+    // risk: indefinitely looping manager
+    expect(policy.emptyTurnAction({ liveChildren: 1, pendingWait: false, consecutiveEmptyWakes: 1, pendingCompletions: 1 })).toBe('park');
+    expect(policy.emptyTurnAction({ liveChildren: 0, pendingWait: false, consecutiveEmptyWakes: 3, pendingCompletions: 0 })).toBe('fail');
+  });
+});

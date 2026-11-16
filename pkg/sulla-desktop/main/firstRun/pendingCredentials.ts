@@ -11,8 +11,9 @@ import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { classifyIntegrationSaveFailure, type IntegrationSaveFailure } from '@pkg/main/integrationSaveFailure';
 import { PendingCloudSessionRefresher } from '@pkg/main/cloud/session/DesktopCloudSessionRefreshers';
-import { FetchCloudRefreshHttp } from '@pkg/main/cloud/session/ElectronCloudRefreshTransport';
-import { getConfiguredApprovalClient, usesContainerVaultAuthority } from '@pkg/vault-broker';
+import { ElectronCloudAccountTransport } from '@pkg/main/cloud/account/ElectronCloudAccountTransport';
+import { SessionBindSigner } from '@pkg/main/cloud/device/SessionBindSigner';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 import {
   deleteFirstRunCredential,
@@ -121,10 +122,8 @@ function scheduleDurableSync(delayMs = 0): void {
 class PendingSessionExpiredError extends Error {}
 
 const pendingSessionRefresher = new PendingCloudSessionRefresher(
-  new FetchCloudRefreshHttp(refreshToken => fetch('https://sulla-workers.merchantprotocol.workers.dev/auth/refresh', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ refreshToken }), signal: AbortSignal.timeout(20_000),
-  })),
+  // POST /auth/refresh {refreshToken}, one attempt, 20 s timeout, with this device's session-bind proof.
+  new ElectronCloudAccountTransport({ sessionBind: SessionBindSigner.forDesktop(message => console.warn(message)) }).withSingleAttemptRefresh(),
   () => new PendingSessionExpiredError('Cloud session expired'),
 );
 
@@ -237,7 +236,7 @@ async function writeEntry(entry: PendingCredential): Promise<void> {
     await pendingSessionRefresher.refreshIfExpiring(entry);
     const accessToken = entry.values.access_token;
     const refreshToken = entry.values.refresh_token;
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.adoptSullaCloudSession({
       userId:             entry.values.user_id,

@@ -89,6 +89,8 @@ export interface ChatMessage {
   proactive?: {
     headline: string;
     body:     string;
+    /** Structured finished-agent result, when the notice comes from delegated work. */
+    result?:  import('../../../shared/agentResults/AgentResultCard').AgentResultCardData;
   };
   /** Source list surfaced as a CitationRow below the reply. Populated by the
    *  CitationExtractor when the model emits a `<citations>` block. */

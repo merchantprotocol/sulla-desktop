@@ -3,9 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+
+import { CapabilityKeyCandidates, type SigningKey } from './CapabilityKeyCandidates.js';
 
 import { decrypt, encrypt, type Envelope } from './crypto.js';
+import { TransactionRunner } from './FilesTransaction.js';
+import { CollectionKeyRepository } from './Repositories/CollectionKeyRepository.js';
+import { FilesKeyStateRepository } from './Repositories/FilesKeyStateRepository.js';
+import { LegacySigningKeySelector } from './Services/LegacySigningKeySelector.js';
 
 import type pg from 'pg';
 
@@ -28,19 +34,21 @@ export class FilesKeyring {
   private epoch = 0;
   private pending?: Promise<void>;
   private readonly cache = new Map<string, CollectionKeys>();
-  constructor(private readonly db:pg.Pool) {}
+  constructor(
+    private readonly db:pg.Pool,
+    private readonly collectionKeys = new CollectionKeyRepository(db),
+    private readonly keyState = new FilesKeyStateRepository(db),
+    private readonly transactions = new TransactionRunner(db),
+    /** Chooses between the current and pre-#2369 signing key; absent, the current key is always used. */
+    private readonly legacyKeys?:LegacySigningKeySelector,
+  ) {}
   get unlocked():boolean { return Boolean(this.master) }
 
-  async unlock(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
-    return this.unlockInternal(master, legacySigningKey, false);
+  async unlock(master:Buffer, legacySigningKey:SigningKey | CapabilityKeyCandidates):Promise<void> {
+    return this.unlockInternal(master, CapabilityKeyCandidates.of(legacySigningKey));
   }
 
-  /** One-time server migration wraps the exact historical derived keys transactionally. */
-  async unlockServer(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
-    return this.unlockInternal(master, legacySigningKey, true);
-  }
-
-  private async unlockInternal(master:Buffer, legacySigningKey:string | Buffer, migrateServerMarkers:boolean):Promise<void> {
+  private async unlockInternal(master:Buffer, legacySigningKey:CapabilityKeyCandidates):Promise<void> {
     if (master.length !== 32) throw new Error('Invalid Files master key');
     const epoch = this.epoch;
     if (this.pending) await this.pending;
@@ -50,61 +58,55 @@ export class FilesKeyring {
       return;
     }
     const copy = Buffer.from(master);
-    this.pending = this.initialize(copy, legacySigningKey, epoch, migrateServerMarkers).finally(() => copy.fill(0));
+    this.pending = this.initialize(copy, legacySigningKey, epoch).finally(() => copy.fill(0));
     try { await this.pending } finally { this.pending = undefined }
   }
 
-  private async initialize(master:Buffer, legacySigningKey:string | Buffer, epoch:number, migrateServerMarkers:boolean):Promise<void> {
-    const client = await this.db.connect();
+  private async initialize(master:Buffer, legacySigningKeys:CapabilityKeyCandidates, epoch:number):Promise<void> {
     try {
-      await client.query('BEGIN');
-      await client.query('LOCK TABLE files_key_state IN EXCLUSIVE MODE');
-      const state = (await client.query('SELECT verifier FROM files_key_state WHERE id=TRUE')).rows[0];
-      if (state) {
-        let check:Uint8Array;
-        try { check = await decrypt(state.verifier, master, CONTEXT) } catch (error) { throw new FilesMasterKeyRejectedError(error) }
-        try { if (!Buffer.from(check).equals(CHECK)) throw new FilesMasterKeyRejectedError() } finally { check.fill(0) }
-        // Never overwrite damaged wrapped keys or silently derive replacements.
-        const rows = (await client.query(`SELECT k.collection_id,k.data_key,k.dedup_key FROM files_collection_keys k
-          JOIN collections c ON c.id=k.collection_id WHERE c.published=TRUE AND c.legacy_source=FALSE`)).rows;
-        for (const row of rows) {
-          const keys = await this.unwrap(row.collection_id, row.data_key, row.dedup_key, master);
-          keys.data.fill(0); keys.dedup.fill(0);
+      await this.transactions.run('files-keyring-unlock', async client => {
+        await this.keyState.lockState(client);
+        const verifier = await this.keyState.findVerifier(client);
+        if (verifier) {
+          let check:Uint8Array;
+          try { check = await decrypt(verifier, master, CONTEXT) } catch (error) { throw new FilesMasterKeyRejectedError(error) }
+          try { if (!Buffer.from(check).equals(CHECK)) throw new FilesMasterKeyRejectedError() } finally { check.fill(0) }
+          // Never overwrite damaged wrapped keys or silently derive replacements.
+          const rows = await this.collectionKeys.publishedWrappedKeys(client);
+          for (const row of rows) {
+            const keys = await this.unwrap(row.collection_id, row.data_key, row.dedup_key, master);
+            keys.data.fill(0); keys.dedup.fill(0);
+          }
+        } else {
+          // Only migration-classified native rows are known to have used the
+          // historical signing-derived scheme. Ambiguous/external rows remain
+          // unkeyed until the separate secure import flow proves their origin.
+          const rows = await this.collectionKeys.lockNativeCollectionsForLegacyMigration(client);
+          for (const row of rows) {
+            // The legacy master.key wrapped metadata only; content used these deterministic keys.
+            const legacySigningKey = this.legacyKeys ? await this.legacyKeys.select(client, row.id, legacySigningKeys) : legacySigningKeys.current;
+            const data = LegacySigningKeySelector.dataKey(legacySigningKey, row.id);
+            const dedup = LegacySigningKeySelector.dedupKey(legacySigningKey, row.id);
+            try {
+              const wrappedData = await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`);
+              const wrappedDedup = await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`);
+              if (!row.data_key && !row.dedup_key) {
+                await this.collectionKeys.insertLegacySigningKeys(client, row.id, wrappedData, wrappedDedup);
+              } else {
+                throw new Error('Existing Files key state cannot be migrated automatically');
+              }
+            } finally { data.fill(0); dedup.fill(0) }
+          }
+          await this.keyState.insertVerifier(client, await encrypt(CHECK, master, CONTEXT));
         }
-      } else {
-        // Only migration-classified native rows are known to have used the
-        // historical signing-derived scheme. Ambiguous/external rows remain
-        // unkeyed until the separate secure import flow proves their origin.
-        const rows = (await client.query(`SELECT c.id,k.data_key,k.dedup_key,k.key_origin
-          FROM collections c LEFT JOIN files_collection_keys k ON k.collection_id=c.id
-          WHERE c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
-          ORDER BY c.id FOR UPDATE OF c`)).rows;
-        for (const row of rows) {
-          // The legacy master.key wrapped metadata only; content used these deterministic keys.
-          const data = createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ row.id }`).digest();
-          const dedup = createHmac('sha256', legacySigningKey).update(`sulla:files:dedup-key:v1:${ row.id }`).digest();
-          try {
-            const wrapped = [await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`), await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`)];
-            if (!row.data_key && !row.dedup_key) {
-              await client.query("INSERT INTO files_collection_keys(collection_id,data_key,dedup_key,key_origin) VALUES($1,$2,$3,'legacy-signing-v1')", [row.id, ...wrapped]);
-            } else if (migrateServerMarkers && serverMarker(row.data_key, 'data', row.id) && serverMarker(row.dedup_key, 'dedup', row.id)) {
-              await client.query("UPDATE files_collection_keys SET data_key=$2,dedup_key=$3,key_origin='legacy-signing-v1' WHERE collection_id=$1", [row.id, ...wrapped]);
-            } else {
-              throw new Error('Existing Files key state cannot be migrated automatically');
-            }
-          } finally { data.fill(0); dedup.fill(0) }
-        }
-        await client.query('INSERT INTO files_key_state(id,verifier) VALUES(TRUE,$1)', [await encrypt(CHECK, master, CONTEXT)]);
-      }
-      if (epoch !== this.epoch) throw new Error('Files was locked during unlock');
-      await client.query('COMMIT');
+        if (epoch !== this.epoch) throw new Error('Files was locked during unlock');
+      });
       if (epoch !== this.epoch) throw new Error('Files was locked during unlock');
       this.master = Buffer.from(master);
     } catch (error) {
-      await client.query('ROLLBACK');
       if (error instanceof FilesMasterKeyRejectedError) throw error;
       throw new Error('Files key unlock failed; existing data was preserved', { cause: error });
-    } finally { client.release() }
+    }
   }
 
   private async unwrap(id:string, data:Envelope, dedup:Envelope, master:Buffer):Promise<CollectionKeys> {
@@ -121,7 +123,7 @@ export class FilesKeyring {
     const cached = this.cache.get(id); if (cached) return cached;
     const epoch = this.epoch; const master = Buffer.from(this.master);
     try {
-      const row = (await queryable.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [id])).rows[0];
+      const row = await this.collectionKeys.findWrappedKeys(id, queryable);
       if (!row) throw new Error('Collection key unavailable; secure key exchange is required');
       const keys = await this.unwrap(id, row.data_key, row.dedup_key, master);
       if (epoch !== this.epoch) { keys.data.fill(0); keys.dedup.fill(0); throw new Error('Files was locked during key access') }
@@ -138,7 +140,7 @@ export class FilesKeyring {
     try {
       const wrapped = { data: await encrypt(data, master, `sulla:files:data-key:v1:${ id }`), dedup: await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ id }`) };
       if (epoch !== this.epoch) throw new Error('Files was locked during key creation');
-      await client.query('INSERT INTO files_collection_keys(collection_id,data_key,dedup_key) VALUES($1,$2,$3)', [id, wrapped.data, wrapped.dedup]);
+      await this.collectionKeys.insertRandomKeys(client, id, wrapped.data, wrapped.dedup);
       if (epoch !== this.epoch) throw new Error('Files was locked during key creation');
       return wrapped;
     } finally { master.fill(0); data.fill(0); dedup.fill(0) }
@@ -164,48 +166,37 @@ export class FilesKeyring {
   }
 
   private async replaceMaster(master:Buffer, recovered:ReadonlyMap<string, CollectionKeys>, epoch:number):Promise<void> {
-    const client = await this.db.connect();
     let committed = false;
     try {
-      await client.query('BEGIN');
-      await client.query('LOCK TABLE files_key_state, files_collection_keys IN EXCLUSIVE MODE');
-      const rows = (await client.query(`SELECT k.collection_id,k.key_origin FROM files_collection_keys k
-        JOIN collections c ON c.id=k.collection_id
-        WHERE c.published=TRUE AND c.legacy_source=FALSE ORDER BY k.collection_id`)).rows;
-      if (rows.length === 0 || rows.length !== recovered.size) throw new Error('Incomplete Files recovery bundle set');
-      for (const row of rows) {
-        if (row.key_origin !== 'random') throw new Error('Legacy Files keys require the separate secure import flow');
-        const keys = recovered.get(row.collection_id);
-        if (keys?.data.length !== 32 || keys.dedup.length !== 32) throw new Error('Invalid recovered collection keys');
-        await client.query(
-          'UPDATE files_collection_keys SET data_key=$2,dedup_key=$3 WHERE collection_id=$1',
-          [row.collection_id, await encrypt(keys.data, master, `sulla:files:data-key:v1:${ row.collection_id }`),
-            await encrypt(keys.dedup, master, `sulla:files:dedup-key:v1:${ row.collection_id }`)],
-        );
-      }
-      await client.query(
-        'INSERT INTO files_key_state(id,verifier) VALUES(TRUE,$1) ON CONFLICT(id) DO UPDATE SET verifier=EXCLUDED.verifier',
-        [await encrypt(CHECK, master, CONTEXT)],
-      );
-      if (epoch !== this.epoch) throw new Error('Files was locked during device recovery');
-      await client.query('COMMIT');
+      await this.transactions.run('files-keyring-device-recovery', async client => {
+        await this.keyState.lockStateAndCollectionKeys(client);
+        const rows = await this.collectionKeys.publishedKeyOrigins(client);
+        if (rows.length === 0 || rows.length !== recovered.size) throw new Error('Incomplete Files recovery bundle set');
+        for (const row of rows) {
+          if (row.key_origin !== 'random') throw new Error('Legacy Files keys require the separate secure import flow');
+          const keys = recovered.get(row.collection_id);
+          if (keys?.data.length !== 32 || keys.dedup.length !== 32) throw new Error('Invalid recovered collection keys');
+          await this.collectionKeys.replaceWrappedKeys(
+            client, row.collection_id, await encrypt(keys.data, master, `sulla:files:data-key:v1:${ row.collection_id }`),
+            await encrypt(keys.dedup, master, `sulla:files:dedup-key:v1:${ row.collection_id }`),
+          );
+        }
+        await this.keyState.upsertVerifier(client, await encrypt(CHECK, master, CONTEXT));
+        if (epoch !== this.epoch) throw new Error('Files was locked during device recovery');
+      });
       committed = true;
       if (epoch !== this.epoch) throw new Error('Files device recovery committed while the service was locking');
       this.master = Buffer.from(master);
       for (const [id, keys] of recovered) this.cache.set(id, { data: Buffer.from(keys.data), dedup: Buffer.from(keys.dedup) });
     } catch (error) {
-      if (!committed) await client.query('ROLLBACK');
       if (committed) throw new Error('Files device recovery committed but remained locked; retry unlock with the replacement master', { cause: error });
       throw new Error('Files device recovery failed; existing key envelopes were preserved', { cause: error });
-    } finally {
-      client.release();
     }
   }
 
   async requireLegacySync(id:string):Promise<void> {
     if (!this.master) throw new Error('Files is locked');
-    const row = (await this.db.query('SELECT key_origin FROM files_collection_keys WHERE collection_id=$1', [id])).rows[0];
-    if (row?.key_origin !== 'legacy-signing-v1') throw new Error('Files sync requires secure collection-key exchange for this collection; existing local data is preserved');
+    if (await this.collectionKeys.findKeyOrigin(id) !== 'legacy-signing-v1') throw new Error('Files sync requires secure collection-key exchange for this collection; existing local data is preserved');
   }
 
   close():void {
@@ -214,11 +205,4 @@ export class FilesKeyring {
     for (const keys of this.cache.values()) { keys.data.fill(0); keys.dedup.fill(0) }
     this.cache.clear();
   }
-}
-
-function serverMarker(value:unknown, purpose:'data' | 'dedup', id:string):boolean {
-  if (!value || typeof value !== 'object') return false;
-  const marker = value as Partial<Envelope>;
-  return marker.version === 1 && marker.algorithm === 'xchacha20-poly1305' && marker.nonce === '' &&
-    marker.ciphertext === `server-derived:${ purpose }:${ id }`;
 }

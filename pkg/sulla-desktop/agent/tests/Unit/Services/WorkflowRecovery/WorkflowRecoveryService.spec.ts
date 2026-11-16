@@ -90,4 +90,41 @@ describe('WorkflowRecoveryService', () => {
     expect(store.shutdowns).toBe(1);
     expect(service.status()).toBe('stopped');
   });
+
+  it('finishes stopping when the database is already down at quit', async() => {
+    // risk: quit reports a failed stop and the service is stuck in 'stopping' because Postgres died first
+    const store = new ExecutionFixture();
+    const refused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:30116'), { code: 'ECONNREFUSED' });
+    store.suspendAllRunning = async() => { throw refused; };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const service = new WorkflowRecoveryService(store, { activate: vi.fn() }, new FakeClock(), { notify: vi.fn() });
+    await service.start();
+
+    await expect(service.stop()).resolves.toBeUndefined();
+
+    expect(service.status()).toBe('stopped');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('database unreachable on stop'));
+    warn.mockRestore();
+  });
+
+  it('still surfaces a real suspend failure but never stays stuck in stopping', async() => {
+    // risk: a failed suspend (running workflows not marked suspended) is hidden, or blocks the next stop
+    const store = new ExecutionFixture();
+    store.suspendAllRunning = async() => { throw Object.assign(new Error('column "status" does not exist'), { code: '42703' }); };
+    const service = new WorkflowRecoveryService(store, { activate: vi.fn() }, new FakeClock(), { notify: vi.fn() });
+    await service.start();
+
+    await expect(service.stop()).rejects.toThrow('column "status" does not exist');
+
+    expect(service.status()).toBe('stopped');
+  });
+
+  it('treats a connection AggregateError as unreachable only when every attempt was refused', () => {
+    // risk: a mixed network failure is misclassified and a real error is swallowed
+    const refused = { code: 'ECONNREFUSED' };
+    expect(WorkflowRecoveryService.isDatabaseUnreachable(new AggregateError([refused, refused]))).toBe(true);
+    expect(WorkflowRecoveryService.isDatabaseUnreachable(new AggregateError([refused, { code: '28P01' }]))).toBe(false);
+    expect(WorkflowRecoveryService.isDatabaseUnreachable(new Error('timeout'))).toBe(false);
+    expect(WorkflowRecoveryService.isDatabaseUnreachable(null)).toBe(false);
+  });
 });

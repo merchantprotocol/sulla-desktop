@@ -5,12 +5,12 @@
 
 /** Shared admission ceiling for concurrently dispatched routine workers. */
 import { randomUUID } from 'node:crypto';
-import type { PoolClient } from 'pg';
 
 import { WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY, normalizeWorkerConcurrency } from '../../shared/workerConcurrency';
 
 import { postgresClient } from '../database/PostgresClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { RoutineSlotRepository } from '../app/Repositories/RoutineSlotRepository';
 
 export type ProtectedRoutineKind =
   | 'planning'
@@ -24,9 +24,6 @@ export const PROTECTED_ROUTINE_KINDS: ProtectedRoutineKind[] = [
   'planning', 'execution', 'review', 'repair', 'dreaming', 'other',
 ];
 
-/** Advisory-lock key that serialises all slot acquisitions. */
-const SLOT_ADVISORY_LOCK_KEY = 4823710298;
-
 /** Slots un-heartbeated for longer than this are treated as crashed. */
 const DEFAULT_STALE_SLOT_MINUTES = 45;
 
@@ -35,83 +32,93 @@ export interface RoutineSlotContext {
   taskId?: string | null;
 }
 
-const wait = (milliseconds: number): Promise<void> => new Promise(resolve => setTimeout(resolve, milliseconds));
+/** Collaborators the policy needs; every one can be swapped in tests. */
+export interface RoutineConcurrencyDependencies {
+  slots:        RoutineSlotRepository;
+  readSetting:  (property: string, defaultValue: unknown) => Promise<unknown>;
+  newSlotId:    () => string;
+  sleep:        (milliseconds: number) => Promise<void>;
+}
 
 export class RoutineConcurrencyPolicy {
+  private static sharedInstance: RoutineConcurrencyPolicy | undefined;
+
+  constructor(private readonly deps: RoutineConcurrencyDependencies) {}
+
+  /** Production wiring: Postgres slots and the stored worker-concurrency setting. */
+  static shared(): RoutineConcurrencyPolicy {
+    this.sharedInstance ??= new RoutineConcurrencyPolicy({
+      slots:       new RoutineSlotRepository(postgresClient),
+      readSetting: (property, defaultValue) => SullaSettingsModel.get(property, defaultValue),
+      newSlotId:   () => randomUUID(),
+      sleep:       milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+    });
+    return this.sharedInstance;
+  }
+
   /** Keep worker capacity independent of whole-board consideration. */
-  static async resolveLimit(_kind: ProtectedRoutineKind, _legacyFallback?: number): Promise<number> {
+  async resolveLimit(_kind: ProtectedRoutineKind, _legacyFallback?: number): Promise<number> {
     return this.resolveTotalLimit();
   }
 
-  static async resolveTotalLimit(): Promise<number> {
-    return normalizeWorkerConcurrency(await SullaSettingsModel.get(WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY));
+  async resolveTotalLimit(): Promise<number> {
+    return normalizeWorkerConcurrency(await this.deps.readSetting(WORKER_CONCURRENCY_KEY, DEFAULT_WORKER_CONCURRENCY) as any);
   }
 
   /** Count active reservations of a kind (or all kinds when omitted). */
-  static async runningCount(kind?: ProtectedRoutineKind): Promise<number> {
-    const row = await postgresClient.queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM work_routine_slots
-        WHERE ($1::text IS NULL OR kind = $1)`,
-      [kind ?? null],
-    );
-    return Number(row?.count || 0);
+  async runningCount(kind?: ProtectedRoutineKind): Promise<number> {
+    return this.deps.slots.countActive(kind ?? null);
   }
 
   /** Reserve against the current shared worker limit under one database lock. */
-  static async acquire(
-    kind: ProtectedRoutineKind,
-    _limit: number,
-    context: RoutineSlotContext = {},
-  ): Promise<string | null> {
+  async acquire(kind: ProtectedRoutineKind, _limit: number, context: RoutineSlotContext = {}): Promise<string | null> {
     const limit = await this.resolveTotalLimit();
-    return postgresClient.transaction(async(client: PoolClient) => {
-      await client.query('SELECT pg_advisory_xact_lock($1)', [SLOT_ADVISORY_LOCK_KEY]);
-      const active = await client.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM work_routine_slots');
-      if (Number(active.rows[0]?.count || 0) >= limit) return null;
-      const id = randomUUID();
-      await client.query(
-        'INSERT INTO work_routine_slots (id, kind, owner, task_id) VALUES ($1, $2, $3, $4)',
-        [id, kind, context.owner ?? null, context.taskId ?? null],
-      );
-      return id;
+    return this.deps.slots.reserveUnderLimit(limit, {
+      id: this.deps.newSlotId(), kind, owner: context.owner ?? null, taskId: context.taskId ?? null,
     });
   }
 
   /** Queue behind capacity instead of converting routine backpressure into failure. */
-  static async acquireWhenAvailable(
-    kind: ProtectedRoutineKind,
-    limit: number,
-    context: RoutineSlotContext = {},
-    pollMs = 1_000,
-  ): Promise<string> {
+  async acquireWhenAvailable(kind: ProtectedRoutineKind, limit: number, context: RoutineSlotContext = {}, pollMs = 1_000): Promise<string> {
     for (;;) {
       await this.reclaimStale();
       const slot = await this.acquire(kind, limit, context);
       if (slot) return slot;
-      await wait(Math.max(100, pollMs));
+      await this.deps.sleep(Math.max(100, pollMs));
     }
   }
 
-  static async release(slotId: string): Promise<void> {
-    await postgresClient.query('DELETE FROM work_routine_slots WHERE id = $1', [slotId]);
+  async release(slotId: string): Promise<void> {
+    await this.deps.slots.delete(slotId);
   }
 
-  static async heartbeat(slotId: string): Promise<void> {
-    await postgresClient.query(
-      'UPDATE work_routine_slots SET heartbeat_at = now() WHERE id = $1',
-      [slotId],
-    );
+  async heartbeat(slotId: string): Promise<void> {
+    await this.deps.slots.touch(slotId);
   }
 
   /** Reclaim slots whose owner crashed without releasing them. */
-  static async reclaimStale(staleMinutes: number = DEFAULT_STALE_SLOT_MINUTES): Promise<number> {
-    const minutes = Math.max(1, Math.floor(staleMinutes));
-    const rows = await postgresClient.query<{ id: string }>(
-      `DELETE FROM work_routine_slots
-        WHERE heartbeat_at <= now() - ($1 * interval '1 minute')
-        RETURNING id`,
-      [minutes],
-    );
-    return rows.length;
+  async reclaimStale(staleMinutes: number = DEFAULT_STALE_SLOT_MINUTES): Promise<number> {
+    return this.deps.slots.deleteStale(Math.max(1, Math.floor(staleMinutes)));
   }
+
+  // Static facade kept for existing callers (main/sullaRoutineTemplateEvents.ts).
+
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().resolveLimit(). */
+  static resolveLimit(kind: ProtectedRoutineKind, legacyFallback?: number): Promise<number> { return this.shared().resolveLimit(kind, legacyFallback); }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().resolveTotalLimit(). */
+  static resolveTotalLimit(): Promise<number> { return this.shared().resolveTotalLimit(); }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().runningCount(). */
+  static runningCount(kind?: ProtectedRoutineKind): Promise<number> { return this.shared().runningCount(kind); }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().acquire(). */
+  static acquire(kind: ProtectedRoutineKind, limit: number, context: RoutineSlotContext = {}): Promise<string | null> { return this.shared().acquire(kind, limit, context); }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().acquireWhenAvailable(). */
+  static acquireWhenAvailable(kind: ProtectedRoutineKind, limit: number, context: RoutineSlotContext = {}, pollMs = 1_000): Promise<string> {
+    return this.shared().acquireWhenAvailable(kind, limit, context, pollMs);
+  }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().release(). */
+  static release(slotId: string): Promise<void> { return this.shared().release(slotId); }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().heartbeat(). */
+  static heartbeat(slotId: string): Promise<void> { return this.shared().heartbeat(slotId); }
+  /** @deprecated Use RoutineConcurrencyPolicy.shared().reclaimStale(). */
+  static reclaimStale(staleMinutes: number = DEFAULT_STALE_SLOT_MINUTES): Promise<number> { return this.shared().reclaimStale(staleMinutes); }
 }

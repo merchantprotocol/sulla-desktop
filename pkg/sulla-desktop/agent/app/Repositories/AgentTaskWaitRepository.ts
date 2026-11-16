@@ -30,6 +30,12 @@ export class AgentTaskWaitRepository {
     return rows[0] ? this.map(rows[0]) : null;
   }
 
+  /** Hand a claimed wake that could not be delivered back to the schedule. Never revives a cancelled or replaced wait. */
+  async release(jobId: string, taskIndex: number, wakeAt: Date): Promise<AgentTaskWait | null> {
+    const rows = await this.database.query<any>(`UPDATE agent_task_waits SET state='scheduled', wake_at=$3, updated_at=now() WHERE job_id=$1 AND task_index=$2 AND state='claimed' RETURNING *`, [jobId, taskIndex, wakeAt]);
+    return rows[0] ? this.map(rows[0]) : null;
+  }
+
   async cancel(jobId: string, taskIndex: number): Promise<boolean> {
     const rows = await this.database.query<any>(`UPDATE agent_task_waits SET state='cancelled', updated_at=now() WHERE job_id=$1 AND task_index=$2 AND state='scheduled' RETURNING job_id`, [jobId, taskIndex]);
     return rows.length > 0;

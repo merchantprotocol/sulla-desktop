@@ -7,14 +7,14 @@ import crypto from 'node:crypto';
 import { app } from 'electron';
 
 import { deviceMessage, getDevicePublicKey, signDeviceMessageExact } from '@pkg/main/cloud/deviceKey';
-import { getOrCreateSupportDeviceId, readEnrolledSupportDeviceId } from '@pkg/main/support/supportIdentity';
+import { supportDeviceIdentity } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore } from '@pkg/main/supportState';
 
 function stateStore() { return new SupportStateStore(app.getPath('userData')) }
 
 const ORIGIN = 'https://sulla-workers.merchantprotocol.workers.dev';
 let preferredIdentity: string | null = null;
-function identities(): string[] { return [...new Set([preferredIdentity, readEnrolledSupportDeviceId(), stateStore().read().supportIdentity?.guestDeviceId, getOrCreateSupportDeviceId()].filter((value):value is string=>!!value))] }
+function identities(): string[] { return [...new Set([preferredIdentity, supportDeviceIdentity.readEnrolled(), stateStore().read().supportIdentity?.guestDeviceId, supportDeviceIdentity.getOrCreate()].filter((value):value is string=>!!value))] }
 
 export async function supportCloudRequest(method: string, pathname: string, init: RequestInit = {}): Promise<Response> {
   const url = new URL(pathname.startsWith('/support') || pathname.startsWith('/device-tools') ? pathname : `/support${ pathname }`, ORIGIN);
@@ -24,7 +24,7 @@ export async function supportCloudRequest(method: string, pathname: string, init
   const candidates=identities();
   for(let index=0;index<candidates.length;index++){
     const deviceId=candidates[index],ts=Date.now(),nonce=crypto.randomBytes(18).toString('base64url');
-    const signature=signDeviceMessageExact('support-request-v1',[deviceId,method.toUpperCase(),url.pathname+url.search,ts,nonce,bodyHash]);
+    const signature=await signDeviceMessageExact('support-request-v1',[deviceId,method.toUpperCase(),url.pathname+url.search,ts,nonce,bodyHash]);
     const headers=new Headers(init.headers);if(encoded?.headers.get('content-type')&&!headers.has('content-type'))headers.set('content-type',encoded.headers.get('content-type')!);headers.set('accept','application/json');headers.set('X-Sulla-Device',deviceId);headers.set('X-Sulla-Ts',String(ts));headers.set('X-Sulla-Nonce',nonce);headers.set('X-Sulla-Signature',signature);
     const response=await fetch(url,{...init,method,headers,body:body.byteLength?body:undefined});
     if(response.status!==401){preferredIdentity=deviceId;return response}
@@ -44,8 +44,8 @@ export async function supportJson(method: string, pathname: string, body?: unkno
 export async function supportWhoAmI(): Promise<{enrolled:boolean;guest:boolean;email?:string}> { return supportJson('GET','/support/whoami') }
 
 export async function registerGuestSupport(email:string, deviceName:string, appVersion:string): Promise<{deviceId:string;guest:true}> {
-  const publicKey=getDevicePublicKey(), normalizedEmail=email.trim().toLowerCase(), ts=Date.now(), nonce=crypto.randomBytes(18).toString('base64url');
-  const signature=signDeviceMessageExact('support-guest-v1',[publicKey,normalizedEmail,ts,nonce]);
+  const publicKey=await getDevicePublicKey(), normalizedEmail=email.trim().toLowerCase(), ts=Date.now(), nonce=crypto.randomBytes(18).toString('base64url');
+  const signature=await signDeviceMessageExact('support-guest-v1',[publicKey,normalizedEmail,ts,nonce]);
   const response=await fetch(new URL('/support/guest-device',ORIGIN),{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({publicKey,deviceName,appVersion,email:normalizedEmail,ts,nonce,signature,website:''})});
   const payload=await response.json().catch(()=>({})) as any; if(!response.ok)throw new Error(payload.error||`Support registration failed (${response.status})`);
   stateStore().update(state=>{state.supportIdentity={guestDeviceId:payload.deviceId,email:normalizedEmail}}); preferredIdentity=payload.deviceId; return payload;

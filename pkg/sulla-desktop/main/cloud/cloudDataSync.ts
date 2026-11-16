@@ -37,7 +37,7 @@ class CloudDataSyncImpl{
   const deviceId=await getDesktopDeviceId();const built=await buildProjection(kind,deviceId);if(!built)return this.set(kind,{skipped:'needs-vault'});
   const body=JSON.stringify(built);const hash=crypto.createHash('sha256').update(body).digest('hex');const key=`cloudSync${kind}LastHash`;const last=String(await SullaSettingsModel.get(key,'')??'');
   if(!force&&hash===last)return this.set(kind,{...this.status[kind],skipped:'unchanged'});
-  const proof=signDeviceMessage('sync-upload',[userId,deviceId,PATH[kind],hash]);const r=await cloudRequest('PUT',`/cloud-runtime/v1/device/${PATH[kind]}`,{headers:{'Content-Type':'application/json','X-Sulla-Timestamp':String(proof.ts),'X-Sulla-Device-Signature':proof.signature},body});
+  const proof=await signDeviceMessage('sync-upload',[userId,deviceId,PATH[kind],hash]);const r=await cloudRequest('PUT',`/cloud-runtime/v1/device/${PATH[kind]}`,{headers:{'Content-Type':'application/json','X-Sulla-Timestamp':String(proof.ts),'X-Sulla-Device-Signature':proof.signature},body});
   if(!r.ok)throw new Error(`upload failed (${r.status})`);await SullaSettingsModel.set(key,hash,'string');return this.set(kind,{lastSyncAt:new Date().toISOString(),count:countProjection(kind,built)});
  }catch(e){const message=e instanceof Error?e.message:String(e);console.warn(`[CloudDataSync] ${kind}: ${message}`);return this.set(kind,{lastSyncAt:this.status[kind].lastSyncAt,lastError:message})}}
 }

@@ -12,6 +12,7 @@
  * enumerate the catalog.
  */
 
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -97,7 +98,8 @@ export function initSullaFunctionEvents(): void {
   ipcMainProxy.handle('functions-list', async(): Promise<FunctionListItem[]> => {
     const items: FunctionListItem[] = [];
     const { FunctionDefinitionModel } = await import('@pkg/agent/database/models/MarketplaceArtifactModel');
-    for (const row of await FunctionDefinitionModel.list()) {
+    const rows = await getDatabaseReadGuard().run('functions-list', () => FunctionDefinitionModel.list(), []);
+    for (const row of rows) {
       const spec = row.manifest.spec ?? {};
       if (!isValidRuntime(row.runtime)) continue;
       items.push({

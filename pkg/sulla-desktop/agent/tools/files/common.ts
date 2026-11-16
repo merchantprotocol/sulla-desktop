@@ -72,8 +72,11 @@ export abstract class FilesTool extends BaseTool {
 
   protected async resolvePath(input: any): Promise<ResolvedFilePath | undefined> {
     if (!input?.path) return undefined;
-    if (!String(input.path).startsWith('/mnt/sulla-files/')) throw new Error('path must be an absolute /mnt/sulla-files/... path');
-    return this.containerJson<ResolvedFilePath>(`/v1/files/resolve?path=${ encodeURIComponent(input.path) }`, input);
+    const supplied = String(input.path).trim().replaceAll('\\', '/');
+    const relative = supplied.startsWith('/mnt/sulla-files/') ? supplied.slice('/mnt/sulla-files/'.length) : supplied.replace(/^\/+/, '');
+    if (!relative || relative.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('path must identify a file or folder inside Sulla Files');
+    const absolute = `/mnt/sulla-files/${ relative }`;
+    return this.containerJson<ResolvedFilePath>(`/v1/files/resolve?path=${ encodeURIComponent(absolute) }`, input);
   }
 
   protected async containerJson<T = any>(path: string, input: unknown, init: RequestInit = {}): Promise<T> {

@@ -262,7 +262,8 @@ export interface IpcMainInvokeEvents {
       metadata?:  Record<string, unknown>;
     }[];
   };
-  'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[];
+  /** null while the database is not reachable yet; reload on `database:available`. */
+  'chat-artifacts:list': (input: { threadId: string; includeClosed?: boolean }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord[] | null;
   'chat-artifacts:get': (input: { threadId: string; idOrName: string }) => import('@pkg/shared/chatArtifacts').ChatArtifactRecord;
   'chat-artifacts:open-file': (input: { threadId: string; fileId: string }) => import('@pkg/agent/services/ChatArtifactService').CreateArtifactResult;
   'chat-artifacts:save': (input: {
@@ -321,6 +322,8 @@ export interface IpcMainInvokeEvents {
   'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;
   /** Retry the managed services now (the Repair action). */
   'sulla-runtime:repair-services': () => void;
+  /** Docker tab Stop/Start/Restart/Delete, so supervision does not undo a Stop. */
+  'docker/container-intent': (intent: import('@pkg/backend/sullaContainerHealth').ContainerIntent, names: string[]) => void;
   /** Why the last backend start failed, until the next start. */
   'sulla-runtime:start-failure': () => { reason: string; message: string } | undefined;
   'app-quit':               () => void;
@@ -445,6 +448,7 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-chat:link': (conversationId: string, title: string, privacyMode: 'encrypted_bodies' | 'metadata_only') => Record<string, any>;
   'sulla-cloud-chat:unlink': (linkId: string, deleteCloudCopy: boolean) => void;
   'sulla-cloud-connection:get-status':        () => Record<string, any>;
+  'sulla-cloud-connection:relink-device':     () => import('@pkg/main/devicesCloudApi').DeviceRelinkResult;
   'sulla-cloud-connection:set-preferences':   (patch: Partial<Record<'enabled' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault' | 'remoteAccess', boolean>>) => Record<string, any>;
   'sulla-cloud-connection:enable-recommended': () => Record<string, any>;
   'sulla-cloud-connection:revoke-client':     (clientId: string) => Record<string, any>;
@@ -452,8 +456,14 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud-vault:decide-held':            (recordId: string, decision: 'approve' | 'reject') => boolean;
   'sulla-cloud-memory:list-pending':          () => Array<{ id: string; generation: number | string; record: Record<string, unknown>; source_device_id: string }>;
   'sulla-cloud-memory:decide-pending':        (id: string, decision: 'confirm' | 'reject') => boolean;
+  'sulla-cloud-connection:open-devices-page': () => void;
   'sulla-cloud-connection:sync-now':          (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
   'sulla-cloud-connection:delete-cloud-copy': (kind: 'all' | 'usage' | 'memory' | 'conversations' | 'files' | 'vault') => Record<string, any>;
+
+  // Settings → Account → Devices (see main/cloud/devices/devicesPanelIpc.ts).
+  'sulla-cloud-devices:list':   () => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDevicesList>;
+  'sulla-cloud-devices:rename': (id: string, name: string) => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDeviceView>;
+  'sulla-cloud-devices:remove': (id: string) => import('@pkg/main/cloud/devices/devicesPanelIpc').DevicesPanelResult<import('@pkg/main/cloud/devices/DevicesPanelService').CloudDevicesList>;
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
@@ -603,6 +613,10 @@ export interface IpcMainInvokeEvents {
   'sulla-files:operation-retry': (input: { operationId:string; request:import('@pkg/sulla-desktop/pages/files/types').FilesOperationRetry }) => import('@pkg/sulla-desktop/pages/files/types').FilesOperationReceipt;
   'sulla-files:operation-undo': (input: { operationId:string }) => import('@pkg/sulla-desktop/pages/files/types').FilesOperationReceipt;
   'sulla-files:list':            (input: { collectionId: string; path?: string; trash?: boolean }) => any[];
+  'sulla-files:list-page':       (input: { collectionId: string; path?: string; trash?: boolean; cursor?: string; children?: boolean }) => { files: any[]; nextCursor: string | null; hasMore: boolean };
+  'sulla-files:recent':          (input: { collectionId: string; limit?: number; createdByType?: string }) => any[];
+  'sulla-files:stats':           (input: { collectionId: string }) => any;
+  'sulla-files:folder-summary':  (input: { collectionId: string; path?: string }) => any[];
   'sulla-files:create-empty-file': (input: { collectionId: string; path: string }) => any;
   'sulla-files:search':          (input: { query: string; collectionId?: string }) => { results:{ id:string }[]; coverage:{ total:number; pending:number; indexing:number; indexed:number; partial?:number; unsupported:number; failed:number; complete:boolean } };
   'sulla-files:reindex':         (input: { fileId: string }) => { accepted:boolean };
@@ -1144,6 +1158,7 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Conversation History
+  'conversation-history:clear-confirmed': (olderThan?: string) => { success: boolean };
   'conversation-history:list': (options?: { view?: 'active' | 'archived' | 'deleted'; limit?: number; type?: 'chat' | 'browser' | 'workflow' | 'graph' }) => import('@pkg/agent/database/models/ConversationHistoryModel').ConversationHistoryRecord[];
   'conversation-history:update': (id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; deleted?: boolean }) => import('@pkg/agent/database/models/ConversationHistoryModel').ConversationHistoryRecord | null;
   'conversation-history:get-recent': (limit?: number, type?: 'chat' | 'browser' | 'workflow' | 'graph') => {
@@ -1273,6 +1288,8 @@ export interface IpcRendererEvents {
   'capture-studio:recording-state': (status: { recording: boolean }) => void;
   'chat-artifacts:changed': (change: import('@pkg/shared/chatArtifacts').ChatArtifactChangedEvent) => void;
   'decisions:changed': (record: import('@pkg/shared/decisions').DecisionRecord) => void;
+  /** The database answered again after an outage; reload lists that came back empty. */
+  'database:available': () => void;
   'claude-oauth:progress':          (text: string) => void;
   /** First-run: VM + database are up, AI sign-in can start. */
   'first-run-ai:ready':             () => void;

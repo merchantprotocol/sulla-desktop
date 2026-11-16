@@ -42,6 +42,7 @@ COPY --from=whisper /out/models/ggml-tiny-q5_1.bin /app/models/ggml-tiny-q5_1.bi
 COPY --from=build /app/services/sulla-files/package.json ./package.json
 COPY --from=build /app/services/sulla-files/node_modules ./node_modules
 COPY --from=build /app/services/sulla-files/dist ./dist
+COPY services/sulla-files/scripts/reconcile-chunk-metadata.mjs ./scripts/reconcile-chunk-metadata.mjs
 COPY --from=build /app/models /app/models
 COPY --from=build /app/packages/vault-crypto/package.json /app/packages/vault-crypto/package.json
 COPY --from=build /app/packages/vault-crypto/dist /app/packages/vault-crypto/dist

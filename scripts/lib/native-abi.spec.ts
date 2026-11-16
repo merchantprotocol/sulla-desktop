@@ -10,7 +10,7 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  NativeAbiAudit, NativeAddonAbiReader, PackagedAppNativeGate, PackagedNativeLoadSmoke, SpawnSmokeRunner, StaleRebuildMarkerRepair,
+  NativeAbiAudit, NativeAddonAbiReader, NodeAbiElectronSource, PackagedAppNativeGate, PackagedNativeLoadSmoke, SpawnSmokeRunner, StaleRebuildMarkerRepair,
   type SmokeProcess, type SmokeRunner,
 } from './native-abi';
 
@@ -187,5 +187,37 @@ describe('PackagedAppNativeGate', () => {
     expect(problems).toHaveLength(2);
     expect(problems[0]).toContain('built for Node ABI 127 but Electron needs 143');
     expect(problems[1]).toContain('better_sqlite3.node failed to load');
+  });
+});
+
+describe('NodeAbiElectronSource', () => {
+  /** A project whose electron-builder depends on a node-abi, laid out the way yarn hoists them. */
+  function project(abiBody: string): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'node-abi-project-'));
+    const write = (rel: string, body: string) => {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), body);
+    };
+
+    dirs.push(root);
+    write('node_modules/electron-builder/package.json', '{"name":"electron-builder","version":"1.0.0","main":"index.js"}');
+    write('node_modules/electron-builder/index.js', 'module.exports = {};');
+    write('node_modules/node-abi/package.json', '{"name":"node-abi","version":"1.0.0","main":"index.js"}');
+    write('node_modules/node-abi/index.js', abiBody);
+
+    return root;
+  }
+
+  // risk: the package gate crashed with "require is not defined" before any addon was checked
+  it('resolves the Electron ABI from the project node-abi', () => {
+    const root = project("exports.getAbi = (version, runtime) => (runtime === 'electron' && version === '40.1.0' ? 143 : 0);");
+
+    expect(new NodeAbiElectronSource(root).abiFor('40.1.0')).toBe(143);
+  });
+
+  it('refuses an Electron version node-abi cannot map', () => {
+    const root = project('exports.getAbi = () => { throw new Error("Could not detect abi"); };');
+
+    expect(() => new NodeAbiElectronSource(root).abiFor('0.0.1')).toThrow();
   });
 });

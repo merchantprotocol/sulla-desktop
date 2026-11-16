@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { RoutineReportRepository } from '../../app/Repositories/RoutineReportRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -26,21 +27,11 @@ function renderReasons(raw: any): string {
  * error — callers decide whether to surface or silently skip.
  */
 export async function buildRoutinesDigest(): Promise<string> {
-  const summaryRows = await postgresClient.query('SELECT * FROM routine_digest_summary');
+  const repository = new RoutineReportRepository(postgresClient);
+  const summaryRows = await repository.digestSummary();
   const summary = Array.isArray(summaryRows) ? summaryRows[0] : summaryRows;
 
-  const exceptions = await postgresClient.query(`
-    SELECT
-      routine_slug,
-      reasons,
-      last_run_status,
-      CASE
-        WHEN last_run_at IS NULL THEN 'never fired'
-        ELSE ROUND(EXTRACT(EPOCH FROM (NOW() - last_run_at)) / 60)::text || 'm ago'
-      END AS last_run_ago
-    FROM routine_exceptions
-    ORDER BY (last_run_status = 'failed') DESC, routine_slug
-  `);
+  const exceptions = await repository.exceptions();
   const rows = Array.isArray(exceptions) ? exceptions : [];
 
   const armed = Number(summary?.enabled_count ?? 0);

@@ -54,8 +54,9 @@ import SettingsValidator from '@pkg/main/commandServer/settingsValidator';
 import { HttpCredentialHelperServer } from '@pkg/main/credentialServer/httpCredentialHelperServer';
 import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
-import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
+import { FailureLifecycle } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
+import { IpcRegistrationGate } from '@pkg/main/ipcRegistrationGate';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { completeRestart, isRestartRequested, restartKind } from '@pkg/main/restartCoordinator';
@@ -69,7 +70,7 @@ import setupUpdate from '@pkg/main/update';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { configureRemoteSupportRuntime, startRemoteSupport } from '@pkg/main/supportRemote';
-import { startInstallPing } from '@pkg/main/installPing';
+import { installPing } from '@pkg/main/installPing';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSecretaryModeStateIpc } from '@pkg/main/secretaryModeState';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
@@ -156,6 +157,11 @@ clearLoggingDirectory();
 const SNAPSHOT_OPERATION = 'Snapshot operation in progress';
 
 const ipcMainProxy = getIpcMainProxy(console);
+// Resolved at the end of this module, after the top-level
+// `await onMainProxyLoad()` and every module-level handler below it.
+// Startup waits on it before opening any window; see IpcRegistrationGate.
+const mainIpcRegistration = new IpcRegistrationGate();
+const MAIN_IPC_REGISTRATION_TIMEOUT_MS = 30_000;
 /** One startup progress model for every window: backend tracker + service lifecycle. */
 function getStartupProgressHub() {
   return getStartupProgressHubInstance(snapshot => window.send('startup-progress', snapshot));
@@ -553,7 +559,7 @@ Electron.app.whenReady().then(() => {
 /// /////////////////////////////////////////////////////////////////////////////
 
 Electron.app.whenReady().then(async() => {
-  e2eTrace('app ready; starting main startup');
+  e2eTrace.write('app ready; starting main startup');
   try {
     const commandLineArgs = getCommandLineArgs();
 
@@ -648,7 +654,7 @@ Electron.app.whenReady().then(async() => {
       console.log(`Failed to update command from argument ${ commandLineArgs.join(', ') }`, err);
     }
 
-    startInstallPing();
+    installPing.start();
 
     httpCommandServer = new HttpCommandServer(new BackgroundCommandWorker());
     await httpCommandServer.init();
@@ -673,7 +679,16 @@ Electron.app.whenReady().then(async() => {
     // Install secrets are machine credentials, not wizard input. Generate them
     // before boot so the VM and managed services can start alongside onboarding.
     await ensureFirstLaunchInstallSecrets();
-    e2eTrace('opening UI');
+    // This handler can run while the module is still suspended on
+    // `await onMainProxyLoad()`; don't open a window whose renderer would
+    // invoke handlers that don't exist yet.
+    const ipcRegistration = await mainIpcRegistration.wait(MAIN_IPC_REGISTRATION_TIMEOUT_MS);
+
+    if (ipcRegistration.state !== 'registered') {
+      console.error(`[Startup] Opening the UI before every IPC handler is registered (${ ipcRegistration.state })`,
+        ipcRegistration.state === 'failed' ? ipcRegistration.error : '');
+    }
+    e2eTrace.write(`opening UI (ipc ${ ipcRegistration.state })`);
     await initUI();
     await checkForBackendLock();
     await setPathManager(cfg.application.pathManagementStrategy);
@@ -733,7 +748,7 @@ Electron.app.whenReady().then(async() => {
     await SullaSettingsModel.set('firstRunSullaNetworking', false, 'boolean');
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);
-    e2eTrace(`startup failed: ${ ex?.stack || ex }`);
+    e2eTrace.write(`startup failed: ${ ex?.stack || ex }`);
     gone = true;
     Electron.app.quit();
   }
@@ -826,43 +841,7 @@ async function checkForBackendLock() {
 }
 
 async function initUI() {
-  // Opening onboarding must not serialize the rest of app startup. In
-  // particular, backend boot continues while the user works through the wizard.
-  void doFirstRunDialog().then(() => {
-    // Closing the wizard while a quit is in progress must not open main.
-    if (gone || shuttingDown) return;
-    if (!cfg.application.startInBackground) window.openMain();
-    // Opened anyway after a failed start: show what failed with Retry, now
-    // over the main window instead of the wizard.
-    if (firstRunBackendFailure) {
-      const failure = firstRunBackendFailure;
-
-      firstRunBackendFailure = null;
-      firstRunTrace('wizard', 'wizard closed with the workspace failed; showing the error with Retry in main');
-      handleFailure(firstRunBackendFailurePayload ?? new Error(failure.detail || failure.message)).catch((err: any) => {
-        console.error('[FirstRun] Could not show the workspace failure in main:', err);
-      });
-      firstRunBackendFailurePayload = undefined;
-    }
-  }).catch((error) => {
-    console.error('[FirstRun] Could not open onboarding:', error);
-    e2eTrace(`first-run dialog failed: ${ error?.stack || error }`);
-  });
-
-  buildApplicationMenu();
-
-  Electron.app.setAboutPanelOptions({
-    // also needs to be updated in electron-builder.yml
-    copyright:          'Copyright © 2025-2026 Merchant Protocol LLC',
-    applicationName:    `${ Electron.app.name } by Merchant Protocol`,
-    applicationVersion: `Version ${ await getVersion() }`,
-    iconPath:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-  });
-
-  if (!cfg.application.hideNotificationIcon) {
-    Tray.getInstance(cfg).show();
-  }
-
+  // Registered before any window opens so a renderer never invokes a missing handler.
   // Initialize audio-driver subsystem (mic + speaker capture, gateway streaming)
   // Registers IPC handlers in the main process — no window reference needed.
   try {
@@ -887,6 +866,43 @@ async function initUI() {
     console.log('[Threat Proxy] Initialized');
   } catch (err) {
     console.error('[Threat Proxy] Failed to initialize:', err);
+  }
+
+  // Opening onboarding must not serialize the rest of app startup. In
+  // particular, backend boot continues while the user works through the wizard.
+  void doFirstRunDialog().then(() => {
+    // Closing the wizard while a quit is in progress must not open main.
+    if (gone || shuttingDown) return;
+    if (!cfg.application.startInBackground) window.openMain();
+    // Opened anyway after a failed start: show what failed with Retry, now
+    // over the main window instead of the wizard.
+    if (firstRunBackendFailure) {
+      const failure = firstRunBackendFailure;
+
+      firstRunBackendFailure = null;
+      firstRunTrace('wizard', 'wizard closed with the workspace failed; showing the error with Retry in main');
+      handleFailure(firstRunBackendFailurePayload ?? new Error(failure.detail || failure.message)).catch((err: any) => {
+        console.error('[FirstRun] Could not show the workspace failure in main:', err);
+      });
+      firstRunBackendFailurePayload = undefined;
+    }
+  }).catch((error) => {
+    console.error('[FirstRun] Could not open onboarding:', error);
+    e2eTrace.write(`first-run dialog failed: ${ error?.stack || error }`);
+  });
+
+  buildApplicationMenu();
+
+  Electron.app.setAboutPanelOptions({
+    // also needs to be updated in electron-builder.yml
+    copyright:          'Copyright © 2025-2026 Merchant Protocol LLC',
+    applicationName:    `${ Electron.app.name } by Merchant Protocol`,
+    applicationVersion: `Version ${ await getVersion() }`,
+    iconPath:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+  });
+
+  if (!cfg.application.hideNotificationIcon) {
+    Tray.getInstance(cfg).show();
   }
 
   if (cfg.application.startInBackground && Electron.app.dock) {
@@ -918,7 +934,9 @@ async function ensureFirstLaunchInstallSecrets(): Promise<void> {
     console.log(`[FirstRun] Generated install secret: ${ key }`);
   };
 
-  await ensure('sullaServicePassword', () => SullaSettingsModel.generatePassword());
+  // The service secret (sullaServicePassword) is not generated here: only the
+  // runtime can tell a fresh install from one whose database already holds it,
+  // so ServiceSecretProvider resolves it when compose is first generated.
   await ensure('sullaN8nEncryptionKey', () => SullaSettingsModel.generateEncryptionKey());
   await ensure('sullaApiToken', () => SullaSettingsModel.generateEncryptionKey(48));
 }
@@ -990,7 +1008,7 @@ async function doFirstRunDialog() {
 
   const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
 
-  e2eTrace(`first-run dialog needed=${ needsFirstRun }`);
+  e2eTrace.write(`first-run dialog needed=${ needsFirstRun }`);
   firstRunTrace('wizard', needsFirstRun ? 'opening the wizard' : 'setup already finished; no wizard', { onboardingComplete });
 
   if (needsFirstRun) {
@@ -1641,7 +1659,10 @@ ipcMainProxy.handle('first-run-ai:connected', async(event, providerId: string) =
 // SULLA DESKTOP
 /// /////////////////////////////////////////////////////////////////////////////
 
-await onMainProxyLoad(ipcMainProxy);
+await onMainProxyLoad(ipcMainProxy).catch((error) => {
+  mainIpcRegistration.markFailed(error);
+  throw error;
+});
 
 // ModelProviderService is initialized via the service lifecycle in sulla.ts
 // (depends on 'database-manager' + 'redis' to guarantee DB is ready before loading state).
@@ -2047,10 +2068,13 @@ ipcMainProxy.on('k8s-restart', async() => {
     case State.STOPPED:
     case State.STARTED:
     case State.DISABLED:
+    case State.ERROR:
       // Calling start() will restart the backend, possible switching versions
-      // as a side-effect.
+      // as a side-effect. From ERROR this is the way to try again.
       await startK8sManager();
       break;
+    default:
+      console.log(`Ignoring restart request while the backend is ${ k8smanager.state }`);
     }
   } catch (ex) {
     handleFailure(ex);
@@ -2416,7 +2440,7 @@ async function handleFailure(payload: any) {
     titlePart = payload.context || titlePart;
   }
   console.log(`Sulla Desktop was unable to start:`, payload);
-  await reportFailureUnlessShuttingDown<FailureDetails>({
+  await new FailureLifecycle<FailureDetails>({
     isShuttingDown:    () => shuttingDown || gone,
     // getFailureDetails is going to read from existing log files.
     // Wait 1 second before reading them to allow recent writes to appear in them.
@@ -2446,7 +2470,7 @@ async function handleFailure(payload: any) {
       }
     },
     onFailureDetailsError: e => console.log(`Failed to get failure details: `, e),
-  });
+  }).reportUnlessShuttingDown();
 }
 
 function doFullRestart(context: CommandWorkerInterface.CommandContext) {
@@ -2796,6 +2820,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
   }
 
   async createSnapshot(context: CommandWorkerInterface.CommandContext, snapshot: Snapshot) {
+    Snapshots.assertSupported();
     await k8smanager.stop();
     try {
       return await Snapshots.create(snapshot);
@@ -2805,6 +2830,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
   }
 
   async restoreSnapshot(context: CommandWorkerInterface.CommandContext, name: string) {
+    Snapshots.assertSupported();
     await k8smanager.stop();
     try {
       return await Snapshots.restore(name);
@@ -2834,3 +2860,6 @@ function isRoot(): boolean {
 
   return os.userInfo().uid === 0;
 }
+
+// Keep last: every module-level IPC handler above is now registered.
+mainIpcRegistration.markRegistered();

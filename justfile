@@ -64,13 +64,25 @@ runtime:
 # install. Only changed parts are downloaded. SULLA_BUNDLE_SKIP=all (or a
 # comma list of images,whisper,audio) skips them for quick dev builds. The
 # BlackHole installer is only embedded with SULLA_BUNDLE_BLACKHOLE=1 (license).
-assets:
+assets: vault-pin-check
     node scripts/ts-wrapper.js scripts/fetch-bundled-assets.ts
+
+# Refuse to bundle a sulla-vault image that is older than the Vault source on
+# this commit or that was never published to GHCR. Runs before every local
+# build and package; GitHub Actions is not a reliable gate for this.
+vault-pin-check:
+    node scripts/check-bundled-vault-image-freshness.mjs --registry
+
+# Synthetic upgrade smoke: OLD vault pin (origin/main) -> NEW pin on a throwaway
+# Postgres; proves item rows and the key row survive and the vault still unlocks.
+# Needs Docker. Override the pair with VAULT_SMOKE_OLD_IMAGE / VAULT_SMOKE_NEW_IMAGE.
+vault-upgrade-smoke:
+    node scripts/vault-upgrade-smoke/run.mjs
 
 build: runtime assets
     NODE_OPTIONS="--max-old-space-size=12288" yarn build
 
-package: runtime
+package: vault-pin-check runtime
     yarn package
     
 # Rebuild without wiping VM (preserves cached images)
@@ -255,9 +267,12 @@ ping-memory:
     resources/darwin/sulla-runtime/sulla-runtime exec -- \
     curl -s -m 5 http://localhost:30115/api/v2/heartbeat || echo "memory unreachable (timeout or 410)"
 
+# psql as `sulla` over the container's local socket (local trust), so no
+# password is needed or typed. Network logins on 30116 need the install's
+# service secret (scram-sha-256).
 pg-conn:
-     echo "Connecting to psql..." && \
-     PGPASSWORD=sulla_dev_password psql -h localhost -p 30116 -U sulla -d sulla
+    @echo "Connecting to psql inside sulla_postgres..."
+    resources/darwin/sulla-runtime/sulla-runtime exec -- docker exec -it sulla_postgres psql -U sulla -d sulla
 
 # Login to Docker Hub inside the VM (bypasses rate limiting for image pulls)
 docker-login:

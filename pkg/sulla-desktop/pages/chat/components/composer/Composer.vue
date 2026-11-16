@@ -6,6 +6,7 @@
 -->
 <!--
   Composer — the only container in the bottom region. Orchestrates:
+    • Thread status line and its details, docked at the top of the card
     • Queue strip (visible only when queued messages exist)
     • Attachment tray (visible when staged attachments exist)
     • Command popover (slash / mention autocomplete)
@@ -20,13 +21,77 @@
     3. start/stop voice    on mic click — delegates to VoiceSessionAdapter
 -->
 <template>
-  <div class="composer-wrap" ref="wrapEl">
+  <div
+    ref="wrapEl"
+    class="composer-wrap"
+  >
     <div class="composer-inner">
       <RunControls />
       <CommandPopover @choose="choosePopoverItem" />
-
+      <ShelfPanel
+        v-if="shelfRequest"
+        :key="`${shelfRequest.mode}:${shelfRequest.name ?? ''}`"
+        :request="shelfRequest"
+        @close="shelfRequest = null"
+      />
+      <!--
+        One dock: the status line and its details are the top of the message
+        box, one solid surface with no gaps for the transcript to show through.
+      -->
       <div class="composer-card">
+        <!-- Kept mounted in the side dock (it also drives the tab dots); the tabs and lanes show its content there. -->
+        <div class="dock-status">
+          <ThreadStatusLine>
+            <template #end>
+              <span
+                class="dock-divider"
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                class="dock-move"
+                :class="{ on: drawerOpen }"
+                :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
+                :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
+                :aria-pressed="drawerOpen"
+                @click="setPosition(drawerOpen ? 'bottom' : 'side')"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                ><rect
+                  x="3"
+                  y="4"
+                  width="18"
+                  height="16"
+                  rx="2"
+                /><path d="M15 4v16" /></svg>
+              </button>
+            </template>
+          </ThreadStatusLine>
+        </div>
         <div class="composer-top">
+          <div
+            v-if="replyTo"
+            class="reply-chip"
+            role="status"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            ><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" /></svg>
+            <span class="reply-chip-text"><b>Replying to</b> {{ replyTo }}</span>
+            <button
+              type="button"
+              class="reply-chip-x"
+              aria-label="Cancel reply"
+              title="Cancel reply (Esc)"
+              @mousedown.prevent
+              @click="replyTo = ''"
+            >
+              ×
+            </button>
+          </div>
           <QueueStrip />
           <AttachmentTray />
           <div v-if="useCases.intent.value" class="usecase-intent">
@@ -47,28 +112,12 @@
             </div>
           </div>
 
-          <!-- Live intent: what Reflex would run for this draft right now. -->
-          <div
-            v-if="reflexChip"
-            :class="['reflex-intent', reflexChip.kind]"
-            role="status"
-            aria-live="polite"
-          >
-            <button
-              v-if="reflexChip.kind === 'suggest'"
-              type="button"
-              class="reflex-intent-btn"
-              title="Run instantly with Reflex (Tab) — Esc to dismiss"
-              @mousedown.prevent
-              @click="acceptReflexIntent"
-            >
-              <span class="bolt">⚡</span>{{ reflexChip.text }}<kbd>⇥</kbd>
-            </button>
-            <span v-else><span class="bolt">{{ reflexChip.kind === 'done' ? '⚡' : '!' }}</span>{{ reflexChip.text }}</span>
-          </div>
         </div>
 
-        <div :class="['composer', { recording: isRecording }]">
+        <div
+          :class="['composer', { recording: isRecording }]"
+          @mousedown="focusFromBar"
+        >
           <span class="glyph">—</span>
 
           <div v-if="useCases.open.value" class="usecase-strip">
@@ -123,7 +172,7 @@
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
             <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
-            <button class="model-btn" type="button" :title="selectionTitle" @click="controller.openModal('model')">
+            <button class="model-btn" type="button" :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle" :style="{ '--usage': `${usagePercent}%` }" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
               <span class="model-name">{{ selectionLabel }}</span>
               <span class="model-caret">▾</span>
@@ -144,7 +193,10 @@
         </div>
       </div>
 
-      <div class="hints">
+      <div
+        class="hints"
+        :class="{ 'hints-contextual': contextualHints }"
+      >
         <div class="classic-guide">
           <span><kbd>⏎</kbd> send</span>
           <span><kbd>hold ␣</kbd> talk</span>
@@ -179,7 +231,6 @@
           <template v-else-if="draft.trim()">
             <span><kbd>⏎</kbd> send</span>
             <span><kbd>⇧⏎</kbd> new line</span>
-            <span><kbd>Tab</kbd> run with Reflex</span>
           </template>
           <template v-else>
             <span><kbd>/</kbd> commands</span>
@@ -196,6 +247,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
 import ComposerInput      from './ComposerInput.vue';
+import { DockPositions } from '../../composables/useDockPosition';
 import ComposerMic        from './ComposerMic.vue';
 import ComposerAttach     from './ComposerAttach.vue';
 import ComposerVoicePanel from './ComposerVoicePanel.vue';
@@ -205,13 +257,16 @@ import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import CommandPopover     from './CommandPopover.vue';
+import ThreadStatusLine   from './ThreadStatusLine.vue';
+import ShelfPanel         from './ShelfPanel.vue';
 import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useChatController } from '../../controller/useChatController';
+import { composeReply, replyExcerpt } from '../../messages/replyQuote';
+import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
-import { useReflexIntent } from '../../composables/useReflexIntent';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
@@ -242,6 +297,8 @@ function looksLikeUrl(input: string): boolean {
 }
 
 const draft        = ref('');
+// Excerpt the next message replies to; empty when not replying.
+const replyTo = ref('');
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
 const wrapEl       = ref<HTMLElement | null>(null);
 const filesMenuOpen = ref(false);
@@ -276,6 +333,10 @@ const usagePercent = computed(() => {
   return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
 });
 
+// ─── Right drawer (side dock): the status row's button opens or closes it ───
+const { position: dockPosition, setPosition } = DockPositions.use();
+const drawerOpen = computed(() => dockPosition.value === 'side');
+
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
 
@@ -297,6 +358,8 @@ const intentSendHint = computed(() => {
 
   return `send + run ${ picked.title }`;
 });
+/** The hint row says something beyond the placeholder: recording, a menu, a draft or a use case. */
+const contextualHints = computed(() => isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
 function pickUseCase(item: SuggestedUseCase): void {
   useCases.pick(item);
   inputRef.value?.focus();
@@ -306,6 +369,13 @@ const recLevel     = computed(() => controller.voice.value.phase === 'recording'
 const recSpeaking  = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.speaking : false);
 const recPtt       = computed(() => controller.voice.value.phase === 'recording' && !!controller.voice.value.ptt);
 const recFinishing = computed(() => controller.voice.value.phase === 'recording' && !!controller.voice.value.finishing);
+
+/** A click anywhere on the message bar that isn't a control puts the cursor in the box. */
+function focusFromBar(event: MouseEvent): void {
+  if (isRecording.value || (event.target as Element).closest('button, a, input, textarea, select, label, [role="button"], [role="option"], [role="listbox"]')) return;
+  event.preventDefault();
+  inputRef.value?.focus();
+}
 
 // The textarea unmounts while recording; hand focus back when a spoken turn ends
 // so the next Space press or typed message works without a click.
@@ -326,36 +396,23 @@ const mentionSource = { list: (q: string) => artifactMentions.list(q) };
 const taRef = computed(() => inputRef.value?.el ?? null);
 useCommandPopover(taRef, mentionSource);
 
-// ─── Live intent (Reflex) ──────────────────────────────────────────
-// While the human types, Reflex previews the action it would run for the
-// draft. Tab runs it instantly (no model turn); Enter still sends normally;
-// Esc hides the chip until the draft changes.
-const reflexIntentEnabled = computed(() => !isRecording.value && !controller.popover.value.open);
-const reflexIntent = useReflexIntent(draft, reflexIntentEnabled);
-const reflexChip = computed(() => {
-  if (reflexIntent.flash.value) {
-    return { kind: reflexIntent.flash.value.kind, text: reflexIntent.flash.value.kind === 'done' ? `Done — ${ reflexIntent.flash.value.text }` : reflexIntent.flash.value.text };
-  }
-  if (reflexIntent.preview.value && reflexIntentEnabled.value) return { kind: 'suggest' as const, text: reflexIntent.preview.value.label };
-  return null;
-});
-
-async function acceptReflexIntent(): Promise<void> {
-  if (await reflexIntent.accept()) {
-    draft.value = '';
-    controller.hidePopover();
-  }
-  inputRef.value?.focus();
-}
-
 // ─── Slash command actions ─────────────────────────────────────────
 // When the user picks a bare slash command from the popover — or types
 // one and hits Enter — intercept the send() and run the matching action
 // instead of shipping the text downstream.
 
 /** Returns true if the command was handled (and the caller should skip the normal send). */
+// /shelve and /resume open a panel above the message box instead of sending text.
+const shelfRequest = ref<ShelfRequest | null>(null);
+
 function tryRunSlashAction(cmd: SlashCommand): boolean {
   switch (cmd.action) {
+    case 'shelve':
+      shelfRequest.value = { mode: 'shelve' };
+      return true;
+    case 'resume':
+      shelfRequest.value = { mode: 'resume' };
+      return true;
     case 'clear':
       // ChatController has no reset hook today — emit a window event for
       // ChatPage / ThreadRegistry to pick up. Follow-up agent will wire.
@@ -447,6 +504,15 @@ function onSend(text: string): void {
     return;
   }
 
+  // "/shelve name", "/shelve delete name", "/resume name" carry an argument.
+  const shelf = ShelfNotes.parseShelfCommand(trimmed);
+  if (shelf) {
+    shelfRequest.value = shelf.kind === 'delete' ? { mode: 'delete', name: shelf.name } : { mode: shelf.kind, name: shelf.name };
+    draft.value = '';
+    controller.hidePopover();
+    return;
+  }
+
   // Intercept bare slash commands even when there's no open popover
   // (e.g. user typed "/help" and hit Enter immediately).
   if (trimmed.startsWith('/')) {
@@ -470,25 +536,24 @@ function onSend(text: string): void {
     });
     useCases.reset();
   } else {
-    controller.send(trimmed || '(attached)', [...controller.staged.value]);
+    const body = trimmed || (replyTo.value ? '' : '(attached)');
+    controller.send(replyTo.value ? composeReply(replyTo.value, body) : body, [...controller.staged.value]);
   }
   draft.value = '';
+  replyTo.value = '';
 }
 
 function onKeydown(e: KeyboardEvent): void {
   const p = controller.popover.value;
+  if (!p.open && e.key === 'Escape' && replyTo.value) {
+    e.preventDefault();
+    replyTo.value = '';
+    return;
+  }
   if (!p.open) {
     const el = e.target as HTMLTextAreaElement | null;
     const caretAtEnd = !el || (el.selectionStart === el.selectionEnd && el.selectionEnd === el.value.length);
     if (useCases.onKeydown(e, caretAtEnd)) return;
-  }
-  if (!p.open && reflexIntent.preview.value) {
-    if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault();
-      void acceptReflexIntent();
-      return;
-    }
-    if (e.key === 'Escape') { e.preventDefault(); reflexIntent.dismiss(); return; }
   }
   if (p.open) {
     if (e.key === 'ArrowDown') { e.preventDefault(); controller.movePopoverSelection(1); }
@@ -621,25 +686,36 @@ function stopVoice(commit: boolean): void {
 
 onBeforeUnmount(() => {
   voiceAdapter.dispose();
-  reflexIntent.dispose();
-  window.removeEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  window.removeEventListener('chat:reply', onReplyFromTurn as EventListener);
+  window.removeEventListener('chat:draft', onDraftFromCard as EventListener);
   window.removeEventListener('chat:attach-files', onAttachShortcut as EventListener);
   ipcRenderer.removeListener('capture-studio:recording-state', onScreenRecordingState);
 });
 
 function onAttachShortcut():void { browseFiles().catch(() => undefined) }
 
-// ─── Listen for quote events from Sulla turns ────────────────────
-// TurnSulla's "Quote" hover action dispatches this; we prefill the
-// composer with a markdown blockquote and focus the input.
-function onQuoteFromTurn(ev: Event): void {
-  const text = (ev as CustomEvent<string>).detail;
-  if (!text) return;
-  const quoted = text.split('\n').map(l => `> ${ l }`).join('\n');
-  draft.value = draft.value
-    ? `${ draft.value.replace(/\s+$/, '') }\n\n${ quoted }\n\n`
-    : `${ quoted }\n\n`;
-  // Focus + move caret to the end.
+// ─── Reply to a part of a Sulla message ──────────────────────────
+// A Reply on a Sulla turn (whole message or one block) sets a cancelable
+// "Replying to" chip; the excerpt is sent as a quote ahead of the user's
+// words. Every open chat hears the event, so only the matching thread acts.
+function onReplyFromTurn(ev: Event): void {
+  const detail = (ev as CustomEvent<{ threadId?: string; excerpt?: string }>).detail;
+  if (!detail?.excerpt || detail.threadId !== controller.thread.value.id) return;
+  replyTo.value = replyExcerpt(detail.excerpt);
+  setTimeout(() => {
+    const ta = taRef.value;
+    if (!ta) return;
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+  }, 0);
+}
+// ─── Drafted next step from a result card ────────────────────────
+// Puts the text in the message box (after anything already typed) for the
+// user to edit and send. Nothing is sent from here.
+function onDraftFromCard(ev: Event): void {
+  const detail = (ev as CustomEvent<{ threadId?: string; text?: string }>).detail;
+  if (!detail?.text?.trim() || detail.threadId !== controller.thread.value.id) return;
+  draft.value = draft.value.trim() ? `${ draft.value.trimEnd() }\n\n${ detail.text }` : detail.text;
   setTimeout(() => {
     const ta = taRef.value;
     if (!ta) return;
@@ -670,7 +746,8 @@ async function prefillFirstRunStarter(): Promise<void> {
 
 onMounted(() => {
   ipcRenderer.on('capture-studio:recording-state', onScreenRecordingState);
-  window.addEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  window.addEventListener('chat:reply', onReplyFromTurn as EventListener);
+  window.addEventListener('chat:draft', onDraftFromCard as EventListener);
   window.addEventListener('chat:attach-files', onAttachShortcut as EventListener);
   prefillFirstRunStarter().catch(() => { /* logged inside */ });
   // Warm the artifact mention cache so the first `@` keystroke has data.
@@ -731,41 +808,13 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   color: var(--text-muted); margin-right: 4px;
 }
 
-.reflex-intent {
-  position: absolute; bottom: 100%; left: 42px;
-  margin-bottom: 8px;
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
-  color: var(--text-muted);
-  animation: reflex-intent-in 0.14s ease-out;
-}
-.reflex-intent-btn, .reflex-intent > span {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 4px 10px; border-radius: 999px;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-glow);
-  color: inherit; font: inherit; cursor: pointer;
-}
-.reflex-intent-btn:hover { background: var(--accent-dim); }
-.reflex-intent.done > span { border-color: var(--status-success); background: var(--status-success-soft); cursor: default; }
-.reflex-intent.error > span { border-color: var(--status-warning); background: var(--status-warning-soft); cursor: default; }
-.reflex-intent .bolt { color: var(--accent-hover); }
-.reflex-intent kbd {
-  font-family: var(--font-mono); font-size: 9px;
-  padding: 1px 5px; border-radius: 3px;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-dim);
-  color: var(--text-muted);
-}
-@keyframes reflex-intent-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: none; }
-}
 
 .hidden-file-input {
   display: none;
 }
 
 /* Noir is a visual skin over the existing controller and keyboard behavior. */
+/* The dock is solid: see-through glass let transcript text show behind the status details. */
 .composer-wrap {
   bottom: 0;
   left: 0;
@@ -794,11 +843,14 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
     0 20px 56px var(--bg-page);
 }
 .composer-card {
-  background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+  background: var(--bg-surface);
   box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float);
 }
+/* The "you can type here" ring is for the message box, not for clicks in the status details. */
+.composer-card:focus-within:not(:has(.composer:focus-within)) { transform: none; box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float); }
 .composer-card:focus-within {
-  box-shadow: inset 0 0 0 1px var(--accent-border), 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent), var(--elev-float);
+  /* Clear "you can type here" ring: solid accent edge plus a visible halo. */
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent), var(--elev-float);
 }
 .composer-top {
   display: flex;
@@ -806,34 +858,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   gap: 6px;
   padding: 0 10px;
 }
-.reflex-intent {
-  position: static;
-  width: max-content;
-  margin: 10px 0 0;
-  color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: 12px;
-  letter-spacing: 0;
-  animation: noir-reflex-in 0.42s cubic-bezier(.22, 1, .36, 1) both;
-}
-.reflex-intent-btn,
-.reflex-intent > span {
-  height: 28px;
-  padding: 0 6px 0 10px;
-  border: 0;
-  border-radius: 14px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent-hover) 35%, transparent);
-}
-.reflex-intent kbd {
-  padding: 2px 7px;
-  border: 0;
-  border-radius: 6px;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--border-default) 75%, transparent);
-  font-size: 10.5px;
-}
-@keyframes noir-reflex-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .composer {
   display: flex;
   align-items: stretch;
@@ -938,9 +962,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-card,
-  .reflex-intent { animation: none; transition: none; }
+  .composer-card { animation: none; transition: none; }
 }
+@keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
 .usecase-strip {
   width: 100%;
@@ -948,7 +972,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
   box-shadow: inset 0 0 0 1px var(--border-default);
-  animation: noir-reflex-in 0.18s cubic-bezier(.22, 1, .36, 1) both;
+  animation: usecase-strip-in 0.18s cubic-bezier(.22, 1, .36, 1) both;
 }
 .usecase-strip-hd {
   display: flex; align-items: center; gap: 8px;
@@ -991,7 +1015,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   width: max-content; max-width: 100%;
   background: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent-border);
   color: var(--text-primary); font-size: 12.5px;
-  animation: noir-reflex-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
+  animation: usecase-strip-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
 }
 .usecase-chip .usecase-type { display: none; }
 .usecase-verb { color: var(--accent-hover); }
@@ -1024,4 +1048,39 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 @media (prefers-reduced-motion: reduce) {
   .usecase-strip, .usecase-chip { animation: none; }
 }
+/* "Replying to" chip: which part of Sulla's message the next message answers. */
+.reply-chip {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 10px 12px 0; padding: 8px 8px 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-default));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+  color: var(--text-secondary); font: 13px/1.45 var(--font-body);
+}
+.reply-chip svg { flex: none; width: 15px; height: 15px; margin-top: 2px; fill: var(--accent); }
+.reply-chip-text {
+  flex: 1; min-width: 0; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: pre-line;
+}
+.reply-chip-text b { color: var(--text-primary); font-weight: 600; margin-right: 4px; }
+.reply-chip-x {
+  flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--text-muted); font-size: 17px; line-height: 1;
+}
+.reply-chip-x:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 8%, transparent); }
+
+/* ─── Side panel toggle ─── */
+/* The move button sits at the end of the status row: a hairline, then a quiet icon button. */
+.dock-divider { flex: none; width: 1px; height: 18px; background: var(--border-default); }
+.dock-move {
+  flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin: 0 6px;
+  border: 1px solid transparent; border-radius: 8px; background: none; cursor: pointer;
+  color: color-mix(in srgb, var(--text-primary) 72%, var(--bg-surface));
+  transition: background-color .15s cubic-bezier(.22, 1, .36, 1), color .15s cubic-bezier(.22, 1, .36, 1);
+}
+.dock-move:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
+.dock-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dock-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.dock-move.on { color: var(--accent); }
 </style>
+<style scoped src="../../styles/composer-field.css"></style>

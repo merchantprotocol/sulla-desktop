@@ -15,7 +15,6 @@ Chat tools manage sidebar artifacts scoped to the current conversation. Artifact
 - The source manifest registers `return_contract` in this tool set.
 - The source manifest registers `message_tab` in this tool set.
 - The source manifest registers `list_tab_contracts` in this tool set.
-- The source manifest registers `route_agent` in this tool set.
 - The source manifest registers `set_heartbeat` in this tool set.
 - The source manifest registers `artifact_list` in this tool set.
 - The source manifest registers `artifact_create` in this tool set.

@@ -57,9 +57,12 @@ ChatCompletionsServer for on-device AI capabilities.
 
 ### 30116 -- PostgreSQL
 
-`postgres:16-alpine` container. Default credentials: user `sulla`, password
-`sulla_dev_password`, database `sulla`. Data persisted at
-`/var/lib/sulla/postgres` inside the VM.
+`sulla-postgres` container (`postgres:16-alpine` + pgvector). User `sulla`,
+database `sulla`. Network logins use `scram-sha-256` with the install's service
+secret (no default password); the container's local socket stays `trust`, so
+`docker exec sulla_postgres psql -U sulla` (`just pg-conn`) needs no password.
+See `database-architecture.md`. Data persisted at `/var/lib/sulla/postgres`
+inside the VM.
 
 ### 30117 -- Redis
 

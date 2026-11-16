@@ -85,6 +85,15 @@ class SnapshotsImpl {
     await fs.promises.rm(this.directory(snapshot), { recursive: true, force: true });
   }
 
+  /**
+   * Throw when a snapshot can't be taken or restored. Callers check this before they stop
+   * the backend: copyState has no runtime to copy yet, so stopping first only took every
+   * Sulla service down to report the same error.
+   */
+  assertSupported(): void {
+    throw new SnapshotsUnsupportedError();
+  }
+
   async cancel(): Promise<void> {
     // Snapshot operations now run in the main process and are serialized by callers.
   }

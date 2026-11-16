@@ -10,10 +10,6 @@ import { pool } from './db.js';
 
 import type { NextFunction, Request, Response as ExpressResponse } from 'express';
 
-const MAX_ACCOUNTS_RESPONSE_BYTES = 64 * 1024;
-const MAX_IDENTITY_VALUE_LENGTH = 2_048;
-const MAX_AUTHORIZATION_VALUES = 100;
-
 export interface RequestIdentity {
   kind:           'owner' | 'runner';
   issuer:         string;
@@ -30,55 +26,10 @@ export interface AuthenticatedRequest extends Request {
   identity?: RequestIdentity;
 }
 
-export function requestBearer(request: Request): string {
-  return request.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] ?? '';
-}
-
 function equalSecret(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
-}
-
-export async function boundedJson(response: Response, maxBytes = MAX_ACCOUNTS_RESPONSE_BYTES): Promise<Record<string, unknown>> {
-  const declaredLength = Number(response.headers.get('content-length') ?? 0);
-  if (declaredLength > maxBytes) throw new Error('Accounts response is too large');
-  if (!response.body) throw new Error('Accounts response has no body');
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      throw new Error('Accounts response is too large');
-    }
-    chunks.push(value);
-  }
-
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const parsed = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Accounts returned an invalid context');
-  return parsed as Record<string, unknown>;
-}
-
-function identityString(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_IDENTITY_VALUE_LENGTH || value.trim() !== value) return null;
-  return value;
-}
-
-function authorizationValues(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.length > MAX_AUTHORIZATION_VALUES ||
-      value.some(item => typeof item !== 'string' || item.length === 0 || item.length > 120 || item.trim() !== item)) return null;
-  return [...new Set(value as string[])];
 }
 
 async function runnerIdentity(token: string): Promise<RequestIdentity | null> {
@@ -106,52 +57,18 @@ async function runnerIdentity(token: string): Promise<RequestIdentity | null> {
   };
 }
 
-async function ownerIdentity(request: Request, token: string): Promise<RequestIdentity> {
-  if (config.mode === 'desktop') {
-    if (!equalSecret(token, config.localToken)) throw new Error('invalid local credential');
-    return {
-      kind:           'owner',
-      issuer:         'urn:sulla:desktop',
-      subject:        'local-owner',
-      authorityId:    null,
-      organizationId: null,
-      roles:          ['owner'],
-      groups:         [],
-    };
-  }
-
-  if (!token) throw Object.assign(new Error('UI session token is required'), { status: 401 });
-  const response = await fetch(`${ config.accountsUrl }/v1/private/ui-sessions/resolve`, {
-    method:  'POST',
-    headers: {
-      'Content-Type':          'application/json',
-      'X-Sulla-Service-Id':    config.accountsServiceId,
-      'X-Sulla-Service-Token': config.accountsServiceToken,
-    },
-    body:     JSON.stringify({ token, audience: config.audience, requiredRoles: config.uiRequiredRoles }),
-    redirect: 'error',
-    signal:   AbortSignal.timeout(5_000),
-  });
-  const context = await boundedJson(response, MAX_ACCOUNTS_RESPONSE_BYTES);
-  const issuer = identityString(context.issuer);
-  const subject = identityString(context.subject);
-  const roles = authorizationValues(context.roles);
-  const groups = authorizationValues(context.groups);
-  const expiresAt = typeof context.expiresAt === 'string' ? Date.parse(context.expiresAt) : Number.NaN;
-  if (!response.ok || context.audience !== config.audience || !Number.isFinite(expiresAt) || expiresAt <= Date.now() ||
-      !identityString(context.authorityId) || !identityString(context.organizationId) || !issuer || !subject || !roles || !groups ||
-      config.uiRequiredRoles.some(role => !roles.includes(role))) {
-    throw Object.assign(new Error('Accounts denied workflow context'), { status: response.status === 401 ? 401 : 403 });
-  }
+async function ownerIdentity(token: string): Promise<RequestIdentity> {
+  if (!equalSecret(token, config.localToken)) throw new Error('invalid local credential');
   return {
-    kind: 'owner', issuer, subject, authorityId: String(context.authorityId), organizationId: String(context.organizationId), roles, groups,
+    kind: 'owner', issuer: 'urn:sulla:desktop', subject: 'local-owner',
+    authorityId: null, organizationId: null, roles: ['owner'], groups: [],
   };
 }
 
 export function authenticateRequest(request: AuthenticatedRequest, response: ExpressResponse, next: NextFunction): void {
-  const token = requestBearer(request);
+  const token = request.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] ?? '';
   (async() => {
-    request.identity = await runnerIdentity(token) ?? await ownerIdentity(request, token);
+    request.identity = await runnerIdentity(token) ?? await ownerIdentity(token);
     next();
   })().catch(error => {
     const status = Number(error?.status) === 403 ? 403 : 401;

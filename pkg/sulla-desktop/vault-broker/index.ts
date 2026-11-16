@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import crypto from 'node:crypto';
-
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+import { VaultBrokerError } from './VaultBrokerError';
+export { VaultBrokerError } from './VaultBrokerError';
 
 import type {
   BrokerApprovalResponse,
@@ -31,7 +31,6 @@ import type {
   VaultDeviceApprovalWrapRequest, VaultEnrollmentWrapRequest, VaultEnrollmentAdoptRequest,
   RecoveryKeyRotateResponse,
 } from '../../../services/sulla-vault/src/contracts';
-import { loopbackOrigin } from '@pkg/utils/instance';
 
 export type {
   BrokerApprovalResponse,
@@ -56,7 +55,9 @@ export type {
 } from '../../../services/sulla-vault/src/contracts';
 export type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 export {
-  createProviderCliBridge,
+  ProviderCliBridgeService,
+  ProviderBridgeAuthorizeUnavailableError,
+  ProviderBridgeRevokedError,
   type ProviderCliAuthMode,
   type ProviderCliBridgeIdentity,
   type ProviderCliBridgeLease,
@@ -66,9 +67,6 @@ export {
   type ProviderCliOpaqueConfig,
 } from './providerCliBridge';
 
-const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
-const DESKTOP_VAULT_ENDPOINT = loopbackOrigin('https', 30135);
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // Sulla Cloud relay events carry a <=1 MiB frame as an escaped JSON string.
 const MAX_RELAY_EVENT_LINE_BYTES = 4 * 1024 * 1024;
 
@@ -86,25 +84,10 @@ export interface VaultBrokerServiceIdentity {
 export type VaultBrokerIdentityProvider = () => Promise<VaultBrokerServiceIdentity>;
 export type VaultBrokerFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** Desktop always uses its local container vault; hosted vault mode moved to merchantprotocol/sulla-server. */
 export function usesContainerVaultAuthority(): boolean {
-  return process.env.SULLA_VAULT_MODE !== 'server';
+  return true;
 }
-
-export class VaultBrokerError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status: number,
-    /** Non-secret diagnostic reason from the vault, e.g. `connect_ECONNREFUSED`. */
-    public readonly reason?: string,
-    /** The vault marked this as a transient egress failure worth retrying after a pause. */
-    public readonly retryable = false,
-  ) {
-    super(message);
-    this.name = 'VaultBrokerError';
-  }
-}
-
 /** Accept only short token-like reason codes from the vault; never echo arbitrary text. */
 function safeReason(value: unknown): string | undefined {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : undefined;
@@ -149,57 +132,13 @@ function assertEndpoint(endpoint: string): string {
   return url.toString().replace(/\/$/, '');
 }
 
+export { configuredVaultBrokerProvider, VaultBrokerServiceProvider } from './VaultBrokerServiceProvider';
+export type { VaultBrokerIdentityContextInput } from './VaultBrokerServiceProvider';
+
 async function errorBody(response: Response): Promise<LocalVaultErrorResponse> {
   return response.json().catch(() => ({
-    error:   'vault_unavailable',
-    message: `Vault broker request failed (${ response.status })`,
+    error: 'vault_unavailable', message: `Vault broker request failed (${ response.status })`,
   })) as Promise<LocalVaultErrorResponse>;
-}
-
-/** Resolve the unlocked local vault owner through the broker-authenticated status endpoint. */
-export async function getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
-  if (!usesContainerVaultAuthority()) throw new Error('Local vault principal is only available in Desktop authority mode');
-  const status = await requireConfiguredCredentialBroker().status(signal);
-  if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Vault is locked', 423);
-  if (typeof status.principalId !== 'string' || !UUID_PATTERN.test(status.principalId)) {
-    throw new VaultBrokerError('invalid_caller_identity', 'Vault did not return an authenticated local principal', 503);
-  }
-  return status.principalId;
-}
-
-export async function issueLocalBrokerContext(input: {
-  agentId:              string;
-  podId:                string;
-  credentialScope:      NonNullable<ToolExecutionContext['credential_scope']>;
-  requestId?:           string;
-  threadId?:            string;
-  jobId?:               string;
-  workflowExecutionId?: string;
-  orgId?:               string;
-  signal?:              AbortSignal;
-}): Promise<ToolExecutionContext> {
-  if (!input.agentId.trim() || !input.podId.trim()) {
-    throw new VaultBrokerError('invalid_caller_identity', 'Broker context requires trusted agent and pod identities', 401);
-  }
-  const now = Math.floor(Date.now() / 1000);
-  return {
-    v:                     1,
-    iss:                   'sulla-desktop',
-    aud:                   'sulla-tools',
-    sub:                   await getLocalVaultPrincipalId(input.signal),
-    org_id:                input.orgId,
-    agent_id:              input.agentId,
-    pod_id:                input.podId,
-    thread_id:             input.threadId,
-    job_id:                input.jobId,
-    workflow_execution_id: input.workflowExecutionId,
-    credential_scope:      input.credentialScope,
-    scopes:                [],
-    iat:                   now,
-    exp:                   now + 300,
-    jti:                   crypto.randomUUID(),
-    request_id:            input.requestId ?? crypto.randomUUID(),
-  };
 }
 
 export class LocalVaultBrokerClient {
@@ -410,167 +349,6 @@ export class LocalVaultBrokerClient {
   }
 }
 
-/** Construct only in the trusted Desktop approval path, never in tools/providers. */
-export class LocalVaultApprovalClient {
-  private readonly endpoint: string;
+export { LocalVaultApprovalClient } from './LocalVaultApprovalClient';
+import { LocalVaultApprovalClient } from './LocalVaultApprovalClient';
 
-  constructor(
-    endpoint: string,
-    private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
-    private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(30_000) }),
-  ) {
-    this.endpoint = assertEndpoint(endpoint);
-    if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {
-      throw new Error('Vault approval service identity is not configured');
-    }
-  }
-
-  async approve(operationId: string): Promise<BrokerApprovalResponse> {
-    return this.request('/v1/broker/approve', 'POST', { operationId });
-  }
-
-  /** Create the empty vault account a first OAuth sign-in stores its tokens in. Metadata only. */
-  async ensureOAuthAccount(integrationId: string, accountId: string, label: string): Promise<BrokerIntegrationMetadataResponse> {
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
-      throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
-    }
-    return this.request(`/v1/broker/integrations/${ encodeURIComponent(integrationId) }/oauth-account`, 'PUT', { accountId, label });
-  }
-
-  /** Atomically store an account collected by trusted Desktop UI. No secret is returned. */
-  async importIntegrationAccount(
-    integrationId: string,
-    input: BrokerIntegrationAccountImportRequest,
-  ): Promise<BrokerIntegrationMetadataResponse> {
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(input.accountId)) {
-      throw new VaultBrokerError('invalid_operation', 'Integration account reference is invalid', 400);
-    }
-    return this.request(`/v1/broker/integrations/${ encodeURIComponent(integrationId) }/desktop-account`, 'PUT', input);
-  }
-
-  async adoptSullaCloudSession(request: SullaCloudSessionAdoptRequest): Promise<SullaCloudSessionResponse> {
-    return this.sullaCloudSession('PUT', request) as Promise<SullaCloudSessionResponse>;
-  }
-
-  async clearSullaCloudSession(): Promise<{ cleared: number }> {
-    return this.sullaCloudSession('DELETE') as Promise<{ cleared: number }>;
-  }
-
-  async rewrapForAccountPassword(request: AccountPasswordRewrapRequest): Promise<AccountPasswordRewrapResponse> {
-    return this.request('/v1/broker/sulla-cloud/account-wrap', 'POST', request);
-  }
-
-  async wrapUserKeyForApprovedDevice(request: VaultDeviceApprovalWrapRequest): Promise<{ wrappedUserKey: unknown }> {
-    return this.request('/v1/broker/sulla-cloud/device-approval-wrap', 'POST', request);
-  }
-
-  async wrapVaultEnrollment(request: VaultEnrollmentWrapRequest): Promise<{ wrappedUserKey: unknown }> {
-    return this.request('/v1/broker/sulla-cloud/enrollment-wrap', 'POST', request);
-  }
-
-  async adoptVaultEnrollment(request: VaultEnrollmentAdoptRequest): Promise<{ bundleMac: string; headMac: string }> {
-    return this.request('/v1/broker/sulla-cloud/enrollment-adopt', 'POST', request);
-  }
-
-  async commitVaultEnrollment(requestId: string): Promise<{ adopted: true }> {
-    return this.request('/v1/broker/sulla-cloud/enrollment-commit', 'POST', { requestId });
-  }
-
-  async rotateRecoveryKey(): Promise<RecoveryKeyRotateResponse> {
-    return this.request('/v1/broker/sulla-cloud/recovery-key/rotate', 'POST', {});
-  }
-
-  async sullaCloudRequest(request: SullaCloudDesktopRequest): Promise<BrokerExecuteResponse> {
-    return this.request('/v1/broker/sulla-cloud/request', 'POST', request);
-  }
-
-  private async sullaCloudSession(method: 'PUT' | 'DELETE', body?: SullaCloudSessionAdoptRequest): Promise<unknown> {
-    return this.request('/v1/broker/sulla-cloud/session', method, body);
-  }
-
-  protected async request<T>(path: string, method: string, body?: unknown): Promise<T> {
-    const identity = typeof this.identity === 'function' ? await this.identity() : this.identity;
-    const response = await this.transport(`${ this.endpoint }${ path }`, {
-      method,
-      headers: {
-        authorization: `Bearer ${ identity.serviceToken }`,
-        'x-sulla-service-id': identity.serviceId,
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!response.ok) {
-      throw brokerError(await errorBody(response), response.status);
-    }
-    return response.json() as Promise<T>;
-  }
-}
-
-let configuredBroker: LocalVaultBrokerClient | null | undefined;
-let configuredApproval: LocalVaultApprovalClient | null | undefined;
-
-export function configureCredentialBroker(broker: LocalVaultBrokerClient | null): void {
-  configuredBroker = broker;
-}
-
-function isElectronMainProcess(): boolean {
-  return Boolean(process.versions.electron) && (process as NodeJS.Process & { type?: string }).type === 'browser';
-}
-
-const toolsVaultFetch: VaultBrokerFetch = async(input, init) => {
-  const runtime = await import('./toolsTransport');
-  return runtime.toolsVaultFetch(input, init);
-};
-
-const desktopVaultFetch: VaultBrokerFetch = async(input, init) => {
-  const runtime = await import('./desktopTransport');
-  return runtime.desktopVaultFetch(input, init);
-};
-
-const desktopBrokerIdentity: VaultBrokerIdentityProvider = async() => {
-  const runtime = await import('./desktopTransport');
-  return runtime.loadDesktopBrokerIdentity();
-};
-
-const desktopApprovalIdentity: VaultBrokerIdentityProvider = async() => {
-  const runtime = await import('./desktopTransport');
-  return runtime.loadDesktopApprovalIdentity();
-};
-
-export function getConfiguredCredentialBroker(): LocalVaultBrokerClient | null {
-  if (configuredBroker !== undefined) return configuredBroker;
-  const token = process.env.SULLA_VAULT_BROKER_TOKEN;
-  const serviceId = process.env.SULLA_VAULT_BROKER_SERVICE_ID;
-  if (token && serviceId) {
-    if (serviceId !== 'sulla-tools') throw new Error('Vault broker service identity must be sulla-tools');
-    configuredBroker = new LocalVaultBrokerClient(
-      process.env.SULLA_VAULT_BROKER_URL ?? TOOLS_VAULT_ENDPOINT,
-      { serviceId, serviceToken: token },
-      toolsVaultFetch,
-    );
-  } else if (isElectronMainProcess()) {
-    configuredBroker = new LocalVaultBrokerClient(
-      DESKTOP_VAULT_ENDPOINT,
-      desktopBrokerIdentity,
-      desktopVaultFetch,
-    );
-  } else {
-    configuredBroker = null;
-  }
-  return configuredBroker;
-}
-
-export function requireConfiguredCredentialBroker(): LocalVaultBrokerClient {
-  const broker = getConfiguredCredentialBroker();
-  if (!broker) throw new VaultBrokerError('vault_unavailable', 'Vault broker service identity is not configured', 503);
-  return broker;
-}
-
-/** Available only to the trusted Electron main approval path. */
-export function getConfiguredApprovalClient(): LocalVaultApprovalClient | null {
-  if (configuredApproval !== undefined) return configuredApproval;
-  configuredApproval = isElectronMainProcess()
-    ? new LocalVaultApprovalClient(DESKTOP_VAULT_ENDPOINT, desktopApprovalIdentity, desktopVaultFetch)
-    : null;
-  return configuredApproval;
-}

@@ -19,13 +19,13 @@ import { agentOccurrence, consumeAgentOccurrence } from './agentInvocation.js';
 import { closeDb, pool } from './db.js';
 import { closeEvents, emitEvent } from './events.js';
 import { OnDemandRuntimeLauncher } from './runtime.js';
-import { DesktopAgentLauncher, ScopedToolClient, ServerAgentLauncher } from './toolClient.js';
+import { DesktopAgentLauncher, ScopedToolClient } from './toolClient.js';
 
 const executionId = process.env.SULLA_EXECUTION_ID ?? '';
 const runToken = process.env.SULLA_RUN_TOKEN ?? '';
 const ownerId = `runner-${ process.pid }-${ crypto.randomBytes(4).toString('hex') }`;
 const tools = new ScopedToolClient(runToken);
-const agents = config.mode === 'server' ? new ServerAgentLauncher(runToken) : new DesktopAgentLauncher(tools);
+const agents = new DesktopAgentLauncher(tools);
 const runtimes = new OnDemandRuntimeLauncher();
 
 function node(playbook: WorkflowPlaybookState, nodeId: string): any {
@@ -225,6 +225,7 @@ async function executeStep(playbook: WorkflowPlaybookState, step: PlaybookStepRe
 }
 
 async function main(): Promise<void> {
+  if (!config.databaseUrl) throw new Error('SULLA_DATABASE_URL is required');
   if (!executionId || !runToken) throw new Error('SULLA_EXECUTION_ID and SULLA_RUN_TOKEN are required');
   const leaseToken = crypto.randomUUID();
   const leased = await pool.query(

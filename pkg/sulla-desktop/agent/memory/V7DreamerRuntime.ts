@@ -1,0 +1,80 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+/**
+ * Production wiring for V7Dreamer: the Postgres v7 store, the Settings-backed
+ * cursor and the subconscious model slot. One Dreamer per process, so the
+ * single-flight guard covers every caller (the routine's tool-call node, a
+ * manual tool call, a schedule catch-up fire).
+ */
+
+import { V7DreamRepository } from '../app/Repositories/V7DreamRepository';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+
+import {
+  DEFAULT_DREAMER_INTERVAL_MINUTES,
+  V7Dreamer,
+  type DreamCursorStore,
+  type DreamModel,
+} from './V7Dreamer';
+
+export const DREAMER_INTERVAL_SETTING = 'dreamerIntervalMinutes';
+export const DREAMER_CURSOR_SETTING = 'dreamerLastWindowEndMs';
+
+/** @deprecated use V7DreamRepository (app/Repositories/V7DreamRepository) */
+export { V7DreamRepository as PostgresV7DreamStore };
+
+export class SettingsDreamCursor implements DreamCursorStore {
+  async getLastWindowEnd(): Promise<number | null> {
+    const value = Number(await SullaSettingsModel.get(DREAMER_CURSOR_SETTING, null));
+
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  async setLastWindowEnd(ms: number): Promise<void> {
+    await SullaSettingsModel.set(DREAMER_CURSOR_SETTING, ms, 'number');
+  }
+
+  async getIntervalMinutes(): Promise<number> {
+    return Number(await SullaSettingsModel.get(DREAMER_INTERVAL_SETTING, DEFAULT_DREAMER_INTERVAL_MINUTES));
+  }
+}
+
+/** One subconscious-slot model call, bounded by the process-wide writer gate. */
+export class SubconsciousDreamModel implements DreamModel {
+  async dream(systemPrompt: string, userMessage: string): Promise<string | null> {
+    const [{ GraphRegistry }, { runThroughWriterGate }] = await Promise.all([
+      import('../services/GraphRegistry'),
+      import('../services/SubconsciousWriterGate'),
+    ]);
+
+    return runThroughWriterGate(async() => {
+      const created = await GraphRegistry.createV7Dreamer(systemPrompt, userMessage);
+      // maxIterations 1: one node pass, so exactly one model call per batch.
+      await created.graph.execute(created.state, 'subconscious', { maxIterations: 1 });
+      const output = (created.state.metadata as any).v7DreamerOutput;
+
+      return typeof output === 'string' ? output : null;
+    });
+  }
+}
+
+/** Owns the one process-wide V7Dreamer, so its single-flight guard covers every caller. */
+export class V7DreamerRuntime {
+  private static instance: V7Dreamer | undefined;
+
+  static shared(): V7Dreamer {
+    V7DreamerRuntime.instance ??= new V7Dreamer({
+      store:  new V7DreamRepository(),
+      cursor: new SettingsDreamCursor(),
+      model:  new SubconsciousDreamModel(),
+    });
+
+    return V7DreamerRuntime.instance;
+  }
+}
+
+/** @deprecated use V7DreamerRuntime.shared() */
+export const getV7Dreamer = (): V7Dreamer => V7DreamerRuntime.shared();

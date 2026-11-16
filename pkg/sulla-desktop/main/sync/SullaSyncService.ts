@@ -20,6 +20,8 @@
  * on the next tick.
  */
 
+import { DatabaseOutageState } from '@pkg/agent/database/DatabaseAvailability';
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import Logging from '@pkg/utils/logging';
 
@@ -29,6 +31,10 @@ import { clearOps, getPendingOps } from './syncQueue';
 import { getLastSeq, setLastSeq } from './syncMeta';
 
 const log = Logging.background;
+
+function isDatabaseUnavailable(err: unknown): boolean {
+  return postgresClient.unavailableClassifier.isUnavailable(err);
+}
 
 const POLL_INTERVAL_MS = 15_000;
 const PUSH_DEBOUNCE_MS = 300;
@@ -56,6 +62,7 @@ class SullaSyncServiceImpl {
   private pushDebounce: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private loggerListener: ((payload: { conversationId: string; event: any }) => void) | null = null;
+  private readonly databaseOutage = new DatabaseOutageState();
 
   isRunning(): boolean {
     return this.running;
@@ -71,14 +78,33 @@ class SullaSyncServiceImpl {
     this.running = true;
     log.log('[SullaSync] Starting sync loop');
     this.attachLoggerMirror();
-    this.fullSync().catch((err) => {
-      log.warn('[SullaSync] Initial sync failed:', err);
-    });
+    this.fullSync().then(() => this.onCycleSucceeded(), err => this.onCycleFailed('Initial', err));
     this.pollTimer = setInterval(() => {
-      this.fullSync().catch((err) => {
-        log.warn('[SullaSync] Periodic sync failed:', err);
-      });
+      this.fullSync().then(() => this.onCycleSucceeded(), err => this.onCycleFailed('Periodic', err));
     }, POLL_INTERVAL_MS);
+  }
+
+  /**
+   * The sync queue and cursor live in Postgres. While the database is down
+   * (VM booting or restarting) every 15s tick fails the same way, so log the
+   * outage once and skip quietly until a cycle succeeds again. Any other
+   * failure (cloud refused, bad payload) is still warned every time.
+   */
+  private onCycleFailed(kind: 'Initial' | 'Periodic' | 'pushSoon', err: unknown): void {
+    if (isDatabaseUnavailable(err)) {
+      if (this.databaseOutage.markUnavailable()) {
+        log.debug(`[SullaSync] Database not reachable; skipping sync until it is back (${ err instanceof Error ? err.message : String(err) })`);
+      }
+
+      return;
+    }
+    log.warn(`[SullaSync] ${ kind } sync failed:`, err);
+  }
+
+  private onCycleSucceeded(): void {
+    if (this.databaseOutage.markAvailable() !== null) {
+      log.debug('[SullaSync] Database reachable again; sync resumed');
+    }
   }
 
   /** Called by sullaCloudAuth on sign-out. Idempotent. */
@@ -143,9 +169,7 @@ class SullaSyncServiceImpl {
     if (this.pushDebounce) return;
     this.pushDebounce = setTimeout(() => {
       this.pushDebounce = null;
-      this.fullSync().catch((err) => {
-        log.warn('[SullaSync] pushSoon sync failed:', err);
-      });
+      this.fullSync().then(() => this.onCycleSucceeded(), err => this.onCycleFailed('pushSoon', err));
     }, PUSH_DEBOUNCE_MS);
   }
 

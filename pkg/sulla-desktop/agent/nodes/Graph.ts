@@ -7,6 +7,7 @@
 // Playbook/workflow orchestration is in controllers/PlaybookController.ts.
 
 import { AgentNode } from './AgentNode';
+import { AgentGraphRouter } from './AgentGraphRouter';
 import { HeartbeatNode } from './HeartbeatNode';
 import { InputHandlerNode } from './InputHandlerNode';
 import { SubconsciousAgentNode } from './SubconsciousAgentNode';
@@ -14,6 +15,7 @@ import { PlaybookController } from '../controllers/PlaybookController';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
+import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
@@ -487,7 +489,12 @@ export class Graph<TState = BaseThreadState> {
         if (convId) {
           getConversationLogger().logGraphCompleted(convId, 'failed', { error: error?.message || String(error) });
         }
-        // Re-throw non-abort errors
+        // A failed turn is still a finished turn. Mark it complete and tell
+        // the chat, or the thread looks "running" forever and its heartbeat
+        // never fires to wake it back up.
+        // Container loss is retried on the same state by the caller, so it
+        // must not be marked finished here.
+        if (!isReentry && !isContainerLifecycleLost(error)) this.finishFailedRun(state);
         throw error;
       }
     }
@@ -506,7 +513,13 @@ export class Graph<TState = BaseThreadState> {
     // workflow to orchestrate. If so, process next steps and potentially
     // re-enter the agent loop with new messages.
     if (!isReentry) {
-      state = await this.playbookController.processWorkflowPlaybook(state);
+      try {
+        state = await this.playbookController.processWorkflowPlaybook(state);
+      } catch (error) {
+        (state as any).metadata._isPlaybookReentry = prevReentryFlag;
+        if (!isContainerLifecycleLost(error)) this.finishFailedRun(state);
+        throw error;
+      }
     }
 
     // Conversation logging — graph completed (skip on playbook re-entry)
@@ -539,6 +552,27 @@ export class Graph<TState = BaseThreadState> {
     (state as any).metadata._isPlaybookReentry = prevReentryFlag;
 
     return state;
+  }
+
+  /**
+   * End a turn that threw: mark the cycle complete so the backend no longer
+   * reports the thread busy, and emit graph_execution_complete so the chat
+   * leaves its running state. Best effort — the original error still wins.
+   */
+  private finishFailedRun(state: TState): void {
+    const metadata = (state as any).metadata;
+    metadata.cycleComplete = true;
+    metadata.waitingForUser = true;
+    const warn = (err: unknown) => console.warn('[Graph] Could not signal completion after a failed run:', err);
+    try {
+      Promise.resolve(getWebSocketClientService().send(metadata.wsChannel || 'heartbeat', {
+        type: 'transfer_data',
+        data: { role: 'system', content: 'graph_execution_complete', stopReason: 'error', waitingForUser: true, thread_id: metadata.threadId },
+      })).catch(warn);
+    } catch (err) {
+      warn(err);
+    }
+    metadata.stopReason = null;
   }
 
   // ── Playbook methods have been extracted to PlaybookController ──
@@ -785,70 +819,9 @@ export function createAgentGraph(): Graph<AgentGraphState> {
   // Input → Agent
   graph.addEdge('input_handler', 'agent');
 
-  // Agent routing: done/blocked → end, otherwise continue looping
-  graph.addConditionalEdge('agent', state => {
-    // If a workflow has been activated, stop the agent loop immediately.
-    // The workflow playbook will take over orchestration.
-    // BUT: during a playbook reentry (_isPlaybookReentry), the workflow is
-    // already running and we're executing on behalf of the walker. In that
-    // case, DON'T bail — let the agent finish its multi-turn tool chain
-    // (e.g. file_search → exec → text answer) before returning control.
-    const isPlaybookReentry = !!(state.metadata as any)._isPlaybookReentry;
-    if ((state.metadata as any).activeWorkflow?.status === 'running' && !isPlaybookReentry) {
-      console.log('[AgentGraph] Workflow activated — pausing agent for workflow orchestration');
-      return 'end';
-    }
-
-    const agentMeta = (state.metadata as any).agent || {};
-    const agentStatus = String(agentMeta.status || '').trim().toLowerCase();
-
-    if (agentStatus === 'done') {
-      console.log('[AgentGraph] Agent reported DONE - ending');
-      return 'end';
-    }
-
-    if (agentStatus === 'blocked') {
-      console.log('[AgentGraph] Agent reported BLOCKED - ending');
-      return 'end';
-    }
-
-    // If the agent executed tool calls this cycle but didn't emit an explicit
-    // wrapper (status is 'in_progress'), the LLM expects to see tool results
-    // and continue — treat it as an implicit CONTINUE.
-    if (agentStatus === 'in_progress' && state.metadata.hadToolCalls) {
-      const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
-      const newLoopCount = currentLoopCount + 1;
-      (state.metadata as any).agentLoopCount = newLoopCount;
-      // Consume the flag so this decision is not sticky. normalizedChat
-      // resets hadToolCalls at the top of each LLM turn, but its
-      // last-message-is-assistant short-circuit returns BEFORE that reset
-      // — leaving the flag stuck true and looping this branch forever
-      // with no LLM activity (observed at ~4ms per cycle, thousands of
-      // iterations). If the next cycle really does run tools, ToolExecutor
-      // sets the flag back to true at the top of executeToolCalls.
-      state.metadata.hadToolCalls = false;
-      console.log(`[AgentGraph] Agent made tool calls without wrapper — implicit continue (cycle ${ newLoopCount })`);
-      return 'agent';
-    }
-
-    // Default to DONE: only an explicit <AGENT_CONTINUE> keeps the loop going.
-    // This matches LangGraph / OpenAI Assistants behaviour — the turn is over
-    // unless the agent explicitly signals it wants to continue.
-    if (agentStatus !== 'continue') {
-      console.log(`[AgentGraph] Agent status '${ agentStatus || 'unknown' }' is not CONTINUE — defaulting to DONE`);
-      (state.metadata as any).agent.status = 'done';
-      state.metadata.cycleComplete = true;
-      return 'end';
-    }
-
-    // Track loop count for diagnostics
-    const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
-    const newLoopCount = currentLoopCount + 1;
-    (state.metadata as any).agentLoopCount = newLoopCount;
-
-    console.log(`[AgentGraph] Agent cycle ${ newLoopCount } - continuing`);
-    return 'agent';
-  });
+  // Agent routing: done/blocked → end, otherwise continue looping.
+  const router = new AgentGraphRouter();
+  graph.addConditionalEdge('agent', state => router.route(state));
 
   graph.setEntryPoint('input_handler');
   graph.setEndPoints('agent');

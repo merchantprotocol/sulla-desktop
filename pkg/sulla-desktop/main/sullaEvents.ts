@@ -11,45 +11,32 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initAgentsIpc } from './agentsIpc';
-import { initModelRoutingIpc } from './modelRoutingIpc';
-import { initModelDefaultsIpc } from './modelDefaultsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initCloudConnectionEvents } from './cloud/cloudLifecycle';
+import { initDevicesPanelEvents } from './cloud/devices/devicesPanelIpc';
 import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initSullaFilesIpc } from './sullaFilesIpc';
-import { initBookmarksIpc } from './bookmarksIpc';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
-import { initChatHeartbeatIpc } from './chatHeartbeatIpc';
-import { initChatArtifactsIpc } from './chatArtifactsIpc';
-import { initChatMessagesIpc } from './chatMessagesIpc';
-import { initConversationMessagesIpc } from './conversationMessagesIpc';
-import { initMessageBusIpc } from './messageBusIpc';
-import { initAgentTabContractIpc } from './agentTabContractIpc';
 import { initSullaApprovalEvents } from './sullaApprovalEvents';
-import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaFunctionEvents } from './sullaFunctionEvents';
 import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
-import { initSullaPatchEvents } from './sullaPatchEvents';
-import { initSullaReflexEvents } from './sullaReflexEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
-import { initUsageEvents } from './usageEvents';
 import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 import { initRecipeRailApps } from './marketplace/recipeRailApps';
-import { initExtensionUiIpc } from './extensionUiIpc';
-import { initIntegrationGrantIpc } from './integrationGrantIpc';
-import { initSupportSessionIpc } from './supportSessionIpc';
+import { MainIpcControllersProvider } from './ipc/MainIpcControllersProvider';
 import { initDebugErrorReporting } from './DebugErrorService';
+import { initThreadShelfIpc } from './threadShelf';
 
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
@@ -86,27 +73,30 @@ function assertInsideUserHome(targetPath: string): string {
  * Initialize Sulla-specific IPC handlers.
  */
 export function initSullaEvents(): void {
+  const ipcControllers = new MainIpcControllersProvider();
   initDebugErrorReporting();
-  initMessageBusIpc();
-  initExtensionUiIpc();
-  initIntegrationGrantIpc();
-  initSupportSessionIpc();
-  initAgentTabContractIpc();
-  initTabsIpc();
+  ipcControllers.messageBus.register();
+  ipcControllers.extensionUi.register();
+  ipcControllers.integrationGrant.register();
+  ipcControllers.supportSession.register();
+  ipcControllers.agentTabContract.register();
+  ipcControllers.tabs.register();
   initAgentsIpc();
-  initModelRoutingIpc();
-  initModelDefaultsIpc();
+  ipcControllers.modelRouting.register();
+  ipcControllers.modelDefaults.register();
   initConversationHistoryIpc();
-  initBookmarksIpc();
-  initChatMessagesIpc();
-  initConversationMessagesIpc();
-  initChatArtifactsIpc();
-  initChatHeartbeatIpc();
+  initThreadShelfIpc();
+  ipcControllers.bookmarks.register();
+  ipcControllers.chatMessages.register();
+  ipcControllers.conversationMessages.register();
+  ipcControllers.chatArtifacts.register();
+  ipcControllers.chatHeartbeat.register();
   initClaudeOAuthEvents();
   initIntegrationOAuthEvents();
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
   initCloudConnectionEvents();
+  initDevicesPanelEvents();
   initSullaCloudAuthEvents();
   initSullaFilesIpc();
 
@@ -314,7 +304,7 @@ export function initSullaEvents(): void {
 
   ipcMainProxy.handle('agents-list', async() => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return (await agentDefinitionService.list()).filter(agent => agent.enabled && agent.status !== 'archive').map(agent => ({
+    return (await getDatabaseReadGuard().run('agents-list', () => agentDefinitionService.list(), [])).filter(agent => agent.enabled && agent.status !== 'archive').map(agent => ({
       id:          agent.slug,
       name:        agent.name,
       description: agent.description,
@@ -359,18 +349,17 @@ export function initSullaEvents(): void {
   });
 
   initSullaWorkflowEvents();
-  initUsageEvents();
+  ipcControllers.usage.register();
   initSullaRoutineTemplateEvents();
   initSullaRoutineExportEvents();
   initSullaRoutineImportEvents();
-  initSullaBundleEvents();
+  ipcControllers.sullaBundle.register();
   initSullaMarketplaceEvents();
   initSullaLibraryEvents();
   initSullaLibraryDraftEvents();
   initSullaFunctionEvents();
   initSullaApprovalEvents();
-  initSullaPatchEvents();
-  initSullaReflexEvents();
+  ipcControllers.sullaPatch.register();
   initSullaRecipeDockerEvents();
   initRecipeRailApps();
 

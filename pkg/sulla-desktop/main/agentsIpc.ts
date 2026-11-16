@@ -17,6 +17,7 @@
 
 import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
+import { AgentRuntimeLiveness } from '@pkg/agent/app/Services/AgentRuntimeLiveness';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
@@ -31,6 +32,7 @@ import { readConversationLog, readConversationPreview, type AgentConversationEnt
 
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
+import { getDatabaseReadGuard } from './DatabaseReadGuard';
 import { debugErrorService } from './DebugErrorService';
 
 // ── Response shape ───────────────────────────────────────────────────────────
@@ -207,13 +209,31 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 
 // ── IPC handler ──────────────────────────────────────────────────────────────
 
+// The reconciler's container probes, kept so a quiet agent can read "still running" or "stopped responding".
+const agentRuntimeLiveness = new AgentRuntimeLiveness();
 const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
-  latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null,
-}, Date.now, {}, agentJobProvider.activity);
+  latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.latestTelemetryForJobs([jobId]))[jobId]?.[taskIndex]?.latestCheckin ?? null,
+  // One batched read per snapshot instead of one telemetry query pair per task.
+  latestForJobs: async(jobIds) => {
+    const telemetry = await agentJobProvider.messaging.latestTelemetryForJobs(jobIds);
+    return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) =>
+      [jobId, Object.fromEntries(Object.entries(tasks).map(([index, item]) => [index, item.latestCheckin]))]));
+  },
+  answeredForJobs: async(jobIds) => {
+    const telemetry = await agentJobProvider.messaging.latestTelemetryForJobs(jobIds);
+    return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) =>
+      [jobId, Object.fromEntries(Object.entries(tasks).map(([index, item]) => [index, item.lastMessageDeliveredAt ?? null]))]));
+  },
+}, Date.now, {}, agentJobProvider.activity, agentRuntimeLiveness);
 const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
   graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
-  container: async task => task.runLocation === 'container' ? probeAgentContainerRuntime(undefined, task.threadId) : false,
-  lastCheckin: async(jobId, taskIndex) => (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin?.createdAt ?? null,
+  container: (task) => {
+    if (task.runLocation !== 'container') return Promise.resolve(false);
+    const alive = probeAgentContainerRuntime(undefined, task.threadId);
+    agentRuntimeLiveness.record(task.threadId, alive);
+    return Promise.resolve(alive);
+  },
+  lastCheckin: (jobId, taskIndex) => agentJobProvider.messaging.latestCheckinAt(jobId, taskIndex),
 }, agentJobProvider.activity);
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 const strandedManagerLifecycle = new StrandedManagerLifecycle(agentJobProvider.stranded, app);
@@ -234,7 +254,9 @@ export function initAgentsIpc(): void {
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return (await agentDefinitionService.list()).filter(a => a.status !== 'archive').map(a => ({
+    // [] while the database is still starting; Studio Agents reloads on `database:available`.
+    const definitions = await getDatabaseReadGuard().run('agent-definitions:list', () => agentDefinitionService.list(), []);
+    return definitions.filter(a => a.status !== 'archive').map(a => ({
       id:                 a.id,
       slug:               a.slug,
       name:               a.name,
@@ -460,21 +482,28 @@ export async function fetchThreadAgentCards(parentThreadId: string): Promise<Thr
     import('@pkg/agent/utils/sullaPaths'),
     import('@pkg/agent/database/models/AgentJobMessagingModel'),
   ]);
-  const jobs = await agentJobProvider.states.descendants(parentThreadId);
+  // UI poll (every 3s per open chat): a few seconds of staleness is invisible, a recursive query per poll is not.
+  const jobs = await agentJobProvider.states.descendants(parentThreadId, { maxStaleMs: 4_000 });
   const logsDir = resolveSullaLogsDir();
+  // Two batched reads for the whole card set instead of per-task telemetry and conversation lookups.
+  const [telemetryByJob, conversationById] = await Promise.all([
+    AgentJobMessagingModel.latestTelemetryForJobs(jobs.map(job => job.jobId)).catch((error) => {
+      void debugErrorService.reportError(`agents:thread-jobs:telemetry:${ parentThreadId }`, error);
+      return {} as Awaited<ReturnType<typeof AgentJobMessagingModel.latestTelemetryForJobs>>;
+    }),
+    ConversationHistoryModel.getByIds(jobs.flatMap(job => job.tasks.flatMap(task => task.threadId ? [task.threadId] : []))),
+  ]);
   const cards = await Promise.all(jobs.flatMap(job => job.tasks.map(async(task, taskIndex): Promise<ThreadAgentCard | null> => {
     if (task.dismissed) return null;
     const isTab = task.visibility === 'tab' || job.visibility === 'tab' || task.promotedToTab === true;
     try {
     let lastActivity = task.status === 'parked' ? `Parked · waiting on ${ job.waitingOnChildren ?? 0 } children` : task.status === 'queued' ? 'Waiting to start' : isTab ? 'Working in its own tab' : 'Starting…';
-    let checkin = null;
-    try { checkin = (await AgentJobMessagingModel.telemetryForJob(job.jobId))[taskIndex]?.latestCheckin ?? null; }
-    catch (error) { void debugErrorService.reportError(`agents:thread-jobs:telemetry:${ job.jobId }#${ taskIndex }`, error); }
-    const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin);
+    const checkin = telemetryByJob[job.jobId]?.[taskIndex]?.latestCheckin ?? null;
+    const activity = agentJobProvider.activity.project(job, task, taskIndex, checkin, telemetryByJob[job.jobId]?.[taskIndex]?.lastMessageDeliveredAt ?? null);
     const lastActivityAt = activity.lastActivityAt;
 
     if (task.threadId) {
-      const row = await ConversationHistoryModel.getById(task.threadId);
+      const row = conversationById.get(task.threadId);
       if (row) {
         const log = await readConversationLog(row.log_file, logsDir);
         const latest = log.entries.at(-1);
@@ -624,15 +653,17 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
       import('@pkg/agent/services/GraphRegistry'),
       import('@pkg/agent/services/AgentDefinitionService'),
     ]);
-    // Only enrich what the Live view can show: unfinished jobs, plus failures
-    // from the last hour. Enriching every historical job reads one log file
-    // per task on each 3s poll.
+    // Live refreshes need active work only. Batch compact check-ins/messages for
+    // all visible jobs instead of issuing two history reads per job per tick.
+    // Live shows unfinished jobs plus failures/stops from the last hour (the ones
+    // the human watches for). Completed history stays out of the poll.
     const failedCutoff = Date.now() - 60 * 60 * 1000;
     const allJobs = (await agentJobProvider.states.list(100, true)).filter(job => {
       if (job.status === 'completed') return false;
       if (job.status === 'failed' || job.status === 'stopped') return (job.finishedAt ?? job.createdAt) >= failedCutoff;
       return true;
     });
+    const telemetryByJob = await AgentJobMessagingModel.latestTelemetryForJobs(allJobs.map(job => job.jobId));
     const definitions = await agentDefinitionService.list();
     const modelByAgent = new Map(definitions.map(definition => [
       definition.slug,
@@ -640,17 +671,22 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     ]));
     const logsDir = resolveSullaLogsDir();
 
+    const conversationById = await ConversationHistoryModel.getByIds(allJobs.flatMap(job => [
+      ...(job.parentThreadId ? [job.parentThreadId] : []),
+      ...job.tasks.flatMap(task => task.threadId ? [task.threadId] : []),
+    ]));
+
     return Promise.all(allJobs.map(async job => {
       try {
-      const telemetry = await AgentJobMessagingModel.telemetryForJob(job.jobId);
-      const parent = job.parentThreadId ? await ConversationHistoryModel.getById(job.parentThreadId) : null;
+      const telemetry = telemetryByJob[job.jobId] ?? {};
+      const parent = job.parentThreadId ? conversationById.get(job.parentThreadId) ?? null : null;
       const tasks = await Promise.all(job.tasks.map(async(task, taskIndex) => {
         const latestCheckin = telemetry[taskIndex]?.latestCheckin ?? null;
-        const activity = agentJobProvider.activity.project(job, task, taskIndex, latestCheckin);
+        const activity = agentJobProvider.activity.project(job, task, taskIndex, latestCheckin, telemetry[taskIndex]?.lastMessageDeliveredAt ?? null);
         const lastActivityAt = activity.lastActivityAt;
         let lastActivity = latestCheckin?.summary || (task.status === 'queued' ? 'Waiting to start' : 'Working');
         if (task.threadId) {
-          const row = await ConversationHistoryModel.getById(task.threadId);
+          const row = conversationById.get(task.threadId);
           if (row) {
             const log = await readConversationLog(row.log_file, logsDir);
             const latest = log.entries.at(-1);

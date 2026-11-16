@@ -207,6 +207,15 @@ function handoffAbortError(): Error {
   return error;
 }
 
+/**
+ * The CLI cannot resume this session: another run holds it, or its transcript is gone (a recreated
+ * container home after a restart). Either way the turn must start a fresh session instead of
+ * retrying the same dead id until recovery gives up (2026-11-14).
+ */
+export function resumeSessionUnusable(stderr: string): boolean {
+  return /Session ID .* is already in use|No conversation found with session ID/i.test(stderr);
+}
+
 export class ClaudeCodeService extends BaseLanguageModel {
   private readonly toolPolicy: ClaudeToolPolicy;
   override managesOwnLoop(): boolean {
@@ -315,9 +324,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     disallowedTools:   string;
     /**
      * Host path of this spawn's system prompt file (cliSystemPromptFile).
-     * Passed as --append-system-prompt-file: ~/.claude/CLAUDE.md is written
-     * on the host, but the CLI runs in the VM under a different $HOME and
-     * never reads it — this flag is the only route Sulla's prompt has in.
+     * Passed as --append-system-prompt-file. The CLI runs in the VM under its
+     * own $HOME, so this flag is the only route Sulla's prompt has in. Sulla
+     * must never write the host's ~/.claude/CLAUDE.md: it belongs to the user.
      */
     systemPromptPath?: string | null;
     /** VM-side pidfile the launched claude records its PID in. */
@@ -368,6 +377,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     // how runClaude knows a steer has been seen.
     claudeArgs.push('--input-format', 'stream-json', '--replay-user-messages');
     if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
+    if (this.effort) claudeArgs.push('--effort', shq(this.effort));
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
     if (p.systemPromptPath) claudeArgs.push('--append-system-prompt-file', shq(p.systemPromptPath));
@@ -401,6 +411,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--input-format', 'stream-json', '--replay-user-messages',
     ];
     if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
+    if (this.effort) args.push('--effort', this.effort);
     if (p.existingSession) args.push('--resume', p.existingSession);
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
@@ -414,6 +425,15 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   override getModel(): string {
     return this.model || 'claude-code';
+  }
+
+  /** Reasoning effort from Preferences → AI models; '' leaves the CLI's own default. */
+  private effort = '';
+  setEffort(effort: string | undefined): void { this.effort = /^[a-z]{2,10}$/.test(effort || '') ? effort! : '' }
+
+  /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
+  private launchModel(): string {
+    return this.model && this.model !== 'claude-code' ? this.model : '';
   }
 
   override getProviderName(): string {
@@ -665,20 +685,14 @@ export class ClaudeCodeService extends BaseLanguageModel {
   /**
    * Build a <sulla_context> prefix for the outgoing user message.
    *
-   * Two tiers:
-   *   - Stable context (platform rules + critical/high observational memory):
-   *     sent on the first turn of a session and again ONLY when its content
-   *     changes. Each send becomes permanent conversation history, so
-   *     repeating it verbatim every turn multiplies token cost with zero
-   *     information gain.
-   *   - Recall context (subconscious middleware output for THIS turn): always
-   *     included when present — it's the per-turn payload the recall agent
-   *     produced specifically so the primary agent doesn't have to research.
+   * Stable context (platform rules + environment) is sent on the first turn
+   * of a session and again ONLY when its content changes. Each send becomes
+   * permanent conversation history, so repeating it verbatim every turn
+   * multiplies token cost with zero information gain.
    *
-   * Injecting in the user turn rather than relying solely on
-   * --append-system-prompt ensures Claude weights it properly, and fixes the
-   * resumed-session gap: --resume sends only the latest user message, so
-   * recall context merged into prior assistant messages was silently dropped.
+   * Memory and recall do not travel here. They arrive as the synthetic
+   * assistant context message that precedes the user message, which
+   * extractLatestUserMessage replays on resumed (--resume) turns.
    */
   private async buildUserMessageContextPrefix(
     state: BaseThreadState | undefined,
@@ -818,6 +832,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
       provider:          'claude-code',
+      model:             this.launchModel(),
       conversationId:    convId,
       state:             options.state,
       providerSessionId: existingSession,
@@ -893,6 +908,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transportContext = mcpSession
       ? await transport.context({
         provider:          'claude-code',
+        model:             this.launchModel(),
         conversationId:    convId,
         state:             options.state,
         providerSessionId: existingSession,
@@ -1679,8 +1695,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const text = chunk.toString('utf-8');
           stderrBuffer += text;
           const trimmed = text.trim();
-          // Detect the session-collision signal so we can retry without it.
-          if (/Session ID .* is already in use/i.test(stderrBuffer)) {
+          // Detect a session we cannot resume (locked, or gone after a restart) so we retry without it.
+          if (resumeSessionUnusable(stderrBuffer)) {
             sessionInUse = true;
           }
           if (trimmed && !trimmed.includes('no stdin data received')) {
@@ -1867,10 +1883,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             return;
           }
 
-          // Session lock collision — drop the cached id and retry once with a
+          // Session locked or missing — drop the cached id and retry once with a
           // fresh session so the user doesn't see a dead-end error.
           if (sessionInUse && !retryWithoutSession) {
-            log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
+            log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked or missing; retrying without --resume for conversationId=${ convId }`);
             this.deleteSession(convId).then(() => this.runClaude(messages, callbacks, options, true, turn)).then(
               r => resolve(r),
               reject,
@@ -2010,9 +2026,10 @@ export function getClaudeCodeService(): ClaudeCodeService {
 }
 
 /** Create a fresh (non-singleton) ClaudeCodeService with a specific model override. */
-export function createClaudeCodeService(model: string): ClaudeCodeService {
+export function createClaudeCodeService(model: string, effort?: string): ClaudeCodeService {
   const svc = new ClaudeCodeService();
   svc.setModel(model);
+  svc.setEffort(effort);
   return svc;
 }
 

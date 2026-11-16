@@ -12,7 +12,6 @@
 
 import fs from 'fs';
 import os from 'os';
-import timers from 'timers';
 
 import { GenericServerOptions } from 'builder-util-runtime';
 import Electron from 'electron';
@@ -22,7 +21,8 @@ import {
 import { ElectronAppAdapter } from 'electron-updater/out/ElectronAppAdapter';
 import yaml from 'yaml';
 
-import { updateEvents } from './UpdateManager';
+import { UpdateCheckSchedule } from './UpdateCheckSchedule';
+import { updateEvents, updateManager } from './UpdateManager';
 import { readUpdateChannelState, recordPendingUpdate, recordUpdateFailure } from './channelState';
 import { launchMacInstaller, stageMacUpdate, type StagedMacUpdate } from './macSelfInstall';
 
@@ -54,10 +54,8 @@ enum State {
 let state: State = State.UNCONFIGURED;
 
 let autoUpdater: AppUpdater;
-/** When we should check for updates next. */
-let updateTimer: NodeJS.Timeout;
-/** The update interval reported by the server. */
-let updateInterval = 0;
+/** When we should check for updates next, and whether automatic checks are on. */
+const checkSchedule = new UpdateCheckSchedule();
 
 let macStagingPromise: Promise<StagedMacUpdate> | undefined;
 
@@ -324,19 +322,31 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
 }
 
 mainEvent.on('settings-update', (settings: Settings) => {
-  if (settings.application.updater.enabled && state === State.CONFIGURED) {
-    // We have a configured updater, but haven't done the actual check yet.
-    // This means the setting was disabled when we configured the updater.
-    // Start checking now.
-    doInitialUpdateCheck();
+  const enabled = settings.application.updater.enabled;
+
+  checkSchedule.autoChecks = enabled;
+  updateManager.setUpdaterEnabled(enabled);
+  if (!enabled) {
+    // Turning automatic checks off stops the scheduled re-check right away.
+    // Manual "Check now" still works through the UpdateManager.
+    checkSchedule.cancel();
+
+    return;
+  }
+  if ((state === State.CONFIGURED || state === State.CHECKED) && !checkSchedule.isScheduled) {
+    // The setting was off when the updater was configured, or was turned
+    // off and back on: start the periodic checks now.
+    state = State.CHECKED;
+    doInitialUpdateCheck().catch((err) => {
+      console.error('Automatic update check failed:', err);
+    });
   }
 });
 
 
 /** Drop the cached updater so a changed channel/feed takes effect immediately. */
 export function reconfigureUpdater(): void {
-  if (updateTimer) timers.clearTimeout(updateTimer);
-  updateTimer = undefined as unknown as NodeJS.Timeout;
+  checkSchedule.cancel();
   autoUpdater?.removeAllListeners();
   autoUpdater = undefined as unknown as AppUpdater;
   macStagingPromise = undefined;
@@ -358,6 +368,7 @@ export function reconfigureUpdater(): void {
  */
 export default async function setupUpdate(enabled: boolean): Promise<boolean> {
   console.debug(`Setting up updater... enabled=${ enabled }`);
+  checkSchedule.autoChecks = enabled;
   if (state === State.UNCONFIGURED) {
     try {
       const newUpdater = await getUpdater();
@@ -412,6 +423,9 @@ async function doInitialUpdateCheck(): Promise<boolean> {
  * Trigger an update check, and set up the timer to re-check again later.
  */
 async function triggerUpdateCheck() {
+  if (!checkSchedule.autoChecks) {
+    return;
+  }
   if (state !== State.DOWNLOADING) {
     const result = await autoUpdater.checkForUpdates();
 
@@ -427,15 +441,12 @@ async function triggerUpdateCheck() {
 
     // Enforce at least one minute between checks, even if the server is reporting
     // bad times.
-    updateInterval = Math.max(givenTimeDelta, 60_000);
+    checkSchedule.setIntervalMs(Math.max(givenTimeDelta, 60_000));
   }
 
   // regardless of whether we actually made the check, schedule the next check.
 
-  if (updateTimer) {
-    timers.clearTimeout(updateTimer);
-  }
-  updateTimer = timers.setTimeout(triggerUpdateCheck, updateInterval);
+  checkSchedule.scheduleNext(triggerUpdateCheck);
 }
 
 export { supportUpdateApi } from './UpdateManager';

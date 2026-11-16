@@ -84,40 +84,56 @@ export interface VaultItemPlaintext {
 
 export type VaultProxyValidation = { ok: true; proxy: VaultItemProxy } | { ok: false; error: string };
 
-const PROXY_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-const PROXY_HOST_PATTERN = /^(?:\*\.)?(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const BROKER_OWNED_HEADERS = new Set(['host', 'cookie', 'content-length', 'connection', 'transfer-encoding']);
+/** Validates an item's encrypted outbound-use (proxy) declaration. Stateless. */
+export class VaultProxyValidator {
+  private static sharedInstance: VaultProxyValidator | undefined;
+
+  private static readonly NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+  private static readonly HOST_PATTERN = /^(?:\*\.)?(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  /** Headers the broker sets itself; a rule may never target them. */
+  private static readonly BROKER_OWNED_HEADERS: ReadonlySet<string> = new Set(['host', 'cookie', 'content-length', 'connection', 'transfer-encoding']);
+
+  static shared(): VaultProxyValidator {
+    VaultProxyValidator.sharedInstance ??= new VaultProxyValidator();
+    return VaultProxyValidator.sharedInstance;
+  }
+
+  /** Validates the encrypted declaration before storage or broker use. */
+  validate(item: Pick<VaultItemPlaintext, 'username' | 'password' | 'fields' | 'customFields' | 'proxy'>): VaultProxyValidation {
+    const proxy = item.proxy;
+    if (!proxy || !Array.isArray(proxy.hosts) || proxy.hosts.length < 1 || proxy.hosts.length > 20 ||
+        !Array.isArray(proxy.rules) || proxy.rules.length < 1 || proxy.rules.length > 5) {
+      return { ok: false, error: 'Agent usage requires 1–20 hosts and 1–5 rules' };
+    }
+    const hosts = proxy.hosts.map(host => typeof host === 'string' ? host.trim().toLowerCase() : '');
+    if (hosts.some(host => !VaultProxyValidator.HOST_PATTERN.test(host))) return { ok: false, error: 'Agent usage contains an invalid host' };
+    const customNames = new Set([
+      ...(item.fields ?? []).map(field => field.name),
+      ...(item.customFields ?? []).map(field => field.label),
+    ]);
+    const rules: VaultProxyRule[] = [];
+    for (const candidate of proxy.rules) {
+      if (!candidate || typeof candidate.source !== 'string' ||
+          (!['password', 'username'].includes(candidate.source) && !candidate.source.startsWith('custom:')) ||
+          !['header', 'query'].includes(candidate.target) || typeof candidate.name !== 'string' || !VaultProxyValidator.NAME_PATTERN.test(candidate.name) ||
+          !['raw', 'Bearer', 'Token', 'Basic'].includes(candidate.scheme)) {
+        return { ok: false, error: 'Agent usage contains an invalid rule' };
+      }
+      if (candidate.target === 'header' && VaultProxyValidator.BROKER_OWNED_HEADERS.has(candidate.name.toLowerCase())) {
+        return { ok: false, error: `Header ${ candidate.name } is owned by the broker` };
+      }
+      if (candidate.source.startsWith('custom:') && !customNames.has(candidate.source.slice(7))) {
+        return { ok: false, error: `Custom source ${ candidate.source.slice(7) } does not exist` };
+      }
+      rules.push({ source: candidate.source, target: candidate.target, name: candidate.name, scheme: candidate.scheme });
+    }
+    return { ok: true, proxy: { hosts: [...new Set(hosts)], rules } };
+  }
+}
 
 /** Validates the encrypted declaration before storage or broker use. */
 export function validateVaultItemProxy(item: Pick<VaultItemPlaintext, 'username' | 'password' | 'fields' | 'customFields' | 'proxy'>): VaultProxyValidation {
-  const proxy = item.proxy;
-  if (!proxy || !Array.isArray(proxy.hosts) || proxy.hosts.length < 1 || proxy.hosts.length > 20 ||
-      !Array.isArray(proxy.rules) || proxy.rules.length < 1 || proxy.rules.length > 5) {
-    return { ok: false, error: 'Agent usage requires 1–20 hosts and 1–5 rules' };
-  }
-  const hosts = proxy.hosts.map(host => typeof host === 'string' ? host.trim().toLowerCase() : '');
-  if (hosts.some(host => !PROXY_HOST_PATTERN.test(host))) return { ok: false, error: 'Agent usage contains an invalid host' };
-  const customNames = new Set([
-    ...(item.fields ?? []).map(field => field.name),
-    ...(item.customFields ?? []).map(field => field.label),
-  ]);
-  const rules: VaultProxyRule[] = [];
-  for (const candidate of proxy.rules) {
-    if (!candidate || typeof candidate.source !== 'string' ||
-        (!['password', 'username'].includes(candidate.source) && !candidate.source.startsWith('custom:')) ||
-        !['header', 'query'].includes(candidate.target) || typeof candidate.name !== 'string' || !PROXY_NAME_PATTERN.test(candidate.name) ||
-        !['raw', 'Bearer', 'Token', 'Basic'].includes(candidate.scheme)) {
-      return { ok: false, error: 'Agent usage contains an invalid rule' };
-    }
-    if (candidate.target === 'header' && BROKER_OWNED_HEADERS.has(candidate.name.toLowerCase())) {
-      return { ok: false, error: `Header ${ candidate.name } is owned by the broker` };
-    }
-    if (candidate.source.startsWith('custom:') && !customNames.has(candidate.source.slice(7))) {
-      return { ok: false, error: `Custom source ${ candidate.source.slice(7) } does not exist` };
-    }
-    rules.push({ source: candidate.source, target: candidate.target, name: candidate.name, scheme: candidate.scheme });
-  }
-  return { ok: true, proxy: { hosts: [...new Set(hosts)], rules } };
+  return VaultProxyValidator.shared().validate(item);
 }
 
 /** Metadata: agents see the item exists. Autofill: Sulla fills it, agent never sees it. Full: agent can read it. */
@@ -149,53 +165,82 @@ export const DEFAULT_AGENT_POLICY: AgentPolicy = {
   allowServerAgents: false,
 };
 
-/** Maps the legacy Desktop llm_access values onto the new policy (blank today = autofill). */
-export function agentPolicyFromLegacyLlmAccess(value: string | null | undefined): AgentPolicy {
-  const v = (value ?? '').trim().toLowerCase();
-  if (v === 'none') {
-    return { ...DEFAULT_AGENT_POLICY };
+/** Owner-declared agent access rules: legacy mapping and the server-side allow check. Stateless. */
+export class AgentPolicyEvaluator {
+  private static sharedInstance: AgentPolicyEvaluator | undefined;
+
+  private static readonly LEVEL_RANK: Readonly<Record<AgentAccessLevel, number>> = Object.freeze({ metadata: 0, autofill: 1, full: 2 });
+
+  static shared(): AgentPolicyEvaluator {
+    AgentPolicyEvaluator.sharedInstance ??= new AgentPolicyEvaluator();
+    return AgentPolicyEvaluator.sharedInstance;
   }
-  const level: AgentAccessLevel = v === 'full' ? 'full' : v === 'metadata' ? 'metadata' : 'autofill';
-  return { ...DEFAULT_AGENT_POLICY, mode: 'agents', level };
+
+  /** Maps the legacy Desktop llm_access values onto the new policy (blank today = autofill). */
+  fromLegacyLlmAccess(value: string | null | undefined): AgentPolicy {
+    const v = (value ?? '').trim().toLowerCase();
+    if (v === 'none') {
+      return { ...DEFAULT_AGENT_POLICY };
+    }
+    const level: AgentAccessLevel = v === 'full' ? 'full' : v === 'metadata' ? 'metadata' : 'autofill';
+    return { ...DEFAULT_AGENT_POLICY, mode: 'agents', level };
+  }
+
+  /** Server-side check for an agent use request. Pure so every service can share it. */
+  allows(
+    policy: AgentPolicy | null | undefined,
+    request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
+  ): { allowed: boolean; reason?: string } {
+    if (policy?.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
+    if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.sites) ||
+        (policy.agents !== undefined && policy.agents !== null && !Array.isArray(policy.agents))) {
+      return { allowed: false, reason: 'The agent access policy is invalid' };
+    }
+    // Same semantics as @sulla/domain AgentAccessPolicy: a non-empty list names
+    // the only agents allowed; an empty or absent list allows every agent.
+    const allowedAgents = policy.agents ?? [];
+    if (allowedAgents.length > 0 && (!request.agentId || !allowedAgents.includes(request.agentId))) {
+      return { allowed: false, reason: 'This agent is not allowed to use this item' };
+    }
+    if (AgentPolicyEvaluator.LEVEL_RANK[request.level] > AgentPolicyEvaluator.LEVEL_RANK[policy.level]) return { allowed: false, reason: `Agents are limited to ${ policy.level }` };
+    if (policy.expiresAt) {
+      const expiry = Date.parse(policy.expiresAt);
+      if (!Number.isFinite(expiry)) return { allowed: false, reason: 'The agent access expiry is invalid' };
+      if ((request.now ?? new Date()).getTime() >= expiry) return { allowed: false, reason: 'Agent access has expired' };
+    }
+    if (request.onServer && !policy.allowServerAgents) return { allowed: false, reason: 'Server agents are not allowed for this item' };
+    if (policy.sites.length) {
+      const host = request.host?.trim().toLowerCase();
+      if (!host) return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+      try {
+        if (new URL(`https://${ host }`).hostname.toLowerCase() !== host) {
+          return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+        }
+      } catch {
+        return { allowed: false, reason: 'A valid destination host is required by this item policy' };
+      }
+      if (!policy.sites.some((s) => host === s.toLowerCase() || host.endsWith(`.${ s.toLowerCase() }`))) {
+        return { allowed: false, reason: `Not allowed on ${ host }` };
+      }
+    }
+    return { allowed: true };
+  }
 }
 
-/** Server-side check for an agent use request. Pure so every service can share it. */
+/** Maps the legacy Desktop llm_access values onto the new policy (blank today = autofill). */
+export function agentPolicyFromLegacyLlmAccess(value: string | null | undefined): AgentPolicy {
+  return AgentPolicyEvaluator.shared().fromLegacyLlmAccess(value);
+}
+
+/**
+ * Server-side check for an agent use request. Pure so every service can share it.
+ * @deprecated Desktop decides agent use through `AgentPolicyGate` (services/sulla-vault), which runs
+ * `@sulla/domain` AgentAccessPolicy. This copy stays only for packages that can't depend on the domain
+ * package yet; its behavior is pinned by AgentPolicyCheckOrderCharacterization.spec.ts.
+ */
 export function agentPolicyAllows(
   policy: AgentPolicy | null | undefined,
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
 ): { allowed: boolean; reason?: string } {
-  if (policy?.mode !== 'agents') return { allowed: false, reason: 'Only the owner can use this item' };
-  if (!['metadata', 'autofill', 'full'].includes(policy.level) || !Array.isArray(policy.sites) ||
-      (policy.agents !== undefined && policy.agents !== null && !Array.isArray(policy.agents))) {
-    return { allowed: false, reason: 'The agent access policy is invalid' };
-  }
-  // Same semantics as @sulla/domain AgentAccessPolicy: a non-empty list names
-  // the only agents allowed; an empty or absent list allows every agent.
-  const allowedAgents = policy.agents ?? [];
-  if (allowedAgents.length > 0 && (!request.agentId || !allowedAgents.includes(request.agentId))) {
-    return { allowed: false, reason: 'This agent is not allowed to use this item' };
-  }
-  const rank: Record<AgentAccessLevel, number> = { metadata: 0, autofill: 1, full: 2 };
-  if (rank[request.level] > rank[policy.level]) return { allowed: false, reason: `Agents are limited to ${ policy.level }` };
-  if (policy.expiresAt) {
-    const expiry = Date.parse(policy.expiresAt);
-    if (!Number.isFinite(expiry)) return { allowed: false, reason: 'The agent access expiry is invalid' };
-    if ((request.now ?? new Date()).getTime() >= expiry) return { allowed: false, reason: 'Agent access has expired' };
-  }
-  if (request.onServer && !policy.allowServerAgents) return { allowed: false, reason: 'Server agents are not allowed for this item' };
-  if (policy.sites.length) {
-    const host = request.host?.trim().toLowerCase();
-    if (!host) return { allowed: false, reason: 'A valid destination host is required by this item policy' };
-    try {
-      if (new URL(`https://${ host }`).hostname.toLowerCase() !== host) {
-        return { allowed: false, reason: 'A valid destination host is required by this item policy' };
-      }
-    } catch {
-      return { allowed: false, reason: 'A valid destination host is required by this item policy' };
-    }
-    if (!policy.sites.some((s) => host === s.toLowerCase() || host.endsWith(`.${ s.toLowerCase() }`))) {
-      return { allowed: false, reason: `Not allowed on ${ host }` };
-    }
-  }
-  return { allowed: true };
+  return AgentPolicyEvaluator.shared().allows(policy, request);
 }

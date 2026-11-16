@@ -14,9 +14,11 @@ const job = (jobId: string, parentThreadId: string, tasks: ReturnType<typeof tas
 });
 
 class FleetStateReader {
+  fullReads = 0;
+  listReads: Array<[number, boolean]> = [];
   constructor(private readonly values: AgentJob[]) {}
-  async jobs() { return this.values; }
-  async list() { return this.values; }
+  async jobs() { this.fullReads++; return this.values; }
+  async list(limit = 25, includeFinished = true) { this.listReads.push([limit, includeFinished]); return this.values; }
   // Mirrors AgentStateService.descendants(): the lineage of one parent thread, resolved by the real index.
   async descendants(parentThreadId: string) { return new AgentLineageIndex(this.values).descendants(parentThreadId); }
   async job(jobId: string) { return this.values.find(value => value.jobId === jobId); }
@@ -41,7 +43,8 @@ describe('AgentFleetProjectionService', () => {
       job('b-worker', 'b-manager-thread', [task('b-worker-thread')], 5, 'manager'),
     ];
     const titles = new FleetTitleReader();
-    const fleet = new AgentFleetProjectionService(new FleetStateReader(values) as any, new FleetTelemetryReader(), titles as any, () => 10_000);
+    const stateReader = new FleetStateReader(values);
+    const fleet = new AgentFleetProjectionService(stateReader as any, new FleetTelemetryReader(), titles as any, () => 10_000);
 
     const mine = await fleet.list({ scope: 'mine', callerThreadId: 'root-a' });
     expect(mine.map(value => value.jobId)).toEqual(['a-grandchild', 'a-worker', 'a-manager']);
@@ -53,6 +56,8 @@ describe('AgentFleetProjectionService', () => {
     const all = await fleet.list({ scope: 'all' });
     expect(all.map(value => value.jobId)).toEqual([...values].reverse().map(value => value.jobId));
     expect(titles.calls[1].sort()).toEqual(['root-a', 'root-b']);
+    expect(stateReader.fullReads).toBe(0);
+    expect(stateReader.listReads).toEqual([[25, true]]);
   });
 
   it('bounds malformed orphan and cyclic ancestry without leaking unrelated jobs', () => {

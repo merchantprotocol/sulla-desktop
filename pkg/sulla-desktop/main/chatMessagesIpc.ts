@@ -9,58 +9,75 @@
 // conversation_messages (one row per message, original UI message in payload).
 // Channel names and return shapes are unchanged so the renderer needs no edit.
 
-import { ipcMain } from 'electron';
+import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 
-import { ConversationThreadStore } from '@pkg/agent/database/models/ConversationThreadStore';
-import Logging from '@pkg/utils/logging';
+export interface ChatThreadStatePort {
+  saveThreadState(id: string, state: any): Promise<unknown>;
+  loadThreadState(id: string): Promise<unknown>;
+  deleteThreadState(id: string): Promise<unknown>;
+  getMessageCount(id: string): Promise<number>;
+}
 
-const console = Logging.background;
+export interface ChatMessagesLogger {
+  log(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+}
 
-/**
- * Initialize chat messages IPC handlers.
- */
-export function initChatMessagesIpc(): void {
-  // ── Invoke handlers (renderer → main, with return value) ──
+/** chat-messages:* — save/load/delete thread state and count messages. */
+export class ChatMessagesIpcController implements IpcController {
+  constructor(private readonly ipc: IpcRegistrar, private readonly store: ChatThreadStatePort, private readonly log: ChatMessagesLogger) {}
 
-  ipcMain.handle('chat-messages:save', async(_event, id: string, state: any) => {
-    try {
-      await ConversationThreadStore.saveThreadState(id, state);
-      return { success: true };
-    } catch (err) {
-      console.error('[ChatMessagesIpc] Failed to save thread state:', err);
-      return { success: false, error: String(err) };
-    }
-  });
+  register(): void {
+    const { store, log } = this;
 
-  ipcMain.handle('chat-messages:load', async(_event, id: string) => {
-    try {
-      const state = await ConversationThreadStore.loadThreadState(id);
-      return { success: true, data: state };
-    } catch (err) {
-      console.error('[ChatMessagesIpc] Failed to load thread state:', err);
-      return { success: false, error: String(err) };
-    }
-  });
+    this.ipc.handle('chat-messages:save', async(_event, id: string, state: any) => {
+      try {
+        await store.saveThreadState(id, state);
 
-  ipcMain.handle('chat-messages:delete', async(_event, id: string) => {
-    try {
-      await ConversationThreadStore.deleteThreadState(id);
-      return { success: true };
-    } catch (err) {
-      console.error('[ChatMessagesIpc] Failed to delete thread state:', err);
-      return { success: false, error: String(err) };
-    }
-  });
+        return { success: true };
+      } catch (err) {
+        log.error('[ChatMessagesIpc] Failed to save thread state:', err);
 
-  ipcMain.handle('chat-messages:message-count', async(_event, id: string) => {
-    try {
-      const count = await ConversationThreadStore.getMessageCount(id);
-      return { success: true, count };
-    } catch (err) {
-      console.error('[ChatMessagesIpc] Failed to get message count:', err);
-      return { success: false, error: String(err), count: 0 };
-    }
-  });
+        return { success: false, error: String(err) };
+      }
+    });
 
-  console.log('[ChatMessagesIpc] IPC bridge initialized');
+    this.ipc.handle('chat-messages:load', async(_event, id: string) => {
+      try {
+        const state = await store.loadThreadState(id);
+
+        return { success: true, data: state };
+      } catch (err) {
+        log.error('[ChatMessagesIpc] Failed to load thread state:', err);
+
+        return { success: false, error: String(err) };
+      }
+    });
+
+    this.ipc.handle('chat-messages:delete', async(_event, id: string) => {
+      try {
+        await store.deleteThreadState(id);
+
+        return { success: true };
+      } catch (err) {
+        log.error('[ChatMessagesIpc] Failed to delete thread state:', err);
+
+        return { success: false, error: String(err) };
+      }
+    });
+
+    this.ipc.handle('chat-messages:message-count', async(_event, id: string) => {
+      try {
+        const count = await store.getMessageCount(id);
+
+        return { success: true, count };
+      } catch (err) {
+        log.error('[ChatMessagesIpc] Failed to get message count:', err);
+
+        return { success: false, error: String(err), count: 0 };
+      }
+    });
+
+    log.log('[ChatMessagesIpc] IPC bridge initialized');
+  }
 }

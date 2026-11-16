@@ -8,16 +8,20 @@ import { bootstrapRoutes, errorHandler, ownerRoutes, privateRoutes } from './rou
 import type { AccountsAdapter } from './adapter.js';
 import type { AccountsConfig } from './config.js';
 import type { Database } from './db.js';
+import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 
 export async function createApp(db: Database, config: AccountsConfig, adapter?: AccountsAdapter) {
   const app = express();
   app.disable('x-powered-by');
   if (config.trustedProxy) app.set('trust proxy', 1);
   app.use(express.json({ limit: '1mb', type: 'application/json' }));
+  const databaseHealth = new DatabaseHealthRepository(db);
+  // /healthz is liveness only; the container healthcheck uses /readyz, which goes 503 while
+  // Postgres is unreachable so Desktop can restart Accounts if it stays that way.
   app.get('/healthz', (_request, response) => response.json({ ok: true }));
   app.get('/readyz', async (_request, response) => {
-    try { await db.query('SELECT 1'); response.json({ ready: true }); }
-    catch { response.status(503).json({ ready: false }); }
+    if (await databaseHealth.reachable()) response.json({ ready: true });
+    else response.status(503).json({ ready: false });
   });
   if (adapter) await adapter.register(app, { db, config });
   app.use('/v1/private', bootstrapRoutes(db, config));

@@ -17,6 +17,7 @@ import { cloudRequest } from '../cloudFetch';
 import { getCloudPreferences } from '../cloudSettings';
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { normalizeMobileContent, persistMobileAttachments, transcriptText } from '../../mobileRelayContent';
+import { CloudCallBackoff, CloudTransportError } from './cloudCallBackoff';
 import { safeDelta, type EncryptedBody, type LinkPrivacyMode } from './privacy';
 
 const console = Logging.background;
@@ -45,6 +46,10 @@ class ConversationSyncServiceImpl {
   private linkRetryAt = 0;
   private linkRetryTimer:ReturnType<typeof setTimeout>|null = null;
   private lastLinkAt = 0;
+  // A broker or network failure is not specific to one chat: stop the pass and
+  // back off instead of repeating the call (and a stack trace) for every link.
+  private readonly linkBackoff = new CloudCallBackoff('conversation linking', console);
+  private readonly resultsBackoff = new CloudCallBackoff('Cloud results pull', console);
 
   start() { if (this.timer) return; this.loadKeys(); this.timer=setInterval(()=>this.syncNow().catch(e=>console.warn('[ConversationSync] sync failed:',e)),30_000); void this.syncNow().catch(() => undefined); }
   stop() { if(this.timer) clearInterval(this.timer); this.timer=null; if(this.linkRetryTimer)clearTimeout(this.linkRetryTimer);this.linkRetryTimer=null; }
@@ -90,6 +95,11 @@ class ConversationSyncServiceImpl {
     return Buffer.concat([dec.update(data),dec.final()]);
   }
   private decrypt(conversationId:string, role:Role, messageId:string, body:{ciphertext:string;nonce:string}) { return this.decryptBytes(conversationId,role,messageId,body).toString('utf8'); }
+
+  /** cloudRequest, with any failure before Cloud answered marked as a transport failure. */
+  private async transport(method:string, path:string, options?:Parameters<typeof cloudRequest>[2]):Promise<Response> {
+    try { return await cloudRequest(method,path,options); } catch(err) { throw new CloudTransportError(err); }
+  }
 
   private async messageExists(id:string) {
     return !!(await postgresClient.queryOne('SELECT 1 FROM conversation_messages WHERE id = $1 LIMIT 1',[id]));
@@ -155,7 +165,7 @@ class ConversationSyncServiceImpl {
     // serialized by syncNow/linkConversations; this gap prevents boot bursts.
     const spacing = Math.max(0, 250 - (Date.now() - this.lastLinkAt));
     if(spacing)await new Promise(resolve=>setTimeout(resolve,spacing));
-    const r=await cloudRequest('POST','/cloud-chat-links',{headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId,remoteConversationId:conversationId,title,privacyMode})});
+    const r=await this.transport('POST','/cloud-chat-links',{headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId,remoteConversationId:conversationId,title,privacyMode})});
     this.lastLinkAt=Date.now();
     if(r.status===429){
       const raw=r.headers.get('retry-after');
@@ -180,12 +190,14 @@ class ConversationSyncServiceImpl {
     let complete=true;
     for(const conversation of conversations) {
       if(onlyNew&&this.linked.has(conversation.id)) continue;
-      if(Date.now()<this.linkRetryAt)return false;
+      if(Date.now()<this.linkRetryAt||!this.linkBackoff.canAttempt())return false;
       try {
         await this.link(conversation.id,conversation.title||'New conversation','encrypted_bodies');
+        this.linkBackoff.succeeded();
       } catch(err) {
-        console.warn(`[ConversationSync] could not link ${conversation.id}:`,err);
         complete=false;
+        if(err instanceof CloudTransportError){ this.linkBackoff.failed(err.code); return false; }
+        console.warn(`[ConversationSync] could not link ${conversation.id}: ${err instanceof Error?err.message:String(err)}`);
         if(err instanceof LinkRateLimitError){
           this.linkRetryAt=Date.now()+err.retryAfterMs;
           if(this.linkRetryTimer)clearTimeout(this.linkRetryTimer);
@@ -222,7 +234,10 @@ class ConversationSyncServiceImpl {
     const payload=await r.json() as any;
     for(const link of (payload.data?.conversations??[]) as Link[]){
       const conv=link.remote_conversation_id;
-      if(link.privacy_mode==='encrypted_bodies') await this.pullCloudResults(link).catch(err=>console.warn('[ConversationSync] cloud results failed:',err));
+      if(link.privacy_mode==='encrypted_bodies'&&this.resultsBackoff.canAttempt()) await this.pullCloudResults(link).catch(err=>{
+        if(err instanceof CloudTransportError) this.resultsBackoff.failed(err.code);
+        else console.warn(`[ConversationSync] cloud results failed for ${link.id}: ${err instanceof Error?err.message:String(err)}`);
+      });
       let before:string|number|undefined;const pending:any[]=[];
       do{const rows=await ConversationMessagesModel.list(conv,{limit:250,beforeSeq:before,includeDeleted:true});pending.unshift(...rows.filter(m=>Number(m.seq)>Number(link.upload_cursor)));before=rows.length===250&&Number(rows[0].seq)>Number(link.upload_cursor)?rows[0].seq:undefined}while(before);
       for(let i=0;i<pending.length;i+=100){
@@ -237,7 +252,9 @@ class ConversationSyncServiceImpl {
   private async pullCloudResults(link:Link) {
     const conv=link.remote_conversation_id;
     if(!this.keys.has(conv)) return;
-    const r=await cloudRequest('GET',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results`);if(!r.ok)return;
+    const r=await this.transport('GET',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results`);
+    this.resultsBackoff.succeeded();
+    if(!r.ok)return;
     const results=((await r.json() as any).data?.results??[]) as CloudResult[];
     for(const x of results){
       let user:string,assistant:string,userParts:unknown=undefined;
@@ -254,7 +271,7 @@ class ConversationSyncServiceImpl {
         {id:x.clientRequestId,conversation_id:conv,role:'user',content:user,parts:userParts,source:'cloud-linked',routed_to:'cloud',created_at:utc(x.createdAt)},
         {id:x.messageId,conversation_id:conv,role:'assistant',content:assistant,source:'cloud-fallback',routed_to:'cloud',created_at:utc(x.completedAt||x.createdAt)},
       ]);
-      await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results/${encodeURIComponent(x.id)}/ack`);
+      await this.transport('POST',`/cloud-chat-links/${encodeURIComponent(link.id)}/cloud-results/${encodeURIComponent(x.id)}/ack`);
     }
   }
 }

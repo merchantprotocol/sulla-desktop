@@ -1,5 +1,20 @@
 # Explorer operation contract
 
+## Chunk metadata integrity and repair
+
+Migration `066_chunk_metadata_integrity.sql` installs transaction-scoped per-chunk guards. Every insert or manifest/collection reassignment of a `file_versions` row must find metadata for every chunk in its manifest; chunk-row deletion is rejected while any live or restorable version references the chunk. These guards cover web/FUSE writes, local and cloud sync, copy, restore, import and trash-recovery version paths, including paths that currently increment refcounts with `UPDATE chunks` but do not check affected-row counts. The prior gap was that chunk/file publication is separate from metadata and a successful `Store.has()` only proves the disk blob exists: it does not prove that the metadata row needed by reads exists. `drainPendingChunkGc` recounts references and locks version writes, but there was no durable DB-level delete guard. The triggering historical transaction cannot be distinguished from the surviving manifests/chunk files alone; the 2026-11-15 pool starvation incident explains 138 additional orphan rows, but predates evidence also includes four older lost metadata rows. The new database invariant prevents the missing-row state regardless of which writer produced it.
+
+`ChunkMetadataReconciler` defaults to a dry-run. It reports missing metadata only when it can infer the plaintext size from each manifest, read the encrypted file, and authenticate/decrypt it with that collection's current keys. Apply mode inserts metadata with stored size/location and a fresh refcount computed from all restorable versions. It never changes chunk files. `.tmp-*` files are reported only. The local maintenance endpoint also invokes apply-mode reconciliation after pending chunk GC.
+
+One-shot commands (run inside the Files service container, after unlock):
+
+```sh
+sulla docker/exec '{"container":"sulla_files","command":"node scripts/reconcile-chunk-metadata.mjs"}'
+sulla docker/exec '{"container":"sulla_files","command":"node scripts/reconcile-chunk-metadata.mjs --apply"}'
+```
+
+The first command is read-only; inspect its report before running the second. Apply repairs metadata only and skips a chunk if another writer already inserted its row. Neither command deletes temporary or orphan chunk files.
+
 ## Native custody and folder extension (028)
 
 ## Explorer tree mapping (029)

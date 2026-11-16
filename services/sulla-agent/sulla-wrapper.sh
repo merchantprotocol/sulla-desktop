@@ -6,17 +6,12 @@
 
 set -eu
 
-# The launcher rotates these lease files while a long-running worker is alive.
-# Read them for every tool call so the model process never holds an expired
-# capability or graph session in its inherited startup environment.
+# The launcher rotates the shared API capability while a long-running worker
+# is alive. Refresh it for each call, but preserve the process-bound graph
+# session so this CLI cannot borrow another chat’s identity.
 secret_dir=/run/secrets/sulla-agent
-for secret_name in SULLA_API_TOKEN SULLA_TOOL_SESSION; do
-  secret_file="$secret_dir/$secret_name"
-  if [ -f "$secret_file" ]; then
-    secret_value=$(cat "$secret_file")
-    export "$secret_name=$secret_value"
-    unset secret_value
-  fi
-done
+. /usr/local/libexec/sulla-secret-env.sh
+load_sulla_api_token "$secret_dir"
+load_sulla_tool_session "$secret_dir"
 
 exec /usr/local/libexec/sulla-remote "$@"

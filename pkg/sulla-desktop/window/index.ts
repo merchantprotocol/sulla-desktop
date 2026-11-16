@@ -13,6 +13,8 @@ import Electron, {
   BrowserWindow, app, shell, ipcMain, screen,
 } from 'electron';
 
+import { WindowBoundsStore } from './WindowBoundsStore';
+
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
 import { FIRST_RUN_LAST_STEP, getFirstRunState } from '@pkg/main/firstRun/firstRunState';
@@ -151,6 +153,8 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 }
 
 const mainUrl = `${ webRoot }/agent.html`;
+/** The main window's last position and size, kept across restarts. */
+const mainBounds = new WindowBoundsStore(path.join(paths.config, 'main-window-bounds.json'));
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -168,6 +172,8 @@ export function openMain() {
 
   const defaultWidth = Math.trunc(fullSize.width * 0.9);
   const defaultHeight = workArea.height;
+  // Where the user left it last time, if that spot is still on a connected display.
+  const saved = mainBounds.restore(screen.getAllDisplays().map(display => display.workArea));
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const window = createWindow(
@@ -175,10 +181,10 @@ export function openMain() {
     mainUrl,
     {
       title:           'Sulla Agent',
-      x:               0,
-      y:               0,
-      width:           defaultWidth,
-      height:          defaultHeight,
+      x:               saved?.x ?? 0,
+      y:               saved?.y ?? 0,
+      width:           saved?.width ?? defaultWidth,
+      height:          saved?.height ?? defaultHeight,
       resizable:       true,
       icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       backgroundColor: '#0d1117',
@@ -197,6 +203,11 @@ export function openMain() {
         webSecurity:      false, // Allow fetch to localhost services (Ollama)
       },
     });
+
+  if (mainBounds.track(window)) {
+    if (saved?.fullScreen) window.setFullScreen(true);
+    else if (saved?.maximized) window.maximize();
+  }
 
   if (!Shortcuts.isRegistered(window)) {
     Shortcuts.register(

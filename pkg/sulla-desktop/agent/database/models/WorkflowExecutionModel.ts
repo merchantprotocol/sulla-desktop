@@ -294,8 +294,16 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   static async settle(executionId: string, outcome: 'completed' | 'failed', error?: string, workflowOutcome?: unknown): Promise<WorkflowExecutionModel | null> {
     void workflowOutcome;
     const row = await postgresClient.queryOne<any>(`
-      UPDATE workflow_executions SET status = $2::text, completed_at = COALESCE(completed_at, NOW()), terminal_at = COALESCE(terminal_at, NOW()), terminal_reason = CASE WHEN $2::text = 'failed' THEN COALESCE($3::text, terminal_reason) ELSE terminal_reason END, error = CASE WHEN $2::text = 'failed' THEN COALESCE($3::text, error) ELSE error END, owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
-      WHERE execution_id = $1 AND status IN ('running', 'suspended') RETURNING *`, [executionId, outcome, error ?? null]);
+      WITH settled AS (
+        UPDATE workflow_executions
+        SET status = $2::text, completed_at = COALESCE(completed_at, NOW()), terminal_at = COALESCE(terminal_at, NOW()), terminal_reason = CASE WHEN $2::text = 'failed' THEN COALESCE($3::text, terminal_reason) ELSE terminal_reason END, error = CASE WHEN $2::text = 'failed' THEN COALESCE($3::text, error) ELSE error END, owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+        WHERE execution_id = $1 AND status IN ('running', 'suspended') RETURNING *
+      ), removed_checkpoints AS (
+        DELETE FROM workflow_checkpoints
+        WHERE execution_id IN (SELECT execution_id FROM settled) AND $2::text = 'completed'
+        RETURNING id
+      )
+      SELECT * FROM settled`, [executionId, outcome, error ?? null]);
     return row ? WorkflowExecutionModel.hydrate(row) : null;
   }
 

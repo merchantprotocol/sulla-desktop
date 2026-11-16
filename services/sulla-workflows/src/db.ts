@@ -17,6 +17,11 @@ export const pool = new Pool({ connectionString: config.databaseUrl, max: 10 });
 // runner handshake is polling. Keeping a small separate pool prevents a wave
 // of launches from starving the queries needed to complete those launches.
 export const advisoryLockPool = new Pool({ connectionString: config.databaseUrl, max: 4 });
+// An idle client dropped by Postgres (restart, admin terminate) is discarded and the next
+// query reconnects; without a listener the 'error' event would kill the manager.
+for (const [label, idlePool] of [['work', pool], ['lock', advisoryLockPool]] as const) {
+  idlePool.on('error', error => console.warn(`[workflow-manager] idle ${ label } database connection lost; reconnecting on next use:`, error.message));
+}
 
 export async function migrate(): Promise<void> {
   const here = path.dirname(fileURLToPath(import.meta.url));

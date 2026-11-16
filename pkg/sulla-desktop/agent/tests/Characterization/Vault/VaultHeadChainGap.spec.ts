@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { NobleCryptoPrimitives } from '@sulla/domain';
+import { HeadChainLinkPolicy, NobleCryptoPrimitives } from '@sulla/domain';
 import { DomainVaultSyncCodec } from '../../../../../../services/sulla-vault/src/browserEnvelope/DomainVaultSyncCodec';
 import { SodiumCryptoPrimitives } from '../../../../../../services/sulla-vault/src/browserEnvelope/SodiumCryptoPrimitives';
 import { loadSodium, type SyncRecord } from '../../../../../../services/sulla-vault/src/browserEnvelope/envelope';
-import { CloudVaultSyncRunner, HeadChainLinkPolicy } from '../../../../../../services/sulla-vault/src/browserEnvelope/syncRunner';
+import { CloudVaultSyncRunner } from '../../../../../../services/sulla-vault/src/browserEnvelope/syncRunner';
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
 
 const vaultId = '12345678-1234-1234-1234-123456789abc';

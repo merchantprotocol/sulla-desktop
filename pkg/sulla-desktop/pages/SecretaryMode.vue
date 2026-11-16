@@ -632,8 +632,14 @@ watch([() => actionItems.value.length, () => decisions.value.length, () => insig
   resaveTimer = setTimeout(() => { resaveTimer = null; void saveNotes() }, 1_000);
 });
 
-function revealNotes(): void {
-  if (savedNotesPath.value) void ipcRenderer.invoke('secretary-mode:reveal-notes', savedNotesPath.value);
+async function revealNotes(): Promise<void> {
+  if (!savedNotesPath.value) return;
+  try {
+    const result = await ipcRenderer.invoke('secretary-mode:reveal-notes', savedNotesPath.value);
+    if (!result?.ok) throw new Error('The notes folder could not be opened');
+  } catch (err) {
+    captureWarning.value = `Couldn't reveal meeting notes: ${ err instanceof Error ? err.message : String(err) }`;
+  }
 }
 
 // ── Session lifecycle (thin wrappers) ──────────────────────────

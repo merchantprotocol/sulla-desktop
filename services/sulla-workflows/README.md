@@ -1,5 +1,5 @@
-# Sulla Workflows core
+# Sulla Workflows service
 
-GPL-2.0-or-later workflow engine and Desktop manager/runner image. Desktop remains the default mode and its local token, schedules, definitions, launcher and tool behavior are unchanged.
+GPL-2.0-or-later workflow engine and local Desktop manager/runner image. The Desktop manager runs schedules and launches local ephemeral runners; runners call Desktop tools through the scoped local capability API. `SULLA_WORKFLOW_ROLE=manager|runner` selects these two local process roles; there is no server product mode in this service.
 
-`src/adapter.ts` defines Workflows adapter API v1. Sulla Server's tenant auth, schedule grants and Server Agents routing live in `merchantprotocol/sulla-server`. Its manager and runner images are derived from the same exact Desktop Workflows digest as `ghcr.io/merchantprotocol/sulla-server-workflows-manager` and `ghcr.io/merchantprotocol/sulla-server-workflows-runner`. The shared service imports the playbook and capability contracts from `packages/workflow-engine` and `packages/runtime-protocol`, never the Electron tree.
+The manager and runner use the shared `packages/workflow-engine` and `packages/runtime-protocol` packages. Remote workflow records remain supported by Desktop's UI and model; this service executes only workflows whose location is `desktop`.

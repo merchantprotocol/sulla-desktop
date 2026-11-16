@@ -634,6 +634,56 @@
                 </div>
               </div>
 
+              <!-- Existing accounts: pick the active one, or edit/remove it in the vault. -->
+              <div
+                v-if="accounts.length || accountError"
+                class="mt-6 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6"
+              >
+                <h3 class="mb-4 text-lg font-semibold text-[var(--text-primary)]">
+                  Your accounts
+                </h3>
+                <ul class="space-y-2">
+                  <li
+                    v-for="account in accounts"
+                    :key="account.account_id"
+                    class="flex items-center gap-3 rounded-lg border border-[var(--border-subtle)] px-3 py-2"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-sm font-medium text-[var(--text-primary)]">
+                        {{ account.label || account.account_id }}
+                      </div>
+                      <div class="text-xs text-[var(--text-muted)]">
+                        {{ account.account_id === activeAccountId ? 'Active · ' : '' }}{{ account.connected ? 'Connected' : 'Not connected' }}
+                      </div>
+                    </div>
+                    <button
+                      v-if="account.account_id !== activeAccountId"
+                      type="button"
+                      :disabled="accountBusy"
+                      class="rounded-md border border-[var(--border-subtle)] px-2.5 py-1 text-xs text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                      @click="setAccountActive(account.account_id)"
+                    >
+                      Make active
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="accountBusy"
+                      class="rounded-md border border-[var(--border-subtle)] px-2.5 py-1 text-xs text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]"
+                      @click="openSecureVault(account.account_id)"
+                    >
+                      Edit or remove
+                    </button>
+                  </li>
+                </ul>
+                <p
+                  v-if="accountError"
+                  role="alert"
+                  class="mt-3 text-xs text-[var(--status-error)]"
+                >
+                  {{ accountError }}
+                </p>
+              </div>
+
               <!-- Guide Links -->
               <!-- <div v-if="integration.guideLinks && integration.guideLinks.length > 0" class="space-y-4">
                 <h2 class="text-xl font-semibold text-[var(--text-primary)] ">Guides & Documentation</h2>
@@ -1024,6 +1074,8 @@ const newAccountLabel = ref('');
 const oauthError = ref('');
 const oauthSuccess = ref('');
 const connectMessage = ref('');
+const accountError = ref('');
+const accountBusy = ref(false);
 const visibleProperties = computed(() => integration.value?.properties?.filter(property => property.key !== 'llm_access') ?? []);
 
 /** Only accounts that are connected */
@@ -1126,7 +1178,10 @@ const previousImage = () => {
 const refreshAccounts = async() => {
   if (!integration.value) return;
   accounts.value = await integrationService.getAccounts(integration.value.id);
-  activeAccountId.value = await integrationService.getActiveAccountId(integration.value.id);
+  // With no accounts there is no active one (the vault-backed lookup throws).
+  activeAccountId.value = accounts.value.length
+    ? await integrationService.getActiveAccountId(integration.value.id)
+    : '';
 };
 
 const startAddAccount = () => {
@@ -1224,8 +1279,25 @@ const openSecureVault = async(accountId?: string) => {
 /** Set a specific account as the active one */
 const setAccountActive = async(accountId: string) => {
   if (!integration.value) return;
-  await integrationService.setActiveAccount(integration.value.id, accountId);
-  await refreshAccounts();
+  accountBusy.value = true;
+  accountError.value = '';
+  try {
+    await integrationService.setActiveAccount(integration.value.id, accountId);
+    await refreshAccounts();
+  } catch (error) {
+    accountError.value = `Couldn't switch the active account: ${ error instanceof Error ? error.message : String(error) }`;
+  } finally {
+    accountBusy.value = false;
+  }
+};
+
+/** Load this integration's accounts for the "Your accounts" list; failures are shown, not swallowed. */
+const loadAccounts = async() => {
+  try {
+    await refreshAccounts();
+  } catch (error) {
+    accountError.value = `Couldn't load your accounts: ${ error instanceof Error ? error.message : String(error) }`;
+  }
 };
 
 /** Disconnect (and delete) a specific account */
@@ -1259,6 +1331,7 @@ const fetchSelectOptions = async(property: { key: string; selectBoxId?: string; 
   if (!integration.value || !property.selectBoxId) return;
 
   selectOptionsLoading.value[property.key] = true;
+  delete errors.value[property.key];
   try {
     const depValues: Record<string, string> = {};
     for (const depKey of (property.selectDependsOn ?? [])) {
@@ -1277,6 +1350,8 @@ const fetchSelectOptions = async(property: { key: string; selectBoxId?: string; 
   } catch (err) {
     console.error(`Failed to fetch select options for ${ property.key }:`, err);
     selectOptions.value[property.key] = [];
+    // Say why the list is empty instead of leaving a silent blank dropdown.
+    errors.value[property.key] = `Couldn't load the options: ${ err instanceof Error ? err.message : String(err) }`;
   } finally {
     selectOptionsLoading.value[property.key] = false;
   }
@@ -1598,6 +1673,8 @@ onMounted(async() => {
   if (integration.value?.id === 'claude-code') {
     loadClaudeUsage().catch(() => { /* ignore */ });
   }
+
+  await loadAccounts();
 });
 onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, onReconnectRequired));
 </script>

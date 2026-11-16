@@ -7,23 +7,23 @@
 <script setup lang="ts">
 /**
  * Preferences → AI models. Approved mockup: Projects/sulla-desktop/mockups/model-routing.
- * Cards: Defaults → Agents → Subconscious agents → Models in each class → How a request is routed → Request settings.
+ * Defaults → Models for each role (ledger) → Agents → More routing settings (Subconscious agents, routing, request settings).
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 
 import PrefMore from '../PrefMore.vue';
 import PrefRow from '../PrefRow.vue';
 import DefaultsCard from './modelRouting/DefaultsCard.vue';
-import ModelClasses from './modelRouting/ModelClasses.vue';
+import RoleLedger from './modelRouting/RoleLedger.vue';
 import RouteTrace from './modelRouting/RouteTrace.vue';
 import RoutingIcon from './modelRouting/RoutingIcon.vue';
 import RoutingList from './modelRouting/RoutingList.vue';
 import { applyFollowOrder, sameModels } from './modelRouting/routingLogic';
-import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ClassModel, type ModelClass, type ModelRoutingState, type RoutingProviderInfo, type RoutingRow } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ModelClass, type ModelRoutingState, type RoutingProviderInfo, type RoutingRow } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Patch = Partial<Pick<ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder'>>;
+type Patch = Partial<Pick<ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder' | 'neverUse'>>;
 
 const state = ref<ModelRoutingState | null>(null);
 const unavailable = ref(false);
@@ -87,11 +87,25 @@ function setList(key: 'agentsList' | 'subconsciousList', rows: RoutingRow[]) {
   }
   save(patch);
 }
-function setClass(modelClass: ModelClass, models: ClassModel[], follow: boolean) {
+function saveLanes(patch: Pick<ModelRoutingState, 'classes' | 'followProviderOrder' | 'neverUse'>) {
   if (!state.value) return;
-  state.value.classes[modelClass] = models;
-  state.value.followProviderOrder[modelClass] = follow;
-  save({ classes: state.value.classes, followProviderOrder: state.value.followProviderOrder });
+  Object.assign(state.value, clone(patch));
+  save(patch);
+}
+const refreshing = ref(false);
+async function refreshModels() {
+  if (!state.value || refreshing.value) return;
+  refreshing.value = true; error.value = '';
+  try {
+    state.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.refresh);
+    snapshot = JSON.stringify(state.value);
+    now.value = Date.now();
+    toast('Model lists refreshed from every connected provider.');
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    refreshing.value = false;
+  }
 }
 async function reset(section: 'agents' | 'subconscious' | 'classes', modelClass?: ModelClass) {
   if (!state.value) return;
@@ -112,19 +126,42 @@ function onStatus(_: unknown, providers: RoutingProviderInfo[]) {
   now.value = Date.now();
 }
 
-function value(e: Event) { return (e.target as HTMLInputElement).value; }
-async function saveNumber(setting: typeof retries, raw: string, min: number, max: number) {
-  const n = Math.round(Number(raw));
-  if (Number.isFinite(n) && n >= min && n <= max) { await setting.save(n); flashSaved(); } else await setting.reload();
+async function saveNumber(setting: typeof retries, event: Event, min: number, max: number) {
+  const input = event.target as HTMLInputElement;
+  const n = Math.round(Number(input.value));
+  if (Number.isFinite(n) && n >= min && n <= max) {
+    await setting.save(n);
+    if (!setting.error.value) flashSaved();
+    return;
+  }
+  await setting.reload();
+  input.value = String(setting.value.value);
+  setting.error.value = `Enter a whole number from ${ min } to ${ max }.`;
+}
+
+/**
+ * Right after Sulla starts, providers may not have reported their connection yet, and no status push
+ * follows when they do. Re-read provider status (only that, so unsaved edits stay) until one connects.
+ */
+let connectTimer: ReturnType<typeof setInterval> | undefined;
+function watchConnections() {
+  let tries = 0;
+  connectTimer = setInterval(async() => {
+    if (!state.value || state.value.providers.some(p => p.connected) || ++tries > 24) { clearInterval(connectTimer); return }
+    try {
+      const next: ModelRoutingState = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get);
+      if (state.value) { state.value.providers = next.providers; state.value.catalog = next.catalog }
+    } catch { /* try again on the next tick */ }
+  }, 5_000);
 }
 
 onMounted(() => {
-  void load();
+  load().then(watchConnections).catch(() => undefined);
   ipcRenderer.on(MODEL_ROUTING_IPC.status, onStatus);
   clock = setInterval(() => { now.value = Date.now(); }, 30_000);
 });
 onBeforeUnmount(() => {
-  clearTimeout(saveTimer); clearTimeout(savedTimer); clearTimeout(toastTimer); clearInterval(clock);
+  clearTimeout(saveTimer); clearTimeout(savedTimer); clearTimeout(toastTimer); clearInterval(clock); clearInterval(connectTimer);
   ipcRenderer.removeListener(MODEL_ROUTING_IPC.status, onStatus);
 });
 </script>
@@ -134,7 +171,7 @@ onBeforeUnmount(() => {
     <div class="ph">
       <div>
         <h1>AI models</h1>
-        <p>Which providers Sulla tries, in what order, and which class of model it uses from each.</p>
+        <p>What each kind of work runs on, and which model each provider uses for each role.</p>
       </div>
       <span
         class="mr-saved"
@@ -188,6 +225,13 @@ onBeforeUnmount(() => {
         @error="error = $event"
         @toast="toast"
       />
+      <RoleLedger
+        :state="state"
+        :now="now"
+        :refreshing="refreshing"
+        @save="saveLanes"
+        @refresh="refreshModels"
+      />
       <RoutingList
         list-key="agents"
         title="Agents"
@@ -202,6 +246,8 @@ onBeforeUnmount(() => {
         @reset="reset('agents')"
         @toast="toast"
       />
+      <details class="mr-more">
+        <summary>More routing settings <small>Subconscious agents, how a request is routed, retries and timeouts</small></summary>
       <RoutingList
         list-key="subconscious"
         title="Subconscious agents"
@@ -216,20 +262,11 @@ onBeforeUnmount(() => {
         @reset="reset('subconscious')"
         @toast="toast"
       />
-      <ModelClasses
-        :state="state"
-        :now="now"
-        @change="setClass"
-        @reset="reset('classes', $event)"
-        @toast="toast"
-      />
       <RouteTrace
         :state="state"
         :now="now"
       />
-    </template>
-
-    <section class="card mr-req">
+      <section class="card mr-req">
       <PrefMore label="Request settings">
         <PrefRow
           title="Retries per provider"
@@ -242,7 +279,7 @@ onBeforeUnmount(() => {
             max="10"
             aria-label="Retries per provider"
             :value="retries.value.value"
-            @change="saveNumber(retries, value($event), 0, 10)"
+            @change="saveNumber(retries, $event, 0, 10)"
           >
         </PrefRow>
         <PrefRow
@@ -256,12 +293,20 @@ onBeforeUnmount(() => {
             max="600"
             aria-label="Request timeout in seconds"
             :value="timeout.value.value"
-            @change="saveNumber(timeout, value($event), 5, 600)"
+            @change="saveNumber(timeout, $event, 5, 600)"
           >
           <span class="dimc">sec</span>
         </PrefRow>
+        <p
+          v-if="retries.error.value || timeout.error.value"
+          class="note badc"
+        >
+          {{ retries.error.value || timeout.error.value }}
+        </p>
       </PrefMore>
-    </section>
+      </section>
+      </details>
+    </template>
 
     <div
       class="mr-toast"
@@ -454,7 +499,7 @@ onBeforeUnmount(() => {
   .mr-ddi b { display: block; font-weight: 600; }
   .mr-ddi small { display: block; color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
   .mr-ddi > .mr-i { width: 14px; height: 14px; margin-top: 3px; color: var(--accent-2); visibility: hidden; }
-  .mr-ddi[aria-selected="true"] > .mr-i { visibility: visible; }
+  .mr-ddi[aria-selected="true"] > .mr-i { visibility: inherit; }
   .mr-ddi:hover, .mr-ddi:focus-visible { outline: 0; box-shadow: none; background: var(--accent-soft); }
   .mr-ddi:hover b, .mr-ddi:focus-visible b { color: var(--accent-2); }
   .mr-ddsep { height: 1px; margin: 4px 0; background: var(--line); }

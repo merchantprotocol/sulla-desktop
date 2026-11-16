@@ -20,7 +20,7 @@ export const nativeGitHubIntegration: Record<string, Integration> = {
     version:           '1.0.0',
     lastUpdated:       '2026-02-14 00:00:00',
     developer:         'Jonathon Byrdziak & Alan Carvalho',
-    formGuide:         'Create a personal access token at github.com/settings/tokens. Select the scopes needed for your automation tasks.',
+    formGuide:         'Paste a GitHub personal access token: either a fine-grained token (github_pat_...) or a classic one (ghp_...). Both work.',
     installationGuide: {
       title:       'GitHub Personal Access Token Setup Guide',
       description: 'Create a GitHub token for API access (2-3 minutes)',
@@ -28,7 +28,7 @@ export const nativeGitHubIntegration: Record<string, Integration> = {
         {
           title:   'Go to GitHub Settings',
           content: `1. Go to https://github.com/settings/tokens
-2. Click "Generate new token (classic)"
+2. Click "Generate new token" and pick either Fine-grained or Classic. Both work in Sulla
 3. Give your token a descriptive name
 4. Select the appropriate scopes for your needs`,
         },
@@ -90,14 +90,15 @@ export const nativeGitHubIntegration: Record<string, Integration> = {
       {
         key:         'token',
         title:       'GitHub Token',
-        hint:        'Your GitHub personal access token',
+        hint:        'Fine-grained (github_pat_...) or classic (ghp_...) personal access token',
         type:        'password',
         required:    true,
         placeholder: '',
         validation:  {
-          pattern:   '^ghp_[a-zA-Z0-9]{36}$',
+          // Accepts classic (ghp_), fine-grained (github_pat_) and OAuth/app tokens.
+          pattern:   '^(ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|gh[ousr]_[A-Za-z0-9]{36,})$',
           minLength: 40,
-          maxLength: 40,
+          maxLength: 255,
         },
       },
     ],

@@ -161,9 +161,11 @@ export async function prepareSullaFilesGuestAnchorDraining(
 }
 
 /** True when `path` can be listed. A dead or snapshot-less FUSE adapter fails with ENOENT/ENOTCONN here. */
-export async function isGuestPathUsable(exec: GuestExec, path: string): Promise<boolean> {
+export async function isGuestPathUsable(exec: GuestExec, path: string, timeoutSeconds?: number): Promise<boolean> {
   try {
-    await exec.execCommand({ root: true, expectFailure: true }, 'ls', '-A', path);
+    // A hung FUSE daemon blocks ls indefinitely; a bounded probe reports it as unusable.
+    const command = timeoutSeconds ? ['timeout', String(timeoutSeconds), 'ls', '-A', path] : ['ls', '-A', path];
+    await exec.execCommand({ root: true, expectFailure: true }, ...command);
 
     return true;
   } catch {

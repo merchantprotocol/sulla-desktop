@@ -181,7 +181,7 @@ class VaultSyncV3Impl {
     const prepared = await VaultSyncContainer.prepare(op, who.deviceId);
     if ('idle' in prepared) return { idle: true as const };
     const p = prepared as PreparedSync;
-    const proof = signDeviceMessage('vault-sync-v3', [who.userId, who.deviceId, p.vaultId, p.op, p.sha256]);
+    const proof = await signDeviceMessage('vault-sync-v3', [who.userId, who.deviceId, p.vaultId, p.op, p.sha256]);
     return VaultSyncContainer.send(p.handle, proof.ts, proof.signature);
   }
 

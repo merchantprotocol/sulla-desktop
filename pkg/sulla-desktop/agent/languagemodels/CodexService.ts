@@ -61,13 +61,14 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * on PATH in the VM). State-mutating Sulla tools are supplied through the
  * same short-lived, graph-bound MCP bridge used by Claude Code.
  *
- * Auth: ~/.codex/auth.json, written by CodexOAuth on sign-in and on every
- * scheduled token refresh. The host home is mounted into the Sulla VM, and
- * every spawn exports CODEX_HOME/HOME to that host path — sulla-runtime exec
- * otherwise sets HOME to the guest path (/home/<user>.linux), which would
- * hide the auth file and 401 every request. The CLI also self-refreshes
- * tokens in place. With ChatGPT sign-in, usage draws from the user's
- * ChatGPT Plus/Pro plan — no API billing.
+ * Auth: by default the ChatGPT sign-in lives in Sulla's vault. Each spawn
+ * gets only a provider-bridge capability (SULLA_PROVIDER_BRIDGE_TOKEN) and a
+ * model_providers.sulla override pointing at the bridge, which injects and
+ * refreshes the real token upstream. Legacy non-vault mode copies Sulla's
+ * own auth.json into the guest $CODEX_HOME. The Mac home folder is not
+ * shared into the VM, and the user's own ~/.codex is never used. With
+ * ChatGPT sign-in, usage draws from the user's ChatGPT Plus/Pro plan, not
+ * API billing.
  *
  * Token strategy — hybrid (first-turn seed + `exec resume` thereafter):
  *   - First turn for a conversation: serialize the full curated
@@ -100,13 +101,25 @@ export class CodexService extends BaseLanguageModel {
   private lastStableContextHash = new Map<string, string>();
 
   private readonly SESSION_KEY_PREFIX = 'codex_session:';
+  /**
+   * Codex records the model in its thread and refuses to resume it with a different
+   * one ("This session was recorded with model X but is resuming with Y"). Fallback
+   * routing can run several Codex models on one conversation, so each model keeps its
+   * own thread: the key is conversation + model.
+   */
+  private sessionKey(convId: string): string {
+    const model = this.model && this.model !== 'codex' ? this.model : 'default';
+    return `${ convId }@${ model }`;
+  }
+
   private async getSession(convId: string): Promise<string | undefined> {
-    const cached = this.sessions.get(convId);
+    const key = this.sessionKey(convId);
+    const cached = this.sessions.get(key);
     if (cached) return cached;
     try {
-      const stored = await providerSessionStore.get(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+      const stored = await providerSessionStore.get(`${ this.SESSION_KEY_PREFIX }${ key }`);
       if (stored) {
-        this.sessions.set(convId, stored);
+        this.sessions.set(key, stored);
         return stored;
       }
     } catch { /* Redis unavailable — start fresh session */ }
@@ -114,17 +127,19 @@ export class CodexService extends BaseLanguageModel {
   }
 
   private async setSession(convId: string, sessionId: string): Promise<void> {
-    this.sessions.set(convId, sessionId);
+    const key = this.sessionKey(convId);
+    this.sessions.set(key, sessionId);
     try {
-      await providerSessionStore.set(`${ this.SESSION_KEY_PREFIX }${ convId }`, sessionId);
+      await providerSessionStore.set(`${ this.SESSION_KEY_PREFIX }${ key }`, sessionId);
     } catch { /* Durable store unavailable — session persists in memory only this run */ }
   }
 
   private async deleteSession(convId: string): Promise<void> {
-    this.sessions.delete(convId);
+    const key = this.sessionKey(convId);
+    this.sessions.delete(key);
     this.recallDedupe.reset(convId);
     try {
-      await providerSessionStore.delete(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+      await providerSessionStore.delete(`${ this.SESSION_KEY_PREFIX }${ key }`);
     } catch { /* Durable store unavailable — non-fatal */ }
   }
 
@@ -142,11 +157,9 @@ export class CodexService extends BaseLanguageModel {
     mcpSession?:       RegisteredSession | null;
     readOnly?:         boolean;
     /**
-     * Host path of a per-run instructions file (cliSystemPromptFile), passed
-     * as -c model_instructions_file. It REPLACES codex's base instructions,
-     * so it is only used for subconscious agents — their caller-built prompt
-     * (observer / Reflex Trainer role) is otherwise dropped, since AGENTS.md
-     * carries only the general Sulla prompt.
+     * Per-run instructions file (cliSystemPromptFile) holding the caller-built
+     * Sulla prompt, passed as -c model_instructions_file on every spawn. It
+     * replaces Codex's base instructions. No AGENTS.md is written or read.
      */
     instructionsPath?: string | null;
     /** VM-side pidfile the launched codex records its PID in. */
@@ -191,6 +204,7 @@ export class CodexService extends BaseLanguageModel {
     if (this.model && this.model !== 'codex') {
       codexArgs.push('--model', shq(this.model));
     }
+    if (this.effort) codexArgs.push('-c', shq(`model_reasoning_effort=${ JSON.stringify(this.effort) }`));
     codexArgs.push('-'); // read the prompt from stdin
 
     // `exec` replaces the inner sh with codex so there's no shell layer
@@ -233,6 +247,7 @@ export class CodexService extends BaseLanguageModel {
     for (const override of p.configOverrides ?? []) args.push('-c', override);
     if (p.instructionsPath) args.push('-c', `model_instructions_file=${ JSON.stringify(p.instructionsPath) }`);
     if (this.model && this.model !== 'codex') args.push('--model', this.model);
+    if (this.effort) args.push('-c', `model_reasoning_effort=${ JSON.stringify(this.effort) }`);
     args.push('-');
 
     return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
@@ -261,6 +276,15 @@ export class CodexService extends BaseLanguageModel {
 
   override getModel(): string {
     return this.model || 'codex';
+  }
+
+  /** Reasoning effort from Preferences → AI models; '' leaves the CLI's own default. */
+  private effort = '';
+  setEffort(effort: string | undefined): void { this.effort = /^[a-z]{2,10}$/.test(effort || '') ? effort! : '' }
+
+  /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
+  private launchModel(): string {
+    return this.model && this.model !== 'codex' ? this.model : '';
   }
 
   override getProviderName(): string {
@@ -507,11 +531,12 @@ export class CodexService extends BaseLanguageModel {
   }
 
   /**
-   * Build a <sulla_context> prefix for the outgoing user message — same
-   * two-tier strategy as ClaudeCodeService: the stable tier (platform rules
-   * + high-priority memories) is sent on the first turn and again only when
-   * its content changes; per-turn recall/observation context always rides
-   * along when present.
+   * Build a <sulla_context> prefix for the outgoing user message, same
+   * strategy as ClaudeCodeService: the stable tier (platform rules,
+   * environment and, for spawned agents, their role instructions) is sent on
+   * the first turn and again only when its content changes. Memory and recall
+   * do not travel here; they arrive as the synthetic assistant context message
+   * that precedes the user message.
    *
    * Returns the stable-tier hash alongside the prefix; the caller commits it
    * to lastStableContextHash only after a successful run, so changed context
@@ -618,6 +643,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transport = getProviderExecutionTransport();
     const initialTransportContext = await transport.context({
       provider:          'codex',
+      model:             this.launchModel(),
       conversationId:    convId,
       state:             options.state,
       providerSessionId: existingSession,
@@ -702,6 +728,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const transportContext = mcpSession
       ? await transport.context({
         provider:          'codex',
+        model:             this.launchModel(),
         conversationId:    convId,
         state:             options.state,
         providerSessionId: existingSession,
@@ -1300,7 +1327,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // pipe") lands in stderr and must not wipe a valid thread.
         const resumeFailed = existingSession && !retryWithoutSession && !sawToolExecution &&
           (errored || code !== 0) &&
-          /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
+          /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)|recorded with model .* resuming with/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
           this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
@@ -1399,9 +1426,10 @@ export function getCodexService(): CodexService {
 }
 
 /** Create a fresh (non-singleton) CodexService with a specific model override. */
-export function createCodexService(model: string): CodexService {
+export function createCodexService(model: string, effort?: string): CodexService {
   const svc = new CodexService();
   svc.setModel(model);
+  svc.setEffort(effort);
   return svc;
 }
 

@@ -54,7 +54,6 @@ interface HeartbeatProjectsAudit {
   selectedTaskStatus?: string;
   selectedTaskAssignee?: string | null;
   selectedTaskLastMovedAt?: string;
-  selectedTaskCommentCount?: number;
 }
 
 const MAX_EVENT_HISTORY = 200;
@@ -497,7 +496,6 @@ export class HeartbeatService {
       selectedTaskAssignee: snapshot.assignee ?? null,
       ...(snapshot.status ? { selectedTaskStatus: String(snapshot.status) } : {}),
       ...(snapshot.lastMovedAt ? { selectedTaskLastMovedAt: String(snapshot.lastMovedAt) } : {}),
-      ...(typeof snapshot.commentCount === 'number' ? { selectedTaskCommentCount: snapshot.commentCount } : {}),
     };
   }
 

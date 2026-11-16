@@ -29,18 +29,8 @@ import * as os from 'os';
 import WebSocket from 'ws';
 
 import { getIntegrationService } from './IntegrationService';
-import {
-  issueLocalBrokerContext,
-  requireConfiguredCredentialBroker,
-  usesContainerVaultAuthority,
-} from '../../vault-broker';
-import {
-  ENTERPRISE_GATEWAY_HTTP_OPERATION,
-  ENTERPRISE_GATEWAY_INTEGRATION_ID,
-  ENTERPRISE_GATEWAY_RELAY_OPERATION,
-  enterpriseGatewayCredentialScope,
-  enterpriseGatewayHttpRequest,
-} from '../../vault-broker/callerPolicies';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../vault-broker';
+import { ENTERPRISE_GATEWAY_HTTP_OPERATION, ENTERPRISE_GATEWAY_INTEGRATION_ID, ENTERPRISE_GATEWAY_RELAY_OPERATION, enterpriseGatewayCredentialScope, enterpriseGatewayHttpRequest } from '../../vault-broker/callerPolicies';
 
 import Logging from '@pkg/utils/logging';
 
@@ -203,7 +193,7 @@ export class GatewayListenerService {
       if (!result.sessionId || !result.callId) throw new Error('Gateway session response is invalid');
       this.activeSessionId = result.sessionId;
       this.activeCallId = result.callId;
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       try {
         await broker.relaySend(this.vaultRelayId!, {
           type: 'gateway.session.open', payload: { sessionId: result.sessionId },
@@ -452,7 +442,7 @@ export class GatewayListenerService {
       const sessionId = this.activeSessionId;
       if (!relayId || !sessionId) return;
       const audio = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      requireConfiguredCredentialBroker().relaySend(relayId, {
+      configuredVaultBrokerProvider.requireConfiguredCredentialBroker().relaySend(relayId, {
         type: 'gateway.audio.chunk', payload: { sessionId, channel, data: audio.toString('base64') },
       }).catch(error => console.error('[GatewayListener] Vault audio send failed:', error));
       return;
@@ -506,7 +496,7 @@ export class GatewayListenerService {
 
     if (usesContainerVaultAuthority()) {
       if (!sessionId || !this.vaultRelayId) return;
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       await broker.relaySend(this.vaultRelayId, { type: 'gateway.audio.close', payload: { sessionId } }).catch(() => undefined);
       await broker.relaySend(this.vaultRelayId, { type: 'gateway.session.close', payload: { sessionId } }).catch(() => undefined);
       this.activeSessionId = null;
@@ -737,13 +727,13 @@ export class GatewayListenerService {
     await this.stopVaultRelay();
     const integrationService = getIntegrationService();
     const accountId = await integrationService.getActiveAccountId(ENTERPRISE_GATEWAY_INTEGRATION_ID);
-    const context = await issueLocalBrokerContext({
+    const context = await configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId:         'enterprise-gateway-listener',
       podId:           'desktop-main',
       credentialScope: enterpriseGatewayCredentialScope(accountId),
     });
     const controller = new AbortController();
-    const relay = await requireConfiguredCredentialBroker().createRelay(
+    const relay = await configuredVaultBrokerProvider.requireConfiguredCredentialBroker().createRelay(
       context,
       ENTERPRISE_GATEWAY_RELAY_OPERATION,
       { integrationId: ENTERPRISE_GATEWAY_INTEGRATION_ID, accountId },
@@ -761,7 +751,7 @@ export class GatewayListenerService {
   }
 
   private async consumeVaultRelay(relayId: string, signal: AbortSignal): Promise<void> {
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     try {
       for await (const relayEvent of broker.relayEventStream(relayId, signal)) {
         if (signal.aborted) continue;
@@ -796,14 +786,14 @@ export class GatewayListenerService {
   private async vaultHttp<T = unknown>(method: 'POST' | 'DELETE', sessionId?: string, body?: unknown): Promise<T> {
     const accountId = this.vaultAccountId;
     if (!accountId) throw new Error(`${ ENTERPRISE_GATEWAY_HTTP_OPERATION } relay context is unavailable`);
-    const context = await issueLocalBrokerContext({
+    const context = await configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId:         'enterprise-gateway-listener',
       podId:           'desktop-main',
       credentialScope: enterpriseGatewayCredentialScope(accountId),
     });
     const config = await this.getConfig();
     if (!config) throw new Error('Gateway routing metadata is unavailable');
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const result = await broker.execute(broker.requestFor(context, enterpriseGatewayHttpRequest({
       accountId,
       gatewayUrl: config.url,
@@ -821,7 +811,7 @@ export class GatewayListenerService {
     this.vaultRelayAbort = null;
     this.vaultRelayId = null;
     this.vaultAccountId = null;
-    if (relayId) await requireConfiguredCredentialBroker().closeRelay(relayId).catch(() => undefined);
+    if (relayId) await configuredVaultBrokerProvider.requireConfiguredCredentialBroker().closeRelay(relayId).catch(() => undefined);
   }
 
   private httpToWs(url: string): string {

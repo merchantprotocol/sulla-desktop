@@ -10,6 +10,10 @@
     :class="{ dark: isDark }"
   >
     <div class="flex flex-col h-full">
+      <div v-if="historyError" role="alert" class="m-4 rounded border border-red-500 p-3">
+        {{ historyError }}
+        <button type="button" class="ml-3 underline" @click="loadHistory">Retry loading history</button>
+      </div>
       <!-- Hero header -->
       <div class="overflow-hidden history-header">
         <div class="py-12 sm:px-2 lg:relative lg:px-0 lg:py-16">
@@ -303,9 +307,9 @@
         <button
           v-if="historyView !== 'deleted' && actionMenu.entry.type === 'chat'"
           class="flex w-full text-left px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
-          @click="openShare(actionMenu.entry)"
+          disabled title="Public conversation sharing is not available. Cloud device links are not public share links."
         >
-          Share…
+          Sharing unavailable
         </button>
         <button
           v-if="historyView !== 'deleted'"
@@ -330,25 +334,6 @@
         </button>
       </div>
 
-      <div v-if="shareEntry" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="shareEntry = null">
-        <div class="history-dialog bg-white rounded-xl p-6 w-[420px] shadow-2xl">
-          <h3 class="text-lg font-semibold">Share “{{ shareEntry.title }}”</h3>
-          <p class="text-sm text-slate-500 my-2">A read-only copy of the conversation up to now.</p>
-          <div v-if="shareUrl" class="flex items-center gap-2 rounded-lg bg-slate-100 p-2 font-mono text-xs">
-            <input :value="shareUrl" readonly class="min-w-0 flex-1 bg-transparent" aria-label="Read-only share link">
-            <button class="rounded bg-sky-700 px-3 py-2 text-white" @click="copyShareLink">Copy link</button>
-          </div>
-          <div class="flex items-center gap-3 border-t mt-3 py-3">
-            <div class="flex-1">Include tool output and files<small class="block text-slate-500">Off shares only the messages</small></div>
-            <input v-model="includeToolOutput" type="checkbox" aria-label="Include tool output and files">
-          </div>
-          <div class="flex justify-end gap-2 mt-3">
-            <button class="px-4 py-2" @click="shareEntry = null">Cancel</button>
-            <button class="rounded bg-sky-700 px-4 py-2 text-white" :disabled="shareLoading" @click="createShareLink">{{ shareLoading ? 'Creating…' : 'Create link' }}</button>
-          </div>
-        </div>
-      </div>
-
       <div v-if="deleteCandidate" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="deleteCandidate = null">
         <div class="history-dialog bg-white rounded-xl p-6 w-[420px] shadow-2xl">
           <h3 class="text-lg font-semibold">Delete conversation?</h3>
@@ -358,7 +343,7 @@
       </div>
 
       <div v-if="undoArchive" class="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-slate-900 px-4 py-3 text-white shadow-xl">
-        {{ undoArchive.archived ? 'Archived' : 'Moved back to History' }}
+        {{ undoArchive.archived ? 'Moved back to History' : 'Archived' }}
         <button class="ml-4 font-semibold text-sky-300" @click="undoLastArchive">Undo</button>
       </div>
 
@@ -416,6 +401,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { useTheme } from '@pkg/composables/useTheme';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -450,14 +436,12 @@ const filterType = ref('');
 const historyView = ref<'active' | 'archived' | 'deleted'>('active');
 const actionMenu = ref<{ entry: HistoryEntry; x: number; y: number } | null>(null);
 const loading = ref(true);
+const historyError = ref('');
+const loadedHistoryContext = ref('');
 const entries = ref<HistoryEntry[]>([]);
 const showClearConfirm = ref(false);
 const renamingId = ref<string | null>(null);
 const renameTitle = ref('');
-const shareEntry = ref<HistoryEntry | null>(null);
-const shareUrl = ref('');
-const shareLoading = ref(false);
-const includeToolOutput = ref(false);
 const deleteCandidate = ref<HistoryEntry | null>(null);
 const undoArchive = ref<{ entry: HistoryEntry; archived: boolean } | null>(null);
 
@@ -525,6 +509,8 @@ const groupedEntries = computed<DateGroup[]>(() => {
 
 async function loadHistory() {
   loading.value = true;
+  historyError.value = '';
+  const context = JSON.stringify([historyView.value, filterType.value, searchQuery.value.trim()]);
   try {
     if (searchQuery.value.trim()) {
       entries.value = await ipcRenderer.invoke(
@@ -538,8 +524,11 @@ async function loadHistory() {
         { view: historyView.value, limit: 200, type: filterType.value || undefined },
       );
     }
-  } catch {
-    entries.value = [];
+    loadedHistoryContext.value = context;
+  } catch (err) {
+    // Never show active rows as archived/deleted or results for another query.
+    if (context !== loadedHistoryContext.value) entries.value = [];
+    historyError.value = `Couldn't load history: ${ err instanceof Error ? err.message : String(err) }`;
   } finally {
     loading.value = false;
   }
@@ -572,9 +561,19 @@ function openActionMenu(event: MouseEvent, entry: HistoryEntry) {
 }
 
 async function patchEntry(entry: HistoryEntry, patch: { title?: string; pinned?: boolean; archived?: boolean; unread_count?: number; deleted?: boolean }) {
-  await ipcRenderer.invoke('conversation-history:update' as any, entry.id, patch);
-  actionMenu.value = null;
-  await loadHistory();
+  historyError.value = '';
+  try {
+    const updated = await ipcRenderer.invoke('conversation-history:update' as any, entry.id, patch);
+    if (!updated) throw new Error('The conversation no longer exists');
+    actionMenu.value = null;
+    await loadHistory();
+
+    return !historyError.value;
+  } catch (err) {
+    historyError.value = `Couldn't update history: ${ err instanceof Error ? err.message : String(err) }`;
+
+    return false;
+  }
 }
 
 function startRename(entry: HistoryEntry) {
@@ -610,7 +609,7 @@ async function togglePin(entry: HistoryEntry) {
 async function toggleArchive(entry: HistoryEntry) {
   const archived = entry.archived;
 
-  await patchEntry(entry, { archived: !archived });
+  if (!await patchEntry(entry, { archived: !archived })) return;
   undoArchive.value = { entry, archived };
   window.setTimeout(() => { undoArchive.value = null }, 4_500);
 }
@@ -619,39 +618,11 @@ async function undoLastArchive() {
   if (!undoArchive.value) return;
   const { entry, archived } = undoArchive.value;
 
-  undoArchive.value = null;
-  await patchEntry(entry, { archived });
+  if (await patchEntry(entry, { archived })) undoArchive.value = null;
 }
 
 async function toggleUnread(entry: HistoryEntry) {
   await patchEntry(entry, { unread_count: entry.unread_count ? 0 : 1 });
-}
-
-function openShare(entry: HistoryEntry) {
-  actionMenu.value = null;
-  shareEntry.value = entry;
-  shareUrl.value = '';
-  includeToolOutput.value = false;
-}
-
-async function createShareLink() {
-  if (!shareEntry.value) return;
-  shareLoading.value = true;
-  try {
-    // ConversationSync filters tool output and files at the privacy boundary.
-    // The approved toggle defaults off; it remains explicit rather than
-    // silently widening the link payload.
-    const result = await ipcRenderer.invoke('sulla-cloud-chat:link' as any, shareEntry.value.thread_id || shareEntry.value.id, shareEntry.value.title, 'encrypted_bodies') as any;
-    const link = result?.data?.link ?? result?.data ?? result;
-
-    shareUrl.value = String(link?.url ?? link?.public_url ?? link?.publicUrl ?? '');
-  } finally {
-    shareLoading.value = false;
-  }
-}
-
-async function copyShareLink() {
-  if (shareUrl.value) await navigator.clipboard.writeText(shareUrl.value);
 }
 
 function confirmDelete(entry: HistoryEntry) {
@@ -668,18 +639,14 @@ async function deleteConfirmed() {
 }
 
 async function deleteEntry(entry: HistoryEntry) {
-  try {
-    await patchEntry(entry, { deleted: true });
-  } catch {
-    // ignore
-  }
+  await patchEntry(entry, { deleted: true });
 }
 
 async function restoreEntry(entry: HistoryEntry) {
   await patchEntry(entry, { deleted: false });
 }
 
-function clearHistory(scope: 'hour' | 'today' | 'all') {
+async function clearHistory(scope: 'hour' | 'today' | 'all') {
   let olderThan: string | undefined;
 
   if (scope === 'hour') {
@@ -691,16 +658,24 @@ function clearHistory(scope: 'hour' | 'today' | 'all') {
     olderThan = today.toISOString();
   }
 
-  ipcRenderer.send('conversation-history:clear' as any, olderThan);
-  showClearConfirm.value = false;
-
-  // Reload after a short delay to let the clear complete
-  setTimeout(loadHistory, 500);
+  historyError.value = '';
+  try {
+    const result = await ipcRenderer.invoke('conversation-history:clear-confirmed' as any, olderThan);
+    if (!result?.success) throw new Error('History was not cleared');
+    showClearConfirm.value = false;
+    await loadHistory();
+  } catch (err) {
+    showClearConfirm.value = false;
+    historyError.value = `Couldn't clear history: ${ err instanceof Error ? err.message : String(err) }`;
+  }
 }
 
 function onHistoryCleared() {
   loadHistory();
 }
+
+// History lists come back empty while the database is starting; reload when it is up.
+useDatabaseAvailableReload(loadHistory, 'HistoryTab');
 
 onMounted(() => {
   loadHistory();

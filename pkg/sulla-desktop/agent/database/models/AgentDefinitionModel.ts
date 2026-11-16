@@ -67,7 +67,7 @@ export interface AgentDefinition {
   cost_tier:               AgentCostTier | null;
   /** Agent slugs this agent may call. Empty means it calls no one. */
   can_call:                string[];
-  /** Reflex may route a new chat straight to this agent. NULL = not set. */
+  /** This agent may be selected for a new chat. NULL = not set. */
   front_door:              boolean | null;
   /** Seeded from the bundled built-in catalog (agent/builtinAgents). */
   is_builtin:              boolean;
