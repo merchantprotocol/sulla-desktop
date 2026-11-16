@@ -19,7 +19,8 @@ export type PostgresAuthTrustReason =
   | 'unavailable';
 
 export type PostgresAuthState =
-  | { kind: 'scram', changed: boolean }
+  /** `unverified`: the managed file is loaded but the TCP login probe kept erroring (not refusing), so scram is kept, not downgraded. */
+  | { kind: 'scram', changed: boolean, unverified?: boolean }
   | { kind: 'trust', reason: PostgresAuthTrustReason, detail?: string };
 
 /** What the caller knows about PostgreSQL's clients. Every method may throw; a throw keeps trust. */
@@ -34,8 +35,10 @@ export interface PostgresAuthConsumers {
    * rejects naming the one that cannot. May be slow; apply() bounds it with
    * `healthTimeoutMs` and rolls back on timeout. apply() never terminates any
    * backend, so session-level advisory locks held by consumers survive.
+   * `signal` aborts once apply() stops waiting (bound reached or done): stop
+   * starting new checks then.
    */
-  waitHealthy(): Promise<void>;
+  waitHealthy(signal?: AbortSignal): Promise<void>;
 }
 
 export interface PostgresAuthSecretSource {
@@ -53,10 +56,17 @@ export type PostgresAuthRepository = Pick<GuestPostgresAuthRepository,
 
 /** Timing knobs; specs inject `sleep` so nothing waits on a real clock. */
 export interface PostgresAuthTiming {
-  sleep?:           (ms: number) => Promise<void>;
+  /** Resolves after `ms`, or early (without error) once `signal` aborts. */
+  sleep?:           (ms: number, signal?: AbortSignal) => Promise<void>;
   /** Verification attempts after the reload (pg_reload_conf is an async SIGHUP). */
   verifyAttempts?:  number;
   verifyDelayMs?:   number;
   /** Upper bound on consumers.waitHealthy() during a switch; a timeout rolls back. */
   healthTimeoutMs?: number;
+  /**
+   * Wait between writing the managed hba file and reloading it. pg_stat_file
+   * reports whole seconds, so the reload must land in a later second than the
+   * write for hbaFileLoaded() to see the file as loaded (default 1100 ms).
+   */
+  loadSettleMs?:    number;
 }

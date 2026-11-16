@@ -101,7 +101,7 @@ export class AgentStateService {
     const jobs: AgentJob[] = [];
     for (const persisted of durable) {
       const derived = this.withDerivedStatus(persisted);
-      const current = derived.status !== persisted.status
+      const current = derived !== persisted
         ? await this.mutateJob(persisted.jobId, current => this.withDerivedStatus(current)) : persisted;
       if (!current) continue;
       this.cache.jobs.set(current.jobId, current);
@@ -147,7 +147,7 @@ export class AgentStateService {
     const persisted = await this.store.job(jobId);
     if (!persisted) { this.cache.jobs.delete(jobId); return undefined; }
     const derived = this.withDerivedStatus(persisted);
-    const current = derived.status !== persisted.status
+    const current = derived !== persisted
       ? await this.mutateJob(jobId, job => this.withDerivedStatus(job)) : persisted;
     if (current) this.cache.jobs.set(jobId, current);
     this.trimTerminalCache();
@@ -320,7 +320,15 @@ export class AgentStateService {
     else if (job.tasks.some(task => task.status === 'error' && task.completion?.status !== 'completed')) status = 'failed';
     else if (statuses.every(value => value === 'stopped')) status = 'stopped';
     else status = 'completed';
-    return status === job.status ? job : { ...job, status };
+    // A terminal rollup always carries finishedAt: a task settling as error/completed flips the job
+    // terminal here, and persisting it with finished_at NULL leaves history rows that never finished.
+    const finishedAt = status === 'running' || status === 'parked' || job.finishedAt != null ? job.finishedAt : this.terminalFinishedAt(job);
+    return status === job.status && finishedAt === job.finishedAt ? job : { ...job, status, finishedAt };
+  }
+  /** The latest task finish time is when the job actually ended; the clock covers tasks without one. */
+  private terminalFinishedAt(job: AgentJob): number {
+    const taskFinishes = job.tasks.map(task => task.finishedAt).filter((value): value is number => typeof value === 'number');
+    return taskFinishes.length > 0 ? Math.max(...taskFinishes) : this.clock();
   }
   private emitChange(): void { this.versionValue = Math.max(this.versionValue + 1, Date.now()); this.changes.emit('change', this.versionValue); }
 }

@@ -225,6 +225,8 @@ export const metaToolManifests: ToolManifest[] = [
       timeoutMs: { type: 'number', optional: true, description: 'Timeout in ms (min 5000, max 1800000, default 300000 = 5 min). On timeout resolves with no selection.' },
     },
     operationTypes: ['read'],
+    // Waits on a human for timeoutMs (default 300 s); a 15 s read deadline would cut it off.
+    deadlineMs:     305_000,
     loader:         () => import('./ask_user_question'),
   },
   {

@@ -12,33 +12,40 @@ export interface FailureLifecycleOptions<T> {
   onFailureDetailsError: (error: unknown) => void;
 }
 
-export async function reportFailureUnlessShuttingDown<T>(options: FailureLifecycleOptions<T>): Promise<void> {
-  if (options.isShuttingDown()) {
-    return;
-  }
+/** Shows startup-failure details (or a fallback) unless the app is shutting down at any step. */
+export class FailureLifecycle<T> {
+  constructor(private readonly options: FailureLifecycleOptions<T>) {}
 
-  try {
-    await options.waitForLogs();
-    if (options.isShuttingDown()) {
-      return;
-    }
-
-    const failureDetails = await options.getFailureDetails();
+  async reportUnlessShuttingDown(): Promise<void> {
+    const options = this.options;
 
     if (options.isShuttingDown()) {
       return;
     }
-    if (failureDetails) {
-      await options.showFailureDetails(failureDetails);
 
+    try {
+      await options.waitForLogs();
+      if (options.isShuttingDown()) {
+        return;
+      }
+
+      const failureDetails = await options.getFailureDetails();
+
+      if (options.isShuttingDown()) {
+        return;
+      }
+      if (failureDetails) {
+        await options.showFailureDetails(failureDetails);
+
+        return;
+      }
+    } catch (error) {
+      options.onFailureDetailsError(error);
+    }
+
+    if (options.isShuttingDown()) {
       return;
     }
-  } catch (error) {
-    options.onFailureDetailsError(error);
+    options.showFallback();
   }
-
-  if (options.isShuttingDown()) {
-    return;
-  }
-  options.showFallback();
 }
