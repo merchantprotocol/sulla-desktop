@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { NotificationRepository } from '../../app/Repositories/NotificationRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -15,46 +16,30 @@ export class NotifyHistoryWorker extends BaseTool {
   name = '';
   description = '';
 
+  protected repository(): NotificationRepository {
+    return new NotificationRepository(postgresClient);
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const limit         = typeof input.limit === 'number' && input.limit > 0 ? Math.min(200, input.limit) : 50;
     const target        = typeof input.target === 'string' ? input.target.trim().toLowerCase() : '';
     const onlyFails     = input.only_failures === true;
     const sinceRaw      = typeof input.since === 'string' ? input.since.trim() : '';
 
-    const where: string[] = [];
-    const params: unknown[] = [];
-
-    if (target) {
-      if (!['desktop', 'mobile'].includes(target)) {
-        return { successBoolean: false, responseString: `"target" must be "desktop" or "mobile".` };
-      }
-      params.push(JSON.stringify([target]));
-      where.push(`targets @> $${ params.length }::jsonb`);
+    let sinceIso: string | undefined;
+    if (target && !['desktop', 'mobile'].includes(target)) {
+      return { successBoolean: false, responseString: `"target" must be "desktop" or "mobile".` };
     }
-    if (onlyFails) where.push('delivered = false');
     if (sinceRaw) {
       const since = new Date(sinceRaw);
       if (Number.isNaN(since.getTime())) {
         return { successBoolean: false, responseString: `"since" is not a valid ISO timestamp: "${ sinceRaw }".` };
       }
-      params.push(since.toISOString());
-      where.push(`sent_at >= $${ params.length }`);
+      sinceIso = since.toISOString();
     }
 
-    const whereClause = where.length > 0 ? `WHERE ${ where.join(' AND ') }` : '';
-    params.push(limit);
-    const limitIdx = params.length;
-
-    const sql = `
-      SELECT id, title, message, targets, notification_id, silent, delivered, error, sent_at
-      FROM notifications
-      ${ whereClause }
-      ORDER BY sent_at DESC
-      LIMIT $${ limitIdx }
-    `;
-
     try {
-      const rows = await postgresClient.query<any>(sql, params);
+      const rows = await this.repository().recent({ target: target || undefined, onlyFailures: onlyFails, sinceIso, limit });
       if (rows.length === 0) {
         return { successBoolean: true, responseString: 'No notifications matched the filter.' };
       }

@@ -109,20 +109,27 @@ export class VaultFilesKeyBundleAuthority {
       if (typeof request.devicePublicKey !== 'string' || !request.devicePublicKey) {
         throw new VaultFilesKeyBundleError('invalid_device_key', 400, 'Files recovery device key is invalid');
       }
-      const row = await this.repository.findCurrentEnvelope(request.context);
-      if (row?.authority_key_id !== this.policy.authorityKeyId(identity) ||
-          !this.policy.sameContext(this.policy.rowContext(row), request.context)) {
-        throw new VaultFilesKeyBundleError('context_denied', 403, 'Files recovery bundle is not authorized for this exact context');
-      }
-      const envelope = await this.cipher.rewrapForDevice(
-        row.authority_bundle,
-        request.context,
-        identity.publicKey,
-        identity.privateKey,
-        request.devicePublicKey,
-      );
-      identity.assertCurrent();
-      return envelope;
+      const { principalId, collectionId } = request.context;
+      // Read and re-wrap under the same per-collection lock and row lock that rotation takes,
+      // so the generation cannot advance between the read and the re-wrap.
+      return this.repository.withCollectionLock(principalId, collectionId, async connection => {
+        const row = await this.repository.findCurrentEnvelopeForUpdate(connection, request.context);
+        // The Vault may have locked while the read was awaiting: never touch the private key then.
+        identity.assertCurrent();
+        if (row?.authority_key_id !== this.policy.authorityKeyId(identity) ||
+            !this.policy.sameContext(this.policy.rowContext(row), request.context)) {
+          throw new VaultFilesKeyBundleError('context_denied', 403, 'Files recovery bundle is not authorized for this exact context');
+        }
+        const envelope = await this.cipher.rewrapForDevice(
+          row.authority_bundle,
+          request.context,
+          identity.publicKey,
+          identity.privateKey,
+          request.devicePublicKey,
+        );
+        identity.assertCurrent();
+        return envelope;
+      });
     });
   }
 }

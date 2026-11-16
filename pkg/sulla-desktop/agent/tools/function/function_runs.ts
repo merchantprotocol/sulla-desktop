@@ -29,39 +29,19 @@ export class FunctionRunsWorker extends BaseTool {
     const sinceRaw  = typeof input.since === 'string' ? input.since.trim() : '';
     const verbose   = input.verbose === true;
 
-    const where: string[] = [];
-    const params: unknown[] = [];
-
-    if (slug) {
-      params.push(slug);
-      where.push(`slug = $${ params.length }`);
-    }
-    if (onlyFails) where.push('success = false');
+    let sinceIso: string | undefined;
     if (sinceRaw) {
       const since = new Date(sinceRaw);
       if (Number.isNaN(since.getTime())) {
         return { successBoolean: false, responseString: `"since" is not a valid ISO timestamp: "${ sinceRaw }".` };
       }
-      params.push(since.toISOString());
-      where.push(`started_at >= $${ params.length }`);
+      sinceIso = since.toISOString();
     }
-
-    const whereClause = where.length > 0 ? `WHERE ${ where.join(' AND ') }` : '';
-    params.push(limit);
-    const limitIdx = params.length;
-
-    const sql = `
-      SELECT id, slug, version, runtime, inputs, outputs, success, error_stage, error,
-             duration_ms, started_at, completed_at
-      FROM function_runs
-      ${ whereClause }
-      ORDER BY started_at DESC
-      LIMIT $${ limitIdx }
-    `;
 
     try {
       const { postgresClient } = await import('../../database/PostgresClient');
-      const rows = await postgresClient.query<any>(sql, params);
+      const { FunctionRunRepository } = await import('../../app/Repositories/FunctionRunRepository');
+      const rows = await new FunctionRunRepository(postgresClient).recent({ slug: slug || undefined, onlyFailures: onlyFails, sinceIso, limit });
       if (rows.length === 0) {
         return { successBoolean: true, responseString: 'No function runs matched the filter.' };
       }
