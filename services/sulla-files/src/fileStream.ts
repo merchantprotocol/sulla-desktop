@@ -15,6 +15,12 @@ export { sendFileStream } from './sendFileStream.js';
 export interface ByteRange { start:number; end:number }
 const CHUNK_BYTES = 4 * 1024 * 1024;
 
+/** Stored content that cannot be read as recorded. `integrityClass` matches files_fsck failure classes. */
+export class FileContentIntegrityError extends Error {
+  readonly status = 500;
+  constructor(readonly integrityClass:'manifest_geometry_invalid' | 'chunk_row_missing' | 'chunk_metadata_invalid' | 'manifest_size_mismatch', message:string, readonly chunkId?:string) { super(message) }
+}
+
 export class RangeNotSatisfiableError extends Error {
   readonly status = 416;
   constructor(readonly size:number) { super('Requested range is not satisfiable') }
@@ -65,7 +71,7 @@ async function descriptor(db:pg.Pool, fileId:string, versionId?:string):Promise<
   const ids = Array.isArray(row.chunk_ids) ? row.chunk_ids.map(String) : [];
   const declared = Number(row.size);
   const expectedChunks = Math.max(1, Math.ceil(declared / CHUNK_BYTES));
-  if (!Number.isSafeInteger(declared) || declared < 0 || ids.length !== expectedChunks) throw new Error('File manifest has invalid chunk geometry');
+  if (!Number.isSafeInteger(declared) || declared < 0 || ids.length !== expectedChunks) throw new FileContentIntegrityError('manifest_geometry_invalid', 'File manifest has invalid chunk geometry');
   const sizes = ids.length ? await db.query('SELECT id,size,stored_size FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [row.chunk_collection_id, ids]) : { rows: [] };
   const byId = new Map(sizes.rows.map(chunk => [String(chunk.id), { size: Number(chunk.size), storedSize: Number(chunk.stored_size) }]));
   const chunks:StreamDescriptor['chunks'] = [];
@@ -75,11 +81,12 @@ async function descriptor(db:pg.Pool, fileId:string, versionId?:string):Promise<
     const size = metadata?.size;
     const storedSize = metadata?.storedSize;
     const expectedSize = index < ids.length - 1 ? CHUNK_BYTES : declared - CHUNK_BYTES * (ids.length - 1);
-    if (size === undefined || storedSize === undefined || !Number.isSafeInteger(size) || size !== expectedSize || size < 0 || size > CHUNK_BYTES || !Number.isSafeInteger(storedSize) || storedSize < 0 || storedSize > maxEncryptedChunkBytes(size)) throw new Error(`Missing or invalid chunk metadata for ${ id }`);
+    if (!metadata) throw new FileContentIntegrityError('chunk_row_missing', `Missing or invalid chunk metadata for ${ id }`, id);
+    if (size === undefined || storedSize === undefined || !Number.isSafeInteger(size) || size !== expectedSize || size < 0 || size > CHUNK_BYTES || !Number.isSafeInteger(storedSize) || storedSize < 0 || storedSize > maxEncryptedChunkBytes(size)) throw new FileContentIntegrityError('chunk_metadata_invalid', `Missing or invalid chunk metadata for ${ id }`, id);
     chunks.push({ id, size, storedSize, start: offset, end: offset + size - 1 });
     offset += size;
   }
-  if (!Number.isSafeInteger(declared) || declared < 0 || Number(row.total_size) !== declared || offset !== declared) throw new Error('File manifest size does not match its version');
+  if (!Number.isSafeInteger(declared) || declared < 0 || Number(row.total_size) !== declared || offset !== declared) throw new FileContentIntegrityError('manifest_size_mismatch', 'File manifest size does not match its version');
   return { fileId: String(row.id), versionId: String(row.version_id), path: String(row.path), mime: String(row.mime || 'application/octet-stream'), size: declared, chunkCollectionId: String(row.chunk_collection_id), chunks };
 }
 

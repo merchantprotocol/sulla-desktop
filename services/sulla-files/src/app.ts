@@ -26,6 +26,8 @@ import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperation
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
 import { folderOperationState,purgeTrashedFolder,restoreTrashedFolder } from './folderOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
+import { ContentReadFailureLog } from './ContentReadFailureLog.js';
+import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { OriginalRevealAttestations,type OriginalRevealTarget } from './originalReveal.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
@@ -163,7 +165,7 @@ export function createApp(
   chunkStore?:Store,
   cloudSync?:CloudSyncService,
 ) {
-  const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }); const transactions = new TransactionRunner(db); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }); const transactions = new TransactionRunner(db); const contentReadFailures = new ContentReadFailureLog(); const chunkRegistry = new ManifestChunkRegistry(); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
   const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
@@ -390,6 +392,7 @@ export function createApp(
     const chunkIds = [...staged.chunkIds]; const chunks = staged.chunks; const manifestHash = staged.manifestHash;
     await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
     for (const chunk of chunks) await client.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING`, [input.collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ input.collectionId }/${ chunk.id }`]);
+    await chunkRegistry.assertRegistered(client, input.collectionId, chunkIds);
     let file:any;
     if (input.fileId) {
       file = (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
@@ -1002,9 +1005,11 @@ export function createApp(
   app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => {
     const controller = new AbortController(); const abort = () => controller.abort();
     request.once('aborted', abort); response.once('close', abort);
+    let readVersionId:string | undefined;
     try {
       let file = await requireFile(request, request.params.id, 'view');
       if(live.has(file.id)){await live.flush(file.id);file=await requireFile(request,file.id,'view');}
+      readVersionId = file.current_version_id;
       const stream = await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,controller.signal);
       if (!stream) return response.sendStatus(404);
       const hash=createHash('sha256');
@@ -1015,6 +1020,7 @@ export function createApp(
       response.setHeader('X-Sulla-Source-Hash', hash.digest('hex'));
       await sendFileStream(request,response,content);
     } catch(error) {
+      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'fuse-read', fileId: request.params.id, versionId: readVersionId });
       if (!controller.signal.aborted && !response.headersSent) next(error);
       else if (!controller.signal.aborted) response.destroy(error as Error);
     } finally { request.off('aborted',abort); response.off('close',abort) }
@@ -1072,7 +1078,8 @@ export function createApp(
     const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
     const sourceHash = request.header('x-sulla-source-hash');
     if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
-    const written = await fuseContentWrite(request, request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer));
+    const written = await fuseContentWrite(request, request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer))
+      .catch(error => { if (ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'fuse-write', fileId: request.params.id, versionId: match }); throw error });
     const result = written.result;
     if (!written.replayed) await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
     if(written.merged) response.setHeader('X-Sulla-Merged','1');
@@ -1368,6 +1375,7 @@ export function createApp(
       }
       response.end();
     } catch (error) {
+      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: download ? 'download' : 'preview', fileId: request.params.id, versionId: readVersionId });
       if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.setHeader('Content-Length', '0'); response.end(); return }
       if (!controller.signal.aborted && !response.headersSent) next(error); else if (!controller.signal.aborted) response.destroy(error as Error);
     } finally { request.off('aborted', abort); response.off('close', abort) }
@@ -1976,9 +1984,10 @@ export function createApp(
     const controller = new AbortController();
     const abort = () => controller.abort();
     request.once('aborted', abort); response.once('close', abort);
+    let readVersionId:string | undefined;
     try {
       const file = await requireFile(request, request.params.id, 'view');
-      const versionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined);
+      const versionId = readVersionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined);
       const content = await streamFileContent(db, config, store, file.id, versionId, request.header('range'), controller.signal);
       if (!content) { response.sendStatus(404); return }
       await audit(request, download ? 'download' : 'preview', { ...file, current_version_id: content.versionId });

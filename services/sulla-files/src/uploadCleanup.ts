@@ -44,7 +44,13 @@ export async function cleanupStaleUploads(db:pg.Pool, store:Store):Promise<numbe
         EXISTS(SELECT 1 FROM chunks WHERE collection_id=$1 AND id=$2) AS registered,
         EXISTS(SELECT 1 FROM file_upload_intents WHERE collection_id=$1 AND cleanup_started_at IS NULL AND updated_at>=NOW()-$3::interval AND chunk_ids ? $2) AS active`,
       [intent.collection_id, chunkId, STALE_UPLOAD_AGE])).rows[0];
-      if (!state?.registered && !state?.active) await store.delete(intent.collection_id, chunkId);
+      if (state?.registered || state?.active) continue;
+      // A blob some version's manifest names is user content even without its `chunks` row (a write
+      // whose row was lost on retry, repairable by files_fsck). Deleting it would make that loss permanent.
+      const referenced = (await db.query(`SELECT EXISTS(SELECT 1 FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash
+        WHERE v.chunk_collection_id=$1 AND m.chunk_ids ? $2) AS referenced`, [intent.collection_id, chunkId])).rows[0]?.referenced;
+      if (referenced) { console.warn(`[SullaFiles] kept chunk ${ chunkId } of a stale upload: a version references it but its chunks row is missing (run files_fsck)`); continue }
+      await store.delete(intent.collection_id, chunkId);
     }
     await db.query('DELETE FROM file_upload_intents WHERE id=$1 AND cleanup_started_at IS NOT NULL', [intent.id]);
     cleaned++;
