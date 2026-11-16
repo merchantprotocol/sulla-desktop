@@ -15,104 +15,128 @@ import {
 
 import type { FilesKeyBundleContext, FilesKeyBundleEnvelope } from '@sulla/vault-crypto';
 
-function constantEqual(actual:string | undefined, expected:string):boolean {
-  if (!actual) return false;
-  const left = Buffer.from(actual);
-  const right = Buffer.from(expected);
-  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
-}
+export type FilesBackupCredentialsProvider = (itemId:string,target:string)=>Promise<Record<string,string>>;
 
-function object(value:unknown, name:string):Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new VaultFilesKeyBundleError('invalid_request', 400, `${ name } is required`);
+/**
+ * The /v1/desktop/files router: Files service identity check, request
+ * validation and the key bundle authority endpoints. Handlers moved verbatim
+ * from the former createFilesKeyBundleRouter function (E9).
+ */
+export class FilesKeyBundleRoutes {
+  constructor(
+    private readonly authority:VaultFilesKeyBundleAuthority,
+    private readonly identity:{ serviceId: string; token: string },
+    private readonly backupCredentials?:FilesBackupCredentialsProvider,
+  ) {
+    if (!identity.serviceId || Buffer.byteLength(identity.token) < 32) {
+      throw new Error('Vault Files service identity is not configured');
+    }
   }
-  return value as Record<string, unknown>;
-}
 
-function context(value:unknown):FilesKeyBundleContext {
-  const input = object(value, 'context');
-  if (typeof input.principalId !== 'string' || !input.principalId || input.principalId.length > 512 ||
-      typeof input.collectionId !== 'string' || !input.collectionId || input.collectionId.length > 512 ||
-      !Number.isSafeInteger(input.keyVersion) || Number(input.keyVersion) < 1 ||
-      !Number.isSafeInteger(input.epoch) || Number(input.epoch) < 1) {
-    throw new VaultFilesKeyBundleError('invalid_context', 400, 'Files key bundle context is invalid');
+  router():express.Router {
+    const authority = this.authority;
+    const identity = this.identity;
+    const backupCredentials = this.backupCredentials;
+    const router = express.Router();
+    router.use((request, response, next) => {
+      const serviceId = request.header('x-sulla-service-id');
+      const token = request.header('authorization')?.replace(/^Bearer\s+/i, '');
+      if (serviceId !== identity.serviceId || !this.constantEqual(token, identity.token)) {
+        response.status(401).json({ error: 'invalid_service_identity', message: 'Files service identity is invalid' });
+        return;
+      }
+      next();
+    });
+    router.post('/backup-credentials',async(request,response,next)=>{
+      try {
+        if(!backupCredentials) return response.sendStatus(404);
+        response.setHeader('Cache-Control','no-store');
+        response.json(await backupCredentials(this.string(request.body?.itemId,'itemId',36),this.string(request.body?.target,'target',2048)));
+      } catch(error) { next(error) }
+    });
+    router.get('/principal', async(_request, response, next) => {
+      try {
+        response.json(await authority.unlockedPrincipal());
+      } catch (error) { next(error) }
+    });
+    router.post('/custody-recipient', async(request, response, next) => {
+      try {
+        response.json(await authority.custodyRecipient(this.context(request.body?.context)));
+      } catch (error) { next(error) }
+    });
+    router.post('/key-bundles', async(request, response, next) => {
+      try {
+        const input = this.object(request.body, 'bundle');
+        const bundle:RegisteredFilesKeyBundle = {
+          context:        this.context(input.context),
+          authorityKeyId: this.string(input.authorityKeyId, 'authorityKeyId', 1024),
+          envelope:       this.object(input.envelope, 'envelope') as unknown as FilesKeyBundleEnvelope,
+        };
+        await authority.registerBundle(bundle);
+        response.status(204).end();
+      } catch (error) { next(error) }
+    });
+    router.post('/device-recovery', async(request, response, next) => {
+      try {
+        response.json(await authority.authorizeDeviceRecovery({
+          context:         this.context(request.body?.context),
+          devicePublicKey: this.string(request.body?.devicePublicKey, 'devicePublicKey', 1024),
+        }));
+      } catch (error) { next(error) }
+    });
+    router.use((error:unknown, _request:express.Request, response:express.Response, next:express.NextFunction) => {
+      if (!(error instanceof VaultFilesKeyBundleError)) {
+        next(error);
+        return;
+      }
+      response.status(error.status).json({ error: error.code, message: error.message });
+    });
+    return router;
   }
-  return {
-    principalId:  input.principalId,
-    collectionId: input.collectionId,
-    keyVersion:   Number(input.keyVersion),
-    epoch:        Number(input.epoch),
-  };
-}
 
-function string(value:unknown, name:string, max = 4096):string {
-  if (typeof value !== 'string' || !value || value.length > max) {
-    throw new VaultFilesKeyBundleError('invalid_request', 400, `${ name } is invalid`);
+  private constantEqual(actual:string | undefined, expected:string):boolean {
+    if (!actual) return false;
+    const left = Buffer.from(actual);
+    const right = Buffer.from(expected);
+    return left.byteLength === right.byteLength && timingSafeEqual(left, right);
   }
-  return value;
+
+  private object(value:unknown, name:string):Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new VaultFilesKeyBundleError('invalid_request', 400, `${ name } is required`);
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private context(value:unknown):FilesKeyBundleContext {
+    const input = this.object(value, 'context');
+    if (typeof input.principalId !== 'string' || !input.principalId || input.principalId.length > 512 ||
+        typeof input.collectionId !== 'string' || !input.collectionId || input.collectionId.length > 512 ||
+        !Number.isSafeInteger(input.keyVersion) || Number(input.keyVersion) < 1 ||
+        !Number.isSafeInteger(input.epoch) || Number(input.epoch) < 1) {
+      throw new VaultFilesKeyBundleError('invalid_context', 400, 'Files key bundle context is invalid');
+    }
+    return {
+      principalId:  input.principalId,
+      collectionId: input.collectionId,
+      keyVersion:   Number(input.keyVersion),
+      epoch:        Number(input.epoch),
+    };
+  }
+
+  private string(value:unknown, name:string, max = 4096):string {
+    if (typeof value !== 'string' || !value || value.length > max) {
+      throw new VaultFilesKeyBundleError('invalid_request', 400, `${ name } is invalid`);
+    }
+    return value;
+  }
 }
 
+/** @deprecated use new FilesKeyBundleRoutes(...).router() — E9 alias, removed in final cleanup */
 export function createFilesKeyBundleRouter(
   authority:VaultFilesKeyBundleAuthority,
   identity:{ serviceId: string; token: string },
-  backupCredentials?:(itemId:string,target:string)=>Promise<Record<string,string>>,
+  backupCredentials?:FilesBackupCredentialsProvider,
 ):express.Router {
-  if (!identity.serviceId || Buffer.byteLength(identity.token) < 32) {
-    throw new Error('Vault Files service identity is not configured');
-  }
-  const router = express.Router();
-  router.use((request, response, next) => {
-    const serviceId = request.header('x-sulla-service-id');
-    const token = request.header('authorization')?.replace(/^Bearer\s+/i, '');
-    if (serviceId !== identity.serviceId || !constantEqual(token, identity.token)) {
-      response.status(401).json({ error: 'invalid_service_identity', message: 'Files service identity is invalid' });
-      return;
-    }
-    next();
-  });
-  router.post('/backup-credentials',async(request,response,next)=>{
-    try {
-      if(!backupCredentials) return response.sendStatus(404);
-      response.setHeader('Cache-Control','no-store');
-      response.json(await backupCredentials(string(request.body?.itemId,'itemId',36),string(request.body?.target,'target',2048)));
-    } catch(error) { next(error) }
-  });
-  router.get('/principal', async(_request, response, next) => {
-    try {
-      response.json(await authority.unlockedPrincipal());
-    } catch (error) { next(error) }
-  });
-  router.post('/custody-recipient', async(request, response, next) => {
-    try {
-      response.json(await authority.custodyRecipient(context(request.body?.context)));
-    } catch (error) { next(error) }
-  });
-  router.post('/key-bundles', async(request, response, next) => {
-    try {
-      const input = object(request.body, 'bundle');
-      const bundle:RegisteredFilesKeyBundle = {
-        context:        context(input.context),
-        authorityKeyId: string(input.authorityKeyId, 'authorityKeyId', 1024),
-        envelope:       object(input.envelope, 'envelope') as unknown as FilesKeyBundleEnvelope,
-      };
-      await authority.registerBundle(bundle);
-      response.status(204).end();
-    } catch (error) { next(error) }
-  });
-  router.post('/device-recovery', async(request, response, next) => {
-    try {
-      response.json(await authority.authorizeDeviceRecovery({
-        context:         context(request.body?.context),
-        devicePublicKey: string(request.body?.devicePublicKey, 'devicePublicKey', 1024),
-      }));
-    } catch (error) { next(error) }
-  });
-  router.use((error:unknown, _request:express.Request, response:express.Response, next:express.NextFunction) => {
-    if (!(error instanceof VaultFilesKeyBundleError)) {
-      next(error);
-      return;
-    }
-    response.status(error.status).json({ error: error.code, message: error.message });
-  });
-  return router;
+  return new FilesKeyBundleRoutes(authority, identity, backupCredentials).router();
 }
