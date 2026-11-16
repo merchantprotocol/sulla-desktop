@@ -57,14 +57,14 @@ describe.skipIf(!databaseUrl)('Files remote version prepare/commit routes (real 
     expect(await commit(remote)).toMatchObject({ status: 200, body: { ok: true, versionId: remote.version.id, fileId: remote.file.id } });
     const file = (await fixture.pool.query('SELECT current_version_id,path,size,created_by_type FROM files WHERE id=$1', [remote.file.id])).rows[0];
     expect(file).toMatchObject({ current_version_id: remote.version.id, path: 'remote/one.txt', created_by_type: 'user' });
-    expect((await fixture.pool.query('SELECT refcount FROM chunks WHERE collection_id=$1 AND id=$2', [fixture.collectionId, remote.chunks[0].id])).rows[0].refcount).toBe(1);
+    expect((await fixture.pool.query('SELECT refcount::int AS refcount FROM chunks WHERE collection_id=$1 AND id=$2', [fixture.collectionId, remote.chunks[0].id])).rows[0].refcount).toBe(1);
     const journal = async() => (await fixture.pool.query("SELECT count(*)::int AS n FROM journal WHERE file_id=$1 AND op='put'", [remote.file.id])).rows[0].n;
     expect(await journal()).toBe(1);
     // An identical replay is accepted without a second version, journal entry or chunk reference.
     expect(await commit(remote)).toMatchObject({ status: 200, body: { ok: true, versionId: remote.version.id } });
     expect((await fixture.pool.query('SELECT count(*)::int AS n FROM file_versions WHERE file_id=$1', [remote.file.id])).rows[0].n).toBe(1);
     expect(await journal()).toBe(1);
-    expect((await fixture.pool.query('SELECT refcount FROM chunks WHERE collection_id=$1 AND id=$2', [fixture.collectionId, remote.chunks[0].id])).rows[0].refcount).toBe(1);
+    expect((await fixture.pool.query('SELECT refcount::int AS refcount FROM chunks WHERE collection_id=$1 AND id=$2', [fixture.collectionId, remote.chunks[0].id])).rows[0].refcount).toBe(1);
     // The same version id with different geometry is refused.
     const tampered = bundle({ fileId: remote.file.id, versionId: remote.version.id, path: 'remote/one.txt', size: 12 }); await uploadChunks(tampered);
     expect(await commit(tampered)).toMatchObject({ status: 409, body: { error: 'immutable remote version geometry does not match the requested version' } });
