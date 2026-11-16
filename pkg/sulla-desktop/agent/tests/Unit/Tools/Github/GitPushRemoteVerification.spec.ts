@@ -12,11 +12,12 @@ const { getIntegrationValue } = vi.hoisted(() => ({ getIntegrationValue: vi.fn()
 vi.mock('../../../../services/IntegrationService', () => ({ getIntegrationService: () => ({ getIntegrationValue }) }));
 
 const localHead = 'a'.repeat(40);
+const checkedOutHead = 'c'.repeat(40);
 const mockCommands = (remoteHead: string, pushExitCode = 0) => (runCommand as any).mockImplementation(async(command: string) => {
   if (command.includes('rev-parse --show-toplevel')) return { stdout: '/repo', stderr: '', exitCode: 0 };
   if (command.includes('rev-parse --abbrev-ref')) return { stdout: 'main', stderr: '', exitCode: 0 };
   if (command.includes('remote get-url')) return { stdout: 'https://github.com/org/repo.git', stderr: '', exitCode: 0 };
-  if (command.includes('rev-parse --verify')) return { stdout: `${ localHead }\n`, stderr: '', exitCode: 0 };
+  if (command.includes('rev-parse --verify')) return { stdout: `${ command.includes('refs/heads/feature') ? localHead : checkedOutHead }\n`, stderr: '', exitCode: 0 };
   if (command.includes('ls-remote')) return { stdout: remoteHead ? `${ remoteHead }\trefs/heads/${ command.match(/refs\/heads\/([^\s]+)/)?.[1] || 'main' }\n` : '', stderr: '', exitCode: 0 };
   if (command.includes(' push ')) return { stdout: '', stderr: pushExitCode ? 'transport failed' : '', exitCode: pushExitCode };
   return { stdout: '', stderr: `unexpected command: ${ command }`, exitCode: 1 };
