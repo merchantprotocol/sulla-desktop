@@ -24,7 +24,7 @@ export class SullaFilesMountCredentialService {
       const credentials = await provider();
       if (generation !== this.generation()) throw new Error('Files mount credential generation changed');
       if (credentials.token.length < 64 || credentials.token.length > 4096) throw new Error('Files mount credentials are invalid');
-      await this.writeGuestSecret(executor, '/var/lib/sulla/files-fuse/token', `${ credentials.token }\n`);
+      await this.writeGuestSecret('/var/lib/sulla/files-fuse/token', `${ credentials.token }\n`);
       if (generation !== this.generation()) throw new Error('Files mount credential generation changed');
     });
 
@@ -32,7 +32,15 @@ export class SullaFilesMountCredentialService {
     try { await write } finally { if (this.pendingWrite === write) this.pendingWrite = undefined; }
   }
 
-  private async writeGuestSecret(executor:VMExecutor, destination:string, contents:string):Promise<void> {
+  /** Wait for any in-flight token write to finish (lock drains it before stopping the guest). */
+  async settle():Promise<void> {
+    await this.pendingWrite?.catch(() => undefined);
+  }
+
+  private async writeGuestSecret(destination:string, contents:string):Promise<void> {
+    // Re-read the guest: it may have been torn down while credentials were fetched.
+    const executor = this.executor();
+    if (!executor) throw new Error('Files mount guest is unavailable');
     const child = executor.spawn(
       { root: true }, 'sh', '-c', `umask 077; cat > ${ destination }.new && mv ${ destination }.new ${ destination }`,
     );

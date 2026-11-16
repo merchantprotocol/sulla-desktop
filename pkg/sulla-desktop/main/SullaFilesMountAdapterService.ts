@@ -53,6 +53,12 @@ export class SullaFilesMountAdapterService {
     }
   }
 
+  /**
+   * Wait for the adapter's mount to reach the guest. The adapter publishes its
+   * phase and a heartbeat (updatedAt every ~5s), so a slow start keeps waiting
+   * while a failed or wedged one stops at once with its own reason, instead of
+   * being killed on a fixed timer.
+   */
   async waitForAdapter(executor:VMExecutor, credentialGeneration:number):Promise<void> {
     const started = Date.now();
     let lastPhase:string | undefined;
