@@ -3829,36 +3829,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/chunkCache/access.ts": {
-      "rules": {
-        "raw-sql": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/chunkCache/budget.ts": {
-      "rules": {
-        "procedural-module": 2
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/chunkCache/evictor.ts": {
-      "rules": {
-        "raw-sql": 20
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/chunkCache/hydrator.ts": {
-      "rules": {
-        "raw-sql": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/chunkCache/index.ts": {
-      "rules": {
-        "raw-sql": 6
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/cloudRemote/catalogSync.ts": {
       "rules": {
         "raw-sql": 2
@@ -3910,12 +3880,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-files/src/crypto.ts": {
-      "rules": {
-        "procedural-module": 7
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/databaseOperationBatches.ts": {
       "rules": {
         "raw-sql": 31,
@@ -3931,13 +3895,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/db.ts": {
-      "rules": {
-        "raw-sql": 7,
-        "procedural-module": 3
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/documentLifecycle.ts": {
       "rules": {
         "raw-sql": 125,
@@ -3948,12 +3905,6 @@
     "services/sulla-files/src/fileOperations.ts": {
       "rules": {
         "raw-sql": 34
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/fileStream.ts": {
-      "rules": {
-        "raw-sql": 4
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
@@ -4037,20 +3988,6 @@
         "raw-sql": 52
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/streamingUpload.ts": {
-      "rules": {
-        "raw-sql": 24,
-        "procedural-module": 1
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/uploadCleanup.ts": {
-      "rules": {
-        "raw-sql": 12,
-        "procedural-module": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
     "services/sulla-files/web-src/main.ts": {
       "rules": {
