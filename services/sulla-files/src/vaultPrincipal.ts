@@ -3,42 +3,40 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { TransactionRunner } from './FilesTransaction.js';
+import { VaultPrincipalRepository } from './Repositories/VaultPrincipalRepository.js';
+
 import type { Config } from './config.js';
 import type pg from 'pg';
 
-interface CollectionOwnerRow { id:string; owner_user_id:string }
+const FOREIGN_PRINCIPAL = 'Existing Files collections belong to another principal; secure migration is required';
 
-export async function adoptVaultPrincipal(db:pg.Pool, config:Pick<Config, 'userId'>, principalId:string):Promise<void> {
-  if (config.userId === principalId) return;
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const rows = (await client.query<CollectionOwnerRow>('SELECT id::text,owner_user_id FROM collections FOR UPDATE')).rows;
-    if (config.userId !== 'desktop-user' || (rows.length > 0 && !rows.some(row => row.owner_user_id === config.userId || row.owner_user_id === principalId))) {
-      throw new Error('Existing Files collections belong to another principal; secure migration is required');
-    }
-    const sentinelIds = rows.filter(row => row.owner_user_id === config.userId).map(row => row.id);
-    if (sentinelIds.length && (await client.query(
-      'SELECT 1 FROM files_collection_key_bundles WHERE collection_id=ANY($1::uuid[]) AND principal_id<>$2 LIMIT 1',
-      [sentinelIds, principalId],
-    )).rowCount) throw new Error('Existing Files collections belong to another principal; secure migration is required');
-    if (sentinelIds.length) {
-      await client.query(
-        `UPDATE file_share_links links SET owner_user_id=$2
-          WHERE links.owner_user_id=$3 AND (
-            links.collection_id=ANY($1::uuid[])
-            OR EXISTS(SELECT 1 FROM files WHERE files.id=links.file_id AND files.collection_id=ANY($1::uuid[]))
-          )`,
-        [sentinelIds, principalId, config.userId],
-      );
-      await client.query('UPDATE collections SET owner_user_id=$2,updated_at=NOW() WHERE id=ANY($1::uuid[])', [sentinelIds, principalId]);
-    }
-    await client.query('COMMIT');
+/**
+ * Moves the Files store from the "desktop-user" sentinel to the principal Vault
+ * unlocked. Refuses (and changes nothing) when any collection, or a custody
+ * bundle for a sentinel collection, already belongs to someone else.
+ */
+export class VaultPrincipalAdoption {
+  constructor(
+    db:Pick<pg.Pool, 'connect' | 'query'>,
+    private readonly principals = new VaultPrincipalRepository(db),
+    private readonly transactions = new TransactionRunner(db),
+  ) {}
+
+  async adopt(config:Pick<Config, 'userId'>, principalId:string):Promise<void> {
+    if (config.userId === principalId) return;
+    await this.transactions.run('files-vault-principal-adoption', async client => {
+      const rows = await this.principals.lockCollectionOwners(client);
+      if (config.userId !== 'desktop-user' || (rows.length > 0 && !rows.some(row => row.owner_user_id === config.userId || row.owner_user_id === principalId))) {
+        throw new Error(FOREIGN_PRINCIPAL);
+      }
+      const sentinelIds = rows.filter(row => row.owner_user_id === config.userId).map(row => row.id);
+      if (sentinelIds.length && await this.principals.hasBundleForOtherPrincipal(sentinelIds, principalId, client)) throw new Error(FOREIGN_PRINCIPAL);
+      if (sentinelIds.length) {
+        await this.principals.reassignShareLinks(sentinelIds, principalId, config.userId, client);
+        await this.principals.reassignCollections(sentinelIds, principalId, client);
+      }
+    });
     config.userId = principalId;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
   }
 }
