@@ -10,19 +10,20 @@ export class PostgresOrgMessagingStateRepository implements OrgMessagingStateRep
   constructor(private readonly connection: PostgresConnection) {}
 
   async enqueue(message: PendingOrgMessage): Promise<void> {
-    await this.connection.run(`INSERT INTO org_messaging_outbox(message_id,envelope) VALUES ($1,$2::jsonb) ON CONFLICT(message_id) DO NOTHING`, [message.messageId, message.envelope]);
+    await this.connection.run(`INSERT INTO org_messaging_outbox(org_id,message_id,envelope) VALUES ($1,$2,$3::jsonb) ON CONFLICT(org_id,message_id) DO NOTHING`, [message.orgId, message.messageId, message.envelope]);
   }
 
-  async pending(): Promise<PendingOrgMessage[]> {
-    return this.connection.select<PendingOrgMessage>(`SELECT message_id AS "messageId", envelope::text AS envelope FROM org_messaging_outbox WHERE sent_at IS NULL AND failed_at IS NULL ORDER BY created_at,message_id`);
+  async pending(orgId: string): Promise<PendingOrgMessage[]> {
+    return this.connection.select<PendingOrgMessage>(`SELECT org_id AS "orgId", message_id AS "messageId", envelope::text AS envelope FROM org_messaging_outbox
+      WHERE org_id=$1 AND sent_at IS NULL AND failed_at IS NULL ORDER BY created_at,message_id`, [orgId]);
   }
 
-  async markSent(messageId: string): Promise<void> {
-    await this.connection.run(`UPDATE org_messaging_outbox SET sent_at=now() WHERE message_id=$1 AND sent_at IS NULL`, [messageId]);
+  async markSent(orgId: string, messageId: string): Promise<void> {
+    await this.connection.run(`UPDATE org_messaging_outbox SET sent_at=now() WHERE org_id=$1 AND message_id=$2 AND sent_at IS NULL`, [orgId, messageId]);
   }
 
-  async markFailed(messageId: string, reason: string): Promise<void> {
-    await this.connection.run(`UPDATE org_messaging_outbox SET failed_at=now(),failure_reason=$2 WHERE message_id=$1 AND sent_at IS NULL AND failed_at IS NULL`, [messageId, reason]);
+  async markFailed(orgId: string, messageId: string, reason: string): Promise<void> {
+    await this.connection.run(`UPDATE org_messaging_outbox SET failed_at=now(),failure_reason=$3 WHERE org_id=$1 AND message_id=$2 AND sent_at IS NULL AND failed_at IS NULL`, [orgId, messageId, reason]);
   }
 
   async cursor(orgId: string, userId: string): Promise<InboxCursor> {

@@ -12,7 +12,8 @@ import { RelayPayloadCodec } from './RelayPayloadCodec.js';
 import type { BrokerRelaySendRequest } from '../contracts.js';
 
 export class SlackRelaySession extends BaseRelaySession {
-  static readonly SOCKET_HOSTS: ReadonlySet<string> = new Set(['wss-primary.slack.com', 'wss-backup.slack.com']);
+  /** Slack Socket Mode hosts the bootstrap URL may name. Private so no other module can widen it. */
+  private static readonly SOCKET_HOSTS: ReadonlySet<string> = new Set(['wss-primary.slack.com', 'wss-backup.slack.com']);
   private readonly acknowledgements = new Map<number, { envelopeId: string; timer: NodeJS.Timeout }>();
 
   constructor(relayId: string, credential: string, abortSignal: AbortSignal) {
