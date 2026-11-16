@@ -21,4 +21,8 @@ describe('DurableAgentInboxReceiverResolver',()=>{
   it('resolves a parked manager parent thread',async()=>{ // risk: manager fleet control
     const resolver=new DurableAgentInboxReceiverResolver({allJobs:async()=>[parked('coding-manager-sol','manager-thread',true)]},()=>undefined);expect((await resolver.resolve('coding-manager-sol')).threadId).toBe('manager-thread');
   });
+  it('returns every live candidate so custody cannot silently choose an ambiguous channel',async()=>{ // risk: custody theft by arbitrary destination selection
+    const resolver=new DurableAgentInboxReceiverResolver({allJobs:async()=>[parked('researcher','parked-thread')]},()=>['live-thread']);
+    expect((await resolver.resolveAll('researcher')).map(item=>item.threadId)).toEqual(['live-thread','parked-thread']);
+  });
 });

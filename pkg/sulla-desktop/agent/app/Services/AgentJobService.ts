@@ -10,7 +10,7 @@ import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
 import { JobAbortScope } from './JobAbortScope';
 import type { StopPrincipalValue } from '../ValueObjects/StopPrincipal';
-import { JobStopService } from './JobStopService';
+import { JobStopService, type StopAuthorization } from './JobStopService';
 import { JobWrapUpService } from './JobWrapUpService';
 import { SpawnDedupeGuard } from './SpawnDedupeGuard';
 import { SpawnJobCreator } from './SpawnJobCreator';
@@ -36,12 +36,11 @@ async updateJobTask(jobId: string, index: number, patch: Partial<AgentJobTask>):
 }
 /** Visible this.runtime.jobs for one graph thread. Hot cache wins over persisted rows. */
 async getJobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
-  return (await this.states.jobsForParentThread(parentThreadId)).sort((a, b) => a.createdAt - b.createdAt);
+  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt).sort((a, b) => a.createdAt - b.createdAt);
 }
 /** Count direct open child tasks while treating a queued hard stop as closed immediately. */
 async openChildrenForThread(parentThreadId: string): Promise<number> {
-  // Only running/parked jobs can hold open tasks, so the bounded live read is exact.
-  return (await this.states.refreshLive()).filter(job => job.parentThreadId === parentThreadId && !this.states.hasPendingTerminalWrite(job.jobId))
+  return (await this.states.jobs()).filter(job => job.parentThreadId === parentThreadId && !this.states.hasPendingTerminalWrite(job.jobId))
     .reduce((count, job) => count + (['running','parked'].includes(job.status) ? job.tasks.filter(task => ['queued','running','parked'].includes(task.status)).length : 0), 0);
 }
 
@@ -67,7 +66,7 @@ releaseJobWatcher(jobId: string): void {
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
 abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopTask(jobId, taskIndex, principal, reason); }
-async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> { return this.stops.authorize(jobId, principal); }
+async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<StopAuthorization> { return this.stops.authorize(jobId, principal); }
 async stopJobCascade(jobId: string, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopCascade(jobId, principal, reason); }
 async stoppedTaskResult(jobId: string, taskIndex: number, label: string, threadId: string): Promise<AgentJobResult | undefined> {
   const job = await this.getJob(jobId); const task = job?.tasks[taskIndex]; if (task?.status !== 'stopped') return undefined;
@@ -150,6 +149,9 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
       completion: result };
     return job;
+  }, async next => {
+    await this.repository.updateTaskCompletions(jobId, taskIndex, next.tasks, next.results);
+    return true;
   });
 }
 /** Acknowledge only the task whose contract actually entered a parent turn. */
@@ -212,8 +214,8 @@ async resolveAgentDepth(metadataSubAgentDepth: unknown, threadId: string | undef
 
 /** Tab this.runtime.jobs still open under one parent chat (each holds a renderer tab). */
 async countOpenTabJobs(parentThreadId: string): Promise<number> {
-  const all = await this.states.refreshLive();
-  return all.filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt && job.visibility === 'tab' && job.status === 'running').length;
+  const all = await this.getJobsForParentThread(parentThreadId);
+  return all.filter(job => job.visibility === 'tab' && job.status === 'running').length;
 }
 
 /**
@@ -251,7 +253,7 @@ async failJob(jobId: string, error: string): Promise<void> {
 /** Persist and mirror one deduplicated late-child notice on its terminal owner. */
 async appendOrphanNotice(jobId: string, notice: OrphanedChildNotice): Promise<boolean> {
   const recorded = await this.repository.appendOrphanNotice(jobId, notice);
-  if (recorded) await this.states.refreshLive();
+  if (recorded) await this.states.refresh();
   return recorded;
 }
 

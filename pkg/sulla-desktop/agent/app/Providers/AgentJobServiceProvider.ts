@@ -39,7 +39,11 @@ import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '..
 import { CustodyCallerVerifier } from '../Services/CustodyCallerVerifier';
 import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegistryTopLevelConversationRegistry';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
-import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
+import { CustodyChangeNotificationService } from '../Services/CustodyChangeNotificationService';
+import { CustodyDestinationResolver } from '../Services/CustodyDestinationResolver';
+import { CustodyCompletionRequeueService } from '../Services/CustodyCompletionRequeueService';
+import { DurableAgentInboxReceiverResolver } from '../../services/AgentInboxReceiverResolver';
+import { GraphRegistry } from '../../services/GraphRegistry';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -59,6 +63,8 @@ export class AgentJobServiceProvider {
   readonly custody: JobCustodyService;
   readonly custodyCallerVerifier: CustodyCallerVerifier;
   readonly custodyLineage: JobTaskCustodyLineage;
+  readonly custodyDestinations: CustodyDestinationResolver;
+  readonly completionRequeue: CustodyCompletionRequeueService;
 
   constructor(runActivity: RunActivityReader = RunActivity) {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -85,7 +91,10 @@ export class AgentJobServiceProvider {
     }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));
-    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
+    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new CustodyChangeNotificationService(this.jobs, completionInboxStore), clock);
+    const receiverResolver = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadByChannel(channel), this.custody);
+    this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receiverResolver, async channel => GraphRegistry.findThreadByChannel(channel));
+    this.completionRequeue = new CustodyCompletionRequeueService(completionInboxStore, this.custody);
     this.custodyCallerVerifier = new CustodyCallerVerifier(taskLocator, conversations);
     const stops = new JobStopService(this.states, this.runtime, clock, taskLocator);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
