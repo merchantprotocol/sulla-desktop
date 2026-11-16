@@ -36,7 +36,7 @@ describe.skipIf(!databaseUrl)('tracked root catalog (real Postgres)', () => {
     userId = `user-${ randomUUID().slice(0, 8) }`; keysCreated = 0; rescans = 0;
     roots = [
       { id: 'default', name: 'Sulla Files', path: '/tmp/a', syncMode: 'local', paused: false, exclusions: [], primary: true },
-      { id: `work-${ userId }`, name: 'Work', path: '/tmp/b', syncMode: 'local', paused: true, exclusions: ['*.log'] },
+      { id: `work-${ userId }`, name: 'Work', path: `/tmp/b-${ userId }`, syncMode: 'local', paused: true, exclusions: ['*.log'] },
     ];
     rootCollections = new Map();
     const keyring = { create: async(id:string, client:pg.PoolClient) => {
