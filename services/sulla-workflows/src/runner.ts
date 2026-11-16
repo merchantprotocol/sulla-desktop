@@ -225,6 +225,7 @@ async function executeStep(playbook: WorkflowPlaybookState, step: PlaybookStepRe
 }
 
 async function main(): Promise<void> {
+  if (!config.databaseUrl) throw new Error('SULLA_DATABASE_URL is required');
   if (!executionId || !runToken) throw new Error('SULLA_EXECUTION_ID and SULLA_RUN_TOKEN are required');
   const leaseToken = crypto.randomUUID();
   const leased = await pool.query(

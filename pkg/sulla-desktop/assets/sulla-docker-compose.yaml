@@ -12,7 +12,10 @@ services:
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_USER=sulla
-      - POSTGRES_PASSWORD=sulla_dev_password
+      # Placeholder only: Desktop writes the install's service secret here
+      # (ServiceSecretComposeValues.applyTo) and refuses to write a compose
+      # file without it (ComposeSecretGuard).
+      - POSTGRES_PASSWORD=replaced-by-sulla-desktop
       - POSTGRES_DB=sulla
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:

@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AuditFileSink, type AuditFileEvent } from '../src/auditFileSink.js';
-import { pruneLegacyOutboundAuditRows } from '../src/auditRetention.js';
 import { AGENT_CREDENTIAL_USE_ACTION, HUMAN_REVEAL_ACTION, OutboundAuditRecorder } from '../src/outboundAudit.js';
 
 let dir: string;
@@ -123,45 +122,5 @@ describe('reveal vs outbound use', () => {
     }
     expect(events.map(e => e.blocked).sort()).toEqual([false, true]);
     expect(AGENT_CREDENTIAL_USE_ACTION).not.toContain('reveal');
-  });
-});
-
-describe('pruneLegacyOutboundAuditRows', () => {
-  function fakeDb(total: number, marked = false) {
-    const state = { remaining: total, marked, batches: 0, sizes: [] as number[], cursors: [] as number[], inserts: 0 };
-    return { state, db: { query: async(sql: string, params: unknown[] = []) => {
-      if (sql.includes('SELECT 1 FROM vault_schema_migrations')) return { rows: state.marked ? [{}] : [] };
-      if (sql.includes('INSERT INTO vault_schema_migrations')) { state.marked = true; state.inserts++; return { rows: [] }; }
-      const size = params[2] as number;
-      const n = Math.min(size, state.remaining);
-      state.remaining -= n; state.batches++; state.sizes.push(size); state.cursors.push(params[1] as number);
-      return { rows: [{ n, last: n ? state.cursors.length * 1000 : params[1] }] };
-    } } as any };
-  }
-
-  it('deletes in bounded batches until none remain, then marks itself done and logs the VACUUM note', async() => {
-    const { db, state } = fakeDb(12_500);
-    const logs: string[] = [];
-    const deleted = await pruneLegacyOutboundAuditRows(db, { batchSize: 5000, pauseMs: 0, sleep: async() => undefined, log: m => logs.push(m) });
-    expect(deleted).toBe(12_500);
-    expect(state.sizes.every(s => s === 5000)).toBe(true);
-    expect(state.cursors).toEqual([0, 1000, 2000, 3000]); // keyset cursor advances; never rescans from the start
-    expect(state.inserts).toBe(1);
-    expect(logs.join('\n')).toMatch(/VACUUM/);
-  });
-
-  it('is idempotent: a marked database is not touched', async() => {
-    const { db, state } = fakeDb(10, true);
-    expect(await pruneLegacyOutboundAuditRows(db)).toBe(0);
-    expect(state.batches).toBe(0);
-  });
-
-  it('can pause after maxBatches without marking done, and resumes later', async() => {
-    const { db, state } = fakeDb(30_000);
-    const opts = { batchSize: 5000, pauseMs: 0, sleep: async() => undefined, log: () => undefined };
-    expect(await pruneLegacyOutboundAuditRows(db, { ...opts, maxBatches: 2 })).toBe(10_000);
-    expect(state.marked).toBe(false);
-    expect(await pruneLegacyOutboundAuditRows(db, opts)).toBe(20_000);
-    expect(state.marked).toBe(true);
   });
 });

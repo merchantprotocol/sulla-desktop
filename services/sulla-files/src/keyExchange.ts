@@ -11,19 +11,15 @@ import {
   type FilesKeyBundleContext,
 } from '@sulla/vault-crypto';
 
+import { TransactionRunner } from './FilesTransaction.js';
 import { FilesKeyBundleRecovery, type FilesKeyBundleAuthority } from './keyBundleRecovery.js';
+import { CollectionKeyRepository, type CollectionKeyContextRow } from './Repositories/CollectionKeyRepository.js';
+import { RemoteKeyRecoveryRepository } from './Repositories/RemoteKeyRecoveryRepository.js';
 
 import type { FilesKeyring } from './keyring.js';
 import type pg from 'pg';
 
-interface CurrentKeyContextRow {
-  collection_id:       string;
-  owner_user_id:       string;
-  key_version:         number;
-  key_epoch:           number;
-  key_origin:          string;
-  compatibility_state: string;
-}
+type CurrentKeyContextRow = CollectionKeyContextRow;
 
 /**
  * Proves that Vault can recover the exact current random collection keys.
@@ -36,6 +32,9 @@ export class SecureCollectionKeyExchange {
     private readonly keyring:FilesKeyring,
     private readonly authority:FilesKeyBundleAuthority,
     private readonly recovery = new FilesKeyBundleRecovery(db, keyring, authority),
+    private readonly collectionKeys = new CollectionKeyRepository(db),
+    private readonly remoteRecovery = new RemoteKeyRecoveryRepository(db),
+    private readonly transactions = new TransactionRunner(db),
   ) {}
 
   async verifyRemoteRecoverability(collectionId:string):Promise<FilesKeyBundleContext> {
@@ -62,30 +61,13 @@ export class SecureCollectionKeyExchange {
         throw new Error('Remote custody recovered different collection keys');
       }
 
-      const client = await this.db.connect();
-      try {
-        await client.query('BEGIN');
+      await this.transactions.run('files-remote-key-recovery', async client => {
         const current = await this.currentContext(collectionId, client);
         if (!sameRowContext(current, context) || current.key_origin !== 'random' || current.compatibility_state !== 'native') {
           throw new Error('Collection key context changed during remote recovery verification');
         }
-        await client.query(
-          `INSERT INTO files_remote_key_recovery
-            (collection_id,principal_id,key_version,key_epoch,authority_key_id,verified_at)
-           VALUES($1,$2,$3,$4,$5,NOW())
-           ON CONFLICT(collection_id) DO UPDATE SET
-             principal_id=EXCLUDED.principal_id,key_version=EXCLUDED.key_version,
-             key_epoch=EXCLUDED.key_epoch,authority_key_id=EXCLUDED.authority_key_id,
-             verified_at=EXCLUDED.verified_at`,
-          [context.collectionId, context.principalId, context.keyVersion, context.epoch, bundle.authorityKeyId],
-        );
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
-      }
+        await this.remoteRecovery.recordVerified(context, bundle.authorityKeyId, client);
+      });
       return context;
     } finally {
       device.privateKey.fill(0);
@@ -97,12 +79,7 @@ export class SecureCollectionKeyExchange {
   }
 
   private async currentContext(collectionId:string, query:Pick<pg.Pool, 'query'> = this.db):Promise<CurrentKeyContextRow> {
-    const row = (await query.query(
-      `SELECT k.collection_id,c.owner_user_id,k.key_version,k.key_epoch,k.key_origin,c.compatibility_state
-         FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
-        WHERE k.collection_id=$1 FOR UPDATE OF k,c`,
-      [collectionId],
-    )).rows[0] as CurrentKeyContextRow | undefined;
+    const row = await this.collectionKeys.lockKeyContext(collectionId, query);
     if (!row) throw new Error('Collection key context is unavailable');
     return row;
   }

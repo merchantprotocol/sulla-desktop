@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { FilesBootstrapError, type FilesBootstrapLifecycle } from './bootstrapAuthority.js';
 import type { FilesBootstrapDisposition, FilesBootstrapUnlockResponse } from './bootstrapProtocol.js';
 import type { Config } from './config.js';
+import { CapabilityKeyCandidates } from './CapabilityKeyCandidates.js';
 import { FilesMasterKeyRejectedError, type FilesKeyring } from './keyring.js';
 import { LegacyFilesImporter, LegacyImportContinuationRequiredError, LegacyImportDataError } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
@@ -176,7 +177,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
           await this.hooks.recover(material.masterKey);
         } else {
           reportStage('keyring');
-          try { await this.keyring.unlock(material.masterKey, this.config.capabilitySigningKey) } catch (error) {
+          try { await this.keyring.unlock(material.masterKey, CapabilityKeyCandidates.fromConfig(this.config)) } catch (error) {
             if (error instanceof FilesMasterKeyRejectedError) {
               if (this.config.legacyPreflight?.state !== 'clear' || !this.hooks.recover || !await this.recoveryComplete()) {
                 throw new FilesBootstrapError(error.code, 409, 'Files master key was rejected; existing data was preserved');
