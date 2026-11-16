@@ -49,6 +49,7 @@ import {
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
 import { SessionBindSigner } from './cloud/device/SessionBindSigner';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
+import { CloudSessionStartupRestorer, VaultNotReadyError } from './cloud/session/CloudSessionStartupRestorer';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
 import { getDesktopRelayClient } from './desktopRelay';
@@ -345,8 +346,6 @@ async function loadSessionIdentity(): Promise<SessionIdentity | null> {
   return { userId: accountId, activeContractorId: accountId, contractors: [] };
 }
 
-class VaultNotReadyError extends Error {}
-
 /**
  * Startup-restore variant of loadSessionIdentity. getAccounts() swallows vault
  * errors and returns [] so settings stay usable while the vault boots — but
@@ -357,35 +356,14 @@ class VaultNotReadyError extends Error {}
  */
 async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> {
   if (!usesContainerVaultAuthority()) return loadSessionIdentity();
-  let metadata: Awaited<ReturnType<ReturnType<typeof configuredVaultBrokerProvider.requireConfiguredCredentialBroker>['integrationMetadata']>>;
-  try {
-    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
-    const status = await broker.status();
-    if (!status.unlocked) throw new Error('vault is locked');
-    await ensureLegacySessionAdopted();
-    metadata = await broker.integrationMetadata(INTEGRATION_ID);
-  } catch (err) {
-    const message = (err as Error)?.message || String(err);
-    const code = (err as any)?.code ?? (err as any)?.cause?.code;
-    if (err instanceof VaultBrokerError && (err.code === 'vault_locked' || err.status === 423) ||
-        ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(code) ||
-        /locked|unavailable|timeout|timed out|not ready|starting|connection/i.test(message)) {
-      throw new VaultNotReadyError(`vault not ready: ${ message }`);
-    }
-    throw err;
-  }
-  const accountId = activeConnectedAccountId(metadata);
-  // A first-run sign-in held in memory is written into the vault right after
-  // it unlocks. Retry until it lands instead of reporting a signed-out Mac.
-  if (!accountId && getPendingCredential(INTEGRATION_ID)) {
-    throw new VaultNotReadyError('vault not ready: the Sulla Cloud session is still being saved');
-  }
-  if (!accountId) {
-    startupAdoptionError = SIGN_IN_AGAIN;
-    return null;
-  }
-  startupAdoptionError = undefined;
-  return { userId: accountId, activeContractorId: accountId, contractors: [] };
+  const restorer = new CloudSessionStartupRestorer({
+    broker: () => configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
+    ensureLegacySessionAdopted,
+    hasPendingCredential: () => !!getPendingCredential(INTEGRATION_ID),
+    signInAgainMessage: SIGN_IN_AGAIN,
+    setAdoptionError: (message) => { startupAdoptionError = message; },
+  });
+  return restorer.restore();
 }
 
 /**
