@@ -93,6 +93,10 @@ import { FuseTreeRepository } from './Repositories/FuseTreeRepository.js';
 import { FuseTreeSnapshotCache } from './Services/FuseTreeSnapshotCache.js';
 import { ChunkRoutes } from './routes/ChunkRoutes.js';
 import { ChunkAccessRepository } from './Repositories/ChunkAccessRepository.js';
+import { VersionSyncRoutes } from './routes/VersionSyncRoutes.js';
+import { RemoteVersionSync } from './Services/RemoteVersionSync.js';
+import { RemoteVersionRepository } from './Repositories/RemoteVersionRepository.js';
+import { RemoteVersionBundleValidator } from './Services/RemoteVersionBundleValidator.js';
 import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
 import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
@@ -103,7 +107,7 @@ const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
 const FILE_ROW_JSON_SQL = `row_to_json((SELECT x FROM (SELECT ${FILE_COLUMNS_SQL}) x))`;
-const { cleanPath, numberedPath, bearer, idempotencyUuid, validateKeyContext } = FilesRequestInput;
+const { cleanPath, numberedPath, bearer, idempotencyUuid } = FilesRequestInput;
 
 async function availableStoredPath(client:pg.PoolClient, collectionId:string, requestedPath:string, keepBoth:boolean):Promise<string> {
   const blockedParent = await client.query('SELECT path FROM files WHERE collection_id=$1 AND path=ANY($2::text[]) ORDER BY length(path),path LIMIT 1', [collectionId, storedParentPaths(requestedPath)]);
@@ -1196,135 +1200,7 @@ function composeFilesApp(
   agentFiles.register(app);
   collectionSync.register(app);
   new ChunkRoutes(config, store, accessGate, new ChunkAccessRepository(db), actorScope).register(app);
-  function validateRemoteBundle(bundle:any):Map<string, { size: number; storedSize: number; location: string }> {
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuid.test(String(bundle?.file?.id ?? '')) || !uuid.test(String(bundle?.version?.id ?? ''))) throw new HttpError(400, 'valid file and version ids are required');
-    if (!bundle?.manifest) {
-      if (!bundle?.version?.deleted || Number(bundle.version.size) !== 0) throw new HttpError(400, 'non-deleted versions require a manifest');
-      return new Map();
-    }
-    if (bundle.version.deleted) throw new HttpError(400, 'deleted versions cannot carry a manifest');
-    const ids = bundle.manifest.chunk_ids;
-    const totalSize = Number(bundle.manifest.total_size);
-    if (!Array.isArray(ids) || !ids.length || ids.some((id:unknown) => typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) || !Number.isSafeInteger(totalSize) || totalSize < 0) throw new HttpError(400, 'invalid manifest metadata');
-    if (Number(bundle.version.size) !== totalSize || Number(bundle.file?.size) !== totalSize) throw new HttpError(400, 'manifest and version sizes do not match');
-    const expectedHash = createHash('sha256').update(JSON.stringify({ ids, size: totalSize })).digest('hex');
-    if (bundle.manifest.hash !== expectedHash) throw new HttpError(400, 'manifest hash does not authenticate its chunk list');
-    if (!Array.isArray(bundle.chunks)) throw new HttpError(400, 'chunk metadata is required');
-    const chunks = new Map<string, { size: number; storedSize: number; location: string }>();
-    for (const chunk of bundle.chunks) {
-      const size = Number(chunk?.size); const storedSize = Number(chunk?.stored_size);
-      if (typeof chunk?.id !== 'string' || !/^[a-f0-9]{64}$/.test(chunk.id) || !Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(storedSize) || storedSize < 0 || typeof chunk.location !== 'string') throw new HttpError(400, 'invalid chunk metadata');
-      chunks.set(chunk.id, { size, storedSize, location: chunk.location });
-    }
-    if (bundle.chunks.length !== chunks.size || chunks.size !== new Set(ids).size || ids.some((id:string) => !chunks.has(id))) throw new HttpError(400, 'chunk metadata must exactly match the manifest');
-    return chunks;
-  }
-  async function prepare(request:RequestWithIdentity, bundle:any, queryable:pg.Pool | pg.PoolClient = db, lock = false, authorizeChunks = false) {
-    const chunkMetadata = validateRemoteBundle(bundle);
-    const path = cleanPath(bundle.file.path, false);
-    if ((await queryable.query('SELECT 1 FROM file_purge_tombstones WHERE file_id=$1', [bundle.file.id])).rowCount) throw new HttpError(410, 'file was permanently purged; create a new file identity to restore content');
-    const candidates = (await queryable.query(`SELECT id,collection_id,path,current_version_id FROM files
-      WHERE id=$1 OR (collection_id=$2 AND path=$3)${ lock ? ' FOR UPDATE' : '' }`, [bundle.file.id, bundle.collectionId, path])).rows;
-    const requested = candidates.find(file => file.id === bundle.file.id);
-    const destination = candidates.find(file => file.collection_id === bundle.collectionId && file.path === path);
-
-    if (requested && requested.collection_id !== bundle.collectionId) throw new HttpError(403, 'file belongs to another collection');
-    if (requested && destination && requested.id !== destination.id) throw new HttpError(409, 'another file already exists at the requested path');
-    for (const file of candidates) await assertUnprotectedFile(queryable, file);
-    let exactFileEdit = false;
-    try { await requirePath(request, bundle.collectionId, path, 'edit',queryable) } catch (error:any) {
-      if (error.status !== 403 || requested?.path !== path) throw error;
-      await requireFile(request, requested.id, 'edit',queryable); exactFileEdit = true;
-    }
-    for (const file of candidates) {
-      if (exactFileEdit && file.id === requested.id) continue;
-      await requirePath(request, file.collection_id, file.path, 'edit',queryable);
-    }
-    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit',false,false,queryable);
-    if (bundle.keyContext) validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, identity(request).userId);
-    const existing = requested ?? destination;
-    const scopedEdit = false;
-    const manifestChunkIds = [...new Set<string>(bundle.manifest?.chunk_ids ?? [])];
-    const missing:string[] = [];
-    for (const id of manifestChunkIds) if ((scopedEdit && authorizeChunks) || !await store.has(bundle.version.chunk_collection_id, id)) missing.push(id);
-    if (scopedEdit && manifestChunkIds.length) {
-      const actor = identity(request); const scope = actorScope(actor);
-      if (authorizeChunks) {
-        await queryable.query('DELETE FROM file_share_chunk_uploads WHERE expires_at<=NOW() OR (version_id=$1 AND principal_id=$2 AND actor_scope=$3)', [bundle.version.id, actor.userId, scope]);
-        for (const chunkId of manifestChunkIds) {
-          const chunk = chunkMetadata.get(chunkId)!;
-          await queryable.query(`INSERT INTO file_share_chunk_uploads(file_id,target_collection_id,file_path,version_id,chunk_collection_id,chunk_id,principal_id,actor_scope,plain_size)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(version_id,chunk_id,principal_id,actor_scope) DO UPDATE SET file_id=EXCLUDED.file_id,target_collection_id=EXCLUDED.target_collection_id,file_path=EXCLUDED.file_path,chunk_collection_id=EXCLUDED.chunk_collection_id,plain_size=EXCLUDED.plain_size,uploaded_at=NULL,expires_at=NOW()+INTERVAL '30 minutes'`, [bundle.file.id, bundle.collectionId, path, bundle.version.id, bundle.version.chunk_collection_id, chunkId, actor.userId, scope, chunk.size]);
-        }
-      } else {
-        const priorVersion = await queryable.query('SELECT 1 FROM file_versions WHERE id=$1', [bundle.version.id]);
-        if (!priorVersion.rowCount) {
-          const uploaded = await queryable.query(`SELECT chunk_id FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2 AND actor_scope=$3 AND expires_at>NOW() AND uploaded_at IS NOT NULL`, [bundle.version.id, actor.userId, scope]);
-          const uploadedIds = new Set(uploaded.rows.map(row => row.chunk_id));
-          if (manifestChunkIds.some(id => !uploadedIds.has(id))) throw new HttpError(403, 'scoped upload intent is missing or incomplete');
-        }
-      }
-    }
-    const base = bundle.baseServerVersionId ?? null;
-    const conflict = Boolean(existing?.current_version_id && existing.current_version_id !== base);
-
-    return { existing, path, missing, conflict, currentVersionId: existing?.current_version_id ?? null, canonicalFileId: existing?.id ?? bundle.file.id };
-  }
-  app.post('/v1/versions/prepare', async(request:RequestWithIdentity, response, next) => { try { const result = await prepare(request, request.body, db, false, true); response.json({ missing: result.missing, currentVersionId: result.currentVersionId, canonicalFileId: result.canonicalFileId, conflict: result.conflict }) } catch (error) { next(error) } });
-  app.post('/v1/versions/commit', async(request:RequestWithIdentity, response, next) => { try {
-    const bundle = request.body; const actor = identity(request);
-    const outcome=await transactions.run('remote-version-commit',async client=>{
-    const bundlePath = cleanPath(bundle.file.path, false);
-    await lockStoredNamespace(client, bundle.collectionId);
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`version-commit:${ bundle.collectionId }:${ bundlePath }`]);
-    const checked = await prepare(request, bundle, client, true);
-    if (checked.missing.length) return {status:400,body:{ error:'manifest chunks missing',missing:checked.missing }};
-    const fileId = checked.canonicalFileId;
-    const prior = (await client.query('SELECT file_id,chunk_collection_id,manifest_hash,size,deleted FROM file_versions WHERE id=$1', [bundle.version.id])).rows[0];
-    if (prior) {
-      const sameGeometry = prior.file_id === fileId && prior.chunk_collection_id === bundle.version.chunk_collection_id &&
-        prior.manifest_hash === (bundle.manifest?.hash ?? null) && Number(prior.size) === Number(bundle.version.size) &&
-        Boolean(prior.deleted) === Boolean(bundle.version.deleted);
-      if (!sameGeometry || checked.currentVersionId !== bundle.version.id) throw new HttpError(409, 'immutable remote version geometry does not match the requested version');
-      const storedContext = (await client.query('SELECT collection_id,principal_id,key_version,key_epoch FROM file_version_key_contexts WHERE version_id=$1', [bundle.version.id])).rows[0];
-      if (Boolean(storedContext) !== Boolean(bundle.keyContext)) throw new HttpError(409, 'immutable version key context does not match the committed version');
-      if (bundle.keyContext) {
-        const context = validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, actor.userId);
-        if (storedContext?.collection_id !== context.collectionId || storedContext.principal_id !== context.principalId ||
-            Number(storedContext.key_version) !== context.keyVersion || Number(storedContext.key_epoch) !== context.epoch) {
-          throw new HttpError(409, 'immutable version key context does not match the committed version');
-        }
-      }
-      return {status:200,body:{ok:true,versionId:bundle.version.id,fileId}};
-    }
-    if(checked.conflict)return {status:409,body:{conflict:true,currentVersionId:checked.currentVersionId}};
-    await assertStoredFilePath(client, bundle.collectionId, checked.path, fileId);
-    await ensureStoredFileParents(client, bundle.collectionId, checked.path, actor);
-    if (bundle.manifest) {
-      await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [bundle.manifest.hash, JSON.stringify(bundle.manifest.chunk_ids), bundle.manifest.total_size]);
-      const storedManifest = (await client.query('SELECT chunk_ids,total_size FROM manifests WHERE hash=$1', [bundle.manifest.hash])).rows[0];
-      if (!storedManifest || JSON.stringify(storedManifest.chunk_ids) !== JSON.stringify(bundle.manifest.chunk_ids) || Number(storedManifest.total_size) !== Number(bundle.manifest.total_size)) throw new HttpError(409, 'immutable manifest metadata does not match the requested version');
-    }
-    for (const chunk of bundle.chunks ?? []) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,1) ON CONFLICT(collection_id,id) DO UPDATE SET refcount=chunks.refcount+1', [bundle.version.chunk_collection_id, chunk.id, chunk.size, chunk.stored_size, chunk.location]);
-    const authenticatedCreatorType = actor.agentId || actor.jobId ? 'agent-run' : 'user'; const authenticatedCreatorId = actor.jobId ?? actor.agentId ?? actor.userId;
-    await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6,$7)
-      ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,mime=EXCLUDED.mime,size=EXCLUDED.size,deleted_at=$8,updated_at=NOW()`, [fileId, bundle.collectionId, checked.path, authenticatedCreatorType, authenticatedCreatorId, bundle.file.mime, bundle.file.size, bundle.version.deleted ? new Date() : null]);
-    await client.query(`INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3)
-      ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text`, [fileId, checked.path, bundle.file.search_text]);
-    await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [bundle.version.id, fileId, bundle.version.chunk_collection_id, checked.currentVersionId, bundle.manifest?.hash ?? null, bundle.version.size, bundle.version.deleted, actor.agentId || actor.jobId ? 'agent-run' : 'user', actor.jobId ?? actor.agentId ?? actor.userId, bundle.version.message, actor.deviceId, checked.currentVersionId]);
-    if (bundle.keyContext) {
-      const context = validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, actor.userId);
-      await client.query('INSERT INTO file_version_key_contexts(version_id,collection_id,principal_id,key_version,key_epoch) VALUES($1,$2,$3,$4,$5)', [bundle.version.id, context.collectionId, context.principalId, context.keyVersion, context.epoch]);
-    }
-    const advanced = await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3 WHERE id=$1 AND current_version_id IS NOT DISTINCT FROM $4', [fileId, bundle.version.id, bundle.version.deleted ? new Date() : null, checked.currentVersionId]);
-    if (advanced.rowCount !== 1) throw new HttpError(409, 'file changed while committing the remote version');
-    await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']);
-    await client.query('DELETE FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2 AND actor_scope=$3', [bundle.version.id, actor.userId, actorScope(actor)]);
-    return {status:200,body:{ok:true,versionId:bundle.version.id,fileId}}; });
-    response.status(outcome.status).json(outcome.body);
-  } catch (error) { next(error) } });
+  new VersionSyncRoutes(new RemoteVersionSync(db, store, accessGate, transactions, new RemoteVersionRepository(), new RemoteVersionBundleValidator(), actorScope)).register(app);
 
   new FolderGuidanceRoutes(accessGate, new FolderGuidanceRepository(db), new CollectionSettingsRepository(db), transactions, requestAudit).register(app);
   app.post('/v1/files/empty', async(request:RequestWithIdentity,response,next)=>{ try {
