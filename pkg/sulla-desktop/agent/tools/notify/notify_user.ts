@@ -143,12 +143,8 @@ async function writeHistoryRow(row: {
 }): Promise<void> {
   try {
     const { postgresClient } = await import('../../database/PostgresClient');
-    await postgresClient.query(
-      `INSERT INTO notifications
-         (title, message, targets, notification_id, silent, delivered, error)
-       VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)`,
-      [row.title, row.message, JSON.stringify(row.targets), row.id, row.silent, row.delivered, row.error ?? null],
-    );
+    const { NotificationRepository } = await import('../../app/Repositories/NotificationRepository');
+    await new NotificationRepository(postgresClient).insert(row);
   } catch (err) {
     console.warn('[notify history] insert failed:', err);
   }

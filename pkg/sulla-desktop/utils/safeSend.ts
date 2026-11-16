@@ -22,37 +22,59 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-let warnedOnce = false;
+export interface SafeSendLogger {
+  warn(...args: unknown[]): void;
+}
 
-/**
- * Send a message to a renderer, silently swallowing the "frame disposed"
- * race that is safe to ignore. Returns true if the send was attempted
- * (regardless of outcome), false if the target was clearly gone.
- *
- * Warns once on the first unexpected error so regressions don't go silent.
- */
-export function safeSend(wc: WebContents | null | undefined, channel: string, ...args: unknown[]): boolean {
-  if (!wc) return false;
-  try {
-    if (wc.isDestroyed()) return false;
-  } catch {
-    return false;
+/** Sends IPC to a renderer, dropping the expected frame-disposed race and warning once on anything else. */
+export class SafeSender {
+  private static sharedInstance: SafeSender | undefined;
+
+  static get shared(): SafeSender {
+    SafeSender.sharedInstance ??= new SafeSender();
+
+    return SafeSender.sharedInstance;
   }
-  try {
-    wc.send(channel, ...args);
-    return true;
-  } catch (err) {
-    const message = (err as Error)?.message || String(err);
-    // The frame-disposed race is expected during teardown. Ignore it silently.
-    if (message.includes('Render frame was disposed') || message.includes('WebFrameMain')) {
+
+  private warnedOnce = false;
+
+  constructor(private readonly logger: SafeSendLogger = console) {}
+
+  /**
+   * Send a message to a renderer, silently swallowing the "frame disposed"
+   * race that is safe to ignore. Returns true if the send was attempted
+   * (regardless of outcome), false if the target was clearly gone.
+   *
+   * Warns once on the first unexpected error so regressions don't go silent.
+   */
+  send(wc: WebContents | null | undefined, channel: string, ...args: unknown[]): boolean {
+    if (!wc) return false;
+    try {
+      if (wc.isDestroyed()) return false;
+    } catch {
       return false;
     }
-    // Anything else is worth seeing (once) — schema mismatch, serialization
-    // failure, etc.
-    if (!warnedOnce) {
-      warnedOnce = true;
-      console.warn(`[safeSend] unexpected send error on channel="${ channel }":`, err);
+    try {
+      wc.send(channel, ...args);
+      return true;
+    } catch (err) {
+      const message = (err as Error)?.message || String(err);
+      // The frame-disposed race is expected during teardown. Ignore it silently.
+      if (message.includes('Render frame was disposed') || message.includes('WebFrameMain')) {
+        return false;
+      }
+      // Anything else is worth seeing (once) — schema mismatch, serialization
+      // failure, etc.
+      if (!this.warnedOnce) {
+        this.warnedOnce = true;
+        this.logger.warn(`[safeSend] unexpected send error on channel="${ channel }":`, err);
+      }
+      return false;
     }
-    return false;
   }
+}
+
+/** @deprecated use SafeSender.shared.send */
+export function safeSend(wc: WebContents | null | undefined, channel: string, ...args: unknown[]): boolean {
+  return SafeSender.shared.send(wc, channel, ...args);
 }
