@@ -9,6 +9,7 @@ import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { TransactionScope } from './TransactionScope.js';
+import type pg from 'pg';
 
 export class Store {
   constructor(private root:string) {}
@@ -102,6 +103,12 @@ export class Store {
       if (ownsTemp) await rm(temp, { force: true });
     }
   }
+
+  /** Version staging writes the immutable blob before DB commit and records cache residency in that commit. */
+  async putStaged(collectionId:string, id:string, bytes:Uint8Array):Promise<boolean> { return this.put(collectionId, id, bytes) }
+
+  /** Hook for derived residency bookkeeping; plain stores have no cache ledger. */
+  async recordResident(_client:pg.PoolClient, _collectionId:string, _id:string, _storedBytes:number):Promise<void> {}
 
   async delete(collectionId:string, id:string) {
     await rm(this.path(collectionId, id), { force: true });

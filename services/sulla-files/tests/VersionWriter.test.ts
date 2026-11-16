@@ -23,6 +23,7 @@ import { VersionWriteRepository } from '../src/Repositories/VersionWriteReposito
 import { AutomergeTextStore } from '../src/Services/AutomergeTextStore.js';
 import { VersionWriter } from '../src/Services/VersionWriter.js';
 import { Store } from '../src/store.js';
+import { CachingStore } from '../src/chunkCache/index.js';
 import { VersionContentStager } from '../src/VersionContentStager.js';
 
 const databaseUrl = process.env.SULLA_FILES_TEST_DATABASE_URL;
@@ -43,8 +44,10 @@ describe.skipIf(!databaseUrl)('VersionWriter and Automerge text store (real Post
         VALUES($1,'writer-user','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$2)`, [id, `spec-${ path }`]);
     }
     root = await mkdtemp(join(tmpdir(), 'sulla-version-writer-'));
-    store = new Store(root);
     const keys = { keys: async() => ({ data: Buffer.alloc(32, 1), dedup: Buffer.alloc(32, 2) }) };
+    store = new CachingStore({ db: pool, root, keyring: keys as any, source: {
+      verifiedCopy: async() => null, reverify: async() => false, fetchPlain: async() => Buffer.alloc(0),
+    } });
     const config:any = { deviceId: 'local-device', keyring: keys };
     writer = new VersionWriter(config, new FilesAccessGate(pool), store, new VersionContentStager(keys, store, { chunkId, encryptChunk }), new ManifestChunkRegistry(), new VersionWriteRepository());
     transactions = new TransactionRunner(pool);
@@ -70,6 +73,21 @@ describe.skipIf(!databaseUrl)('VersionWriter and Automerge text store (real Post
     expect((await pool.query('SELECT refcount FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, manifest.chunk_ids])).rows.map(row => Number(row.refcount))).toEqual([1]);
     expect((await pool.query("SELECT op FROM journal WHERE file_id=$1 AND version_id=$2", [file.id, version.id])).rows).toEqual([{ op: 'put' }]);
     expect(version.manifest_hash).toBe(await writer.manifestHashFor(collectionId, Buffer.from('hello')));
+    // Residency records the encrypted on-disk size, the same value the chunks row stores.
+    const storedSize = (await pool.query('SELECT stored_size FROM chunks WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, manifest.chunk_ids])).rows[0].stored_size;
+    expect((await pool.query('SELECT state,stored_bytes FROM files_chunk_cache WHERE collection_id=$1 AND chunk_id=ANY($2::text[])', [collectionId, manifest.chunk_ids])).rows)
+      .toEqual([{ state: 'resident', stored_bytes: String(storedSize) }]);
+  });
+
+  it('rolls cache residency back with an aborted version transaction', async() => {
+    // risk: cache consistency — a rolled-back version must not leave a phantom resident cache entry.
+    const bytes = Buffer.from(`rollback-${randomUUID()}`); const staged = await writer.stage(collectionId, bytes);
+    await expect(transactions.run('spec-cache-rollback', async client => {
+      await writer.insert(client, { collectionId, path: 'docs/cache-rollback.txt', mime: 'text/plain', bytes, staged, actor, message: 'spec' });
+      throw new Error('force rollback');
+    })).rejects.toThrow('force rollback');
+    expect((await pool.query('SELECT 1 FROM files_chunk_cache WHERE collection_id=$1 AND chunk_id=ANY($2::text[])', [collectionId, staged.chunkIds])).rowCount).toBe(0);
+    expect((await pool.query("SELECT 1 FROM files WHERE collection_id=$1 AND path='docs/cache-rollback.txt'", [collectionId])).rowCount).toBe(0);
   });
 
   it('appends a version to an existing file, revives it from Trash and chains the parent', async() => {

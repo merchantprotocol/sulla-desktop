@@ -27,8 +27,8 @@ describe('Files transaction resource guard',()=>{
     const open=TransactionScope.within('other-request',async()=>{await gate});
     expect(()=>TransactionScope.assertOutside('independent-request','throw')).not.toThrow();release();await open;
   });
-  // risk: data loss — only derived index state may acknowledge before its WAL flush; file content and audit spool remain synchronous.
-  it('disables synchronous commit only inside explicitly reconstructible indexing transactions',async()=>{
+  // risk: data loss — derived indexing and spool-atomic audit delivery may replay; user versions and spool inserts stay synchronous.
+  it('disables synchronous commit only for reconstructible index state and atomic audit delivery',async()=>{
     const calls:string[]=[];
     const runner=new TransactionRunner({connect:async()=>({query:async(sql:string)=>{calls.push(sql)},release:()=>undefined})} as any);
     await runner.run('index-content-commit',async()=>undefined);
@@ -38,6 +38,12 @@ describe('Files transaction resource guard',()=>{
     expect(calls).toEqual(['BEGIN','COMMIT']);
     calls.length=0;
     await runner.run('audit-spool-insert',async()=>undefined);
+    expect(calls).toEqual(['BEGIN','COMMIT']);
+    calls.length=0;
+    await runner.run('audit-append',async()=>undefined);
+    expect(calls).toEqual(['BEGIN','SET LOCAL synchronous_commit = off','COMMIT']);
+    calls.length=0;
+    await runner.run('fuse-create',async()=>undefined);
     expect(calls).toEqual(['BEGIN','COMMIT']);
   });
   it('bounds the configured backend budget',()=>{

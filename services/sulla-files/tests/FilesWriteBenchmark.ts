@@ -197,7 +197,7 @@ export class FilesWriteBenchmark {
           }
         }
         latencies.add(performance.now() - begin);
-        if (reply.status !== expectedStatus) failures.push(`${ path }: ${ reply.status } ${ reply.body }`);
+        if (reply.status !== expectedStatus) failures.push(`${ path }: ${ reply.status } ${ reply.body.slice(0, 300) }`);
       }
     }));
     const ended = performance.now(); const seconds = (ended - started) / 1000; sampler.stop();
@@ -240,7 +240,7 @@ export class FilesWriteBenchmark {
     return new Promise((done, reject) => {
       const request = httpRequest(new URL(path, this.baseUrl), { method, headers, agent: false }, response => {
         const parts:Buffer[] = []; response.on('data', part => parts.push(Buffer.from(part)));
-        response.on('end', () => done({ status: response.statusCode ?? 500, body: Buffer.concat(parts).toString('utf8').slice(0, 300), headers: response.headers }));
+        response.on('end', () => done({ status: response.statusCode ?? 500, body: Buffer.concat(parts).toString('utf8'), headers: response.headers }));
       });
       request.on('error', reject); if (body) request.write(body); request.end();
     });
