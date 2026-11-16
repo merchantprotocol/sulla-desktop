@@ -15,69 +15,83 @@
 // Mutations go through bookmarkService, the same write path chrome.bookmarks
 // uses, so both surfaces stay in sync and emit the same events.
 
-import { BrowserWindow } from 'electron';
-
-import { configureChatArtifactBookmarkSync } from '@pkg/agent/services/ChatArtifactService';
-import { getArtifactBookmarkSync } from '@pkg/main/bookmarks/artifactBookmarkSync';
-import { bookmarkService } from '@pkg/main/bookmarks/bookmarkService';
-import { listDockerLinks } from '@pkg/main/dockerLinks';
-import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import Logging from '@pkg/utils/logging';
+import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 
 export { fetchFaviconDataUrl } from '@pkg/main/bookmarks/bookmarkService';
 
-const console = Logging.background;
-const ipcMainProxy = getIpcMainProxy(console);
-
-function trusted(event: Electron.IpcMainInvokeEvent): void {
-  if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame ||
-      !/^(file:|app:)/.test(event.senderFrame?.url || '')) {
-    throw new Error('Only the Desktop application can manage bookmarks.');
-  }
+/** The bookmarkService surface this controller uses. */
+export interface BookmarksIpcService {
+  list(): Promise<unknown>;
+  create(input: { kind: 'folder' | 'bookmark'; title?: string; url?: string; parentId: string | null; tabId?: string }): Promise<unknown>;
+  update(id: string, input: { title?: string; url?: string }): Promise<unknown>;
+  remove(id: string, opts: { recursive: boolean }): Promise<unknown>;
+  move(id: string, parentId: string | null, index: number): Promise<unknown>;
 }
 
-export function initBookmarksIpc(): void {
-  configureChatArtifactBookmarkSync(getArtifactBookmarkSync());
+export interface BookmarksIpcDependencies {
+  bookmarks: BookmarksIpcService;
+  /** Wires artifact bookmark sync before channels exist (old init order). */
+  configureArtifactSync(): void;
+  listDockerLinks(): Promise<unknown>;
+  /** True when the sender is a Desktop app window (not a web page). */
+  isAppWindow(sender: Electron.WebContents): boolean;
+}
 
-  ipcMainProxy.handle('bookmarks:list', async(event) => {
-    trusted(event);
+/** bookmarks:* — only Desktop app frames may manage bookmarks. */
+export class BookmarksIpcController implements IpcController {
+  constructor(private readonly ipc: IpcRegistrar, private readonly deps: BookmarksIpcDependencies) {}
 
-    return bookmarkService.list();
-  });
+  trusted(event: Electron.IpcMainInvokeEvent): void {
+    if (!this.deps.isAppWindow(event.sender) || event.senderFrame !== event.sender.mainFrame ||
+        !/^(file:|app:)/.test(event.senderFrame?.url || '')) {
+      throw new Error('Only the Desktop application can manage bookmarks.');
+    }
+  }
 
-  ipcMainProxy.handle('bookmarks:create', async(event, input) => {
-    trusted(event);
+  register(): void {
+    const { bookmarks } = this.deps;
+    this.deps.configureArtifactSync();
 
-    return bookmarkService.create({
-      kind:     input?.kind === 'folder' ? 'folder' : 'bookmark',
-      title:    input?.title,
-      url:      input?.url,
-      parentId: input?.parentId ?? null,
-      tabId:    typeof input?.tabId === 'string' ? input.tabId : undefined,
+    this.ipc.handle('bookmarks:list', async(event) => {
+      this.trusted(event);
+
+      return bookmarks.list();
     });
-  });
 
-  ipcMainProxy.handle('bookmarks:update', async(event, id, input) => {
-    trusted(event);
+    this.ipc.handle('bookmarks:create', async(event, input) => {
+      this.trusted(event);
 
-    return bookmarkService.update(id, { title: input?.title, url: input?.url });
-  });
+      return bookmarks.create({
+        kind:     input?.kind === 'folder' ? 'folder' : 'bookmark',
+        title:    input?.title,
+        url:      input?.url,
+        parentId: input?.parentId ?? null,
+        tabId:    typeof input?.tabId === 'string' ? input.tabId : undefined,
+      });
+    });
 
-  ipcMainProxy.handle('bookmarks:delete', async(event, id) => {
-    trusted(event);
+    this.ipc.handle('bookmarks:update', async(event, id, input) => {
+      this.trusted(event);
 
-    return bookmarkService.remove(id, { recursive: true });
-  });
+      return bookmarks.update(id, { title: input?.title, url: input?.url });
+    });
 
-  ipcMainProxy.handle('bookmarks:move', async(event, id, parentId, index) => {
-    trusted(event);
-    await bookmarkService.move(id, parentId ?? null, Number(index));
-  });
+    this.ipc.handle('bookmarks:delete', async(event, id) => {
+      this.trusted(event);
 
-  // Live, read-only "Docker" section: running containers with open ports.
-  ipcMainProxy.handle('bookmarks:docker-links', async(event) => {
-    trusted(event);
+      return bookmarks.remove(id, { recursive: true });
+    });
 
-    return listDockerLinks();
-  });
+    this.ipc.handle('bookmarks:move', async(event, id, parentId, index) => {
+      this.trusted(event);
+      await bookmarks.move(id, parentId ?? null, Number(index));
+    });
+
+    // Live, read-only "Docker" section: running containers with open ports.
+    this.ipc.handle('bookmarks:docker-links', async(event) => {
+      this.trusted(event);
+
+      return this.deps.listDockerLinks();
+    });
+  }
 }
