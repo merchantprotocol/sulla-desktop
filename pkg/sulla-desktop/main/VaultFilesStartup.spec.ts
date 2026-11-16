@@ -35,4 +35,18 @@ describe('VaultFilesStartup', () => {
 
     expect(startup.snapshot()).toMatchObject({ phase: 'degraded', ready: true, filesUnlocked: true, mountTokenWritten: true });
   });
+
+  it('is ready without a mount token when the guest mount is disabled by design, and requires it again after a relock', () => {
+    const startup = new VaultFilesStartup();
+
+    startup.filesUnlocking();
+    startup.filesUnlocked();
+    expect(startup.isReady()).toBe(false);
+    startup.mountNotRequired();
+    expect(startup.isReady()).toBe(true);
+    startup.vaultLocked();
+    startup.filesUnlocking();
+    startup.filesUnlocked();
+    expect(startup.isReady()).toBe(false);
+  });
 });

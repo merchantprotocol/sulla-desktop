@@ -28,12 +28,15 @@ export class VaultFilesStartup {
   private filesUnlockedValue = false;
   private mountTokenWrittenValue = false;
   private mountedValue = false;
+  /** False when the guest FUSE mount is disabled by design (native rollout off). */
+  private mountRequiredValue = true;
 
   vaultLocked():void {
     this.vaultUnlockedValue = false;
     this.filesUnlockedValue = false;
     this.mountTokenWrittenValue = false;
     this.mountedValue = false;
+    this.mountRequiredValue = true;
     this.reason = undefined;
     this.phaseValue = 'vault-locked';
   }
@@ -62,13 +65,18 @@ export class VaultFilesStartup {
     this.reason = undefined;
   }
 
+  /** Files is usable without the guest mount when the mount is disabled by design. */
+  mountNotRequired():void {
+    this.mountRequiredValue = false;
+  }
+
   degrade(reason:string):void {
     this.phaseValue = 'degraded';
     this.reason = reason;
   }
 
   isReady():boolean {
-    return this.vaultUnlockedValue && this.filesUnlockedValue && this.mountTokenWrittenValue;
+    return this.vaultUnlockedValue && this.filesUnlockedValue && (this.mountTokenWrittenValue || !this.mountRequiredValue);
   }
 
   snapshot():VaultFilesStartupSnapshot {

@@ -329,6 +329,9 @@ class SullaFilesWatcher {
       )).catch(error => {
         console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
       });
+    } else {
+      // Native mounting is off by design here, so Files is ready without a token.
+      this.startup.mountNotRequired();
     }
   }
 
