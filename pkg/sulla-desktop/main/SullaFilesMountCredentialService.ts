@@ -13,6 +13,7 @@ export class SullaFilesMountCredentialService {
     private readonly executor:() => VMExecutor | undefined,
     private readonly credentials:() => (() => Promise<SullaFilesMountCredentials>) | undefined,
     private readonly generation:() => number,
+    private readonly tokenPath:string,
   ) {}
 
   async refresh(generation:number):Promise<void> {
@@ -24,7 +25,7 @@ export class SullaFilesMountCredentialService {
       const credentials = await provider();
       if (generation !== this.generation()) throw new Error('Files mount credential generation changed');
       if (credentials.token.length < 64 || credentials.token.length > 4096) throw new Error('Files mount credentials are invalid');
-      await this.writeGuestSecret('/var/lib/sulla/files-fuse/token', `${ credentials.token }\n`);
+      await this.writeGuestSecret(this.tokenPath, `${ credentials.token }\n`);
       if (generation !== this.generation()) throw new Error('Files mount credential generation changed');
     });
 
