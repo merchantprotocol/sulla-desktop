@@ -13,6 +13,7 @@ import { FilesMasterKeyRejectedError, type FilesKeyring } from './keyring.js';
 import { LegacyFilesImporter, LegacyImportContinuationRequiredError, LegacyImportDataError } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
+import { FilesBootstrapStateRepository } from './Repositories/FilesBootstrapStateRepository.js';
 
 import type pg from 'pg';
 
@@ -40,6 +41,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
     private readonly config:Config,
     private readonly keyring:FilesKeyring,
     private readonly hooks:LifecycleHooks,
+    private readonly keyState = new FilesBootstrapStateRepository(db),
   ) {}
 
   get generation():number { return this.currentGeneration }
@@ -54,16 +56,10 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
   }
 
   async disposition(hasMasterBlob:boolean):Promise<FilesBootstrapDisposition> {
-    const hasState = Boolean((await this.db.query('SELECT 1 FROM files_key_state WHERE id=TRUE')).rowCount);
+    const hasState = await this.keyState.hasKeyState();
     if (hasMasterBlob) return 'existing';
     if (!hasState) {
-      const protectedState = await this.db.query(`SELECT 1 WHERE
-        EXISTS(SELECT 1 FROM files_collection_keys) OR
-        EXISTS(SELECT 1 FROM file_versions WHERE manifest_hash IS NOT NULL) OR
-        EXISTS(SELECT 1 FROM chunks) OR
-        EXISTS(SELECT 1 FROM collections
-          WHERE compatibility_state<>'native' OR encrypted_data_key<>'{}'::jsonb OR dedup_key_ciphertext<>'{}'::jsonb)`);
-      if (protectedState.rowCount) {
+      if (await this.keyState.hasProtectedState()) {
         throw new FilesBootstrapError('FILES_MASTER_STATE_INCOMPLETE', 409, 'Files key state is incomplete; fresh key creation was refused');
       }
       return 'create-new';
@@ -75,16 +71,10 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
   }
 
   private async recoveryComplete():Promise<boolean> {
-    const unsupported = await this.db.query(`SELECT 1 FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
-      WHERE c.published=TRUE AND c.legacy_source=FALSE
-        AND (k.key_origin<>'random' OR c.compatibility_state<>'native') LIMIT 1`);
-    const incomplete = await this.db.query(`SELECT 1 FROM files_collection_keys k JOIN collections c ON c.id=k.collection_id
-      LEFT JOIN files_collection_key_bundles b ON b.collection_id=k.collection_id AND b.principal_id=c.owner_user_id
-        AND b.key_version=k.key_version AND b.key_epoch=k.key_epoch
-      WHERE c.published=TRUE AND c.legacy_source=FALSE AND b.collection_id IS NULL LIMIT 1`);
-    const count = Number((await this.db.query(`SELECT COUNT(*)::int AS count FROM files_collection_keys k
-      JOIN collections c ON c.id=k.collection_id WHERE c.published=TRUE AND c.legacy_source=FALSE`)).rows[0]?.count ?? 0);
-    return !unsupported.rowCount && !incomplete.rowCount && count > 0;
+    const unsupported = await this.keyState.hasUnsupportedRecoveryKey();
+    const incomplete = await this.keyState.hasIncompleteOwnerBundle();
+    const count = await this.keyState.publishedKeyCount();
+    return !unsupported && !incomplete && count > 0;
   }
 
   bootstrap(
@@ -100,7 +90,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
       const reportStage = (next:FilesStartupStage) => { stage = next; diagnostics.stage(stage) };
       diagnostics.stage(stage);
       try {
-        const hasState = Boolean((await this.db.query('SELECT 1 FROM files_key_state WHERE id=TRUE')).rowCount);
+        const hasState = await this.keyState.hasKeyState();
         if (disposition === 'create-new' && hasState) throw new FilesBootstrapError('FILES_BOOTSTRAP_STATE_CHANGED', 409, 'Files key state changed during bootstrap');
         if (disposition === 'recover' && !hasState) throw new FilesBootstrapError('FILES_BOOTSTRAP_STATE_CHANGED', 409, 'Files recovery state changed during bootstrap');
         if (disposition !== 'existing' && await this.disposition(false) !== disposition) {
