@@ -14,30 +14,26 @@ import { LiveTextSessions } from './liveText.js';
 import { auditContext } from './auditContext.js';
 import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, textDocumentHeads, utf8Text, versionCheckedTextSave, type TextDocument } from './automergeText.js';
 import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
-import { assertSystemAreaWritable } from './systemAreas.js';
 
-import { CollectionRoleGate, resolveCollectionAccess } from './acl.js';
 import { FilesPathResolver } from './filesPathResolver.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
-import { restoreTrashedFile, trashFileWithoutReceipt } from './databaseOperations.js';
+import { trashFileWithoutReceipt } from './databaseOperations.js';
 import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
-import { folderOperationState,purgeTrashedFolder,restoreTrashedFolder } from './folderOperationBatches.js';
+import { folderOperationState } from './folderOperationBatches.js';
 import { RangeNotSatisfiableError, sendFileStream, streamFileContent } from './fileStream.js';
 import { ContentReadFailureLog } from './ContentReadFailureLog.js';
 import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
-import { OriginalRevealAttestations,type OriginalRevealTarget } from './originalReveal.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent, thumbnail } from './preview.js';
-import { assertUnprotectedFile, isProtectedPath, isAuditLogPath, protectedPathError } from './protectedFiles.js';
+import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
 import { SharesService } from './shares.js';
 import { CatalogSyncService } from './cloudRemote/catalogSync.js';
 import { DesktopRequestSyncService } from './cloudRemote/desktopRequests.js';
 import { Store } from './store.js';
-import { ChunkMetadataReconciler } from './ChunkMetadataReconciler.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload, streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
@@ -50,7 +46,7 @@ import { PersonalBackupScheduler } from './backup/scheduler.js';
 import { BackupRuntimeRequests } from './backup/runtime.js';
 import { AwsS3BackupClient } from './backup/s3.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
-import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
+import { authorizedVersionId, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import { AutomergeSnapshotRetention } from './automergeSnapshotRetention.js';
 import type { FilesLifecycle } from './lifecycle.js';
 
@@ -63,61 +59,41 @@ import type { CloudSyncService } from './cloudSync/service.js';
 import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import { homeQuery } from './sullaCollectionMigration.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
-import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
-import { ListingPage } from './ListingPage.js';
 import { DatabaseFailureClassifier, RetryableDatabaseError, TransactionRunner } from './FilesTransaction.js';
 import { VersionContentStager, type StagedVersionContent } from './VersionContentStager.js';
 import { FileListingQuery } from './FileListingQuery.js';
+import { HttpError } from './Http/HttpError.js';
+import { FilesRequestInput } from './Http/FilesRequestInput.js';
+import { FilesAccessGate, type RequestWithIdentity, type Right } from './Http/FilesAccessGate.js';
+import { FileListingRepository } from './Repositories/FileListingRepository.js';
+import { FileListingRoutes } from './routes/FileListingRoutes.js';
+import { ShareRoutes } from './routes/ShareRoutes.js';
+import { OriginalRevealRoutes } from './routes/OriginalRevealRoutes.js';
+import { CollectionSyncRoutes } from './routes/CollectionSyncRoutes.js';
+import { CollectionSyncRepository } from './Repositories/CollectionSyncRepository.js';
+import { TrashRoutes } from './routes/TrashRoutes.js';
+import { TrashListingRepository } from './Repositories/TrashListingRepository.js';
+import { FolderGuidanceRoutes } from './routes/FolderGuidanceRoutes.js';
+import { RequestAuditLog } from './Http/RequestAuditLog.js';
+import { AuditLogRepository } from './Repositories/AuditLogRepository.js';
+import { CollectionSettingsRepository } from './Repositories/CollectionSettingsRepository.js';
+import { FolderGuidanceRepository } from './Repositories/FolderGuidanceRepository.js';
+import { LocalMaintenanceRoutes } from './routes/LocalMaintenanceRoutes.js';
+import { LocalRootRoutes } from './routes/LocalRootRoutes.js';
+import { SearchRoutes } from './routes/SearchRoutes.js';
+import { StarRoutes } from './routes/StarRoutes.js';
+import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
+import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
+import { StarRepository } from './Repositories/StarRepository.js';
 import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
-const FOLDER_WHERE_CANDIDATES = 2000;
 const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
 const FILE_ROW_JSON_SQL = `row_to_json((SELECT x FROM (SELECT ${FILE_COLUMNS_SQL}) x))`;
-type RequestWithIdentity = express.Request<Record<string, string>> & { filesIdentity?: FilesIdentity };
-type Right = 'view' | 'edit' | 'manage';
-
-class HttpError extends Error { constructor(public readonly status:number, message:string) { super(message) } }
-
-function cleanPath(value:unknown, allowEmpty = true):string {
-  if (typeof value !== 'string') throw new HttpError(400, 'path must be a string');
-  const path = value.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
-  if (!path && allowEmpty) return '';
-  if ((!allowEmpty && !path) || path.split('/').some(part => !part || part === '.' || part === '..')) throw new HttpError(400, 'invalid Files path');
-  return path;
-}
-
-function folderGuidance(value:unknown, field:'description'|'namingHint', required = false):string | null {
-  if (value === undefined || value === null || value === '') {
-    if (required) throw new HttpError(400, `${ field } is required when an agent creates a folder`);
-    return null;
-  }
-  if (typeof value !== 'string') throw new HttpError(400, `${ field } must be a string`);
-  const text=value.trim(); const limit=field==='description'?2000:500;
-  if (!text || text.length>limit) throw new HttpError(400, `${ field } must be between 1 and ${ limit } characters`);
-  return text;
-}
-
-function suggestedFileName(what:string, kind?:string):string {
-  const stem=what.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60) || 'new-file';
-  const normalized=(kind??'').toLowerCase().replace(/^\./,'');
-  const extensions:Record<string,string>={markdown:'md',document:'md',text:'txt',json:'json',yaml:'yaml',csv:'csv',image:'png',screenshot:'png',video:'mp4',audio:'m4a'};
-  const extension=extensions[normalized] ?? (/^[a-z0-9]{1,8}$/.test(normalized)?normalized:'');
-  return extension && !stem.endsWith(`.${ extension }`) ? `${ stem }.${ extension }` : stem;
-}
-
-function numberedPath(path:string, index:number):string {
-  const slash = path.lastIndexOf('/');
-  const folder = slash >= 0 ? path.slice(0, slash + 1) : '';
-  const name = path.slice(slash + 1);
-  const dot = name.lastIndexOf('.');
-  const stem = dot > 0 ? name.slice(0, dot) : name;
-  const extension = dot > 0 ? name.slice(dot) : '';
-  return `${ folder }${ stem } (${ index })${ extension }`;
-}
+const { cleanPath, numberedPath, bearer, idempotencyUuid, validateKeyContext } = FilesRequestInput;
 
 async function availableStoredPath(client:pg.PoolClient, collectionId:string, requestedPath:string, keepBoth:boolean):Promise<string> {
   const blockedParent = await client.query('SELECT path FROM files WHERE collection_id=$1 AND path=ANY($2::text[]) ORDER BY length(path),path LIMIT 1', [collectionId, storedParentPaths(requestedPath)]);
@@ -132,25 +108,38 @@ async function availableStoredPath(client:pg.PoolClient, collectionId:string, re
   throw new HttpError(409, 'Files could not reserve a distinct path for this upload.');
 }
 
-function bearer(request:express.Request):string | undefined { return request.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1] }
-function idempotencyUuid(scope:string):string {
-  const hex = createHash('sha256').update(scope).digest('hex').slice(0, 32).split('');
-
-  hex[12] = '5';
-  hex[16] = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
-  return `${ hex.slice(0, 8).join('') }-${ hex.slice(8, 12).join('') }-${ hex.slice(12, 16).join('') }-${ hex.slice(16, 20).join('') }-${ hex.slice(20).join('') }`;
+/** Everything the Files HTTP API is composed from (built once by the process entry). */
+export interface FilesApplicationDependencies {
+  db:pg.Pool;
+  config:Config;
+  manager?:LocalFilesManager;
+  search?:FileSearch;
+  onUnlock?:()=>Promise<void>;
+  onLock?:()=>Promise<void>;
+  onRecover?:(master:Buffer)=>Promise<number>;
+  residency?:FileResidencyManager;
+  filesLifecycle?:FilesLifecycle;
+  bootstrapAuthority?:FilesBootstrapAuthority;
+  indexer?:IndexingQueue;
+  chunkStore?:Store;
+  cloudSync?:CloudSyncService;
 }
-function validateKeyContext(value:unknown, collectionId:string, principalId:string):FilesKeyBundleContext {
-  if (!value || typeof value !== 'object') throw new HttpError(400, 'valid version key context is required');
-  const context = value as Record<string, unknown>;
-  if (context.collectionId !== collectionId || context.principalId !== principalId ||
-      !Number.isSafeInteger(context.keyVersion) || Number(context.keyVersion) < 1 ||
-      !Number.isSafeInteger(context.epoch) || Number(context.epoch) < 1) {
-    throw new HttpError(400, 'version key context does not match the authenticated collection owner');
+
+/**
+ * Composition root of the Files HTTP API. Route groups live as classes under routes/ and take
+ * their repositories and services by constructor; composeFilesApp still holds the groups that
+ * have not moved there yet, in their original mount order.
+ */
+export class FilesApplication {
+  constructor(private readonly dependencies:FilesApplicationDependencies) {}
+
+  build():express.Express {
+    const d = this.dependencies;
+    return composeFilesApp(d.db, d.config, d.manager, d.search, d.onUnlock, d.onLock, d.onRecover, d.residency, d.filesLifecycle, d.bootstrapAuthority, d.indexer, d.chunkStore, d.cloudSync);
   }
-  return context as unknown as FilesKeyBundleContext;
 }
 
+/** Positional entry kept for the process entry and specs; delegates to FilesApplication. */
 export function createApp(
   db:pg.Pool,
   config:Config,
@@ -166,6 +155,24 @@ export function createApp(
   chunkStore?:Store,
   cloudSync?:CloudSyncService,
 ) {
+  return new FilesApplication({ db, config, manager, search, onUnlock, onLock, onRecover, residency, filesLifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync }).build();
+}
+
+function composeFilesApp(
+  db:pg.Pool,
+  config:Config,
+  manager?:LocalFilesManager,
+  search?:FileSearch,
+  onUnlock?:()=>Promise<void>,
+  onLock?:()=>Promise<void>,
+  onRecover?:(master:Buffer)=>Promise<number>,
+  residency?:FileResidencyManager,
+  filesLifecycle?:FilesLifecycle,
+  bootstrapAuthority?:FilesBootstrapAuthority,
+  indexer?:IndexingQueue,
+  chunkStore?:Store,
+  cloudSync?:CloudSyncService,
+):express.Express {
   const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }); const transactions = new TransactionRunner(db); const contentReadFailures = new ContentReadFailureLog(); const chunkRegistry = new ManifestChunkRegistry(); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
@@ -261,107 +268,16 @@ export function createApp(
     response.status(202).json({ok:true});
     void auditWriter.drain().catch(error=>console.error('[SullaFiles] audit delivery failed; retry pending',error));
   } catch(error) {next(error)} });
-  const identity = (request:RequestWithIdentity):FilesIdentity => { if (!request.filesIdentity) throw new HttpError(401, 'identity required'); return request.filesIdentity };
+  const accessGate = new FilesAccessGate(db);
+  const { identity, collectionRow, collectionAccess, requireCollection, requirePath, fileRow, requireFile, visibleVersion } = accessGate;
   const actorScope = (actor:FilesIdentity):string => actor.jobId
     ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
     : `device:${ actor.deviceId || config.deviceId }`;
   const mountIdentity = (request:RequestWithIdentity, _operation:string, _resource:Record<string,unknown> = {}) => identity(request);
-  async function collectionRow(collectionId:string, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
-    const result = await queryable.query('SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE', [collectionId]);
-    if (!result.rows[0]) throw new HttpError(404, 'collection not found');
-    return result.rows[0];
-  }
-  async function collectionAccess(
-    request:RequestWithIdentity,
-    collectionId:string,
-    queryable:pg.Pool | pg.PoolClient = db,
-  ) {
-    return resolveCollectionAccess(queryable, identity(request), collectionId);
-  }
-  const roleGate = new CollectionRoleGate();
-  async function requireCollection(
-    request:RequestWithIdentity,
-    collectionId:string,
-    right:Right,
-    _allowShared = false,
-    _allowExactFiles = false,
-    queryable:pg.Pool | pg.PoolClient = db,
-  ) {
-    const access = await collectionAccess(request, collectionId, queryable);
-    if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
-    if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
-    return access;
-  }
-  async function requirePath(request:RequestWithIdentity, collectionId:string, path:string, right:Right, queryable:pg.Pool | pg.PoolClient = db) {
-    identity(request);
-    const access = await collectionAccess(request, collectionId, queryable);
-    // Every edit/move/delete/upload path funnels through here (requireFile too), so the level is checked here.
-    if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
-    if (isProtectedPath(path) && !(access.collection.system_area === 'logs' && (isAuditLogPath(path) || path === 'audit/vault'))) throw protectedPathError();
-    if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
-    return access;
-  }
-  async function fileRow(fileId:string, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
-    const result = await queryable.query('SELECT * FROM files WHERE id=$1', [fileId]);
-    if (!result.rows[0]) throw new HttpError(404, 'file not found');
-    await assertUnprotectedFile(queryable, result.rows[0]);
-    return result.rows[0];
-  }
-  async function requireFile(request:RequestWithIdentity, fileId:string, right:Right, queryable:pg.Pool | pg.PoolClient = db):Promise<any> {
-    const file = await fileRow(fileId, queryable);
-    await requirePath(request, file.collection_id, file.path, right, queryable);
-    return file;
-  }
-  async function visibleVersion(request:RequestWithIdentity, file:any, requested?:string):Promise<string> {
-    return authorizedVersionId(db, file, true, requested);
-  }
-  const originalReveals = new OriginalRevealAttestations();
-  // Both the native-only local secret and a fresh principal capability are
-  // required. The local secret alone must never bypass Files authorization.
-  const requireOriginalMain = (request:RequestWithIdentity) => {
-    if (config.mode !== 'desktop' || !manager) throw new HttpError(404,'Original reveal is unavailable');
-    const actor = identity(request);
-    if (!config.localToken || request.header('x-sulla-files-token') !== config.localToken ||
-      actor.kind !== 'capability' || !actor.deviceId || actor.agentId || actor.jobId || actor.threadId ||
-      actor.userId !== config.userId) throw new HttpError(403,'Native main identity required');
-    return actor;
-  };
-  const reauthorizeOriginal = async(request:RequestWithIdentity,target:OriginalRevealTarget):Promise<void> => {
-    const fresh=await requireFile(request,target.fileId,'view');
-    await visibleVersion(request,fresh,target.versionId);
-    if (fresh.deleted_at || fresh.collection_id!==target.collectionId || fresh.path!==target.relativePath ||
-      fresh.current_version_id!==target.versionId || String(fresh.operation_revision)!==target.revision) throw Object.assign(new HttpError(409,'Original changed'),{code:'original-changed'});
-  };
-  app.post('/v1/original-reveal/attest',async(request:RequestWithIdentity,response,next) => { try {
-    const actor = requireOriginalMain(request);
-    const file = await requireFile(request,String(request.body.fileId ?? ''),'view');
-    const versionId = await visibleVersion(request,file,request.body.versionId);
-    response.setHeader('Cache-Control','no-store');
-    if (file.deleted_at || versionId !== file.current_version_id) return response.json({ status:'unavailable',code:'no-current-original' });
-    const target = await manager!.originalRevealTarget(file);
-    if (!target) return response.json({ status:'unavailable',code:'no-current-original' });
-    await reauthorizeOriginal(request,target);
-    response.json({ status:'attested',...originalReveals.issue(actor,target),target });
-  } catch (error) { next(error) } });
-  app.post('/v1/original-reveal/redeem',async(request:RequestWithIdentity,response,next) => { try {
-    const actor = requireOriginalMain(request);
-    const expected = originalReveals.consume(actor,request.body.token);
-    const file = await requireFile(request,expected.fileId,'view');
-    await visibleVersion(request,file,expected.versionId);
-    if (file.deleted_at) throw Object.assign(new HttpError(409,'Original changed'),{ code:'original-changed' });
-    const current = await manager!.originalRevealTarget(file);
-    if (!current || JSON.stringify(current) !== JSON.stringify(expected)) throw Object.assign(new HttpError(409,'Original changed'),{ code:'original-changed' });
-    await reauthorizeOriginal(request,current);
-    response.setHeader('Cache-Control','no-store');
-    response.json({ status:'redeemed',target:current });
-  } catch (error) { next(error) } });
+  const originalReveal = new OriginalRevealRoutes(config, accessGate, manager);
+  originalReveal.register(app);
   if (residency) registerResidencyRoutes(app, residency, async(request, fileId) => { await requireFile(request as RequestWithIdentity, fileId, 'edit') });
-  async function audit(request:RequestWithIdentity, action:string, file?:any, details:Record<string, unknown> = {}):Promise<void> {
-    const actor=identity(request);
-    await db.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,org_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [actor.agentId?'agent':actor.kind==='capability'?'agent-or-device':'user',actor.agentId??actor.userId,actor.jobId??actor.deviceId??null,file?.id??null,file?.current_version_id??null,action,details.orgId??null,details])
-      .catch(error=>console.error('[SullaFiles] PostgreSQL audit dual-write failed; file-change event remains in durable spool',error));
-  }
+  const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db)); const audit = requestAudit.record;
   function sendContent(request:express.Request, response:express.Response, content:{ buffer: Buffer; mime: string }, cache = 'private, max-age=300') {
     response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', cache); response.type(content.mime); const range = request.header('range'); if (!range) return response.send(content.buffer);
     const match = /^bytes=(\d*)-(\d*)$/.exec(range); if (!match) return response.status(416).end(); const start = match[1] ? Number(match[1]) : 0; const end = match[2] ? Number(match[2]) : content.buffer.length - 1;
@@ -1229,94 +1145,11 @@ export function createApp(
     }
     throw new HttpError(404,'Files path not found');
   }catch(error){next(error)}});
-  app.get('/v1/local/roots', async(_request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.listRoots()) } catch (error) { next(error) } });
-  app.post('/v1/local/roots', async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.status(201).json(await manager.attachBrokeredRoot(request.body))}catch(error){next(error)}});
-  app.post('/v1/local/roots/:id/scan-state',async(request,response,next)=>{try{if(!manager)return response.status(409).json({error:'watched folder disabled'});response.json(await manager.brokeredScanState(String(request.params.id),request.body))}catch(error){next(error)}});
-  app.patch('/v1/local/roots/:id', async(request, response, next) => { try {
-    if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
-    const exclusions = request.body.exclusions;
-    if (exclusions !== undefined && (!Array.isArray(exclusions) || exclusions.length > 200 || exclusions.some((item:unknown) => typeof item !== 'string' || item.length > 500 || item.includes('\0')))) {
-      return response.status(400).json({ error: 'exclusions must be an array of safe patterns' });
-    }
-    if (request.body.syncMode !== undefined && !['local', 'server'].includes(request.body.syncMode)) return response.status(400).json({ error: 'syncMode must be local or server' });
-    response.json(await manager.configureRoot(String(request.params.id), {
-      paused: request.body.paused === undefined ? undefined : Boolean(request.body.paused),
-      syncMode: request.body.syncMode,
-      exclusions,
-    }));
-  } catch (error) { next(error) } });
-  app.delete('/v1/local/roots/:id', async(request, response, next) => { try {
-    if (!manager) return response.status(409).json({ error: 'watched folder disabled' });
-    await manager.detachRoot(String(request.params.id));
-    response.status(204).end();
-  } catch (error) { next(error) } });
-  app.get('/v1/local/recent', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.recent(Number(request.query.limit ?? 4), typeof request.query.path === 'string' ? request.query.path : undefined)) } catch (error) { next(error) } });
-  app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
-  app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
-  app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
-  app.post('/v1/local/maintenance', async(_request, response, next) => { try {
-    const now = new Date();
-    const {expired,disposal}=await transactions.run('maintenance-expiry',async client=>{
-    const disposal = await client.query(`UPDATE files SET disposal_status='pending',disposal_review_at=NOW(),lifecycle_generation=lifecycle_generation+1
-      WHERE deleted_at IS NOT NULL AND disposal_status='none' AND retention_mode<>'none' AND NOT files_retention_active(files) RETURNING id`);
-    const expired = (await client.query('SELECT * FROM files WHERE expires_at<$1 AND deleted_at IS NULL FOR UPDATE', [now])).rows;
-    for (const file of expired) {
-      const deleted = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id)
-        VALUES($1,$2,$3,NULL,0,TRUE,'agent-run','scratch-maintenance','Scratch TTL expired','scratch-maintenance') RETURNING id`, [file.id, file.collection_id, file.current_version_id])).rows[0];
-      await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3,updated_at=$3 WHERE id=$1', [file.id, deleted.id, now]);
-      await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [file.collection_id, file.id, deleted.id]);
-    }
-    return {expired,disposal}; });
-    await drainPendingChunkGc(db, (collectionId, chunkId) => store.delete(collectionId, chunkId));
-    const chunkMetadataRepair = config.keyring
-      ? await new ChunkMetadataReconciler(db, store, config.keyring).run({ apply:true })
-      : undefined;
-    const receiptGc=manager?await manager.expireTrashReceipts(now):{invalidated:0,disposed:0,preserved:0};
-    response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc,chunkMetadataRepair });
-  } catch (error) { next(error) } });
+  new LocalRootRoutes(manager).register(app);
+  new LocalMaintenanceRoutes(db, config, store, transactions, new ScratchMaintenanceRepository(), manager).register(app);
 
-  app.post('/v1/local/chunk-metadata/reconcile', async(request, response, next) => { try {
-    if (!config.keyring) return response.status(503).json({ error:'Files keyring is unavailable' });
-    const report = await new ChunkMetadataReconciler(db, store, config.keyring).run({ apply:request.body?.apply === true });
-    response.json(report);
-  } catch (error) { next(error) } });
-
-  app.post('/v1/search', async(request:RequestWithIdentity, response, next) => {
-    const abort = new AbortController();
-    const disconnected = () => { if (!response.writableEnded) abort.abort() };
-    request.once('aborted', disconnected); response.once('close', disconnected);
-    try {
-      if (!search) return response.status(503).json({ error: 'search unavailable' });
-      const scopes = (await db.query("SELECT id FROM collections WHERE published=TRUE AND legacy_source=FALSE")).rows.map(row => ({ collectionId: row.id }));
-      const result = await search.search(request.body, scopes, abort.signal);
-      if (!abort.signal.aborted) response.json(result);
-    } catch (error) { if (!abort.signal.aborted) next(error) }
-    finally { request.off('aborted', disconnected); response.off('close', disconnected) }
-  });
-  const starPrincipal = (request:RequestWithIdentity) => { const actor = identity(request); return actor.agentId || actor.jobId ? { type: 'agent', id: actor.agentId || actor.jobId! } : { type: 'user', id: actor.userId } };
-  app.get('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); await requireCollection(request, collectionId, 'view', true, true); const principal = starPrincipal(request);
-    const rows = await db.query(`SELECT s.collection_id,s.file_id,s.folder_path FROM file_stars s LEFT JOIN files f ON f.id=s.file_id
-      WHERE s.principal_type=$1 AND s.principal_id=$2 AND s.collection_id=$3 AND (s.file_id IS NULL OR (f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id))) ORDER BY s.created_at`, [principal.type, principal.id, collectionId]);
-    const visible = []; for (const row of rows.rows) { try { if (row.file_id) await requireFile(request, row.file_id, 'view'); else await requirePath(request, collectionId, row.folder_path, 'view'); visible.push({ collectionId, fileId: row.file_id ?? undefined, folderPath: row.folder_path ?? undefined }) } catch { /* inaccessible stars are hidden */ } }
-    response.json(visible);
-  } catch (error) { next(error) } });
-  app.put('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? cleanPath(request.body.folderPath, false) : undefined;
-    if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
-    const file = fileId ? await requireFile(request, fileId, 'view') : undefined; if (file && file.collection_id !== collectionId) throw new HttpError(400, 'file belongs to another collection');
-    if (!file) await requirePath(request, collectionId, folderPath!, 'view'); const principal = starPrincipal(request);
-    if (fileId) await db.query(`INSERT INTO file_stars(principal_type,principal_id,collection_id,file_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [principal.type, principal.id, collectionId, fileId]);
-    else await db.query(`INSERT INTO file_stars(principal_type,principal_id,collection_id,folder_path) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [principal.type, principal.id, collectionId, folderPath]);
-    response.status(204).end();
-  } catch (error) { next(error) } });
-  app.delete('/v1/stars', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? cleanPath(request.body.folderPath, false) : undefined;
-    if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
-    await requireCollection(request, collectionId, 'view', true, true); const principal = starPrincipal(request);
-    await db.query(`DELETE FROM file_stars WHERE principal_type=$1 AND principal_id=$2 AND collection_id=$3 AND (($4::uuid IS NOT NULL AND file_id=$4) OR ($5::text IS NOT NULL AND folder_path=$5))`, [principal.type, principal.id, collectionId, fileId ?? null, folderPath ?? null]);
-    response.status(204).end();
-  } catch (error) { next(error) } });
+  new SearchRoutes(new SearchScopeRepository(db), search).register(app);
+  new StarRoutes(accessGate, new StarRepository(db)).register(app);
   const operationAccess = (request:RequestWithIdentity) => ({
     custody: manager?.operationCustody(),
     prepare: async(collectionId:string) => { await requireCollection(request, collectionId, 'edit') },
@@ -1369,61 +1202,10 @@ export function createApp(
     else throw new HttpError(409, 'The selection mixes watched and stored-only Files. Move or copy them in separate operations.');
     response.json({ ok: true, count: expanded.length + folderMoves.length, undoSupported: false, undoUnsupportedReason: 'Legacy path operations do not issue database receipts; native undo requires custody-coordinated publication.' });
   } catch (error) { next(error) } });
-  app.get('/v1/local/shares/:id/content', async(request, response, next) => {
-    const controller = new AbortController(); const abort = () => controller.abort();
-    request.once('aborted', abort); response.once('close', abort);
-    try {
-      const content = await shares.streamContent(request.params.id, String(request.query.path ?? ''), request.header('range'), controller.signal);
-      response.status(content.status).type(content.mime).setHeader('X-Sulla-Filename', encodeURIComponent(content.name));
-      response.setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Length', content.contentLength);
-      if (content.contentRange) response.setHeader('Content-Range', content.contentRange);
-      for await (const part of content.body) {
-        if (!response.write(part)) await new Promise<void>((resolve, reject) => {
-          const cleanup = () => { response.off('drain', drained); response.off('close', closed) };
-          const drained = () => { cleanup(); resolve() };
-          const closed = () => { cleanup(); reject(Object.assign(new Error('Share stream cancelled'), { name: 'AbortError' })) };
-          response.once('drain', drained); response.once('close', closed);
-        });
-      }
-      response.end();
-    } catch (error) {
-      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'share-content', shareId: request.params.id });
-      if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.setHeader('Content-Length', '0'); response.end(); return }
-      if (!controller.signal.aborted && !response.headersSent) next(error); else if (!controller.signal.aborted) response.destroy(error as Error);
-    } finally { request.off('aborted', abort); response.off('close', abort) }
-  });
-  // Narrow contract for the future public viewer/relay. It validates the link
-  // policy and returns metadata only; content stays on the authenticated local
-  // relay route above until the visitor viewer lands.
-  app.post('/v1/local/shares/:id/authorize', async(request, response, next) => { try { response.json(await shares.authorize(request.params.id, { password: typeof request.body.password === 'string' ? request.body.password : undefined, wantsDownload: request.body.download === true })) } catch (error) { next(error) } });
-  app.post('/v1/links', async(request:RequestWithIdentity, response, next) => {
-    try {
-      if (request.body.fileId) await requireFile(request, String(request.body.fileId), 'view');
-      else await requirePath(request, String(request.body.collectionId ?? ''), cleanPath(request.body.folderPath, false), 'view');
-      const actor = identity(request);
-      response.status(201).json(await shares.create({ user: actor.userId, device: actor.deviceId || '' }, request.body));
-    } catch (error) { next(error) }
-  });
-  app.get('/v1/links', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.list({ user: actor.userId, device: actor.deviceId || '' })) } catch (error) { next(error) } });
-  app.get('/v1/links/activity', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.activity({ user: actor.userId, device: actor.deviceId || '' })) } catch (error) { next(error) } });
-  app.get('/v1/links/:id/activity', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.activity({ user: actor.userId, device: actor.deviceId || '' }, request.params.id)) } catch (error) { next(error) } });
-  app.delete('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.revoke({ user: actor.userId, device: actor.deviceId || '' }, request.params.id)) } catch (error) { next(error) } });
-  app.patch('/v1/links/:id', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.update({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, request.body)) } catch (error) { next(error) } });
-  app.post('/v1/links/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const actor = identity(request); response.json(await shares.restore({ user: actor.userId, device: actor.deviceId || '' }, request.params.id, typeof request.body.password === 'string' ? request.body.password : undefined)) } catch (error) { next(error) } });
+  new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 
-  app.get('/v1/collections', async(request:RequestWithIdentity, response, next) => { try {
-    const rows = await db.query("SELECT * FROM collections WHERE published=TRUE AND legacy_source=FALSE AND system_area IS DISTINCT FROM 'sulla' ORDER BY explorer_path,name");
-    const visible = [];
-    for (const collection of rows.rows) {
-      try {
-        const access = await collectionAccess(request, collection.id);
-        visible.push({ ...collection, systemArea: collection.system_area ?? null, access_role: access.role, shared_folders: access.paths, shared_files: access.files });
-      } catch (error) {
-        if ((error as HttpError).status !== 403) throw error;
-      }
-    }
-    response.json(visible);
-  } catch (error) { next(error) } });
+  const collectionSync = new CollectionSyncRoutes(db, accessGate, new CollectionSyncRepository(db, FILE_ROW_JSON_SQL));
+  collectionSync.registerListing(app);
   app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
     try {
       if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) throw new HttpError(400, 'valid JSON body required');
@@ -1552,65 +1334,7 @@ export function createApp(
     await db.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,$3,$4) ON CONFLICT DO NOTHING`, [file.id, target.id, request.body.kind, identity(request).jobId ?? identity(request).userId]);
     response.status(204).end();
   } catch (error) { next(error) } });
-  app.post('/v1/collections', async(request:RequestWithIdentity, response, next) => {
-    try {
-      const actor = identity(request); const collection = request.body.collection;
-      if (collection.kind !== 'knowledge') throw new HttpError(400, 'only knowledge syncs');
-      const created = await db.query(`INSERT INTO collections(id,org_id,owner_user_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy) VALUES($1,$2,$3,$4,'knowledge','synced','org-readable',$5,$6,$7) ON CONFLICT(id) DO NOTHING RETURNING id`, [collection.id, collection.org_id, actor.userId, collection.name, collection.encrypted_data_key, collection.dedup_key_ciphertext, collection.retention_policy ?? {}]);
-      response.json({ ok: true });
-    } catch (error) { next(error) }
-  });
-  app.get('/v1/collections/:id/journal', async(request:RequestWithIdentity, response, next) => { try {
-    const access = await requireCollection(request, request.params.id, 'view', true, true); const after = Number(request.query.after ?? 0);
-    // UI change feed: never serialize manifests, key context, or file contents.
-    if (request.query.changesOnly === 'true') {
-      if (request.query.head === 'true') {
-        const head = await db.query(`SELECT GREATEST(
-          COALESCE((SELECT MAX(seq) FROM journal WHERE collection_id=$1),0),
-          COALESCE((SELECT MAX(seq) FROM file_purge_tombstones WHERE collection_id=$1),0)
-        )::text AS seq`, [request.params.id]);
-        response.json({ seq: head.rows[0].seq, paths: [], more: false });
-        return;
-      }
-      const params = [request.params.id, Number.isSafeInteger(after) ? after : 0];
-      const changes = await db.query(`SELECT seq,path FROM (
-        SELECT j.seq,f.path FROM journal j JOIN files f ON f.id=j.file_id
-          WHERE j.collection_id=$1 AND j.seq>$2 AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-        UNION ALL SELECT seq,path FROM file_purge_tombstones WHERE collection_id=$1 AND seq>$2
-      ) changes ORDER BY seq LIMIT 1000`, params);
-      const entries = changes.rows.filter(row => !isProtectedPath(row.path));
-      // Advance past protected rows too, without revealing their paths.
-      response.json({ seq: String(changes.rows.at(-1)?.seq ?? params[1]), paths: entries.map(row => row.path), more: changes.rows.length === 1000 });
-      return;
-    }
-    const params:any[] = [request.params.id, Number.isSafeInteger(after) ? after : 0]; let filter = '';
-    const query = await db.query(`SELECT j.*,${FILE_ROW_JSON_SQL} file,row_to_json(v.*) version,row_to_json(m.*) manifest,json_build_object('system_area',c.system_area) collection FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id JOIN collections c ON c.id=f.collection_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND j.collection_id=$1 AND j.seq>$2${ filter } ORDER BY j.seq LIMIT 1000`, params);
-    const actor = identity(request); const entries:any[] = [];
-    for (const row of query.rows.filter(row => !isProtectedPath(row.file.path))) {
-      const draftVisible = true; const canEdit = true;
-      const visibleFile = row.file;
-      entries.push({ ...row, file: lifecycleFields(visibleFile), syncAuthority: { canEdit, canViewDraft: draftVisible, canMaterialize: row.version.deleted || row.version.publication_status === 'published' || draftVisible } });
-    }
-    const tombstones = await db.query('SELECT seq,collection_id,file_id,path,lifecycle_generation,purged_at,audience FROM file_purge_tombstones WHERE collection_id=$1 AND seq>$2 ORDER BY seq LIMIT 1000', params.slice(0, 2));
-    for (const tombstone of tombstones.rows) {
-      if (isProtectedPath(tombstone.path)) continue;
-      entries.push({ seq:tombstone.seq,collection_id:tombstone.collection_id,file_id:tombstone.file_id,op:'purge',at:tombstone.purged_at,
-        file:{id:tombstone.file_id,collection_id:tombstone.collection_id,path:tombstone.path,lifecycle_generation:tombstone.lifecycle_generation},
-        syncAuthority:{canEdit:true,canViewDraft:true,canMaterialize:true} });
-    }
-    response.json(entries.sort((left, right) => Number(left.seq) - Number(right.seq)).slice(0, 1000));
-  } catch (error) { next(error) } });
-  app.get('/v1/versions/:id', async(request:RequestWithIdentity, response, next) => { try { const query = await db.query(`SELECT row_to_json(v.*) version,row_to_json(m.*) manifest,json_build_object('system_area',c.system_area) collection,${FILE_ROW_JSON_SQL} file,
-      CASE WHEN k.version_id IS NULL THEN NULL ELSE json_build_object('collectionId',k.collection_id,'principalId',k.principal_id,'keyVersion',k.key_version,'epoch',k.key_epoch) END AS "keyContext"
-      FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id LEFT JOIN manifests m ON m.hash=v.manifest_hash LEFT JOIN file_version_key_contexts k ON k.version_id=v.id WHERE v.id=$1`, [request.params.id]); if (!query.rows[0]) return response.sendStatus(404); await assertUnprotectedFile(db, query.rows[0].file); const file = await requireFile(request, query.rows[0].file.id, 'view'); await visibleVersion(request, file, request.params.id); response.json(query.rows[0]) } catch (error) { next(error) } });
-  app.get('/v1/files/:id/recording-metadata', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await requireFile(request, request.params.id, 'view'); const versionId = await visibleVersion(request, file);
-    const query = await db.query(`SELECT f.collection_id,f.path,m.version_id,m.language,m.transcript,m.chapters,m.duration_seconds,m.generator,m.generated_at
-      FROM recording_metadata m JOIN files f ON f.id=m.file_id WHERE m.file_id=$1 AND m.version_id=$2`, [request.params.id, versionId]);
-    if (!query.rows[0]) return response.sendStatus(404);
-    await assertUnprotectedFile(db, { id: request.params.id, path: query.rows[0].path });
-    const { collection_id: _collectionId, path: _path, ...metadata } = query.rows[0]; response.json(metadata);
-  } catch (error) { next(error) } });
+  collectionSync.register(app);
   app.use('/v1/chunks/:collection/:id', async(request, _response, next) => {
     try {
       const protectedChunk = await db.query('SELECT 1 FROM files_protected_chunks WHERE collection_id=$1 AND chunk_id=$2', [request.params.collection, request.params.id]);
@@ -1779,83 +1503,7 @@ export function createApp(
     response.status(outcome.status).json(outcome.body);
   } catch (error) { next(error) } });
 
-  app.get('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? '');
-    if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    await requireCollection(request, collectionId, 'view', true, true);
-    const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
-    let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
-    const rows = await db.query("SELECT id,path,operation_revision::text AS revision,description,naming_hint,(description LIKE 'Created by % — needs description') AS needs_description FROM file_folders WHERE collection_id=$1 AND deleted_at IS NULL AND path>$2 ORDER BY path LIMIT $3", [collectionId,pageRequest.after,paged?pageRequest.limit+1:ListingPage.legacyMaxRows+1]);
-    if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'folder listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
-    const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
-    const visible:(string|{folderId:string;path:string;revision:string;description:string|null;namingHint:string|null;needsDescription:boolean})[] = [];
-    for (const row of page) {
-      try { await requirePath(request, collectionId, row.path, 'view'); visible.push(request.query.details==='true'?{folderId:row.id,path:row.path,revision:row.revision,description:row.description,namingHint:row.naming_hint,needsDescription:row.needs_description}:row.path) }
-      catch (error:any) { if (error.status !== 403) throw error }
-    }
-    response.json(visible);
-  } catch (error) { next(error) } });
-  app.get('/v1/folders/map', async(request:RequestWithIdentity,response,next)=>{ try {
-    const limit=Math.min(40,Math.max(1,Number(request.query.limit??40)||40));
-    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL ORDER BY explorer_path LIMIT $1`,[limit]);
-    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' ORDER BY c.explorer_path,f.path LIMIT $1`,[limit]);
-    response.json([...roots.rows,...folders.rows].slice(0,limit).map(row=>({collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description')})));
-  } catch(error){next(error)} });
-  app.get('/v1/folders/where', async(request:RequestWithIdentity,response,next)=>{ try {
-    const what=String(request.query.what??'').trim(); if(!what) throw new HttpError(400,'what is required');
-    const kind=String(request.query.kind??''); const project=String(request.query.project??'');
-    const tokens=[what,kind,project].join(' ').toLowerCase().split(/[^a-z0-9]+/).filter(token=>token.length>1);
-    const roots=await db.query(`SELECT id AS collection_id,'' AS path,name,description,naming_hint FROM collections WHERE published=TRUE AND legacy_source=FALSE AND description IS NOT NULL LIMIT ${FOLDER_WHERE_CANDIDATES}`);
-    // Only folders matching at least one token are ranked, capped; ranking needs candidates, not every folder.
-    const patterns=tokens.map(token=>`%${token.replace(/[\\%_]/g,'\\$&')}%`);
-    const folders=await db.query(`SELECT f.collection_id,f.path,c.name,f.description,f.naming_hint FROM file_folders f JOIN collections c ON c.id=f.collection_id WHERE f.deleted_at IS NULL AND f.description IS NOT NULL AND lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' AND (cardinality($1::text[])=0 OR lower(c.name||' '||f.path||' '||f.description||' '||COALESCE(f.naming_hint,'')) LIKE ANY($1::text[])) ORDER BY f.path LIMIT ${FOLDER_WHERE_CANDIDATES}`,[patterns]);
-    const ranked=[...roots.rows,...folders.rows].map(row=>{const haystack=`${row.name} ${row.path} ${row.description} ${row.naming_hint??''}`.toLowerCase();return{collectionId:row.collection_id,path:row.path,collectionName:row.name,description:row.description,namingHint:row.naming_hint,needsDescription:String(row.description).endsWith('— needs description'),score:tokens.reduce((score,token)=>score+(haystack.includes(token)?1:0),0)}}).sort((a,b)=>b.score-a.score||a.path.localeCompare(b.path)).slice(0,10);
-    const suggested=ranked[0]??null; const filename=suggestedFileName(what,kind);
-    response.json({matches:ranked,suggestedFolder:suggested,suggestedFilename:filename,suggestedPath:suggested?[suggested.path,filename].filter(Boolean).join('/'):filename});
-  } catch(error){next(error)} });
-  app.patch('/v1/folders/:id/description', async(request:RequestWithIdentity,response,next)=>{ try {
-    const current=(await db.query('SELECT * FROM file_folders WHERE id=$1 AND deleted_at IS NULL',[request.params.id])).rows[0]; if(!current) throw new HttpError(404,'folder not found');
-    await requirePath(request,current.collection_id,current.path,'edit'); const description=folderGuidance(request.body.description,'description'); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
-    const updated=(await db.query('UPDATE file_folders SET description=$2,naming_hint=$3,updated_at=NOW() WHERE id=$1 RETURNING id AS "folderId",collection_id AS "collectionId",path,operation_revision::text AS revision,description,naming_hint AS "namingHint"',[current.id,description,namingHint])).rows[0];
-    await audit(request,'change-folder-description',undefined,{collectionId:current.collection_id,folderPath:current.path,description,namingHint}); response.json({...updated,needsDescription:false});
-  } catch(error){next(error)} });
-  app.patch('/v1/collections/:id/description', async(request:RequestWithIdentity,response,next)=>{ try {
-    await requireCollection(request,request.params.id,'manage'); const description=folderGuidance(request.body.description,'description'); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
-    const updated=(await db.query('UPDATE collections SET description=$2,naming_hint=$3,updated_at=NOW() WHERE id=$1 RETURNING id,name,description,naming_hint AS "namingHint"',[request.params.id,description,namingHint])).rows[0];
-    await audit(request,'change-collection-description',undefined,{collectionId:request.params.id,description,namingHint}); response.json(updated);
-  } catch(error){next(error)} });
-  app.patch('/v1/collections/:id/cloud-sync', async(request:RequestWithIdentity,response,next)=>{ try {
-    await requireCollection(request,request.params.id,'manage');
-    const enabled=request.body.enabled===true;
-    const updated=(await db.query('UPDATE collections SET cloud_catalog_sync=$2,updated_at=NOW() WHERE id=$1 RETURNING id,name,cloud_catalog_sync AS "cloudCatalogSync"',[request.params.id,enabled])).rows[0];
-    await audit(request,'change-collection-cloud-sync',undefined,{collectionId:request.params.id,enabled});
-    app.locals.catalogSync?.syncNow().catch(()=>undefined);
-    response.json(updated);
-  } catch(error){next(error)} });
-  app.patch('/v1/collections/:id/keep-on-computer', async(request:RequestWithIdentity,response,next)=>{ try {
-    await requireCollection(request,request.params.id,'manage');
-    if(typeof request.body?.enabled!=='boolean') throw new HttpError(400,'enabled must be a boolean');
-    const enabled=request.body.enabled;
-    const updated=(await db.query('UPDATE collections SET keep_on_computer=$2,updated_at=NOW() WHERE id=$1 RETURNING id,keep_on_computer AS "keepOnComputer"',[request.params.id,enabled])).rows[0];
-    await audit(request,'change-collection-keep-on-computer',undefined,{collectionId:request.params.id,enabled});
-    response.json(updated);
-  } catch(error){next(error)} });
-  app.post('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.body.collectionId ?? '');
-    const folderPath = cleanPath(request.body.path, false);
-    await requirePath(request, collectionId, folderPath, 'edit');
-    const actor = identity(request); const agentCreated=Boolean(actor.agentId||actor.jobId);
-    const description=folderGuidance(request.body.description,'description',agentCreated); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
-    await transactions.run('create-folder',async client=>{
-    await requirePath(request,collectionId,folderPath,'edit',client);
-    await lockStoredNamespace(client, collectionId);
-    await ensureStoredFolder(client, collectionId, folderPath, actor);
-    if (description) await client.query('UPDATE file_folders SET description=$3,naming_hint=$4,updated_at=NOW() WHERE collection_id=$1 AND path=$2',[collectionId,folderPath,description,namingHint]);
-    if (agentCreated) { const fallback=`Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description`; await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,storedParentPaths(folderPath),fallback]); }
-    });
-    await audit(request,'create-folder',undefined,{collectionId,folderPath,description,namingHint});
-    response.status(201).json({ collectionId, path: folderPath, description, namingHint, needsDescription:false });
-  } catch (error) { next(error) } });
+  new FolderGuidanceRoutes(accessGate, new FolderGuidanceRepository(db), new CollectionSettingsRepository(db), transactions, requestAudit).register(app);
   app.post('/v1/files/empty', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.body.collectionId??''); const filePath=cleanPath(request.body.path,false);
     await requirePath(request,collectionId,filePath,'edit'); const actor=identity(request);
@@ -1909,28 +1557,7 @@ export function createApp(
     }
     response.json(visible);
   } catch (error) { next(error) } });
-  app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
-    const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
-    const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
-    let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
-    const scope=listingQuery.build({ collectionId, path, childrenOnly:request.query.children==='true', trash, deviceId:typeof request.query.deviceId==='string'?request.query.deviceId:undefined, after:pageRequest.after, limit:(paged ? pageRequest.limit : ListingPage.legacyMaxRows)+1 });
-    const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
-      FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
-      WHERE ${ scope.where } ${ scope.orderLimit }`, scope.values);
-    if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
-    const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
-    const actor = identity(request); const visible = [];
-    for (const row of page.filter(row => !row.path || !isProtectedPath(row.path) || (access.collection.system_area === 'logs' && isAuditLogPath(row.path)))) {
-      const role = access.role;
-      const versionId = row.current_version_id;
-      if (!versionId) continue;
-      const version = row;
-      const draftVisible = true;
-      visible.push({ ...lifecycleFields({ ...row, current_version_id: versionId, size: Number(version?.size ?? row.size), version_created_at: version?.created_at, version_created_by_type: version?.created_by_type, version_created_by_id: version?.created_by_id }), capabilities: lifecycleCapabilities(role, draftVisible) });
-    }
-    response.json(visible);
-  } catch (error) { next(error) } });
+  new FileListingRoutes(accessGate, new FileListingRepository(db, FILE_COLUMNS_SQL), listingQuery).register(app);
   app.post('/v1/files/:id/conflicts/keep-both', async(request:RequestWithIdentity, response, next) => { try {
     const conflictFileId = request.params.id;
     const conflictVersionId = String(request.body.currentVersionId ?? '');
@@ -2106,98 +1733,7 @@ export function createApp(
     await trashFileWithoutReceipt(db, request.params.id, identity(request), operationAccess(request));
     response.status(204).end();
   } catch (error) { next(error) } });
-  app.get('/v1/trash', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId=String(request.query.collectionId??''); const access=await requireCollection(request,collectionId,'view',true,true);
-    const files=await db.query(`SELECT ${FILE_COLUMNS_SQL} FROM files f WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND f.deleted_at IS NOT NULL ORDER BY f.deleted_at DESC`,[collectionId]);
-    const allowed:any[]=[];
-    const undoState=(receipt:any,pathOperation:any) => {
-      const lifecycle=receipt?.folder_plan?.lifecycle??{}; const disposal=pathOperation?.plan?.disposal??lifecycle.disposal??{};
-      const state=disposal.undoInvalidatedAt?'invalidated':pathOperation && (!['completed','undone','rolled-back'].includes(pathOperation.state)||pathOperation.last_error)?'recovery-required':receipt?'available':'unavailable';
-      return {state,...(lifecycle.expiresAt?{expiresAt:lifecycle.expiresAt}:{})};
-    };
-    // requireFile delegates to requirePath, which checks the collection role and
-    // protected-path policy. Collection authorization is already established;
-    // the SQL excludes protected files and the same policy is applied to folders below.
-    // Same path rule requirePath applied per item: protected paths stay hidden,
-    // except audit logs inside the logs system area.
-    const pathVisible=(path:string)=>!isProtectedPath(path) || (access.collection.system_area==='logs' && (isAuditLogPath(path) || path==='audit/vault'));
-    const visibleFiles=files.rows.filter((file:any)=>pathVisible(file.path));
-    const fileIds=visibleFiles.map((file:any)=>file.id);
-    const fileReceipts=fileIds.length?(await db.query(`SELECT DISTINCT ON (r.file_id) r.* FROM files_database_operation_receipts r
-      JOIN files f ON f.id=r.file_id AND f.current_version_id::text=r.after_state->>'versionId'
-      WHERE r.file_id=ANY($1) AND r.action='trash' ORDER BY r.file_id,r.created_at DESC`,[fileIds])).rows:[];
-    const fileReceiptByVersion=new Map<string,any>();
-    for (const receipt of fileReceipts) {
-      const versionId=receipt.after_state?.versionId;
-      if (versionId) fileReceiptByVersion.set(`${receipt.file_id}:${versionId}`,receipt);
-    }
-    const fileOperationIds=fileReceipts.map((receipt:any)=>receipt.id);
-    const pathOperations=fileOperationIds.length?(await db.query('SELECT operation_id,state,plan,last_error FROM files_path_operations WHERE operation_id=ANY($1)',[fileOperationIds])).rows:[];
-    const pathOperationById=new Map(pathOperations.map((operation:any)=>[operation.operation_id,operation]));
-    for (const authorized of visibleFiles) {
-      const role='manage'; const draftVisible=true;
-      const receipt=fileReceiptByVersion.get(`${authorized.id}:${authorized.current_version_id}`);
-      const pathOperation=receipt?pathOperationById.get(receipt.id):null;
-      allowed.push({ ...lifecycleFields(authorized),kind:'file',id:authorized.id,path:authorized.path,revision:String(authorized.operation_revision),
-        currentTombstone:{kind:'version',id:authorized.current_version_id,...(receipt?{receiptId:receipt.id,...(receipt.request?.batchOperationId?{operationId:receipt.request.batchOperationId}:{})}:{}),undo:undoState(receipt,pathOperation)},
-        capabilities:lifecycleCapabilities(role,draftVisible) });
-    }
-    const folders=await db.query(`SELECT * FROM file_folders f WHERE f.collection_id=$1 AND f.deleted_at IS NOT NULL AND NOT EXISTS(
-      SELECT 1 FROM file_folders p WHERE p.collection_id=f.collection_id AND p.deleted_at IS NOT NULL AND p.id<>f.id AND starts_with(f.path,p.path||'/')) ORDER BY f.deleted_at DESC,f.path`,[collectionId]);
-    const visibleFolders=folders.rows.filter((folder:any)=>pathVisible(folder.path));
-    const folderReceipts=visibleFolders.length?(await db.query(`SELECT * FROM files_database_operation_receipts r WHERE r.collection_id=$1 AND r.action='trash' AND r.state='completed'
-      AND r.folder_plan->>'source'=ANY($2) ORDER BY r.created_at DESC`,[collectionId,[...new Set(visibleFolders.map((folder:any)=>folder.path))]])).rows:[];
-    const folderReceiptByFolder=new Map<string,any>();
-    for(const receipt of folderReceipts) for(const item of receipt.folder_plan?.folders??[]) {
-      const after=item?.after; if(!after) continue;
-      const key=`${receipt.folder_plan.source}:${after.folderId}:${after.revision}`;
-      if(!folderReceiptByFolder.has(key)) folderReceiptByFolder.set(key,receipt);
-    }
-    const folderOperationIds=[...new Set([...folderReceiptByFolder.values()].map((receipt:any)=>receipt.id))];
-    const folderOperations=folderOperationIds.length?(await db.query('SELECT operation_id,state,plan,last_error FROM files_path_operations WHERE operation_id=ANY($1)',[folderOperationIds])).rows:[];
-    const folderOperationById=new Map(folderOperations.map((operation:any)=>[operation.operation_id,operation]));
-    for (const folder of visibleFolders) {
-      const role='manage';
-      const receipt=folderReceiptByFolder.get(`${folder.path}:${folder.id}:${String(folder.operation_revision)}`);
-      if (!receipt) continue;
-      const pathOperation=folderOperationById.get(receipt.id);
-      allowed.push({kind:'folder',id:folder.id,path:folder.path,revision:String(folder.operation_revision),deleted_at:folder.deleted_at,
-        currentTombstone:{kind:'receipt',id:receipt.id,receiptId:receipt.id,...(receipt.request?.batchOperationId?{operationId:receipt.request.batchOperationId}:{}),undo:undoState(receipt,pathOperation)},
-        capabilities:lifecycleCapabilities(role,false)});
-    }
-    response.json(allowed);
-  } catch (error) { next(error) } });
-  app.post('/v1/trash/:id/restore', async(request:RequestWithIdentity, response, next) => { try {
-    const kind=request.body?.kind??'file'; const tombstone=request.body?.currentTombstone;
-    const receiptId=tombstone?.receiptId; const tombstoneId=tombstone?.id;
-    if (receiptId!==undefined && typeof receiptId!=='string') throw new HttpError(400,'currentTombstone.receiptId must be a string');
-    if (kind==='folder' && receiptId!==undefined && tombstoneId!==undefined && receiptId!==tombstoneId) throw new HttpError(400,'currentTombstone id and receiptId must match');
-    if (kind==='folder') {
-      response.json(await restoreTrashedFolder(db,request.params.id,String(receiptId??tombstoneId??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request)));
-      return;
-    }
-    if (kind!=='file') throw new HttpError(400,'kind must be file or folder');
-    response.json(await restoreTrashedFile(db,request.params.id,identity(request),operationAccess(request),{
-      expectedVersionId:String(tombstone?.id??request.body?.expectedVersionId??'')||undefined,
-      expectedRevision:request.body?.expectedRevision===undefined?undefined:String(request.body.expectedRevision),
-      receiptId,
-    }));
-  } catch (error) { next(error) } });
-  app.delete('/v1/trash/:id/purge', async(request:RequestWithIdentity,response,next) => {
-    if (request.body?.kind!=='folder') return next();
-    try {
-      const tombstone=request.body?.currentTombstone;
-      const receiptId=tombstone?.receiptId; const tombstoneId=tombstone?.id;
-      if (receiptId!==undefined && typeof receiptId!=='string') throw new HttpError(400,'currentTombstone.receiptId must be a string');
-      if (receiptId!==undefined && tombstoneId!==undefined && receiptId!==tombstoneId) throw new HttpError(400,'currentTombstone id and receiptId must match');
-      const result=await purgeTrashedFolder(db,request.params.id,String(receiptId??tombstoneId??''),String(request.body?.expectedRevision??''),identity(request),operationAccess(request),{
-        invalidateUndo:request.body?.invalidateUndo===true,
-        ...(manager?{dispose:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),
-        drainChunks:()=>drainPendingChunkGc(db,(collectionId,chunkId)=>store.delete(collectionId,chunkId)),
-      });
-      response.status(result.status==='recovery-required'?202:200).json(result);
-    } catch(error) { next(error) }
-  });
+  new TrashRoutes(db, accessGate, new TrashListingRepository(db, FILE_COLUMNS_SQL), operationAccess, store, manager).register(app);
   app.post('/v1/files/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'edit'); const actor = identity(request); const authorized = await visibleVersion(request, file, String(request.body.versionId ?? '')); const source = (await db.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [authorized, file.id])).rows[0]; if (!source) throw new HttpError(404, 'version not found'); const version=await transactions.run('restore-version',async client=>{ await lockStoredNamespace(client,file.collection_id,file.path); const current=await requireFile(request,file.id,'edit',client); if(current.current_version_id!==file.current_version_id)throw new HttpError(409,'Files version changed while preparing restore'); const available=await client.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted FOR UPDATE',[source.id,file.id]);if(!available.rowCount)throw new HttpError(409,'Restore source changed'); const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,version_comment,version_kind,publication_status,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,'user',$6,'Restored version',$7,'minor',NULL,$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.manifest_hash, source.size, actor.userId, request.body.comment ?? 'Restored as a new version', actor.deviceId || 'server-web'])).rows[0]; await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]); await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW() WHERE id=$1', [file.id, version.id, source.size]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, version.id]); return version; }); await audit(request, 'version-restore', { ...file, current_version_id: version.id }); response.json({ ok: true, versionId: version.id }) } catch (error) { next(error) } });
 
   app.post('/v1/agent-files/:id/keep', async(request:RequestWithIdentity, response, next) => { try {
@@ -2260,12 +1796,7 @@ export function createApp(
     deleteChunk:(collectionId,chunkId)=>store.delete(collectionId,chunkId),
     ...(manager?{disposeTrashReceipt:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),
   });
-  app.use('/v1/original-reveal', (error:any,_request:any,response:any,_next:any) => {
-    const status=typeof error.status==='number'?error.status:409;
-    response.setHeader('Cache-Control','no-store');
-    response.status(status).json({ error:!error.status?'Original changed or is unavailable':status>=500?'Original reveal failed':error.message,
-      code:error.code ?? (status===403?'original-forbidden':status===401?'unauthorized':status===404?'original-not-found':'original-changed') });
-  });
+  originalReveal.registerErrorHandler(app);
   app.use('/v1/database-file-operations', (error:any, _request:any, response:any, _next:any) => {
     const status = error.status ?? (error.code === '23505' ? 409 : 500);
     response.status(status).json({ error: status < 500 ? error.message : 'Database operation failed', code: error.code ?? 'operation-failed' });
