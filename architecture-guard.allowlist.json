@@ -3393,12 +3393,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/pages/files/FilesBrowser.vue": {
-      "rules": {
-        "long-file": 2586
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/pages/files/editor/html-builder/html-builder.js": {
       "rules": {
         "long-file": 2186
