@@ -23,6 +23,10 @@ const ALLOWED:Record<string, number> = {
   // Finder badges: one row per live file of the one requested collection (moved from cloudSync/repository.ts).
   'Repositories/CloudCollectionCatalogRepository.ts': 1,
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Legacy import: converts every legacy version once; counts and provenance checks are one-row aggregates.
+  'Repositories/LegacyImportIdentityRepository.ts': 1,
+  'Repositories/LegacyImportPublicationRepository.ts': 1,
+  'Repositories/LegacyImportReceiptRepository.ts': 1,
   // Shared-folder listing for a public folder link (moved from shares.ts, same read).
   'Repositories/ShareLinkRepository.ts': 1,
   // Child-folder totals: one GROUP BY row per direct child folder of the open folder, never a row per file.
@@ -44,7 +48,6 @@ const ALLOWED:Record<string, number> = {
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
   'app.ts': 5,
-  'legacyImport.ts': 3,
   'localManager.ts': 3,
 };
 
