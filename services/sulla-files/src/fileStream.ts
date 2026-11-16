@@ -126,7 +126,7 @@ export class FileContentStreamer {
   }
 }
 
-/** Kept for app.ts, localManager.ts, shares.ts and cloudRemote (outside this slice). */
+/** Kept for app.ts, NativeCustody.ts, shares.ts and cloudRemote (outside this slice). */
 export function streamFileContent(db:pg.Pool, config:Config, store:Store, fileId:string, versionId:string | undefined, rangeHeader:string | undefined, signal:AbortSignal) {
   return new FileContentStreamer(db, config, store).stream(fileId, versionId, rangeHeader, signal);
 }
