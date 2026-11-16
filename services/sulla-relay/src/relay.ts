@@ -10,6 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 import { bearerToken, tokenMatches, verifyDeviceToken } from './auth.js';
 import { RedisHealthProbe } from './RedisHealthProbe.js';
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
 
 import type { RelayConfig } from './config.js';
 import type {
@@ -49,6 +50,8 @@ type BusMessage =
   | { kind: 'result'; envelope: RelayToolResultEnvelope }
   | { kind: 'cancel'; requestId: string; deviceId: string };
 
+/** Desktop enforces the deadline itself; the relay waits a little longer so a result landing at the deadline still reaches its caller. */
+const RESULT_GRACE_MS = 1_000;
 const presenceKey = (deviceId: string) => `sulla:relay:device:${ deviceId }`;
 const replicaChannel = (replicaId: string) => `sulla:relay:replica:${ replicaId }`;
 
@@ -190,7 +193,7 @@ export class RelayService {
     const startedAt = Date.now();
     const timer = setTimeout(() => {
       this.timeoutRequest(requestId).catch(error => console.error('[sulla-relay] Timeout cleanup failed:', error));
-    }, deadlineMs);
+    }, deadlineMs + RESULT_GRACE_MS);
     this.pendingHttp.set(requestId, {
       response, ownerReplicaId: presence.replicaId, deviceId, timer, category, tool,
       operationTypes: envelope.operationTypes ?? [], startedAt, deadlineMs,
@@ -305,7 +308,7 @@ export class RelayService {
       connection.inflight.delete(envelope.requestId);
       this.localRoutes.delete(envelope.requestId);
       this.sendToDevice(connection, { type: 'tool-call', action: 'cancel', requestId: envelope.requestId, deviceId: envelope.deviceId });
-    }, Math.max(1, (envelope.deadlineAt ?? Date.now()) - Date.now()));
+    }, Math.max(1, (envelope.deadlineAt ?? Date.now()) - Date.now()) + RESULT_GRACE_MS);
     this.localRoutes.set(envelope.requestId, { originReplicaId: envelope.originReplicaId!, deviceId: envelope.deviceId, timer });
     this.sendToDevice(connection, envelope);
   }
@@ -346,15 +349,8 @@ export class RelayService {
     const pending = this.pendingHttp.get(requestId);
     if (!pending) return;
     this.pendingHttp.delete(requestId);
-    const sideEffectUnknown = pending.operationTypes.some(type => ['create', 'update', 'delete', 'execute'].includes(type));
-    const toolName = `${ pending.category }/${ pending.tool }`;
-    const details = {
-      tool: toolName,
-      deadlineMs: pending.deadlineMs,
-      elapsedMs: Date.now() - pending.startedAt,
-      ...(sideEffectUnknown ? { sideEffectUnknown: true } : {}),
-      hint: sideEffectUnknown ? `check state before retrying, e.g. github/list_prs for ${ pending.tool }` : 'safe to retry once',
-    };
+    const details = new ToolDeadlinePolicy().timeoutDetails(
+      `${ pending.category }/${ pending.tool }`, pending.deadlineMs, Date.now() - pending.startedAt, pending.operationTypes);
     sendJson(pending.response, 504, { error: { ...relayError('DEADLINE_EXCEEDED', 'Desktop tool call deadline exceeded', true), details } });
     await this.publishOrCancelLocal(pending.ownerReplicaId, requestId, pending.deviceId);
   }

@@ -86,7 +86,7 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     // risk: availability — every FUSE lookup rebuilding the multi-megabyte tree starves the pool.
     const repository = new FuseTreeRepository(fixture.pool);
     let loads = 0; const counting = Object.assign(Object.create(repository), { snapshot: (...args:Parameters<FuseTreeRepository['snapshot']>) => { loads++; return repository.snapshot(...args) } });
-    const cache = new FuseTreeSnapshotCache(counting, fixture.userId);
+    const cache = new FuseTreeSnapshotCache(counting, { userId: fixture.userId });
     const [one, two] = await Promise.all([cache.load(), cache.load()]);
     expect(one).toBe(two);
     expect(loads).toBe(1);

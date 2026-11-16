@@ -4,6 +4,8 @@
 
 import Logging from '@pkg/utils/logging';
 
+import { VaultMigrationRetry } from './VaultMigrationRetry';
+
 const console = Logging.sulla;
 
 /** The status fields the monitor reads; the vault client returns more. */
@@ -30,6 +32,8 @@ export interface VaultStatusMonitorDependencies<S extends VaultStatusLike> {
  * Polls vault status while the vault view is open. One in-flight refresh is
  * shared between the poll and every renderer `vault:status` caller so slow or
  * missing vault responses can't pile up; one migration runs at a time.
+ * A migration the vault reports as `migration_failed` is retried a few times
+ * with backoff (VaultMigrationRetry), only on a refresh that sees that state.
  */
 export class VaultStatusMonitor<S extends VaultStatusLike = VaultStatusLike> {
   private poll: ReturnType<typeof setInterval> | undefined;
@@ -37,7 +41,11 @@ export class VaultStatusMonitor<S extends VaultStatusLike = VaultStatusLike> {
   private migrationRun: Promise<unknown> | undefined;
   private inFlight: Promise<S> | undefined;
 
-  constructor(private readonly deps: VaultStatusMonitorDependencies<S>, private readonly intervalMs = 1_000) {}
+  constructor(
+    private readonly deps: VaultStatusMonitorDependencies<S>,
+    private readonly intervalMs = 1_000,
+    private readonly migrationRetry = new VaultMigrationRetry(),
+  ) {}
 
   refresh(): Promise<S> {
     this.inFlight ??= this.refreshOnce().finally(() => { this.inFlight = undefined });
@@ -80,8 +88,26 @@ export class VaultStatusMonitor<S extends VaultStatusLike = VaultStatusLike> {
       this.migrationRun ??= client.migrate().finally(() => { this.migrationRun = undefined });
       await this.migrationRun;
       status = await client.status();
+    } else if (status.state === 'migration_failed') {
+      status = await this.retryFailedMigration(client, status);
+    } else {
+      this.migrationRetry.cleared();
     }
     if (status.unlocked !== wasUnlocked) await this.deps.publish(status.unlocked);
     return status;
+  }
+
+  /** Retries a failed migration when its backoff is due; otherwise returns the status unchanged. */
+  private async retryFailedMigration(client: VaultStatusClient<S>, status: S): Promise<S> {
+    if (this.migrationRun || !this.migrationRetry.due()) return status;
+    this.migrationRetry.started();
+    console.warn('[vault] Legacy migration failed; retrying');
+    this.migrationRun = client.migrate().finally(() => { this.migrationRun = undefined });
+    try {
+      await this.migrationRun;
+    } catch (error) {
+      console.warn(`[vault] Legacy migration retry failed${ this.migrationRetry.exhausted() ? '; no retries left this session' : '' }:`, error);
+    }
+    return client.status();
   }
 }

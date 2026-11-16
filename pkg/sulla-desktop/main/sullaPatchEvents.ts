@@ -25,12 +25,7 @@
  *     trust boundary.
  */
 
-import { ipcMain } from 'electron';
-import * as fs from 'fs/promises';
-
-import Logging from '@pkg/utils/logging';
-
-const log = Logging.background;
+import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 
 type RevertMeta =
   | { op: 'edit';  path: string; oldString: string; newString: string }
@@ -38,8 +33,26 @@ type RevertMeta =
 
 type RevertResult = { ok: true } | { ok: false; error: string };
 
-export function initSullaPatchEvents(): void {
-  ipcMain.handle('patch:revert', async(_event, meta: RevertMeta): Promise<RevertResult> => {
+export interface PatchRevertFiles {
+  readFile(path: string, encoding: 'utf-8'): Promise<string>;
+  writeFile(path: string, data: string, encoding: 'utf-8'): Promise<unknown>;
+}
+
+export interface PatchRevertLogger {
+  log(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+}
+
+/** patch:revert — undo an applied PatchBlock edit or write. */
+export class SullaPatchIpcController implements IpcController {
+  constructor(private readonly ipc: IpcRegistrar, private readonly fs: PatchRevertFiles, private readonly log: PatchRevertLogger) {}
+
+  register(): void {
+    this.ipc.handle('patch:revert', (_event, meta: RevertMeta) => this.revert(meta));
+  }
+
+  async revert(meta: RevertMeta): Promise<RevertResult> {
+    const { fs, log } = this;
     if (!meta || typeof meta !== 'object') {
       return { ok: false, error: 'missing revert metadata' };
     }
@@ -74,5 +87,5 @@ export function initSullaPatchEvents(): void {
       log.warn(`[patch:revert] failed for ${ meta.path }: ${ message }`);
       return { ok: false, error: message };
     }
-  });
+  }
 }

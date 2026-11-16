@@ -58,8 +58,9 @@ export class AgentContainerRuntimeRegistry {
   current(): AgentContainerRuntimeBinding | undefined { return this.activeRuntime.getStore(); }
   register(binding: AgentContainerRuntimeBinding): () => void { this.bindings.set(binding.podId, binding); return () => { if (this.bindings.get(binding.podId) === binding) this.bindings.delete(binding.podId); }; }
   require(ctx: ToolExecutionContext): AgentContainerRuntimeBinding {
-    const binding = this.bindings.get(ctx.pod_id ?? ''); if (!binding) throw new Error('Agent tool context is not bound to a live container');
-    if (ctx.sub !== binding.subject || ctx.org_id !== binding.orgId || ctx.agent_id !== binding.agentId || ctx.job_id !== binding.jobId || ctx.thread_id !== binding.threadId || ctx.device_id !== binding.deviceId) throw new Error('Agent tool context is not bound to this live container job');
+    // `reason` is a non-secret code the provider bridge logs when it refuses a request.
+    const binding = this.bindings.get(ctx.pod_id ?? ''); if (!binding) throw Object.assign(new Error('Agent tool context is not bound to a live container'), { reason: 'container_not_registered' });
+    if (ctx.sub !== binding.subject || ctx.org_id !== binding.orgId || ctx.agent_id !== binding.agentId || ctx.job_id !== binding.jobId || ctx.thread_id !== binding.threadId || ctx.device_id !== binding.deviceId) throw Object.assign(new Error('Agent tool context is not bound to this live container job'), { reason: 'container_job_mismatch' });
     return binding;
   }
   forExecution(ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined { return target === 'agent-local' && ctx.pod_id ? this.require(ctx) : undefined; }

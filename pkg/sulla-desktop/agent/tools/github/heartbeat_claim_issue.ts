@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { HeartbeatSeenIssueRepository } from '../../app/Repositories/HeartbeatSeenIssueRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -31,6 +32,10 @@ export class HeartbeatClaimIssueWorker extends BaseTool {
   name = '';
   description = '';
 
+  protected repository(): HeartbeatSeenIssueRepository {
+    return new HeartbeatSeenIssueRepository(postgresClient);
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const owner = String(input?.owner ?? '').trim();
     const repo = String(input?.repo ?? '').trim();
@@ -51,18 +56,9 @@ export class HeartbeatClaimIssueWorker extends BaseTool {
     const title = input?.title != null ? String(input.title) : null;
 
     try {
-      // ON CONFLICT DO NOTHING + RETURNING: a returned row means we inserted it
-      // (won the claim); an empty result means the row already existed (lost).
-      const rows = await postgresClient.query(
-        `INSERT INTO heartbeat_seen_issues
-           (repo_owner, repo_name, issue_number, issue_node_id, title, claim_method, claimed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())
-         ON CONFLICT (repo_owner, repo_name, issue_number) DO NOTHING
-         RETURNING repo_owner`,
-        [owner, repo, issueNumber, nodeId, title, claimMethod],
-      );
-
-      const won = rows.length > 0;
+      const won = await this.repository().claim({
+        owner, repo, issueNumber, nodeId, title, claimMethod,
+      });
       const key = `${ owner }/${ repo }#${ issueNumber }`;
       return {
         successBoolean: true,

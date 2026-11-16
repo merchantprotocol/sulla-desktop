@@ -196,6 +196,13 @@ export class OrgMessenger {
     return (await this.session.orgName?.())?.trim() || orgId;
   }
 
+  /** People and agent addresses in this org, read now from the org's host. */
+  async loadDirectory(): Promise<{ people: readonly unknown[] }> {
+    const directoryTransport = this.transport as Partial<OrgMessagingDirectory>;
+    if (typeof directoryTransport.loadDirectory !== 'function') throw new Error('This organization host has no directory');
+    return directoryTransport.loadDirectory();
+  }
+
   private async loadDirectoryIfDue(): Promise<{ people: readonly unknown[] }> {
     const directoryTransport = this.transport as Partial<OrgMessagingDirectory>;
     const orgId = await this.session.orgId();

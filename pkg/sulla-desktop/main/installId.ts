@@ -7,28 +7,43 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-const INSTALL_ID_FILE = 'install-id';
+export interface InstallIdFileSystem {
+  readFileSync(file: string, encoding: 'utf8'): string;
+  mkdirSync(dir: string, options: { recursive: true }): unknown;
+  writeFileSync(file: string, data: string, options: { encoding: 'utf8'; mode: number }): void;
+}
 
-/** Return the anonymous UUID for this install, creating it on first use. */
-export function getInstallId(userDataPath: string): string {
-  const installIdPath = path.join(userDataPath, INSTALL_ID_FILE);
+/** The anonymous per-install UUID stored in `<userData>/install-id`. */
+export class InstallIdStore {
+  static readonly FILE_NAME = 'install-id';
 
-  try {
-    const existing = fs.readFileSync(installIdPath, 'utf8').trim();
+  constructor(
+    private readonly userDataPath: string,
+    private readonly files: InstallIdFileSystem = fs,
+    private readonly newId: () => string = () => crypto.randomUUID(),
+  ) {}
 
-    if (existing) {
-      return existing;
+  /** Return the install id, creating it on first use. Read errors other than ENOENT are thrown. */
+  get(): string {
+    const installIdPath = path.join(this.userDataPath, InstallIdStore.FILE_NAME);
+
+    try {
+      const existing = this.files.readFileSync(installIdPath, 'utf8').trim();
+
+      if (existing) {
+        return existing;
+      }
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') {
+        throw err;
+      }
     }
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') {
-      throw err;
-    }
+
+    const installId = this.newId();
+
+    this.files.mkdirSync(this.userDataPath, { recursive: true });
+    this.files.writeFileSync(installIdPath, installId, { encoding: 'utf8', mode: 0o600 });
+
+    return installId;
   }
-
-  const installId = crypto.randomUUID();
-
-  fs.mkdirSync(userDataPath, { recursive: true });
-  fs.writeFileSync(installIdPath, installId, { encoding: 'utf8', mode: 0o600 });
-
-  return installId;
 }

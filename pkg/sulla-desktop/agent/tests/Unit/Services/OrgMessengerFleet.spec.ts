@@ -8,6 +8,7 @@ import { AgentInbox, type AgentInboxEntry, type AgentInboxRepository, type Agent
 import { OrgMembershipDirectory, OrgMembershipRequiredError, type OrgMembership, type OrgMembershipSource } from '../../../services/OrgMembershipDirectory';
 import { OrgMessenger, type OrgContactPrompt, type OrgConversationStartRequest, type OrgMessagingSession } from '../../../services/OrgMessenger';
 import { OrgMessengerFleet, type OrgFleetIdentity, type OrgMessengerFactory } from '../../../services/OrgMessengerFleet';
+import { OrgHostingResolver, type OrgHostCredentials, type ServerOrgHostDirectory } from '../../../services/OrgHostingResolver';
 import type { OrgMessagingStateRepository, PendingOrgMessage } from '../../../services/OrgMessagingStateRepository';
 
 const ACME: OrgMembership = { orgId: 'org-a', name: 'Acme', slug: 'acme', memberCount: 2 };
@@ -61,6 +62,18 @@ class TestIdentity implements OrgFleetIdentity {
   active = ACME.orgId;
   async userId() { return this.user; }
   async activeOrgId() { return this.active; }
+}
+
+/** Every org in these specs is Cloud-hosted: Desktop Accounts lists no Server orgs. */
+class NoServerOrgs implements ServerOrgHostDirectory {
+  async hosts() { return []; }
+}
+
+/** Cloud sign-in that follows the test identity, so signing out clears the user id. */
+class IdentityCloudCredentials implements OrgHostCredentials {
+  constructor(private readonly identity: TestIdentity) {}
+  async accessToken() { return 'cloud-token'; }
+  userId() { return this.identity.userId(); }
 }
 
 /** One Cloud host shared by every org; each transport is pinned to one org like the Cloud adapter. */
@@ -126,7 +139,8 @@ function setup(memberships: OrgMembership[] = [ACME, BETA], admission: (envelope
   const factory = new TestFactory(host, state, inbox, prompts);
   const source = new MemoryMembershipSource(memberships);
   const identity = new TestIdentity();
-  const fleet = new OrgMessengerFleet(new OrgMembershipDirectory(source), factory, identity);
+  const hosting = new OrgHostingResolver(new NoServerOrgs(), { accessToken: async () => '' }, new IdentityCloudCredentials(identity), 'https://cloud.example.test');
+  const fleet = new OrgMessengerFleet(new OrgMembershipDirectory(source), factory, identity, hosting);
   return { host, state, delivered, prompts, factory, source, identity, fleet };
 }
 

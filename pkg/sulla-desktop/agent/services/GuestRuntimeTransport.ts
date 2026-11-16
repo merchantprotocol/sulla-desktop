@@ -11,7 +11,9 @@ import * as path from 'node:path';
 import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
+import { GuestCommandRunner, type GuestExecFile } from './GuestCommandRunner';
 import { GuestDiskFullError } from './GuestDiskFullError';
+import { GuestWorkspaceCleanupInspector, type GuestWorkspaceCleanupDecision } from './GuestWorkspaceCleanupInspector';
 
 export const GUEST_RUNTIME_ROOT = '/mnt/data/sulla/runtime';
 export const GUEST_AGENT_WORKSPACES_ROOT = `${ GUEST_RUNTIME_ROOT }/agents`;
@@ -28,10 +30,7 @@ export interface GuestRuntimeIdentity {
   gid: number;
 }
 
-export interface GuestWorkspaceCleanupDecision {
-  remove: boolean;
-  reason: string;
-}
+export type { GuestWorkspaceCleanupDecision };
 
 function assertGuestPath(candidate: string, roots = GUEST_PATH_ROOTS): string {
   const resolved = path.posix.resolve(candidate);
@@ -57,37 +56,16 @@ function safeErrorText(value: string): string {
     .slice(-8_192);
 }
 
+const guestCommands = new GuestCommandRunner({
+  runtimeBinary: () => paths.sullaRuntime,
+  execFile:      childProcess.execFile as GuestExecFile,
+  environment:   guestEnvironment,
+  redact:        safeErrorText,
+  warn:          message => console.warn(message),
+});
+
 export function runGuest(args: string[], input?: string | Buffer, timeoutMs = COMMAND_TIMEOUT_MS): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let child: childProcess.ChildProcess;
-    try {
-      child = childProcess.execFile(paths.sullaRuntime, ['exec', '--', ...args], {
-        env:       guestEnvironment(),
-        encoding:  'utf8',
-        maxBuffer: 8 * 1024 * 1024,
-        timeout:   timeoutMs,
-        killSignal: 'SIGKILL',
-      }, (error, stdout, stderr) => {
-        if (error) {
-          const exitCode = (error as NodeJS.ErrnoException & { code?: unknown }).code;
-          if (typeof exitCode !== 'number') {
-            reject(error);
-            return;
-          }
-          const detail = safeErrorText(String(stderr || stdout || ''));
-          reject(GuestDiskFullError.fromGuestFailure(detail, `Guest command exited ${ exitCode }`));
-          return;
-        }
-        resolve(String(stdout ?? '').trim());
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    child.stdin?.on('error', () => { /* child exited before reading input */ });
-    if (input !== undefined) child.stdin?.end(input);
-    else child.stdin?.end();
-  });
+  return guestCommands.run(args, input, timeoutMs);
 }
 
 let guestIdentity: { user: string; identity: GuestRuntimeIdentity } | undefined;
@@ -427,16 +405,14 @@ export async function seedGitWorktreeIntoGuest(source: string, jobKey: string): 
   }
 }
 
+const workspaceCleanup = new GuestWorkspaceCleanupInspector({
+  ephemeralRoot:  GUEST_AGENT_WORKSPACES_ROOT,
+  persistentRoot: GUEST_CONVERSATIONS_ROOT,
+  run:            args => runGuest(args),
+});
+
 export async function inspectGuestWorkspaceForCleanup(workspacePath: string): Promise<GuestWorkspaceCleanupDecision> {
-  await existingGuestPath(workspacePath, [GUEST_AGENT_WORKSPACES_ROOT]);
-  // A guest-controlled origin-tracking ref is not proof of remote publication.
-  // Git status also omits ignored files that may contain irreplaceable output.
-  // Retain runtime work until its owner verifies publication and preservation
-  // independently; the caller returns this path in the cleanup receipt.
-  return {
-    remove: false,
-    reason: 'workspace retained pending independent publication and file-preservation verification',
-  };
+  return await workspaceCleanup.inspect(workspacePath);
 }
 
 const contentAddressedSeeds = new Map<string, Promise<string>>();

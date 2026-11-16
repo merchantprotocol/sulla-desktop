@@ -139,9 +139,8 @@ export class HumanRecoveryService {
     try {
       const payload = backups.open(backupEnvelope, backupPassword);
       const asBuffer = DesktopHumanBackup.bytea;
-      const client = await this.host.db.connect();
-      try {
-        await this.host.localStore.begin(client);
+      // A failed ROLLBACK never masks the original error, and that client is destroyed (PgTransactionRunner).
+      await this.host.runTransaction(async client => {
         await this.host.userRepository.importBackup(
           [payload.user.id, payload.user.email, asBuffer(payload.user.login_hash_salt), asBuffer(payload.user.login_hash_verifier),
             payload.user.public_key, payload.user.encrypted_private_key, payload.user.encrypted_user_key, payload.user.kdf],
@@ -159,13 +158,7 @@ export class HumanRecoveryService {
         }
         this.host.requireStableGeneration(attemptGeneration);
         await this.host.auditHumanAction(client, payload.user.id, 'human_backup_imported');
-        await this.host.localStore.commit(client);
-      } catch (error) {
-        await this.host.localStore.rollback(client);
-        throw error;
-      } finally {
-        client.release();
-      }
+      });
     } catch (error) {
       if (error instanceof LocalVaultError) throw error;
       throw new LocalVaultError('invalid_credentials', 400, 'Backup password or payload is invalid');

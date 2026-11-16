@@ -6,13 +6,20 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { ProviderModelPin } from './ProviderModelPin';
-import { ProviderBridgeRevokedError, PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderCliBridgeTools, ProviderCliBridgeResponsePolicy, ProviderCliBridgeFailurePolicy } from './providerCliBridge';
+import { PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderBridgeAuthorizeUnavailableError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
+import { ProviderBridgeRevokedError, ProviderCliBridgeTools, ProviderCliBridgeResponsePolicy, ProviderCliBridgeFailurePolicy } from './providerCliBridge';
 import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
 import { vaultHealthMonitor, VaultHealthMonitor } from './vaultHealth';
 import type { ToolExecutionContext } from './index';
 import type { ProviderCliBridgeOptions, ProviderCliBridgeLease, ProviderCliBridgeIdentity, ProviderCliOpaqueConfig } from './providerCliBridge';
 
 const console = globalThis.console;
+const RETRY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  'retry-after':    String(PROVIDER_BRIDGE_RETRY_AFTER_SECONDS),
+  'retry-after-ms': String(PROVIDER_BRIDGE_RETRY_AFTER_SECONDS * 1000),
+  'x-should-retry': 'true',
+});
+const UNAVAILABLE_MESSAGE = 'Sulla provider bridge is temporarily unavailable';
 
 /**
  * Create one process-scoped HTTP adapter. The returned environment contains
@@ -73,6 +80,8 @@ export class ProviderCliBridgeService {
     let status = 500;
     let timingPath = 'unknown';
     let failureNote = '';
+    // Where the request was when it failed; part of the logged reason code.
+    let stage = 'request';
     response.socket?.setNoDelay(true);
     const requestAbort = new AbortController();
     const abort = () => {
@@ -87,17 +96,53 @@ export class ProviderCliBridgeService {
     response.once('close', () => {
       if (!response.writableEnded) abort();
     });
+    const deny = (code: number, type: string, extra: { message?: string; reason: string; headers?: Record<string, string> }) => {
+      status = code;
+      failureNote = ` failure=${ type } reason=${ extra.reason } stage=${ stage }`;
+      ProviderCliBridgeResponsePolicy.sendError(response, code, type, extra);
+    };
+    // Revoking destroys every in-flight request, including this one; detach it
+    // first so the CLI receives the denial and its reason, not a socket reset.
+    const revokeAfterReply = () => {
+      lifetime.signal.removeEventListener('abort', abort);
+      revoke();
+    };
+    // Live lifecycle check. A check that could not run (Redis blip) is
+    // transient and must not revoke the lease; only a real refusal or
+    // identity mismatch does.
+    const checkLive = async(): Promise<ToolExecutionContext | undefined> => {
+      const checkStartedAt = performance.now();
+      try {
+        const live = await ProviderCliBridgeTools.liveContext(options, identity);
+        if (!live) {
+          deny(403, 'provider_bridge_revoked', { reason: 'authorize_refused' });
+          revokeAfterReply();
+        }
+        return live;
+      } catch (error) {
+        const reason = ProviderCliBridgeFailurePolicy.denialReason(error);
+        // Only the typed "check could not run" error keeps the lease; any other
+        // throw (even one that claims to be retryable) is a refusal.
+        if (error instanceof ProviderBridgeAuthorizeUnavailableError) {
+          deny(503, 'provider_bridge_unavailable', { message: UNAVAILABLE_MESSAGE, reason, headers: { ...RETRY_HEADERS } });
+          return undefined;
+        }
+        deny(403, 'provider_bridge_identity_changed', { reason });
+        revokeAfterReply();
+        return undefined;
+      } finally {
+        liveContextMs += performance.now() - checkStartedAt;
+      }
+    };
 
     try {
       if (lifetime.signal.aborted || !ProviderCliBridgeTools.safeEqual(ProviderCliBridgeTools.requestCapability(request), capability)) {
-        status = 401;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'invalid_bridge_capability');
+        deny(401, 'invalid_bridge_capability', { reason: lifetime.signal.aborted ? 'lifecycle_revoked' : 'capability_mismatch' });
         return;
       }
       const incoming = new URL(request.url ?? '/', 'http://provider-bridge.invalid');
       if (request.method !== 'POST' || incoming.hash || !incoming.pathname.startsWith(scopedPrefix)) {
-        status = 404;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'unsupported_provider_route');
+        deny(404, 'unsupported_provider_route', { reason: request.method !== 'POST' ? 'method_not_post' : 'scope_prefix_mismatch' });
         return;
       }
       const incomingPath = incoming.pathname.slice(scopedPrefix.length);
@@ -107,54 +152,23 @@ export class ProviderCliBridgeService {
         ? incoming.search
         : '';
       if (!upstreamPath || (incoming.search && !upstreamSearch)) {
-        status = 404;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'unsupported_provider_route');
+        deny(404, 'unsupported_provider_route', { reason: upstreamPath ? 'query_not_allowed' : 'route_not_allowed' });
         return;
       }
-      const initialContextStartedAt = performance.now();
-      let context: ToolExecutionContext | undefined;
-      try {
-        context = await ProviderCliBridgeTools.liveContext(options, identity);
-      } catch {
-        liveContextMs = performance.now() - initialContextStartedAt;
-        revoke();
-        status = 403;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'provider_bridge_identity_changed');
-        return;
-      }
-      liveContextMs = performance.now() - initialContextStartedAt;
-      if (!context) {
-        revoke();
-        status = 403;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'provider_bridge_revoked');
-        return;
-      }
+      stage = 'authorize';
+      if (!await checkLive()) return;
+      stage = 'request_body';
       const bodyStartedAt = performance.now();
       const bodyResult = await ProviderCliBridgeTools.readJsonBody(request, requestAbort.signal);
       requestBodyReadMs = performance.now() - bodyStartedAt;
       bodyBytes = bodyResult.bytes;
 
-      const contextStartedAt = performance.now();
-      try {
-        context = await ProviderCliBridgeTools.liveContext(options, identity);
-      } catch {
-        liveContextMs += performance.now() - contextStartedAt;
-        revoke();
-        status = 403;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'provider_bridge_identity_changed');
-        return;
-      }
-      liveContextMs += performance.now() - contextStartedAt;
-      if (!context) {
-        revoke();
-        status = 403;
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'provider_bridge_revoked');
-        return;
-      }
+      stage = 'authorize';
+      const context = await checkLive();
+      if (!context) return;
       if (!ProviderCliBridgeTools.modelAllowed(bodyResult.body, identity.models)) {
-        status = 403;
         // Model names only (no secrets): says which pin refused which request.
-        ProviderCliBridgeResponsePolicy.sendError(response, status, 'provider_model_denied', { reason: `requested=${ String(ProviderModelPin.requested(bodyResult.body) ?? '(none)') } allowed=${ (identity.models ?? []).join(',') }` });
+        deny(403, 'provider_model_denied', { reason: `requested=${ String(ProviderModelPin.requested(bodyResult.body) ?? '(none)') } allowed=${ (identity.models ?? []).join(',') }` });
         return;
       }
       const headers = ProviderCliBridgeTools.requestHeaders(request.headers);
@@ -167,9 +181,20 @@ export class ProviderCliBridgeService {
         headers['session-id'] = context.thread_id!;
         headers['thread-id'] = context.thread_id!;
       }
+      stage = 'credential_upkeep';
       const upkeepStartedAt = performance.now();
-      await runBeforeUpstream();
+      try {
+        await runBeforeUpstream();
+      } catch (error) {
+        // Upkeep is a best-effort early refresh; the stored credential is
+        // usually still valid. Failing the request here surfaced as a
+        // terminal "request denied" and killed healthy workers. A credential
+        // that really expired gets the provider's own 401 instead.
+        failureNote = ' upkeep=credential_upkeep_failed';
+        console.warn(`[ProviderCliBridge] credential upkeep failed reason=credential_upkeep_failed error=${ ProviderCliBridgeFailurePolicy.safeToken((error as { name?: unknown })?.name) ?? 'Error' }; forwarding with the stored credential`);
+      }
       beforeUpstreamMs = performance.now() - upkeepStartedAt;
+      stage = 'upstream_headers';
       const upstreamStartedAt = performance.now();
       const upstream = await broker.executeStream(broker.requestFor(context, {
         operation:    'provider.cli',
@@ -189,6 +214,7 @@ export class ProviderCliBridgeService {
       }
       response.writeHead(upstream.status, ProviderCliBridgeTools.responseHeaders(upstream.headers));
       response.flushHeaders();
+      stage = 'upstream_stream';
       if (upstream.body) {
         // Forward each chunk the moment it arrives (no pipeline buffering). A
         // client that disconnects mid-stream must not leave us waiting on a
@@ -213,28 +239,41 @@ export class ProviderCliBridgeService {
       }
       response.end();
     } catch (error) {
-      const failure = ProviderCliBridgeFailurePolicy.classifyProviderBridgeFailure(error);
+      if (requestAbort.signal.aborted) {
+        // The CLI hung up or the job's lifecycle ended: a cancellation, not a bridge failure.
+        const reason = lifetime.signal.aborted ? 'lifecycle_revoked' : 'client_disconnected';
+        if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason });
+        else {
+          status = 499;
+          // The streamed reply can never finish; end the connection so the CLI
+          // sees the cut instead of waiting on an open socket. request.destroy()
+          // alone leaves the socket up once the request body was fully read.
+          response.destroy();
+        }
+        failureNote = ` failure=provider_bridge_cancelled reason=${ reason } stage=${ stage }`;
+        console.warn(`[ProviderCliBridge] request cancelled reason=${ reason } stage=${ stage }`);
+        return;
+      }
+      if (error instanceof ProviderBridgeRequestError) {
+        deny(error.status, 'invalid_provider_request', { reason: error.reason });
+        return;
+      }
+      const failure = ProviderCliBridgeFailurePolicy.classifyProviderBridgeFailure(error, stage);
       const brokerStatus = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
       const vaultKind = VaultHealthMonitor.failureKind(brokerStatus, failure.errorCode === 'vault_locked' ? 'vault_locked' : failure.reason);
       if (vaultKind) vaultHealthMonitor.record(vaultKind);
-      failureNote = ` failure=${ failure.type }${ failure.errorCode ? `:${ failure.errorCode }` : '' }${ failure.reason ? ` reason=${ failure.reason }` : '' }`;
+      failureNote = ` failure=${ failure.type }${ failure.errorCode ? `:${ failure.errorCode }` : '' }${ failure.reason ? ` reason=${ failure.reason }` : '' } stage=${ stage }`;
       console.error(`[ProviderCliBridge] request failed: ${ failure.errorName }${ failure.errorCode ? ` (${ failure.errorCode })` : '' }` +
         `${ failure.reason ? ` reason=${ failure.reason }` : '' } -> ${ failure.status } ${ failure.type }`);
       if (!response.headersSent) {
         status = failure.status;
         ProviderCliBridgeResponsePolicy.sendError(response, status, failure.type, failure.transient
-          ? {
-            message: 'Sulla provider bridge is temporarily unavailable',
-            reason:  failure.reason,
-            headers: {
-              'retry-after':    String(PROVIDER_BRIDGE_RETRY_AFTER_SECONDS),
-              'retry-after-ms': String(PROVIDER_BRIDGE_RETRY_AFTER_SECONDS * 1000),
-              'x-should-retry': 'true',
-            },
-          }
+          ? { message: UNAVAILABLE_MESSAGE, reason: failure.reason, headers: { ...RETRY_HEADERS } }
           : { reason: failure.reason });
       }
-      abort();
+      // Destroying the request also destroys its socket: let a written error reply flush first.
+      if (response.writableEnded && !response.writableFinished) response.once('finish', abort);
+      else abort();
     } finally {
       lifetime.signal.removeEventListener('abort', abort);
       const ms = (value: number) => value.toFixed(1);

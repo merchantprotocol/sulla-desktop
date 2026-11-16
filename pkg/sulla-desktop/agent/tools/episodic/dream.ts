@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { getV7Dreamer } from '../../memory/V7DreamerRuntime';
+import { V7DreamerRuntime } from '../../memory/V7DreamerRuntime';
 import type { DreamRunResult } from '../../memory/V7Dreamer';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -16,7 +16,7 @@ export class DreamRecentMemoriesWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const dreamer = getV7Dreamer();
+    const dreamer = V7DreamerRuntime.shared();
     const run = dreamer.run({ trigger: input?.force === true ? 'manual' : 'routine', force: input?.force === true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const pending = new Promise<null>((resolve) => {

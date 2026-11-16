@@ -17,6 +17,7 @@ export function verifyDeviceToken(token: string, secret: string): DeviceTokenCla
   const payload = jwt.verify(token, secret, {
     algorithms: ['HS256'],
     audience:   'sulla-relay-device',
+    clockTolerance: 60,
   });
   if (typeof payload === 'string' || typeof payload.sub !== 'string' || typeof payload.device_id !== 'string') {
     throw new Error('Invalid device token claims');
