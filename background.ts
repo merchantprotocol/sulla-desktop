@@ -54,7 +54,7 @@ import SettingsValidator from '@pkg/main/commandServer/settingsValidator';
 import { HttpCredentialHelperServer } from '@pkg/main/credentialServer/httpCredentialHelperServer';
 import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
-import { reportFailureUnlessShuttingDown } from '@pkg/main/failureLifecycle';
+import { FailureLifecycle } from '@pkg/main/failureLifecycle';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
 import { IpcRegistrationGate } from '@pkg/main/ipcRegistrationGate';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -70,7 +70,7 @@ import setupUpdate from '@pkg/main/update';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { configureRemoteSupportRuntime, startRemoteSupport } from '@pkg/main/supportRemote';
-import { startInstallPing } from '@pkg/main/installPing';
+import { installPing } from '@pkg/main/installPing';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSecretaryModeStateIpc } from '@pkg/main/secretaryModeState';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
@@ -559,7 +559,7 @@ Electron.app.whenReady().then(() => {
 /// /////////////////////////////////////////////////////////////////////////////
 
 Electron.app.whenReady().then(async() => {
-  e2eTrace('app ready; starting main startup');
+  e2eTrace.write('app ready; starting main startup');
   try {
     const commandLineArgs = getCommandLineArgs();
 
@@ -654,7 +654,7 @@ Electron.app.whenReady().then(async() => {
       console.log(`Failed to update command from argument ${ commandLineArgs.join(', ') }`, err);
     }
 
-    startInstallPing();
+    installPing.start();
 
     httpCommandServer = new HttpCommandServer(new BackgroundCommandWorker());
     await httpCommandServer.init();
@@ -688,7 +688,7 @@ Electron.app.whenReady().then(async() => {
       console.error(`[Startup] Opening the UI before every IPC handler is registered (${ ipcRegistration.state })`,
         ipcRegistration.state === 'failed' ? ipcRegistration.error : '');
     }
-    e2eTrace(`opening UI (ipc ${ ipcRegistration.state })`);
+    e2eTrace.write(`opening UI (ipc ${ ipcRegistration.state })`);
     await initUI();
     await checkForBackendLock();
     await setPathManager(cfg.application.pathManagementStrategy);
@@ -748,7 +748,7 @@ Electron.app.whenReady().then(async() => {
     await SullaSettingsModel.set('firstRunSullaNetworking', false, 'boolean');
   } catch (ex: any) {
     console.error(`Error starting up: ${ ex }`, ex.stack);
-    e2eTrace(`startup failed: ${ ex?.stack || ex }`);
+    e2eTrace.write(`startup failed: ${ ex?.stack || ex }`);
     gone = true;
     Electron.app.quit();
   }
@@ -888,7 +888,7 @@ async function initUI() {
     }
   }).catch((error) => {
     console.error('[FirstRun] Could not open onboarding:', error);
-    e2eTrace(`first-run dialog failed: ${ error?.stack || error }`);
+    e2eTrace.write(`first-run dialog failed: ${ error?.stack || error }`);
   });
 
   buildApplicationMenu();
@@ -1008,7 +1008,7 @@ async function doFirstRunDialog() {
 
   const needsFirstRun = !noModalDialogs && onboardingComplete !== true;
 
-  e2eTrace(`first-run dialog needed=${ needsFirstRun }`);
+  e2eTrace.write(`first-run dialog needed=${ needsFirstRun }`);
   firstRunTrace('wizard', needsFirstRun ? 'opening the wizard' : 'setup already finished; no wizard', { onboardingComplete });
 
   if (needsFirstRun) {
@@ -2440,7 +2440,7 @@ async function handleFailure(payload: any) {
     titlePart = payload.context || titlePart;
   }
   console.log(`Sulla Desktop was unable to start:`, payload);
-  await reportFailureUnlessShuttingDown<FailureDetails>({
+  await new FailureLifecycle<FailureDetails>({
     isShuttingDown:    () => shuttingDown || gone,
     // getFailureDetails is going to read from existing log files.
     // Wait 1 second before reading them to allow recent writes to appear in them.
@@ -2470,7 +2470,7 @@ async function handleFailure(payload: any) {
       }
     },
     onFailureDetailsError: e => console.log(`Failed to get failure details: `, e),
-  });
+  }).reportUnlessShuttingDown();
 }
 
 function doFullRestart(context: CommandWorkerInterface.CommandContext) {
