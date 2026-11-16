@@ -620,7 +620,7 @@ export function initSullaCloudAuthEvents(): void {
       // First run never calls, waits on, or creates the vault while its sign-in
       // is held only in memory for a returning Cloud session.
       holdUntilWizardCloses: () => getFirstRunState().credentialsSaved === false,
-      hasPendingKey:         () => !!pendingCloudMasterKey,
+      hasPendingKey:         () => !!cloudSessionKeyProvider.keys.context().key,
       containerStatus:       async() => {
         const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
         const status = await getDesktopVaultClient().status();
@@ -633,7 +633,9 @@ export function initSullaCloudAuthEvents(): void {
       },
       enrollmentComplete: async() => {
         const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
-        return DesktopVaultEnrollment.coordinator.complete(pendingCloudMasterKey!, pendingCloudUserId!);
+        const { key, userId } = cloudSessionKeyProvider.keys.context();
+
+        return DesktopVaultEnrollment.coordinator.complete(key!, userId!);
       },
       createOrRewrap: async() => {
         const creating = !lifecycle.isVaultUnlocked();
@@ -667,7 +669,7 @@ export function initSullaCloudAuthEvents(): void {
     const queued = getPendingCredential(INTEGRATION_ID);
     return {
       sessionInMemory: !!queued,
-      masterKeyRetained: !!pendingCloudMasterKey,
+      masterKeyRetained: !!cloudSessionKeyProvider.keys.context().key,
       email: queued?.values.email || queued?.values.contractors_json && JSON.parse(queued.values.contractors_json || '[]')[0]?.email || undefined,
       oldVaultLocked,
     };
