@@ -71,9 +71,10 @@ export class SullaFilesTlsService {
 }
 
 export class SullaFilesTlsServiceProvider {
-  readonly service = new SullaFilesTlsService();
+  private service?:SullaFilesTlsService;
+  resolve():SullaFilesTlsService { return this.service ??= new SullaFilesTlsService(); }
 }
 
 export const sullaFilesTlsProvider = new SullaFilesTlsServiceProvider();
-export async function refreshFilesPinnedSessions():Promise<void> { return sullaFilesTlsProvider.service.refreshFilesPinnedSessions() }
-export async function desktopFilesFetch(input:string | URL, init?:RequestInit):Promise<Response> { return sullaFilesTlsProvider.service.desktopFilesFetch(input, init) }
+export async function refreshFilesPinnedSessions():Promise<void> { return sullaFilesTlsProvider.resolve().refreshFilesPinnedSessions() }
+export async function desktopFilesFetch(input:string | URL, init?:RequestInit):Promise<Response> { return sullaFilesTlsProvider.resolve().desktopFilesFetch(input, init) }

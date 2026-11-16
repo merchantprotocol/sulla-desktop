@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { randomUUID } from 'node:crypto';
+
 import type { Protocol } from 'electron';
 import type { SullaFilesClient } from './sullaFilesClient';
+
+const MEDIA_CAPABILITY_TTL_MS = 4 * 60 * 60_000;
 
 interface MediaCapability { fileId:string; versionId?:string; expiresAt:number }
 
@@ -14,8 +18,10 @@ export class SullaFilesIpcMediaService {
   constructor(private readonly protocol:Protocol, private readonly filesClient:SullaFilesClient) {}
 
   capability(input:{fileId:string;versionId?:string}):string {
-    const token = crypto.randomUUID();
-    this.capabilities.set(token, { ...input, expiresAt:Date.now() + 60_000 });
+    const now = Date.now();
+    for (const [token, capability] of this.capabilities) if (capability.expiresAt <= now) this.capabilities.delete(token);
+    const token = randomUUID();
+    this.capabilities.set(token, { ...input, expiresAt:now + MEDIA_CAPABILITY_TTL_MS });
     return `sulla-files-media://content/${ token }`;
   }
 
@@ -45,7 +51,7 @@ export class SullaFilesIpcMediaService {
     });
   }
 
-  private passiveMedia(mime:string):boolean {
-    return /^(image\/(?:avif|gif|jpeg|png|webp)|audio\/(?:aac|flac|mpeg|ogg|wav|webm)|video\/(?:mp4|mpeg|ogg|quicktime|webm))$/i.test(mime.split(';', 1)[0].trim());
+  passiveMedia(mime:string):boolean {
+    return /^(?:video\/|audio\/)/i.test(mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(mime);
   }
 }

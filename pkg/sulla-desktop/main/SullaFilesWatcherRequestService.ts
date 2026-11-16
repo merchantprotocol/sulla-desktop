@@ -10,10 +10,7 @@ import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from './sullaFilesTls';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
-import { requestHeaders, type SullaFilesCapabilityContext } from './SullaFilesWatcherSupport';
-
-const NATIVE_SOURCE_PAGE_SIZE = 500;
-const NATIVE_SOURCE_MAX_PAGES = 40;
+import { NATIVE_SOURCE_MAX_PAGES, NATIVE_SOURCE_PAGE_SIZE, requestHeaders, type SullaFilesCapabilityContext } from './SullaFilesWatcherSupport';
 
 export class SullaFilesWatcherRequestService {
   constructor(

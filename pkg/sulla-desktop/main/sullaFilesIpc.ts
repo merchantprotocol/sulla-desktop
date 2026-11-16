@@ -608,7 +608,7 @@ export function initSullaFilesIpc():void {
   });
   ipcMain.handle('files-ui:chat-inventory', async(_event, input:{ runIds:string[]; threadId:string }) => {
     try {
-      const files = await readyFilesJson<any[]>('/v1/agent-files/query', { method: 'POST', body: JSON.stringify(input) });
+      const files = await upload.readyFilesJson<any[]>('/v1/agent-files/query', { method: 'POST', body: JSON.stringify(input) });
 
       return { files: files.map(file => reference(file, {
         id: file.collection_id, kind: file.collection_kind, agent_run_id: file.agent_run_id,

@@ -14,7 +14,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
-import { getSullaFilesWatcher, type RecentSullaFile } from '@pkg/main/sullaFilesWatcher';
+import { getSullaFilesWatcher, type RecentSullaFile, type SullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 
 export type ScreenshotMode = 'area' | 'window' | 'full';
 export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string; reference?:ChatFilesReference }
@@ -175,7 +175,7 @@ export function getSullaFilesCaptureService():SullaFilesCaptureService { return 
 
 export class SullaFilesScreenshotMarkupService {
   private markupWindow?:BrowserWindow;
-  constructor(private readonly watcher = getSullaFilesWatcher()) {}
+  constructor(private readonly resolveWatcher:() => Pick<SullaFilesWatcher, 'notifyRescan'> = getSullaFilesWatcher) {}
   open(filePath:string):void {
     if (this.markupWindow && !this.markupWindow.isDestroyed()) this.markupWindow.destroy();
     this.markupWindow = new BrowserWindow({
@@ -183,11 +183,12 @@ export class SullaFilesScreenshotMarkupService {
       webPreferences: { contextIsolation: false, nodeIntegration: true },
     });
     this.markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
-    this.markupWindow.on('closed', () => { this.markupWindow = undefined; this.watcher.notifyRescan().catch(() => undefined) });
+    this.markupWindow.on('closed', () => { this.markupWindow = undefined; this.resolveWatcher().notifyRescan().catch(() => undefined) });
   }
 }
 export class SullaFilesScreenshotMarkupServiceProvider {
-  readonly service = new SullaFilesScreenshotMarkupService();
+  private service?:SullaFilesScreenshotMarkupService;
+  resolve():SullaFilesScreenshotMarkupService { return this.service ??= new SullaFilesScreenshotMarkupService(); }
 }
 export const sullaFilesScreenshotMarkupServiceProvider = new SullaFilesScreenshotMarkupServiceProvider();
-export function openScreenshotMarkup(filePath:string):void { sullaFilesScreenshotMarkupServiceProvider.service.open(filePath) }
+export function openScreenshotMarkup(filePath:string):void { sullaFilesScreenshotMarkupServiceProvider.resolve().open(filePath) }

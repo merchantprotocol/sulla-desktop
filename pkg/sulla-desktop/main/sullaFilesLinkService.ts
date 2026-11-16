@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
-import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
+import { getSullaFilesClient, type SullaFilesClient } from '@pkg/main/sullaFilesClient';
 
 export type ShareMode = 'view' | 'download';
 
@@ -53,7 +53,6 @@ export interface LinkService {
 }
 
 export class SharingUnavailableError extends Error {}
-const filesClient = getSullaFilesClient();
 
 function normalize(value:any):ShareLink {
   return {
@@ -79,22 +78,24 @@ function normalize(value:any):ShareLink {
   };
 }
 
-async function requestWithContractFallback(paths:string[], init:RequestInit):Promise<Response> {
-  let last:Response | undefined;
-  for (const path of paths) {
-    let response:Response;
-
-    try { response = await filesClient.request(path, init) } catch (error) {
-      throw new SharingUnavailableError(`Sharing service is offline: ${ error instanceof Error ? error.message : String(error) }`);
-    }
-    if (![404, 405].includes(response.status)) return response;
-    last = response;
-  }
-  throw new SharingUnavailableError(`Sharing API is not installed (${ last?.status ?? 'offline' })`);
-}
-
 /** Thin adapter over the Phase 4 public-link contract; it never owns links. */
 export class SullaFilesLinkService implements LinkService {
+  constructor(private readonly resolveClient:() => Pick<SullaFilesClient, 'request'> = getSullaFilesClient) {}
+
+  private async requestWithContractFallback(paths:string[], init:RequestInit):Promise<Response> {
+    let last:Response | undefined;
+    for (const path of paths) {
+      let response:Response;
+
+      try { response = await this.resolveClient().request(path, init) } catch (error) {
+        throw new SharingUnavailableError(`Sharing service is offline: ${ error instanceof Error ? error.message : String(error) }`);
+      }
+      if (![404, 405].includes(response.status)) return response;
+      last = response;
+    }
+    throw new SharingUnavailableError(`Sharing API is not installed (${ last?.status ?? 'offline' })`);
+  }
+
   async create(input:CreateShareInput):Promise<ShareLink> {
     const deviceId = await getDesktopDeviceId();
     const body = JSON.stringify({
@@ -110,7 +111,7 @@ export class SullaFilesLinkService implements LinkService {
       captureMetadata: input.captureMetadata,
       deviceId,
     });
-    const response = await requestWithContractFallback(['/v1/links', '/v1/shares'], {
+    const response = await this.requestWithContractFallback(['/v1/links', '/v1/shares'], {
       method: 'POST', headers: { 'content-type': 'application/json' }, body,
     });
     if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error ?? `Sharing failed (${ response.status })`);
@@ -121,7 +122,7 @@ export class SullaFilesLinkService implements LinkService {
   }
 
   async list():Promise<ShareLink[]> {
-    const response = await requestWithContractFallback(['/v1/links?createdBy=me', '/v1/shares'], {});
+    const response = await this.requestWithContractFallback(['/v1/links?createdBy=me', '/v1/shares'], {});
     if (!response.ok) throw new Error(`Recent shares failed (${ response.status })`);
     const body = await response.json(); const values = Array.isArray(body) ? body : body.links ?? body.shares ?? [];
 
@@ -129,14 +130,14 @@ export class SullaFilesLinkService implements LinkService {
   }
 
   async revoke(id:string):Promise<void> {
-    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
+    const response = await this.requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
       method:  'DELETE',
     });
     if (!response.ok) throw new Error(`Revoke share failed (${ response.status })`);
   }
 
   async update(id:string, input:Partial<CreateShareInput>):Promise<ShareLink> {
-    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
+    const response = await this.requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }`], {
       method:  'PATCH',
       headers: { 'content-type': 'application/json' },
       body:    JSON.stringify(input),
@@ -147,13 +148,13 @@ export class SullaFilesLinkService implements LinkService {
   }
 
   async restore(id:string, password?:string):Promise<ShareLink> {
-    const response = await requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }) });
+    const response = await this.requestWithContractFallback([`/v1/links/${ encodeURIComponent(id) }/restore`], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password }) });
     if (!response.ok) throw new Error(`Restore share failed (${ response.status })`);
     return normalize(await response.json());
   }
 
   async activity(id?:string):Promise<{ id:string; action:'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked'; occurredAt:string; detail?:string }[]> {
-    const response = await requestWithContractFallback([id ? `/v1/links/${ encodeURIComponent(id) }/activity` : '/v1/links/activity'], {});
+    const response = await this.requestWithContractFallback([id ? `/v1/links/${ encodeURIComponent(id) }/activity` : '/v1/links/activity'], {});
     if (!response.ok) throw new Error(`Share activity failed (${ response.status })`);
     const body = await response.json(); const events = Array.isArray(body) ? body : body.events ?? [];
     return events.map((event:any) => ({ id: String(event.id), action: event.action, occurredAt: event.occurredAt ?? event.occurred_at, detail: event.detail }));
