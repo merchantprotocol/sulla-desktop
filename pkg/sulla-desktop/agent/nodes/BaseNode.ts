@@ -39,6 +39,7 @@ import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
+import { TurnOutputCounter } from '../services/TurnOutputCounter';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -1519,6 +1520,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         console.log(`[VoiceTrace] ${ JSON.stringify({ turnId: voiceTurnId, stage: 'first_token', ts: new Date().toISOString(), durationMs: Date.now() - voiceStartedAt, size: token.length }) }`);
       }
       contentBuffer += token;
+      new TurnOutputCounter(state.metadata as any).recordToken(token);
 
       // Sub-agent inactivity watchdog in PlaybookController reads this —
       // every token proves the LLM is generating, not hung.
@@ -1600,6 +1602,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // transcript. Flush the open streaming bubble first, same as onActivity,
     // so the patch block lands between text segments rather than mid-stream.
     const onFilePatch = (info: import('../util/linePatch').FilePatchInfo): void => {
+      new TurnOutputCounter(state.metadata as any).record();
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
       if (!isVoiceMode && contentBuffer.trim()) {
@@ -1626,12 +1629,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
       providerToolStarted = true;
+      new TurnOutputCounter(state.metadata as any).record();
       this.logConversationToolCall(state, event.toolName, event.input, {
         chars: event.resultChars,
         error: event.isError || undefined,
       });
     };
-    const onToolStarted = (): void => { providerToolStarted = true };
+    const onToolStarted = (): void => {
+      providerToolStarted = true;
+      new TurnOutputCounter(state.metadata as any).record();
+    };
 
     let reply: NormalizedResponse | null;
     try {

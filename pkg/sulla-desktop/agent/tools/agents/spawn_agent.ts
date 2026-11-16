@@ -653,6 +653,7 @@ export class SpawnAgentWorker extends BaseTool {
             String(entry.jobId), Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0,
           )));
         };
+        const failedManagerCompletionRerouter = new FailedManagerCompletionRerouter();
         const freshTurnRunner = new DelegatedFreshTurnRunner({
           jobId:                  activityJobId,
           taskIndex:              index,
@@ -669,7 +670,7 @@ export class SpawnAgentWorker extends BaseTool {
           endWakeTurn:            (jobId, taskIndex) => agentJobLifecycle.endWakeTurn(jobId, taskIndex),
           waitForWake:            (wakeThreadId, signal) => agentJobLifecycle.waitForWake(wakeThreadId, signal),
           resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
-          rerouteCompletions:     (manager, taskIndex, reason, entries) => new FailedManagerCompletionRerouter().route(manager, taskIndex, reason, entries),
+          rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
           acknowledgeCompletions: acknowledgeCompletionInput,
         });
         const runFreshTurn = (currentState: any) => freshTurnRunner.run(currentState);

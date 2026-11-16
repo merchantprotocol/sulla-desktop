@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { DelegatedFreshTurnRunner, type DelegatedFreshTurnPorts } from '../../../services/DelegatedFreshTurnRunner';
+import { TurnOutputCounter } from '../../../services/TurnOutputCounter';
 
 type TurnEffect = (state: any) => void;
 
@@ -23,8 +24,23 @@ class FakeDelegatedTask {
     this.state = { messages, metadata: { lastActivityMs: 500 } };
   }
 
-  /** A model/tool event inside the graph stamps activity the way BaseNode/ToolExecutor do. */
-  touch(state: any): void { state.metadata.lastActivityMs = ++this.clock }
+  /**
+   * What BaseNode does on EVERY model call, output or not: "Preparing your
+   * turn…" onActivity, the streaming_complete/thinking_complete sentinels and
+   * blank separator tokens all stamp the activity timestamps.
+   */
+  heartbeat(state: any): void {
+    state.metadata.lastActivityMs = ++this.clock;
+    state.metadata.lastAgentActivityAt = ++this.clock;
+    new TurnOutputCounter(state.metadata).recordToken('\n\n');
+    new TurnOutputCounter(state.metadata).recordToken('');
+  }
+
+  /** A provider-managed (Claude Code/Codex CLI) tool call: BaseNode.onToolEvent. */
+  cliToolCall(state: any): void {
+    this.heartbeat(state);
+    new TurnOutputCounter(state.metadata).record();
+  }
 
   ports(): DelegatedFreshTurnPorts {
     return {
@@ -78,7 +94,7 @@ describe('DelegatedFreshTurnRunner', () => {
   it('counts a tool-only CLI turn as progress even though no assistant message was stored', async() => {
     // risk: false failure. Claude Code runs tools inside the provider and a [SILENT]
     // reply stores no visible assistant text, so the message count never grows.
-    const task = new FakeDelegatedTask([...history(), completionWake()], [state => task.touch(state)]);
+    const task = new FakeDelegatedTask([...history(), completionWake()], [state => task.cliToolCall(state)]);
     task.job.tasks[0].emptyWakeCount = 2;
     const result = await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
 
@@ -113,13 +129,59 @@ describe('DelegatedFreshTurnRunner', () => {
 
   it('parks a truly empty wake while a child is live and runs again when woken', async() => {
     // risk: lost manager job while workers are still running
-    const task = new FakeDelegatedTask([...history(), completionWake()], [() => undefined, () => undefined, state => task.touch(state)]);
+    const task = new FakeDelegatedTask([...history(), completionWake()], [() => undefined, () => undefined, state => task.cliToolCall(state)]);
     task.liveChildren = 1;
     await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
 
     expect(task.calls).toEqual(expect.arrayContaining(['endWakeTurn', 'waitForWake', 'resume']));
     expect(task.executions).toBe(3);
     expect(task.job.tasks[0].emptyWakeCount).toBe(0);
+  });
+
+  it('treats a turn that only stamped activity timestamps as empty and reroutes stranded completions', async() => {
+    // risk: lost delegated work. Production stamps lastActivityMs/lastAgentActivityAt
+    // on every model call even with no output; that must not ACK child completions.
+    const task = new FakeDelegatedTask([...history(), completionWake()], [
+      state => task.heartbeat(state),
+      state => task.heartbeat(state),
+    ]);
+    await expect(new DelegatedFreshTurnRunner(task.ports()).run(task.state))
+      .rejects.toThrow('wake=sub_agent_completion, unconsumedCompletionJobs=child-1');
+
+    expect(task.executions).toBe(2); // the empty turn was retried
+    expect(task.rerouted).toHaveLength(1);
+    expect(task.acknowledged).toEqual([]);
+  });
+
+  it('settles a heartbeat-only reminder turn instead of counting it as progress', async() => {
+    // risk: unbounded empty loop. A heartbeat must advance the empty-wake bound.
+    const task = new FakeDelegatedTask([...history(), reminder()], [
+      state => task.heartbeat(state),
+      state => {
+        task.heartbeat(state);
+        state.messages.push({ role: 'assistant', content: 'Error: LLM returned empty response', metadata: { kind: 'agent_error' } });
+        state.messages.push({ role: 'assistant', content: '   ' });
+      },
+    ]);
+    task.job.tasks[0].emptyWakeCount = 1;
+    const result = await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
+
+    expect(result.returned).toBeUndefined();
+    expect(task.executions).toBe(2);
+    expect(task.job.tasks[0].emptyWakeCount).toBe(2);
+  });
+
+  it('counts a Sulla tool result as progress even when the model wrote no text', async() => {
+    // risk: false failure for a tool-only turn on the non-CLI path
+    const task = new FakeDelegatedTask([...history(), completionWake()], [state => {
+      task.heartbeat(state);
+      state.messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }], metadata: { kind: 'tool_result' } });
+    }]);
+    await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
+
+    expect(task.executions).toBe(1);
+    expect(task.acknowledged).toHaveLength(1);
+    expect(task.rerouted).toEqual([]);
   });
 
   it('fails once truly empty turns repeat past the bound, even with nothing to consume', async() => {

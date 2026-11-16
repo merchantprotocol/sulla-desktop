@@ -30,7 +30,8 @@ export interface DelegatedFreshTurnResult { finalState: any; returned: any }
 
 /**
  * Runs one delegated turn after a wake, reminder or resume, retrying once when
- * the turn did nothing. A turn with any model/tool activity is progress. A
+ * the turn did nothing. Only real output (a non-blank token, a tool call or
+ * a new output message, see DelegatedTurnProgressProbe) is progress. A
  * truly empty turn parks while something can wake it, hands back to the
  * settlement loop when nothing was waiting to be consumed, and fails only when
  * child completions would be stranded or the empty-turn bound is exceeded.
@@ -71,7 +72,13 @@ export class DelegatedFreshTurnRunner {
     const { ports } = this;
     const { jobId, taskIndex, threadId } = ports;
     const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
-    if (!jobId) return { finalState: currentState, returned: undefined };
+    if (!jobId) {
+      // No agent job row (direct/legacy run): nothing can park it, count its
+      // empty turns or own child completions, so hand the turn back to the
+      // caller's settlement loop, which reminds and then auto-parks with its
+      // own bound. Completions stay unacknowledged for that loop to retry.
+      return { finalState: currentState, returned: undefined };
+    }
     const job = await ports.getJob(jobId);
     const liveChildren = await ports.openChildren(threadId);
     const pendingWait = Boolean(await ports.pendingWait(jobId, taskIndex));
@@ -83,6 +90,12 @@ export class DelegatedFreshTurnRunner {
       await ports.waitForWake(threadId, ports.signal);
       if (ports.signal?.aborted) return { finalState: currentState, returned: undefined };
       await ports.resume(jobId, taskIndex);
+      // A wake (child completion, job message) is injected into this live
+      // state.messages before wake() releases waitForWake (see
+      // AgentJobLifecycleService.hasLiveWaiter), so the next
+      // run() reads that as its wake input. If the wake added nothing, run()
+      // re-reads this same unacknowledged input, so its completions are still
+      // acknowledged on progress or rerouted on failure; never dropped.
       return await this.run(currentState);
     }
     if (action === 'settle') {
