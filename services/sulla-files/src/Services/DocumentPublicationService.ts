@@ -68,7 +68,7 @@ export class DocumentPublicationService {
   }
 
   /** An agent asks a human to publish one of its draft versions (idempotent while pending). */
-  requestPublication(fileId:string, versionId:string, actor:FilesIdentity, reason:string | null):Promise<any> {
+  async requestPublication(fileId:string, versionId:string, actor:FilesIdentity, reason:string | null):Promise<any> {
     if (!LifecycleHttpError.isAgent(actor)) throw LifecycleHttpError.of(403, 'agent identity required');
     return this.transactions.run('document-publish-request', async client => {
       const file = await this.lockedFile(client, fileId);
@@ -78,7 +78,7 @@ export class DocumentPublicationService {
     });
   }
 
-  listRequests(status:string, fileId:string | null):Promise<any[]> {
+  async listRequests(status:string, fileId:string | null):Promise<any[]> {
     if (!['pending','approved','rejected','expired'].includes(status)) throw LifecycleHttpError.of(400, 'invalid publish request status');
     return this.lifecycle.listPublishRequests(status, fileId);
   }

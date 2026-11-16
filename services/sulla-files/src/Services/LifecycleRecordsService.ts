@@ -35,7 +35,7 @@ export class LifecycleRecordsService {
     return mode === 'retain-until' ? retainUntil : mode === 'event' && eventAt && days != null ? new Date(new Date(eventAt as string).valueOf() + Number(days) * DAY_MS) : null;
   }
 
-  updateSettings(fileId:string, body:Record<string, unknown> | undefined):Promise<any> {
+  async updateSettings(fileId:string, body:Record<string, unknown> | undefined):Promise<any> {
     const allowed = ['enabled','majorMinor','requireApproval','requireCheckout'];
     if (!Object.keys(body ?? {}).every(key => allowed.includes(key))) throw LifecycleHttpError.of(400, 'unsupported lifecycle setting');
     return this.transactions.run('lifecycle-settings', async client => {
@@ -93,7 +93,7 @@ export class LifecycleRecordsService {
     });
   }
 
-  lockRecord(fileId:string, actor:FilesIdentity, kind:unknown):Promise<any> {
+  async lockRecord(fileId:string, actor:FilesIdentity, kind:string):Promise<any> {
     if (kind !== 'ordinary' && kind !== 'policy') throw LifecycleHttpError.of(400, 'record lock kind must be ordinary or policy');
     return this.transactions.run('lifecycle-record-lock', async client => {
       const file = await this.lockedFile(client, fileId); if (file.record_lock_type === 'policy' && kind !== 'policy') throw LifecycleHttpError.of(423, 'policy records cannot be downgraded');
@@ -110,7 +110,7 @@ export class LifecycleRecordsService {
     });
   }
 
-  reviewDisposal(fileId:string, decision:unknown, extendedUntil:unknown):Promise<any> {
+  async reviewDisposal(fileId:string, decision:unknown, extendedUntil:unknown):Promise<any> {
     if (!['approve','reject','extend'].includes(decision as string)) throw LifecycleHttpError.of(400, 'disposal decision must be approve, reject, or extend');
     return this.transactions.run('lifecycle-disposal-review', async client => {
       const file = await this.lockedFile(client, fileId);
@@ -124,7 +124,7 @@ export class LifecycleRecordsService {
   }
 
   /** Applies another device's lifecycle state when its generation is newer and policy allows it. */
-  applyState(fileId:string, incoming:any):Promise<{ applied:boolean; file:any }> {
+  async applyState(fileId:string, incoming:any):Promise<{ applied:boolean; file:any }> {
     if (!incoming || incoming.id !== fileId || !Number.isInteger(Number(incoming.lifecycle_generation))) throw LifecycleHttpError.of(400, 'valid lifecycle state is required');
     if (!['none','retain-until','event'].includes(incoming.retention_mode) || !['none','ordinary','policy'].includes(incoming.record_lock_type) || !['none','pending','approved','rejected'].includes(incoming.disposal_status)) throw LifecycleHttpError.of(400, 'invalid lifecycle state');
     return this.transactions.run('lifecycle-state-sync', async client => {
