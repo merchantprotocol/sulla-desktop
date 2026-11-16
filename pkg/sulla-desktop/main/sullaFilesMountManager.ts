@@ -60,7 +60,7 @@ export class SullaFilesMountManager extends EventEmitter {
   /** True only after the backend prepared the anchor and no probe has since contradicted it. */
   private guestAnchorConfirmed = false;
   private readonly credentialService = new SullaFilesMountCredentialService(
-    () => this.executor, () => this.credentialProvider, () => this.credentialGeneration,
+    () => this.executor, () => this.credentialProvider, () => this.credentialGeneration, TOKEN_FILE,
   );
   private readonly adapterService = new SullaFilesMountAdapterService(
     generation => this.credentialService.refresh(generation), () => { this.guestAnchorConfirmed = false },

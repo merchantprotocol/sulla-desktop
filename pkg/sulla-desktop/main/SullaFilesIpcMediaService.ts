@@ -16,7 +16,7 @@ interface MediaCapability { fileId:string; versionId?:string; expiresAt:number }
 export class SullaFilesIpcMediaService {
   private readonly capabilities = new Map<string, MediaCapability>();
 
-  constructor(private readonly protocol:Protocol, private readonly filesClient:SullaFilesClient, private readonly now:() => number = Date.now) {}
+  constructor(private readonly protocol:Protocol, private readonly filesClient:SullaFilesClient, private readonly now:() => number = () => Date.now()) {}
 
   capability(input:{fileId:string;versionId?:string}):string {
     const now = this.now();

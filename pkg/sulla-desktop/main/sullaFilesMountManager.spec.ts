@@ -104,7 +104,7 @@ describe('SullaFilesMountCredentialService token custody', () => {
   it('lets lock wait for an in-flight token write before tearing the guest down', async() => {
     // risk: data integrity — lock must not remove the token file while a write is still landing it.
     const guest = new FakeGuestWriter();
-    const service = new SullaFilesMountCredentialService(() => guest.executor, () => async() => ({ token: VALID_TOKEN }), () => 1);
+    const service = new SullaFilesMountCredentialService(() => guest.executor, () => async() => ({ token: VALID_TOKEN }), () => 1, '/var/lib/sulla/files-fuse/token');
 
     const write = service.refresh(1);
     await vi.waitFor(() => expect(guest.writes).toHaveLength(1));
@@ -128,7 +128,7 @@ describe('SullaFilesMountCredentialService token custody', () => {
       current = undefined;
       return { token: VALID_TOKEN };
     };
-    const service = new SullaFilesMountCredentialService(() => current, () => provider, () => 1);
+    const service = new SullaFilesMountCredentialService(() => current, () => provider, () => 1, '/var/lib/sulla/files-fuse/token');
 
     await expect(service.refresh(1)).rejects.toThrow('Files mount guest is unavailable');
     expect(guest.executor.spawn).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ describe('SullaFilesMountCredentialService token custody', () => {
       generation = 2;
       return { token: VALID_TOKEN };
     };
-    const service = new SullaFilesMountCredentialService(() => guest.executor, () => provider, () => generation);
+    const service = new SullaFilesMountCredentialService(() => guest.executor, () => provider, () => generation, '/var/lib/sulla/files-fuse/token');
 
     await expect(service.refresh(1)).rejects.toThrow('Files mount credential generation changed');
     expect(guest.executor.spawn).not.toHaveBeenCalled();

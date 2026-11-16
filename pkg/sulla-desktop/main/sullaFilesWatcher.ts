@@ -386,3 +386,4 @@ export class SullaFilesWatcher {
 }
 
 export { SullaFilesWatcherProvider, sullaFilesWatcherProvider, getSullaFilesWatcher } from './SullaFilesWatcherProvider';
+export type { NativeSourceFileResult, NativeSourceIngestInput, RecentSullaFile, SullaFilesCapabilityContext, SullaFilesRootStatus, SullaFilesStatus } from './SullaFilesWatcherSupport';
