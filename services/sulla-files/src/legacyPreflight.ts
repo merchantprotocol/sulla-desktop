@@ -122,7 +122,7 @@ export function runLegacyPreflight(db:pg.Pool, filesRoot:string, options:{ caseI
   return new LegacyPreflightService(new LegacyPreflightRepository(db)).run(filesRoot, options);
 }
 
-/** @deprecated Use `LegacyPreflightService.isLegacyInternalPath`; kept for localManager.ts. */
+/** @deprecated Use `LegacyPreflightService.isLegacyInternalPath`; kept for in-flight callers. */
 export function isLegacyInternalPath(path:string, status?:LegacyPreflightStatus):boolean {
   return LegacyPreflightService.isLegacyInternalPath(path, status);
 }
