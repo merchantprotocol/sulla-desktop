@@ -39,7 +39,7 @@ import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/main/firstRun/first
 import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, VaultBrokerError, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import type { AccountKdf } from '@sulla/domain';
 
 import { CloudPasswordSignIn } from './cloud/account/CloudPasswordSignIn';
@@ -125,7 +125,7 @@ async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ 
   }
   const attemptKey = Uint8Array.from(key);
   try {
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault account-wrap service is unavailable');
     firstRunTrace('vault', 'creating or re-keying the vault with the Cloud key', { userId });
     const result = await client.rewrapForAccountPassword({ masterKey: Buffer.from(attemptKey).toString('base64url'), cloudUserId: userId, kdf });
@@ -235,7 +235,7 @@ function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): stri
 
 async function saveSession(session: CloudSession): Promise<void> {
   if (usesContainerVaultAuthority()) {
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.adoptSullaCloudSession({
       userId: session.userId, activeContractorId: session.activeContractorId,
@@ -312,7 +312,7 @@ async function loadSession(): Promise<CloudSession | null> {
 
 type SessionIdentity = Pick<CloudSession, 'userId' | 'activeContractorId' | 'contractors'>;
 
-function activeConnectedAccountId(metadata: Awaited<ReturnType<ReturnType<typeof requireConfiguredCredentialBroker>['integrationMetadata']>>): string | undefined {
+function activeConnectedAccountId(metadata: Awaited<ReturnType<ReturnType<typeof configuredVaultBrokerProvider.requireConfiguredCredentialBroker>['integrationMetadata']>>): string | undefined {
   const active = metadata.accounts.find(account => account.accountId === metadata.activeAccountId && account.connected);
   return active?.accountId ?? metadata.accounts.find(account => account.active && account.connected)?.accountId;
 }
@@ -335,7 +335,7 @@ async function loadSessionIdentity(): Promise<SessionIdentity | null> {
     const session = await loadSession();
     return session ? { userId: session.userId, activeContractorId: session.activeContractorId, contractors: session.contractors } : null;
   }
-  const broker = requireConfiguredCredentialBroker();
+  const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
   const status = await broker.status();
   if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Waiting for the vault to be unlocked.', 423);
   const metadata = await broker.integrationMetadata(INTEGRATION_ID);
@@ -357,9 +357,9 @@ class VaultNotReadyError extends Error {}
  */
 async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> {
   if (!usesContainerVaultAuthority()) return loadSessionIdentity();
-  let metadata: Awaited<ReturnType<ReturnType<typeof requireConfiguredCredentialBroker>['integrationMetadata']>>;
+  let metadata: Awaited<ReturnType<ReturnType<typeof configuredVaultBrokerProvider.requireConfiguredCredentialBroker>['integrationMetadata']>>;
   try {
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const status = await broker.status();
     if (!status.unlocked) throw new Error('vault is locked');
     await ensureLegacySessionAdopted();
@@ -398,7 +398,7 @@ async function ensureLegacySessionAdopted(): Promise<void> {
   if (!usesContainerVaultAuthority() || startupAdoptionComplete) return;
   if (startupAdoptionPromise) return startupAdoptionPromise;
   startupAdoptionPromise = (async() => {
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const metadata = await broker.integrationMetadata(INTEGRATION_ID);
     if (metadata.activeAccountId || metadata.accounts.length > 0) {
       await IntegrationValueModel.deleteLegacySullaCloudSession();
@@ -439,7 +439,7 @@ async function ensureLegacySessionAdopted(): Promise<void> {
       contractors = legacy.contractors_json ? JSON.parse(legacy.contractors_json) as CloudContractor[] : [];
     } catch { /* use an empty list for legacy single-contractor sessions */ }
     const activeContractorId = legacy.active_contractor_id || userId;
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new VaultNotReadyError('Desktop vault session service is unavailable');
     try {
       await client.adoptSullaCloudSession({
@@ -468,7 +468,7 @@ async function ensureLegacySessionAdopted(): Promise<void> {
 
 async function clearSession(): Promise<void> {
   if (usesContainerVaultAuthority()) {
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault session service is unavailable');
     await client.clearSullaCloudSession();
     await IntegrationValueModel.deleteLegacySullaCloudSession();
@@ -745,7 +745,7 @@ export function initSullaCloudAuthEvents(): void {
   ipcMainProxy.handle('sulla-cloud:recovery-key-rotate', async() => {
     const status = await buildStatus();
     if (!status.signedIn || !status.userId) throw new Error('Sign in to Sulla Cloud before making a recovery key.');
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault recovery service is unavailable.');
     const result = await client.rotateRecoveryKey();
     const storage = await saveRecoveryKeyToMacKeychain(status.userId, result.recoveryKey);

@@ -156,5 +156,21 @@ export class VaultKeyService {
   private secretEgressDenied(): Error { return new Error('unsupported_secret_egress') }
 }
 
-let instance: VaultKeyService | null = null;
-export function getVaultKeyService(): VaultKeyService { return instance ?? (instance = new VaultKeyService()) }
+/**
+ * Creates the Desktop vault key facade on first use, so importing this module never reads paths or
+ * constructs the retry policy. The holder owns the single instance; no module-level `let` is needed.
+ */
+export class VaultKeyServiceProvider {
+  private service: VaultKeyService | null = null;
+
+  get(): VaultKeyService {
+    return this.service ??= new VaultKeyService();
+  }
+}
+
+export const vaultKeyServices = new VaultKeyServiceProvider();
+
+/** Compatibility seam for existing callers; prefer injecting a `VaultKeyService`. */
+export function getVaultKeyService(): VaultKeyService {
+  return vaultKeyServices.get();
+}

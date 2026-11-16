@@ -14,10 +14,7 @@ import { REFRESH_RETRY_DELAY_MS, refreshRetryDelayMs } from './oauthRefreshRetry
 import { CustodyResolver } from './oauth/custody/CustodyResolver';
 import { isRawTokenCustody, type RawTokenCustody, type ResolvedTokenCustody, type TokenCustody } from './oauth/custody/TokenCustody';
 import { RefreshScheduler } from './oauth/RefreshScheduler';
-import {
-  issueLocalBrokerContext,
-  requireConfiguredCredentialBroker,
-} from '../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../vault-broker';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
@@ -264,12 +261,12 @@ export class OAuthService {
     };
 
     if (custody.kind === 'vault') {
-      const context = await issueLocalBrokerContext({
+      const context = await configuredVaultBrokerProvider.issueLocalBrokerContext({
         agentId:         'oauth-register',
         podId:           'desktop-main',
         credentialScope: { integration_id: integrationId, account_id: accountId },
       });
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       const result = await broker.execute(broker.requestFor(context, {
         operation:  'oauth.register',
         ref:        { integrationId, accountId },
@@ -424,7 +421,7 @@ export class OAuthService {
     providerId: string,
     clientId: string,
   ): Promise<OAuthTokenSet> {
-    const context = await issueLocalBrokerContext({
+    const context = await configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId:         'oauth-refresh',
       podId:           'desktop-main',
       credentialScope: { integration_id: integrationId, account_id: accountId },
@@ -449,7 +446,7 @@ export class OAuthService {
           { field: 'client_id', target: 'form' as const, name: 'client_id', scheme: 'raw' as const },
           { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
         ];
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const result = await broker.execute(broker.requestFor(context, {
       operation:  'oauth.refresh',
       ref:        { integrationId, accountId },
@@ -692,12 +689,12 @@ export class OAuthService {
       const metadata = await custody.getMetadata(integrationId, accountId);
       const provider = getOAuthProvider(metadata?.providerId || '');
       if (!provider?.config.revokeUrl) throw new Error(`${ LOG_PREFIX } OAuth provider does not expose a revoke endpoint`);
-      const context = await issueLocalBrokerContext({
+      const context = await configuredVaultBrokerProvider.issueLocalBrokerContext({
         agentId:         'oauth-revoke',
         podId:           'desktop-main',
         credentialScope: { integration_id: integrationId, account_id: accountId },
       });
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       await broker.execute(broker.requestFor(context, {
         operation:  'oauth.revoke',
         ref:        { integrationId, accountId },
