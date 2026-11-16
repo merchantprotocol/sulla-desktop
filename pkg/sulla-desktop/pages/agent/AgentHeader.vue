@@ -118,15 +118,15 @@
             >
               <path :d="tab.iconPath" />
             </svg>
+            <span
+              v-if="tab.activity && tab.activity !== 'idle'"
+              class="tab-activity-dot"
+              :class="`tab-activity-${tab.activity}`"
+              role="img"
+              :aria-label="ACTIVITY_LABEL[tab.activity]"
+              :title="ACTIVITY_LABEL[tab.activity]"
+            />
           </span>
-          <span
-            v-if="tab.activity && tab.activity !== 'idle'"
-            class="tab-activity-dot"
-            :class="`tab-activity-${tab.activity}`"
-            role="img"
-            :aria-label="ACTIVITY_LABEL[tab.activity]"
-            :title="ACTIVITY_LABEL[tab.activity]"
-          />
           <input
             v-if="renamingTabId === tab.id"
             ref="renameInput"
@@ -1094,7 +1094,7 @@ const orderedTabs = computed(() => {
 });
 
 const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
-const tabDensityClass = computed(() => orderedTabs.value.length >= 9 ? 'tabs-compact' : orderedTabs.value.length >= 6 ? 'tabs-tight' : 'tabs-normal');
+const tabDensityClass = computed(() => orderedTabs.value.length >= 12 ? 'tabs-compact' : orderedTabs.value.length >= 8 ? 'tabs-tight' : 'tabs-normal');
 
 // Keep tabOrder in sync when tabs are added/removed
 watch(
@@ -1498,7 +1498,7 @@ function handleTabContextMenuAction(
   /* One surface for the whole bar: the logo, the tab strip and the right-hand
      controls share the tab strip's glass background and a single bottom
      border that runs edge to edge. */
-  background: linear-gradient(var(--bg-glass), var(--bg-glass)), var(--bg-page);
+  background: color-mix(in srgb, var(--bg-page) 93%, var(--text-primary));
   border-bottom: 1px solid var(--border-default);
 }
 
@@ -2414,12 +2414,12 @@ function handleTabContextMenuAction(
   padding-top: 0;
   padding-bottom: 0;
   align-items: center;
-  background: var(--bg-surface, var(--bg-page));
+  background: color-mix(in srgb, var(--bg-page) 93%, var(--text-primary));
 }
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
 .app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
-.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: stretch; overflow-x: auto; overflow-y: hidden; }
+.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
 .app-titlebar .tab-item {
   position: relative;
   height: 34px;
@@ -2436,9 +2436,9 @@ function handleTabContextMenuAction(
   overflow: visible;
 }
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-titlebar .tab-icon { flex: 0 0 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-surface, var(--bg-page)); }
-.app-titlebar .tab-active .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-page, var(--bg-surface)); }
+.app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
+.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-page); }
+.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-page) 93%, var(--text-primary)); }
 .app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
@@ -2447,11 +2447,17 @@ function handleTabContextMenuAction(
   margin-bottom: -1px;
   border: 0;
   border-radius: 9px 9px 0 0;
-  background: var(--bg-page, var(--bg-surface));
+  background: var(--bg-page);
   box-shadow: none;
   color: var(--text-primary);
   font-weight: 600;
   overflow: visible;
+}
+.app-titlebar .tab-active {
+  border: 1px solid var(--border-default);
+  border-bottom: 0;
+  background: var(--bg-page);
+  box-sizing: border-box;
 }
 .app-titlebar .tab-active .tab-accent-bar,
 .app-titlebar .tab-active-native .tab-accent-bar { display: none; }
@@ -2464,9 +2470,17 @@ function handleTabContextMenuAction(
   height: 10px;
   pointer-events: none;
   background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-page, var(--bg-surface)) 10.5px);
+  display: block;
 }
 .app-titlebar .tab-active::before { left: -10px; }
 .app-titlebar .tab-active::after { right: -10px; transform: scaleX(-1); }
+.app-titlebar .tab-inactive + .tab-inactive::before {
+  display: block;
+  top: 9px;
+  bottom: 9px;
+  height: auto;
+  background: color-mix(in srgb, var(--border-default) 55%, transparent);
+}
 .app-titlebar .tab-active-indicator { display: none !important; }
 .app-titlebar .tab-pinned { min-width: 64px; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
 .app-titlebar .tab-pinned.tab-active { box-shadow: none; }
