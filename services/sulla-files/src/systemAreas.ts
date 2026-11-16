@@ -3,69 +3,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHash, randomUUID } from 'node:crypto';
+// Delegating shims for callers outside the E5 S5 slice (index.ts, app.ts, localManager.ts). The
+// provisioning is Services/SystemAreaProvisioner.ts and its SQL Repositories/SystemAreaRepository.ts.
+import { TransactionRunner } from './FilesTransaction.js';
+import { SystemAreaRepository } from './Repositories/SystemAreaRepository.js';
+import { SystemAreaProvisioner } from './Services/SystemAreaProvisioner.js';
 
 import type { Config } from './config.js';
 import type pg from 'pg';
 
-// 'logs' is the internal audit store (FileAuditWriter appends audit/files and audit/vault).
-// It is not mounted, mirrored or shown in the File Manager.
-const AREAS = [
-  { key: 'logs', name: 'Logs', explorerPath: 'Logs', folders: ['audit/files', 'audit/vault'] },
-  { key: 'home', name: 'Files', explorerPath: '', folders: [
-{ path: 'Use Cases/skills' }, { path: 'Use Cases/workflows' }, { path: 'Use Cases/agents' },
-    { path: 'Use Cases/functions' }, { path: 'Use Cases/recipes' }, { path: 'Projects' }, { path: 'Identity' },
-    { path: 'Memory', description: 'Durable agent memory. Memory files are live as soon as they are written (no publish step). Record durable facts as observations too.' },
-    { path: 'Memory/claude-code', description: 'Claude Code project memory files.' },
-    { path: 'Memory/codex', description: 'Codex CLI memory database snapshot.' },
-    { path: 'Memory/sulla', description: 'Memories written by Sulla agents and services.' },
-  ] },
-] as const;
+export { SystemAreaProvisioner } from './Services/SystemAreaProvisioner.js';
 
 export function collectionIdFor(userId:string, rootId = 'default'):string {
-  const identity = rootId === 'default' ? `sulla-files:v1:${ userId }` : `sulla-files:root:v1:${ userId }:${ rootId }`;
-  const value = createHash('sha256').update(identity).digest('hex').slice(0, 32).split(''); value[12] = '4'; value[16] = '8';
-  return `${ value.slice(0, 8).join('') }-${ value.slice(8, 12).join('') }-${ value.slice(12, 16).join('') }-${ value.slice(16, 20).join('') }-${ value.slice(20).join('') }`;
+  return SystemAreaProvisioner.collectionIdFor(userId, rootId);
 }
 
-export async function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void> {
-  if (!config.keyring?.unlocked) throw new Error('Files keyring must be unlocked before system areas are initialized');
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    for (const area of AREAS) {
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`system-area:${ area.key }`]);
-      let collection = area.key === 'home'
-        ? (await client.query("SELECT * FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1", [config.userId])).rows[0]
-        : (await client.query('SELECT * FROM collections WHERE system_area=$1', [area.key])).rows[0];
-      if (!collection) {
-        const id = area.key === 'home' ? collectionIdFor(config.userId) : randomUUID();
-        collection = (await client.query(`INSERT INTO collections
-          (id,org_id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,explorer_path,system_area)
-          VALUES($1,$2,$3,$4,'knowledge','desktop-only',$5,$6,'{}',$8,$7) RETURNING *`,
-        [id, config.orgId ?? null, config.userId, area.name, {}, {}, area.key === 'home' ? null : area.key, area.explorerPath])).rows[0];
-        const wrapped = await config.keyring.create(id, client);
-        await client.query('UPDATE collections SET encrypted_data_key=$2,dedup_key_ciphertext=$3 WHERE id=$1', [id, wrapped.data, wrapped.dedup]);
-      }
-      for (const folderEntry of area.folders) {
-        const folder = typeof folderEntry === 'string' ? folderEntry : folderEntry.path;
-        const parts = folder.split('/');
-        for (let index = 1; index <= parts.length; index++) {
-          const path = parts.slice(0, index).join('/');
-          const description = index === parts.length && typeof folderEntry !== 'string' && 'description' in folderEntry ? folderEntry.description : null;
-          await client.query(`INSERT INTO file_folders(collection_id,path,created_by_type,created_by_id,description)
-            VALUES($1,$2,'service','sulla-files',$3) ON CONFLICT(collection_id,path) DO UPDATE
-            SET description=COALESCE(EXCLUDED.description,file_folders.description)`, [collection.id, path, description]);
-        }
-      }
-    }
-    await client.query('COMMIT');
-  } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+export function ensureSystemAreas(db:pg.Pool, config:Config):Promise<void> {
+  return new SystemAreaProvisioner(new TransactionRunner(db), new SystemAreaRepository()).ensure(config);
 }
 
 /** Read-only system storage is structural: no caller grants can override it. */
-export function assertSystemAreaWritable(area:unknown):void {
-  if (area === 'logs') {
-    throw Object.assign(new Error('System area is read-only'), {status:403,code:'EROFS'});
-  }
-}
+export function assertSystemAreaWritable(area:unknown):void { SystemAreaProvisioner.assertWritable(area) }
