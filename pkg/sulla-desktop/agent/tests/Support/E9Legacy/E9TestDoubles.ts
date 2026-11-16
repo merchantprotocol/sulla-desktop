@@ -66,6 +66,41 @@ export class E9CounterRandom {
   }
 }
 
+/**
+ * Deterministic `randombytes_buf` for libsodium. `@sulla/vault-crypto` (encryptItem / generateKey, used by
+ * e.g. the Sulla Cloud pending-revocation queue) draws keys and nonces from libsodium directly, not from the
+ * injected RandomSource, so both sides of a comparison must replay the same sequence. Each draw is unique
+ * (the draw counter is written into the first 4 bytes); calls with an output format use the real function.
+ */
+export class E9SodiumDeterminism {
+  private drawn = 0;
+  private readonly restores: Array<() => void> = [];
+
+  /** Replaces `randombytes_buf` on every distinct libsodium instance given (ESM and CJS builds can differ). */
+  install(...instances: Array<Record<string, unknown> | null | undefined>): this {
+    for (const sodium of new Set(instances.filter((entry): entry is Record<string, unknown> => !!entry))) {
+      const real = sodium.randombytes_buf as (length: number, format?: unknown) => unknown;
+      if (typeof real !== 'function') continue;
+      sodium.randombytes_buf = (length: number, format?: unknown) => (format === undefined ? this.bytes(length) : real.call(sodium, length, format));
+      this.restores.push(() => { sodium.randombytes_buf = real });
+    }
+    return this;
+  }
+
+  restore(): void {
+    while (this.restores.length) this.restores.pop()!();
+  }
+
+  bytes(length: number): Uint8Array {
+    this.drawn += 1;
+    const output = new Uint8Array(length);
+    for (let index = 0; index < length; index += 1) {
+      output[index] = index < 4 ? (this.drawn >>> (8 * index)) & 0xff : (this.drawn * 71 + index * 13 + 29) & 0xff;
+    }
+    return output;
+  }
+}
+
 /** A fixed clock for Date.now while a scenario runs. */
 export class E9Clock {
   static readonly START = Date.UTC(2026, 10, 16, 12, 0, 0);
