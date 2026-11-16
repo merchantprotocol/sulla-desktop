@@ -3,10 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { LocalVaultApprovalClient } from '@pkg/vault-broker';
 import type { AccountKdf } from '@sulla/domain';
 
 import type { recoveryKeyStorageStatus } from '../../recoveryKeychain';
-import type { LocalVaultApprovalClient } from '@pkg/vault-broker';
 import type { CloudRecoveryKeyNotice, CloudRecoveryKeyNoticeStore } from '../session/CloudRecoveryKeyNoticeStore';
 import type { CloudSessionKeyStore } from '../session/CloudSessionKeyStore';
 
