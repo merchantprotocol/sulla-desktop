@@ -3719,19 +3719,5 @@
       "sideEffect": "write",
       "credential": "none"
     }
-  },
-  "github/github_update_repo": {
-    "category": "github",
-    "name": "github_update_repo",
-    "placements": [
-      "desktop",
-      "cloud",
-      "mobile"
-    ],
-    "relayable": true,
-    "sideEffect": "irreversible",
-    "credential": {
-      "integration": "github"
-    }
   }
 }

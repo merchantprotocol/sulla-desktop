@@ -160,7 +160,8 @@ export class GitPushWorker extends BaseTool {
       // broker can fail after the remote accepted the push, or report success
       // without updating it.
       if (!tags) {
-        const localHead = await runCommand(`git -C "${ repoRoot }" rev-parse HEAD`, [], { runInGuest: true, timeoutMs: 10_000 });
+        const expectedRef = branch ? `refs/heads/${ targetBranch }^{commit}` : 'HEAD';
+        const localHead = await runCommand(`git -C "${ repoRoot }" rev-parse --verify "${ expectedRef }"`, [], { runInGuest: true, timeoutMs: 10_000 });
         const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url "${ remote }"`, [], { runInGuest: true, timeoutMs: 10_000 });
         let remoteHead = { stdout: '', stderr: '', exitCode: 1 };
         if (remoteUrl.exitCode === 0) {

@@ -16,7 +16,7 @@ const mockCommands = (remoteHead: string, pushExitCode = 0) => (runCommand as an
   if (command.includes('rev-parse --show-toplevel')) return { stdout: '/repo', stderr: '', exitCode: 0 };
   if (command.includes('rev-parse --abbrev-ref')) return { stdout: 'main', stderr: '', exitCode: 0 };
   if (command.includes('remote get-url')) return { stdout: 'https://github.com/org/repo.git', stderr: '', exitCode: 0 };
-  if (command.includes('rev-parse HEAD')) return { stdout: `${ localHead }\n`, stderr: '', exitCode: 0 };
+  if (command.includes('rev-parse --verify')) return { stdout: `${ localHead }\n`, stderr: '', exitCode: 0 };
   if (command.includes('ls-remote')) return { stdout: remoteHead ? `${ remoteHead }\trefs/heads/${ command.match(/refs\/heads\/([^\s]+)/)?.[1] || 'main' }\n` : '', stderr: '', exitCode: 0 };
   if (command.includes(' push ')) return { stdout: '', stderr: pushExitCode ? 'transport failed' : '', exitCode: pushExitCode };
   return { stdout: '', stderr: `unexpected command: ${ command }`, exitCode: 1 };
@@ -32,6 +32,21 @@ describe('GitPushWorker remote verification', () => {
     expect(result.successBoolean).toBe(true);
     expect(result.responseString).toContain('Pushed to origin/main');
     expect(runCommand).toHaveBeenCalledWith(expect.stringContaining('ls-remote'), [], expect.any(Object));
+  });
+
+  it('verifies the tip of an explicitly pushed branch rather than checked-out HEAD', async() => {
+    // risk: data integrity — success must describe the exact non-checked-out branch tip that was pushed.
+    mockCommands(localHead);
+    const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch: 'feature' });
+    expect(result.successBoolean).toBe(true);
+    expect(runCommand).toHaveBeenCalledWith(expect.stringContaining('rev-parse --verify "refs/heads/feature^{commit}"'), [], expect.any(Object));
+  });
+
+  it('fails when an explicitly pushed branch tip differs from its remote ref', async() => {
+    // risk: data integrity — a stale remote must not be reported as a successful branch push.
+    mockCommands('b'.repeat(40));
+    const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch: 'feature' });
+    expect(result.successBoolean).toBe(false);
   });
 
   it('authenticates private-remote verification and redacts the token', async() => {
