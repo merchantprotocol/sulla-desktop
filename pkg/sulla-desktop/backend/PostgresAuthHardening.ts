@@ -7,12 +7,13 @@ import { randomBytes } from 'crypto';
 
 import { ServiceSecretProvider } from '@pkg/agent/app/Services/ServiceSecret/ServiceSecretProvider';
 
+import { PostgresAuthProbes } from './PostgresAuthProbes';
 import { PostgresAuthReporter } from './PostgresAuthReporter';
 import { PostgresHbaRestore } from './PostgresHbaRestore';
 import { PostgresScramVerifier, ScramVerifierUnsupportedPasswordError } from './PostgresScramVerifier';
-import type { PostgresProbeOutcome } from './Repositories/GuestPostgresAuthRepository';
 import type {
   PostgresAuthConsumers, PostgresAuthLogger, PostgresAuthRepository, PostgresAuthSecretSource, PostgresAuthState, PostgresAuthTiming,
+  PostgresAuthTrustReason,
 } from './PostgresAuthTypes';
 
 export type {
@@ -38,6 +39,11 @@ export type {
  *   (not refusing) stays scram, reported as unverified.
  * - verify(): the right secret logs in over TCP and a wrong one gets 28P01.
  * - rollback(): restore the pre-switch hba (or a trust file) and reload.
+ * - restoreTrust(): put trust back if a managed file is in place, and report why.
+ *
+ * Callers must serialise converge/apply/restoreTrust (PostgresAuthLifecycle
+ * runs them on one chain); apply() itself follows a secret that changes while
+ * it runs.
  *
  * The managed hba file is its own marker: it travels with the data volume.
  * The secret never goes to argv or to a log line.
@@ -47,12 +53,12 @@ export class PostgresAuthHardening {
   static readonly MANAGED_HBA = PostgresHbaRestore.MANAGED_HBA;
   /** Written by rollback when no unmanaged backup exists. */
   static readonly TRUST_HBA = PostgresHbaRestore.TRUST_HBA;
+  /** How many times apply() re-decides when the secret changed while it ran. */
+  private static readonly SECRET_FOLLOW_ATTEMPTS = 2;
 
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-  private readonly verifyAttempts: number;
-  private readonly verifyDelayMs: number;
-  private readonly healthTimeoutMs: number;
   private readonly loadSettleMs: number;
+  private readonly probes: PostgresAuthProbes;
   private readonly reporter: PostgresAuthReporter;
   private readonly hba: PostgresHbaRestore;
 
@@ -61,14 +67,17 @@ export class PostgresAuthHardening {
     private readonly secret: PostgresAuthSecretSource,
     private readonly consumers: PostgresAuthConsumers,
     private readonly logger: PostgresAuthLogger = console,
-    private readonly wrongPassword: () => string = () => randomBytes(24).toString('base64url'),
+    wrongPassword: () => string = () => randomBytes(24).toString('base64url'),
     private readonly developmentPassword: string = ServiceSecretProvider.DEVELOPMENT_PASSWORD,
     timing: PostgresAuthTiming = {},
   ) {
-    this.sleep = timing.sleep ?? PostgresAuthHardening.abortableSleep;
-    this.verifyAttempts = Math.max(1, timing.verifyAttempts ?? 5);
-    this.verifyDelayMs = timing.verifyDelayMs ?? 200;
-    this.healthTimeoutMs = timing.healthTimeoutMs ?? 120_000;
+    this.sleep = timing.sleep ?? PostgresAuthProbes.abortableSleep;
+    this.probes = new PostgresAuthProbes(repository, consumers, wrongPassword, {
+      sleep:           this.sleep,
+      verifyAttempts:  Math.max(1, timing.verifyAttempts ?? 5),
+      verifyDelayMs:   timing.verifyDelayMs ?? 200,
+      healthTimeoutMs: timing.healthTimeoutMs ?? 120_000,
+    });
     this.loadSettleMs = Math.max(1000, timing.loadSettleMs ?? 1100);
     this.reporter = new PostgresAuthReporter(logger);
     this.hba = new PostgresHbaRestore(repository, logger, this.reporter);
@@ -99,13 +108,24 @@ export class PostgresAuthHardening {
       return this.reporter.report({ kind: 'trust', reason: 'unavailable', detail: this.reporter.describe(error, secret) });
     }
 
-    return this.reporter.report(await this.applyWith(secret));
+    return this.reporter.report(await this.followSecretChange(secret, await this.applyWith(secret)));
+  }
+
+  /**
+   * Puts trust back when a managed file is on disk (restores the backup and
+   * reloads) and reports `state=trust (<reason>)`. For callers that learn the
+   * secret and the role or a consumer disagree (a failed secret change). Never throws.
+   */
+  async restoreTrust(reason: PostgresAuthTrustReason, detail?: string): Promise<PostgresAuthState> {
+    await this.hba.restoreIfManaged(this.reporter.reasonText(reason));
+
+    return this.reporter.report(detail ? { kind: 'trust', reason, detail } : { kind: 'trust', reason });
   }
 
   /** True when the secret logs in over TCP and a wrong password is refused with 28P01. Never throws. */
   async verify(): Promise<boolean> {
     try {
-      return await this.verifyWith(await this.secret.value());
+      return await this.probes.verify(await this.secret.value());
     } catch {
       return false;
     }
@@ -116,8 +136,45 @@ export class PostgresAuthHardening {
     return this.hba.restore(reason, true);
   }
 
+  /** setTimeout-based sleep that clears its timer and resolves early when `signal` aborts. */
+  static abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return PostgresAuthProbes.abortableSleep(ms, signal);
+  }
+
   static isManaged(content: string): boolean {
     return PostgresHbaRestore.isManaged(content);
+  }
+
+  /**
+   * apply() works from the secret it read at the start. When the secret changed
+   * meanwhile (ServiceSecretProvider adopting the stored database value), the
+   * role may now hold the stale value: decide again with the new one, so the
+   * role, the hba file and the reported state follow the latest secret. A
+   * secret that keeps moving restores trust. Never throws.
+   */
+  private async followSecretChange(used: string, state: PostgresAuthState): Promise<PostgresAuthState> {
+    let current = used;
+
+    for (let decided = 0; ; decided++) {
+      let latest: string;
+
+      try {
+        latest = await this.secret.value();
+      } catch {
+        return state;
+      }
+      if (latest === current) {
+        return state;
+      }
+      if (decided >= PostgresAuthHardening.SECRET_FOLLOW_ATTEMPTS) {
+        await this.hba.restoreIfManaged(this.reporter.reasonText('role-password-not-set'));
+
+        return { kind: 'trust', reason: 'role-password-not-set', detail: 'the service secret kept changing' };
+      }
+      this.logger.log('[PostgresAuth] the service secret changed while apply ran; deciding again with the new value');
+      current = latest;
+      state = await this.applyWith(latest);
+    }
   }
 
   /** Decides, then makes the file on disk agree with a trust result. Never throws. */
@@ -178,30 +235,13 @@ export class PostgresAuthHardening {
     if ((await this.ruleErrors()).length > 0 || !await this.repository.hbaFileLoaded(path)) {
       return null;
     }
-    const probe = await this.probeRetryingErrors(secret);
+    const probe = await this.probes.probeRetryingErrors(secret);
 
     if (probe === 'ok') {
       return { kind: 'scram', changed: false };
     }
 
     return probe === 'error' ? { kind: 'scram', changed: false, unverified: true } : null;
-  }
-
-  /** probeTcp, retried while it ends in 'error' (up to verifyAttempts); a refusal is returned at once. */
-  private async probeRetryingErrors(secret: string): Promise<PostgresProbeOutcome> {
-    let outcome: PostgresProbeOutcome = 'error';
-
-    for (let attempt = 1; attempt <= this.verifyAttempts; attempt++) {
-      outcome = await this.repository.probeTcp(secret);
-      if (outcome !== 'error') {
-        return outcome;
-      }
-      if (attempt < this.verifyAttempts) {
-        await this.sleep(this.verifyDelayMs);
-      }
-    }
-
-    return outcome;
   }
 
   /** The first gate that fails, or null when the switch may go ahead. */
@@ -257,7 +297,7 @@ export class PostgresAuthHardening {
       return { kind: 'trust', reason: 'switch-failed', detail: this.reporter.describe(error, secret) };
     }
 
-    if (!await this.verifyAfterReload(secret)) {
+    if (!await this.probes.verifyAfterReload(secret)) {
       await this.rollback('the service secret could not authenticate, or a wrong password was accepted');
 
       return { kind: 'trust', reason: 'rolled-back', detail: 'verification failed' };
@@ -266,7 +306,7 @@ export class PostgresAuthHardening {
     // Existing sessions stay authenticated (scram checks new connections only), so
     // no backend is terminated: consumers' session advisory locks must survive.
     try {
-      await this.waitHealthyBounded();
+      await this.probes.waitHealthyBounded();
     } catch (error) {
       const detail = this.reporter.describe(error, secret);
 
@@ -293,70 +333,6 @@ export class PostgresAuthHardening {
     this.logger.log('[PostgresAuth] role password converged to the service secret');
 
     return true;
-  }
-
-  /** pg_reload_conf() only signals the postmaster; retry so a not-yet-applied reload is not a rollback. */
-  private async verifyAfterReload(secret: string): Promise<boolean> {
-    for (let attempt = 1; attempt <= this.verifyAttempts; attempt++) {
-      if (await this.verifyWith(secret)) {
-        return true;
-      }
-      if (attempt < this.verifyAttempts) {
-        await this.sleep(this.verifyDelayMs);
-      }
-    }
-
-    return false;
-  }
-
-  /** Races consumers.waitHealthy() against the bound; either way the timer is cleared and the checks are told to stop. */
-  private async waitHealthyBounded(): Promise<void> {
-    const seconds = Math.round(this.healthTimeoutMs / 1000);
-    const stop = new AbortController();
-    const timeout = this.sleep(this.healthTimeoutMs, stop.signal).then(() => {
-      if (!stop.signal.aborted) {
-        throw new Error(`database consumers were not healthy within ${ seconds }s`);
-      }
-    });
-
-    try {
-      await Promise.race([this.consumers.waitHealthy(stop.signal), timeout]);
-    } finally {
-      stop.abort();
-    }
-  }
-
-  /** setTimeout-based sleep that clears its timer and resolves early when `signal` aborts. */
-  static abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
-    return new Promise((resolve) => {
-      if (signal?.aborted) {
-        resolve();
-
-        return;
-      }
-      const done = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', done);
-        resolve();
-      };
-      const timer = setTimeout(done, ms);
-
-      timer.unref?.();
-      signal?.addEventListener('abort', done, { once: true });
-    });
-  }
-
-  private async verifyWith(secret: string): Promise<boolean> {
-    if (await this.repository.probeTcp(secret) !== 'ok') {
-      return false;
-    }
-    let wrong = this.wrongPassword();
-
-    if (wrong === secret) {
-      wrong = `${ wrong }x`;
-    }
-
-    return await this.repository.probeTcp(wrong) === 'auth-failed';
   }
 
   /** Rule errors; a failed check counts as an error (never reload an unchecked file). */

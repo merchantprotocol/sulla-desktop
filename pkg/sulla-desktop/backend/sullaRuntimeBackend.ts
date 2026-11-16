@@ -36,6 +36,7 @@ import { reconcileComposeService } from './sullaServiceReconcile';
 import { ComposeDriftActions } from './ComposeDriftActions';
 import { ComposeSecretGuard } from './ComposeSecretGuard';
 import { ContainerDriftReconciler } from './ContainerDriftReconciler';
+import { PostgresAuthLifecycle } from './PostgresAuthLifecycle';
 import { GuestServiceSecretInstallState } from './GuestServiceSecretInstallState';
 import { ServiceSecretComposeValues } from './ServiceSecretComposeValues';
 import { SullaComposeRegeneration } from './SullaComposeRegeneration';
@@ -263,6 +264,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // may be mid-invocation; neither carries the service secret.
     return this.#composeTargets.filter(target => target.service !== 'sulla_files_fuse' && !(target.service in ON_DEMAND_SERVICES));
   }, this.#composeDrift, console);
+  /** Network logins to PostgreSQL: role password follows the secret, then trust → scram (backend/PostgresAuthLifecycle.ts). */
+  readonly #postgresAuth = PostgresAuthLifecycle.forGuest({ binary: paths.sullaRuntime, guestArgs: command => this.guestExecArgs({ root: true }, command), drift: this.#composeDrift,
+    waitServiceHealthy: (target, timeoutSec) => this.waitForDockerServiceHealthy(target, timeoutSec), accountsPasswordFile: path.join(paths.appHome, 'accounts', 'database.password'), secret: serviceSecretProvider });
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
   /** The native Sulla runtime VM. */
@@ -1694,7 +1698,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     if (this.#composeTargets.length === 0) return;
     const generation = this.#managedServicesGeneration;
 
-    await this.#composeRegeneration.run(`service secret: ${ reason }`, { checkpoint: () => this.assertManagedServicesGeneration(generation) });
+    await this.#postgresAuth.aroundSecretChange(() => this.#composeRegeneration.run(`service secret: ${ reason }`, { checkpoint: () => this.assertManagedServicesGeneration(generation) }));
   }
 
   /**
@@ -1826,6 +1830,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         this.waitForDockerServiceHealthy({ service: 'postgres', container: 'sulla_postgres' }, 300, generation),
         this.waitForDockerServiceHealthy({ service: 'redis', container: 'sulla_redis' }, 300, generation),
       ]);
+      await this.#postgresAuth.afterPostgresHealthy();
       mainEvents.emit('first-run-ai-runtime-ready');
 
       this.#activeOptionalSullaServices.clear();
@@ -1991,14 +1996,19 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
           this.assertManagedServicesGeneration(generation);
           await Promise.all(orderedOptionalServices.map(run));
+          const allActive = orderedOptionalServices.every(entry => this.#activeOptionalSullaServices.has(entry.service));
+
+          if (allActive || attempt === OPTIONAL_SERVICE_ATTEMPTS) {
+            settleFirstPass();
+            void this.#postgresAuth.afterFirstPass(generation, bootStatus); // in the background: never holds boot
+          }
           if (attempt === 1) {
             console.log(`[Sulla] Boot services: postgres=healthy, redis=healthy, ${
               [...bootStatus].map(([service, status]) => `${ service }=${ status }`).join(', ')
             }`);
           }
           firstRunTrace('services', `optional services attempt ${ attempt }`, Object.fromEntries(bootStatus));
-          if (attempt === OPTIONAL_SERVICE_ATTEMPTS) settleFirstPass();
-          if (orderedOptionalServices.every(entry => this.#activeOptionalSullaServices.has(entry.service))) return;
+          if (allActive) return;
           const delayMs = attempt < OPTIONAL_SERVICE_ATTEMPTS
             ? Math.min(5_000 * attempt, 30_000)
             : OPTIONAL_SERVICE_RECONCILE_MS + Math.round(Math.random() * 15_000);
