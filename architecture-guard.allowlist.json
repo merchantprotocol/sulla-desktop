@@ -3829,21 +3829,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "services/sulla-files/src/legacyImport.ts": {
-      "rules": {
-        "long-file": 690,
-        "mutable-state": 2,
-        "raw-sql": 126
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/legacyPreflight.ts": {
-      "rules": {
-        "raw-sql": 13,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/localManager.ts": {
       "rules": {
         "long-file": 1669,
