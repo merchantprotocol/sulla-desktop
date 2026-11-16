@@ -8,7 +8,7 @@
 // and the real audit drainer. Writers drive POST /v1/fuse/files over HTTP; a sampler watches
 // pg_stat_activity for the longest open transaction. Only used when SULLA_FILES_TEST_DATABASE_URL is set.
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createServer, request as httpRequest, type Server } from 'node:http';
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type Server } from 'node:http';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +30,7 @@ export interface BenchmarkResult {
   started:number; ended:number; files:number; seconds:number; filesPerSecond:number;
   p50:number; p95:number; p99:number; max:number;
   maxTransactionMs:number; failures:string[];
+  walSyncs:number; walSyncsPerFile:number;
 }
 
 /** Percentiles over request latencies (milliseconds). */
@@ -172,22 +173,40 @@ export class FilesWriteBenchmark {
   async run(runId:string):Promise<BenchmarkResult> {
     const latencies = new LatencySample(); const failures:string[] = [];
     const sampler = new TransactionHoldSampler(this.admin, this.applicationName);
+    const walBefore = Number((await this.admin.query('SELECT wal_sync FROM pg_stat_wal')).rows[0]?.wal_sync ?? 0);
     const token = issueCapabilityToken({ sub: this.userId, device_id: 'bench-device', scopes: ['files/*'], job_id: 'bench-job' }, this.signingKey);
     const started = performance.now(); sampler.start();
     await Promise.all(this.paths(runId).map(async paths => {
       for (const path of paths) {
         const body = randomBytes(512 + Math.floor(Math.random() * 1024)).toString('base64');
         const begin = performance.now();
-        const reply = await this.post(`/v1/fuse/files?collectionId=${ this.collectionId }&path=${ encodeURIComponent(path) }`, Buffer.from(body), token);
+        const bytes = Buffer.from(body);
+        const created = await this.request('POST', `/v1/fuse/files?collectionId=${ this.collectionId }&path=${ encodeURIComponent(path) }`, bytes, token);
+        let reply = created; let expectedStatus = 201;
+        if (created.status === 201) {
+          expectedStatus = 200;
+          const file = JSON.parse(created.body) as { id:string };
+          const contentPath = `/v1/fuse/files/${ encodeURIComponent(file.id) }/content`;
+          const current = await this.request('GET', contentPath, undefined, token);
+          const etag = current.headers.etag;
+          const sourceHash = current.headers['x-sulla-source-hash'];
+          if (current.status !== 200 || typeof etag !== 'string' || typeof sourceHash !== 'string') {
+            reply = { status: current.status || 500, body: 'could not read current FUSE version headers', headers: current.headers };
+          } else {
+            reply = await this.request('PUT', contentPath, bytes, token, { 'if-match': etag, 'x-sulla-source-hash': sourceHash });
+          }
+        }
         latencies.add(performance.now() - begin);
-        if (reply.status !== 201) failures.push(`${ path }: ${ reply.status } ${ reply.body }`);
+        if (reply.status !== expectedStatus) failures.push(`${ path }: ${ reply.status } ${ reply.body }`);
       }
     }));
     const ended = performance.now(); const seconds = (ended - started) / 1000; sampler.stop();
+    const walAfter = Number((await this.admin.query('SELECT wal_sync FROM pg_stat_wal')).rows[0]?.wal_sync ?? walBefore);
     if (sampler.waits.size) console.log(`[files-bench] top waits (samples every 20ms):\n${ sampler.topWaits() }`);
     const files = this.options.writers * this.options.filesPerWriter;
     return { started, ended, files, seconds, filesPerSecond: files / seconds, p50: latencies.percentile(50), p95: latencies.percentile(95), p99: latencies.percentile(99),
-      max: latencies.percentile(100), maxTransactionMs: sampler.maxMs, failures };
+      max: latencies.percentile(100), maxTransactionMs: sampler.maxMs, failures,
+      walSyncs: Math.max(0, walAfter - walBefore), walSyncsPerFile: Math.max(0, walAfter - walBefore) / files };
   }
 
   /** Waits (bounded) until every job for the run's files is finished, then reports lag and drain rate. */
@@ -216,14 +235,14 @@ export class FilesWriteBenchmark {
 
   async scalar(sql:string, values:unknown[] = []):Promise<number> { return Number((await this.pool.query(sql, values)).rows[0].n) }
 
-  private post(path:string, body:Buffer, token:string):Promise<{ status:number; body:string }> {
-    const headers = { 'x-sulla-files-token': 'test-local', authorization: `Bearer ${ token }`, 'content-type': 'text/plain', 'content-length': String(body.length) };
+  private request(method:'GET' | 'POST' | 'PUT', path:string, body:Buffer | undefined, token:string, extraHeaders:Record<string,string> = {}):Promise<{ status:number; body:string; headers:IncomingHttpHeaders }> {
+    const headers = { 'x-sulla-files-token': 'test-local', authorization: `Bearer ${ token }`, ...(body ? { 'content-type': 'text/plain', 'content-length': String(body.length) } : {}), ...extraHeaders };
     return new Promise((done, reject) => {
-      const request = httpRequest(new URL(path, this.baseUrl), { method: 'POST', headers, agent: false }, response => {
+      const request = httpRequest(new URL(path, this.baseUrl), { method, headers, agent: false }, response => {
         const parts:Buffer[] = []; response.on('data', part => parts.push(Buffer.from(part)));
-        response.on('end', () => done({ status: response.statusCode ?? 500, body: Buffer.concat(parts).toString('utf8').slice(0, 300) }));
+        response.on('end', () => done({ status: response.statusCode ?? 500, body: Buffer.concat(parts).toString('utf8').slice(0, 300), headers: response.headers }));
       });
-      request.on('error', reject); request.write(body); request.end();
+      request.on('error', reject); if (body) request.write(body); request.end();
     });
   }
 }
