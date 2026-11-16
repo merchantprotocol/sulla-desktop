@@ -99,7 +99,7 @@ export class ServiceSecretComposeValues {
     }
     const postgres = compose.services?.postgres;
 
-    if (Array.isArray(postgres?.environment)) postgres.environment = this.applyToPostgresEnvironment(postgres.environment);
+    if (postgres && Array.isArray(postgres.environment)) postgres.environment = this.applyToPostgresEnvironment(postgres.environment);
   }
 
   /** Replace POSTGRES_PASSWORD in a compose `environment:` list (the asset ships a placeholder). */

@@ -43,7 +43,7 @@ export class ComposeSecretGuard {
       const definition = compose.services?.[service];
 
       if (!definition) continue;
-      const environment = Array.isArray(definition.environment) ? {} : definition.environment ?? {};
+      const environment: Record<string, unknown> = Array.isArray(definition.environment) ? {} : definition.environment ?? {};
 
       for (const [name, expected] of Object.entries(this.secret.environmentFor(service))) {
         if (environment[name] === undefined || environment[name] === '') problems.push(`${ service } is missing ${ name }`);
