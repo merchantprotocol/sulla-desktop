@@ -3,22 +3,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { ClientRequest } from 'node:http';
+
 import type pg from 'pg';
 import type { LocalEncryptedItem, LocalItemContext } from '@sulla/domain';
 
 import type { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
 
 import type { BitwardenExportImporter } from '../bitwarden/BitwardenExportImporter.js';
+import type { BrokerRedirectPolicy } from '../brokerRedirectPolicy.js';
 import type { DomainVaultSyncCodecProvider } from '../browserEnvelope/DomainVaultSyncCodecProvider.js';
 import type { SyncBundle, SyncHead } from '../browserEnvelope/envelope.js';
 import type { StoredKeyEnvelopeReaderProvider } from '../browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultConfig } from '../config.js';
 import type {
-  BrokerCredentialRef, BrokerExecuteRequest, BrokerExecuteResponse, BrokerIntegrationMetadataResponse, LocalVaultState,
+  BrokerCredentialRef, BrokerExecuteRequest, BrokerIntegrationMetadataResponse, LocalVaultState,
 } from '../contracts.js';
 import type { Database, Queryable } from '../db.js';
 import type { LocalVaultCryptoProvider } from '../localCrypto/LocalVaultCryptoProvider.js';
-import type { PinnedAddress } from '../pinnedLookup.js';
 import type { VaultRelayManager } from '../relays.js';
 import type { PostgresLocalAuthorityRepository } from '../repositories/PostgresLocalAuthorityRepository.js';
 import type { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
@@ -54,6 +56,7 @@ export interface LocalAuthorityHost {
   readonly pendingApprovals: Map<string, number>;
   readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
   readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
+  readonly inFlight:         Set<ClientRequest>;
   readonly pendingVaultEnrollments: Map<string, {
     expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
   }>;
@@ -75,6 +78,7 @@ export interface LocalAuthorityHost {
   readonly codecProvider:       DomainVaultSyncCodecProvider;
   readonly relayManager:        VaultRelayManager;
   readonly revocationRepository: PostgresSullaCloudRevocationRepository;
+  readonly brokerRedirectPolicy: BrokerRedirectPolicy;
   readonly localCryptoProvider: LocalVaultCryptoProvider;
   readonly bitwardenImporter:   BitwardenExportImporter;
   readonly localStore:          PostgresLocalAuthorityRepository;
@@ -98,13 +102,6 @@ export interface LocalAuthorityHost {
   requireApprovalIdentity(callerId: string, token: string | undefined): void;
   requireDesktopIdentity(callerId: string, token: string | undefined): void;
   requireBrokerIdentity(callerId: string, token: string | undefined): void;
-  validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }>;
-  loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy?: boolean): Promise<ItemRow>;
-  send(
-    url: URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] }, methodInput: string, headersInput: Record<string, string>,
-    bodyInput: unknown, responseType: 'json' | 'text' | 'base64', secrets: string[], generation: number, redactResponseBody?: boolean,
-    maxRequestBytes?: number, maxResponseBytes?: number, operation?: string, integrationId?: string,
-  ): Promise<BrokerExecuteResponse>;
   audit(input: BrokerExecuteRequest, item: ItemRow, blocked: boolean, reason: string | null, db?: Queryable): Promise<void>;
   withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T>;
   integrationMetadata(callerId: string, token: string | undefined, integrationId: string, accountFilter?: string): Promise<BrokerIntegrationMetadataResponse>;

@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { randomBytes, randomUUID } from 'node:crypto';
-import { promises as dns } from 'node:dns';
-import type { ClientRequest, IncomingMessage } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import https from 'node:https';
 import { join } from 'node:path';
 
@@ -21,19 +19,8 @@ import {
 } from '@sulla/vault-crypto';
 
 import { BitwardenExportImporter } from './bitwarden/BitwardenExportImporter.js';
-import { validateCatalogRequest } from './catalogPolicy.js';
-import { validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
-import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
-import { validateOAuthDestination } from './oauthPolicy.js';
-import { pinnedAddressesLookup, pinnedLookup, type PinnedAddress } from './pinnedLookup.js';
-import {
-  describeUpstreamError, familySummary, formatUpstreamFailureLog, isReconnectableUpstreamError, retryAddressOrder,
-  UPSTREAM_CONNECT_TIMEOUT_MS, UPSTREAM_FIRST_ATTEMPT_FAMILY_TIMEOUT_MS, UPSTREAM_MAX_ATTEMPTS,
-  UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS, UPSTREAM_RETRY_DELAYS_MS,
-  upstreamFailurePhase, upstreamFailureReason,
-} from './upstreamEgress.js';
+import { brokerTransferLimits, FILES_SYNC_OPERATION } from './operationPolicy.js';
 import { DefaultVaultRelayManager } from './relays.js';
-import { buildTranscriptionProviderRequest } from './transcriptionPolicy.js';
 
 import type { VaultConfig } from './config.js';
 import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from './filesKeyBundleAuthority.js';
@@ -86,9 +73,6 @@ import {
   BROKER_IDENTIFIER_PATTERN,
   CACHE_UPDATE_TTL_MS,
   MAX_CREDENTIAL_BYTES,
-  MAX_GIT_STREAM_BYTES,
-  MAX_RESPONSE_BYTES,
-  MAX_STREAM_BYTES,
   UUID_PATTERN,
 } from './localAuthority/LocalAuthorityLimits.js';
 import type {
@@ -115,17 +99,9 @@ export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | u
 // Local names for the moved helpers so the method bodies below stay verbatim (E9).
 const constantEqual = LocalAuthorityCrypto.constantEqual;
 const operationDigest = LocalAuthorityCrypto.operationDigest;
-const serializeBrokerBody = BrokerHttpBody.serializeBrokerBody;
-const headerValue = BrokerHttpBody.headerValue;
-const setContentType = BrokerHttpBody.setContentType;
-const formFromObject = BrokerHttpBody.formFromObject;
-const applyJsonPath = BrokerHttpBody.applyJsonPath;
 const streamResponseIsBodyless = BrokerHttpBody.streamResponseIsBodyless;
 const credentialField = BrokerCredentialFields.credentialField;
-const proxySource = BrokerCredentialFields.proxySource;
-const proxyHostMatches = BrokerCredentialFields.proxyHostMatches;
 const deriveChatgptAccountRoutingForRequest = BrokerCredentialFields.deriveChatgptAccountRoutingForRequest;
-const redact = BrokerCredentialFields.redact;
 const privateAddress = BrokerAddressPolicy.privateAddress;
 const allowsSullaCloudDesktopRequest = SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest;
 
@@ -292,6 +268,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   sendRelay(...args: Parameters<BrokerRelayService['sendRelay']>) { return this.parts.relays.sendRelay(...args) }
   closeRelay(...args: Parameters<BrokerRelayService['closeRelay']>) { return this.parts.relays.closeRelay(...args) }
 
+
   /**
    * Lend a bounded copy of the unlocked user X25519 identity to another
    * Vault-owned component. Lock remains responsive while the operation is in
@@ -407,40 +384,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     }
   }
 
-  private validateBrokerRequestIdentity(input: BrokerExecuteRequest, callerId: string, token: string | undefined): void {
-    this.requireBrokerIdentity(callerId, token);
-    const claims = input?.claims;
-    const validIdentifier = (value: unknown) => typeof value === 'string' && BROKER_IDENTIFIER_PATTERN.test(value);
-    if (!input || typeof input.operation !== 'string' || !/^[a-z][a-z0-9_.:-]{1,79}$/i.test(input.operation) ||
-        !claims || !UUID_PATTERN.test(claims.sub) || !validIdentifier(claims.agent_id) || !validIdentifier(claims.pod_id) ||
-        (claims.org_id !== undefined && !UUID_PATTERN.test(claims.org_id)) ||
-        (claims.thread_id !== undefined && !validIdentifier(claims.thread_id)) ||
-        (claims.job_id !== undefined && !validIdentifier(claims.job_id)) ||
-        (claims.workflow_execution_id !== undefined && !validIdentifier(claims.workflow_execution_id))) {
-      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
-    }
-    if (input.operation !== 'item.http' && input.ref?.itemId) {
-      throw new LocalVaultError('policy_denied', 403, 'Direct item references are only accepted for item.http');
-    }
-    const scope = claims.credential_scope;
-    if (scope && input.operation !== 'item.http' &&
-        (!validIdentifier(scope.integration_id) || !validIdentifier(scope.account_id) || scope.item_id !== undefined)) {
-      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker integration scope is invalid');
-    }
-    if (scope && ((scope.integration_id !== undefined && !validIdentifier(scope.integration_id)) ||
-        (scope.account_id !== undefined && !validIdentifier(scope.account_id)) ||
-        (scope.item_id !== undefined && !UUID_PATTERN.test(scope.item_id)) ||
-        (scope.repository !== undefined && !validIdentifier(scope.repository)))) {
-      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller scope is invalid');
-    }
-    const ref = input.ref;
-    if (!ref || (ref.integrationId !== undefined && !validIdentifier(ref.integrationId)) ||
-        (ref.accountId !== undefined && !validIdentifier(ref.accountId)) ||
-        (ref.itemId !== undefined && !UUID_PATTERN.test(ref.itemId)) || !Array.isArray(input.injections)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Broker credential reference is invalid');
-    }
-  }
-
   approve(callerId: string, token: string | undefined, operationId: string): { approvalId: string; expiresAt: number } {
     if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Approval service identity is invalid');
@@ -455,7 +398,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   }
 
   async execute(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
-    this.validateBrokerRequestIdentity(input, serviceId, token);
+    this.parts.brokerRequests.validateBrokerRequestIdentity(input, serviceId, token);
     try {
       if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
         throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
@@ -467,8 +410,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
         return await this.executeOAuthMutation(input, serviceId, token);
       }
       if (AgentMailboxCloudLane.handles(input.operation)) return await this.parts.sullaCloud.agentMailboxes().execute(input);
-      const prepared = await this.prepareBrokerRequest(input, serviceId, token);
-      const result = await this.send(
+      const prepared = await this.parts.brokerRequests.prepareBrokerRequest(input, serviceId, token);
+      const result = await this.parts.upstream.send(
         prepared.target, input.method, prepared.headers, prepared.body,
         input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
         brokerTransferLimits(input.operation).response, input.operation, input.ref.integrationId,
@@ -535,8 +478,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
 
   private async executeOAuthMutation(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
     return this.withCredentialQueue(input.ref, async() => {
-      const prepared = await this.prepareBrokerRequest(input, serviceId, token);
-      const result = await this.send(
+      const prepared = await this.parts.brokerRequests.prepareBrokerRequest(input, serviceId, token);
+      const result = await this.parts.upstream.send(
         prepared.target, input.method, prepared.headers, prepared.body,
         input.responseType === 'text' ? 'text' : 'json', prepared.secrets, prepared.generation, false,
         prepared.maxRequestBytes,
@@ -575,14 +518,14 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     token: string | undefined,
     sink: BrokerStreamSink,
   ): Promise<void> {
-    this.validateBrokerRequestIdentity(input, serviceId, token);
+    this.parts.brokerRequests.validateBrokerRequestIdentity(input, serviceId, token);
     const streamInput = {
       ...input,
       responseType: input.responseType === 'binary-stream' ? 'binary-stream' as const : 'stream' as const,
     };
     try {
-      const prepared = await this.prepareBrokerRequest(streamInput, serviceId, token);
-      await this.sendStream(prepared, streamInput, sink);
+      const prepared = await this.parts.brokerRequests.prepareBrokerRequest(streamInput, serviceId, token);
+      await this.parts.streams.sendStream(prepared, streamInput, sink);
       if (prepared.item) await this.audit(streamInput, prepared.item, false, null);
     } catch (error) {
       if (error instanceof LocalVaultError) {
@@ -594,227 +537,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
       }
       throw error;
     }
-  }
-
-  private async prepareBrokerRequest(
-    input: BrokerExecuteRequest,
-    serviceId: string,
-    token: string | undefined,
-  ): Promise<PreparedBrokerRequest> {
-    this.validateBrokerRequestIdentity(input, serviceId, token);
-    if (!/^[a-z][a-z0-9_.:-]{1,79}$/i.test(input.operation)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Broker operation is invalid');
-    }
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    if (input.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    const target = await this.validateTarget(input.url);
-    let catalogDecision = null;
-    if (['catalog.http', 'mcp.http'].includes(input.operation)) {
-      try {
-        catalogDecision = await validateCatalogRequest(this.db, input, target);
-      } catch {
-        throw new LocalVaultError('policy_denied', 403, 'Registered catalog policy denied the request');
-      }
-    }
-    if (catalogDecision?.credentialFree) {
-      const scope = input.claims.credential_scope;
-      if (!scope || scope.integration_id !== input.ref.integrationId || scope.account_id !== input.ref.accountId) {
-        throw new LocalVaultError('policy_denied', 403, 'Public request is outside the signed caller scope');
-      }
-      this.requireGeneration(generation);
-      return {
-        target,
-        headers: { ...(input.headers ?? {}), 'accept-encoding': 'identity' },
-        body: input.body,
-        secrets: [],
-        generation,
-        maxRequestBytes: MAX_RESPONSE_BYTES,
-      };
-    }
-    const item = await this.loadBrokerItem(input, input.operation.startsWith('oauth.') ? null : target.hostname);
-    const plaintext = JSON.parse(await this.openItemText(
-      { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
-      keys.userKey,
-      { itemId: item.id, ownerId: item.collection_id ?? item.owner_user_id ?? keys.userId },
-    )) as VaultItemPlaintext;
-    const itemPolicy = item.agent_policy ?? plaintext.agentPolicy;
-    if (input.operation === 'item.http') {
-      const checked = validateVaultItemProxy(plaintext);
-      if (!checked.ok) throw new LocalVaultError('policy_denied', 403, 'Vault item has no valid agent usage rules');
-      try { validateItemHttpOperation(input) } catch (error) {
-        const reason = error instanceof Error ? error.message : 'policy_denied';
-        throw new LocalVaultError(reason === 'method_denied' ? 'method_denied' : 'invalid_injection', 403,
-          reason === 'injection_denied' ? 'Caller-supplied injections are not allowed for item requests' : 'Item request is not allowed');
-      }
-      if (!checked.proxy.hosts.some(host => proxyHostMatches(target.hostname.toLowerCase(), host))) {
-        throw new LocalVaultError('destination_denied', 403, `Vault item is not allowed on ${ target.hostname }`);
-      }
-      const decision = agentPolicyAllows(itemPolicy, {
-        agentId: input.claims.agent_id, level: 'autofill', host: target.hostname, onServer: false,
-      });
-      if (!decision.allowed) throw new LocalVaultError('policy_denied', 403, decision.reason ?? 'Credential policy denied the operation');
-      const digest = operationDigest(input);
-      if (itemPolicy.askFirst) {
-        const approval = input.approvalId ? this.approvals.get(input.approvalId) : undefined;
-        if (!approval || approval.expiresAt <= Date.now() || approval.digest !== digest) {
-          if (input.approvalId) this.approvals.delete(input.approvalId);
-          this.pendingApprovals.set(digest, Date.now() + APPROVAL_TTL_MS);
-          throw new LocalVaultError('approval_required', 428, digest);
-        }
-        this.approvals.delete(input.approvalId!);
-      }
-      const ruleHeaderNames = new Set(checked.proxy.rules.map(rule => rule.name.toLowerCase()));
-      ruleHeaderNames.add('authorization');
-      const headers = Object.fromEntries(Object.entries(input.headers ?? {}).filter(([name]) => !ruleHeaderNames.has(name.toLowerCase())));
-      headers['accept-encoding'] = 'identity';
-      const secrets: string[] = [];
-      const rememberSecret = (value: string) => {
-        secrets.push(value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value), new URLSearchParams({ v: value }).toString().slice(2));
-      };
-      for (const rule of checked.proxy.rules) {
-        let value: string | undefined;
-        if (rule.scheme === 'Basic') {
-          if (typeof plaintext.username !== 'string' || typeof plaintext.password !== 'string') {
-            throw new LocalVaultError('credential_field_missing', 404, 'Basic auth requires username and password');
-          }
-          if (Buffer.byteLength(plaintext.username) + Buffer.byteLength(plaintext.password) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
-          value = `Basic ${ Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64') }`;
-          rememberSecret(plaintext.username);
-          rememberSecret(plaintext.password);
-          rememberSecret(Buffer.from(`${ plaintext.username }:${ plaintext.password }`).toString('base64'));
-        } else {
-          const source = proxySource(plaintext, rule.source);
-          if (typeof source !== 'string') throw new LocalVaultError('credential_field_missing', 404, 'Agent usage source is unavailable');
-          if (Buffer.byteLength(source) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
-          value = rule.scheme === 'raw' ? source : `${ rule.scheme } ${ source }`;
-          rememberSecret(source);
-        }
-        if (rule.target === 'header' && /[^\t\x20-\x7e\x80-\xff]/.test(value)) throw new LocalVaultError('policy_denied', 403, 'Agent usage value is not a valid HTTP header');
-        rememberSecret(value);
-        if (rule.target === 'header') headers[rule.name] = value;
-        else target.searchParams.set(rule.name, value);
-      }
-      this.requireGeneration(generation);
-      return { target, headers, body: input.body, secrets, generation, maxRequestBytes: MAX_RESPONSE_BYTES, item, plaintext };
-    }
-    let effectivePolicy = itemPolicy;
-    if (input.operation.startsWith('oauth.')) {
-      try {
-        await validateOAuthDestination(this.db, input, plaintext);
-        effectivePolicy = { ...itemPolicy, sites: [target.hostname] };
-      } catch {
-        throw new LocalVaultError('destination_denied', 403, 'OAuth destination is not registered for this provider');
-      }
-    }
-    // The Files service acts for the owner on their own Cloud account, so the
-    // owner-only agent policy doesn't apply; its operation policy still does.
-    const decision: { allowed: boolean; reason?: string } = isTrustedFilesCloudCall(input) ? { allowed: true } : agentPolicyAllows(effectivePolicy, {
-      agentId: input.claims.agent_id,
-      level: 'autofill',
-      host: target.hostname,
-      onServer: false,
-    });
-    if (!decision.allowed) throw new LocalVaultError('policy_denied', 403, decision.reason ?? 'Credential policy denied the operation');
-    if (input.operation === 'enterprise.gateway.http') {
-      const gatewayUrl = plaintext.integration?.properties.gateway_url;
-      try {
-        validateEnterpriseGatewayHttp(input, gatewayUrl ?? '');
-      } catch {
-        throw new LocalVaultError('destination_denied', 403, 'Enterprise gateway destination is not bound to this account');
-      }
-    }
-    try {
-      if (!catalogDecision) validateOperation(input, target.hostname, effectivePolicy);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'policy_denied';
-      const code = reason === 'method_denied' ? 'method_denied' : reason === 'destination_denied' ? 'destination_denied' : 'policy_denied';
-      throw new LocalVaultError(code, 403, 'Registered operation policy denied the request');
-    }
-
-    const digest = operationDigest(input);
-    if ((item.agent_policy ?? plaintext.agentPolicy).askFirst) {
-      const approval = input.approvalId ? this.approvals.get(input.approvalId) : undefined;
-      if (!approval || approval.expiresAt <= Date.now() || approval.digest !== digest) {
-        if (input.approvalId) this.approvals.delete(input.approvalId);
-        this.pendingApprovals.set(digest, Date.now() + APPROVAL_TTL_MS);
-        throw new LocalVaultError('approval_required', 428, digest);
-      }
-      this.approvals.delete(input.approvalId!);
-    }
-
-    deriveChatgptAccountRoutingForRequest(input, plaintext);
-
-    const secrets: string[] = [];
-    const headers: Record<string, string> = { ...(input.headers ?? {}) };
-    headers['accept-encoding'] = 'identity';
-    let body: unknown = input.bodyEncoding === 'base64' && typeof input.body === 'string'
-      ? Buffer.from(input.body, 'base64')
-      : input.body;
-    for (const injection of input.injections) {
-      const value = credentialField(plaintext, injection.field) ??
-        (input.operation.startsWith('sulla-cloud.') && injection.field === 'api_token'
-          ? credentialField(plaintext, 'access_token')
-          : undefined);
-      if (typeof value !== 'string') throw new LocalVaultError('credential_field_missing', 404, 'Requested credential field is unavailable');
-      if (Buffer.byteLength(value) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('policy_denied', 403, 'Credential field exceeds the broker limit');
-      secrets.push(value);
-      const basicClientId = injection.scheme === 'BasicClient' ? credentialField(plaintext, 'client_id') : undefined;
-      if (injection.scheme === 'BasicClient' && typeof basicClientId !== 'string') {
-        throw new LocalVaultError('credential_field_missing', 404, 'OAuth client identity is unavailable');
-      }
-      const injected = injection.scheme === 'GitHubBasic'
-        ? `Basic ${ Buffer.from(`x-access-token:${ value }`).toString('base64') }`
-        : injection.scheme === 'BasicClient'
-          ? `Basic ${ Buffer.from(`${ basicClientId }:${ value }`).toString('base64') }`
-        : injection.scheme && injection.scheme !== 'raw' ? `${ injection.scheme } ${ value }` : value;
-      secrets.push(injected);
-      if (injection.target === 'header') {
-        if (!/^[A-Za-z0-9-]+$/.test(injection.name)) throw new LocalVaultError('invalid_injection', 400, 'Invalid header injection name');
-        headers[injection.name] = injected;
-      } else if (injection.target === 'query') {
-        target.searchParams.set(injection.name, injected);
-      } else if (injection.target === 'form') {
-        const form = body instanceof URLSearchParams
-          ? body
-          : typeof body === 'string' ? new URLSearchParams(body) : formFromObject(body);
-        form.set(injection.name, injected);
-        body = form;
-        setContentType(headers, 'application/x-www-form-urlencoded');
-      } else {
-        body = applyJsonPath(body, injection.name, injected);
-      }
-    }
-    // Public OAuth clients (PKCE, no secret) get no form injection, so an object body declared as a
-    // form would otherwise go out as JSON; token endpoints like auth.x.ai reject that with a 415.
-    const declaredType = headerValue(headers, 'content-type');
-    if (declaredType && /^application\/x-www-form-urlencoded\b/i.test(declaredType) &&
-        body && typeof body === 'object' && !Array.isArray(body) && !Buffer.isBuffer(body) && !(body instanceof URLSearchParams)) {
-      body = formFromObject(body);
-      setContentType(headers, 'application/x-www-form-urlencoded');
-    }
-    if (input.operation === 'provider.transcription') {
-      try {
-        const transformed = buildTranscriptionProviderRequest(body, headers);
-        body = transformed.body;
-        for (const name of Object.keys(headers)) delete headers[name];
-        Object.assign(headers, transformed.headers);
-      } catch {
-        throw new LocalVaultError('invalid_operation', 400, 'Transcription request is invalid');
-      }
-    }
-    if (input.operation === 'oauth.register') setContentType(headers, 'application/json');
-    this.requireGeneration(generation);
-    return {
-      target,
-      headers,
-      body,
-      secrets,
-      generation,
-      maxRequestBytes: brokerTransferLimits(input.operation).request,
-      item,
-      plaintext,
-    };
   }
 
   bootstrapToken(): string {
@@ -862,474 +584,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
 
   async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     return this.localStore.transaction(operation);
-  }
-
-  async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
-    let url: URL;
-    try { url = new URL(raw); } catch { throw new LocalVaultError('invalid_destination', 400, 'Destination URL is invalid'); }
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
-      throw new LocalVaultError('invalid_destination', 403, 'Destination must be HTTPS without credentials or fragments');
-    }
-    const pinnedAddresses = await this.resolvePinnedAddresses(url.hostname);
-    return Object.assign(url, {
-      pinnedAddress: pinnedAddresses[0].address,
-      pinnedFamily: pinnedAddresses[0].family,
-      pinnedAddresses,
-    });
-  }
-
-  /**
-   * Resolve and validate public addresses. Called per request (and again for
-   * a connect retry); nothing is cached across requests, so a network change
-   * never leaves a stale pin behind.
-   */
-  private async resolvePinnedAddresses(hostname: string, attempt = 1): Promise<PinnedAddress[]> {
-    let addresses: Array<{ address: string; family: number }>;
-    try {
-      addresses = await dns.lookup(hostname, { all: true, verbatim: true });
-    } catch (error) {
-      const detail = describeUpstreamError(error);
-      const willRetry = detail.code === 'EAI_AGAIN' && attempt < UPSTREAM_MAX_ATTEMPTS;
-      console.warn(formatUpstreamFailureLog({
-        operation: 'dns.lookup', hostname, attempt, maxAttempts: UPSTREAM_MAX_ATTEMPTS, phase: 'dns', detail,
-        families: 'none', reusedSocket: false, willRetry,
-      }));
-      if (willRetry) {
-        await new Promise(resolve => setTimeout(resolve, UPSTREAM_RETRY_DELAYS_MS[attempt - 1]));
-        return this.resolvePinnedAddresses(hostname, attempt + 1);
-      }
-      throw new LocalVaultError('upstream_failed', 502, 'Broker upstream DNS lookup failed', upstreamFailureReason('dns', detail.code));
-    }
-    if (!addresses.length || addresses.some(candidate => privateAddress(candidate.address))) {
-      throw new LocalVaultError('destination_denied', 403, 'Destination resolved to a private, local, or invalid address');
-    }
-    return addresses.map(candidate => ({ address: candidate.address, family: candidate.family as 4 | 6 }));
-  }
-
-  /**
-   * Open one upstream HTTPS request with connect-phase self-healing.
-   *
-   * A failure before the TLS handshake completes on a fresh socket means no
-   * request bytes reached the upstream, so it is safe to re-resolve DNS and
-   * try twice more (other address family first). Reused keep-alive sockets and
-   * failures after the handshake are never retried. Every failure is logged
-   * with its errno/syscall/family and surfaces a non-secret reason code.
-   */
-  private openUpstream(
-    target: URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] },
-    options: {
-      operation:  string;
-      method:     string;
-      headers:    Record<string, string>;
-      timeoutMs:  number;
-      payload?:   Buffer;
-      generation: number;
-      failureMessage: string;
-      timeoutError: () => LocalVaultError;
-    },
-    hooks: {
-      onRequest(request: ClientRequest): void;
-      onResponse(request: ClientRequest, response: IncomingMessage): void;
-      onError(request: ClientRequest, error: LocalVaultError): void;
-      canRetry?(): boolean;
-    },
-  ): void {
-    const maxAttempts = UPSTREAM_MAX_ATTEMPTS;
-    const start = (addresses: PinnedAddress[], attempt: number) => {
-      let connected = false;
-      let reusedSocket = false;
-      let connectTimer: ReturnType<typeof setTimeout> | undefined;
-      const clearConnectTimer = () => { if (connectTimer) clearTimeout(connectTimer); connectTimer = undefined };
-      this.requireGeneration(options.generation);
-      // Family-autoselection fields are honoured by net.connect but missing from http's option types.
-      const requestOptions: https.RequestOptions & { autoSelectFamily?: boolean; autoSelectFamilyAttemptTimeout?: number } = {
-        protocol: 'https:',
-        hostname: target.hostname,
-        servername: target.hostname,
-        port: target.port ? Number(target.port) : 443,
-        path: `${ target.pathname }${ target.search }`,
-        method: options.method,
-        headers: options.headers,
-        timeout: options.timeoutMs,
-        autoSelectFamily: true,
-        autoSelectFamilyAttemptTimeout: attempt === 1 ? UPSTREAM_FIRST_ATTEMPT_FAMILY_TIMEOUT_MS : UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS,
-        lookup: addresses.length ? pinnedAddressesLookup(addresses) : pinnedLookup(target.pinnedAddress, target.pinnedFamily),
-      };
-      const request = https.request(requestOptions, response => hooks.onResponse(request, response));
-      this.inFlight.add(request);
-      hooks.onRequest(request);
-      request.on('socket', socket => {
-        if (request.reusedSocket) {
-          connected = true;
-          reusedSocket = true;
-          return;
-        }
-        connectTimer = setTimeout(() => {
-          request.destroy(Object.assign(new Error('Upstream connect timed out'), { code: 'UPSTREAM_CONNECT_TIMEOUT', syscall: 'connect' }));
-        }, UPSTREAM_CONNECT_TIMEOUT_MS);
-        connectTimer.unref?.();
-        socket.once('secureConnect', () => { connected = true; clearConnectTimer() });
-        socket.once('close', clearConnectTimer);
-      });
-      request.on('timeout', () => request.destroy(options.timeoutError()));
-      request.on('error', error => {
-        clearConnectTimer();
-        this.inFlight.delete(request);
-        if (error instanceof LocalVaultError) {
-          hooks.onError(request, error);
-          return;
-        }
-        const detail = describeUpstreamError(error);
-        const phase = upstreamFailurePhase(detail.code, connected);
-        const reason = upstreamFailureReason(phase, detail.code === 'UPSTREAM_CONNECT_TIMEOUT' ? 'timeout' : detail.code);
-        const willRetry = attempt < maxAttempts && isReconnectableUpstreamError(error, connected) && (hooks.canRetry?.() ?? true);
-        console.warn(formatUpstreamFailureLog({
-          operation: options.operation, hostname: target.hostname, attempt, maxAttempts, phase, detail,
-          families: familySummary(addresses), reusedSocket, willRetry,
-        }));
-        const failure = new LocalVaultError('upstream_failed', 502, options.failureMessage, reason);
-        if (!willRetry) {
-          hooks.onError(request, failure);
-          return;
-        }
-        this.resolvePinnedAddresses(target.hostname).then(fresh => {
-          if (!(hooks.canRetry?.() ?? true)) {
-            hooks.onError(request, failure);
-            return;
-          }
-          const retryAddresses = retryAddressOrder(fresh, detail.attempts.length ? detail.attempts : addresses.map(candidate => `v${ candidate.family }:${ detail.code }`));
-          setTimeout(() => {
-            if (!(hooks.canRetry?.() ?? true)) {
-              hooks.onError(request, failure);
-              return;
-            }
-            try {
-              start(retryAddresses, attempt + 1);
-            } catch (retryError) {
-              hooks.onError(request, retryError instanceof LocalVaultError ? retryError : failure);
-            }
-          }, UPSTREAM_RETRY_DELAYS_MS[attempt - 1]);
-        }).catch(resolveError => {
-          hooks.onError(request, resolveError instanceof LocalVaultError ? resolveError : failure);
-        });
-      });
-      if (options.payload) request.write(options.payload);
-      request.end();
-    };
-    start(target.pinnedAddresses?.length ? [...target.pinnedAddresses] : [], 1);
-  }
-
-  async loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy = false): Promise<ItemRow> {
-    const ref = input.ref ?? {};
-    const scope = input.claims.credential_scope;
-    if (input.operation === 'item.http') {
-      if (!scope?.item_id || !ref.itemId || scope.item_id !== ref.itemId || scope.integration_id || scope.account_id || ref.integrationId || ref.accountId) {
-        throw new LocalVaultError('policy_denied', 403, 'Vault item reference is outside the signed caller scope');
-      }
-    } else {
-      if (!scope || !ref.integrationId || !ref.accountId ||
-          scope.integration_id !== ref.integrationId || scope.account_id !== ref.accountId) {
-        throw new LocalVaultError('policy_denied', 403, 'Credential reference is outside the signed caller scope');
-      }
-      if (ref.itemId) throw new LocalVaultError('policy_denied', 403, 'Direct item references are not accepted by the local broker');
-    }
-    if (input.operation === 'github.git') {
-      const path = new URL(input.url).pathname;
-      const match = /^\/([^/]+)\/([^/]+?)(?:\.git)?\/(?:info\/refs|git-upload-pack|git-receive-pack)$/.exec(path);
-      const repository = match ? `${ match[1] }/${ match[2] }`.toLowerCase() : '';
-      if (!scope.repository || repository !== scope.repository.replace(/\.git$/i, '').toLowerCase()) {
-        throw new LocalVaultError('policy_denied', 403, 'Git repository is outside the signed caller scope');
-      }
-    }
-    const integrationRef = ref.integrationId ? `${ ref.integrationId }/${ ref.accountId ?? 'default' }` : null;
-    const result = await this.itemRepository.findBrokerCredential<ItemRow>([input.claims.sub, ref.itemId ?? null, integrationRef]);
-    const item = result.rows[0];
-    const personal = item?.owner_user_id === input.claims.sub;
-    // Local authority has only the personal user key in memory. It must never
-    // attempt to decrypt a collection item with that key; collection-key
-    // custody remains a separate server-mode path until explicitly supported.
-    if (!item || !personal || item.collection_id) {
-      throw new LocalVaultError('policy_denied', 403, 'Credential is unavailable to this caller');
-    }
-    const trustedFirstParty = bypassAgentPolicy || isTrustedFilesCloudCall(input);
-    if (host && input.operation !== 'item.http' && !trustedFirstParty) {
-      const siteDecision = agentPolicyAllows(item.agent_policy, { agentId: input.claims.agent_id, level: 'autofill', host, onServer: false });
-      if (!siteDecision.allowed) {
-        throw new LocalVaultError('policy_denied', 403, siteDecision.reason ?? 'Credential policy denied the destination');
-      }
-    }
-    return item;
-  }
-
-  private async sendStream(
-    prepared: PreparedBrokerRequest,
-    input: BrokerExecuteRequest,
-    sink: BrokerStreamSink,
-  ): Promise<void> {
-    const method = input.method.toUpperCase();
-    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie', 'x-sulla-git-request-id']);
-    const headers = Object.fromEntries(Object.entries(prepared.headers).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
-    headers['accept-encoding'] = 'identity';
-    const streamLimit = input.operation === 'github.git' ? MAX_GIT_STREAM_BYTES : MAX_STREAM_BYTES;
-    let payload: Buffer | undefined;
-    if (prepared.body !== undefined && method !== 'GET' && method !== 'HEAD') {
-      payload = serializeBrokerBody(prepared.body);
-      if (payload.byteLength > streamLimit) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
-      headers['content-length'] = String(payload.byteLength);
-    }
-    const binary = input.responseType === 'binary-stream';
-    const redactor = binary ? null : new StreamingRedactor(prepared.secrets);
-    const requestedId = Object.entries(input.headers ?? {}).find(([name]) => name.toLowerCase() === 'x-sulla-git-request-id')?.[1];
-    const requestId = typeof requestedId === 'string' && /^[0-9a-f-]{36}$/i.test(requestedId) ? requestedId : randomUUID();
-    const startedAt = Date.now();
-    let received = 0;
-    let logged = false;
-    let endedBy = 'unknown';
-    let terminalReason: unknown;
-    const target = new URL(prepared.target);
-    const pathParts = target.pathname.split('/').filter(Boolean);
-    const repository = target.hostname === 'github.com' && pathParts.length >= 2 ? `${ pathParts[0] }/${ pathParts[1].replace(/\.git$/, '') }` : 'unknown';
-    const service = input.operation === 'github.git' ? (target.pathname.includes('git-receive-pack') ? 'receive-pack' : 'upload-pack') : input.operation;
-    const logTermination = () => {
-      if (logged) return;
-      logged = true;
-      const error = terminalReason instanceof Error ? { name: terminalReason.name, code: (terminalReason as NodeJS.ErrnoException).code, message: prepared.secrets.reduce((message, secret) => secret ? message.split(secret).join('[secret redacted]') : message, terminalReason.message) } : terminalReason;
-      console.info(JSON.stringify({ component: 'vault.broker.stream', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), bytesReceived: received, durationMs: Date.now() - startedAt, endedBy, ...(error ? { reason: error } : {}) }));
-    };
-    if (binary) console.info(JSON.stringify({ component: 'vault.broker.stream', requestId, repository, service, startedAt: new Date(startedAt).toISOString(), event: 'start' }));
-
-    await new Promise<void>((resolve, reject) => {
-      let started = false;
-      let aborted = false;
-      let current: ClientRequest | undefined;
-      sink.onAbort(() => {
-        aborted = true;
-        endedBy = 'downstream-abort';
-        terminalReason = 'broker client disconnected';
-        current?.destroy(new LocalVaultError('upstream_failed', 499, 'Broker client disconnected'));
-      });
-      this.openUpstream(prepared.target, {
-        operation: input.operation,
-        method,
-        headers,
-        timeoutMs: 120_000,
-        payload,
-        generation: prepared.generation,
-        failureMessage: 'Broker upstream stream failed',
-        timeoutError: () => new LocalVaultError('upstream_timeout', 504, 'Broker stream timed out'),
-      }, {
-        canRetry: () => !aborted && !started,
-        onRequest: request => {
-          current = request;
-          if (aborted) request.destroy(new LocalVaultError('upstream_failed', 499, 'Broker client disconnected'));
-        },
-        onError: (_request, safe) => {
-          if (endedBy === 'unknown') endedBy = safe instanceof Error && /timed out/i.test(safe.message) ? 'vault-timeout' : 'upstream-error';
-          terminalReason = safe;
-          if (started) {
-            sink.destroy(safe);
-            logTermination();
-            resolve();
-          } else {
-            logTermination();
-            reject(safe);
-          }
-        },
-        onResponse: (request, response) => {
-          if (prepared.generation !== this.generation) {
-            response.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
-            return;
-          }
-          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
-            const location = response.headers.location;
-            if (typeof location === 'string' && this.brokerRedirectPolicy.allowsGitHubLogRedirect({
-              operation: input.operation, integrationId: input.ref.integrationId, requestUrl: prepared.target,
-              status: response.statusCode, location,
-            })) {
-              response.resume();
-              started = true;
-              sink.start(302, { location });
-              this.inFlight.delete(request);
-              sink.end();
-              endedBy = 'upstream-redirect';
-              logTermination();
-              resolve();
-              return;
-            }
-            response.resume();
-            request.destroy(new LocalVaultError('redirect_denied', 403, 'Broker redirects are disabled'));
-            return;
-          }
-          const contentType = String(response.headers['content-type'] ?? '').toLowerCase();
-          const contentEncoding = String(response.headers['content-encoding'] ?? 'identity').toLowerCase();
-          if (contentEncoding && contentEncoding !== 'identity') {
-            response.resume();
-            request.destroy(new LocalVaultError('invalid_upstream_response', 502, `Compressed broker streams are not accepted (content-encoding: ${ contentEncoding })`));
-            return;
-          }
-          const bodyless = streamResponseIsBodyless(method, response.statusCode ?? 0, response.headers['content-length']);
-          // Untyped bodies still pass through the redactor; providers (chatgpt.com)
-          // send untyped error replies, and blocking them hid the real status.
-          if (!binary && !bodyless && contentType && !contentType.startsWith('text/') && !contentType.includes('json') && !contentType.includes('event-stream') && !contentType.includes('ndjson')) {
-            response.resume();
-            request.destroy(new LocalVaultError('invalid_upstream_response', 502, `Streaming adapter requires a textual upstream response (status: ${ response.statusCode ?? 'none' }, content-type: ${ contentType })`));
-            return;
-          }
-          const blockedResponseHeaders = /^(set-cookie|cookie|authorization|proxy-authenticate|www-authenticate|x-api-key|content-length)$/i;
-          const outputHeaders: Record<string, string> = {};
-          for (const [name, value] of Object.entries(response.headers)) {
-            if (!blockedResponseHeaders.test(name) && typeof value === 'string') outputHeaders[name] = redact(value, prepared.secrets);
-          }
-          if (binary && typeof response.headers['content-length'] === 'string') outputHeaders['content-length'] = response.headers['content-length'];
-          started = true;
-          sink.start(response.statusCode ?? 502, outputHeaders);
-          response.on('data', (chunk: Buffer) => {
-            received += chunk.byteLength;
-            if (received > streamLimit) {
-              request.destroy(new LocalVaultError('response_too_large', 502, 'Broker stream exceeded the size limit'));
-              return;
-            }
-            const output = redactor ? redactor.transform(chunk) : chunk;
-            if (output.byteLength && !sink.write(output)) {
-              response.pause();
-              sink.onceDrain(() => response.resume());
-            }
-          });
-          response.on('end', () => {
-            try { this.requireGeneration(prepared.generation); } catch (error) { endedBy = 'vault-generation-change'; terminalReason = error; request.destroy(error as Error); return; }
-            const tail = redactor?.flush();
-            if (tail?.byteLength) sink.write(tail);
-            this.inFlight.delete(request);
-            sink.end();
-            endedBy = 'upstream-end';
-            logTermination();
-            resolve();
-          });
-          response.on('error', error => { endedBy = 'upstream-response-error'; terminalReason = error; request.destroy(error); });
-        },
-      });
-    });
-  }
-
-  async send(
-    url: URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] },
-    methodInput: string,
-    headersInput: Record<string, string>,
-    bodyInput: unknown,
-    responseType: 'json' | 'text' | 'base64',
-    secrets: string[],
-    generation: number,
-    redactResponseBody = true,
-    maxRequestBytes = MAX_RESPONSE_BYTES,
-    maxResponseBytes = MAX_RESPONSE_BYTES,
-    operation = 'broker.request',
-    integrationId?: string,
-  ): Promise<BrokerExecuteResponse> {
-    const method = methodInput.toUpperCase();
-    if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      throw new LocalVaultError('method_denied', 403, 'HTTP method is not allowed');
-    }
-    const blockedRequestHeaders = new Set(['host', 'content-length', 'connection', 'transfer-encoding', 'cookie']);
-    const headers = Object.fromEntries(Object.entries(headersInput).filter(([name]) => !blockedRequestHeaders.has(name.toLowerCase())));
-    headers['accept-encoding'] = 'identity';
-    let payload: Buffer | undefined;
-    if (bodyInput !== undefined && method !== 'GET' && method !== 'HEAD') {
-      payload = serializeBrokerBody(bodyInput);
-      if (payload.byteLength > maxRequestBytes) throw new LocalVaultError('request_too_large', 413, 'Broker request body is too large');
-      headers['content-length'] = String(payload.byteLength);
-      if (!headerValue(headers, 'content-type')) {
-        headers['content-type'] = Buffer.isBuffer(bodyInput)
-          ? 'application/octet-stream'
-          : bodyInput instanceof URLSearchParams ? 'application/x-www-form-urlencoded'
-            : typeof bodyInput === 'string' ? 'text/plain; charset=utf-8' : 'application/json';
-      }
-    }
-
-    return new Promise<BrokerExecuteResponse>((resolve, reject) => {
-      this.openUpstream(url, {
-        operation: 'broker.request',
-        method,
-        headers,
-        timeoutMs: 30_000,
-        payload,
-        generation,
-        failureMessage: 'Broker upstream request failed',
-        timeoutError: () => new LocalVaultError('upstream_timeout', 504, 'Broker request timed out'),
-      }, {
-        onRequest: () => undefined,
-        onError: (_request, error) => reject(error),
-        onResponse: (request, response) => {
-          if (generation !== this.generation) {
-            response.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
-            return;
-          }
-          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
-            const location = response.headers.location;
-            if (typeof location === 'string' && this.brokerRedirectPolicy.allowsGitHubLogRedirect({
-              operation, integrationId, requestUrl: url,
-              status: response.statusCode, location,
-            })) {
-              response.resume();
-              this.inFlight.delete(request);
-              resolve({ status: 302, headers: { location }, body: '' });
-              return;
-            }
-            response.resume();
-            reject(new LocalVaultError('redirect_denied', 403, 'Broker redirects are disabled'));
-            return;
-          }
-          const contentEncoding = String(response.headers['content-encoding'] ?? 'identity').toLowerCase();
-          if (contentEncoding && contentEncoding !== 'identity') {
-            response.resume();
-            request.destroy(new LocalVaultError('invalid_upstream_response', 502, 'Compressed broker responses are not accepted'));
-            return;
-          }
-          const chunks: Buffer[] = [];
-          let size = 0;
-          response.on('data', (chunk: Buffer) => {
-            size += chunk.byteLength;
-            if (size > maxResponseBytes) request.destroy(new LocalVaultError('response_too_large', 502, 'Broker response exceeded the size limit'));
-            else chunks.push(chunk);
-          });
-          response.on('end', () => {
-            try { this.requireGeneration(generation); } catch (error) { reject(error); return; }
-            if (responseType === 'base64') {
-              // Binary bodies cannot be redacted in place, so one that echoes a credential is refused outright.
-              const bytes = Buffer.concat(chunks);
-              if (secrets.some(secret => secret && bytes.includes(Buffer.from(secret)))) {
-                reject(new LocalVaultError('invalid_upstream_response', 502, 'Upstream response echoed a credential'));
-                return;
-              }
-              const binaryHeaders: Record<string, string> = {};
-              for (const name of ['content-type', 'content-length', 'x-content-sha256']) {
-                const value = response.headers[name];
-                if (typeof value === 'string') binaryHeaders[name] = value;
-              }
-              this.inFlight.delete(request);
-              resolve({ status: response.statusCode ?? 502, headers: binaryHeaders, body: bytes.toString('base64') });
-              return;
-            }
-            const upstream = Buffer.concat(chunks).toString('utf8');
-            const raw = redactResponseBody ? redact(upstream, secrets) : upstream;
-            const blockedResponseHeaders = /^(set-cookie|cookie|authorization|proxy-authenticate|www-authenticate|x-api-key)$/i;
-            const outputHeaders: Record<string, string> = {};
-            for (const [name, value] of Object.entries(response.headers)) {
-              if (!blockedResponseHeaders.test(name) && typeof value === 'string') outputHeaders[name] = redact(value, secrets);
-            }
-            let body: unknown = raw;
-            if (responseType === 'json' && raw) {
-              // Error responses are often plain text; keep them so the caller sees the real HTTP status.
-              const ok = (response.statusCode ?? 502) >= 200 && (response.statusCode ?? 502) < 300;
-              try { body = JSON.parse(raw); } catch {
-                if (ok) { reject(new LocalVaultError('invalid_upstream_response', 502, 'Expected a JSON response')); return; }
-              }
-            }
-            this.inFlight.delete(request);
-            resolve({ status: response.statusCode ?? 502, headers: outputHeaders, body });
-          });
-        },
-      });
-    });
   }
 
   private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<void> {

@@ -53,7 +53,7 @@ export class BrokerRelayService {
     };
     const keys = this.host.requireKeys();
     const generation = this.host.generation;
-    const item = await this.host.loadBrokerItem(request, expected.host);
+    const item = await this.host.parts.brokerRequests.loadBrokerItem(request, expected.host);
     const plaintext = JSON.parse(await this.host.openItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
@@ -67,7 +67,7 @@ export class BrokerRelayService {
       try {
         const gateway = enterpriseGatewayOrigin(rawGatewayUrl);
         gatewayUrl = gateway.origin;
-        const pinned = await this.host.validateTarget(gateway.origin);
+        const pinned = await this.host.parts.upstream.validateTarget(gateway.origin);
         gatewayAddress = { address: pinned.pinnedAddress, family: pinned.pinnedFamily };
         request.url = `${ gateway.origin }/vault-relay`;
         const siteDecision = agentPolicyAllows(item.agent_policy ?? plaintext.agentPolicy, {

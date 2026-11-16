@@ -158,8 +158,8 @@ export class SullaCloudService {
       .filter(([name, value]) => allowedHeaders.has(name.toLowerCase()) && typeof value === 'string'));
     headers.authorization = `Bearer ${ credential }`;
     const body = input.bodyEncoding === 'base64' && typeof input.body === 'string' ? Buffer.from(input.body, 'base64') : input.body;
-    const pinned = await this.host.validateTarget(target.toString());
-    const result = await this.host.send(
+    const pinned = await this.host.parts.upstream.validateTarget(target.toString());
+    const result = await this.host.parts.upstream.send(
       pinned, method, headers, body, input.responseType ?? 'json', [credential], this.host.generation, true,
       target.pathname.endsWith('/bundle') ? MAX_STREAM_BYTES : /^\/files-sync\/v1\/uploads\//.test(target.pathname) ? MAX_FILES_SYNC_UPLOAD_BYTES : MAX_RESPONSE_BYTES,
     );
@@ -177,8 +177,8 @@ export class SullaCloudService {
       },
       accessToken: request => this.freshSullaCloudAccessToken(request, true),
     }, {
-      send: async(request, target, headers, secrets) => this.host.send(
-        await this.host.validateTarget(target.toString()), request.method, headers, request.body, 'json', secrets, this.host.generation, true,
+      send: async(request, target, headers, secrets) => this.host.parts.upstream.send(
+        await this.host.parts.upstream.validateTarget(target.toString()), request.method, headers, request.body, 'json', secrets, this.host.generation, true,
         MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, request.operation, SULLA_CLOUD_INTEGRATION_ID,
       ),
       audit: (request, item) => this.host.audit(request, item as ItemRow, false, null),
@@ -197,7 +197,7 @@ export class SullaCloudService {
       items: this.host.itemRepository, state: this.host.integrationStateRepository, revocations: this.host.revocationRepository,
       serialize: (name, work) => this.host.withCredentialQueue({ integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId: name }, work),
       postJson: async(url, body) => {
-        const result = await this.host.send(await this.host.validateTarget(url), 'POST', { 'content-type': 'application/json' }, body, 'json', [body.refreshToken], this.host.generation, false);
+        const result = await this.host.parts.upstream.send(await this.host.parts.upstream.validateTarget(url), 'POST', { 'content-type': 'application/json' }, body, 'json', [body.refreshToken], this.host.generation, false);
         return { status: result.status, body: result.body };
       },
     }).create();
@@ -268,7 +268,7 @@ export class SullaCloudService {
     const keys = this.host.requireKeys();
     const generation = this.host.generation;
     if (request.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    const item = await this.host.loadBrokerItem(request, SULLA_CLOUD_HOST, trustedDesktopPath);
+    const item = await this.host.parts.brokerRequests.loadBrokerItem(request, SULLA_CLOUD_HOST, trustedDesktopPath);
     const plaintext = JSON.parse(await this.host.openItemText(
       { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
       keys.userKey,
