@@ -1,0 +1,82 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import { BootstrapUnlockService } from './BootstrapUnlockService.js';
+import { HumanSessionService } from './HumanSessionService.js';
+import { HumanItemService } from './HumanItemService.js';
+import { BitwardenImportService } from './BitwardenImportService.js';
+import { AccountPasswordService } from './AccountPasswordService.js';
+import { HumanRecoveryService } from './HumanRecoveryService.js';
+import { VaultEnrollmentService } from './VaultEnrollmentService.js';
+import { AgentItemWriter } from './AgentItemWriter.js';
+import { IntegrationAccountService } from './IntegrationAccountService.js';
+import { LegacyMigrationService } from './LegacyMigrationService.js';
+import { SullaCloudService } from './SullaCloudService.js';
+import { BrokerRelayService } from './BrokerRelayService.js';
+import { UpstreamHttpClient } from './UpstreamHttpClient.js';
+import { BrokerStreamSender } from './BrokerStreamSender.js';
+import { BrokerRequestPreparer } from './BrokerRequestPreparer.js';
+import { BrokerExecutionService } from './BrokerExecutionService.js';
+import { OAuthTokenStore } from './OAuthTokenStore.js';
+import { BrokerAuditRecorder } from './BrokerAuditRecorder.js';
+import { ServiceIdentityGuard } from './ServiceIdentityGuard.js';
+import { UnlockedKeyLender } from './UnlockedKeyLender.js';
+import { CacheUpdateStager } from './CacheUpdateStager.js';
+import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
+import { VaultKeyActivation } from './VaultKeyActivation.js';
+
+/**
+ * The collaborators LocalVaultAuthority delegates to (E9). Each one holds only the host and
+ * reads vault state from it at call time, so building them has no side effects.
+ */
+export class LocalAuthorityCollaborators {
+  readonly bootstrap: BootstrapUnlockService;
+  readonly keyActivation: VaultKeyActivation;
+  readonly humanSessions: HumanSessionService;
+  readonly humanItems: HumanItemService;
+  readonly bitwarden: BitwardenImportService;
+  readonly accountPasswords: AccountPasswordService;
+  readonly recovery: HumanRecoveryService;
+  readonly enrollment: VaultEnrollmentService;
+  readonly agentItems: AgentItemWriter;
+  readonly integrations: IntegrationAccountService;
+  readonly legacyMigration: LegacyMigrationService;
+  readonly sullaCloud: SullaCloudService;
+  readonly relays: BrokerRelayService;
+  readonly upstream: UpstreamHttpClient;
+  readonly streams: BrokerStreamSender;
+  readonly brokerRequests: BrokerRequestPreparer;
+  readonly brokerExecution: BrokerExecutionService;
+  readonly oauthTokens: OAuthTokenStore;
+  readonly brokerAudit: BrokerAuditRecorder;
+  readonly identities: ServiceIdentityGuard;
+  readonly keyLender: UnlockedKeyLender;
+  readonly cacheStager: CacheUpdateStager;
+
+  constructor(host: LocalAuthorityHost) {
+    this.bootstrap = new BootstrapUnlockService(host);
+    this.keyActivation = new VaultKeyActivation(host);
+    this.humanSessions = new HumanSessionService(host);
+    this.humanItems = new HumanItemService(host);
+    this.bitwarden = new BitwardenImportService(host);
+    this.accountPasswords = new AccountPasswordService(host);
+    this.recovery = new HumanRecoveryService(host);
+    this.enrollment = new VaultEnrollmentService(host);
+    this.agentItems = new AgentItemWriter(host);
+    this.integrations = new IntegrationAccountService(host);
+    this.legacyMigration = new LegacyMigrationService(host);
+    this.sullaCloud = new SullaCloudService(host);
+    this.relays = new BrokerRelayService(host);
+    this.upstream = new UpstreamHttpClient(host);
+    this.streams = new BrokerStreamSender(host);
+    this.brokerRequests = new BrokerRequestPreparer(host);
+    this.brokerExecution = new BrokerExecutionService(host);
+    this.oauthTokens = new OAuthTokenStore(host);
+    this.brokerAudit = new BrokerAuditRecorder(host);
+    this.identities = new ServiceIdentityGuard(host);
+    this.keyLender = new UnlockedKeyLender(host);
+    this.cacheStager = new CacheUpdateStager(host);
+  }
+}
