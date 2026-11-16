@@ -28,7 +28,11 @@ export interface ConsumerDatabaseUrl {
 }
 
 export interface PostgresAuthConsumerTimings {
-  /** How long each consumer may take to log in over a fresh connection (5 consumers x 20 s stays inside the hardening 120 s bound). */
+  /**
+   * How long each consumer may keep retrying a fresh login. Checked between
+   * attempts; one attempt is bounded by FRESH_LOGIN_TIMEOUT_MS, so the worst
+   * case is 5 x (15 s + 8 s) = 115 s, inside the hardening 120 s bound.
+   */
   perServiceMs: number;
   /** Pause between two login attempts of a consumer that is not logging in yet. */
   pollMs: number;
@@ -69,7 +73,9 @@ export class ComposePostgresAuthConsumers implements PostgresAuthConsumers {
   static readonly ACCOUNTS: ComposeServiceTarget = { service: 'sulla_accounts', container: 'sulla_accounts' };
   /** The entrypoint's private copy of the password file, taken when the container started. */
   static readonly ACCOUNTS_STARTED_PASSWORD = '/run/sulla-accounts-private/database.password';
-  static readonly DEFAULT_TIMINGS: PostgresAuthConsumerTimings = { perServiceMs: 20_000, pollMs: 2_000, accountsRestartSec: 120 };
+  static readonly DEFAULT_TIMINGS: PostgresAuthConsumerTimings = { perServiceMs: 15_000, pollMs: 2_000, accountsRestartSec: 120 };
+  /** Bound on one fresh-login `docker exec` (the script's own connect timeout is 5 s). */
+  static readonly FRESH_LOGIN_TIMEOUT_MS = 8_000;
 
   /** Every consumer's own database URL, in the order they are checked. */
   static readonly DATABASE_URLS: readonly ConsumerDatabaseUrl[] = [
@@ -109,6 +115,8 @@ export class ComposePostgresAuthConsumers implements PostgresAuthConsumers {
     private readonly readFile: (file: string) => Promise<Buffer> = file => fs.readFile(file),
     private readonly sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
     private readonly now: () => number = Date.now,
+    /** Runs the fresh-login script; give it a short timeout (FRESH_LOGIN_TIMEOUT_MS). Must not log. */
+    private readonly loginDocker: StdinDockerCli = docker,
   ) {}
 
   async driftedConsumers(): Promise<string[]> {
@@ -154,19 +162,22 @@ export class ComposePostgresAuthConsumers implements PostgresAuthConsumers {
     }
   }
 
-  async waitHealthy(): Promise<void> {
+  /** `signal` aborts when the caller stops waiting: no new docker exec is started after that. */
+  async waitHealthy(signal?: AbortSignal): Promise<void> {
     for (const consumer of ComposePostgresAuthConsumers.DATABASE_URLS) {
+      ComposePostgresAuthConsumers.throwIfStopped(signal);
       if (await this.isRunning(consumer.target.container)) {
-        await this.waitLoggedIn(consumer);
+        await this.waitLoggedIn(consumer, signal);
       }
     }
   }
 
-  private async waitLoggedIn(consumer: ConsumerDatabaseUrl): Promise<void> {
+  private async waitLoggedIn(consumer: ConsumerDatabaseUrl, signal?: AbortSignal): Promise<void> {
     const deadline = this.now() + this.timings.perServiceMs;
     let last = 'no answer';
 
     for (;;) {
+      ComposePostgresAuthConsumers.throwIfStopped(signal);
       last = await this.freshLogin(consumer);
       if (last === 'ok') {
         return;
@@ -186,7 +197,7 @@ export class ComposePostgresAuthConsumers implements PostgresAuthConsumers {
     const user = consumer.source === 'file' ? ['-u', '0'] : [];
 
     try {
-      const result = await this.docker.run([
+      const result = await this.loginDocker.run([
         'exec', ...user, consumer.target.container, 'node', '-e', ComposePostgresAuthConsumers.FRESH_LOGIN_SCRIPT, consumer.source, consumer.ref,
       ]);
 
@@ -214,6 +225,12 @@ export class ComposePostgresAuthConsumers implements PostgresAuthConsumers {
     ]);
 
     return result.code === 0 && result.stdout.trim().split(/\s+/)[0] === expected;
+  }
+
+  private static throwIfStopped(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+      throw new Error('stopped: the consumer wait was abandoned');
+    }
   }
 
   private static firstLine(error: unknown): string {

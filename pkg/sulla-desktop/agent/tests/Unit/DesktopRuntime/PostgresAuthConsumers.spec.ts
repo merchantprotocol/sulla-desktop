@@ -207,4 +207,47 @@ describe('ComposePostgresAuthConsumers', () => {
 
     await expect(consumers.waitHealthy()).rejects.toThrow('workflow_manager could not open a database connection (ECONNREFUSED)');
   });
+
+  // risk: availability — one stuck fresh-login exec must not eat the whole hardening bound; logins run on their own short-timeout runner
+  it('runs fresh logins on the dedicated login runner and everything else on the main runner', async() => {
+    const docker = new FakeGuestDocker();
+    const login = new FakeGuestDocker();
+    let clock = 0;
+
+    docker.containers.set('sulla_vault', { running: true });
+    login.containers.set('sulla_vault', { running: true });
+    const consumers = new ComposePostgresAuthConsumers(docker, new FakeDrift(), '/host/accounts/database.password', async() => undefined,
+      { log: () => undefined, warn: () => undefined }, { perServiceMs: 10_000, pollMs: 2_000, accountsRestartSec: 60 },
+      async() => Buffer.from(NEW_SECRET), async(ms) => { clock += ms }, () => clock, login);
+
+    await consumers.waitHealthy();
+
+    expect(docker.calls.some(args => args.includes('node'))).toBe(false);
+    expect(login.calls.filter(args => args.includes('node'))).toHaveLength(1);
+    expect(docker.calls.filter(args => args[0] === 'inspect').length).toBeGreaterThan(0);
+  });
+
+  // risk: availability — once hardening stops waiting (bound reached), no further docker execs are started
+  it('stops starting checks once the signal aborts', async() => {
+    const { docker, consumers } = setup();
+    const stop = new AbortController();
+
+    docker.containers.set('sulla_vault', { running: true, logins: ['ECONNREFUSED', 'ECONNREFUSED', 'ECONNREFUSED'] })
+      .set('sulla_tools', { running: true });
+    const run = docker.run.bind(docker);
+
+    docker.run = async(args) => {
+      const result = await run(args);
+
+      if (args.includes('node')) {
+        stop.abort(); // the bound fired while the first login attempt ran
+      }
+
+      return result;
+    };
+
+    await expect(consumers.waitHealthy(stop.signal)).rejects.toThrow('stopped');
+    expect(docker.calls.filter(args => args.includes('node'))).toHaveLength(1);
+    expect(docker.calls.some(args => args.includes('sulla_tools'))).toBe(false);
+  });
 });
