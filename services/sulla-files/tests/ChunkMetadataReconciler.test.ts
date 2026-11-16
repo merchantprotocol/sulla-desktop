@@ -68,6 +68,10 @@ describe.skipIf(!databaseUrl)('chunk metadata integrity (real Postgres)', () => 
     } finally { client.release(true); killer.release() }
     expect(Number((await pool.query('SELECT count(*) FROM file_versions')).rows[0].count)).toBe(0);
     expect(Number((await pool.query('SELECT count(*) FROM chunks')).rows[0].count)).toBe(0);
+    // The transaction's chunk insert was lost with the backend; retrying the
+    // version commit without durable chunk metadata must still be rejected.
+    await expect(pool.query('INSERT INTO file_versions(id,chunk_collection_id,manifest_hash) VALUES($1,$2,$3)', [randomUUID(),collectionId,manifestHash]))
+      .rejects.toThrow(/missing chunk metadata/);
   });
 
   // risk: data loss — GC cannot remove a chunk still referenced by any restorable version.
