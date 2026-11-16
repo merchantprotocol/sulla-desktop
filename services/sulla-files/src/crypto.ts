@@ -83,7 +83,7 @@ export class ChunkCrypto {
 /** Shared stateless instance behind the function exports below. */
 export const defaultChunkCrypto = new ChunkCrypto();
 
-// Function exports kept for callers outside this module (keyring, localManager, app, cloudSync,
+// Function exports kept for callers outside this module (keyring, ReplicationPuller, TrackedFuseMount, WatchedFileIngestor, app, cloudSync,
 // legacyImport, preview, residency, shares, indexSource). They delegate to `defaultChunkCrypto`.
 export function maxEncryptedChunkBytes(plainBytes:number):number { return defaultChunkCrypto.maxEncryptedChunkBytes(plainBytes) }
 export function encrypt(value:Uint8Array, key:Uint8Array, context:string):Promise<Envelope> { return defaultChunkCrypto.encrypt(value, key, context) }
