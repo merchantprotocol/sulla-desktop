@@ -20,6 +20,7 @@ import { AgentResultCardBuilder, subconsciousResultModel } from '../../services/
 import type { AgentResultCardData } from '../../../shared/agentResults/AgentResultCard';
 
 import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
+import type { JobCustodyPort } from '../../app/Services/JobCustodyTypes';
 
 /** A returned contract as the job result the parent reads. */
 export function returnedJobResult(task: AgentJobTask, label: string, threadId: string): AgentJobResult {
@@ -170,7 +171,7 @@ export class JobCompletionDelivery {
   private readonly orphanedChildResults: OrphanedChildResultService;
   private readonly orphanedChildRerouter: OrphanedChildRerouter;
 
-  constructor(jobs: OrphanedChildJobStore, private readonly cards = new AgentResultCardBuilder(subconsciousResultModel)) {
+  constructor(jobs: OrphanedChildJobStore, private readonly cards = new AgentResultCardBuilder(subconsciousResultModel), private readonly custody?: Pick<JobCustodyPort, 'resolveOwner'>) {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
     this.orphanedChildRerouter = new OrphanedChildRerouter();
   }
@@ -199,13 +200,15 @@ export class JobCompletionDelivery {
       const orphanReason = `orphaned child result: job ${ job.jobId } settled after its manager became ${ orphan.notice.managerStatus }`;
       return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, orphanReason, taskIndex, terminal);
     }
-    const channel = job.parentChannel || 'sulla-desktop';
+    const owner = await this.custody?.resolveOwner(job.jobId, taskIndex);
+    const channel = owner?.channel ?? job.parentChannel ?? 'sulla-desktop';
+    const threadId = owner?.threadId ?? job.parentThreadId;
     // Bounded (a few seconds at most) and never fatal: a plain card is the fallback.
     const card = results.length && !failureReason
       ? await this.cards.build(job, results, taskIndex).catch(() => undefined)
       : undefined;
-    await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal, card);
-    return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex, terminal);
+    await emitProactiveCompletion(channel, job.jobId, results, failureReason, threadId, terminal, card);
+    return wakeParentGraph(channel, threadId, job.jobId, results, failureReason, taskIndex, terminal);
   }
 }
 

@@ -4,7 +4,11 @@
 
 import { Service } from '@sulla/foundation';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
-import { AgentCompletionInboxService } from './AgentCompletionInboxService';
+import { AgentCompletionInboxService, type PendingCompletion } from './AgentCompletionInboxService';
+import type { JobCustodyPort } from './JobCustodyTypes';
+
+/** Resolves the current custody owner under the shared custody/inbox producer lock. */
+export type CompletionOwnerSource = Pick<JobCustodyPort, 'withOwner'>;
 
 export interface PendingCompletionSource {
   getPendingCompletions?(): Promise<AgentJob[]>;
@@ -39,6 +43,7 @@ export class AgentCompletionRecoveryService extends Service {
     private readonly deliveryPolicy = new CompletionDeliveryPolicy(),
     private readonly clock: () => number = Date.now,
     private readonly timer: CompletionRecoveryTimer = new SystemCompletionRecoveryTimer(),
+    private readonly owners?: CompletionOwnerSource,
   ) {
     super();
   }
@@ -85,23 +90,26 @@ export class AgentCompletionRecoveryService extends Service {
     if (job.status === 'stopped' || this.inFlight.has(job.jobId) || !job.parentChannel || !job.parentThreadId) return;
     this.inFlight.add(job.jobId);
     try {
-      job.tasks.forEach((rawTask, taskIndex) => {
+      for (const [taskIndex, rawTask] of job.tasks.entries()) {
         const task = rawTask as AgentJobTask & { completionFirstDeliveredAt?: number };
         const result = task.completion ?? job.results[taskIndex];
         // Older persisted jobs may not have any timestamps; treat them as long-pending
         // so an immediate startup recovery still delivers their saved completion.
         const returnedAt = task.returnedAt ?? task.finishedAt ?? job.finishedAt ?? job.createdAt ?? 0;
-        if (result && !this.deliveryPolicy.isDelivered(job, task) && this.clock() - returnedAt >= minimumAgeMs) {
-          this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, {
-            jobId: job.jobId,
-            taskIndex,
-            results: [result],
-            notice: task.completionFirstDeliveredAt
-              ? `[re-delivery: first delivered at ${new Date(task.completionFirstDeliveredAt).toISOString()}] [job state: ${job.status}]\n\n${result.output}`
-              : undefined,
-          });
-        }
-      });
+        if (!result || this.deliveryPolicy.isDelivered(job, task) || this.clock() - returnedAt < minimumAgeMs) continue;
+        const completion: PendingCompletion = {
+          jobId: job.jobId,
+          taskIndex,
+          results: [result],
+          notice: task.completionFirstDeliveredAt
+            ? `[re-delivery: first delivered at ${new Date(task.completionFirstDeliveredAt).toISOString()}] [job state: ${job.status}]\n\n${result.output}`
+            : undefined,
+        };
+        // Custody decides the recipient: a reassigned/adopted task re-delivers to its
+        // current owner, under the same lock a custody move takes.
+        if (this.owners) await this.owners.withOwner(job.jobId, taskIndex, async(_client, owner) => this.inbox.enqueue(owner.channel, owner.threadId, completion));
+        else this.inbox.enqueue(job.parentChannel!, job.parentThreadId!, completion);
+      }
     } catch (error) {
       console.warn(`[AgentCompletionRecovery] delivery failed for ${ job.jobId }; will retry:`, error);
     } finally {

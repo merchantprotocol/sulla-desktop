@@ -556,9 +556,13 @@ export class BackendGraphWebSocketService {
           `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
           task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
       },
-      (job, reason) => {
-        if (!job.parentChannel || !job.parentThreadId) return;
-        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
+      async(job, reason) => {
+        const entry = { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason };
+        const routed = await agentJobProvider.custody.withOwner(job.jobId, undefined, async(_client, owner) => {
+          enqueueAgentCompletion(owner.channel, owner.threadId, entry);
+          return true;
+        });
+        if (routed === undefined && job.parentChannel && job.parentThreadId) enqueueAgentCompletion(job.parentChannel, job.parentThreadId, entry);
       },
     );
     interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
@@ -1136,8 +1140,8 @@ export class BackendGraphWebSocketService {
           completionConsumption.confirmAnswered(state?.messages ?? []);
           await completionConsumption.releaseOnAbort(async entry => {
             // A failed turn retries with backoff; a stopped one waits quietly (stop means stop).
-            if (runAbort?.signal.aborted) requeueAgentCompletionQuietly(channelId, threadId, entry);
-            else requeueAgentCompletionAfterFailure(channelId, threadId, entry);
+            if (runAbort?.signal.aborted) await agentJobProvider.completionRequeue.requeueQuietly(channelId, threadId, entry);
+            else await agentJobProvider.completionRequeue.requeueAfterFailure(channelId, threadId, entry);
             await agentJobProvider.completionAcknowledgements.release(entry);
           });
           for (const message of state?.messages ?? []) {

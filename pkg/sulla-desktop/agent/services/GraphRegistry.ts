@@ -635,13 +635,17 @@ ${ feedbackJson }`);
 
   /** Most recently registered durable thread for one exact channel/agent identity. */
   findThreadByChannel(channel: string): string | undefined {
+    return this.findThreadsByChannel(channel).at(-1);
+  },
+
+  /** All in-memory threads for one exact agent channel, oldest to newest. */
+  findThreadsByChannel(channel: string): string[] {
     const matches = [...registry.entries()].filter(([key, record]) => {
       const metadata = record.state?.metadata as any;
       return String(metadata?.agentId || metadata?.wsChannel || '').trim() === channel
         && Boolean(String(metadata?.threadId || key || '').trim());
     });
-    const latest = matches.at(-1);
-    return latest ? String((latest[1].state.metadata as any)?.threadId || latest[0]).trim() : undefined;
+    return matches.map(([key, record]) => String((record.state.metadata as any)?.threadId || key).trim());
   },
 
   /**

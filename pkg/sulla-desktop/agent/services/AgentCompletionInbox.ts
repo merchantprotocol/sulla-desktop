@@ -10,6 +10,12 @@ import { CompletionIdleDispatcher } from '../app/Services/CompletionIdleDispatch
 
 export { COMPLETION_RESULT_LIMIT };
 export type { AgentTerminalNotice, PendingCompletion } from '../app/Services/AgentCompletionInboxService';
+export interface CompletionInboxPort {
+  move(fromChannel: string, fromThreadId: string, toChannel: string, toThreadId: string, jobId: string, taskIndex: number): void;
+  requeue(channel: string, threadId: string, entry: import('../app/Services/AgentCompletionInboxService').PendingCompletion): boolean;
+  requeueAfterFailure(channel: string, threadId: string, entry: import('../app/Services/AgentCompletionInboxService').PendingCompletion): number;
+  requeueQuietly(channel: string, threadId: string, entry: import('../app/Services/AgentCompletionInboxService').PendingCompletion): void;
+}
 
 /** Backwards-compatible constructable inbox with instance-owned state. */
 export class CompletionInboxStore extends AgentCompletionInboxService {
@@ -21,6 +27,10 @@ export class CompletionInboxStore extends AgentCompletionInboxService {
 export { CompletionInboxStore as AgentCompletionInbox };
 export const completionInboxStore = {
   enqueue: (...args: Parameters<AgentCompletionInboxService['enqueue']>) => agentCompletionProvider.inbox.enqueue(...args),
+  requeue: (...args: Parameters<AgentCompletionInboxService['requeue']>) => agentCompletionProvider.inbox.requeue(...args),
+  move: (...args: Parameters<AgentCompletionInboxService['move']>) => agentCompletionProvider.inbox.move(...args),
+  requeueAfterFailure: (...args: Parameters<AgentCompletionInboxService['requeueAfterFailure']>) => agentCompletionProvider.inbox.requeueAfterFailure(...args),
+  requeueQuietly: (...args: Parameters<AgentCompletionInboxService['requeueQuietly']>) => agentCompletionProvider.inbox.requeueQuietly(...args),
   acknowledge: (...args: Parameters<AgentCompletionInboxService['acknowledge']>) => agentCompletionProvider.inbox.acknowledge(...args),
 };
 

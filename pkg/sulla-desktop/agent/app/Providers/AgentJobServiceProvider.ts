@@ -8,6 +8,7 @@ import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
 import { AgentJobReviewItemRepository } from '../Repositories/AgentJobReviewItemRepository';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
+import { AgentJobCustodyStateWriter } from '../Repositories/AgentJobCustodyStateWriter';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
 import { CompletionAcknowledgementService } from '../Services/CompletionAcknowledgementService';
@@ -32,6 +33,19 @@ import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
 import { AgentTaskActivityProjector } from '../Services/AgentTaskActivityProjector';
 import { ReviewObligationGate } from '../Services/ReviewObligationGate';
+import { resolveAgentIdentity } from '../../utils/agentIdentity';
+import { AgentJobCustodyRepository } from '../Repositories/AgentJobCustodyRepository';
+import { JobCustodyService } from '../Services/JobCustodyService';
+import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
+import { CustodyCallerVerifier } from '../Services/CustodyCallerVerifier';
+import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegistryTopLevelConversationRegistry';
+import { GraphRegistryOwnerPresence } from '../Services/GraphRegistryOwnerPresence';
+import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
+import { CustodyChangeNotificationService } from '../Services/CustodyChangeNotificationService';
+import { CustodyDestinationResolver } from '../Services/CustodyDestinationResolver';
+import { CustodyCompletionRequeueService } from '../Services/CustodyCompletionRequeueService';
+import { DurableAgentInboxReceiverResolver } from '../../services/AgentInboxReceiverResolver';
+import { GraphRegistry } from '../../services/GraphRegistry';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -48,6 +62,11 @@ export class AgentJobServiceProvider {
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
   readonly blockerEscalation: BlockerEscalationService;
+  readonly custody: JobCustodyService;
+  readonly custodyCallerVerifier: CustodyCallerVerifier;
+  readonly custodyLineage: JobTaskCustodyLineage;
+  readonly custodyDestinations: CustodyDestinationResolver;
+  readonly completionRequeue: CustodyCompletionRequeueService;
 
   constructor(runActivity: RunActivityReader = RunActivity) {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -67,12 +86,25 @@ export class AgentJobServiceProvider {
       strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
-    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator);
+    const custodyRepository = new AgentJobCustodyRepository(postgresClient);
+    const conversations = new GraphRegistryTopLevelConversationRegistry();
+    const { GraphRegistry } = await import('../../services/GraphRegistry');
+    const ownerPresence = new GraphRegistryOwnerPresence(GraphRegistry);
+    const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) },
+      { matches: async owner => ownerPresence.matches(owner) }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
+    this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);
+    const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));
+    this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new CustodyChangeNotificationService(this.jobs, completionInboxStore), clock);
+    const receiverResolver = new DurableAgentInboxReceiverResolver(this.jobs, channel => GraphRegistry.findThreadsByChannel(channel), this.custody);
+    this.custodyDestinations = new CustodyDestinationResolver(taskLocator, receiverResolver, async channel => GraphRegistry.findThreadByChannel(channel));
+    this.completionRequeue = new CustodyCompletionRequeueService(completionInboxStore, this.custody);
+    this.custodyCallerVerifier = new CustodyCallerVerifier(taskLocator, conversations);
+    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator, this.custody, this.custodyLineage, undefined, new AgentJobCustodyStateWriter());
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);
     this.completionAcknowledgements = new CompletionAcknowledgementService(this.service, strandedEpisodes, completionInboxStore);
-    this.delivery = new JobCompletionDelivery(this.service);
+    this.delivery = new JobCompletionDelivery(this.service, undefined, this.custody);
   }
 }
 
