@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { PostgresConnection } from '@sulla/foundation/postgres';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentJobRepository } from '../../../app/Repositories/AgentJobRepository';
 import { AgentJobRetentionRepository } from '../../../app/Repositories/AgentJobRetentionRepository';
@@ -30,6 +30,8 @@ dbDescribe('AgentJobRepository', () => {
     retention = new AgentJobRetentionRepository(connection);
   }, 60_000);
   afterAll(async() => database.dispose());
+  // Every test owns the table: projection/live/pending reads are global, so leftovers from earlier tests leak in.
+  beforeEach(async() => { await database.query('TRUNCATE agent_jobs CASCADE') });
 
   const job = (jobId: string, createdAt = Date.now()): AgentJob => ({
     jobId, status: 'running', createdAt, finishedAt: null, taskCount: 1, results: [],
@@ -394,6 +396,7 @@ dbDescribe('AgentJobRepository', () => {
     stale.tasks[0] = { ...stale.tasks[0], threadId: 'poll-task-thread',
       completion: { label: 'lane', status: 'completed', output: 'ok', threadId: 'poll-task-thread', contract: 'result' } };
     for (const item of [live, done, stale]) await repository.insertJob(item);
+    await repository.complete(done); // insertJob always records a launch as running
     await repository.complete({ ...stale, status: 'completed', finishedAt: Date.now() });
     expect((await repository.liveJobs()).map(item => item.jobId)).toContain('poll-live');
     expect((await repository.liveJobs()).map(item => item.jobId)).not.toContain('poll-done');
