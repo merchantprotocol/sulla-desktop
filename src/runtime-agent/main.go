@@ -581,10 +581,16 @@ func (a *agent) control(c net.Conn) {
 		case "status":
 			_ = writeFrame(c, map[string]any{"id": req.ID, "result": a.status()})
 		case "set-time":
-			// The guest has no clock of its own: the host sets it after a
-			// restore from a saved state, and periodically against drift.
+			// Host is the authoritative time source; report drift on every
+			// boot/resume/periodic sample and avoid needless wall-clock steps.
 			if req.UnixMS <= 0 {
 				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "invalid_time", "message": "unixMs is required"}})
+				continue
+			}
+			skewMs := req.UnixMS - time.Now().UnixMilli()
+			log.Printf("[clock] skew=%+dms", skewMs)
+			if skewMs <= 2000 && skewMs >= -2000 {
+				_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]any{"ok": true, "corrected": false, "skewMs": skewMs}})
 				continue
 			}
 			tv := syscall.NsecToTimeval(req.UnixMS * int64(time.Millisecond))
@@ -592,7 +598,7 @@ func (a *agent) control(c net.Conn) {
 				_ = writeFrame(c, map[string]any{"id": req.ID, "error": map[string]string{"code": "set_time_failed", "message": err.Error()}})
 				continue
 			}
-			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]bool{"ok": true}})
+			_ = writeFrame(c, map[string]any{"id": req.ID, "result": map[string]any{"ok": true, "corrected": true, "skewMs": skewMs}})
 		case "prepare-suspend":
 			// Clean page cache is the bulk of a saved state; dropping it first
 			// makes saving and restoring proportionally faster.

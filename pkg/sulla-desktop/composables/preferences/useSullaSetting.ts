@@ -21,16 +21,30 @@ export interface SullaSetting<T> {
   reload: () => Promise<void>;
 }
 
-export function useSullaSetting<T>(
-  key: string,
-  fallback: T,
-  cast?: SettingCast,
-  options: { refreshOnFocus?: boolean } = {},
-): SullaSetting<T> {
-  const value = ref(fallback) as Ref<T>;
-  const error = ref('');
+/** Where a Sulla setting is read from and written to (swappable in tests). */
+export interface SullaSettingsStore {
+  get(key: string, fallback: unknown): Promise<unknown>;
+  set(key: string, value: unknown, cast?: SettingCast): Promise<unknown>;
+}
 
-  function coerce(raw: unknown): T {
+/** One Sulla setting: its current value, last error, and load/save. */
+export class SullaSettingController<T> implements SullaSetting<T> {
+  readonly value: Ref<T>;
+  readonly error = ref('');
+
+  constructor(
+    private readonly key: string,
+    private readonly fallback: T,
+    private readonly cast: SettingCast | undefined,
+    private readonly settingsStore: SullaSettingsStore,
+  ) {
+    this.value = ref(fallback) as Ref<T>;
+  }
+
+  /** Turn a stored value into this setting's type, falling back when empty or invalid. */
+  coerce(raw: unknown): T {
+    const { fallback, cast } = this;
+
     if (raw === null || raw === undefined || raw === '') {
       return fallback;
     }
@@ -46,26 +60,39 @@ export function useSullaSetting<T>(
     return raw as T;
   }
 
-  async function reload() {
+  reload = async(): Promise<void> => {
     try {
-      value.value = coerce(await SullaSettingsModel.get(key, fallback));
+      this.value.value = this.coerce(await this.settingsStore.get(this.key, this.fallback));
     } catch (err) {
-      error.value = `Could not load this setting: ${ err instanceof Error ? err.message : String(err) }`;
+      this.error.value = `Could not load this setting: ${ err instanceof Error ? err.message : String(err) }`;
     }
-  }
+  };
 
-  async function save(next: T) {
-    const previous = value.value;
+  save = async(next: T): Promise<void> => {
+    const previous = this.value.value;
 
-    value.value = next;
-    error.value = '';
+    this.value.value = next;
+    this.error.value = '';
     try {
-      await SullaSettingsModel.set(key, next, cast);
+      await this.settingsStore.set(this.key, next, this.cast);
     } catch (err) {
-      value.value = previous;
-      error.value = `Could not save this setting: ${ err instanceof Error ? err.message : String(err) }`;
+      this.value.value = previous;
+      this.error.value = `Could not save this setting: ${ err instanceof Error ? err.message : String(err) }`;
     }
-  }
+  };
+}
+
+/** Vue entry point: one Sulla setting, loaded now and optionally re-read on window focus. */
+export function useSullaSetting<T>(
+  key: string,
+  fallback: T,
+  cast?: SettingCast,
+  options: { refreshOnFocus?: boolean } = {},
+): SullaSetting<T> {
+  const controller = new SullaSettingController<T>(key, fallback, cast, SullaSettingsModel as unknown as SullaSettingsStore);
+  const {
+    value, error, save, reload,
+  } = controller;
 
   void reload();
 
