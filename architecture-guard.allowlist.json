@@ -3984,12 +3984,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/extractor.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/fileOperations.ts": {
       "rules": {
         "raw-sql": 34
@@ -4015,19 +4009,6 @@
         "mutable-state": 2
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "services/sulla-files/src/indexSource.ts": {
-      "rules": {
-        "raw-sql": 4,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/indexing.ts": {
-      "rules": {
-        "raw-sql": 83
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
     "services/sulla-files/src/legacyImport.ts": {
       "rules": {
@@ -4070,19 +4051,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "services/sulla-files/src/preview.ts": {
-      "rules": {
-        "raw-sql": 6,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/recordingEnrichment.ts": {
-      "rules": {
-        "raw-sql": 45
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/residency.ts": {
       "rules": {
         "long-file": 642,
@@ -4102,19 +4070,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "services/sulla-files/src/search.ts": {
-      "rules": {
-        "raw-sql": 9
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/searchCleanup.ts": {
-      "rules": {
-        "raw-sql": 3,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/shares.ts": {
       "rules": {
         "long-file": 560,
@@ -4133,20 +4088,6 @@
       "rules": {
         "raw-sql": 12,
         "procedural-module": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/vectorBackfill.ts": {
-      "rules": {
-        "raw-sql": 5,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/vectorState.ts": {
-      "rules": {
-        "raw-sql": 2,
-        "procedural-module": 2
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
