@@ -108,7 +108,7 @@ describe('Relay session expiry and cancellation', () => {
     expect(socket.closes).toEqual([[1000, 'relay_closed']]);
     await consumer.done;
     expect(consumer.events).toEqual([expect.objectContaining({ sequence: 1, type: 'discord.message_create' })]);
-    await expect(fx.manager.send('discord-e10', { type: 'discord.presence', payload: {} })).rejects.toThrow('relay_not_found');
+    expect(() => fx.manager.send('discord-e10', { type: 'discord.presence', payload: {} })).toThrow('relay_not_found');
     expect(vi.getTimerCount()).toBe(0);
   });
 
