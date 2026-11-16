@@ -7,6 +7,7 @@ import { ChunkAccessTracker } from './access.js';
 import { ChunkCacheEvictor } from './evictor.js';
 import { ChunkHydrator } from './hydrator.js';
 import { Store } from '../store.js';
+import { ChunkCacheRepository } from '../Repositories/ChunkCacheRepository.js';
 import type { FilesKeyring } from '../keyring.js';
 import type { CloudChunkSource } from './types.js';
 import type pg from 'pg';
@@ -17,13 +18,15 @@ export class CachingStore extends Store {
   private readonly access:ChunkAccessTracker;
   private readonly hydrator:ChunkHydrator;
   private readonly evictor:ChunkCacheEvictor;
+  private readonly cache:ChunkCacheRepository;
   private timer?:NodeJS.Timeout;
   private lastWriteEviction = 0;
   constructor(private readonly options:ChunkCacheOptions) {
     super(options.root);
-    this.access = new ChunkAccessTracker(options.db);
-    this.hydrator = new ChunkHydrator(options.db, this, options.keyring, options.source!);
-    this.evictor = new ChunkCacheEvictor(options.db, this, options.root, options.source!);
+    this.cache = new ChunkCacheRepository(options.db);
+    this.access = new ChunkAccessTracker(options.db, undefined, undefined, this.cache);
+    this.hydrator = new ChunkHydrator(this.cache, this, options.keyring, options.source!);
+    this.evictor = new ChunkCacheEvictor(this.cache, this, options.root, options.source!);
   }
   async start():Promise<void> {
     await this.recover();
@@ -32,10 +35,9 @@ export class CachingStore extends Store {
     void this.evictor.run().catch(() => undefined);
   }
   async recover():Promise<void> {
-    const rows = (await this.options.db.query("SELECT collection_id::text,chunk_id FROM files_chunk_cache WHERE state='evicting'")).rows;
-    for (const row of rows) {
+    for (const row of await this.cache.interruptedEvictions()) {
       const state = await super.has(row.collection_id, row.chunk_id) ? 'resident' : 'evicted';
-      await this.options.db.query("UPDATE files_chunk_cache SET state=$3,stored_bytes=CASE WHEN $3='evicted' THEN 0 ELSE stored_bytes END,updated_at=NOW() WHERE collection_id=$1 AND chunk_id=$2", [row.collection_id, row.chunk_id, state]);
+      await this.cache.settleInterrupted(row.collection_id, row.chunk_id, state);
     }
   }
   override async get(collectionId:string, id:string):Promise<Buffer> {
@@ -59,9 +61,7 @@ export class CachingStore extends Store {
   }
   override async put(collectionId:string, id:string, bytes:Uint8Array):Promise<boolean> {
     const created = await super.put(collectionId, id, bytes);
-    await this.options.db.query(`INSERT INTO files_chunk_cache(collection_id,chunk_id,state,stored_bytes,last_read_at)
-      VALUES($1,$2,'resident',$3,NOW()) ON CONFLICT(collection_id,chunk_id) DO UPDATE
-      SET state='resident',stored_bytes=EXCLUDED.stored_bytes,evicted_at=NULL,updated_at=NOW()`, [collectionId, id, bytes.byteLength]);
+    await this.cache.upsertResident(collectionId, id, bytes.byteLength);
     // The eviction pass sums the whole cache table, so running it on every write made each
     // write O(cached chunks). The 60s timer still bounds the cache; writes only nudge it at most every 30s.
     if (Date.now() - this.lastWriteEviction >= 30_000) {
