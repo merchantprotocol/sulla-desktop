@@ -3,67 +3,77 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { ipcMain } from 'electron';
-
-import { ChatArtifactModel } from '@pkg/agent/database/models/ChatArtifactModel';
-import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
-import { configureChatArtifactFilesRegistration, getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
-import { getChatArtifactFilesRegistration } from '@pkg/main/chatArtifactFilesRegistration';
-import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
+import type { IpcController, IpcRegistrar } from './ipc/IpcController';
+import type { getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
 import type { ChatArtifactStatus } from '@pkg/shared/chatArtifacts';
 
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
+type ChatArtifactService = ReturnType<typeof getChatArtifactService>;
+
+export interface ChatArtifactsIpcDependencies {
+  /** Wires Files registration into the artifact service, then returns the service (old init order). */
+  service(): ChatArtifactService;
+  readGuard: { run<T>(label: string, read: () => Promise<T>, fallback: T): Promise<T> };
+  getArtifactById(id: string): Promise<{ threadId: string } | null | undefined>;
+  getHistoryByThread(threadId: string): Promise<{ status?: string } | null | undefined>;
 }
 
-export function initChatArtifactsIpc(): void {
-  configureChatArtifactFilesRegistration(getChatArtifactFilesRegistration());
-  const service = getChatArtifactService();
+/** chat-artifacts:* — the renderer's artifact pane. */
+export class ChatArtifactsIpcController implements IpcController {
+  constructor(private readonly ipc: IpcRegistrar, private readonly deps: ChatArtifactsIpcDependencies) {}
 
-  // null = database not reachable yet: the renderer keeps what it shows and
-  // reloads on `database:available` (an empty list would close open artifacts).
-  ipcMain.handle('chat-artifacts:list', (_event, input: { threadId: string; includeClosed?: boolean }) =>
-    getDatabaseReadGuard().run('chat-artifacts:list', () => service.list(text(input?.threadId), !!input?.includeClosed), null));
+  text(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
 
-  ipcMain.handle('chat-artifacts:get', (_event, input: { threadId: string; idOrName: string }) =>
-    service.get(text(input?.threadId), text(input?.idOrName)));
+  register(): void {
+    const service = this.deps.service();
+    const text = (value: unknown) => this.text(value);
 
-  ipcMain.handle('chat-artifacts:open-file', (_event, input: { threadId: string; fileId: string }) =>
-    service.openFile(text(input?.threadId), text(input?.fileId)));
+    // null = database not reachable yet: the renderer keeps what it shows and
+    // reloads on `database:available` (an empty list would close open artifacts).
+    this.ipc.handle('chat-artifacts:list', (_event, input: { threadId: string; includeClosed?: boolean }) =>
+      this.deps.readGuard.run('chat-artifacts:list', () => service.list(text(input?.threadId), !!input?.includeClosed), null));
 
-  ipcMain.handle('chat-artifacts:get-by-id', async(_event, input: { artifactId: string }) => {
-    const artifact = await ChatArtifactModel.getById(text(input?.artifactId));
-    if (!artifact) return null;
-    const foundHistory = await ConversationHistoryModel.getByThread(artifact.threadId);
-    const history = foundHistory?.status === 'deleted' ? null : foundHistory;
+    this.ipc.handle('chat-artifacts:get', (_event, input: { threadId: string; idOrName: string }) =>
+      service.get(text(input?.threadId), text(input?.idOrName)));
 
-    return { threadId: artifact.threadId, artifact, history };
-  });
+    this.ipc.handle('chat-artifacts:open-file', (_event, input: { threadId: string; fileId: string }) =>
+      service.openFile(text(input?.threadId), text(input?.fileId)));
 
-  ipcMain.handle('chat-artifacts:save', (_event, input: {
-    threadId: string;
-    idOrName: string;
-    content?: string;
-    name?: string;
-    status?: ChatArtifactStatus;
-    expectedVersion?: number;
-  }) => service.update(text(input?.threadId), text(input?.idOrName), {
-    content: input?.content,
-    name: input?.name,
-    status: input?.status,
-    expectedVersion: input?.expectedVersion,
-    author: 'human',
-  }));
+    this.ipc.handle('chat-artifacts:get-by-id', async(_event, input: { artifactId: string }) => {
+      const artifact = await this.deps.getArtifactById(text(input?.artifactId));
+      if (!artifact) return null;
+      const foundHistory = await this.deps.getHistoryByThread(artifact.threadId);
+      const history = foundHistory?.status === 'deleted' ? null : foundHistory;
 
-  ipcMain.handle('chat-artifacts:close', (_event, input: { threadId: string; idOrName: string; expectedVersion?: number }) =>
-    service.close(text(input?.threadId), text(input?.idOrName), input?.expectedVersion, 'human'));
+      return { threadId: artifact.threadId, artifact, history };
+    });
 
-  ipcMain.handle('chat-artifacts:focus', (_event, input: { threadId: string; idOrName: string }) =>
-    service.focus(text(input?.threadId), text(input?.idOrName)));
+    this.ipc.handle('chat-artifacts:save', (_event, input: {
+      threadId:         string;
+      idOrName:         string;
+      content?:         string;
+      name?:            string;
+      status?:          ChatArtifactStatus;
+      expectedVersion?: number;
+    }) => service.update(text(input?.threadId), text(input?.idOrName), {
+      content:         input?.content,
+      name:            input?.name,
+      status:          input?.status,
+      expectedVersion: input?.expectedVersion,
+      author:          'human',
+    }));
 
-  ipcMain.handle('chat-artifacts:reopen', (_event, input: { threadId: string; idOrName: string }) =>
-    service.reopen(text(input?.threadId), text(input?.idOrName), undefined, 'human'));
+    this.ipc.handle('chat-artifacts:close', (_event, input: { threadId: string; idOrName: string; expectedVersion?: number }) =>
+      service.close(text(input?.threadId), text(input?.idOrName), input?.expectedVersion, 'human'));
 
-  ipcMain.handle('chat-artifacts:retry-files-registration', (_event, input: { threadId: string; idOrName: string }) =>
-    service.retryFilesRegistration(text(input?.threadId), text(input?.idOrName)));
+    this.ipc.handle('chat-artifacts:focus', (_event, input: { threadId: string; idOrName: string }) =>
+      service.focus(text(input?.threadId), text(input?.idOrName)));
+
+    this.ipc.handle('chat-artifacts:reopen', (_event, input: { threadId: string; idOrName: string }) =>
+      service.reopen(text(input?.threadId), text(input?.idOrName), undefined, 'human'));
+
+    this.ipc.handle('chat-artifacts:retry-files-registration', (_event, input: { threadId: string; idOrName: string }) =>
+      service.retryFilesRegistration(text(input?.threadId), text(input?.idOrName)));
+  }
 }

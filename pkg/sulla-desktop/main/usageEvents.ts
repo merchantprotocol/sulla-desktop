@@ -3,21 +3,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { getUsageSummary } from '@pkg/agent/usage/providerUsage';
-import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import Logging from '@pkg/utils/logging';
+import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 
-const ipcMainProxy = getIpcMainProxy(Logging.background);
+export interface UsageEventsDependencies {
+  summary(hours: number | undefined, profileId: string): Promise<unknown>;
+  /** The signed-in contractor id; throws on local/offline installs. */
+  activeContractorId(): Promise<string>;
+}
 
-export function initUsageEvents(): void {
-  ipcMainProxy.handle('usage:summary', async(_event: unknown, options?: { hours?: number; profileId?: string }) => {
-    let profileId = options?.profileId?.trim();
-    if (!profileId) {
-      try {
-        const { getActiveContractorId } = await import('./sullaCloudAuth');
-        profileId = (await getActiveContractorId()).trim();
-      } catch { /* local/offline installs use the default profile */ }
-    }
-    return getUsageSummary(options?.hours, profileId || 'default');
-  });
+/** usage:summary — provider usage for the active (or given) profile. */
+export class UsageIpcController implements IpcController {
+  constructor(private readonly ipc: IpcRegistrar, private readonly deps: UsageEventsDependencies) {}
+
+  register(): void {
+    this.ipc.handle('usage:summary', async(_event: unknown, options?: { hours?: number; profileId?: string }) => {
+      let profileId = options?.profileId?.trim();
+      if (!profileId) {
+        try {
+          profileId = (await this.deps.activeContractorId()).trim();
+        } catch { /* local/offline installs use the default profile */ }
+      }
+
+      return this.deps.summary(options?.hours, profileId || 'default');
+    });
+  }
 }
