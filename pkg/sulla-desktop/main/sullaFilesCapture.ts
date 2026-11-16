@@ -14,7 +14,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
-import { getSullaFilesWatcher, type RecentSullaFile } from '@pkg/main/sullaFilesWatcher';
+import { getSullaFilesWatcher, type RecentSullaFile, type SullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 
 export type ScreenshotMode = 'area' | 'window' | 'full';
 export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string; reference?:ChatFilesReference }
@@ -166,16 +166,29 @@ export class SullaFilesCaptureService {
   }
 }
 
-let captureService:SullaFilesCaptureService | undefined;
-export function getSullaFilesCaptureService():SullaFilesCaptureService { captureService ??= new SullaFilesCaptureService(); return captureService }
-
-let markupWindow:BrowserWindow | undefined;
-export function openScreenshotMarkup(filePath:string):void {
-  if (markupWindow && !markupWindow.isDestroyed()) markupWindow.destroy();
-  markupWindow = new BrowserWindow({
-    width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#f4f7fb',
-    webPreferences: { contextIsolation: false, nodeIntegration: true },
-  });
-  markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
-  markupWindow.on('closed', () => { markupWindow = undefined; getSullaFilesWatcher().notifyRescan().catch(() => undefined) });
+export class SullaFilesCaptureServiceProvider {
+  private captureService?:SullaFilesCaptureService;
+  resolve():SullaFilesCaptureService { return this.captureService ??= new SullaFilesCaptureService(); }
 }
+export const sullaFilesCaptureServiceProvider = new SullaFilesCaptureServiceProvider();
+export function getSullaFilesCaptureService():SullaFilesCaptureService { return sullaFilesCaptureServiceProvider.resolve() }
+
+export class SullaFilesScreenshotMarkupService {
+  private markupWindow?:BrowserWindow;
+  constructor(private readonly resolveWatcher:() => Pick<SullaFilesWatcher, 'notifyRescan'> = getSullaFilesWatcher) {}
+  open(filePath:string):void {
+    if (this.markupWindow && !this.markupWindow.isDestroyed()) this.markupWindow.destroy();
+    this.markupWindow = new BrowserWindow({
+      width: 1100, height: 760, title: 'Mark up screenshot', backgroundColor: '#f4f7fb',
+      webPreferences: { contextIsolation: false, nodeIntegration: true },
+    });
+    this.markupWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'markup.html'), { query: { file: filePath } });
+    this.markupWindow.on('closed', () => { this.markupWindow = undefined; this.resolveWatcher().notifyRescan().catch(() => undefined) });
+  }
+}
+export class SullaFilesScreenshotMarkupServiceProvider {
+  private service?:SullaFilesScreenshotMarkupService;
+  resolve():SullaFilesScreenshotMarkupService { return this.service ??= new SullaFilesScreenshotMarkupService(); }
+}
+export const sullaFilesScreenshotMarkupServiceProvider = new SullaFilesScreenshotMarkupServiceProvider();
+export function openScreenshotMarkup(filePath:string):void { sullaFilesScreenshotMarkupServiceProvider.resolve().open(filePath) }

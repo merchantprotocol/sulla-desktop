@@ -9,32 +9,18 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { hostPort } from '@pkg/utils/instance';
-
-const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
-const MAX_CONCURRENT_REQUESTS = 4;
-const MAX_TOTAL_INFLIGHT_BYTES = MAX_CONCURRENT_REQUESTS * MAX_SOURCE_BYTES;
-const MAX_CAPABILITY_TTL_MS = 5 * 60_000;
-const BIND_HOST = '127.0.0.1';
-
-interface RegisteredSource {
-  path:       string;
-  parentPath: string;
-  file:       fs.promises.FileHandle;
-  dev:        bigint;
-  ino:        bigint;
-  epoch:      number;
-  release?:   () => void;
-}
-
-type SourcePermission = 'read' | 'write';
-
-interface SourceCapability {
-  handle:      string;
-  serviceId:   string;
-  permissions: ReadonlySet<SourcePermission>;
-  expiresAt:   number;
-  epoch:       number;
-}
+import {
+  BIND_HOST,
+  MAX_CAPABILITY_TTL_MS,
+  MAX_SOURCE_BYTES,
+  type RegisteredSource,
+  type SourceCapability,
+  SourceGatewayError,
+  type SourcePermission,
+  SullaFilesSourceGatewayFileStore,
+  SullaFilesSourceGatewayFingerprint,
+  SullaFilesSourceGatewayRequestBudget,
+} from './SullaFilesSourceGatewaySupport';
 
 export interface SullaFilesSourceSnapshot {
   handle:      string;
@@ -47,29 +33,6 @@ export interface SullaFilesSourceWriteResult extends Omit<SullaFilesSourceSnapsh
   conflictHandle?: string;
 }
 
-class SourceGatewayError extends Error {
-  constructor(readonly status:number, readonly code:string, message:string, readonly conflictHandle?:string) {
-    super(message);
-  }
-}
-
-function safeEqual(left:string, right:string):boolean {
-  const a = Buffer.from(left);
-  const b = Buffer.from(right);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function fingerprint(info:fs.BigIntStats, contentHash:string):string {
-  return crypto.createHash('sha256').update([
-    info.dev, info.ino, info.size, info.mtimeNs, contentHash,
-  ].join(':')).digest('hex');
-}
-
-async function syncParent(parentPath:string):Promise<void> {
-  const parent = await fs.promises.open(parentPath, constants.O_RDONLY);
-  try { await parent.sync() } finally { await parent.close() }
-}
-
 export class SullaFilesSourceGateway {
   private readonly sources = new Map<string, RegisteredSource>();
   private readonly capabilities = new Map<string, SourceCapability>();
@@ -77,9 +40,9 @@ export class SullaFilesSourceGateway {
   private port = 0;
   private epoch = 0;
   private sessionsEnabled = false;
-  private activeRequests = 0;
-  private reservedBytes = 0;
-  private drainWaiters = new Set<() => void>();
+  private readonly fileStore = new SullaFilesSourceGatewayFileStore();
+  private readonly requestBudget = new SullaFilesSourceGatewayRequestBudget();
+  private readonly fingerprints = new SullaFilesSourceGatewayFingerprint();
 
   get vmUrl():string {
     if (!this.port) throw new Error('Files source gateway is not running');
@@ -160,9 +123,7 @@ export class SullaFilesSourceGateway {
     this.epoch++;
     this.sessionsEnabled = false;
     this.capabilities.clear();
-    if (this.activeRequests) {
-      await new Promise<void>(resolve => this.drainWaiters.add(resolve));
-    }
+    await this.requestBudget.waitForIdle();
     for (const source of this.sources.values()) {
       source.release?.();
       await source.file.close().catch(() => undefined);
@@ -187,7 +148,7 @@ export class SullaFilesSourceGateway {
   }
 
   async read(handle:string):Promise<SullaFilesSourceSnapshot> {
-    return this.withCapacity(() => this.readPinned(handle));
+    return this.requestBudget.withCapacity(() => this.readPinned(handle));
   }
 
   private async readPinned(handle:string):Promise<SullaFilesSourceSnapshot> {
@@ -206,11 +167,11 @@ export class SullaFilesSourceGateway {
       throw new SourceGatewayError(409, 'source_changed', 'Registered source changed while it was being read');
     }
     const contentHash = crypto.createHash('sha256').update(bytes).digest('hex');
-    return { handle, bytes, contentHash, revision: fingerprint(after, contentHash) };
+    return { handle, bytes, contentHash, revision: this.fingerprints.fingerprint(after, contentHash) };
   }
 
   async write(handle:string, expectedRevision:string, bytes:Buffer):Promise<SullaFilesSourceWriteResult> {
-    return this.withCapacity(() => this.writePinned(handle, expectedRevision, bytes));
+    return this.requestBudget.withCapacity(() => this.writePinned(handle, expectedRevision, bytes));
   }
 
   private async writePinned(handle:string, expectedRevision:string, bytes:Buffer):Promise<SullaFilesSourceWriteResult> {
@@ -229,7 +190,7 @@ export class SullaFilesSourceGateway {
       ownsStage = true;
       try { await staged.writeFile(bytes); await staged.sync() } finally { await staged.close() }
       const current = await this.readPinned(handle);
-      if (!safeEqual(current.revision.toLowerCase(), expectedRevision.toLowerCase())) {
+      if (!this.fingerprints.safeEqual(current.revision.toLowerCase(), expectedRevision.toLowerCase())) {
         const conflictHandle = await this.preserveConflict(source, stagedPath);
         ownsStage = false;
         throw new SourceGatewayError(409, 'source_changed', 'Registered source changed before the conditional write', conflictHandle);
@@ -237,7 +198,7 @@ export class SullaFilesSourceGateway {
       await fs.promises.link(source.path, recoveryPath);
       ownsRecovery = true;
       const verified = await this.readPinned(handle);
-      if (!safeEqual(verified.revision.toLowerCase(), expectedRevision.toLowerCase())) {
+      if (!this.fingerprints.safeEqual(verified.revision.toLowerCase(), expectedRevision.toLowerCase())) {
         const conflictHandle = await this.preserveConflict(source, stagedPath);
         ownsStage = false;
         throw new SourceGatewayError(409, 'source_changed', 'Registered source changed while the conditional write was staged', conflictHandle);
@@ -245,19 +206,19 @@ export class SullaFilesSourceGateway {
       this.assertActive(handle, source);
       await fs.promises.rename(stagedPath, source.path);
       ownsStage = false;
-      await syncParent(source.parentPath);
+      await this.fileStore.syncParent(source.parentPath);
       this.assertActive(handle, source);
-      const replacement = await this.openPinnedSource(source.path);
+      const replacement = await this.fileStore.openPinned(source.path);
       await source.file.close();
       source.file = replacement.file;
       source.dev = replacement.info.dev;
       source.ino = replacement.info.ino;
       const result = await this.readPinned(handle);
       const desiredHash = crypto.createHash('sha256').update(bytes).digest('hex');
-      if (!safeEqual(result.contentHash, desiredHash)) throw new Error('Published source does not match the staged bytes');
+      if (!this.fingerprints.safeEqual(result.contentHash, desiredHash)) throw new Error('Published source does not match the staged bytes');
       await fs.promises.unlink(recoveryPath);
       ownsRecovery = false;
-      await syncParent(source.parentPath);
+      await this.fileStore.syncParent(source.parentPath);
       return { handle, contentHash: result.contentHash, revision: result.revision };
     } catch (error) {
       if (error instanceof SourceGatewayError) {
@@ -273,7 +234,7 @@ export class SullaFilesSourceGateway {
         if (current?.contentHash === desiredHash) {
           await fs.promises.rename(recoveryPath, source.path).then(async() => {
             ownsRecovery = false;
-            await syncParent(source.parentPath);
+            await this.fileStore.syncParent(source.parentPath);
           }).catch(() => undefined);
         }
       }
@@ -287,14 +248,14 @@ export class SullaFilesSourceGateway {
   async start(port = 0):Promise<void> {
     if (this.server) return;
     const server = http.createServer((request, response) => {
-      if (!this.reserveRequest()) {
+      if (!this.requestBudget.reserve()) {
         this.sendError(response, new SourceGatewayError(503, 'gateway_busy', 'Native Files source gateway request limits are reached'));
         request.destroy();
         return;
       }
       this.route(request, response)
         .catch(error => this.sendError(response, error))
-        .finally(() => this.releaseRequest());
+        .finally(() => this.requestBudget.release());
     });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -335,8 +296,8 @@ export class SullaFilesSourceGateway {
     if (!this.sessionsEnabled || source.epoch !== this.epoch) throw new SourceGatewayError(423, 'files_locked', 'Files locked before conflict preservation');
     const conflictPath = path.join(source.parentPath, `.sulla-source-conflict-${ crypto.randomUUID() }`);
     await fs.promises.rename(stagedPath, conflictPath);
-    await syncParent(source.parentPath);
-    const pinned = await this.openPinnedSource(conflictPath);
+    await this.fileStore.syncParent(source.parentPath);
+    const pinned = await this.fileStore.openPinned(conflictPath);
     try {
       if (!this.sessionsEnabled || source.epoch !== this.epoch) throw new SourceGatewayError(423, 'files_locked', 'Files locked while conflict preservation was completing');
       const conflictHandle = crypto.randomBytes(32).toString('base64url');
@@ -346,26 +307,6 @@ export class SullaFilesSourceGateway {
       return conflictHandle;
     } catch (error) {
       await pinned.file.close().catch(() => undefined);
-      throw error;
-    }
-  }
-
-  private async openPinnedSource(sourcePath:string):Promise<{
-    file: fs.promises.FileHandle;
-    info: fs.BigIntStats;
-  }> {
-    const file = await fs.promises.open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const [pathInfo, descriptorInfo] = await Promise.all([
-        fs.promises.lstat(sourcePath, { bigint: true }),
-        file.stat({ bigint: true }),
-      ]);
-      if (!pathInfo.isFile() || pathInfo.isSymbolicLink() || pathInfo.dev !== descriptorInfo.dev || pathInfo.ino !== descriptorInfo.ino) {
-        throw new SourceGatewayError(409, 'source_identity_changed', 'Source pathname changed while its identity was being pinned');
-      }
-      return { file, info: descriptorInfo };
-    } catch (error) {
-      await file.close().catch(() => undefined);
       throw error;
     }
   }
@@ -381,27 +322,6 @@ export class SullaFilesSourceGateway {
       if (capability?.expiresAt && capability.expiresAt <= Date.now()) this.capabilities.delete(token);
       throw new SourceGatewayError(403, 'capability_denied', 'Native source capability is expired, revoked, or outside its exact scope');
     }
-  }
-
-  private reserveRequest():boolean {
-    if (this.activeRequests >= MAX_CONCURRENT_REQUESTS || this.reservedBytes + MAX_SOURCE_BYTES > MAX_TOTAL_INFLIGHT_BYTES) return false;
-    this.activeRequests++;
-    this.reservedBytes += MAX_SOURCE_BYTES;
-    return true;
-  }
-
-  private releaseRequest():void {
-    this.activeRequests = Math.max(0, this.activeRequests - 1);
-    this.reservedBytes = Math.max(0, this.reservedBytes - MAX_SOURCE_BYTES);
-    if (!this.activeRequests) {
-      for (const resolve of this.drainWaiters) resolve();
-      this.drainWaiters.clear();
-    }
-  }
-
-  private async withCapacity<T>(operation:()=>Promise<T>):Promise<T> {
-    if (!this.reserveRequest()) throw new SourceGatewayError(503, 'gateway_busy', 'Native Files source gateway request limits are reached');
-    try { return await operation() } finally { this.releaseRequest() }
   }
 
   private async route(request:http.IncomingMessage, response:http.ServerResponse):Promise<void> {
@@ -462,30 +382,4 @@ export class SullaFilesSourceGateway {
   }
 }
 
-let sourceGateway:SullaFilesSourceGateway | undefined;
-
-export function startSullaFilesSourceGateway():SullaFilesSourceGateway {
-  if (sourceGateway) return sourceGateway;
-  const gateway = new SullaFilesSourceGateway();
-  sourceGateway = gateway;
-  return gateway;
-}
-
-export function getSullaFilesSourceGateway():SullaFilesSourceGateway {
-  if (!sourceGateway) throw new Error('Experimental native Files source gateway is not running');
-  return sourceGateway;
-}
-
-export async function stopSullaFilesSourceGateway():Promise<void> {
-  const gateway = sourceGateway;
-  sourceGateway = undefined;
-  await gateway?.stop();
-}
-
-export async function lockSullaFilesSourceGateway():Promise<void> {
-  await sourceGateway?.lock();
-}
-
-export function unlockSullaFilesSourceGateway():void {
-  sourceGateway?.unlock();
-}
+export { SullaFilesSourceGatewayProvider, sullaFilesSourceGatewayProvider, startSullaFilesSourceGateway, getSullaFilesSourceGateway, stopSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './SullaFilesSourceGatewayProvider';
