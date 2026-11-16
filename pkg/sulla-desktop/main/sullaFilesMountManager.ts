@@ -60,7 +60,7 @@ export class SullaFilesMountManager extends EventEmitter {
   /** True only after the backend prepared the anchor and no probe has since contradicted it. */
   private guestAnchorConfirmed = false;
   private readonly credentialService = new SullaFilesMountCredentialService(
-    () => this.executor, () => this.credentialProvider, () => this.credentialGeneration,
+    () => this.executor, () => this.credentialProvider, () => this.credentialGeneration, TOKEN_FILE,
   );
   private readonly adapterService = new SullaFilesMountAdapterService(
     generation => this.credentialService.refresh(generation), () => { this.guestAnchorConfirmed = false },
@@ -247,7 +247,7 @@ export class SullaFilesMountManager extends EventEmitter {
     ++this.credentialGeneration;
     this.publish('locking');
     try {
-      await this.credentialWrite?.catch(() => undefined);
+      await this.credentialService.settle();
       await this.stopGuest();
       this.credentialProvider = undefined;
       this.onTokenWritten = undefined;
@@ -351,12 +351,6 @@ export class SullaFilesMountManager extends EventEmitter {
     this.healthTimer = undefined;
   }
 
-  /**
-   * Wait for the adapter's mount to reach the guest. The adapter publishes its
-   * phase and a heartbeat (updatedAt every ~5s), so a slow start keeps waiting
-   * while a failed or wedged one stops at once with its own reason, instead of
-   * being killed on a fixed timer.
-   */
   private async serialize(action:() => Promise<void>):Promise<void> {
     const previous = this.operation?.catch(() => undefined) ?? Promise.resolve();
     const operation = previous.then(action);

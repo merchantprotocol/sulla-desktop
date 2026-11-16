@@ -4,14 +4,12 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { VMExecutor } from '@pkg/backend/backend';
-import { SULLA_FILES_GUEST_MOUNT_PATH, isGuestPathUsable, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
+import { SULLA_FILES_GUEST_MOUNT_PATH, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
 import { traceEvent } from '@pkg/utils/startupTrace';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 const MOUNT_PATH = SULLA_FILES_GUEST_MOUNT_PATH;
-const MOUNT_PROBE_TIMEOUT_SECONDS = 15;
-const MOUNT_UNRESPONSIVE_LIMIT = 3;
 const ADAPTER_STATUS_FILE = '/tmp/sulla-files-fuse-status.json';
 const ADAPTER_WAIT_MS = 120_000;
 const ADAPTER_TOKEN_REPAIR_AFTER_MS = 30_000;
@@ -53,6 +51,12 @@ export class SullaFilesMountAdapterService {
     }
   }
 
+  /**
+   * Wait for the adapter's mount to reach the guest. The adapter publishes its
+   * phase and a heartbeat (updatedAt every ~5s), so a slow start keeps waiting
+   * while a failed or wedged one stops at once with its own reason, instead of
+   * being killed on a fixed timer.
+   */
   async waitForAdapter(executor:VMExecutor, credentialGeneration:number):Promise<void> {
     const started = Date.now();
     let lastPhase:string | undefined;
