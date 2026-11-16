@@ -3,24 +3,27 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-(() => {
+class LocalVaultConsole {
+  csrf = '';
+  setupCreatesVault = false;
+  pendingRecoveryCode = '';
+  items = [];
+  selectedId = '';
+  category = 'all';
+  accessFilter = 'all';
+  query = '';
+  detailGeneration = 0;
+  editingItem = null;
+  auditGeneration = 0;
+  auditEvents = [];
+  auditOffset = 0;
+  auditActor = 'all';
+  auditHasMore = false;
+  pendingBitwarden = null;
+
+  constructor() {
   'use strict';
 
-  let csrf = '';
-  let setupCreatesVault = false;
-  let pendingRecoveryCode = '';
-  let items = [];
-  let selectedId = '';
-  let category = 'all';
-  let accessFilter = 'all';
-  let query = '';
-  let detailGeneration = 0;
-  let editingItem = null;
-  let auditGeneration = 0;
-  let auditEvents = [];
-  let auditOffset = 0;
-  let auditActor = 'all';
-  let auditHasMore = false;
   const initialUrl = new URL(location.href);
   const integrationHint = initialUrl.searchParams.get('integration');
   const accountHint = initialUrl.searchParams.get('account');
@@ -67,9 +70,9 @@
     if (text) setTimeout(() => { if (output.textContent === text) output.textContent = ''; }, 4_000);
   };
   const api = async(path, options = {}, responseType = 'json') => {
-    if (!csrf) throw new Error('The vault session is missing its CSRF binding');
+    if (!this.csrf) throw new Error('The vault session is missing its CSRF binding');
     const headers = new Headers(options.headers);
-    headers.set('x-csrf-token', csrf);
+    headers.set('x-csrf-token', this.csrf);
     if (options.body && !(options.body instanceof FormData)) headers.set('content-type', 'application/json');
     let response;
     try {
@@ -90,9 +93,9 @@
     byId('vault').hidden = !unlocked;
   };
   const invalidateDetail = (clearSelection = true) => {
-    detailGeneration += 1;
-    editingItem = null;
-    if (clearSelection) selectedId = '';
+    this.detailGeneration += 1;
+    this.editingItem = null;
+    if (clearSelection) this.selectedId = '';
     byId('edit-item').onclick = null;
     byId('detail-fields').replaceChildren();
     byId('detail-activity').replaceChildren();
@@ -101,30 +104,30 @@
     byId('detail-empty').hidden = false;
   };
   const invalidateAudit = () => {
-    auditGeneration += 1;
-    auditEvents = [];
-    auditHasMore = false;
+    this.auditGeneration += 1;
+    this.auditEvents = [];
+    this.auditHasMore = false;
     byId('audit-rows').replaceChildren();
     byId('audit-detail').replaceChildren();
     byId('audit-total').textContent = byId('audit-agent-count').textContent = byId('audit-blocked-count').textContent = '0';
     byId('audit-prev').disabled = byId('audit-next').disabled = true;
   };
 
-  const visibleItems = () => items.filter(item => {
-    if (category === 'favorite' && !item.favorite) return false;
-    if (!['all', 'favorite'].includes(category) && item.type !== category) return false;
-    if (accessFilter !== 'all' && policy(item).mode !== accessFilter) return false;
+  const visibleItems = () => this.items.filter(item => {
+    if (this.category === 'favorite' && !item.favorite) return false;
+    if (!['all', 'favorite'].includes(this.category) && item.type !== this.category) return false;
+    if (this.accessFilter !== 'all' && policy(item).mode !== this.accessFilter) return false;
     const haystack = [item.name, item.username, item.uris?.[0]?.uri, item.integration?.integrationId, item.integration?.accountId].filter(Boolean).join(' ').toLowerCase();
-    return !query || haystack.includes(query);
+    return !this.query || haystack.includes(this.query);
   });
 
   const updateCounts = () => {
-    const count = name => items.filter(item => name === 'all' || (name === 'favorite' ? item.favorite : item.type === name)).length;
+    const count = name => this.items.filter(item => name === 'all' || (name === 'favorite' ? item.favorite : item.type === name)).length;
     for (const name of ['all', 'favorite', 'login', 'apiKey', 'card', 'note']) byId(`count-${name}`).textContent = String(count(name));
-    byId('filter-all').textContent = String(items.length);
-    byId('filter-only').textContent = String(items.filter(item => policy(item).mode === 'only_me').length);
-    byId('filter-agents').textContent = String(items.filter(item => policy(item).mode === 'agents').length);
-    byId('search').placeholder = `Search ${items.length} item${items.length === 1 ? '' : 's'}`;
+    byId('filter-all').textContent = String(this.items.length);
+    byId('filter-only').textContent = String(this.items.filter(item => policy(item).mode === 'only_me').length);
+    byId('filter-agents').textContent = String(this.items.filter(item => policy(item).mode === 'agents').length);
+    byId('search').placeholder = `Search ${this.items.length} item${this.items.length === 1 ? '' : 's'}`;
   };
 
   const renderItems = () => {
@@ -134,12 +137,12 @@
     const visible = visibleItems();
     if (!visible.length) {
       const empty = document.createElement('div'); empty.className = 'empty-state';
-      empty.innerHTML = `<b>${items.length ? 'No items match this view' : 'No vault items yet'}</b><span>${items.length ? 'Try another category or search.' : 'Create an item to store your first credential.'}</span>`;
+      empty.innerHTML = `<b>${this.items.length ? 'No items match this view' : 'No vault items yet'}</b><span>${this.items.length ? 'Try another category or search.' : 'Create an item to store your first credential.'}</span>`;
       root.append(empty); return;
     }
     for (const item of visible) {
       const itemPolicy = policy(item);
-      const row = document.createElement('button'); row.type = 'button'; row.className = `item-row${selectedId === item.id ? ' selected' : ''}`;
+      const row = document.createElement('button'); row.type = 'button'; row.className = `item-row${this.selectedId === item.id ? ' selected' : ''}`;
       const tile = document.createElement('span'); tile.className = `tile${tileTint(item)}`; tile.textContent = initials(item);
       const meta = document.createElement('span'); meta.className = 'meta';
       const name = document.createElement('span'); name.className = 'name'; name.textContent = item.name || 'Untitled';
@@ -284,28 +287,28 @@
     const first = problems.findIndex(Boolean);
     if (first >= 0) { rows[first].querySelector('.cf-label').focus(); throw new Error(`Custom field ${first + 1}: ${problems[first]}`); }
     const fields = rows.map(row => ({ id: row.dataset.fieldId, label: row.querySelector('.cf-label').value.trim(), type: row.dataset.type, value: rowValue(row), ...(row.dataset.hidden ? { hidden: row.dataset.hidden === 'true' } : {}) }));
-    const preserved = Array.isArray(editingItem?.customFields) ? editingItem.customFields : [];
+    const preserved = Array.isArray(this.editingItem?.customFields) ? this.editingItem.customFields : [];
     const checked = CF.validate(fields, { preserved });
     if (!checked.ok) throw new Error(checked.error);
     return checked.fields;
   };
 
   const selectItem = async id => {
-    const generation = ++detailGeneration;
-    selectedId = id; renderItems();
-    editingItem = null;
+    const generation = ++this.detailGeneration;
+    this.selectedId = id; renderItems();
+    this.editingItem = null;
     byId('detail-empty').hidden = true; byId('detail-content').hidden = false;
     try {
       const [revealed, activity] = await Promise.all([
         api(`/v1/human/items/${encodeURIComponent(id)}/reveal`, { method: 'POST', body: '{}' }),
         api(`/v1/human/activity?item=${encodeURIComponent(id)}`),
       ]);
-      if (generation !== detailGeneration || selectedId !== id) return;
+      if (generation !== this.detailGeneration || this.selectedId !== id) return;
       const item = { ...revealed.item, id: revealed.id, revision: revealed.revision };
-      editingItem = JSON.parse(JSON.stringify(item));
+      this.editingItem = JSON.parse(JSON.stringify(item));
       const itemPolicy = policy(item);
       byId('detail-tile').textContent = initials(item); byId('detail-tile').className = `tile xl${tileTint(item)}`; byId('detail-name').textContent = item.name || 'Untitled';
-      byId('detail-meta').textContent = `${typeLabel(item.type)} · edited ${dateText(items.find(value => value.id === id)?.updatedAt)}`;
+      byId('detail-meta').textContent = `${typeLabel(item.type)} · edited ${dateText(this.items.find(value => value.id === id)?.updatedAt)}`;
       const fields = byId('detail-fields'); fields.replaceChildren();
       if (item.username) fields.append(detailField('Username', item.username));
       if (item.password) fields.append(detailField(item.type === 'apiKey' ? 'Secret' : 'Password', item.password, true));
@@ -325,17 +328,17 @@
       byId('detail-activity').innerHTML = events.length ? events.slice(0, 6).map(event => `<div class="activity-event"><b>${esc(auditAction(event))}</b><span>${esc(dateText(event.created_at))}</span><span>${esc(auditIsAgent(event) ? event.metadata?.agentId || 'Agent' : 'You')}</span><span>${esc(auditResult(event))}</span></div>`).join('') : '<div class="honest-state">No recorded activity for this item.</div>';
       byId('edit-item').onclick = () => { void openEditor(item); };
     } catch (error) {
-      if (generation !== detailGeneration || selectedId !== id) return;
+      if (generation !== this.detailGeneration || this.selectedId !== id) return;
       invalidateDetail(false);
       message(error.message, true);
     }
   };
 
   const load = async() => {
-    const result = await api('/v1/human/items'); items = result.items || [];
-    if (selectedId && !items.some(item => item.id === selectedId)) selectedId = '';
+    const result = await api('/v1/human/items'); this.items = result.items || [];
+    if (this.selectedId && !this.items.some(item => item.id === this.selectedId)) this.selectedId = '';
     renderItems();
-    if (selectedId) await selectItem(selectedId);
+    if (this.selectedId) await selectItem(this.selectedId);
   };
 
   const renderIntegrationProperties = properties => {
@@ -364,7 +367,7 @@
     const enabled = byId('agent-enabled').checked; byId('policy-mode').value = enabled ? 'agents' : 'only_me';
     byId('item-form').classList.toggle('policy-disabled', !enabled);
   };
-  const showBrowser = () => { auditGeneration += 1; byId('connect-view').hidden = true; byId('editor-view').hidden = true; byId('audit-view').hidden = true; byId('browser-view').hidden = false; byId('nav-audit').classList.remove('on'); document.querySelectorAll('[data-category]').forEach(button => button.classList.toggle('on', button.dataset.category === category)); };
+  const showBrowser = () => { this.auditGeneration += 1; byId('connect-view').hidden = true; byId('editor-view').hidden = true; byId('audit-view').hidden = true; byId('browser-view').hidden = false; byId('nav-audit').classList.remove('on'); document.querySelectorAll('[data-category]').forEach(button => button.classList.toggle('on', button.dataset.category === this.category)); };
   const renderProxyRules = rules => {
     const container = byId('proxy-rules'); container.replaceChildren();
     for (const rule of rules || []) {
@@ -386,14 +389,14 @@
     renderProxyRules(presets[preset]);
   };
   const openEditor = async item => {
-    const generation = ++detailGeneration;
+    const generation = ++this.detailGeneration;
     byId('item-form').reset(); let detail = item;
     if (item?.id && !item.password && !item.integration?.properties) {
       const revealed = await api(`/v1/human/items/${encodeURIComponent(item.id)}/reveal`, { method: 'POST', body: '{}' });
-      if (generation !== detailGeneration) return;
+      if (generation !== this.detailGeneration) return;
       detail = { ...revealed.item, id: revealed.id, revision: revealed.revision };
     }
-    editingItem = detail ? JSON.parse(JSON.stringify(detail)) : null;
+    this.editingItem = detail ? JSON.parse(JSON.stringify(detail)) : null;
     byId('proxy-hosts').value = detail?.proxy?.hosts?.join(', ') || ''; renderProxyRules(detail?.proxy?.rules); byId('proxy-hint').textContent = '';
     const itemPolicy = policy(detail);
     byId('item-id').value = detail?.id || ''; byId('revision').value = detail?.revision || ''; byId('item-type').value = detail?.integration ? 'integration' : detail?.type || 'login';
@@ -407,7 +410,7 @@
   };
   const itemPayload = () => {
     const type = byId('item-type').value; const origin = byId('website').value.trim(); const expiry = byId('policy-expiry').value;
-    const item = editingItem ? JSON.parse(JSON.stringify(editingItem)) : {};
+    const item = this.editingItem ? JSON.parse(JSON.stringify(this.editingItem)) : {};
     delete item.id; delete item.revision;
     const existingUris = Array.isArray(item.uris) ? item.uris : [];
     item.type = type === 'integration' ? 'apiKey' : type;
@@ -427,7 +430,7 @@
   };
   const openIntegrationHint = async() => {
     if (!integrationHint) return;
-    if (accountHint) for (const item of items.slice(0, 200)) { const revealed = await api(`/v1/human/items/${encodeURIComponent(item.id)}/reveal`, { method: 'POST', body: '{}' }); if (revealed.item?.integration?.integrationId === integrationHint && revealed.item?.integration?.accountId === accountHint) { await openEditor({ ...revealed.item, id: revealed.id, revision: revealed.revision }); return; } }
+    if (accountHint) for (const item of this.items.slice(0, 200)) { const revealed = await api(`/v1/human/items/${encodeURIComponent(item.id)}/reveal`, { method: 'POST', body: '{}' }); if (revealed.item?.integration?.integrationId === integrationHint && revealed.item?.integration?.accountId === accountHint) { await openEditor({ ...revealed.item, id: revealed.id, revision: revealed.revision }); return; } }
     if (!accountHint && connectSpec) { openConnect(); return; }
     await openEditor({ type: 'apiKey', name: integrationHint, integration: { integrationId: integrationHint, accountId: accountHint || 'default', properties: {} } });
   };
@@ -473,7 +476,7 @@
     const label = byId('connect-label').value.trim();
     const accountId = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 64);
     if (!accountId) throw new Error('Give this account a label with at least one letter or number');
-    if (items.some(item => item.integration?.integrationId === integrationHint && item.integration?.accountId === accountId)) throw new Error(`An account labelled "${label}" already exists for this integration`);
+    if (this.items.some(item => item.integration?.integrationId === integrationHint && item.integration?.accountId === accountId)) throw new Error(`An account labelled "${label}" already exists for this integration`);
     const properties = { account_label: label, connection_status: 'connected', connected_at: new Date().toISOString() };
     for (const input of byId('connect-fields').querySelectorAll('[data-connect-key]')) if (input.value) properties[input.dataset.connectKey] = input.value;
     const agents = byId('connect-agents').checked;
@@ -493,70 +496,70 @@
     human_item_reveal: 'Revealed item', human_item_created: 'Created item', human_item_updated: 'Changed item', human_item_deleted: 'Deleted item',
     vault_outbound_request: 'Used credential', agent_credential_broker_use: 'Used credential', agent_credential_use: 'Used credential',
   })[event.action] || String(event.action || 'Recorded action').replaceAll('_', ' ');
-  const auditItem = event => items.find(item => item.id === event.item_id)?.name || (event.item_id ? 'Deleted or unavailable item' : 'Vault');
+  const auditItem = event => this.items.find(item => item.id === event.item_id)?.name || (event.item_id ? 'Deleted or unavailable item' : 'Vault');
   const auditWhere = event => event.metadata?.destination || event.metadata?.operation || event.pod_id || 'Desktop vault';
   const auditResult = event => event.blocked ? 'Blocked' : (auditIsAgent(event) ? 'Allowed' : 'Recorded');
   const renderAuditDetail = index => {
-    const event = auditEvents[index];
+    const event = this.auditEvents[index];
     if (!event) { byId('audit-detail').innerHTML = '<div class="empty-state"><b>Select an event</b><span>Authorized metadata will appear here.</span></div>'; return; }
     document.querySelectorAll('[data-audit-event]').forEach((row, rowIndex) => row.classList.toggle('selected', rowIndex === index));
     const agent = auditIsAgent(event);
     byId('audit-detail').innerHTML = `<span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span><h2>${esc(auditAction(event))}</h2>${event.blocked ? `<div class="reason">${esc(event.reason || 'The action was denied before a secret was released.')}</div>` : ''}<div class="kv"><span>Who</span><b>${esc(agent ? event.metadata?.agentId || 'Agent' : 'You')}</b></div><div class="kv"><span>Item</span><b>${esc(auditItem(event))}</b></div><div class="kv"><span>Where</span><b>${esc(auditWhere(event))}</b></div><div class="kv"><span>Pod</span><b>${esc(event.pod_id || '—')}</b></div><div class="kv"><span>When</span><b>${esc(dateText(event.created_at))}</b></div><p class="security-note">This event contains authorized audit metadata only. No secret value is returned.</p>`;
   };
   const renderAudit = () => {
-    byId('audit-total').textContent = String(auditEvents.length);
-    byId('audit-agent-count').textContent = String(auditEvents.filter(auditIsAgent).length);
-    byId('audit-blocked-count').textContent = String(auditEvents.filter(event => event.blocked).length);
-    byId('audit-page').textContent = `Page ${Math.floor(auditOffset / 25) + 1}`;
-    byId('audit-prev').disabled = auditOffset === 0; byId('audit-next').disabled = !auditHasMore;
-    byId('audit-rows').innerHTML = auditEvents.length ? auditEvents.map((event, index) => { const agent = auditIsAgent(event); const who = agent ? event.metadata?.agentId || 'Agent' : 'You'; return `<tr data-audit-event="${index}"><td>${esc(dateText(event.created_at))}</td><td><span class="actor-cell"><span class="avatar ${agent ? 'agent' : ''}">${agent ? agentIcon : esc(who)}</span>${esc(who)}</span></td><td>${esc(auditAction(event))}</td><td>${esc(auditItem(event))}</td><td>${esc(auditWhere(event))}</td><td><span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span></td></tr>`; }).join('') : '<tr><td colspan="6" class="muted">No recorded events match these filters.</td></tr>';
+    byId('audit-total').textContent = String(this.auditEvents.length);
+    byId('audit-agent-count').textContent = String(this.auditEvents.filter(auditIsAgent).length);
+    byId('audit-blocked-count').textContent = String(this.auditEvents.filter(event => event.blocked).length);
+    byId('audit-page').textContent = `Page ${Math.floor(this.auditOffset / 25) + 1}`;
+    byId('audit-prev').disabled = this.auditOffset === 0; byId('audit-next').disabled = !this.auditHasMore;
+    byId('audit-rows').innerHTML = this.auditEvents.length ? this.auditEvents.map((event, index) => { const agent = auditIsAgent(event); const who = agent ? event.metadata?.agentId || 'Agent' : 'You'; return `<tr data-audit-event="${index}"><td>${esc(dateText(event.created_at))}</td><td><span class="actor-cell"><span class="avatar ${agent ? 'agent' : ''}">${agent ? agentIcon : esc(who)}</span>${esc(who)}</span></td><td>${esc(auditAction(event))}</td><td>${esc(auditItem(event))}</td><td>${esc(auditWhere(event))}</td><td><span class="audit-result ${event.blocked ? 'blocked' : ''}">${esc(auditResult(event))}</span></td></tr>`; }).join('') : '<tr><td colspan="6" class="muted">No recorded events match these filters.</td></tr>';
     document.querySelectorAll('[data-audit-event]').forEach(row => row.onclick = () => renderAuditDetail(Number(row.dataset.auditEvent)));
-    renderAuditDetail(auditEvents.length ? 0 : -1);
+    renderAuditDetail(this.auditEvents.length ? 0 : -1);
   };
   const loadAudit = async() => {
-    const generation = ++auditGeneration;
+    const generation = ++this.auditGeneration;
     byId('audit-rows').innerHTML = '<tr><td colspan="6" class="muted">Loading authorized audit events…</td></tr>';
-    const params = new URLSearchParams({ limit: '25', offset: String(auditOffset) });
-    if (auditActor === 'human' || auditActor === 'agent') params.set('actor', auditActor);
-    if (auditActor === 'blocked') params.set('blocked', 'true');
+    const params = new URLSearchParams({ limit: '25', offset: String(this.auditOffset) });
+    if (this.auditActor === 'human' || this.auditActor === 'agent') params.set('actor', this.auditActor);
+    if (this.auditActor === 'blocked') params.set('blocked', 'true');
     const range = byId('audit-time').value;
     if (range !== 'all') params.set('from', new Date(Date.now() - ({ '24h': 1, '7d': 7, '30d': 30 }[range] || 7) * 86_400_000).toISOString());
     const search = byId('audit-search').value.trim(); if (search) params.set('query', search);
     try {
       const result = await api(`/v1/human/activity?${params}`);
-      if (generation !== auditGeneration || byId('audit-view').hidden) return;
-      auditEvents = result.events || []; auditHasMore = Boolean(result.hasMore); renderAudit();
+      if (generation !== this.auditGeneration || byId('audit-view').hidden) return;
+      this.auditEvents = result.events || []; this.auditHasMore = Boolean(result.hasMore); renderAudit();
     } catch (error) {
-      if (generation !== auditGeneration || byId('audit-view').hidden) return;
-      auditEvents = []; auditHasMore = false; byId('audit-total').textContent = byId('audit-agent-count').textContent = byId('audit-blocked-count').textContent = '—';
+      if (generation !== this.auditGeneration || byId('audit-view').hidden) return;
+      this.auditEvents = []; this.auditHasMore = false; byId('audit-total').textContent = byId('audit-agent-count').textContent = byId('audit-blocked-count').textContent = '—';
       byId('audit-rows').innerHTML = `<tr class="audit-error"><td colspan="6">${esc(error.message)}</td></tr>`; byId('audit-prev').disabled = byId('audit-next').disabled = true;
       byId('audit-detail').innerHTML = '<div class="empty-state"><b>Audit events unavailable</b><span>The request failed; this is not an empty audit log.</span></div>';
     }
   };
   const showAudit = () => {
-    invalidateDetail(); auditOffset = 0; byId('connect-view').hidden = true; byId('editor-view').hidden = true; byId('browser-view').hidden = true; byId('audit-view').hidden = false;
+    invalidateDetail(); this.auditOffset = 0; byId('connect-view').hidden = true; byId('editor-view').hidden = true; byId('browser-view').hidden = true; byId('audit-view').hidden = false;
     document.querySelectorAll('[data-category]').forEach(button => button.classList.remove('on')); byId('nav-audit').classList.add('on'); void loadAudit();
   };
 
   const start = async() => {
-    const fragment = new URLSearchParams(location.hash.slice(1)); const grant = fragment.get('grant'); csrf = fragment.get('csrf') || ''; history.replaceState(null, '', '/vault/');
-    if (!csrf) throw new Error('Open the vault from Sulla Desktop to start a protected session');
-    const session = grant ? await api('/v1/human/session/exchange', { method: 'POST', body: JSON.stringify({ grant, csrf }) }) : await api('/v1/human/session');
-    csrf = session.csrf;
+    const fragment = new URLSearchParams(location.hash.slice(1)); const grant = fragment.get('grant'); this.csrf = fragment.get('csrf') || ''; history.replaceState(null, '', '/vault/');
+    if (!this.csrf) throw new Error('Open the vault from Sulla Desktop to start a protected session');
+    const session = grant ? await api('/v1/human/session/exchange', { method: 'POST', body: JSON.stringify({ grant, csrf: this.csrf }) }) : await api('/v1/human/session');
+    this.csrf = session.csrf;
     if (filesRestore) {
       byId('unlock').hidden = true; byId('vault').hidden = true; byId('cloud-restore').hidden = false;
       return;
     }
     setPhase(session.phase);
-    setupCreatesVault = session.setupRequired === true;
+    this.setupCreatesVault = session.setupRequired === true;
     if (session.phase === 'unlocked') {
       await load(); await openIntegrationHint();
     } else {
       byId('unlock-title').textContent = session.setupRequired ? 'Finish setting up your account' : 'Finish updating your account';
       byId('unlock-help').textContent = session.setupRequired ? 'Return to Sulla Desktop and sign in to finish setup.' : 'Enter your old vault password once. Sulla will move your existing encrypted data to your account password.';
       byId('password').autocomplete = session.setupRequired ? 'new-password' : 'current-password';
-      byId('password-confirm-label').hidden = !setupCreatesVault;
-      byId('password-confirm').required = setupCreatesVault;
+      byId('password-confirm-label').hidden = !this.setupCreatesVault;
+      byId('password-confirm').required = this.setupCreatesVault;
     }
   };
 
@@ -571,8 +574,8 @@
     byId('onboarding-recovery-saved').disabled = true;
     byId('onboarding-recovery-continue').disabled = true;
     try {
-      await api('/v1/human/recovery/configure', { method: 'POST', body: JSON.stringify({ recoveryCode: pendingRecoveryCode }) });
-      byId('onboarding-recovery-code').textContent = pendingRecoveryCode;
+      await api('/v1/human/recovery/configure', { method: 'POST', body: JSON.stringify({ recoveryCode: this.pendingRecoveryCode }) });
+      byId('onboarding-recovery-code').textContent = this.pendingRecoveryCode;
       byId('onboarding-recovery-copy').disabled = false;
       byId('onboarding-recovery-download').disabled = false;
       byId('onboarding-recovery-saved').disabled = false;
@@ -588,14 +591,14 @@
     if (button) { button.disabled = true; button.textContent = label; }
     return () => { if (button) { button.disabled = false; button.textContent = original; } };
   };
-  byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; const done = busy(event.target, setupCreatesVault ? 'Creating vault…' : 'Unlocking…'); try {
+  byId('unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; const done = busy(event.target, this.setupCreatesVault ? 'Creating vault…' : 'Unlocking…'); try {
     const password = byId('password').value;
-    if (setupCreatesVault && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
+    if (this.setupCreatesVault && password !== byId('password-confirm').value) throw new Error('Passwords do not match');
     const result = await api('/v1/human/unlock', { method: 'POST', body: JSON.stringify({ password }) });
-    csrf = result.csrf; byId('password').value = ''; byId('password-confirm').value = ''; setPhase('unlocked');
-    if (setupCreatesVault) {
+    this.csrf = result.csrf; byId('password').value = ''; byId('password-confirm').value = ''; setPhase('unlocked');
+    if (this.setupCreatesVault) {
       const bytes = crypto.getRandomValues(new Uint8Array(32));
-      pendingRecoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0);
+      this.pendingRecoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0);
       byId('vault').hidden = true; byId('unlock').hidden = false; byId('unlock-form').hidden = true;
       byId('unlock-title').textContent = 'Vault created'; byId('unlock-help').textContent = 'Your vault is encrypted and its unlock cache is protected by this Mac.';
       await configureOnboardingRecovery();
@@ -606,17 +609,17 @@
   byId('onboarding-recovery-copy').onclick = async() => { try { await navigator.clipboard.writeText(byId('onboarding-recovery-code').textContent); message('Recovery key copied.'); } catch { byId('onboarding-recovery-error').textContent = 'Could not copy. Select the key and copy it manually.'; } };
   byId('onboarding-recovery-download').onclick = () => { const blob = new Blob([byId('onboarding-recovery-code').textContent + '\n'], { type: 'text/plain' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'sulla-vault-recovery-key.txt'; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); };
   byId('onboarding-recovery-continue').onclick = () => { if (byId('onboarding-recovery-saved').checked) { byId('unlock').hidden = true; byId('vault').hidden = false; void load(); } };
-  byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; const done = busy(event.target, 'Unlocking…'); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message || 'Could not unlock with that recovery key.'; } finally { done(); } };
+  byId('recovery-unlock-form').onsubmit = async event => { event.preventDefault(); byId('unlock-error').textContent = ''; const done = busy(event.target, 'Unlocking…'); try { const result = await api('/v1/human/recovery/unlock', { method: 'POST', body: JSON.stringify({ recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value }) }); this.csrf = result.csrf; event.target.reset(); setPhase('unlocked'); await load(); await openIntegrationHint(); } catch (error) { byId('unlock-error').textContent = error.message || 'Could not unlock with that recovery key.'; } finally { done(); } };
   byId('new-item').onclick = () => { void openEditor(null).catch(error => message(error.message, true)); };
   byId('nav-audit').onclick = showAudit;
   // Desktop intercepts this path and opens its Integrations tab; nothing is served here.
   byId('nav-integrations').onclick = () => { location.href = '/vault/desktop/integrations'; };
   byId('audit-back').onclick = showBrowser;
-  document.querySelectorAll('[data-audit-actor]').forEach(button => button.onclick = () => { auditActor = button.dataset.auditActor; auditOffset = 0; document.querySelectorAll('[data-audit-actor]').forEach(value => value.classList.toggle('on', value === button)); void loadAudit(); });
-  byId('audit-time').onchange = () => { auditOffset = 0; void loadAudit(); };
-  byId('audit-search').onchange = () => { auditOffset = 0; void loadAudit(); };
-  byId('audit-prev').onclick = () => { auditOffset = Math.max(0, auditOffset - 25); void loadAudit(); };
-  byId('audit-next').onclick = () => { if (auditHasMore) { auditOffset += 25; void loadAudit(); } };
+  document.querySelectorAll('[data-audit-actor]').forEach(button => button.onclick = () => { this.auditActor = button.dataset.auditActor; this.auditOffset = 0; document.querySelectorAll('[data-audit-actor]').forEach(value => value.classList.toggle('on', value === button)); void loadAudit(); });
+  byId('audit-time').onchange = () => { this.auditOffset = 0; void loadAudit(); };
+  byId('audit-search').onchange = () => { this.auditOffset = 0; void loadAudit(); };
+  byId('audit-prev').onclick = () => { this.auditOffset = Math.max(0, this.auditOffset - 25); void loadAudit(); };
+  byId('audit-next').onclick = () => { if (this.auditHasMore) { this.auditOffset += 25; void loadAudit(); } };
   byId('item-type').onchange = () => { syncProxyFields(); const integration = byId('item-type').value === 'integration'; byId('integration-fields').hidden = !integration; byId('item-secret-field').hidden = integration; if (integration && !byId('integration-properties').children.length) renderIntegrationProperties({}); };
   byId('add-integration-property').onclick = () => { if (byId('integration-properties').children.length >= 20) return message('Integration properties are limited to 20.', true); addPropertyRow().focus(); };
   byId('add-custom-field').onclick = () => { if (customFieldRows().length >= CF.LIMITS.maxFields) return message(`Custom fields are limited to ${CF.LIMITS.maxFields}.`, true); addCustomFieldRow().focus(); };
@@ -625,22 +628,24 @@
   for (const id of ['cancel', 'editor-back']) byId(id).onclick = showBrowser;
   for (const id of ['connect-cancel', 'connect-back']) byId(id).onclick = () => { byId('connect-form').reset(); showConnectView(false); showBrowser(); };
   byId('connect-form').onsubmit = async event => { event.preventDefault(); try { await saveConnect(); } catch (error) { message(error.message, true); } };
-  byId('search').oninput = event => { query = event.target.value.trim().toLowerCase(); renderItems(); };
+  byId('search').oninput = event => { this.query = event.target.value.trim().toLowerCase(); renderItems(); };
   addEventListener('keydown', event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); byId('search').focus(); } });
-  document.querySelectorAll('[data-category]').forEach(button => button.onclick = () => { showBrowser(); category = button.dataset.category; document.querySelectorAll('[data-category]').forEach(value => value.classList.toggle('on', value === button)); renderItems(); });
-  document.querySelectorAll('[data-access]').forEach(button => button.onclick = () => { accessFilter = button.dataset.access; document.querySelectorAll('[data-access]').forEach(value => value.classList.toggle('on', value === button)); renderItems(); });
+  document.querySelectorAll('[data-category]').forEach(button => button.onclick = () => { showBrowser(); this.category = button.dataset.category; document.querySelectorAll('[data-category]').forEach(value => value.classList.toggle('on', value === button)); renderItems(); });
+  document.querySelectorAll('[data-access]').forEach(button => button.onclick = () => { this.accessFilter = button.dataset.access; document.querySelectorAll('[data-access]').forEach(value => value.classList.toggle('on', value === button)); renderItems(); });
   document.querySelectorAll('[data-panel-open]').forEach(button => button.onclick = () => { const panel = button.dataset.panelOpen; byId('utility-title').textContent = panel === 'security' ? 'Security & recovery' : panel === 'import' ? 'Import passwords' : 'Encrypted backup'; document.querySelectorAll('[data-utility]').forEach(value => { value.hidden = value.dataset.utility !== panel; }); byId('utility-dialog').showModal(); });
   byId('utility-close').onclick = () => byId('utility-dialog').close();
-  byId('item-form').onsubmit = async event => { event.preventDefault(); const id = byId('item-id').value; const revision = Number(byId('revision').value || 0); try { const result = await api(id ? `/v1/human/items/${encodeURIComponent(id)}` : '/v1/human/items', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(id ? { item: itemPayload(), revision } : { item: itemPayload() }) }); byId('item-password').value = ''; selectedId = result.id; await load(); showBrowser(); message('Item saved.'); } catch (error) { message(error.message, true); } };
-  byId('delete-item').onclick = async() => { const id = byId('item-id').value; if (!id || !confirm('Delete this vault item?')) return; try { await api(`/v1/human/items/${encodeURIComponent(id)}?revision=${encodeURIComponent(byId('revision').value)}`, { method: 'DELETE' }); selectedId = ''; await load(); showBrowser(); byId('detail-content').hidden = true; byId('detail-empty').hidden = false; message('Item deleted.'); } catch (error) { message(error.message, true); } };
-  byId('password-form').onsubmit = async event => { event.preventDefault(); try { const result = await api('/v1/human/password', { method: 'POST', body: JSON.stringify({ currentPassword: byId('current-password').value, nextPassword: byId('new-password').value }) }); if (result?.csrf) csrf = result.csrf; event.target.reset(); message('Password changed. Use the new password next start.'); } catch (error) { message(error.message, true); } };
+  byId('item-form').onsubmit = async event => { event.preventDefault(); const id = byId('item-id').value; const revision = Number(byId('revision').value || 0); try { const result = await api(id ? `/v1/human/items/${encodeURIComponent(id)}` : '/v1/human/items', { method: id ? 'PATCH' : 'POST', body: JSON.stringify(id ? { item: itemPayload(), revision } : { item: itemPayload() }) }); byId('item-password').value = ''; this.selectedId = result.id; await load(); showBrowser(); message('Item saved.'); } catch (error) { message(error.message, true); } };
+  byId('delete-item').onclick = async() => { const id = byId('item-id').value; if (!id || !confirm('Delete this vault item?')) return; try { await api(`/v1/human/items/${encodeURIComponent(id)}?revision=${encodeURIComponent(byId('revision').value)}`, { method: 'DELETE' }); this.selectedId = ''; await load(); showBrowser(); byId('detail-content').hidden = true; byId('detail-empty').hidden = false; message('Item deleted.'); } catch (error) { message(error.message, true); } };
+  byId('password-form').onsubmit = async event => { event.preventDefault(); try { const result = await api('/v1/human/password', { method: 'POST', body: JSON.stringify({ currentPassword: byId('current-password').value, nextPassword: byId('new-password').value }) }); if (result?.csrf) this.csrf = result.csrf; event.target.reset(); message('Password changed. Use the new password next start.'); } catch (error) { message(error.message, true); } };
   byId('recovery-form').onsubmit = async event => { event.preventDefault(); try { const bytes = crypto.getRandomValues(new Uint8Array(32)); const recoveryCode = btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', ''); bytes.fill(0); await api('/v1/human/recovery/configure', { method: 'POST', body: JSON.stringify({ recoveryCode }) }); event.target.reset(); byId('recovery-output').hidden = false; byId('recovery-output').textContent = recoveryCode; message('Recovery code generated. Save it now; it will not be shown again.'); } catch (error) { message(error.message, true); } };
   byId('backup-export-form').onsubmit = async event => { event.preventDefault(); try { const backup = await api('/v1/human/backup/export', { method: 'POST', body: JSON.stringify({ backupPassword: byId('backup-export-password').value }) }); const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = `sulla-vault-backup-${new Date().toISOString().slice(0, 10)}.vault`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 0); event.target.reset(); message('Encrypted backup downloaded.'); } catch (error) { message(error.message, true); } };
-  let pendingBitwarden = null;
   const fileBase64 = file => new Promise((resolve,reject)=>{ const reader=new FileReader(); reader.onerror=()=>reject(new Error('The export could not be read')); reader.onload=()=>resolve(String(reader.result).split(',',2)[1]||''); reader.readAsDataURL(file); });
-  byId('bitwarden-import-form').onsubmit = async event => { event.preventDefault(); try { const file=byId('bitwarden-file').files[0]; if(!file||file.size>25*1024*1024) throw new Error('Choose a Bitwarden export up to 25 MB'); const zip=file.name.toLowerCase().endsWith('.zip'); const content=zip?await fileBase64(file):await file.text(); pendingBitwarden={content,format:zip?'zip':file.name.toLowerCase().endsWith('.csv')?'csv':'json',password:byId('bitwarden-password').value||undefined}; const preview=await api('/v1/human/import/bitwarden/preview',{method:'POST',body:JSON.stringify(pendingBitwarden)}); byId('bitwarden-counts').textContent=`Found ${preview.total}; ${preview.importable} ready to import, ${preview.duplicates} duplicates, ${preview.unmapped.length} unmapped. ${Object.entries(preview.counts).map(([type,count])=>`${type}: ${count}`).join(' · ')}`; byId('bitwarden-warnings').textContent=preview.warnings.join(' '); byId('bitwarden-preview').hidden=false; byId('bitwarden-confirm').disabled=!preview.importable; } catch(error){ pendingBitwarden=null; byId('bitwarden-preview').hidden=true; message(error.message,true); } };
-  byId('bitwarden-confirm').onclick = async()=>{ if(!pendingBitwarden)return; try{ const result=await api('/v1/human/import/bitwarden',{method:'POST',body:JSON.stringify(pendingBitwarden)}); pendingBitwarden=null; byId('bitwarden-import-form').reset(); byId('bitwarden-preview').hidden=true; byId('utility-dialog').close(); await load(); message(`Imported ${result.imported} Bitwarden item${result.imported===1?'':'s'}; skipped ${result.duplicates} duplicate${result.duplicates===1?'':'s'}.`); }catch(error){message(error.message,true);} };
+  byId('bitwarden-import-form').onsubmit = async event => { event.preventDefault(); try { const file=byId('bitwarden-file').files[0]; if(!file||file.size>25*1024*1024) throw new Error('Choose a Bitwarden export up to 25 MB'); const zip=file.name.toLowerCase().endsWith('.zip'); const content=zip?await fileBase64(file):await file.text(); this.pendingBitwarden={content,format:zip?'zip':file.name.toLowerCase().endsWith('.csv')?'csv':'json',password:byId('bitwarden-password').value||undefined}; const preview=await api('/v1/human/import/bitwarden/preview',{method:'POST',body:JSON.stringify(this.pendingBitwarden)}); byId('bitwarden-counts').textContent=`Found ${preview.total}; ${preview.importable} ready to import, ${preview.duplicates} duplicates, ${preview.unmapped.length} unmapped. ${Object.entries(preview.counts).map(([type,count])=>`${type}: ${count}`).join(' · ')}`; byId('bitwarden-warnings').textContent=preview.warnings.join(' '); byId('bitwarden-preview').hidden=false; byId('bitwarden-confirm').disabled=!preview.importable; } catch(error){ this.pendingBitwarden=null; byId('bitwarden-preview').hidden=true; message(error.message,true); } };
+  byId('bitwarden-confirm').onclick = async()=>{ if(!this.pendingBitwarden)return; try{ const result=await api('/v1/human/import/bitwarden',{method:'POST',body:JSON.stringify(this.pendingBitwarden)}); this.pendingBitwarden=null; byId('bitwarden-import-form').reset(); byId('bitwarden-preview').hidden=true; byId('utility-dialog').close(); await load(); message(`Imported ${result.imported} Bitwarden item${result.imported===1?'':'s'}; skipped ${result.duplicates} duplicate${result.duplicates===1?'':'s'}.`); }catch(error){message(error.message,true);} };
   byId('backup-import-form').onsubmit = async event => { event.preventDefault(); try { const file = byId('backup-file').files[0]; if (file.size > 25 * 1024 * 1024) throw new Error('Backup files are limited to 25 MB'); const backup = JSON.parse(await file.text()); await api('/v1/human/backup/import', { method: 'POST', body: JSON.stringify({ backupPassword: byId('backup-import-password').value, backup }) }); event.target.reset(); byId('unlock-error').textContent = 'Backup restored. Unlock it with the vault password from that backup.'; } catch (error) { byId('unlock-error').textContent = error.message; } };
-  addEventListener('pagehide', () => { invalidateDetail(); invalidateAudit(); csrf = ''; items = []; });
+  addEventListener('pagehide', () => { invalidateDetail(); invalidateAudit(); this.csrf = ''; this.items = []; });
   start().catch(error => { byId('state').textContent = 'Unavailable'; byId('unlock').hidden = false; byId('unlock-error').textContent = error.message; });
-})();
+  }
+}
+
+new LocalVaultConsole();

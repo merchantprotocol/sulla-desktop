@@ -75,7 +75,7 @@ function sameContext(left: FilesKeyBundleContext, right: FilesKeyBundleContext):
     left.keyVersion === right.keyVersion && left.epoch === right.epoch;
 }
 
-export function filesKeyBundleAssociatedData(
+function filesKeyBundleAssociatedDataImplementation(
   purpose: FilesKeyBundlePurpose,
   key: 'data' | 'dedup',
   context: FilesKeyBundleContext,
@@ -89,7 +89,7 @@ export function filesKeyBundleAssociatedData(
   ]) }`;
 }
 
-export async function generateX25519RecipientKeyPair(): Promise<X25519RecipientKeyPair> {
+async function generateX25519RecipientKeyPairImplementation(): Promise<X25519RecipientKeyPair> {
   await sodium.ready;
   const pair = sodium.crypto_box_keypair();
   return {
@@ -98,7 +98,7 @@ export async function generateX25519RecipientKeyPair(): Promise<X25519RecipientK
   };
 }
 
-export async function sealFilesKeyBundle(
+async function sealFilesKeyBundleImplementation(
   material: FilesCollectionKeyMaterial,
   context: FilesKeyBundleContext,
   purpose: FilesKeyBundlePurpose,
@@ -114,15 +114,15 @@ export async function sealFilesKeyBundle(
       purpose,
       context:    { ...context },
       wrappedKey: await wrapKeyToPublicKey(bundleKey, recipientPublicKey),
-      dataKey:    await encryptWithKey(material.dataKey, bundleKey, filesKeyBundleAssociatedData(purpose, 'data', context)),
-      dedupKey:   await encryptWithKey(material.dedupKey, bundleKey, filesKeyBundleAssociatedData(purpose, 'dedup', context)),
+      dataKey:    await encryptWithKey(material.dataKey, bundleKey, filesKeyBundleAssociatedDataImplementation(purpose, 'data', context)),
+      dedupKey:   await encryptWithKey(material.dedupKey, bundleKey, filesKeyBundleAssociatedDataImplementation(purpose, 'dedup', context)),
     };
   } finally {
     bundleKey.fill(0);
   }
 }
 
-export async function openFilesKeyBundle(
+async function openFilesKeyBundleImplementation(
   envelope: FilesKeyBundleEnvelope,
   expectedContext: FilesKeyBundleContext,
   expectedPurpose: FilesKeyBundlePurpose,
@@ -139,14 +139,14 @@ export async function openFilesKeyBundle(
     const dataKey = await decryptWithKey(
       envelope.dataKey,
       bundleKey,
-      filesKeyBundleAssociatedData(expectedPurpose, 'data', expectedContext),
+      filesKeyBundleAssociatedDataImplementation(expectedPurpose, 'data', expectedContext),
     );
     let dedupKey:Uint8Array | undefined;
     try {
       dedupKey = await decryptWithKey(
         envelope.dedupKey,
         bundleKey,
-        filesKeyBundleAssociatedData(expectedPurpose, 'dedup', expectedContext),
+        filesKeyBundleAssociatedDataImplementation(expectedPurpose, 'dedup', expectedContext),
       );
       const material = { dataKey, dedupKey };
       assertMaterial(material);
@@ -162,14 +162,14 @@ export async function openFilesKeyBundle(
 }
 
 /** Runs inside the custody authority after its principal/collection checks pass. */
-export async function rewrapFilesKeyBundleForDevice(
+async function rewrapFilesKeyBundleForDeviceImplementation(
   authorityEnvelope: FilesKeyBundleEnvelope,
   expectedContext: FilesKeyBundleContext,
   authorityPublicKey: Base64,
   authorityPrivateKey: Uint8Array,
   devicePublicKey: Base64,
 ): Promise<FilesKeyBundleEnvelope> {
-  const material = await openFilesKeyBundle(
+  const material = await openFilesKeyBundleImplementation(
     authorityEnvelope,
     expectedContext,
     'authority-custody',
@@ -177,9 +177,24 @@ export async function rewrapFilesKeyBundleForDevice(
     authorityPrivateKey,
   );
   try {
-    return await sealFilesKeyBundle(material, expectedContext, 'device-recovery', devicePublicKey);
+    return await sealFilesKeyBundleImplementation(material, expectedContext, 'device-recovery', devicePublicKey);
   } finally {
     material.dataKey.fill(0);
     material.dedupKey.fill(0);
   }
 }
+
+/** Static compatibility facade for deterministic vault crypto behavior. */
+export class VaultFilesKeyBundle {
+  static readonly filesKeyBundleAssociatedData = filesKeyBundleAssociatedDataImplementation;
+  static readonly generateX25519RecipientKeyPair = generateX25519RecipientKeyPairImplementation;
+  static readonly sealFilesKeyBundle = sealFilesKeyBundleImplementation;
+  static readonly openFilesKeyBundle = openFilesKeyBundleImplementation;
+  static readonly rewrapFilesKeyBundleForDevice = rewrapFilesKeyBundleForDeviceImplementation;
+}
+
+export const filesKeyBundleAssociatedData = VaultFilesKeyBundle.filesKeyBundleAssociatedData;
+export const generateX25519RecipientKeyPair = VaultFilesKeyBundle.generateX25519RecipientKeyPair;
+export const sealFilesKeyBundle = VaultFilesKeyBundle.sealFilesKeyBundle;
+export const openFilesKeyBundle = VaultFilesKeyBundle.openFilesKeyBundle;
+export const rewrapFilesKeyBundleForDevice = VaultFilesKeyBundle.rewrapFilesKeyBundleForDevice;

@@ -20,7 +20,7 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const VAULT_RETRY_WINDOW_MS = 2 * 60 * 1000;
 const VAULT_RETRY_INITIAL_DELAY_MS = 250;
 const VAULT_RETRY_MAX_DELAY_MS = 5 * 1000;
-const RETRYABLE_NETWORK_CODES = new Set(['ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'ETIMEDOUT']);
+const RETRYABLE_NETWORK_CODES = ['ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'ETIMEDOUT'] as const;
 
 export interface VaultFilesAuthorityClientConfig {
   baseUrl:      string;
@@ -29,22 +29,20 @@ export interface VaultFilesAuthorityClientConfig {
   caPath?:      string;
 }
 
-function isRetryableVaultStartupError(error:unknown):boolean {
-  if (error instanceof FilesSafeDiagnosticError) {
-    const diagnostic = error.diagnostic;
-    if (diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403) return false;
-    if (diagnostic.httpStatus === 423) return true;
-  }
-  let current:unknown = error;
-  for (let depth = 0; depth < 3 && current; depth++) {
-    if (typeof current === 'object' && current !== null && 'code' in current &&
-        typeof current.code === 'string' && RETRYABLE_NETWORK_CODES.has(current.code)) return true;
-    current = typeof current === 'object' && current !== null && 'cause' in current ? current.cause : undefined;
-  }
-  return false;
-}
 
 export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
+  static configured(
+    config:Pick<Config, 'mode' | 'vaultAuthorityUrl' | 'vaultAuthorityId' | 'vaultAuthorityToken' | 'vaultAuthorityCaPath'>,
+  ):VaultFilesKeyBundleAuthority | undefined {
+    const values = [config.vaultAuthorityUrl, config.vaultAuthorityId, config.vaultAuthorityToken];
+    if (config.mode !== 'desktop' || values.every(value => !value)) return undefined;
+    if (values.some(value => !value)) throw new Error('Files Vault authority configuration is incomplete');
+    return new VaultFilesKeyBundleAuthority({
+      baseUrl: config.vaultAuthorityUrl!, serviceId: config.vaultAuthorityId!,
+      serviceToken: config.vaultAuthorityToken!, caPath: config.vaultAuthorityCaPath,
+    });
+  }
+
   private readonly origin: URL;
   private ca?:             Promise<Buffer>;
 
@@ -92,7 +90,7 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
       try {
         return await this.requestOnce<T>(operation, pathname, body);
       } catch (error) {
-        if (!isRetryableVaultStartupError(error) || Date.now() - startedAt >= VAULT_RETRY_WINDOW_MS) throw error;
+        if (!VaultAuthorityRetryPolicy.isRetryableStartupError(error) || Date.now() - startedAt >= VAULT_RETRY_WINDOW_MS) throw error;
         console.warn(`[SullaFiles] Vault unavailable; retrying ${operation} in ${delay}ms`);
         await new Promise(resolve => setTimeout(resolve, delay));
         delay = Math.min(delay * 2, VAULT_RETRY_MAX_DELAY_MS);
@@ -177,16 +175,20 @@ export class VaultFilesKeyBundleAuthority implements FilesKeyBundleAuthority {
   }
 }
 
-export function configuredVaultFilesKeyBundleAuthority(
-  config:Pick<Config, 'mode' | 'vaultAuthorityUrl' | 'vaultAuthorityId' | 'vaultAuthorityToken' | 'vaultAuthorityCaPath'>,
-):VaultFilesKeyBundleAuthority | undefined {
-  const values = [config.vaultAuthorityUrl, config.vaultAuthorityId, config.vaultAuthorityToken];
-  if (config.mode !== 'desktop' || values.every(value => !value)) return undefined;
-  if (values.some(value => !value)) throw new Error('Files Vault authority configuration is incomplete');
-  return new VaultFilesKeyBundleAuthority({
-    baseUrl:      config.vaultAuthorityUrl!,
-    serviceId:    config.vaultAuthorityId!,
-    serviceToken: config.vaultAuthorityToken!,
-    caPath:       config.vaultAuthorityCaPath,
-  });
+export class VaultAuthorityRetryPolicy {
+  static isRetryableStartupError(error:unknown):boolean {
+  if (error instanceof FilesSafeDiagnosticError) {
+    const diagnostic = error.diagnostic;
+    if (diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403) return false;
+    if (diagnostic.httpStatus === 423) return true;
+  }
+  let current:unknown = error;
+  for (let depth = 0; depth < 3 && current; depth++) {
+    if (typeof current === 'object' && current !== null && 'code' in current &&
+        typeof current.code === 'string' && RETRYABLE_NETWORK_CODES.includes(current.code as typeof RETRYABLE_NETWORK_CODES[number])) return true;
+    current = typeof current === 'object' && current !== null && 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+}
+
 }

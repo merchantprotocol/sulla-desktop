@@ -80,14 +80,14 @@ function assertKey(key: Uint8Array, label: string): void {
   }
 }
 
-export function itemAssociatedData(purpose: 'key' | 'ciphertext', context: ItemContext): string {
+function itemAssociatedDataImplementation(purpose: 'key' | 'ciphertext', context: ItemContext): string {
   if (!context.itemId || !context.ownerId) {
     throw new Error('Item context requires an item id and owner id');
   }
   return `sulla:item:${ purpose }:v1:${ JSON.stringify([context.ownerId, context.itemId]) }`;
 }
 
-export async function deriveMasterKey(
+async function deriveMasterKeyImplementation(
   masterPassword: string,
   salt?: Base64,
   parameters: Argon2idParameters = DEFAULT_ARGON2ID,
@@ -111,19 +111,19 @@ export async function deriveMasterKey(
   return { key, salt: b64(saltBytes), parameters };
 }
 
-export async function deriveAccountAuthHash(masterKey: Uint8Array): Promise<Base64> {
+async function deriveAccountAuthHashImplementation(masterKey: Uint8Array): Promise<Base64> {
   await ready();
   assertKey(masterKey, 'Master key');
   return b64(sodium.crypto_generichash(KEY_BYTES, textEncoder.encode(CLOUD_AUTH_DOMAIN), masterKey));
 }
 
-export async function deriveLoginHash(masterKey: Uint8Array): Promise<Base64> {
+async function deriveLoginHashImplementation(masterKey: Uint8Array): Promise<Base64> {
   await ready();
   assertKey(masterKey, 'Master key');
   return b64(sodium.crypto_generichash(KEY_BYTES, textEncoder.encode('sulla-vault-login-v1'), masterKey));
 }
 
-export async function deriveOrgJoinHash(joinPassword: string, orgId: string): Promise<Base64> {
+async function deriveOrgJoinHashImplementation(joinPassword: string, orgId: string): Promise<Base64> {
   await ready();
   if (!joinPassword || !orgId) {
     throw new Error('Join password and organization id are required');
@@ -132,17 +132,17 @@ export async function deriveOrgJoinHash(joinPassword: string, orgId: string): Pr
   return b64(sodium.crypto_generichash(KEY_BYTES, input, null));
 }
 
-export async function publicKeyFingerprint(publicKey: Base64): Promise<string> {
+async function publicKeyFingerprintImplementation(publicKey: Base64): Promise<string> {
   await ready();
   return b64(sodium.crypto_generichash(8, bytes(publicKey), null));
 }
 
-export async function generateKey(): Promise<Uint8Array> {
+async function generateKeyImplementation(): Promise<Uint8Array> {
   await ready();
   return sodium.randombytes_buf(KEY_BYTES);
 }
 
-export async function encryptWithKey(
+async function encryptWithKeyImplementation(
   plaintext: Uint8Array,
   key: Uint8Array,
   context: string,
@@ -160,7 +160,7 @@ export async function encryptWithKey(
   return { version: VERSION, algorithm: 'xchacha20-poly1305', nonce: b64(nonce), ciphertext: b64(ciphertext) };
 }
 
-export async function decryptWithKey(
+async function decryptWithKeyImplementation(
   envelope: EncryptedEnvelope,
   key: Uint8Array,
   context: string,
@@ -179,65 +179,65 @@ export async function decryptWithKey(
   );
 }
 
-export async function createUserKey(masterKey: Uint8Array): Promise<{ userKey: Uint8Array; encryptedUserKey: EncryptedEnvelope }> {
-  const userKey = await generateKey();
-  return { userKey, encryptedUserKey: await encryptWithKey(userKey, masterKey, 'sulla:user-key:v1') };
+async function createUserKeyImplementation(masterKey: Uint8Array): Promise<{ userKey: Uint8Array; encryptedUserKey: EncryptedEnvelope }> {
+  const userKey = await generateKeyImplementation();
+  return { userKey, encryptedUserKey: await encryptWithKeyImplementation(userKey, masterKey, 'sulla:user-key:v1') };
 }
 
-export function unwrapUserKey(encryptedUserKey: EncryptedEnvelope, masterKey: Uint8Array): Promise<Uint8Array> {
-  return decryptWithKey(encryptedUserKey, masterKey, 'sulla:user-key:v1');
+function unwrapUserKeyImplementation(encryptedUserKey: EncryptedEnvelope, masterKey: Uint8Array): Promise<Uint8Array> {
+  return decryptWithKeyImplementation(encryptedUserKey, masterKey, 'sulla:user-key:v1');
 }
 
-export async function encryptItem(
+async function encryptItemImplementation(
   plaintext: Uint8Array | string,
   ownerKey: Uint8Array,
   context: ItemContext,
   agentPublicKey?: Base64,
 ): Promise<EncryptedItem> {
-  const itemKey = await generateKey();
+  const itemKey = await generateKeyImplementation();
   const payload = typeof plaintext === 'string' ? textEncoder.encode(plaintext) : plaintext;
   return {
     version:             VERSION,
-    encryptedItemKey:    await encryptWithKey(itemKey, ownerKey, itemAssociatedData('key', context)),
-    ciphertext:          await encryptWithKey(payload, itemKey, itemAssociatedData('ciphertext', context)),
+    encryptedItemKey:    await encryptWithKeyImplementation(itemKey, ownerKey, itemAssociatedDataImplementation('key', context)),
+    ciphertext:          await encryptWithKeyImplementation(payload, itemKey, itemAssociatedDataImplementation('ciphertext', context)),
     agentWrappedItemKey: agentPublicKey ? await wrapItemKeyForAgent(itemKey, agentPublicKey) : undefined,
   };
 }
 
-export async function decryptItem(item: EncryptedItem, ownerKey: Uint8Array, context: ItemContext): Promise<Uint8Array> {
+async function decryptItemImplementation(item: EncryptedItem, ownerKey: Uint8Array, context: ItemContext): Promise<Uint8Array> {
   if (item.version !== VERSION) {
     throw new Error('Unsupported item version');
   }
-  const itemKey = await decryptWithKey(item.encryptedItemKey, ownerKey, itemAssociatedData('key', context));
-  return decryptWithKey(item.ciphertext, itemKey, itemAssociatedData('ciphertext', context));
+  const itemKey = await decryptWithKeyImplementation(item.encryptedItemKey, ownerKey, itemAssociatedDataImplementation('key', context));
+  return decryptWithKeyImplementation(item.ciphertext, itemKey, itemAssociatedDataImplementation('ciphertext', context));
 }
 
-export async function decryptItemText(item: EncryptedItem, ownerKey: Uint8Array, context: ItemContext): Promise<string> {
-  return textDecoder.decode(await decryptItem(item, ownerKey, context));
+async function decryptItemTextImplementation(item: EncryptedItem, ownerKey: Uint8Array, context: ItemContext): Promise<string> {
+  return textDecoder.decode(await decryptItemImplementation(item, ownerKey, context));
 }
 
-export async function createUserKeyPair(userKey: Uint8Array): Promise<WrappedKeyPair & { privateKey: Uint8Array }> {
+async function createUserKeyPairImplementation(userKey: Uint8Array): Promise<WrappedKeyPair & { privateKey: Uint8Array }> {
   await ready();
   const pair = sodium.crypto_box_keypair();
   return {
     publicKey:           b64(pair.publicKey),
     privateKey:          pair.privateKey,
-    encryptedPrivateKey: await encryptWithKey(pair.privateKey, userKey, 'sulla:user-private-key:v1'),
+    encryptedPrivateKey: await encryptWithKeyImplementation(pair.privateKey, userKey, 'sulla:user-private-key:v1'),
   };
 }
 
-export function unwrapUserPrivateKey(encryptedPrivateKey: EncryptedEnvelope, userKey: Uint8Array): Promise<Uint8Array> {
-  return decryptWithKey(encryptedPrivateKey, userKey, 'sulla:user-private-key:v1');
+function unwrapUserPrivateKeyImplementation(encryptedPrivateKey: EncryptedEnvelope, userKey: Uint8Array): Promise<Uint8Array> {
+  return decryptWithKeyImplementation(encryptedPrivateKey, userKey, 'sulla:user-private-key:v1');
 }
 
-export async function wrapKeyToPublicKey(key: Uint8Array, recipientPublicKey: Base64): Promise<PublicKeyEnvelope> {
+async function wrapKeyToPublicKeyImplementation(key: Uint8Array, recipientPublicKey: Base64): Promise<PublicKeyEnvelope> {
   await ready();
   assertKey(key, 'Wrapped key');
   const ciphertext = sodium.crypto_box_seal(key, bytes(recipientPublicKey));
   return { version: VERSION, algorithm: 'x25519-sealed-box', ciphertext: b64(ciphertext) };
 }
 
-export async function unwrapKeyFromPublicKey(
+async function unwrapKeyFromPublicKeyImplementation(
   envelope: PublicKeyEnvelope,
   recipientPublicKey: Base64,
   recipientPrivateKey: Uint8Array,
@@ -249,20 +249,65 @@ export async function unwrapKeyFromPublicKey(
   return sodium.crypto_box_seal_open(bytes(envelope.ciphertext), bytes(recipientPublicKey), recipientPrivateKey);
 }
 
-export const wrapOrgKeyForMember = wrapKeyToPublicKey;
-export const unwrapOrgKeyForMember = unwrapKeyFromPublicKey;
+export const wrapOrgKeyForMember = wrapKeyToPublicKeyImplementation;
+export const unwrapOrgKeyForMember = unwrapKeyFromPublicKeyImplementation;
 
-export function wrapCollectionKey(collectionKey: Uint8Array, orgKey: Uint8Array): Promise<EncryptedEnvelope> {
-  return encryptWithKey(collectionKey, orgKey, 'sulla:collection-key:v1');
+function wrapCollectionKeyImplementation(collectionKey: Uint8Array, orgKey: Uint8Array): Promise<EncryptedEnvelope> {
+  return encryptWithKeyImplementation(collectionKey, orgKey, 'sulla:collection-key:v1');
 }
 
-export function unwrapCollectionKey(encryptedCollectionKey: EncryptedEnvelope, orgKey: Uint8Array): Promise<Uint8Array> {
-  return decryptWithKey(encryptedCollectionKey, orgKey, 'sulla:collection-key:v1');
+function unwrapCollectionKeyImplementation(encryptedCollectionKey: EncryptedEnvelope, orgKey: Uint8Array): Promise<Uint8Array> {
+  return decryptWithKeyImplementation(encryptedCollectionKey, orgKey, 'sulla:collection-key:v1');
 }
 
-export const wrapItemKeyForAgent = wrapKeyToPublicKey;
-export const unwrapItemKeyForAgent = unwrapKeyFromPublicKey;
+export const wrapItemKeyForAgent = wrapKeyToPublicKeyImplementation;
+export const unwrapItemKeyForAgent = unwrapKeyFromPublicKeyImplementation;
 export * from './itemSchema.js';
 export * from './customFields.js';
 export * from './filesKeyBundle.js';
 export { FilesTransportEnvelopeService, type FilesTransportEnvelope } from './filesTransportEnvelope.js';
+
+/** Static compatibility facade for deterministic vault crypto behavior. */
+export class VaultCrypto {
+  static readonly itemAssociatedData = itemAssociatedDataImplementation;
+  static readonly deriveMasterKey = deriveMasterKeyImplementation;
+  static readonly deriveAccountAuthHash = deriveAccountAuthHashImplementation;
+  static readonly deriveLoginHash = deriveLoginHashImplementation;
+  static readonly deriveOrgJoinHash = deriveOrgJoinHashImplementation;
+  static readonly publicKeyFingerprint = publicKeyFingerprintImplementation;
+  static readonly generateKey = generateKeyImplementation;
+  static readonly encryptWithKey = encryptWithKeyImplementation;
+  static readonly decryptWithKey = decryptWithKeyImplementation;
+  static readonly createUserKey = createUserKeyImplementation;
+  static readonly unwrapUserKey = unwrapUserKeyImplementation;
+  static readonly encryptItem = encryptItemImplementation;
+  static readonly decryptItem = decryptItemImplementation;
+  static readonly decryptItemText = decryptItemTextImplementation;
+  static readonly createUserKeyPair = createUserKeyPairImplementation;
+  static readonly unwrapUserPrivateKey = unwrapUserPrivateKeyImplementation;
+  static readonly wrapKeyToPublicKey = wrapKeyToPublicKeyImplementation;
+  static readonly unwrapKeyFromPublicKey = unwrapKeyFromPublicKeyImplementation;
+  static readonly wrapCollectionKey = wrapCollectionKeyImplementation;
+  static readonly unwrapCollectionKey = unwrapCollectionKeyImplementation;
+}
+
+export const itemAssociatedData = VaultCrypto.itemAssociatedData;
+export const deriveMasterKey = VaultCrypto.deriveMasterKey;
+export const deriveAccountAuthHash = VaultCrypto.deriveAccountAuthHash;
+export const deriveLoginHash = VaultCrypto.deriveLoginHash;
+export const deriveOrgJoinHash = VaultCrypto.deriveOrgJoinHash;
+export const publicKeyFingerprint = VaultCrypto.publicKeyFingerprint;
+export const generateKey = VaultCrypto.generateKey;
+export const encryptWithKey = VaultCrypto.encryptWithKey;
+export const decryptWithKey = VaultCrypto.decryptWithKey;
+export const createUserKey = VaultCrypto.createUserKey;
+export const unwrapUserKey = VaultCrypto.unwrapUserKey;
+export const encryptItem = VaultCrypto.encryptItem;
+export const decryptItem = VaultCrypto.decryptItem;
+export const decryptItemText = VaultCrypto.decryptItemText;
+export const createUserKeyPair = VaultCrypto.createUserKeyPair;
+export const unwrapUserPrivateKey = VaultCrypto.unwrapUserPrivateKey;
+export const wrapKeyToPublicKey = VaultCrypto.wrapKeyToPublicKey;
+export const unwrapKeyFromPublicKey = VaultCrypto.unwrapKeyFromPublicKey;
+export const wrapCollectionKey = VaultCrypto.wrapCollectionKey;
+export const unwrapCollectionKey = VaultCrypto.unwrapCollectionKey;

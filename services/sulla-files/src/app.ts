@@ -49,7 +49,7 @@ import { BACKUP_ROOT, checkedBackupDirectory, localBackupRoot, LocalBackupObject
 import { PersonalBackupScheduler } from './backup/scheduler.js';
 import { BackupRuntimeRequests } from './backup/runtime.js';
 import { AwsS3BackupClient } from './backup/s3.js';
-import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
+import { VaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
 import { authorizedVersionId, drainPendingChunkGc, lifecycleCapabilities, lifecycleFields, registerDocumentLifecycleRoutes } from './documentLifecycle.js';
 import { AutomergeSnapshotRetention } from './automergeSnapshotRetention.js';
 import type { FilesLifecycle } from './lifecycle.js';
@@ -576,7 +576,7 @@ export function createApp(
   });
   app.use('/v1/local/backups',(_request,response,next)=>config.mode==='desktop'?next():response.sendStatus(404));
   const backupRuntime=new BackupRuntimeRequests();
-  const backupVault=configuredVaultFilesKeyBundleAuthority(config);
+  const backupVault=VaultFilesKeyBundleAuthority.configured(config);
   const backupScheduler=new PersonalBackupScheduler(db,config,{ready,open:async(id,destination)=>{
     if(destination.kind==='local') {
       const root=await checkedBackupDirectory(localBackupRoot(destination.root));

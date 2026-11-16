@@ -14,7 +14,7 @@
 //
 // How to add a new type:
 //   1. Add the key to CUSTOM_FIELD_TYPES and a friendly name to CUSTOM_FIELD_TYPE_LABELS.
-//   2. Add a validator branch in customFieldValueError() (return a message, or null when valid).
+//   2. Add a validator branch in customFieldValueErrorImplementation() (return a message, or null when valid).
 //   3. If the value is a secret, add it to SECRET_CUSTOM_FIELD_TYPES.
 //   4. Mirror steps 1–3 in console/local/customFields.js, then give it an editor input and a
 //      detail renderer in console/local/local.js. The parity test covers steps 1–3.
@@ -66,11 +66,11 @@ const FUTURE_TYPE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
-export function isKnownCustomFieldType(type: unknown): type is CustomFieldType {
+function isKnownCustomFieldTypeImplementation(type: unknown): type is CustomFieldType {
   return typeof type === 'string' && (CUSTOM_FIELD_TYPES as readonly string[]).includes(type);
 }
 
-export function isSecretCustomField(field: Pick<VaultItemCustomField, 'type' | 'hidden'>): boolean {
+function isSecretCustomFieldImplementation(field: Pick<VaultItemCustomField, 'type' | 'hidden'>): boolean {
   return field.hidden === true || (SECRET_CUSTOM_FIELD_TYPES as readonly string[]).includes(field.type);
 }
 
@@ -101,13 +101,13 @@ function validTotpSecret(value: string): boolean {
  * Returns a human-readable problem with `value` for `type`, or null when it is valid.
  * Messages never include the value. Empty values are allowed for every type except boolean.
  */
-export function customFieldValueError(type: string, value: unknown): string | null {
+function customFieldValueErrorImplementation(type: string, value: unknown): string | null {
   if (typeof value !== 'string') return 'must be text';
   if (new TextEncoder().encode(value).length > CUSTOM_FIELD_LIMITS.maxValueBytes) {
     return `must be ${ CUSTOM_FIELD_LIMITS.maxValueBytes / 1024 } KiB or less`;
   }
   if (type === 'boolean') return value === 'true' || value === 'false' ? null : 'must be Yes or No';
-  if (value === '' || !isKnownCustomFieldType(type)) return null;
+  if (value === '' || !isKnownCustomFieldTypeImplementation(type)) return null;
   const trimmed = value.trim();
   switch (type) {
   case 'text':
@@ -148,7 +148,7 @@ export type CustomFieldsValidation =
  * `preserved` lists stored fields whose unknown type may round-trip: a field with a type this
  * build does not know is accepted only when the same id already had that type in `preserved`.
  */
-export function validateCustomFields(
+function validateCustomFieldsImplementation(
   input: unknown,
   options: { preserved?: readonly VaultItemCustomField[] } = {},
 ): CustomFieldsValidation {
@@ -177,13 +177,13 @@ export function validateCustomFields(
     if (CONTROL_CHARACTERS.test(label)) return { ok: false, error: `${ where } label contains control characters` };
     if (labels.has(label.toLowerCase())) return { ok: false, error: `${ where } label is already used on this item` };
     if (typeof field.type !== 'string') return { ok: false, error: `${ where } needs a type` };
-    if (!isKnownCustomFieldType(field.type)) {
+    if (!isKnownCustomFieldTypeImplementation(field.type)) {
       if (!FUTURE_TYPE_PATTERN.test(field.type) || preservedTypes.get(field.id) !== field.type) {
         return { ok: false, error: `${ where } has an unsupported type` };
       }
     }
     if (field.hidden !== undefined && typeof field.hidden !== 'boolean') return { ok: false, error: `${ where } hidden flag is invalid` };
-    const problem = customFieldValueError(field.type, field.value);
+    const problem = customFieldValueErrorImplementation(field.type, field.value);
     if (problem) return { ok: false, error: `${ where } ${ problem }` };
     ids.add(field.id);
     labels.add(label.toLowerCase());
@@ -194,3 +194,16 @@ export function validateCustomFields(
   }
   return { ok: true, fields };
 }
+
+/** Static compatibility facade for deterministic vault crypto behavior. */
+export class VaultCustomFields {
+  static readonly isKnownCustomFieldType = isKnownCustomFieldTypeImplementation;
+  static readonly isSecretCustomField = isSecretCustomFieldImplementation;
+  static readonly customFieldValueError = customFieldValueErrorImplementation;
+  static readonly validateCustomFields = validateCustomFieldsImplementation;
+}
+
+export const isKnownCustomFieldType = VaultCustomFields.isKnownCustomFieldType;
+export const isSecretCustomField = VaultCustomFields.isSecretCustomField;
+export const customFieldValueError = VaultCustomFields.customFieldValueError;
+export const validateCustomFields = VaultCustomFields.validateCustomFields;

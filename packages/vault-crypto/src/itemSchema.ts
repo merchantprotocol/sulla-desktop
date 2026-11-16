@@ -86,10 +86,10 @@ export type VaultProxyValidation = { ok: true; proxy: VaultItemProxy } | { ok: f
 
 const PROXY_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const PROXY_HOST_PATTERN = /^(?:\*\.)?(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const BROKER_OWNED_HEADERS = new Set(['host', 'cookie', 'content-length', 'connection', 'transfer-encoding']);
+const BROKER_OWNED_HEADERS = ['host', 'cookie', 'content-length', 'connection', 'transfer-encoding'] as const;
 
 /** Validates the encrypted declaration before storage or broker use. */
-export function validateVaultItemProxy(item: Pick<VaultItemPlaintext, 'username' | 'password' | 'fields' | 'customFields' | 'proxy'>): VaultProxyValidation {
+function validateVaultItemProxyImplementation(item: Pick<VaultItemPlaintext, 'username' | 'password' | 'fields' | 'customFields' | 'proxy'>): VaultProxyValidation {
   const proxy = item.proxy;
   if (!proxy || !Array.isArray(proxy.hosts) || proxy.hosts.length < 1 || proxy.hosts.length > 20 ||
       !Array.isArray(proxy.rules) || proxy.rules.length < 1 || proxy.rules.length > 5) {
@@ -109,7 +109,7 @@ export function validateVaultItemProxy(item: Pick<VaultItemPlaintext, 'username'
         !['raw', 'Bearer', 'Token', 'Basic'].includes(candidate.scheme)) {
       return { ok: false, error: 'Agent usage contains an invalid rule' };
     }
-    if (candidate.target === 'header' && BROKER_OWNED_HEADERS.has(candidate.name.toLowerCase())) {
+    if (candidate.target === 'header' && BROKER_OWNED_HEADERS.includes(candidate.name.toLowerCase() as typeof BROKER_OWNED_HEADERS[number])) {
       return { ok: false, error: `Header ${ candidate.name } is owned by the broker` };
     }
     if (candidate.source.startsWith('custom:') && !customNames.has(candidate.source.slice(7))) {
@@ -150,7 +150,7 @@ export const DEFAULT_AGENT_POLICY: AgentPolicy = {
 };
 
 /** Maps the legacy Desktop llm_access values onto the new policy (blank today = autofill). */
-export function agentPolicyFromLegacyLlmAccess(value: string | null | undefined): AgentPolicy {
+function agentPolicyFromLegacyLlmAccessImplementation(value: string | null | undefined): AgentPolicy {
   const v = (value ?? '').trim().toLowerCase();
   if (v === 'none') {
     return { ...DEFAULT_AGENT_POLICY };
@@ -160,7 +160,7 @@ export function agentPolicyFromLegacyLlmAccess(value: string | null | undefined)
 }
 
 /** Server-side check for an agent use request. Pure so every service can share it. */
-export function agentPolicyAllows(
+function agentPolicyAllowsImplementation(
   policy: AgentPolicy | null | undefined,
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },
 ): { allowed: boolean; reason?: string } {
@@ -199,3 +199,14 @@ export function agentPolicyAllows(
   }
   return { allowed: true };
 }
+
+/** Static compatibility facade for deterministic vault crypto behavior. */
+export class VaultItemSchema {
+  static readonly validateVaultItemProxy = validateVaultItemProxyImplementation;
+  static readonly agentPolicyFromLegacyLlmAccess = agentPolicyFromLegacyLlmAccessImplementation;
+  static readonly agentPolicyAllows = agentPolicyAllowsImplementation;
+}
+
+export const validateVaultItemProxy = VaultItemSchema.validateVaultItemProxy;
+export const agentPolicyFromLegacyLlmAccess = VaultItemSchema.agentPolicyFromLegacyLlmAccess;
+export const agentPolicyAllows = VaultItemSchema.agentPolicyAllows;

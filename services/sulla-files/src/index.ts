@@ -36,8 +36,9 @@ import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagno
 import { Store } from './store.js';
 import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCache/index.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
-import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
-import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { VaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
+import { VaultPrincipalAdopter } from './vaultPrincipal.js';
+import { VaultPrincipalRepository } from './repositories/VaultPrincipalRepository.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { MemoryTelemetry } from './MemoryTelemetry.js';
 import { FilesCloudBroker } from './cloudBroker.js';
@@ -87,7 +88,7 @@ const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
   ? new FilesCloudChunkSource(db, new FilesSyncCloudApi(cloudBroker), new CloudRootKeyStore(config.keyring))
   : undefined;
 const chunkStore = createChunkStore({ db, root: config.chunkRoot, keyring: config.keyring, source: config.mode === 'desktop' && !config.filesRoot ? cloudChunkSource : undefined });
-const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
+const vaultAuthority = VaultFilesKeyBundleAuthority.configured(config);
 const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   ? new FilesKeyBundleRecovery(db, config.keyring, vaultAuthority)
   : undefined;
@@ -121,7 +122,7 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
     if (vaultAuthority) {
       reportStage('identity-adoption');
       const { principalId } = await vaultAuthority.unlockedPrincipal();
-      await adoptVaultPrincipal(db, config, principalId);
+      await new VaultPrincipalAdopter(new VaultPrincipalRepository(db)).adopt(config, principalId);
     }
     await migrateSullaCollection(db, config);
     await trashStrayDocs(db, config).catch(error => console.warn('[SullaFiles] stray Docs cleanup failed:', error));
