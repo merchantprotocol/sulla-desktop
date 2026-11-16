@@ -38,31 +38,42 @@ import type { LocalAuthorityCollaborators } from './LocalAuthorityCollaborators.
 import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
 
 /**
- * What LocalVaultAuthority's collaborators may read and change on it (E9). The authority keeps
- * all vault state (unlocked keys, generation, grants, challenges) so lock, generation checks and
- * the security-operation queue stay in one place; collaborators hold only this host reference
- * and read it at call time.
+ * Key material and the grants that unlock it. LocalVaultAuthority keeps these `private`: only
+ * its collaborators reach them, through the LocalAuthorityHost view the authority hands to
+ * LocalAuthorityCollaborators. Routes, the app and other vault components never see them.
  */
-export interface LocalAuthorityHost {
-  // Vault state.
+export interface LocalAuthorityVaultSecrets {
   keys:              UnlockedKeys | null;
-  generation:        number;
-  migrationState:    LocalVaultState;
   stagedCacheUpdate: StagedCacheUpdate | null;
   readonly challenges:      Map<string, Challenge>;
   readonly cacheChallenges: Map<string, Challenge>;
   readonly challengeRate:   Map<string, { count: number; resetAt: number }>;
   readonly humanSessions:   Map<string, HumanSession>;
-  sullaCloudSessionManager: SullaCloudSessionManager | null;
-  agentMailboxCloudLane:    AgentMailboxCloudLane | null;
   readonly pendingApprovals: Map<string, number>;
   readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
   readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
-  readonly oauthRefreshQueues: Map<string, Promise<void>>;
-  readonly inFlight:         Set<ClientRequest>;
   readonly pendingVaultEnrollments: Map<string, {
     expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
   }>;
+}
+
+/**
+ * What LocalVaultAuthority's collaborators may read and change on it (E9): the public seam plus
+ * the private vault secrets. The authority keeps all vault state (unlocked keys, generation,
+ * grants, challenges) so lock, generation checks and the security-operation queue stay in one
+ * place; collaborators hold only this host reference and read it at call time.
+ */
+export interface LocalAuthorityHost extends LocalAuthoritySeam, LocalAuthorityVaultSecrets {}
+
+/** The part of the collaborator host that LocalVaultAuthority exposes publicly (no key material). */
+export interface LocalAuthoritySeam {
+  // Vault state.
+  generation:        number;
+  migrationState:    LocalVaultState;
+  sullaCloudSessionManager: SullaCloudSessionManager | null;
+  agentMailboxCloudLane:    AgentMailboxCloudLane | null;
+  readonly oauthRefreshQueues: Map<string, Promise<void>>;
+  readonly inFlight:         Set<ClientRequest>;
 
   // Dependencies.
   readonly db:                  Database;

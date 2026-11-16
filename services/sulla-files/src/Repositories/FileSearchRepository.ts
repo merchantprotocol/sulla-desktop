@@ -6,6 +6,7 @@
 import { UNINDEXED_SYSTEM_AREAS } from '../systemAreaIngest.js';
 
 import type { SearchQueryable } from './IndexingJobRepository.js';
+import { LikePattern } from '../LikePattern.js';
 
 export interface CollectionSearchScope { collectionId:string }
 
@@ -40,7 +41,7 @@ export class FileSearchRepository {
     const collectionIds=args.push(scopes.map(scope=>scope.collectionId));
     const unindexed = args.push([...UNINDEXED_SYSTEM_AREAS]);
     const where = [`NOT EXISTS(SELECT 1 FROM collections c WHERE c.id=f.collection_id AND c.system_area=ANY($${ unindexed }::text[]))`, `f.collection_id=ANY($${collectionIds}::uuid[])`, 'f.deleted_at IS NULL', "lower(replace(f.path,chr(92),'/')) !~ '(^|/)(master[.]key|[^/]*wallet[^/]*|vault|vaults)($|/)'", 'NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)'];
-    if (input.folder) where.push(`f.path LIKE $${ args.push(`${ input.folder.replace(/[\\%_]/g, value => `\\${ value }`) }%`) } ESCAPE '\\'`);
+    if (input.folder) where.push(`f.path LIKE $${ args.push(LikePattern.prefix(input.folder)) } ESCAPE '\\'`);
     if (input.type) where.push(`f.mime=$${ args.push(input.type) }`);
     if (input.person) where.push(`(f.person_id=$${ args.push(input.person) } OR f.created_by_id=$${ args.length })`);
     if (input.from) where.push(`f.updated_at >= $${ args.push(input.from) }`);

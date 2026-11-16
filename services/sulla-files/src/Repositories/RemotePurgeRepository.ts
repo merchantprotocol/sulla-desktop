@@ -6,6 +6,7 @@
 import type pg from 'pg';
 
 import type { RemotePurgePlan } from '../PathOperationPlan.js';
+import { LikePattern } from '../LikePattern.js';
 
 export interface PurgeTarget { path:string; current_version_id:string; operation_revision:string | number; root_id:string | null; content_hash:string | null; size:string | null; mtime_ms:string | null }
 
@@ -15,7 +16,7 @@ export class RemotePurgeRepository {
 
   async activeHold(collectionId:string, fileId:string):Promise<string | undefined> {
     return (await this.db.query(`SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed')
-        AND (plan->>'collectionId'=$1 OR plan::text LIKE $2) LIMIT 1`,[collectionId,`%${fileId}%`])).rows[0]?.operation_id;
+        AND (plan->>'collectionId'=$1 OR plan::text LIKE $2 ESCAPE '\\') LIMIT 1`,[collectionId,LikePattern.contains(fileId)])).rows[0]?.operation_id;
   }
 
   async target(fileId:string, collectionId:string):Promise<PurgeTarget | undefined> {

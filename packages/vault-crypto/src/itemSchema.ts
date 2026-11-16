@@ -232,7 +232,12 @@ export function agentPolicyFromLegacyLlmAccess(value: string | null | undefined)
   return AgentPolicyEvaluator.shared().fromLegacyLlmAccess(value);
 }
 
-/** Server-side check for an agent use request. Pure so every service can share it. */
+/**
+ * Server-side check for an agent use request. Pure so every service can share it.
+ * @deprecated Desktop decides agent use through `AgentPolicyGate` (services/sulla-vault), which runs
+ * `@sulla/domain` AgentAccessPolicy. This copy stays only for packages that can't depend on the domain
+ * package yet; its behavior is pinned by AgentPolicyCheckOrderCharacterization.spec.ts.
+ */
 export function agentPolicyAllows(
   policy: AgentPolicy | null | undefined,
   request: { agentId: string; level: AgentAccessLevel; host?: string; onServer?: boolean; now?: Date },

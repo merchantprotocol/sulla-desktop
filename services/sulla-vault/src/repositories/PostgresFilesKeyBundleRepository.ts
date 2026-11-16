@@ -94,13 +94,19 @@ export class PostgresFilesKeyBundleRepository {
     );
   }
 
-  /** The envelope only when it is the collection's current authorized generation. */
-  async findCurrentEnvelope(context: FilesKeyBundleContext): Promise<FilesKeyBundleEnvelopeRow | undefined> {
-    return (await this.db.query<FilesKeyBundleEnvelopeRow>(
+  /**
+   * The envelope only when it is the collection's current authorized generation, read inside
+   * the caller's collection-lock transaction. `FOR UPDATE OF c` holds the current-generation row
+   * until COMMIT, so a concurrent rotation cannot advance the generation while the envelope is
+   * being re-wrapped for a device. Every predicate is scoped to the requesting principal.
+   */
+  async findCurrentEnvelopeForUpdate(connection: Queryable, context: FilesKeyBundleContext): Promise<FilesKeyBundleEnvelopeRow | undefined> {
+    return (await connection.query<FilesKeyBundleEnvelopeRow>(
       `SELECT e.principal_id,e.collection_id,e.key_version,e.key_epoch,e.authority_key_id,e.authority_bundle
-           FROM files_key_bundle_envelopes e
-           JOIN files_key_bundle_current c USING(principal_id,collection_id,key_version,key_epoch)
-          WHERE e.principal_id=$1 AND e.collection_id=$2 AND e.key_version=$3 AND e.key_epoch=$4`,
+           FROM files_key_bundle_current c
+           JOIN files_key_bundle_envelopes e USING(principal_id,collection_id,key_version,key_epoch)
+          WHERE c.principal_id=$1 AND c.collection_id=$2 AND c.key_version=$3 AND c.key_epoch=$4
+          FOR UPDATE OF c`,
       [context.principalId, context.collectionId,
         context.keyVersion, context.epoch],
     )).rows[0];
