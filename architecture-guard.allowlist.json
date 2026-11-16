@@ -3801,20 +3801,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "services/sulla-files/experimental/fuse/live-proof.mjs": {
-      "rules": {
-        "long-file": 580,
-        "mutable-state": 19
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "services/sulla-files/scripts/search-bench.mjs": {
-      "rules": {
-        "mutable-state": 6,
-        "raw-sql": 30
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/app.ts": {
       "rules": {
         "long-file": 2107,
@@ -3828,12 +3814,6 @@
         "raw-sql": 409
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/web-src/main.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "services/sulla-relay/verify/two-replica.mjs": {
       "rules": {
