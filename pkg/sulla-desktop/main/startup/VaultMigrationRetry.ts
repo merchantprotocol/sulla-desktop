@@ -26,10 +26,13 @@ export class VaultMigrationRetry {
     return this.now() >= this.dueAt;
   }
 
-  /** Call when a retry starts; the next one waits for the following delay. */
+  /**
+   * Call when a retry starts. The next retry is due the following delay after
+   * this start, so the schedule doesn't drift with when the next refresh happens.
+   */
   started(): void {
     this.attempts++;
-    this.dueAt = undefined;
+    this.dueAt = this.attempts < this.delaysMs.length ? this.now() + this.delaysMs[this.attempts] : undefined;
   }
 
   /** The vault no longer reports a failed migration: a later failure waits its full delay again. */
