@@ -31,6 +31,7 @@ import { metaToolManifests } from './meta/manifests';
 import { mobileToolManifests } from './mobile/manifests';
 import { modelsToolManifests } from './models/manifests';
 import { notifyToolManifests } from './notify/manifests';
+import { orgToolManifests } from './org/manifests';
 import { pgToolManifests } from './pg/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { rulesToolManifests } from './rules/manifests';
@@ -69,6 +70,7 @@ export const allToolManifests: ToolManifest[] = [
   ...mobileToolManifests,
   ...modelsToolManifests,
   ...notifyToolManifests,
+  ...orgToolManifests,
   ...pgToolManifests,
   ...redisToolManifests,
   ...rulesToolManifests,

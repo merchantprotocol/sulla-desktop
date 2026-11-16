@@ -5,9 +5,9 @@
 import { randomUUID } from 'node:crypto';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 
-export type AgentMessageKind = 'human' | 'parent' | 'child' | 'peer' | 'contract' | 'blocker';
+export type AgentMessageKind = 'human' | 'parent' | 'child' | 'peer' | 'contract' | 'blocker' | 'org';
 export type AgentInboxDeliveryReceipt = 'accepted' | 'deferred' | 'failed';
-export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; ids: { messageId: string; jobId?: string; taskIndex?: number; threadId?: string } }
+export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; ids: { messageId: string; jobId?: string; taskIndex?: number; threadId?: string; hostSeq?: number; relayed?: boolean } }
 export interface AgentInboxTarget { channel: string; threadId?: string; agentId?: string }
 export interface AgentInboxEntry { envelope: AgentMessageEnvelope; target: AgentInboxTarget }
 export interface AgentInboxClaim { owner: string; target: AgentInboxTarget; entries: AgentInboxEntry[] }

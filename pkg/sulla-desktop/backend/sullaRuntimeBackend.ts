@@ -17,6 +17,7 @@ import merge from 'lodash/merge';
 import omit from 'lodash/omit';
 import yaml from 'yaml';
 
+import { SULLA_FILES_FUSE_HEALTHCHECK, SULLA_FILES_HEALTHCHECK } from './sullaFilesHealthchecks';
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import {
@@ -35,6 +36,10 @@ import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import {
+  ComposeContainerNameReconciler, ComposeServiceHealthWaiter, type ComposeServiceTarget, type DockerCli,
+} from './sullaComposeContainers';
+import { NamedVolumeMigrator, type NamedVolumeSpec } from './sullaVolumeMigration';
 import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
@@ -127,6 +132,11 @@ const OPTIONAL_SERVICE_RECONCILE_MS = 60_000;
 /** How long Docker may take to answer after the guest reports it ready. */
 const DOCKER_API_TIMEOUT_MS = 120_000;
 
+/** Stateful services whose image declares a VOLUME the compose file now names. */
+const SULLA_NAMED_VOLUME_MIGRATIONS: ReadonlyArray<NamedVolumeSpec> = [
+  { service: 'redis', container: 'sulla_redis', mountPath: '/data', volume: 'sulla_redis_data', composeVolume: 'sulla_redis_data' },
+];
+
 /**
  * The VM or its Docker did not come up. `message` is written for the user
  * (background.ts shows it with Try again); the cause stays in the log.
@@ -195,6 +205,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
   #staleFilesAdapters = new Set<string>();
   #healPlanner = new ContainerHealPlanner();
+  /** Every compose service with a fixed container_name, from the last prepared compose file. */
+  #composeTargets: ComposeServiceTarget[] = [];
+  readonly #guestDocker: DockerCli = { run: args => this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', ...args) };
+  /** Finds compose containers by label and heals names left by an interrupted re-create. */
+  readonly #composeContainers = new ComposeContainerNameReconciler(this.#guestDocker, 'sulla', console);
+  readonly #composeHealth = new ComposeServiceHealthWaiter(this.#guestDocker, this.#composeContainers);
+  readonly #volumeMigrator = new NamedVolumeMigrator(this.#guestDocker, this.#composeContainers, 'sulla', console);
   /** Sulla containers the person stopped from the Docker tab; supervision leaves them stopped. */
   readonly #userStopped = new UserStoppedContainers();
   #lastGuestRecovery = 0;
@@ -1664,12 +1681,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       restart: 'unless-stopped',
       // 1g OOM-killed Files every ~90s on 2026-11-13: steady state is ~1.2g (512 MiB heap plus ~700 MiB native: Potion table, chunk buffers).
       mem_limit: '2g',
+      // BusyBox wget against Files' loopback-only plain-HTTP /healthz: no Node runtime and no TLS
+      // per tick (the old `node -e` https probe cost ~35% of a CPU on a busy 3-vCPU VM and timed
+      // out under load). The node probe remains only as a fallback for an image that predates the
+      // loopback listener. 10s x 6 = a minute of failures before Docker says unhealthy, then the
+      // heal planner still needs UNHEALTHY_TICKS_BEFORE_RESTART one-minute observations.
       healthcheck: {
-        test: [
-          'CMD', 'node', '-e',
-          "const fs=require('fs'),https=require('https');const r=https.get({hostname:'127.0.0.1',port:8792,path:'/healthz',ca:fs.readFileSync('/run/sulla-files-tls/tls.crt')},x=>{x.resume();process.exit(x.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2500,()=>r.destroy())",
-        ],
-        interval: '5s', timeout: '3s', retries: 10, start_period: '10m',
+        test: ['CMD-SHELL', SULLA_FILES_HEALTHCHECK],
+        interval: '10s', timeout: '5s', retries: 6, start_period: '10m',
       },
     };
 
@@ -1717,12 +1736,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         cpus:         0.5,
         depends_on:   { sulla_files: { condition: 'service_healthy' } },
         restart:      'unless-stopped',
+        // The adapter is healthy while its FUSE mount is live and its event loop keeps rewriting
+        // the status file (every 5 s). It no longer starts Python and a TLS round trip to Files
+        // each tick, and a slow Files no longer gets the mount restarted (which would break every
+        // open handle with ENOTCONN); the adapter retries Files itself.
         healthcheck: {
-          test: [
-            'CMD', 'python3', '-c',
-            "import os,ssl,urllib.request; assert os.path.ismount('/mnt/sulla-files'); urllib.request.urlopen('https://sulla_files:8792/healthz', context=ssl.create_default_context(cafile='/run/sulla-files-ca/tls.crt'), timeout=2).read(1)",
-          ],
-          interval: '5s', timeout: '3s', retries: 10,
+          test: ['CMD-SHELL', SULLA_FILES_FUSE_HEALTHCHECK],
+          interval: '10s', timeout: '5s', retries: 6, start_period: '2m',
         },
       };
     }
@@ -1772,6 +1792,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
+    this.#composeTargets = ComposeContainerNameReconciler.targetsOf(compose);
   }
 
   /**
@@ -1944,6 +1965,25 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // Retire the old Desktop board container; preserve all database data.
       await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);
 
+      // An interrupted compose re-create can leave a container under
+      // `<id>_<name>` with nothing under its real name. Compose still treats it
+      // as current, so heal the names before compose and the health waits run.
+      await this.#composeContainers.reconcile(this.#composeTargets)
+        .catch(error => console.warn('[Sulla] Could not check compose container names:', (error as Error)?.message?.split('\n')[0]));
+      // Move data off anonymous volumes before compose switches the service to its named one.
+      for (const spec of SULLA_NAMED_VOLUME_MIGRATIONS) {
+        try {
+          const result = await this.#volumeMigrator.migrate(spec);
+
+          if (result.kind === 'migrated') firstRunTrace('services', 'volume migrated', { service: spec.service, from: result.source, to: spec.volume });
+        } catch (error) {
+          // Redis keeps no persistent data (no snapshots, no AOF): never hold startup on it.
+          // The anonymous volume is never deleted, so a failed copy loses nothing.
+          console.warn(`[Sulla] Could not move ${ spec.service } data to volume ${ spec.volume }; continuing:`, (error as Error)?.message?.split('\n')[0]);
+        }
+        this.assertManagedServicesGeneration(generation);
+      }
+
       // Postgres and Redis are stable data services. Compose pulls them only when
       // missing; Desktop does not force-refresh their upstream image tags.
       await this.execCommand(
@@ -1952,8 +1992,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       );
       this.assertManagedServicesGeneration(generation);
       await Promise.all([
-        this.waitForDockerServiceHealthy('sulla_postgres', 300, generation),
-        this.waitForDockerServiceHealthy('sulla_redis', 300, generation),
+        this.waitForDockerServiceHealthy({ service: 'postgres', container: 'sulla_postgres' }, 300, generation),
+        this.waitForDockerServiceHealthy({ service: 'redis', container: 'sulla_redis' }, 300, generation),
       ]);
       mainEvents.emit('first-run-ai-runtime-ready');
 
@@ -2104,7 +2144,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               } else if (state !== 'running starting') {
                 await startOptionalService(service);
               }
-              await this.waitForDockerServiceHealthy(container, service === 'sulla_files' ? 600 : 20, generation);
+              await this.waitForDockerServiceHealthy(entry, service === 'sulla_files' ? 600 : 20, generation);
               this.#activeOptionalSullaServices.add(service);
               bootStatus.set(service, 'healthy');
               if (service === 'sulla_vault') markVaultContainerReady();
@@ -2286,7 +2326,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    * running container.
    */
   private async sullaServiceImageIsStale(container: string, service: string, generation?: number): Promise<boolean> {
-    await this.waitForDockerServiceHealthy(container, 600, generation);
+    await this.waitForDockerServiceHealthy({ service, container }, 600, generation);
     const refreshImage = this.#managedSullaRefreshImages.get(service);
     const pinnedImage = this.#pinnedSullaImages.get(service);
 
@@ -2323,33 +2363,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   /**
-   * Waits for a specific Docker container to be healthy by polling its status.
-   * @param serviceName The name of the Docker container to check.
-   * @param timeoutSec Maximum time to wait in seconds (default 300).
+   * Waits for a compose service's container to be healthy. The container is
+   * found by its compose labels when it is not under its fixed name, and a
+   * name left over from an interrupted re-create is healed on the way.
    */
-  private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300, generation?: number): Promise<void> {
-    const start = Date.now();
-    let delayMs = 300;
-    let lastStatus = 'not created';
-    while (Date.now() - start < timeoutSec * 1000) {
-      if (generation !== undefined) this.assertManagedServicesGeneration(generation);
-      try {
-        const status = await this.execCommand(
-          { capture: true, root: true }, 'docker', 'inspect', '--format',
-          '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', serviceName,
-        );
-        lastStatus = status.trim();
-        if (lastStatus === 'running healthy' || lastStatus === 'running none') {
-          console.log(`Docker service ${ serviceName } is ready`);
-          return;
-        }
-      } catch {
-        // Service not ready yet
-      }
-      await new Promise(r => setTimeout(r, delayMs));
-      delayMs = Math.min(Math.round(delayMs * 1.5), 1_000);
-    }
-    throw new Error(`Docker service ${ serviceName } not healthy after ${ timeoutSec }s (last status: ${ lastStatus })`);
+  private async waitForDockerServiceHealthy(target: ComposeServiceTarget, timeoutSec = 300, generation?: number): Promise<void> {
+    await this.#composeHealth.waitHealthy(target, timeoutSec,
+      generation === undefined ? undefined : () => this.assertManagedServicesGeneration(generation));
+    console.log(`Docker service ${ target.container } is ready`);
   }
 
   async stop(): Promise<void> {

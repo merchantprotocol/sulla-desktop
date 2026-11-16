@@ -31,18 +31,9 @@ export class SubjectMemorySentModel {
   async deleteExpiredBatch(limit = 500): Promise<number> {
     const rows = await postgresClient.query<{ thread_id: string }>(`
       WITH stale AS (
-        SELECT sent.ctid, sent.thread_id
-        FROM subject_memory.sent AS sent
-        WHERE sent.cleared OR (
-          sent.sent_at < NOW() - INTERVAL '14 days'
-          AND NOT EXISTS (
-            SELECT 1 FROM subject_memory.sent AS active
-            WHERE active.thread_id = sent.thread_id
-              AND active.sent_at >= NOW() - INTERVAL '14 days'
-          )
-        )
-        ORDER BY sent.sent_at ASC
-        LIMIT $1
+        SELECT sent.ctid FROM subject_memory.sent AS sent
+        WHERE sent.sent_at < NOW() - INTERVAL '48 hours'
+        ORDER BY sent.sent_at ASC LIMIT $1
       )
       DELETE FROM subject_memory.sent AS sent USING stale WHERE sent.ctid = stale.ctid
       RETURNING sent.thread_id

@@ -9,13 +9,29 @@ import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
 
+import { TransactionScope } from './TransactionScope.js';
+
 import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 const MIGRATION_APPLICATION = 'sulla-files-migrate';
 const MIGRATION_LOCK = 8_795_043;
 const MIGRATION_RETRIES = 3;
 const sleep = (ms:number) => new Promise(resolve => setTimeout(resolve, ms));
-export async function connect(url:string, max = 10, startup = new StartupDatabaseWait({ name: 'SullaFiles' })) {
-  const db = new pg.Pool({ connectionString: url, max });
+export function filesPoolMax(value=process.env.SULLA_FILES_DB_POOL_MAX):number {
+  if(value===undefined)return 12;
+  const parsed=Number(value);
+  if(!Number.isInteger(parsed)||parsed<1||parsed>64)throw new Error('SULLA_FILES_DB_POOL_MAX must be an integer from 1 to 64');
+  return parsed;
+}
+export async function connect(url:string, max = filesPoolMax(), startup = new StartupDatabaseWait({ name: 'SullaFiles' })) {
+  // A request that cannot get a connection within 20 s fails (as a retryable 503) instead of
+  // waiting forever: a pool starved by clients that each wait on the pool again never recovers.
+  // On a 3-vCPU / 5-GB VM, 12 short metadata sessions absorb Desktop + agent bursts
+  // without spending hundreds of MB on mostly waiting backends. More sessions do not
+  // fix nested acquisition. Keep headroom for the other services; override for measured load.
+  // 15s bounds abandoned transactions; 30s bounds individual statements (including lock waits).
+  // Migrations can explicitly SET LOCAL statement_timeout for exceptional maintenance.
+  const db = TransactionScope.guardPool(new pg.Pool({ connectionString: url, max,
+    connectionTimeoutMillis: 20_000, idle_in_transaction_session_timeout: 15_000, statement_timeout: 30_000 }));
   // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
   db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
   // pg-pool only listens on idle clients. A checked-out client that Postgres

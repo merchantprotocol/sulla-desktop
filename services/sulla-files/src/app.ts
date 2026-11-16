@@ -63,6 +63,10 @@ import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepositor
 import type { FilesKeyBundleContext } from '@sulla/vault-crypto';
 import type pg from 'pg';
 import { ListingPage } from './ListingPage.js';
+import { DatabaseFailureClassifier, RetryableDatabaseError, TransactionRunner } from './FilesTransaction.js';
+import { VersionContentStager, type StagedVersionContent } from './VersionContentStager.js';
+import { FileListingQuery } from './FileListingQuery.js';
+import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const FOLDER_WHERE_CANDIDATES = 2000;
@@ -159,7 +163,7 @@ export function createApp(
   chunkStore?:Store,
   cloudSync?:CloudSyncService,
 ) {
-  const app = express(); const store = chunkStore ?? new Store(config.chunkRoot); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
+  const app = express(); const listingQuery = new FileListingQuery(); const filesFeed = new CollectionFilesFeed(db, FILE_COLUMNS_SQL); const store = chunkStore ?? new Store(config.chunkRoot); const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }); const transactions = new TransactionRunner(db); const shares = new SharesService(db, config, store); const jsonParser = express.json({ limit: '20mb' });
   const inFlightRequests = new Map<string, number>();
   app.locals.inFlightRequests = inFlightRequests;
   const snapshotRetention = AutomergeSnapshotRetention.fromEnvironment(db);
@@ -245,7 +249,7 @@ export function createApp(
     const content=await loadFileContent(db,config,store,id,versionId);
     if (!content) throw new Error('Audit log content unavailable');
     return content.buffer;
-  }, (client,collectionId,path,bytes,fileId) => insertVersion(client,{collectionId,path,bytes,fileId,mime:'application/x-ndjson',
+  }, (collectionId,bytes) => stageVersionContent(collectionId,bytes), (client,collectionId,path,bytes,staged,fileId) => insertVersion(client,{collectionId,path,bytes,staged,fileId,mime:'application/x-ndjson',
     actor:{userId:config.userId,deviceId:config.deviceId,kind:'capability'},createdByType:'user',createdById:'sulla-files',message:'Append audit event'}));
   app.locals.auditWriter=auditWriter;
   app.post('/v1/system/audit-events',async(request,response,next)=>{try {
@@ -278,8 +282,9 @@ export function createApp(
     right:Right,
     _allowShared = false,
     _allowExactFiles = false,
+    queryable:pg.Pool | pg.PoolClient = db,
   ) {
-    const access = await collectionAccess(request, collectionId);
+    const access = await collectionAccess(request, collectionId, queryable);
     if (!roleGate.allows(access.role, right)) throw new HttpError(403, 'access denied');
     if (right !== 'view') assertSystemAreaWritable(access.collection.system_area);
     return access;
@@ -366,7 +371,11 @@ export function createApp(
     for (let offset = 0; offset < Math.max(1, bytes.length); offset += CHUNK_BYTES) chunkIds.push(chunkId(bytes.subarray(offset, Math.min(bytes.length, offset + CHUNK_BYTES)), dedupKey));
     return createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: bytes.length })).digest('hex');
   }
-  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null }) {
+  /** Encrypts and durably writes a version's chunks. Call this before opening the transaction that commits it. */
+  async function stageVersionContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
+    return contentStager.stage(collectionId, bytes);
+  }
+  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null; staged: StagedVersionContent }) {
     input = { ...input, mime: resolveMime(input.path, input.mime) };
     const agentWrite = input.createdByType === 'agent-run' || input.createdByType === 'agent' || Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
     const collection = await collectionRow(input.collectionId, client);
@@ -375,9 +384,11 @@ export function createApp(
     const publicationStatus = new PublicationLifecyclePolicy().statusForWrite({ collection, path:input.path, createdByType });
     await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
     await ensureStoredFileParents(client, input.collectionId, input.path, input.actor);
-    const { data: dataKey, dedup: dedupKey } = await config.keyring!.keys(input.collectionId); const chunkIds:string[] = []; const chunks:{ id: string; size: number; storedSize: number }[] = [];
-    for (let offset = 0; offset < Math.max(1, input.bytes.length); offset += CHUNK_BYTES) { const plain = input.bytes.subarray(offset, Math.min(input.bytes.length, offset + CHUNK_BYTES)); const id = chunkId(plain, dedupKey); chunkIds.push(id); if (!await store.has(input.collectionId, id)) { const encrypted = await encryptChunk(plain, dataKey, id); await store.put(input.collectionId, id, encrypted); chunks.push({ id, size: plain.length, storedSize: encrypted.length }) } }
-    const manifestHash = createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: input.bytes.length })).digest('hex'); await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
+    // Every writer must stage before entering its metadata transaction. Never add a fallback here.
+    const staged = input.staged;
+    if (staged.collectionId !== input.collectionId || staged.size !== input.bytes.length) throw new Error('staged content does not match the version being written');
+    const chunkIds = [...staged.chunkIds]; const chunks = staged.chunks; const manifestHash = staged.manifestHash;
+    await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
     for (const chunk of chunks) await client.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING`, [input.collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ input.collectionId }/${ chunk.id }`]);
     let file:any;
     if (input.fileId) {
@@ -395,7 +406,12 @@ export function createApp(
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$4,$11) RETURNING *`, [input.versionId ?? randomUUID(), file.id, input.collectionId, parent, manifestHash, input.bytes.length, createdByType, createdById, input.message, input.actor.jobId || input.actor.deviceId || config.deviceId, publicationStatus])).rows[0];
     await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
     if (version.publication_status === 'draft') await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'draft-write',$6)`, [agentWrite?'agent-or-device':'user',createdById,input.actor.deviceId||null,file.id,version.id,{path:input.path,message:input.message}]);
-    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status:version.publication_status };
+    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]);
+    // Chunk GC takes a table lock on file_versions, so once the version row above is in, no GC that
+    // could still delete these chunks is running. One that finished between staging and now could
+    // have reclaimed a deduplicated chunk: check the blobs (a local stat each) before committing.
+    for (const chunk of chunks) if (!await store.has(input.collectionId, chunk.id)) throw Object.assign(new HttpError(503, 'Files storage changed while saving; retry the request'), { code: 'FILES_DB_RETRYABLE' });
+    await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status:version.publication_status };
   }
 
   async function saveAutomergeVersion(client:pg.PoolClient,fileId:string,versionId:string,document:Automerge.Doc<TextDocument>):Promise<void> {
@@ -459,29 +475,58 @@ export function createApp(
     await visibleVersion(request,file,file.current_version_id);
     live.peer(file.id,request.params.peerId,liveOwner(request));return file;
   }
-  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{const client=await db.connect();try{
-    await client.query('BEGIN');let file=await requireFile(request,request.params.id,'view',client);await lockStoredNamespace(client,file.collection_id);file=await requireFile(request,file.id,'view',client);
+  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{try{
+    // Load and build the document first; the transaction only re-checks the version and saves it.
+    const file=await requireFile(request,request.params.id,'view');
     await visibleVersion(request,file,file.current_version_id);
-    let editable=true;try{await requireFile(request,file.id,'edit',client)}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
+    let editable=true;try{await requireFile(request,file.id,'edit')}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
     const actor=identity(request);
     if(editable)liveWriters.set(file.id,request);
     if(!live.has(file.id)){
       const loaded=await loadFileContent(db,config,store,file.id,file.current_version_id);const text=loaded&&utf8Text(loaded.buffer);
       if(typeof text!=='string'||loaded!.buffer.length>8*1024*1024)throw new HttpError(415,'Live editing requires UTF-8 text up to 8 MiB');
-      const saved=await currentAutomergeDocument(client,file.id,file.current_version_id);
-      const document=saved??newTextDocument(text);await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      const saved=await currentAutomergeDocument(db as unknown as pg.PoolClient,file.id,file.current_version_id);
+      const document=saved??newTextDocument(text);
+      await transactions.run('live-open',async client=>{
+        await lockStoredNamespace(client,file.collection_id,file.path);
+        const current=await requireFile(request,file.id,'view',client);
+        if(current.current_version_id!==file.current_version_id||current.path!==file.path) throw new HttpError(409,'Files changed concurrently or are busy; retry');
+        await saveAutomergeVersion(client,file.id,file.current_version_id,document);
+      });
       // Reauthorize on each durable write; revoked rights and protected paths fail closed.
-      live.open(file.id,document,async snapshot=>{const request=liveWriters.get(file.id);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);const tx=await db.connect();try{await tx.query('BEGIN');let current=await requireFile(request,file.id,'edit',tx);await lockStoredNamespace(tx,current.collection_id);current=await requireFile(request,file.id,'edit',tx);
-        const latest=(await tx.query('SELECT document FROM file_automerge_docs WHERE file_id=$1',[file.id])).rows[0];
-        if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
-        const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,file.id,current.current_version_id);
-        if(!existing?.buffer.equals(bytes)){const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,actor,message:'Live document edit',baseVersionId:current.current_version_id});await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);await tx.query('COMMIT');await audit(request,'live-edit',result,{versionId:result.current_version_id});}
-        else {await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[current.id,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);await tx.query('COMMIT');}
-      }catch(error){await tx.query('ROLLBACK');throw error}finally{tx.release()}});
+      if(!live.has(file.id)) live.open(file.id,document,snapshot=>flushLiveDocument(file.id,snapshot));
     }
-    await client.query('COMMIT');const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
+    const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
     response.json({...peer,versionId:file.current_version_id,events:`${liveBase(file.id)}/${peer.peerId}/events`});
-  }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()}});
+  }catch(error){next(error)}});
+  /**
+   * Persist a live document. Merging, reading the current version and encrypting run outside any
+   * transaction; the transaction re-checks the version and the stored document under the path lock
+   * and records the result. A concurrent writer in between makes the snapshot stale: redo (bounded).
+   */
+  async function flushLiveDocument(fileId:string,snapshot:Automerge.Doc<TextDocument>):Promise<void>{
+    const request=liveWriters.get(fileId);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);
+    for(let attempt=1;;attempt++){
+      const current=await requireFile(request,fileId,'edit');
+      const latest=(await db.query('SELECT document,updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0];
+      if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
+      const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,fileId,current.current_version_id);
+      const changed=!existing?.buffer.equals(bytes);
+      const staged=changed?await stageVersionContent(current.collection_id,bytes):undefined;
+      const outcome=await transactions.run('live-flush',async tx=>{
+        await lockStoredNamespace(tx,current.collection_id,current.path);
+        const locked=await requireFile(request,fileId,'edit',tx);
+        const stamp=(await tx.query('SELECT updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0]?.stamp;
+        if(locked.current_version_id!==current.current_version_id||locked.path!==current.path||stamp!==latest?.stamp) return undefined;
+        if(!changed){await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[fileId,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);return {};}
+        const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged,actor,message:'Live document edit',baseVersionId:current.current_version_id});
+        await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);
+        return {result};
+      });
+      if(outcome){if(outcome.result)await audit(request,'live-edit',outcome.result,{versionId:outcome.result.current_version_id});return;}
+      if(attempt>=4)throw new HttpError(409,'Files changed concurrently or are busy; retry');
+    }
+  }
   app.post('/v1/files/:id/live/:peerId/sync',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);const p=live.peer(request.params.id,request.params.peerId);const message=request.body?.message;if(typeof message!=='string'||message.length>12*1024*1024)throw new HttpError(400,'Invalid sync message');
     // Live versions are attributed to the last peer that actually sent changes, not the last one to sync.
     if(p.editable&&Automerge.decodeSyncMessage(Buffer.from(message,'base64')).changes.length){await requireFile(request,request.params.id,'edit');liveWriters.set(request.params.id,request);}response.json({message:live.receive(request.params.id,request.params.peerId,Buffer.from(message,'base64'),p.editable)});}catch(error){next(error)}});
@@ -636,10 +681,11 @@ export function createApp(
     const collection = await collectionRow(collectionId);
     if (collection.compatibility_state !== 'native') throw new HttpError(409, 'native source ingestion requires a native Files collection');
     const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
+    const staged=await stageVersionContent(collectionId,bytes);
     const result = await nativeSourceManager().ingestNativeSource({ ...metadata, fileId, baseVersionId, collectionId, path },
       (client, versionId) => insertVersion(client, {
         collectionId, fileId, versionId, path,
-        mime: request.header('content-type') ?? 'application/octet-stream', bytes, actor,
+        mime: request.header('content-type') ?? 'application/octet-stream', bytes, staged, actor,
         createdByType: 'user', createdById: config.userId, message: 'Imported from an explicitly selected native source', baseVersionId: baseVersionId ?? null,
       }));
     response.status(201).json(result);
@@ -655,13 +701,14 @@ export function createApp(
     if (!isSystemArea(collection.system_area) && collection.system_area !== null) throw new HttpError(409, 'system-area ingestion requires the home or a system collection');
     const mime = request.header('content-type') ?? 'application/octet-stream';
     const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
+    const staged=await stageVersionContent(collectionId,bytes);
     const result = await mirrorSystemAreaFile(db, {
       collectionId, path, manifestHash: await manifestHashFor(collectionId, bytes),
       skipSearchIndex: shouldSkipSearchIndex(request.header(SKIP_SEARCH_INDEX_HEADER), collection.system_area),
     }, {
       lockNamespace: (client, id) => lockStoredNamespace(client as pg.PoolClient, id),
       insertVersion: (client, existing) => insertVersion(client as pg.PoolClient, {
-        collectionId, fileId: existing?.id, path, mime, bytes, actor, createdByType: 'user', createdById: config.userId,
+        collectionId, fileId: existing?.id, path, mime, bytes, staged, actor, createdByType: 'user', createdById: config.userId,
         message: 'Mirrored from a Sulla system area', baseVersionId: existing?.current_version_id ?? null,
       }),
     });
@@ -876,23 +923,26 @@ export function createApp(
     response.setHeader('ETag', `"${ area || 'home' }:${ snapshot.revision }"`);
     response.type('application/json').send(snapshot.body);
   } catch (error) { next(error) } });
-  app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => {
-    const client = await db.connect(); try {
-      const collectionId = String(request.query.collectionId ?? '');
-      const filePath = cleanPath(String(request.query.path ?? ''), false);
-      const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
-      await requireCollection(request, collectionId, 'edit');
-      await client.query('BEGIN'); await lockStoredNamespace(client, collectionId, filePath);
+  app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? '');
+    const filePath = cleanPath(String(request.query.path ?? ''), false);
+    const actor = mountIdentity(request, 'create', { collectionId, path: filePath });
+    await requireCollection(request, collectionId, 'edit');
+    const bytes = Buffer.from(request.body as Buffer);
+    // Encrypt and fsync the chunks first; the transaction below holds only DB statements.
+    const staged = await stageVersionContent(collectionId, bytes);
+    const file = await transactions.run('fuse-create', async client => {
+      await lockStoredNamespace(client, collectionId, filePath);
       // A trashed file keeps its (collection_id, path) row, so a plain INSERT hit the unique index and
       // creating a file where one was deleted failed with 'A file already occupies ...'. Revive the
       // trashed row instead (insertVersion un-deletes it and appends a version; history is kept).
       const trashed = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NOT NULL FOR UPDATE', [collectionId, filePath])).rows[0];
-      const file = await insertVersion(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
-        mime: request.header('content-type') ?? 'application/octet-stream', bytes: Buffer.from(request.body as Buffer), actor,
+      return insertVersion(client, { collectionId, path: filePath, ...(trashed ? { fileId: trashed.id } : {}),
+        mime: request.header('content-type') ?? 'application/octet-stream', bytes, staged, actor,
         createdByType: 'agent-run', createdById: actor.jobId ?? actor.agentId ?? actor.userId, message: 'Created through the Files mount' });
-      await client.query('COMMIT'); await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
-    } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
-  });
+    });
+    await audit(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status}); response.status(201).json(file);
+  } catch (error) { next(error) } });
   app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     const file = await fileRow(request.params.id); const nextPath = cleanPath(request.body.path, false);
     const targetCollectionId=String(request.body.targetCollectionId??file.collection_id);
@@ -912,14 +962,16 @@ export function createApp(
     const file = await fileRow(request.params.id); mountIdentity(request, 'delete', { collectionId:file.collection_id,fileId:file.id,path:file.path });
     await trashFileWithoutReceipt(db, file.id, identity(request), operationAccess(request)); response.status(204).end();
   } catch (error) { next(error) } });
-  app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { const client=await db.connect(); try {
+  app.post('/v1/fuse/folders', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
     const actor=mountIdentity(request,'create',{collectionId,path:folderPath}); await requireCollection(request, collectionId, 'edit');
-    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
     const createdDescription=`Created by ${actor.agentId??actor.jobId??'agent'} on ${new Date().toISOString().slice(0,10)} — needs description`;
-    await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
-    await client.query('COMMIT'); await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+    await transactions.run('fuse-mkdir', async client => {
+      await lockStoredNamespace(client,collectionId,folderPath); await ensureStoredFolder(client,collectionId,folderPath,actor);
+      await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,[...storedParentPaths(folderPath),folderPath],createdDescription]);
+    });
+    await audit(request,'create-folder',undefined,{collectionId,folderPath,description:createdDescription}); response.status(201).json({collectionId,path:folderPath,description:createdDescription,needsDescription:true});
+  } catch(error){next(error)} });
   app.patch('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.body.collectionId??''); const folderPath=cleanPath(request.body.path,false);
     const targetCollectionId=String(request.body.targetCollectionId??collectionId); const targetPath=cleanPath(request.body.targetPath,false);
@@ -936,14 +988,17 @@ export function createApp(
     if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Folder move did not complete');
     response.json(result.items[0]?.after);
   } catch(error){next(error)} });
-  app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+  app.delete('/v1/fuse/folders', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.query.collectionId??''); const folderPath=cleanPath(String(request.query.path??''),false);
-    mountIdentity(request,'delete',{collectionId,path:folderPath}); await requirePath(request,collectionId,folderPath,'edit'); await client.query('BEGIN'); await lockStoredNamespace(client,collectionId);
-    const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[collectionId,folderPath]);
-    if(occupied.rowCount) throw new HttpError(409,'folder is not empty');
-    await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
-    await client.query('COMMIT'); response.status(204).end();
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+    mountIdentity(request,'delete',{collectionId,path:folderPath}); await requirePath(request,collectionId,folderPath,'edit');
+    await transactions.run('fuse-rmdir', async client => {
+      await lockStoredNamespace(client,collectionId);
+      const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`,[collectionId,folderPath]);
+      if(occupied.rowCount) throw new HttpError(409,'folder is not empty');
+      await client.query(`DELETE FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/'))`,[collectionId,folderPath]);
+    });
+    response.status(204).end();
+  } catch(error){next(error)} });
   app.get('/v1/fuse/files/:id/content', async(request:RequestWithIdentity, response, next) => {
     const controller = new AbortController(); const abort = () => controller.abort();
     request.once('aborted', abort); response.once('close', abort);
@@ -965,9 +1020,9 @@ export function createApp(
     } finally { request.off('aborted',abort); response.off('close',abort) }
   });
   app.put('/v1/fuse/files/:id/content/stream', async(request:RequestWithIdentity, response, next) => {
-    const client=await db.connect(); const uploadId=randomUUID();
+    const uploadId=randomUUID();
     try {
-      let file=await requireFile(request,request.params.id,'edit');
+      const file=await requireFile(request,request.params.id,'edit');
       const match=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
       const sourceHash=request.header('x-sulla-source-hash');
       const declaredBytes=Number(request.header('content-length'));
@@ -975,76 +1030,128 @@ export function createApp(
       if(!Number.isSafeInteger(declaredBytes)||declaredBytes<0) throw new HttpError(400,'valid content-length is required');
       if(declaredBytes>FUSE_MAX_FILE_BYTES) throw new HttpError(413,'Files mount writes are limited to 64 MiB');
       const actor=identity(request);
-      await beginUploadIntent(db,uploadId,file.collection_id);
-      await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
-      file=await requireFile(request,file.id,'edit',client);
-      if(match!==file.current_version_id) throw new HttpError(409,'Files mount version changed');
+      const contentHash=request.header('x-sulla-content-hash')?.toLowerCase();
+      if(match!==file.current_version_id) {
+        // A retried upload whose first attempt committed: the current version already holds this content.
+        if(contentHash&&/^[0-9a-f]{64}$/.test(contentHash)&&Number(file.size)===declaredBytes) {
+          const current=await streamFileContent(db,config,store,file.id,file.current_version_id,undefined,new AbortController().signal);
+          const currentHash=createHash('sha256'); if(current) for await (const part of current.body) currentHash.update(part);
+          if(current&&currentHash.digest('hex')===contentHash) {
+            request.resume();
+            response.setHeader('ETag',`"${file.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',contentHash);
+            return response.json({id:file.id,collectionId:file.collection_id,path:file.path,mime:file.mime,size:Number(file.size),versionId:file.current_version_id,sourceHash:contentHash,mtimeMs:Date.now()});
+          }
+        }
+        throw new HttpError(409,'Files mount version changed');
+      }
       const baseContent=await streamFileContent(db,config,store,file.id,match,undefined,new AbortController().signal);
       if(!baseContent) throw new HttpError(409,'Files mount version changed');
       const baseHash=createHash('sha256');
       for await (const part of baseContent.body) baseHash.update(part);
       if(sourceHash.toLowerCase()!==baseHash.digest('hex')) throw new HttpError(409,'Files mount version changed');
-      const result=await insertStreamingUpload(client,config,store,{uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,
-        expectedBytes:declaredBytes,actor,body:request,intentDb:db,existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'});
-      await client.query('COMMIT');
+      // Phase 1 (no transaction): read the body, encrypt and publish chunks under an upload intent.
+      await beginUploadIntent(db,uploadId,file.collection_id);
+      const uploadInput={uploadId,collectionId:file.collection_id,path:file.path,mime:file.mime,expectedBytes:declaredBytes,actor,body:request,intentDb:db,
+        existingFile:{id:file.id,current_version_id:file.current_version_id},message:'Updated through the Files mount'};
+      const streamed=await streamUploadChunks(config,store,uploadInput);
+      // Phase 2: a short transaction that only re-checks the version and records metadata.
+      const result=await transactions.run('fuse-write-stream',async client=>{
+        await lockStoredNamespace(client,file.collection_id,file.path);
+        const current=await requireFile(request,file.id,'edit',client);
+        if(current.current_version_id!==file.current_version_id||current.path!==file.path||current.collection_id!==file.collection_id) throw new HttpError(409,'Files mount version changed');
+        return commitStreamedUpload(client,uploadInput,streamed);
+      });
       await completeUploadIntent(db,uploadId).catch(()=>undefined);
       const hash=result.source_hash;
       await audit(request,'fuse-write',result,{versionId:result.current_version_id,publicationStatus:result.publication_status});
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',hash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:hash,mtimeMs:Date.now()});
-    } catch(error) { await client.query('ROLLBACK'); next(error) } finally { client.release() }
+    } catch(error) { next(error) }
   });
   app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
-    let file = await requireFile(request, request.params.id, 'edit');
     const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
     const sourceHash = request.header('x-sulla-source-hash');
     if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
-    const manager = requireFuseExperiment();
-    const actor=identity(request); const client=await db.connect();
-    try {
-      await client.query('BEGIN'); await lockStoredNamespace(client,file.collection_id);
-      file=await requireFile(request,file.id,'edit',client);
-      const currentBytes=await manager.readStoredVersion(file.id,file.current_version_id);
-      const baseVersion=(await client.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted',[match,file.id])).rows[0];
-      if(!baseVersion) throw new HttpError(409,'Files mount version changed');
-      const baseBytes=match===file.current_version_id?currentBytes:await manager.readStoredVersion(file.id,match);
-      if(sourceHash.toLowerCase()!==createHash('sha256').update(baseBytes).digest('hex')) throw new HttpError(409,'Files mount version changed');
-      const saved=await textSave(client,file,match,Buffer.from(request.body as Buffer),currentBytes);
-      const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,
-        bytes:saved.bytes,actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,
-        message:'Updated through the Files mount',baseVersionId:file.current_version_id});
-      if(saved.document) await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document);
-      await client.query('COMMIT'); if(saved.document)adoptLive(request,file.id,saved.document); const nextHash=createHash('sha256').update(saved.bytes).digest('hex');
-      await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
-      if(saved.merged) response.setHeader('X-Sulla-Merged','1');
-      response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
-      response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
-    } catch(error){await client.query('ROLLBACK');throw error} finally{client.release()}
+    const written = await fuseContentWrite(request, request.params.id, match, sourceHash.toLowerCase(), Buffer.from(request.body as Buffer));
+    const result = written.result;
+    if (!written.replayed) await audit(request, 'fuse-write', result, {versionId:result.current_version_id,publicationStatus:result.publication_status});
+    if(written.merged) response.setHeader('X-Sulla-Merged','1');
+    response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',written.sourceHash);
+    response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:written.sourceHash,mtimeMs:Date.now()});
   } catch (error) { next(error) } });
-  app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+  /**
+   * A small mount write. Reads, hashing, text merging and chunk encryption run against a
+   * snapshot of the file outside any transaction; the transaction then only re-checks that
+   * snapshot under the path lock and records the version. A concurrent writer that moved the
+   * file on in between makes the snapshot stale, and the whole write is redone (bounded).
+   * A retried request whose content is already the current version is answered from that
+   * version instead of writing a duplicate (the first attempt committed, its reply was lost).
+   */
+  async function fuseContentWrite(request:RequestWithIdentity, fileId:string, match:string, sourceHash:string, submitted:Buffer) {
+    const manager = requireFuseExperiment(); const actor = identity(request);
+    const sha256 = (bytes:Buffer) => createHash('sha256').update(bytes).digest('hex');
+    const submittedHash = sha256(submitted);
+    for (let attempt = 1; ; attempt++) {
+      const file = await requireFile(request, fileId, 'edit');
+      const currentBytes = await manager.readStoredVersion(file.id, file.current_version_id);
+      const baseVersion = (await db.query('SELECT id,parent_version_id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [match, file.id])).rows[0];
+      if (!baseVersion) throw new HttpError(409, 'Files mount version changed');
+      if (match !== file.current_version_id && sha256(currentBytes) === submittedHash) {
+        return { result: file, sourceHash: submittedHash, merged: false, replayed: true };
+      }
+      const baseBytes = match === file.current_version_id ? currentBytes : await manager.readStoredVersion(file.id, match);
+      if (sourceHash !== sha256(baseBytes)) throw new HttpError(409, 'Files mount version changed');
+      const saved = await textSave(db as unknown as pg.PoolClient, file, match, submitted, currentBytes);
+      const staged = await stageVersionContent(file.collection_id, saved.bytes);
+      const outcome = await transactions.run('fuse-write', async client => {
+        await lockStoredNamespace(client, file.collection_id, file.path);
+        const current = await requireFile(request, file.id, 'edit', client);
+        if (current.current_version_id !== file.current_version_id || current.path !== file.path || current.collection_id !== file.collection_id) return undefined;
+        const result = await insertVersion(client, { collectionId: file.collection_id, fileId: file.id, path: file.path, mime: file.mime,
+          bytes: saved.bytes, staged, actor, createdByType: actor.agentId ? 'agent' : 'agent-run', createdById: actor.agentId ?? actor.jobId ?? actor.userId,
+          message: 'Updated through the Files mount', baseVersionId: file.current_version_id });
+        if (saved.document) await saveAutomergeVersion(client, file.id, result.current_version_id, saved.document);
+        return result;
+      });
+      if (outcome) {
+        if (saved.document) adoptLive(request, file.id, saved.document);
+        return { result: outcome, sourceHash: staged.sourceHash, merged: saved.merged, replayed: false };
+      }
+      if (attempt >= 4) throw new HttpError(409, 'Files changed concurrently or are busy; retry the write');
+    }
+  }
+  app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ try {
     const actor=identity(request); const sourceFileId=String(request.body.sourceFileId??'');
     if(!sourceFileId) throw new HttpError(400,'sourceFileId is required');
     if(sourceFileId===request.params.id) throw new HttpError(400,'replacement source must differ from target');
-    await client.query('BEGIN');
-    let target=await requireFile(request,request.params.id,'edit',client); const source=await requireFile(request,sourceFileId,'edit',client);
+    const manager=requireFuseExperiment();
+    // Read, merge and encrypt from a snapshot first; the transaction only re-checks it and records the version.
+    const target=await requireFile(request,request.params.id,'edit'); const source=await requireFile(request,sourceFileId,'edit');
     if(target.collection_id!==source.collection_id) throw new HttpError(400,'replacement source must be in the target collection');
-    await lockStoredNamespace(client,target.collection_id); target=await requireFile(request,target.id,'edit',client);
-    const bytes=await requireFuseExperiment().readStoredVersion(source.id,source.current_version_id);
+    const bytes=await manager.readStoredVersion(source.id,source.current_version_id);
     const baseHeader=request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1]??target.current_version_id;
-    const currentBytes=await requireFuseExperiment().readStoredVersion(target.id,target.current_version_id);
-    const saved=await textSave(client,target,baseHeader,bytes,currentBytes).catch(error=>{
+    const currentBytes=await manager.readStoredVersion(target.id,target.current_version_id);
+    const saved=await textSave(db as unknown as pg.PoolClient,target,baseHeader,bytes,currentBytes).catch(error=>{
       if(baseHeader!==target.current_version_id) throw error;
       return {bytes,document:undefined,merged:false};
     });
-    const result=await insertVersion(client,{collectionId:target.collection_id,fileId:target.id,path:target.path,mime:source.mime,bytes:saved.bytes,
-      actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
-    if(saved.document) await saveAutomergeVersion(client,target.id,result.current_version_id,saved.document);
-    await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[source.id]);
-    await client.query('COMMIT'); if(saved.document)adoptLive(request,target.id,saved.document);
-    const nextHash=createHash('sha256').update(saved.bytes).digest('hex'); await audit(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
+    const staged=await stageVersionContent(target.collection_id,saved.bytes);
+    const result=await transactions.run('fuse-replace',async client=>{
+      await lockStoredNamespace(client,target.collection_id);
+      const lockedTarget=await requireFile(request,target.id,'edit',client); const lockedSource=await requireFile(request,source.id,'edit',client);
+      if(lockedTarget.current_version_id!==target.current_version_id||lockedTarget.path!==target.path||lockedSource.current_version_id!==source.current_version_id||lockedSource.deleted_at)
+        throw new HttpError(409,'Files changed concurrently or are busy; retry the replace');
+      const result=await insertVersion(client,{collectionId:target.collection_id,fileId:target.id,path:target.path,mime:source.mime,bytes:saved.bytes,staged,
+        actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});
+      if(saved.document) await saveAutomergeVersion(client,target.id,result.current_version_id,saved.document);
+      await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1',[source.id]);
+      return result;
+    });
+    if(saved.document)adoptLive(request,target.id,saved.document);
+    const nextHash=staged.sourceHash; await audit(request,'fuse-write',result,{versionId:result.current_version_id,replacedSourceFileId:source.id});
     if(saved.merged) response.setHeader('X-Sulla-Merged','1'); response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
     response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
+  } catch(error){next(error)} });
   const metadataValue=(row:any,folder:boolean):Record<string,unknown>=>{
     const value={...(row.metadata??{})};
     if(folder&&row.description!==null) value.description=row.description;
@@ -1065,14 +1172,14 @@ export function createApp(
     const target=await metadataTarget(request,collectionId,path,'view');
     response.json({path,kind:target.kind,metadata:metadataValue(target.row,target.kind==='folder'),revision:Number(target.row.metadata_revision)});
   }catch(error){next(error)}});
-  app.put('/v1/fuse/metadata',async(request:RequestWithIdentity,response,next)=>{const client=await db.connect();try{
+  app.put('/v1/fuse/metadata',async(request:RequestWithIdentity,response,next)=>{try{
     const collectionId=String(request.body.collectionId??''); const path=cleanPath(request.body.path); const actor=mountIdentity(request,'metadata',{collectionId,path});
     const set=request.body.set??{},unset=request.body.unset??[];
     if(!set||typeof set!=='object'||Array.isArray(set)||!Array.isArray(unset)||unset.some((key:unknown)=>typeof key!=='string')) throw new HttpError(400,'set must be an object and unset must be a string array');
     const keys=[...Object.keys(set),...unset];
     if(keys.some(key=>!key||key.length>128||key.includes('\0'))) throw new HttpError(400,'invalid metadata key');
     if(keys.some(key=>!canWriteMetadata(actor,key))) throw new HttpError(403,'metadata field is not writable by this actor');
-    await client.query('BEGIN'); const target=await metadataTarget(request,collectionId,path,'edit',client);
+    const updatedTarget=await transactions.run('metadata-write',async client=>{ const target=await metadataTarget(request,collectionId,path,'edit',client);
     if(request.body.baseRevision!==undefined&&Number(request.body.baseRevision)!==Number(target.row.metadata_revision)) throw new HttpError(409,'metadata revision changed');
     const old=metadataValue(target.row,target.kind==='folder'); const next={...old,...set}; for(const key of unset) delete next[key];
     const table=target.kind==='file'?'files':'file_folders';
@@ -1086,8 +1193,9 @@ export function createApp(
     for(const key of keys) if(JSON.stringify(old[key])!==JSON.stringify(metadataValue(updated,target.kind==='folder')[key])) await client.query(
       `INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,action,details) VALUES($1,$2,$3,$4,'metadata-set',$5)`,
       [actor.agentId?'agent':actor.kind==='capability'?'agent-or-device':'user',actor.agentId??actor.userId,actor.jobId??actor.deviceId??null,target.kind==='file'?target.row.id:null,{key,old:old[key]??null,new:metadataValue(updated,target.kind==='folder')[key]??null,collectionId,path}]);
-    await client.query('COMMIT'); response.json({revision:Number(updated.metadata_revision),metadata:metadataValue(updated,target.kind==='folder')});
-  }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()}});
+    return {updated,kind:target.kind}; });
+    response.json({revision:Number(updatedTarget.updated.metadata_revision),metadata:metadataValue(updatedTarget.updated,updatedTarget.kind==='folder')});
+  }catch(error){next(error)}});
   app.get('/v1/fuse/folder-metadata',async(request:RequestWithIdentity,response,next)=>{try{
     const collectionId=String(request.query.collectionId??'');const path=cleanPath(request.query.path);const target=await metadataTarget(request,collectionId,path,'view');
     if(target.kind!=='folder') throw new HttpError(400,'path is not a folder'); const prefix=path?`${path}/`:'';
@@ -1136,8 +1244,9 @@ export function createApp(
   app.post('/v1/local/rescan', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.rescan().catch(error => console.error('[SullaFiles] rescan failed', error)); response.status(202).json({ accepted: true }) });
   app.post('/v1/local/pause', async(request, response, next) => { try { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); response.json(await manager.setPaused(Boolean(request.body.paused))) } catch (error) { next(error) } });
   app.post('/v1/local/sync', (_request, response) => { if (!manager) return response.status(409).json({ error: 'watched folder disabled' }); manager.sync().catch(error => console.error('[SullaFiles] sync failed', error)); response.status(202).json({ accepted: true }) });
-  app.post('/v1/local/maintenance', async(_request, response, next) => { const client = await db.connect(); try {
-    await client.query('BEGIN'); const now = new Date();
+  app.post('/v1/local/maintenance', async(_request, response, next) => { try {
+    const now = new Date();
+    const {expired,disposal}=await transactions.run('maintenance-expiry',async client=>{
     const disposal = await client.query(`UPDATE files SET disposal_status='pending',disposal_review_at=NOW(),lifecycle_generation=lifecycle_generation+1
       WHERE deleted_at IS NOT NULL AND disposal_status='none' AND retention_mode<>'none' AND NOT files_retention_active(files) RETURNING id`);
     const expired = (await client.query('SELECT * FROM files WHERE expires_at<$1 AND deleted_at IS NULL FOR UPDATE', [now])).rows;
@@ -1147,11 +1256,11 @@ export function createApp(
       await client.query('UPDATE files SET current_version_id=$2,deleted_at=$3,updated_at=$3 WHERE id=$1', [file.id, deleted.id, now]);
       await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [file.collection_id, file.id, deleted.id]);
     }
-    await client.query('COMMIT');
+    return {expired,disposal}; });
     await drainPendingChunkGc(db, (collectionId, chunkId) => store.delete(collectionId, chunkId));
     const receiptGc=manager?await manager.expireTrashReceipts(now):{invalidated:0,disposed:0,preserved:0};
     response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => {
     const abort = new AbortController();
@@ -1327,7 +1436,7 @@ export function createApp(
       next(error);
     }
   });
-  app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
     if (collection.system_area === 'sulla' && !isSullaWritablePath(path)) throw new HttpError(403, 'Agent writes to the Sulla system collection are limited to Use Cases drafts, durable Memory and Projects');
@@ -1350,7 +1459,10 @@ export function createApp(
       ? [...new Set<string>(request.body.derivedFrom.filter((value:unknown):value is string => typeof value === 'string'))].sort()
       : [];
 
-    await client.query('BEGIN');
+    // Authorize sources and encrypt the content before the transaction; it then holds only DB statements.
+    for (const sourceId of derived) await requireFile(request, sourceId, 'view');
+    const staged = await stageVersionContent(collection.id, bytes);
+    const outcome = await transactions.run('agent-put', async client => {
     await lockStoredNamespace(client, collection.id);
     const pathFile = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collection.id, path])).rows[0];
     const requestedFile = requestedFileId ? (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [requestedFileId])).rows[0] : undefined;
@@ -1376,18 +1488,24 @@ export function createApp(
         if (prior.message !== message) throw new HttpError(409, 'idempotencyKey was already used with a different message');
         const priorEdges = (await client.query("SELECT dst_id FROM edges WHERE src_type='file' AND src_id=$1 AND kind='derived_from' ORDER BY dst_id", [prior.file_id])).rows.map(row => row.dst_id);
         if (priorEdges.length !== derived.length || priorEdges.some((id, index) => id !== derived[index])) throw new HttpError(409, 'idempotencyKey was already used with different artifact sources');
-        const content = await loadFileContent(db, config, store, prior.file_id, prior.id);
-        if (!content?.buffer.equals(bytes)) throw new HttpError(409, 'idempotencyKey was already used for different content');
-        await client.query('COMMIT');
-        return response.status(200).json({ fileId: prior.file_id, versionId: prior.id, collectionId: collection.id, path });
+        return { prior: { fileId: prior.file_id as string, versionId: prior.id as string } };
       }
     }
-    const file = await insertVersion(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, actor, createdByType: 'agent-run', createdById: creatorId, message });
+    const file = await insertVersion(client, { collectionId: collection.id, fileId: existing?.id ?? requestedFileId, createFileId: Boolean(requestedFileId && !existing), versionId, path, mime, bytes, staged, actor, createdByType: 'agent-run', createdById: creatorId, message });
     await client.query("DELETE FROM edges WHERE src_type='file' AND src_id=$1 AND kind='derived_from'", [file.id]);
-    for (const sourceId of derived) { const source = await requireFile(request, sourceId, 'view'); await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,'derived_from',$3) ON CONFLICT DO NOTHING`, [file.id, source.id, actor.jobId ?? actor.agentId!]) }
-    await client.query('COMMIT'); await audit(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
+    for (const sourceId of derived) { const source = await fileRow(sourceId, client); await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,'derived_from',$3) ON CONFLICT DO NOTHING`, [file.id, source.id, actor.jobId ?? actor.agentId!]) }
+    return { file };
+    });
+    if ('prior' in outcome && outcome.prior) {
+      // Idempotent replay: compare content outside the transaction (it reads chunks through the pool).
+      const content = await loadFileContent(db, config, store, outcome.prior.fileId, outcome.prior.versionId);
+      if (!content?.buffer.equals(bytes)) throw new HttpError(409, 'idempotencyKey was already used for different content');
+      return response.status(200).json({ fileId: outcome.prior.fileId, versionId: outcome.prior.versionId, collectionId: collection.id, path });
+    }
+    const file = (outcome as { file:any }).file;
+    await audit(request, 'put', file, { threadId: actor.threadId, agentRunId: actor.jobId });
     response.status(201).json({ fileId: file.id, versionId: file.current_version_id, collectionId: collection.id, path: file.path });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
   app.post('/v1/agent-files/ensure', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });
@@ -1548,15 +1666,15 @@ export function createApp(
     if (requested && destination && requested.id !== destination.id) throw new HttpError(409, 'another file already exists at the requested path');
     for (const file of candidates) await assertUnprotectedFile(queryable, file);
     let exactFileEdit = false;
-    try { await requirePath(request, bundle.collectionId, path, 'edit') } catch (error:any) {
+    try { await requirePath(request, bundle.collectionId, path, 'edit',queryable) } catch (error:any) {
       if (error.status !== 403 || requested?.path !== path) throw error;
-      await requireFile(request, requested.id, 'edit'); exactFileEdit = true;
+      await requireFile(request, requested.id, 'edit',queryable); exactFileEdit = true;
     }
     for (const file of candidates) {
       if (exactFileEdit && file.id === requested.id) continue;
-      await requirePath(request, file.collection_id, file.path, 'edit');
+      await requirePath(request, file.collection_id, file.path, 'edit',queryable);
     }
-    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit');
+    if (bundle.version.chunk_collection_id !== bundle.collectionId) await requireCollection(request, bundle.version.chunk_collection_id, 'edit',false,false,queryable);
     if (bundle.keyContext) validateKeyContext(bundle.keyContext, bundle.version.chunk_collection_id, identity(request).userId);
     const existing = requested ?? destination;
     const scopedEdit = false;
@@ -1587,14 +1705,14 @@ export function createApp(
     return { existing, path, missing, conflict, currentVersionId: existing?.current_version_id ?? null, canonicalFileId: existing?.id ?? bundle.file.id };
   }
   app.post('/v1/versions/prepare', async(request:RequestWithIdentity, response, next) => { try { const result = await prepare(request, request.body, db, false, true); response.json({ missing: result.missing, currentVersionId: result.currentVersionId, canonicalFileId: result.canonicalFileId, conflict: result.conflict }) } catch (error) { next(error) } });
-  app.post('/v1/versions/commit', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/versions/commit', async(request:RequestWithIdentity, response, next) => { try {
     const bundle = request.body; const actor = identity(request);
-    await client.query('BEGIN');
+    const outcome=await transactions.run('remote-version-commit',async client=>{
     const bundlePath = cleanPath(bundle.file.path, false);
     await lockStoredNamespace(client, bundle.collectionId);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`version-commit:${ bundle.collectionId }:${ bundlePath }`]);
     const checked = await prepare(request, bundle, client, true);
-    if (checked.missing.length) { await client.query('ROLLBACK'); return response.status(400).json({ error: 'manifest chunks missing', missing: checked.missing }) }
+    if (checked.missing.length) return {status:400,body:{ error:'manifest chunks missing',missing:checked.missing }};
     const fileId = checked.canonicalFileId;
     const prior = (await client.query('SELECT file_id,chunk_collection_id,manifest_hash,size,deleted FROM file_versions WHERE id=$1', [bundle.version.id])).rows[0];
     if (prior) {
@@ -1611,10 +1729,9 @@ export function createApp(
           throw new HttpError(409, 'immutable version key context does not match the committed version');
         }
       }
-      await client.query('COMMIT');
-      return response.json({ ok: true, versionId: bundle.version.id, fileId });
+      return {status:200,body:{ok:true,versionId:bundle.version.id,fileId}};
     }
-    if (checked.conflict) { await client.query('ROLLBACK'); return response.status(409).json({ conflict: true, currentVersionId: checked.currentVersionId }) }
+    if(checked.conflict)return {status:409,body:{conflict:true,currentVersionId:checked.currentVersionId}};
     await assertStoredFilePath(client, bundle.collectionId, checked.path, fileId);
     await ensureStoredFileParents(client, bundle.collectionId, checked.path, actor);
     if (bundle.manifest) {
@@ -1638,8 +1755,9 @@ export function createApp(
     if (advanced.rowCount !== 1) throw new HttpError(409, 'file changed while committing the remote version');
     await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [bundle.collectionId, fileId, bundle.version.id, bundle.version.deleted ? 'delete' : 'put']);
     await client.query('DELETE FROM file_share_chunk_uploads WHERE version_id=$1 AND principal_id=$2 AND actor_scope=$3', [bundle.version.id, actor.userId, actorScope(actor)]);
-    await client.query('COMMIT'); response.json({ ok: true, versionId: bundle.version.id, fileId });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+    return {status:200,body:{ok:true,versionId:bundle.version.id,fileId}}; });
+    response.status(outcome.status).json(outcome.body);
+  } catch (error) { next(error) } });
 
   app.get('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
@@ -1702,36 +1820,40 @@ export function createApp(
     await audit(request,'change-collection-keep-on-computer',undefined,{collectionId:request.params.id,enabled});
     response.json(updated);
   } catch(error){next(error)} });
-  app.post('/v1/folders', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.body.collectionId ?? '');
     const folderPath = cleanPath(request.body.path, false);
     await requirePath(request, collectionId, folderPath, 'edit');
     const actor = identity(request); const agentCreated=Boolean(actor.agentId||actor.jobId);
     const description=folderGuidance(request.body.description,'description',agentCreated); const namingHint=folderGuidance(request.body.namingHint,'namingHint');
-    await client.query('BEGIN');
+    await transactions.run('create-folder',async client=>{
+    await requirePath(request,collectionId,folderPath,'edit',client);
     await lockStoredNamespace(client, collectionId);
     await ensureStoredFolder(client, collectionId, folderPath, actor);
     if (description) await client.query('UPDATE file_folders SET description=$3,naming_hint=$4,updated_at=NOW() WHERE collection_id=$1 AND path=$2',[collectionId,folderPath,description,namingHint]);
     if (agentCreated) { const fallback=`Created by ${actor.agentId??actor.jobId} on ${new Date().toISOString().slice(0,10)} — needs description`; await client.query(`UPDATE file_folders SET description=$3,updated_at=NOW() WHERE collection_id=$1 AND path=ANY($2::text[]) AND description IS NULL`,[collectionId,storedParentPaths(folderPath),fallback]); }
-    await client.query('COMMIT');
+    });
     await audit(request,'create-folder',undefined,{collectionId,folderPath,description,namingHint});
     response.status(201).json({ collectionId, path: folderPath, description, namingHint, needsDescription:false });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
-  app.post('/v1/files/empty', async(request:RequestWithIdentity,response,next)=>{ const client=await db.connect(); try {
+  } catch (error) { next(error) } });
+  app.post('/v1/files/empty', async(request:RequestWithIdentity,response,next)=>{ try {
     const collectionId=String(request.body.collectionId??''); const filePath=cleanPath(request.body.path,false);
     await requirePath(request,collectionId,filePath,'edit'); const actor=identity(request);
-    await client.query('BEGIN'); await lockStoredNamespace(client,collectionId);
+    const bytes=Buffer.alloc(0); const staged=await stageVersionContent(collectionId,bytes);
+    const file=await transactions.run('create-empty',async client=>{
+    await requirePath(request,collectionId,filePath,'edit',client); await lockStoredNamespace(client,collectionId);
     const occupied=await client.query(`SELECT 1 FROM files WHERE collection_id=$1 AND path=$2
       UNION ALL SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 LIMIT 1`,[collectionId,filePath]);
     if(occupied.rowCount) throw new HttpError(409,'A file or folder already exists at that Files path.');
-    const file=await insertVersion(client,{collectionId,path:filePath,mime:'text/plain',bytes:Buffer.alloc(0),actor,message:'Created empty file'});
-    await client.query('COMMIT'); await audit(request,'create-empty-file',file); response.status(201).json(file);
-  } catch(error){await client.query('ROLLBACK');next(error)} finally{client.release()} });
-  app.delete('/v1/folders', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+    return insertVersion(client,{collectionId,path:filePath,mime:'text/plain',bytes,staged,actor,message:'Created empty file'});
+    }); await audit(request,'create-empty-file',file); response.status(201).json(file);
+  } catch(error){next(error)} });
+  app.delete('/v1/folders', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
     const folderPath = cleanPath(String(request.query.path ?? ''), false);
     await requirePath(request, collectionId, folderPath, 'edit');
-    await client.query('BEGIN');
+    await transactions.run('remove-folder',async client=>{
+    await requirePath(request,collectionId,folderPath,'edit',client);
     await lockStoredNamespace(client, collectionId);
     const active = await client.query(`SELECT 1 FROM files WHERE collection_id=$1
       AND (path=$2 OR starts_with(path,$2||'/')) LIMIT 1`, [collectionId, folderPath]);
@@ -1742,23 +1864,40 @@ export function createApp(
     if (!removed.rowCount) throw new HttpError(404, 'folder not found');
     await client.query(`DELETE FROM file_stars WHERE collection_id=$1 AND folder_path IS NOT NULL
       AND (folder_path=$2 OR starts_with(folder_path,$2||'/'))`, [collectionId, folderPath]);
-    await client.query('COMMIT');
+    });
     response.status(204).end();
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
+  // Cross-folder views read their own bounded server queries; clients only hold the open folder's rows.
+  app.get('/v1/files/recent', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    const access = await requireCollection(request, collectionId, 'view', true, true);
+    let rows:any[]; try { rows = await filesFeed.recent({ collectionId, limit: request.query.limit, createdByType: request.query.createdByType }) } catch (error) { if (error instanceof RangeError) throw new HttpError(400, error.message); throw error }
+    response.json(rows.filter(row => !isProtectedPath(row.path)).map(row => ({ ...lifecycleFields({ ...row, size: Number(row.size) }), capabilities: lifecycleCapabilities(access.role, true) })));
+  } catch (error) { next(error) } });
+  app.get('/v1/files/stats', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    await requireCollection(request, collectionId, 'view', true, true);
+    response.json(await filesFeed.stats(collectionId));
+  } catch (error) { next(error) } });
+  app.get('/v1/folders/summary', async(request:RequestWithIdentity, response, next) => { try {
+    const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
+    const path = cleanPath(String(request.query.path ?? '')); await requireCollection(request, collectionId, 'view', true, true);
+    const visible = [];
+    for (const summary of await filesFeed.folderSummaries(collectionId, path)) {
+      const folderPath = path ? `${ path }/${ summary.name }` : summary.name; if (isProtectedPath(folderPath)) continue;
+      try { await requirePath(request, collectionId, folderPath, 'view'); visible.push({ path: folderPath, ...summary }) } catch (error:any) { if (error.status !== 403) throw error }
+    }
+    response.json(visible);
+  } catch (error) { next(error) } });
   app.get('/v1/files', async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? ''); if (!collectionId) throw new HttpError(400, 'collectionId is required');
     const path = cleanPath(String(request.query.path ?? '')); const access = await requireCollection(request, collectionId, 'view', true, true); const trash = request.query.trash === 'true';
     const paged=ListingPage.isRequested(request.query.limit,request.query.cursor);
     let pageRequest:ListingPage; try { pageRequest=ListingPage.parse(request.query.limit,request.query.cursor); } catch { throw new HttpError(400,'invalid listing cursor'); }
-    const params:any[] = [collectionId, path ? `${ path }/` : ''];
-    let filter = '';
-    if (typeof request.query.deviceId === 'string' && request.query.deviceId) {
-      params.push(request.query.deviceId);
-      filter = ` AND v.device_id=$${ params.length }`;
-    }
+    const scope=listingQuery.build({ collectionId, path, childrenOnly:request.query.children==='true', trash, deviceId:typeof request.query.deviceId==='string'?request.query.deviceId:undefined, after:pageRequest.after, limit:(paged ? pageRequest.limit : ListingPage.legacyMaxRows)+1 });
     const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},v.created_at AS version_created_at,v.created_by_type AS version_created_by_type,v.created_by_id AS version_created_by_id,v.size AS visible_size,nc.source_file_id AS conflict_source_file_id,sf.current_version_id AS conflict_source_version_id,CASE WHEN nc.file_id IS NOT NULL OR ns.state='conflict' THEN 'conflict' WHEN r.state='online-only' THEN 'online-only' WHEN r.state IN('evicting','hydrating') THEN 'syncing' ELSE NULL END AS sync_state
       FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id LEFT JOIN file_residency r ON r.file_id=f.id LEFT JOIN files_native_conflicts nc ON nc.file_id=f.id LEFT JOIN files sf ON sf.id=nc.source_file_id LEFT JOIN files_native_sources ns ON ns.file_id=f.id
-      WHERE NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) AND f.collection_id=$1 AND ($2 = '' OR starts_with(f.path, $2)) AND f.path>$${params.push(pageRequest.after)}${ trash ? ' AND f.deleted_at IS NOT NULL' : ' AND f.deleted_at IS NULL' }${ filter } ORDER BY f.path LIMIT $${params.push(paged ? pageRequest.limit+1 : ListingPage.legacyMaxRows+1)}`, params);
+      WHERE ${ scope.where } ${ scope.orderLimit }`, scope.values);
     if(!paged && rows.rows.length>ListingPage.legacyMaxRows) throw new HttpError(413,'listing exceeds the 20,000-row compatibility limit; use limit and cursor pagination');
     const hasMore=paged && rows.rows.length>pageRequest.limit; const page=rows.rows.slice(0,paged?pageRequest.limit:ListingPage.legacyMaxRows); if(paged) pageRequest.apply(response,hasMore,page.at(-1)?.path);
     const actor = identity(request); const visible = [];
@@ -1772,7 +1911,7 @@ export function createApp(
     }
     response.json(visible);
   } catch (error) { next(error) } });
-  app.post('/v1/files/:id/conflicts/keep-both', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/files/:id/conflicts/keep-both', async(request:RequestWithIdentity, response, next) => { try {
     const conflictFileId = request.params.id;
     const conflictVersionId = String(request.body.currentVersionId ?? '');
     const sourceFileId = String(request.body.sourceFileId ?? '');
@@ -1781,7 +1920,7 @@ export function createApp(
     const displayedConflict = await requireFile(request, conflictFileId, 'edit');
     const displayedSource = await requireFile(request, sourceFileId, 'edit');
     if (displayedConflict.collection_id !== displayedSource.collection_id) throw new HttpError(409, 'The displayed conflict source is no longer in the same collection. Refresh Files and try again.');
-    await client.query('BEGIN');
+    await transactions.run('keep-both',async client=>{
     await lockStoredNamespace(client, displayedConflict.collection_id);
     const relation = (await client.query('SELECT source_file_id FROM files_native_conflicts WHERE file_id=$1 FOR UPDATE', [conflictFileId])).rows[0];
     if (!relation || relation.source_file_id !== sourceFileId) throw new HttpError(409, 'This conflict changed. Refresh Files and try again.');
@@ -1796,9 +1935,9 @@ export function createApp(
     if (removed.rowCount !== 1) throw new HttpError(409, 'This conflict was already changed. Refresh Files and try again.');
     await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details)
       VALUES($1,$2,$3,$4,$5,'conflict-keep-both',$6)`, [identity(request).kind === 'capability' ? 'agent-or-device' : 'user', identity(request).userId, identity(request).deviceId || null, conflictFileId, conflictVersionId, JSON.stringify({ sourceFileId, sourceVersionId })]);
-    await client.query('COMMIT');
+    });
     response.status(204).end();
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  } catch (error) { next(error) } });
   app.post('/v1/files/:id/reindex', async(request:RequestWithIdentity, response, next) => { try {
     if (!indexer) return response.status(503).json({ error: 'indexing unavailable' });
     await requireFile(request, request.params.id, 'edit');
@@ -1857,52 +1996,60 @@ export function createApp(
   app.get('/v1/files/:id/download', (request:RequestWithIdentity, response, next) => stream(request, response, next, true));
   app.get('/v1/files/:id/thumbnail', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const versionId = await visibleVersion(request, file, typeof request.query.versionId === 'string' ? request.query.versionId : undefined); const content = await thumbnail(db, config, store, file.id, versionId); if (!content) return response.sendStatus(404); return sendContent(request, response, content, 'private, max-age=86400') } catch (error) { next(error) } });
   app.get('/v1/files/:id/history', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'view'); const rows = await db.query(`SELECT *,major_version::text||'.'||minor_version::text AS version_number FROM file_versions WHERE file_id=$1 ORDER BY created_at DESC`, [request.params.id]); response.json(rows.rows.filter(row => !row.path || !isProtectedPath(row.path))) } catch (error) { next(error) } });
-  app.put('/v1/files/:id/content', async(request:RequestWithIdentity, response, next) => { const client=await db.connect(); try {
+  app.put('/v1/files/:id/content', async(request:RequestWithIdentity, response, next) => { try {
     const baseVersionId=String(request.body?.baseVersionId??''); const content=request.body?.content;
     if(!UUID.test(baseVersionId)||typeof content!=='string') throw new HttpError(400,'baseVersionId and text content are required');
-    await client.query('BEGIN'); let file=await requireFile(request,request.params.id,'edit',client); await lockStoredNamespace(client,file.collection_id); file=await requireFile(request,file.id,'edit',client);
-    const base=(await client.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted',[baseVersionId,file.id])).rows[0];
-    if(!base){await client.query('ROLLBACK');return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited Files version is no longer available.',currentVersionId:file.current_version_id})}
+    const file=await requireFile(request,request.params.id,'edit');
+    const base=(await db.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted',[baseVersionId,file.id])).rows[0];
+    if(!base){return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited Files version is no longer available.',currentVersionId:file.current_version_id})}
     const readVersion=async(fileId:string,versionId:string):Promise<Buffer>=>{const loaded=await loadFileContent(db,config,store,fileId,versionId);if(!loaded)throw new HttpError(409,'Files version content is unavailable');return loaded.buffer};
     const currentBytes=await readVersion(file.id,file.current_version_id); let saved;
-    try{saved=await textSave(client,file,baseVersionId,Buffer.from(content,'utf8'),currentBytes,readVersion)}catch(error){
-      if(baseVersionId!==file.current_version_id){await client.query('ROLLBACK');return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited version could not be merged safely.',currentVersionId:file.current_version_id})}
+    try{saved=await textSave(db as unknown as pg.PoolClient,file,baseVersionId,Buffer.from(content,'utf8'),currentBytes,readVersion)}catch(error){
+      if(!databaseFailures.isConnectionLoss(error)&&baseVersionId!==file.current_version_id){return response.status(409).json({code:'VERSION_CONFLICT',error:'The edited version could not be merged safely.',currentVersionId:file.current_version_id})}
       throw error;
     }
-    const actor=identity(request); const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,bytes:saved.bytes,actor,
+    const actor=identity(request); const staged=await stageVersionContent(file.collection_id,saved.bytes);
+    const result=await transactions.run('web-editor-save',async client=>{
+    await lockStoredNamespace(client,file.collection_id,file.path);
+    const current=await requireFile(request,file.id,'edit',client);
+    if(current.current_version_id!==file.current_version_id||current.path!==file.path||current.collection_id!==file.collection_id)throw new HttpError(409,'Files version changed while preparing save; retry');
+    const result=await insertVersion(client,{collectionId:file.collection_id,fileId:file.id,path:file.path,mime:file.mime,bytes:saved.bytes,staged,actor,
       createdByType:actor.agentId?'agent':actor.jobId?'agent-run':undefined,createdById:actor.agentId??actor.jobId??actor.userId,message:'Saved with version check',baseVersionId:file.current_version_id});
-    if(saved.document)await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document); await client.query('COMMIT'); if(saved.document)adoptLive(request,file.id,saved.document);
+    if(saved.document)await saveAutomergeVersion(client,file.id,result.current_version_id,saved.document); return result; }); if(saved.document)adoptLive(request,file.id,saved.document);
     await audit(request,'version-checked-save',result,{baseVersionId,merged:saved.merged,versionId:result.current_version_id});
     response.json({status:saved.merged?'merged':'saved',fileId:result.id,path:result.path,mime:result.mime,content:saved.bytes.toString('utf8'),versionId:result.current_version_id});
-  }catch(error){await client.query('ROLLBACK');next(error)}finally{client.release()} });
-  app.put('/v1/files/upload', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); let inTransaction = false; try {
+  }catch(error){next(error)} });
+  app.put('/v1/files/upload', async(request:RequestWithIdentity, response, next) => { const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? ''); const path = cleanPath(String(request.query.path ?? ''), false); const actor = identity(request);
     const lengthHeader = request.header('content-length') ?? request.header('x-sulla-expected-bytes');
     const expectedBytes = lengthHeader === undefined ? undefined : Number(lengthHeader);
     if (expectedBytes !== undefined && (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > 2 * 1024 * 1024 * 1024)) throw new HttpError(400, 'valid content-length is required');
     const baseVersionId = typeof request.query.baseVersionId === 'string' ? request.query.baseVersionId : undefined;
     const conflict = (current:any) => response.status(409).json({ code: 'VERSION_CONFLICT', error: 'The Files version this upload was based on is no longer current.', currentVersionId: current?.current_version_id ?? null });
-    const authorize = async(row:any) => {
-      if (row) { await assertUnprotectedFile(client, row); try { await requirePath(request, collectionId, path, 'edit') } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, row.id, 'edit') } }
-      else await requirePath(request, collectionId, path, 'edit');
+    const authorize = async(row:any,client:pg.Pool|pg.PoolClient=db) => {
+      if (row) { await assertUnprotectedFile(client, row); try { await requirePath(request, collectionId, path, 'edit',client) } catch (error:any) { if (error.status !== 403) throw error; await requireFile(request, row.id, 'edit',client) } }
+      else await requirePath(request, collectionId, path, 'edit',client);
     };
     await beginUploadIntent(db, uploadId, collectionId);
     // Authorize and fail fast BEFORE reading the body. The body is streamed into chunks with no
     // transaction open: a slow client must never hold BEGIN or the namespace lock (Postgres kills
     // idle-in-transaction sessions after 60 s, and the lock would block every other writer).
-    const before = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2', [collectionId, path])).rows[0];
+    const before = (await db.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2', [collectionId, path])).rows[0];
     await authorize(before);
     if (baseVersionId !== undefined && (!UUID.test(baseVersionId) || before?.current_version_id !== baseVersionId || before?.deleted_at)) return conflict(before);
     const streamed = await streamUploadChunks(config, store, { uploadId, collectionId, expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, body: request, intentDb: db });
     // Short metadata transaction: re-read under the lock and re-check what may have changed while streaming.
-    await client.query('BEGIN'); inTransaction = true; await lockStoredNamespace(client, collectionId);
+    const outcome=await transactions.run('upload',async client=>{
+    await lockStoredNamespace(client, collectionId);
     const existing = (await client.query('SELECT * FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [collectionId, path])).rows[0];
-    if (existing?.id !== before?.id) await authorize(existing); else if (existing) await assertUnprotectedFile(client, existing);
-    if (baseVersionId !== undefined && (existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { await client.query('ROLLBACK'); inTransaction = false; return conflict(existing) }
+    if (existing?.id !== before?.id) await authorize(existing,client); else if (existing) await assertUnprotectedFile(client, existing);
+    if (baseVersionId !== undefined && (existing?.current_version_id !== baseVersionId || existing?.deleted_at)) { return {conflict:existing} }
     const file = await commitStreamedUpload(client, { uploadId, collectionId, path, mime: request.header('content-type') ?? 'application/octet-stream', expectedBytes, maxBytes: 2 * 1024 * 1024 * 1024, actor, body: request, intentDb: db, existingFile: existing ? { id: existing.id, current_version_id: existing.current_version_id } : undefined, message: 'Uploaded' }, streamed);
-    await client.query('COMMIT'); inTransaction = false; await completeUploadIntent(db, uploadId).catch(()=>undefined); await audit(request, 'upload', file); response.status(201).json(file);
-  } catch (error) { if (inTransaction) await client.query('ROLLBACK').catch(() => undefined); next(error) } finally { client.release() } });
-  app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); const uploadId = randomUUID(); try {
+    return {file}; });
+    if(!outcome.file)return conflict(outcome.conflict); const file=outcome.file;
+    await completeUploadIntent(db, uploadId).catch(()=>undefined); await audit(request, 'upload', file); response.status(201).json(file);
+  } catch (error) { next(error) } });
+  app.put('/v1/files/import', async(request:RequestWithIdentity, response, next) => { const uploadId = randomUUID(); try {
     const collectionId = String(request.query.collectionId ?? '');
     const requestedPath = cleanPath(String(request.query.path ?? ''), false);
     const keepBoth = request.query.conflict === 'keep-both';
@@ -1917,10 +2064,10 @@ export function createApp(
     // Stream the body into chunks first (no transaction held during the network transfer), then
     // pick the path and write metadata in a short transaction.
     const streamed = await streamUploadChunks(config, store, { uploadId, collectionId, expectedBytes: declaredBytes, body: request, intentDb: db });
-    await client.query('BEGIN');
+    const result=await transactions.run('import',async client=>{
     await lockStoredNamespace(client, collectionId);
     const path = await availableStoredPath(client, collectionId, requestedPath, keepBoth);
-    if (path !== requestedPath) await requirePath(request, collectionId, path, 'edit');
+    if (path !== requestedPath) await requirePath(request, collectionId, path, 'edit',client);
     await assertStoredFilePath(client, collectionId, path);
     await ensureStoredFileParents(client, collectionId, path, actor);
     const file = await commitStreamedUpload(client, {
@@ -1928,10 +2075,11 @@ export function createApp(
       expectedBytes: declaredBytes, actor, body: request, intentDb: db,
       message: path === requestedPath ? 'Imported into Files' : `Imported as ${ path } to preserve both files`,
     }, streamed);
-    await client.query('COMMIT');
+    return {file,path}; });
+    const {file,path}=result;
     await completeUploadIntent(db, uploadId).catch(() => undefined);
     response.status(201).json({ ...file, requested_path: requestedPath, conflict_resolution: path === requestedPath ? 'none' : 'kept-both' });
-  } catch (error:any) { await client.query('ROLLBACK'); if (error?.code === '23505') return response.status(409).json({ error: 'A file or folder already exists at that Files path.' }); next(error) } finally { client.release() } });
+  } catch (error:any) { if (error?.code === '23505') return response.status(409).json({ error: 'A file or folder already exists at that Files path.' }); next(error) } });
   app.delete('/v1/files/:id', async(request:RequestWithIdentity, response, next) => { try {
     await trashFileWithoutReceipt(db, request.params.id, identity(request), operationAccess(request));
     response.status(204).end();
@@ -2028,40 +2176,58 @@ export function createApp(
       response.status(result.status==='recovery-required'?202:200).json(result);
     } catch(error) { next(error) }
   });
-  app.post('/v1/files/:id/restore', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try { const file = await requireFile(request, request.params.id, 'edit'); const actor = identity(request); const authorized = await visibleVersion(request, file, String(request.body.versionId ?? '')); const source = (await db.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [authorized, file.id])).rows[0]; if (!source) throw new HttpError(404, 'version not found'); await client.query('BEGIN'); const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,version_comment,version_kind,publication_status,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,'user',$6,'Restored version',$7,'minor',NULL,$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.manifest_hash, source.size, actor.userId, request.body.comment ?? 'Restored as a new version', actor.deviceId || 'server-web'])).rows[0]; await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]); await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW() WHERE id=$1', [file.id, version.id, source.size]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, version.id]); await client.query('COMMIT'); await audit(request, 'version-restore', { ...file, current_version_id: version.id }); response.json({ ok: true, versionId: version.id }) } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+  app.post('/v1/files/:id/restore', async(request:RequestWithIdentity, response, next) => { try { const file = await requireFile(request, request.params.id, 'edit'); const actor = identity(request); const authorized = await visibleVersion(request, file, String(request.body.versionId ?? '')); const source = (await db.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [authorized, file.id])).rows[0]; if (!source) throw new HttpError(404, 'version not found'); const version=await transactions.run('restore-version',async client=>{ await lockStoredNamespace(client,file.collection_id,file.path); const current=await requireFile(request,file.id,'edit',client); if(current.current_version_id!==file.current_version_id)throw new HttpError(409,'Files version changed while preparing restore'); const available=await client.query('SELECT id FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted FOR UPDATE',[source.id,file.id]);if(!available.rowCount)throw new HttpError(409,'Restore source changed'); const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,version_comment,version_kind,publication_status,device_id,base_server_version_id) VALUES($1,$2,$3,$4,$5,'user',$6,'Restored version',$7,'minor',NULL,$8,$3) RETURNING id`, [file.id, source.chunk_collection_id, file.current_version_id, source.manifest_hash, source.size, actor.userId, request.body.comment ?? 'Restored as a new version', actor.deviceId || 'server-web'])).rows[0]; await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id IN (SELECT jsonb_array_elements_text(chunk_ids) FROM manifests WHERE hash=$2)', [source.chunk_collection_id, source.manifest_hash]); await client.query('UPDATE files SET current_version_id=$2,deleted_at=NULL,size=$3,updated_at=NOW() WHERE id=$1', [file.id, version.id, source.size]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'restore')", [file.collection_id, file.id, version.id]); return version; }); await audit(request, 'version-restore', { ...file, current_version_id: version.id }); response.json({ ok: true, versionId: version.id }) } catch (error) { next(error) } });
 
-  app.post('/v1/agent-files/:id/keep', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+  app.post('/v1/agent-files/:id/keep', async(request:RequestWithIdentity, response, next) => { try {
     const source = await requireFile(request, request.params.id, 'edit'); const targetCollectionId = String(request.body.collectionId ?? ''); const targetPath = cleanPath(String(request.body.path ?? source.path), false);
     await requirePath(request, targetCollectionId, targetPath, 'edit'); const target = await collectionRow(targetCollectionId); if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
     const content = await loadFileContent(db, config, store, source.id, source.current_version_id); if (!content) throw new HttpError(404, 'source content not found');
+    if(source.collection_id===targetCollectionId&&source.path===targetPath)throw new HttpError(409,'The file is already kept at this path');
     const actor = identity(request);
-    await client.query('BEGIN');
+    const staged=await stageVersionContent(targetCollectionId,content.buffer);
+    const kept=await transactions.run('keep-agent-file',async client=>{
+    for(const id of [...new Set([source.collection_id,targetCollectionId])].sort())await lockStoredNamespace(client,id);
+    await client.query('SELECT id FROM files WHERE id=$1 FOR UPDATE',[source.id]);
+    const current=await requireFile(request,source.id,'edit',client);
+    if(current.current_version_id!==source.current_version_id||current.path!==source.path||current.collection_id!==source.collection_id)throw new HttpError(409,'Source changed while preparing keep');
+    await requirePath(request,targetCollectionId,targetPath,'edit',client);
     await lockStoredNamespace(client, targetCollectionId);
     const lockedExisting = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [targetCollectionId, targetPath])).rows[0];
-    const kept = await insertVersion(client, { collectionId: targetCollectionId, fileId: lockedExisting?.id, path: targetPath, mime: source.mime, bytes: content.buffer, actor, createdByType: source.created_by_type, createdById: source.created_by_id, message: `Kept from agent run ${ source.created_by_id }` });
+    const kept = await insertVersion(client, { collectionId: targetCollectionId, fileId: lockedExisting?.id, path: targetPath, mime: source.mime, bytes: content.buffer, staged, actor, createdByType: source.created_by_type, createdById: source.created_by_id, message: `Kept from agent run ${ source.created_by_id }` });
     await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [source.id]);
     await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,props,created_by) VALUES('file',$1,'agent-run',$2,'created_by',$3,$4) ON CONFLICT DO NOTHING`, [kept.id, source.created_by_id, JSON.stringify({ keptFromCollectionId: source.collection_id, sourceFileId: source.id }), actor.userId]);
-    await client.query('COMMIT'); await audit(request, 'keep-agent-file', kept); response.json({ ...kept, provenance: { type: source.created_by_type, id: source.created_by_id } });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
-  app.post('/v1/agent-runs/:runId/keep', async(request:RequestWithIdentity, response, next) => { const client = await db.connect(); try {
+    return kept; }); await audit(request, 'keep-agent-file', kept); response.json({ ...kept, provenance: { type: source.created_by_type, id: source.created_by_id } });
+  } catch (error) { next(error) } });
+  app.post('/v1/agent-runs/:runId/keep', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request); const source = (await db.query("SELECT * FROM collections WHERE owner_user_id=$1 AND agent_run_id=$2 AND kind='scratch' AND published=TRUE AND legacy_source=FALSE", [actor.userId, request.params.runId])).rows[0];
     if (!source) throw new HttpError(404, 'scratch run not found');
     const targetCollectionId = String(request.body.collectionId ?? ''); await requireCollection(request, targetCollectionId, 'edit'); const target = await collectionRow(targetCollectionId);
     if (target.kind === 'scratch') throw new HttpError(400, 'Keep target must be a permanent collection');
     const files = (await db.query(`SELECT ${FILE_COLUMNS_SQL} FROM files f WHERE f.collection_id=$1 AND f.created_by_id=$2 AND f.deleted_at IS NULL`, [source.id, request.params.runId])).rows;
-    const materialized = await Promise.all(files.map(async file => ({ file, content: await loadFileContent(db, config, store, file.id, file.current_version_id) })));
-    await client.query('BEGIN');
-    await lockStoredNamespace(client, targetCollectionId);
+    const materialized:{file:any;content:NonNullable<Awaited<ReturnType<typeof loadFileContent>>>;staged:StagedVersionContent}[]=[];
+    // Bound acquisitions and encryption work instead of flooding the pool for a large run.
+    for(const file of files){
+      const content=await loadFileContent(db,config,store,file.id,file.current_version_id);
+      if(!content)throw new HttpError(404,'Source content not found');
+      materialized.push({file,content,staged:await stageVersionContent(targetCollectionId,content.buffer)});
+    }
+    const count=await transactions.run('keep-agent-run',async client=>{
+    await requireCollection(request,targetCollectionId,'edit',false,false,client);
+    for(const id of [...new Set([source.id,targetCollectionId])].sort())await lockStoredNamespace(client,id);
+    await client.query('SELECT id FROM files WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[materialized.map(item=>item.file.id)]);
     let count = 0;
     for (const item of materialized) {
       if (!item.content) throw new HttpError(404, `source content not found for ${ item.file.path }`);
+      const current=await requireFile(request,item.file.id,'edit',client);
+      if(current.current_version_id!==item.file.current_version_id||current.path!==item.file.path||current.collection_id!==item.file.collection_id)throw new HttpError(409,'Source changed while preparing keep');
+      await requirePath(request,targetCollectionId,item.file.path,'edit',client);
       const existing = (await client.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 FOR UPDATE', [targetCollectionId, item.file.path])).rows[0];
-      const kept = await insertVersion(client, { collectionId: targetCollectionId, fileId: existing?.id, path: item.file.path, mime: item.file.mime, bytes: item.content.buffer, actor, createdByType: item.file.created_by_type, createdById: item.file.created_by_id, message: `Kept from agent run ${ request.params.runId }` });
+      const kept = await insertVersion(client, { collectionId: targetCollectionId, fileId: existing?.id, path: item.file.path, mime: item.file.mime, bytes: item.content.buffer, staged:item.staged, actor, createdByType: item.file.created_by_type, createdById: item.file.created_by_id, message: `Kept from agent run ${ request.params.runId }` });
       await client.query('UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [item.file.id]);
       await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,props,created_by) VALUES('file',$1,'agent-run',$2,'created_by',$3,$4) ON CONFLICT DO NOTHING`, [kept.id, request.params.runId, JSON.stringify({ keptFromCollectionId: source.id, sourceFileId: item.file.id }), actor.userId]); count++;
     }
-    await client.query('COMMIT'); response.json({ count });
-  } catch (error) { await client.query('ROLLBACK'); next(error) } finally { client.release() } });
+    return count; }); response.json({ count });
+  } catch (error) { next(error) } });
   app.post('/v1/agent-runs/:runId/end', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request);
     const result = await db.query(`UPDATE files f SET expires_at=NOW()+INTERVAL '14 days',updated_at=NOW()
@@ -2081,6 +2247,15 @@ export function createApp(
   app.use('/v1/database-file-operations', (error:any, _request:any, response:any, _next:any) => {
     const status = error.status ?? (error.code === '23505' ? 409 : 500);
     response.status(status).json({ error: status < 500 ? error.message : 'Database operation failed', code: error.code ?? 'operation-failed' });
+  });
+  // A lost database connection is transient: answer 503 + Retry-After with a stable code so the
+  // mount and other clients retry, instead of an opaque 500 that surfaces to agents as EIO.
+  const databaseFailures = new DatabaseFailureClassifier();
+  app.use((error:any, _request:any, response:any, next:any) => {
+    if (!(error instanceof RetryableDatabaseError) && error?.code !== 'FILES_DB_RETRYABLE' && !databaseFailures.isConnectionLoss(error)) return next(error);
+    console.warn('[SullaFiles] request failed on a lost database connection; client may retry', { path: _request.path, error: String(error?.cause?.message ?? error?.message ?? error) });
+    response.setHeader('Retry-After', '1');
+    return response.status(503).json({ error: error instanceof RetryableDatabaseError || error?.code === 'FILES_DB_RETRYABLE' ? error.message : 'Files lost its database connection; retry the request', code: 'FILES_DB_RETRYABLE', retryable: true });
   });
   app.use((error:any, _request:any, response:any, _next:any) => response.status(error.status ?? (error.code === '23505' ? 409 : error.code === '55000' ? 423 : 500)).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error', ...((error.status === 423 || error.code === '55000') ? {code:'FILE_LOCKED'} : error.code === 'EROFS' ? {code:'EROFS'} : error.code === 'FILE_OFFLINE' ? {code:'FILE_OFFLINE'} : {}), ...(error.conflictPath ? { conflictPath: error.conflictPath } : {}) })); return app;
 }

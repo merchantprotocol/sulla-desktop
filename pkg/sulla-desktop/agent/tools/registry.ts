@@ -73,7 +73,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'desktop', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'files', 'fs', 'function', 'gdrive', 'github', 'integrations', 'kubectl', 'ledger', 'mail', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'pg', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'desktop', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'files', 'fs', 'function', 'gdrive', 'github', 'integrations', 'kubectl', 'ledger', 'mail', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'org', 'pg', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -192,6 +192,7 @@ export class ToolRegistry {
         instance.name = m.name;
         instance.description = m.description;
         instance.metadata.category = m.category;
+        instance.metadata.sideEffect = m.sideEffect;
         instance.metadata.operationTypes = Array.isArray(m.operationTypes) ? [...m.operationTypes] : [];
         return instance;
       });

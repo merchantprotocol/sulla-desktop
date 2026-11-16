@@ -61,7 +61,7 @@ export async function drainPendingChunkGc(db:pg.Pool, deleteChunk:(collectionId:
       await client.query('COMMIT');
     } catch (error:any) {
       await client.query('ROLLBACK');
-      await db.query('UPDATE file_chunk_gc SET last_error=$3 WHERE collection_id=$1 AND chunk_id=$2', [item.collection_id, item.chunk_id, String(error?.message ?? error).slice(0, 1000)]).catch(() => undefined);
+      await client.query('UPDATE file_chunk_gc SET last_error=$3 WHERE collection_id=$1 AND chunk_id=$2', [item.collection_id, item.chunk_id, String(error?.message ?? error).slice(0, 1000)]).catch(() => undefined);
     } finally { client.release() }
     }
     if (pending.rows.length < 500) break;

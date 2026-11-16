@@ -1,3 +1,5 @@
+import { describe, expect, it } from 'vitest';
+import toolPlacements from '../../../../../resources/tool-placements.json';
 import { DockerDiagnostics } from '../../tools/docker/DockerDiagnostics';
 import { DockerExecWorker } from '../../tools/docker/docker_exec';
 
@@ -24,6 +26,26 @@ describe('DockerDiagnostics', () => {
     expect(diagnostics.healthFlags({ State: { Status: 'running', Health: { Status: 'unhealthy' } } })).toContain('unhealthy');
     expect(diagnostics.healthFlags({ State: { Status: 'restarting' } })).toContain('restarting');
     expect(diagnostics.healthFlags({ State: { Status: 'exited', OOMKilled: true, ExitCode: 137 } })).toEqual(expect.arrayContaining(['oom-killed', 'exited-nonzero']));
+  });
+
+  it('refuses exec into vault or wallet containers without invoking Docker', async () => {
+    // risk: privacy/security — command execution must never inspect sealed vault or wallet data.
+    const worker = new DockerExecWorker() as any;
+    for (const container of ['sulla_vault', 'wallet-service', 'WALLET_backup']) {
+      const result = await worker._validatedCall({ container, command: 'cat /sealed/data' });
+      expect(result.successBoolean).toBe(false);
+      expect(result.responseString).toContain('vault and wallet containers are sealed');
+    }
+  });
+
+  it('keeps docker_exec relayable to the Sulla runtime VM', () => {
+    // risk: execution — agent-container calls must route to Desktop instead of a missing local Docker CLI.
+    expect(toolPlacements.tools['docker/docker_exec']).toMatchObject({
+      placements: ['desktop'],
+      relayable: true,
+    });
+    expect(toolPlacements.tools['docker/docker_run'].relayable).toBe(false);
+    expect(toolPlacements.tools['docker/docker_build'].relayable).toBe(false);
   });
 
   it('passes the user command as one argv to sh -c via the Docker worker', () => {

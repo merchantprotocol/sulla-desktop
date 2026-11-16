@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { TransactionRunner } from './FilesTransaction.js';
+import type pg from 'pg';
+
 /**
  * Plain, read-only mirroring of Desktop-owned system-area content (such as
  * published Use Cases) into Files.
@@ -61,23 +64,16 @@ export async function mirrorSystemAreaFile(db:ConnectionPool, input:{
   lockNamespace(client:Queryable, collectionId:string):Promise<void>;
   insertVersion(client:Queryable, existing?:{ id:string; current_version_id:string | null }):Promise<{ id:string; current_version_id:string }>;
 }):Promise<MirroredSystemFile> {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
+  return new TransactionRunner(db as unknown as pg.Pool).run('system-area-ingest',async client=>{
     await deps.lockNamespace(client, input.collectionId);
     const existing = (await client.query(`SELECT f.id::text,f.current_version_id::text,f.deleted_at,v.manifest_hash FROM files f
       LEFT JOIN file_versions v ON v.id=f.current_version_id WHERE f.collection_id=$1 AND f.path=$2 FOR UPDATE OF f`, [input.collectionId, input.path])).rows[0] as
       { id:string; current_version_id:string | null; deleted_at:Date | null; manifest_hash:string | null } | undefined;
     if (existing?.current_version_id && !existing.deleted_at && existing.manifest_hash === input.manifestHash) {
-      await client.query('COMMIT');
       return { id: existing.id, current_version_id: existing.current_version_id, unchanged: true };
     }
     const inserted = await deps.insertVersion(client, existing ? { id: existing.id, current_version_id: existing.current_version_id } : undefined);
     if (input.skipSearchIndex) await skipSearchIndexForVersion(client, inserted.id, inserted.current_version_id);
-    await client.query('COMMIT');
     return { id: inserted.id, current_version_id: inserted.current_version_id, unchanged: false };
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally { client.release() }
+  });
 }

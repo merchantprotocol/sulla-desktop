@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { TransactionRunner } from '../FilesTransaction.js';
+
 import { createHash, randomUUID } from 'node:crypto';
 
 import type pg from 'pg';
@@ -104,18 +106,7 @@ function manifestHash(chunkIds:string[], size:number):string {
 }
 
 async function transaction<T>(db:pg.Pool, work:(client:pg.PoolClient) => Promise<T>):Promise<T> {
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await work(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
+  return new TransactionRunner(db).run('cloud-sync-metadata',work);
 }
 
 /** All cloud-sync SQL. Collections in system areas (Logs, Training Data) are never sync candidates. */

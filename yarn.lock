@@ -41,6 +41,18 @@
     fflate "^0.8.3"
     zod "^3.25.0"
 
+"@sulla/domain@file:vendor/sulla-core/sulla-domain-0.4.1-e11de18.tgz":
+  version "0.4.1"
+  resolved "file:vendor/sulla-core/sulla-domain-0.4.1-e11de18.tgz#aa929b1642438e1fb1ecd93420bc6c38397f680d"
+  integrity sha512-nGh8FqMGtm3QYOvmHTQ5l+z9l2Eo5VegO7zGRG85HCQ1EpaFmL8HqSrsmdF+caPTaSAtdXHOqtFDANSvFpLTJw==
+  dependencies:
+    "@noble/ciphers" "^2.0.1"
+    "@noble/curves" "^2.0.1"
+    "@noble/hashes" "^2.0.1"
+    "@sulla/foundation" "0.1.1"
+    fflate "^0.8.3"
+    zod "^3.25.0"
+
 "@sulla/foundation@0.1.1", "@sulla/foundation@file:vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz":
   version "0.1.1"
   resolved "file:vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz#9ac6d23fb52b8f858730957a881a44d1adf6fbe4"

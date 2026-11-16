@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderSourceSnapshot, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationCapabilities, type FilesPreview, type FilesSaveConflict, type FilesSaveRequest, type FilesSaveSuccess, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
+import { normalizeFilesIndexCoverage, type FilesFolderSummary, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderSourceSnapshot, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationCapabilities, type FilesPreview, type FilesSaveConflict, type FilesSaveRequest, type FilesSaveSuccess, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
 import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -11,6 +11,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { FilesRevealResult, FilesOperationRequest, FilesOperationReceipt, FilesOperationRetry } from './types';
 import { webUtils, type IpcRendererEvent } from 'electron';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
+
+interface CollectionStats { fileCount:number; totalBytes:number; agentRunCount:number; indexing:FilesIndexCoverage }
 
 interface RemoteCapabilities {
   orgSharing: boolean;
@@ -104,7 +106,14 @@ export class DesktopFilesDataSource implements FilesDataSource {
   private files: FilesItem[] = [];
   private filesCursor:string|null = null;
   private filesHasMore = false;
+  private listingPath = '';
   private loadingMore = false;
+  private loadingMorePromise:Promise<FilesItem[]>|null = null;
+  private listingGeneration = 0;
+  private folderListeners = new Set<(files:FilesItem[])=>void>();
+  private statsCache:{ collectionId:string; at:number; value:CollectionStats }|null = null;
+  static readonly statsMaxAgeMs = 30_000;
+  private summaryCache = new Map<string,{ at:number; value:FilesFolderSummary[] }>();
   private watching = false;
   private watchedCollectionId = '';
   private collectionId = '';
@@ -131,7 +140,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilitiesListeners.forEach(listener => listener());
   }
 
-  selectCollection(collectionId:string):void { this.collectionId = collectionId }
+  selectCollection(collectionId:string):void { if(collectionId!==this.collectionId){this.listingGeneration++;this.listingPath='';this.files=[];this.filesCursor=null;this.filesHasMore=false;} this.collectionId = collectionId }
 
   private resetRemoteCapabilities():void {
     Object.assign(this.capabilities, {
@@ -176,6 +185,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async load():Promise<FilesSnapshot> {
+    const listingGeneration = this.listingGeneration;
+    const listingPath = this.listingPath;
     this.capabilities.durableOperations = false;
     this.capabilities.folderReceipts = false;
     this.capabilities.nativeFolderReceipts = false;
@@ -197,6 +208,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Wait for Files to finish starting, then try again.');
+    if (this.collectionId !== collection.id) this.listingPath = '';
     this.collectionId = collection.id;
     if (this.watching && this.watchedCollectionId !== collection.id) {
       this.watchedCollectionId = collection.id;
@@ -223,9 +235,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
       status.serverConfigured = selectedRoot.serverConfigured ?? status.serverConfigured;
     }
     this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
-    const [activePage, trash] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
+    const [activePage, trash, stats] = await Promise.all([
+      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id, path:listingPath, children:true }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
       ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
+      this.collectionStats(collection.id),
     ]).catch((error) => {
       if (capabilitiesGeneration === this.capabilitiesGeneration) {
         this.capabilitiesGeneration++;
@@ -233,10 +246,17 @@ export class DesktopFilesDataSource implements FilesDataSource {
       }
       throw error;
     });
+    if (listingGeneration !== this.listingGeneration || listingPath !== this.listingPath) return this.load();
 
-    this.files = activePage.files.map(file => filesItem(file));
-    this.filesCursor = activePage.nextCursor;
-    this.filesHasMore = activePage.hasMore;
+    // File rows are scoped to the open directory; the complete folder tree remains independently paged.
+    const loaded = [...activePage.files];
+    const cursor = activePage.nextCursor;
+    const hasMore = activePage.hasMore;
+    this.files = loaded.map(file => filesItem(file));
+    this.filesCursor = cursor;
+    this.filesHasMore = hasMore && Boolean(cursor);
+    if (this.filesHasMore) void this.completeFolder(listingGeneration,listingPath);
+    this.listingPath = this.listingPath || '';
     const trashItems = (trash as FilesApiRecord[]).map(trashItem);
     if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
@@ -250,6 +270,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
         retentionPolicy: collection.retention_policy ?? {},
         storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
         keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
+        fileCount:       stats?.fileCount,
+        totalBytes:      stats?.totalBytes,
+        agentRunCount:   stats?.agentRunCount,
         desktopCount:    collection.desktop_count === undefined ? undefined : Number(collection.desktop_count),
         memberCount:     collection.member_count === undefined ? undefined : Number(collection.member_count),
         accountName:     collection.account_display_name,
@@ -263,20 +286,98 @@ export class DesktopFilesDataSource implements FilesDataSource {
       availableCollections,
       files: this.files,
       trash: trashItems,
-      status: { ...status, indexing: indexCoverage(this.files.filter(file => !file.deletedAt)) },
+      status: { ...status, indexing: stats ? normalizeFilesIndexCoverage(stats.indexing) : indexCoverage(this.files.filter(file => !file.deletedAt)) },
     };
     return snapshot;
   }
 
-  async loadMore():Promise<FilesItem[]> {
-    if(this.loadingMore || !this.filesHasMore || !this.collectionId) return this.files;
-    this.loadingMore=true;
+  async loadFolder(path:string):Promise<FilesItem[]> {
+    const generation=++this.listingGeneration;
+    this.listingPath=path; this.files=[]; this.filesCursor=null; this.filesHasMore=false;
+    const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+    if(generation!==this.listingGeneration || path!==this.listingPath) return this.files;
+    this.files=page.files.map(file=>filesItem(file)); this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+    void this.completeFolder(generation,path);
+    return this.files;
+  }
+
+  /** Collection-wide totals from the server; cached briefly and dropped on any change event for the collection. */
+  private async collectionStats(collectionId:string):Promise<CollectionStats|undefined> {
+    const cached=this.statsCache;
+    if(cached && cached.collectionId===collectionId && Date.now()-cached.at<DesktopFilesDataSource.statsMaxAgeMs) return cached.value;
     try {
-      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,cursor:this.filesCursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      const value=await ipcRenderer.invoke('sulla-files:stats',{collectionId}) as CollectionStats;
+      this.statsCache={collectionId,at:Date.now(),value};
+      return value;
+    } catch { return undefined }
+  }
+
+  async recentFiles(options:{ limit?:number; createdByType?:'user' | 'agent-run' } = {}):Promise<FilesItem[]> {
+    if(!this.collectionId) return [];
+    const rows=await ipcRenderer.invoke('sulla-files:recent',{collectionId:this.collectionId,limit:options.limit ?? 50,...(options.createdByType?{createdByType:options.createdByType}:{})}) as FilesApiFile[];
+    return rows.map(row=>filesItem(row)).filter(file=>!file.deletedAt);
+  }
+
+  async filesByIds(ids:string[]):Promise<FilesItem[]> {
+    const known=new Map(this.files.map(file=>[file.id,file]));
+    const found:FilesItem[]=[];
+    const pending=[...new Set(ids)];
+    // Bounded fan-out: stars and search hits are resolved a few at a time, never by loading folders.
+    for(let index=0;index<pending.length;index+=8) {
+      const batch=await Promise.all(pending.slice(index,index+8).map(async id=>known.get(id) ?? await (ipcRenderer.invoke('sulla-files:metadata',{fileId:id}) as Promise<FilesApiFile>).then(record=>filesItem(record)).catch(()=>null)));
+      for(const file of batch) if(file && !file.deletedAt) found.push(file);
+    }
+    return found;
+  }
+
+  listFolderChildren(path:string):Promise<FilesItem[]> { return this.pageAll({ path, children:true }) }
+
+  listFolderTree(path:string):Promise<FilesItem[]> { return this.pageAll({ path, children:false }) }
+
+  async folderSummaries(path:string):Promise<FilesFolderSummary[]> {
+    if(!this.collectionId) return [];
+    // Root summaries scan the whole collection, so the 12-second refresh reuses them until a change event arrives.
+    const key=`${ this.collectionId }\n${ path }`; const cached=this.summaryCache.get(key);
+    if(cached && Date.now()-cached.at<DesktopFilesDataSource.statsMaxAgeMs) return cached.value;
+    const value=await ipcRenderer.invoke('sulla-files:folder-summary',{collectionId:this.collectionId,path}) as FilesFolderSummary[];
+    this.summaryCache.set(key,{at:Date.now(),value});
+    return value;
+  }
+
+  private async pageAll(input:{ path:string; children:boolean }):Promise<FilesItem[]> {
+    const collectionId=this.collectionId; const files:FilesItem[]=[]; let cursor:string|undefined;
+    for(;;) {
+      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId,path:input.path,children:input.children,...(cursor?{cursor}:{})}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      files.push(...page.files.map(file=>filesItem(file)));
+      if(!page.hasMore || !page.nextCursor || page.nextCursor===cursor) return files;
+      cursor=page.nextCursor;
+    }
+  }
+
+  private async completeFolder(generation:number,path:string):Promise<void> {
+    while(generation===this.listingGeneration && path===this.listingPath && this.filesHasMore) {
+      await this.loadMore(generation);
+    }
+  }
+
+  async loadMore(generation=this.listingGeneration):Promise<FilesItem[]> {
+    if(this.loadingMore) {
+      await this.loadingMorePromise;
+      return generation===this.listingGeneration ? this.loadMore(generation) : this.files;
+    }
+    if(!this.filesHasMore || !this.collectionId) return this.files;
+    const path=this.listingPath;
+    this.loadingMore=true;
+    this.loadingMorePromise=(async()=>{ try {
+      const cursor=this.filesCursor;
+      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true,cursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      if(generation!==this.listingGeneration || path!==this.listingPath) return this.files;
       this.files.push(...page.files.map(file=>filesItem(file)));
       this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+      this.folderListeners.forEach(listener=>listener([...this.files]));
       return this.files;
-    } finally { this.loadingMore=false; }
+    } finally { this.loadingMore=false; this.loadingMorePromise=null; } })();
+    return this.loadingMorePromise;
   }
 
   async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> {
@@ -319,7 +420,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
   async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {
     const response = await ipcRenderer.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { results:{ id:string }[]; coverage:FilesIndexCoverage };
     const byId = new Map(this.files.map(file => [file.id, file]));
-    return { files: response.results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
+    const details = await Promise.all(response.results.map(async result => byId.get(result.id) ?? await ipcRenderer.invoke('sulla-files:metadata',{fileId:result.id}).then(record=>filesItem(record as FilesApiFile)).catch(()=>null)));
+    return { files: details.filter((file):file is FilesItem=>Boolean(file&&!file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
   }
 
   reindex(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:reindex', { fileId }) }
@@ -365,8 +467,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
     return () => this.capabilitiesListeners.delete(listener);
   }
 
+  onFolderFilesChanged(listener:(files:FilesItem[])=>void):()=>void { this.folderListeners.add(listener); return ()=>this.folderListeners.delete(listener) }
+
   onFilesChanged(listener:(change:{ collectionId:string; seq:string; paths:string[] }) => void):() => void {
-    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => listener(change);
+    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => { if (this.statsCache?.collectionId === change.collectionId) this.statsCache = null; this.summaryCache.clear(); listener(change) };
     this.watching = true;
     ipcRenderer.on('files-ui:changed', wrapped);
     if (this.collectionId) {

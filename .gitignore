@@ -50,3 +50,7 @@ logs/
 
 # SwiftPM/Xcode build output for the Finder sync helper
 native/SullaFinderSync/build/
+
+# Python bytecode
+__pycache__/
+*.pyc
