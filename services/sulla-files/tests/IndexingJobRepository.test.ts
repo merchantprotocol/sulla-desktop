@@ -28,33 +28,34 @@ describe.skipIf(!databaseUrl)('indexing job, accounting and search content repos
     collectionId = await database.collection();
   });
 
-  // risk: lost or duplicated work — a claim must take exactly the oldest due job and count the attempt.
-  it('claims the oldest due pending job, counts the attempt and skips jobs that are not due', async() => {
+  // risk: lost or duplicated work — a claim must take the oldest due jobs, count the attempt and mark the file.
+  it('claims the oldest due pending jobs in order, counts the attempt, marks the file and skips jobs that are not due', async() => {
     const later = await database.file(collectionId, 'later.txt');
     const first = await database.file(collectionId, 'first.txt');
     const notDue = await database.file(collectionId, 'not-due.txt');
     await database.pool.query("UPDATE file_index_jobs SET created_at=NOW()-INTERVAL '1 hour' WHERE version_id=$1", [first.versionId]);
     await database.pool.query("UPDATE file_index_jobs SET created_at=NOW()-INTERVAL '2 hours',available_at=NOW()+INTERVAL '1 hour' WHERE version_id=$1", [notDue.versionId]);
 
-    const claimed = await jobs.claimNext();
-    expect(claimed).toEqual({ file_id: first.fileId, version_id: first.versionId, attempts: 1 });
+    expect(await jobs.claimBatch(1)).toEqual([{ file_id: first.fileId, version_id: first.versionId, attempts: 1 }]);
     expect((await database.job(first.versionId)).status).toBe('indexing');
-    expect((await jobs.claimNext())?.version_id).toBe(later.versionId);
-    expect(await jobs.claimNext()).toBeUndefined();
+    expect((await database.fileRow(first.fileId)).extraction_status).toBe('indexing');
+    expect((await database.fileRow(later.fileId)).extraction_status).not.toBe('indexing');
+    expect((await jobs.claimBatch(5)).map(job => job.version_id)).toEqual([later.versionId]);
+    expect(await jobs.claimBatch(5)).toEqual([]);
     expect((await database.job(notDue.versionId)).status).toBe('pending');
   });
 
-  // risk: two workers index the same version — SKIP LOCKED must hand a concurrent claimer a different job.
+  // risk: two workers index the same version — SKIP LOCKED must hand a concurrent claimer different jobs.
   it('never hands a job another transaction is claiming to a second worker', async() => {
     const a = await database.file(collectionId, 'a.txt');
     const b = await database.file(collectionId, 'b.txt');
     const holder = await database.pool.connect();
     try {
       await holder.query('BEGIN');
-      const held = await jobs.on(holder).claimNext();
-      const other = await jobs.claimNext();
-      expect(held && other && held.version_id !== other.version_id).toBe(true);
-      expect([held?.version_id, other?.version_id].sort()).toEqual([a.versionId, b.versionId].sort());
+      const held = await jobs.on(holder).claimBatch(1);
+      const other = await jobs.claimBatch(5);
+      expect(held).toHaveLength(1); expect(other).toHaveLength(1);
+      expect([held[0].version_id, other[0].version_id].sort()).toEqual([a.versionId, b.versionId].sort());
       await holder.query('ROLLBACK');
     } finally { holder.release() }
   });
@@ -74,6 +75,11 @@ describe.skipIf(!databaseUrl)('indexing job, accounting and search content repos
       expect(await jobs.on(client).lockEligibility('00000000-0000-4000-8000-000000000000')).toBeUndefined();
       await client.query('COMMIT');
     } finally { client.release() }
+    // The unlocked batch read reports the same eligibility (it only decides what to extract).
+    const read = await jobs.readEligibility([file.fileId, logged.fileId, '00000000-0000-4000-8000-000000000000']);
+    expect(read.get(file.fileId)).toMatchObject({ path: 'notes.md', current_version_id: file.versionId, protected: true, system_area: null });
+    expect(read.get(logged.fileId)?.system_area).toBe('logs');
+    expect(read.size).toBe(2);
   });
 
   // risk: a manual re-index that keeps stale attempts/chunks never retries or serves old text.
@@ -94,7 +100,7 @@ describe.skipIf(!databaseUrl)('indexing job, accounting and search content repos
   // risk: a slow worker overwrites a newer claim — the attempt count fences the failure write.
   it('reschedules a failed job only while the worker still owns that attempt', async() => {
     const file = await database.file(collectionId, 'owned.txt');
-    const claimed = (await jobs.claimNext())!;
+    const [claimed] = await jobs.claimBatch(1);
     const outcome = { status: 'pending', reasonCode: 'retry_scheduled', reason: 'retry' };
     expect(await jobs.rescheduleOwnedJob({ ...claimed, attempts: claimed.attempts + 1 }, outcome, 'err')).toBe(false);
     expect((await database.job(file.versionId)).status).toBe('indexing');

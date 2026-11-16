@@ -17,6 +17,7 @@ import pg from 'pg';
 import { issueCapabilityToken } from '../src/auth.js';
 import { migrate } from '../src/db.js';
 import { createApp } from '../src/app.js';
+import { TransactionRunner } from '../src/FilesTransaction.js';
 import { IndexingQueue } from '../src/indexing.js';
 import { LocalFilesManager } from '../src/localManager.js';
 import type { PotionEmbedder } from '../src/potionEmbedder.js';
@@ -26,7 +27,7 @@ import { TransactionScope } from '../src/TransactionScope.js';
 export interface BenchmarkOptions { writers:number; filesPerWriter:number; directories:number; indexer:boolean; audit:boolean }
 
 export interface BenchmarkResult {
-  files:number; seconds:number; filesPerSecond:number;
+  started:number; ended:number; files:number; seconds:number; filesPerSecond:number;
   p50:number; p95:number; p99:number; max:number;
   maxTransactionMs:number; failures:string[];
 }
@@ -74,7 +75,18 @@ class BenchmarkIndexSource {
   }
 }
 
+/** Longest hold of each named transaction the indexer ran (every one is observed, not only slow ones). */
+export class TransactionHoldLog {
+  readonly maxMs = new Map<string, number>();
+  readonly observer = { slowTransaction: (name:string, ms:number) => { this.maxMs.set(name, Math.max(ms, this.maxMs.get(name) ?? 0)) } };
+  describe():string { return [...this.maxMs].map(([name, ms]) => `${ name }=${ ms }ms`).join(' ') || 'none' }
+}
+
+/** How indexing kept up with a run: lag from version commit to indexed, and how fast the backlog drained. */
+export interface IndexResult { backlogAtBurstEnd:number; drainSeconds:number; jobsPerSecond:number; lagP50:number; lagP95:number; indexed:number; holds:string }
+
 export class FilesWriteBenchmark {
+  readonly indexHolds = new TransactionHoldLog();
   readonly schema = `files_bench_${ randomUUID().replaceAll('-', '') }`;
   readonly applicationName = `files-bench-${ randomUUID().slice(0, 8) }`;
   readonly userId = 'bench-user';
@@ -114,7 +126,8 @@ export class FilesWriteBenchmark {
     if (this.options.indexer) {
       const text = join(this.root, 'index-source.txt'); await writeFile(text, 'benchmark indexed text '.repeat(40));
       const source = new BenchmarkIndexSource(text);
-      this.indexer = new IndexingQueue(this.pool, source.source, BenchmarkIndexSource.embedder());
+      this.indexer = new IndexingQueue(this.pool, source.source, BenchmarkIndexSource.embedder(),
+        { transactions: new TransactionRunner(this.pool, undefined, this.indexHolds.observer, 0) });
     }
     const manager = new LocalFilesManager(this.pool, config, this.indexer);
     (manager as any).rootCollections.set('default', this.collectionId);
@@ -170,11 +183,28 @@ export class FilesWriteBenchmark {
         if (reply.status !== 201) failures.push(`${ path }: ${ reply.status } ${ reply.body }`);
       }
     }));
-    const seconds = (performance.now() - started) / 1000; sampler.stop();
+    const ended = performance.now(); const seconds = (ended - started) / 1000; sampler.stop();
     if (sampler.waits.size) console.log(`[files-bench] top waits (samples every 20ms):\n${ sampler.topWaits() }`);
     const files = this.options.writers * this.options.filesPerWriter;
-    return { files, seconds, filesPerSecond: files / seconds, p50: latencies.percentile(50), p95: latencies.percentile(95), p99: latencies.percentile(99),
+    return { started, ended, files, seconds, filesPerSecond: files / seconds, p50: latencies.percentile(50), p95: latencies.percentile(95), p99: latencies.percentile(99),
       max: latencies.percentile(100), maxTransactionMs: sampler.maxMs, failures };
+  }
+
+  /** Waits (bounded) until every job for the run's files is finished, then reports lag and drain rate. */
+  async indexing(runId:string, burstStarted:number, burstEnded:number, timeoutMs = 180_000):Promise<IndexResult> {
+    const prefix = `bench/${ runId }/`;
+    const open = () => this.scalar(`SELECT COUNT(*) n FROM file_index_jobs j JOIN files f ON f.id=j.file_id
+      WHERE f.collection_id=$1 AND starts_with(f.path,$2) AND j.status IN ('pending','indexing')`, [this.collectionId, prefix]);
+    const backlogAtBurstEnd = await open();
+    while (await open() > 0 && performance.now() - burstEnded < timeoutMs) await new Promise(resolve => setTimeout(resolve, 100));
+    const drained = performance.now();
+    const lag = (await this.pool.query(`SELECT COUNT(*)::int AS n,
+        COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM f.extracted_at-v.created_at)),0) AS p50,
+        COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM f.extracted_at-v.created_at)),0) AS p95
+      FROM files f JOIN file_versions v ON v.id=f.current_version_id
+      WHERE f.collection_id=$1 AND starts_with(f.path,$2) AND f.extraction_status='indexed'`, [this.collectionId, prefix])).rows[0];
+    return { backlogAtBurstEnd, drainSeconds: (drained - burstEnded) / 1000, jobsPerSecond: lag.n / ((drained - burstStarted) / 1000),
+      lagP50: Number(lag.p50), lagP95: Number(lag.p95), indexed: lag.n, holds: this.indexHolds.describe() };
   }
 
   /** Live file rows under the run's prefix, with how many rows share each path. */

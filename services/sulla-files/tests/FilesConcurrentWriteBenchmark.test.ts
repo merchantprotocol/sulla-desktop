@@ -35,6 +35,10 @@ describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real
       + `maxTransaction=${ result.maxTransactionMs.toFixed(0) }ms failures=${ result.failures.length } `
       + `auditBacklog=${ await bench.scalar('SELECT COUNT(*) n FROM files_audit_spool') } indexBacklog=${ await bench.scalar("SELECT COUNT(*) n FROM file_index_jobs WHERE status IN ('pending','indexing')") }`);
 
+    const index = background === 'all' || background === 'indexer' ? await bench.indexing(runId, result.started, result.ended) : undefined;
+    if (index) console.log(`[files-bench] index backlogAtBurstEnd=${ index.backlogAtBurstEnd } drainAfterBurst=${ index.drainSeconds.toFixed(1) }s `
+      + `jobs/s=${ index.jobsPerSecond.toFixed(1) } lagP50=${ index.lagP50.toFixed(1) }s lagP95=${ index.lagP95.toFixed(1) }s indexed=${ index.indexed } holds: ${ index.holds }`);
+
     expect(result.failures).toEqual([]);
     const stored = await bench.storedPaths(runId);
     const expected = bench.paths(runId).flat();
@@ -46,10 +50,16 @@ describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real
     // Each shared directory exists once, so concurrent parent creation raced safely.
     expect(await bench.scalar('SELECT COUNT(*) n FROM file_folders WHERE collection_id=$1 AND starts_with(path,$2)', [bench.collectionId, prefix])).toBe(10);
 
+    if (index) expect(index.indexed).toBe(expected.length);
     if (assertTargets) {
       expect(result.filesPerSecond).toBeGreaterThanOrEqual(50);
       expect(result.p99).toBeLessThan(1_000);
       expect(result.maxTransactionMs).toBeLessThan(1_000);
+      if (index) {
+        expect(index.drainSeconds).toBeLessThan(60);
+        expect(index.lagP95).toBeLessThan(30);
+        expect(Number(index.holds.match(/index-eligibility=(\d+)ms/)?.[1] ?? 0)).toBeLessThan(200);
+      }
     }
   }, 900_000);
 });
