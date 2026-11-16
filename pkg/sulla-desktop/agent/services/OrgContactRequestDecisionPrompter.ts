@@ -81,7 +81,7 @@ export class OrgContactRequestDecisionPrompter implements OrgContactRequestPromp
     const first = prompt.messages[0];
     if (!first) return 'unanswered';
     const questions: ContactQuestion[] = [{
-      question: `${prompt.senderName}'s agent wants to contact you. Allow it to use your agent's access?`,
+      question: `${prompt.senderName}'s agent wants to contact you${prompt.orgName ? ` in ${prompt.orgName}` : ''}. Allow it to use your agent's access?`,
       options: [
         { label: 'Allow always', description: `Allow future messages from ${prompt.senderName}.` },
         { label: 'Just this once', description: 'Allow only these held messages.' },
@@ -90,7 +90,7 @@ export class OrgContactRequestDecisionPrompter implements OrgContactRequestPromp
     }];
     const { record, result } = await this.decisions.request({
       kind: 'question',
-      title: `First contact from ${prompt.senderName}`,
+      title: `First contact from ${prompt.senderName}${prompt.orgName ? ` (${prompt.orgName})` : ''}`,
       questions,
       channel: this.channel,
       conversationId: first.data.conversationId,

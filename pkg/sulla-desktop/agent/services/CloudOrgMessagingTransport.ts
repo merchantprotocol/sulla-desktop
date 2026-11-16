@@ -18,7 +18,15 @@ export class DesktopOrgCloudSession implements OrgCloudSession {
   async userId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentUserId(); }
 }
 
-/** Cloud adapter. The team id is resolved from the active authenticated session for every request. */
+/** Session pinned to one organization the human belongs to, so a non-active org can sync on its own. */
+export class PinnedOrgCloudSession implements OrgCloudSession {
+  constructor(private readonly pinnedOrgId: string, private readonly base: OrgCloudSession = new DesktopOrgCloudSession()) {}
+  accessToken(): Promise<string> { return this.base.accessToken(); }
+  async orgId(): Promise<string> { return this.pinnedOrgId; }
+  userId(): Promise<string> { return this.base.userId(); }
+}
+
+/** Cloud adapter. The team id comes from its session: the active org by default, or one pinned org per fleet member. */
 export class CloudOrgMessagingTransport implements OrgMessagingTransport {
   readonly hosting = 'cloud' as const;
   private readonly codec = new EnvelopeCodec();

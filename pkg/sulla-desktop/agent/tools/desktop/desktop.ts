@@ -51,10 +51,8 @@ function snapshotId(ref: string): string { return ref.slice(1, ref.indexOf(':'))
 async function audit(tool: string, app: string | undefined, action: string, success: boolean, durationMs: number): Promise<void> {
   try {
     const { postgresClient } = await import('../../database/PostgresClient');
-    await postgresClient.query(
-      'INSERT INTO desktop_audit (tool, target_app, action, success, duration_ms) VALUES ($1,$2,$3,$4,$5)',
-      [tool, app ?? null, action, success, durationMs],
-    );
+    const { DesktopAuditRepository } = await import('../../app/Repositories/DesktopAuditRepository');
+    await new DesktopAuditRepository(postgresClient).insert(tool, app, action, success, durationMs);
   } catch (error) { console.warn('[desktop audit] insert failed:', error); }
 }
 
