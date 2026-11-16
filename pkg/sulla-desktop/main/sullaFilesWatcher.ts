@@ -14,6 +14,7 @@ import { app, shell } from 'electron';
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
 import { NativeSourceRevalidator } from './NativeSourceRevalidator';
 import { VaultFilesStartup, type VaultFilesStartupSnapshot } from './VaultFilesStartup';
+import { vaultFilesStartupProvider } from '@pkg/agent/app/Providers/VaultFilesStartupServiceProvider';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { FilesListingPager } from './FilesListingPager';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
@@ -173,7 +174,7 @@ class SullaFilesWatcher {
   private unlockPermitted = false;
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
-  private readonly startup = new VaultFilesStartup();
+  private readonly startup:VaultFilesStartup;
   private readonly nativeSourceRevalidator = new NativeSourceRevalidator({
     post: (handles, replaceExisting) => this.rawLocalRequest('/v1/local/native-sources/revalidate', {
       method: 'POST', body: JSON.stringify({ handles, replaceExisting }),
@@ -199,6 +200,10 @@ class SullaFilesWatcher {
     finish:   (operationId, result) => this.finishNativePublication(operationId, result),
     logError: (message, error) => console.debug(`[SullaFiles] ${ message }:`, error),
   });
+
+  constructor(startup:VaultFilesStartup) {
+    this.startup = startup;
+  }
 
   private async appUnlocked(): Promise<boolean> {
     const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
@@ -864,7 +869,7 @@ class SullaFilesWatcher {
 }
 
 let instance:SullaFilesWatcher | undefined;
-export function getSullaFilesWatcher():SullaFilesWatcher { instance ??= new SullaFilesWatcher(); return instance }
+export function getSullaFilesWatcher():SullaFilesWatcher { instance ??= new SullaFilesWatcher(vaultFilesStartupProvider.startup); return instance }
 
 /** Main-process service seam for the planned use-case-suggest:query IPC handler. */
 export function queryUseCaseSuggestions(text:string, options?:SuggestionOptions):Promise<UseCaseSuggestion[]> { return getSullaFilesWatcher().queryUseCaseSuggestions(text, options) }
