@@ -10,7 +10,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest, type Server } from 'node:http';
-import { access, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Pool } from 'pg';
@@ -35,12 +35,13 @@ class UnreadableVersionFixture {
   readonly admin:Pool;
   pool?:Pool;
   root = '';
+  filesRoot = '';
   chunkRoot = '';
   collectionId = '';
   readonly logged:string[] = [];
   private readonly signingKey = Buffer.alloc(32, 9);
   private server?:Server;
-  private manager?:any;
+  manager?:any;
   private baseUrl = '';
   private issueToken?:(claims:any, key:Buffer) => string;
 
@@ -59,7 +60,7 @@ class UnreadableVersionFixture {
     await migrate(this.pool);
     try { (await import(`${ SRC }/TransactionScope.js`)).TransactionScope.guardPool(this.pool) } catch { /* build #1 had no TransactionScope */ }
     this.root = await mkdtemp(join(tmpdir(), 'sulla-unreadable-'));
-    const filesRoot = join(this.root, 'files'); this.chunkRoot = join(this.root, 'chunks');
+    const filesRoot = this.filesRoot = join(this.root, 'files'); this.chunkRoot = join(this.root, 'chunks');
     await mkdir(filesRoot, { recursive: true }); await mkdir(this.chunkRoot, { recursive: true });
     const keyring = { unlocked: true, keys: async() => ({ data: Buffer.alloc(32, 1), dedup: Buffer.alloc(32, 2) }) };
     const config:any = { port: 0, databaseUrl: this.url, chunkRoot: this.chunkRoot, dataRoot: this.root, filesRoot, caseInsensitiveRoot: false,
@@ -231,6 +232,36 @@ describeWithDatabase('Files that are listed but unreadable (real routes, Postgre
     expect(history.map(row => row.id)).toContain(lost.versionId);
     expect(history.at(-1)).toMatchObject({ parent_version_id: lost.versionId, restored_from_version_id: good.versionId });
   }, 60_000);
+
+  // risk: data loss. Watched-folder ingest had the build #1 pattern (skip the chunks row when the blob already exists).
+  it('watched-folder ingest of content whose blob was left by a rolled-back write stays readable', async() => {
+    const created = await f.create('Stress/broken/ingest-source.txt');
+    const content = 'same bytes reach Files twice\n'.repeat(41);
+    expect((await f.write(created.fileId, created.versionId, '', content)).status).toBe(200);
+    const orphan = await f.currentChunk(created.fileId);
+    // The state a rolled-back attempt leaves: the blob is on disk, its chunks row never committed.
+    await f.pool!.query('DELETE FROM chunks WHERE collection_id=$1 AND id=$2', [f.collectionId, orphan.chunkId]);
+    await writeFile(join(f.filesRoot, 'ingested.txt'), content);
+    const manager = f.manager;
+    await manager.ingest(manager.roots[0], f.collectionId, 'ingested.txt', Date.now(), undefined, new Map());
+    const ingested = (await f.pool!.query('SELECT id::text FROM files WHERE collection_id=$1 AND path=$2', [f.collectionId, 'ingested.txt'])).rows[0];
+    const read = await f.read(ingested.id);
+    expect(read.status, JSON.stringify(read.body)).toBe(200);
+    expect(read.body).toBe(content);
+  }, 30_000);
+
+  // risk: data loss. The commit-time guard refuses a version whose chunks are not registered.
+  it('the commit guard refuses chunk ids that have no chunks row', async() => {
+    let ManifestChunkRegistry:any;
+    try { ({ ManifestChunkRegistry } = await import(`${ SRC }/ManifestChunkRegistry.js`)) } catch { ManifestChunkRegistry = undefined }
+    expect(ManifestChunkRegistry, 'ManifestChunkRegistry exists').toBeDefined();
+    const created = await f.create('Stress/broken/guard.txt');
+    expect((await f.write(created.fileId, created.versionId, '', 'guarded')).status).toBe(200);
+    const registered = await f.currentChunk(created.fileId);
+    const guard = new ManifestChunkRegistry();
+    await expect(guard.assertRegistered(f.pool!, f.collectionId, [registered.chunkId, registered.chunkId])).resolves.toBeUndefined();
+    await expect(guard.assertRegistered(f.pool!, f.collectionId, [registered.chunkId, 'f'.repeat(64)])).rejects.toMatchObject({ code: 'FILES_CHUNK_UNREGISTERED', missing: ['f'.repeat(64)] });
+  });
 
   // risk: data loss. Startup upload cleanup must not delete the only copy of a repairable file's content.
   it('stale upload cleanup keeps a blob that a version references even when its chunk row is missing', async() => {
