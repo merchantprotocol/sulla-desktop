@@ -25,4 +25,10 @@ describe('DurableAgentInboxReceiverResolver',()=>{
     const resolver=new DurableAgentInboxReceiverResolver({allJobs:async()=>[parked('researcher','parked-thread')]},()=>['live-thread']);
     expect((await resolver.resolveAll('researcher')).map(item=>item.threadId)).toEqual(['live-thread','parked-thread']);
   });
+  it('uses main’s bounded active-job reader when present',async()=>{ // risk: parked receiver discovery regresses to an unbounded history scan
+    let allReads=0;let activeReads=0;
+    const resolver=new DurableAgentInboxReceiverResolver({allJobs:async()=>{allReads++;return[];},activeJobs:async()=>{activeReads++;return[parked('bounded-agent','bounded-thread')];}},()=>undefined);
+    expect((await resolver.resolve('bounded-agent')).threadId).toBe('bounded-thread');
+    expect(activeReads).toBe(1);expect(allReads).toBe(0);
+  });
 });

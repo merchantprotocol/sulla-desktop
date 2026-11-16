@@ -165,6 +165,25 @@ dbDescribe('registered custody transfer tools',()=>{
     expect(await tools.call('stop_agent_job',{jobId:stale.jobId,reason:'owner stop'},newMeta)).toMatchObject({success:true});
   });
 
+  it('legacy jobs without custody preserve parent routing and authority across message, stop, and completion delivery',async()=>{
+    // risk: existing jobs lose their historical parent authorization or completion when custody is introduced
+    const stamp=Date.now();
+    const parentMeta={wsChannel:`legacy-parent-${stamp}`,agentId:`legacy-parent-${stamp}`,threadId:`legacy-parent-thread-${stamp}`,subAgentDepth:1};
+    const messageJob=await registry.createJob([{agentId:'legacy-worker',label:'W',prompt:'work',status:'running',threadId:`legacy-message-${stamp}`}],parentMeta.agentId,parentMeta.threadId,{parentAgentId:parentMeta.agentId});
+    const stopJob=await registry.createJob([{agentId:'legacy-worker',label:'W',prompt:'work',status:'running',threadId:`legacy-stop-${stamp}`}],parentMeta.agentId,parentMeta.threadId,{parentAgentId:parentMeta.agentId});
+    const {agentJobProvider}=await import('../../../app/Providers/AgentJobServiceProvider');
+    expect(await database.query<any>(`SELECT job_id FROM agent_job_custody WHERE job_id=ANY($1::text[])`,[[messageJob.jobId,stopJob.jobId]])).toHaveLength(0);
+    expect(await agentJobProvider.custody.resolveOwner(messageJob.jobId)).toMatchObject({channel:parentMeta.agentId,threadId:parentMeta.threadId});
+    const sent=await tools.call('send_job_message',{jobId:messageJob.jobId,message:'legacy parent message'},parentMeta);
+    expect(sent).toMatchObject({success:true});
+    const stopped=await tools.call('stop_agent_job',{jobId:stopJob.jobId,reason:'legacy parent stop'},parentMeta);
+    expect(stopped).toMatchObject({success:true});
+    const {JobCompletionDelivery}=await import('../../../tools/agents/jobDelivery');
+    const delivery=new JobCompletionDelivery(agentJobProvider.service,{build:async()=>undefined} as any,agentJobProvider.custody);
+    expect(await delivery.deliver(messageJob,[{label:'W',status:'completed',output:'legacy result'} as any])).toBe(true);
+    expect(completionInboxStore.take(parentMeta.agentId,parentMeta.threadId).some(entry=>entry.jobId===messageJob.jobId)).toBe(true);
+  });
+
 
   it('Stop follows single-task custody while untouched tasks retain their original owner',async()=>{
     // risk: cross-task cancellation; guards JobStopService.stopTask task-scoped custody lookup

@@ -101,7 +101,7 @@ export class AgentJobServiceProvider {
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);
     this.completionAcknowledgements = new CompletionAcknowledgementService(this.service, strandedEpisodes, completionInboxStore);
-    this.delivery = new JobCompletionDelivery(this.service);
+    this.delivery = new JobCompletionDelivery(this.service, undefined, this.custody);
   }
 }
 
