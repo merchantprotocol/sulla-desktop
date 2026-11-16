@@ -23,11 +23,12 @@ const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
   // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
   'Repositories/FolderSubtreeRepository.ts': 7,
+  // Legacy stored folder move: the moved folder's own subtree, locked for update.
+  'Repositories/StoredFileOperationRepository.ts': 1,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
   'app.ts': 9,
   'cloudSync/repository.ts': 1,
-  'fileOperations.ts': 1,
   'legacyImport.ts': 3,
   'localManager.ts': 3,
   'shares.ts': 1,

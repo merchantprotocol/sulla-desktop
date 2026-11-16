@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1032,
+  "entries": 1029,
   "files": {
     "background.ts": {
       "rules": {
@@ -4277,12 +4277,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-files/src/fileOperations.ts": {
-      "rules": {
-        "raw-sql": 34
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/fileStream.ts": {
       "rules": {
         "raw-sql": 4
@@ -4351,13 +4345,6 @@
       "rules": {
         "long-file": 1669,
         "raw-sql": 409
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/nativeOperationJournal.ts": {
-      "rules": {
-        "long-file": 771,
-        "raw-sql": 64
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
