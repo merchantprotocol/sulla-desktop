@@ -11,41 +11,61 @@
 //
 // There is NO reactive two-way sync. Renderer mirrors main's state; that's it.
 
-import { ipcMain, webContents } from 'electron';
-
-import { tabRegistry, type TabRecord } from './TabRegistry';
-import { getBrowserSession } from './browserSession';
-
-import { safeSend } from '@pkg/utils/safeSend';
+import type { TabRecord } from './TabRegistry';
+import type { IpcController, IpcRegistrar } from '../ipc/IpcController';
 
 const CHANGE_CHANNEL = 'tabs:change';
 
-export function initTabsIpc(): void {
-  ipcMain.handle('tabs:list', (): TabRecord[] => tabRegistry.list());
-  ipcMain.handle('tabs:active', (): string | null => tabRegistry.getActiveAssetId());
+/** The TabRegistry surface this controller uses. */
+export interface TabsIpcRegistry {
+  list(): TabRecord[];
+  getActiveAssetId(): string | null;
+  open(input: { assetId: string; url: string; title?: string; origin: 'user' }): unknown;
+  close(assetId: string): unknown;
+  setActive(assetId: string): void;
+  onChange(listener: (tabs: TabRecord[]) => void): unknown;
+}
 
-  ipcMain.handle('tabs:open', (_event, payload: { assetId?: string; url: string; title?: string }) => {
-    const assetId = payload.assetId || `user_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;
-    return tabRegistry.open({ assetId, url: payload.url, title: payload.title, origin: 'user' });
-  });
+/** Electron surfaces the change broadcast needs. */
+export interface TabsIpcBroadcastPort {
+  allWebContents(): Electron.WebContents[];
+  browserSession(): Electron.Session | null | undefined;
+  send(wc: Electron.WebContents, channel: string, payload: unknown): void;
+}
 
-  ipcMain.handle('tabs:close', (_event, assetId: string) => tabRegistry.close(assetId));
+/** tabs:* — list/open/close/activate tabs, and push tab changes to Sulla renderers. */
+export class TabsIpcController implements IpcController {
+  constructor(private readonly ipc: IpcRegistrar, private readonly registry: TabsIpcRegistry, private readonly broadcast: TabsIpcBroadcastPort) {}
 
-  ipcMain.handle('tabs:setActive', (_event, assetId: string) => {
-    tabRegistry.setActive(assetId);
-  });
+  register(): void {
+    const registry = this.registry;
+    this.ipc.handle('tabs:list', (): TabRecord[] => registry.list());
+    this.ipc.handle('tabs:active', (): string | null => registry.getActiveAssetId());
 
-  // Broadcast changes to Sulla's own renderers. Browser-tab guests (and their
-  // popups) share the browser session and are skipped: they never listen on
-  // this channel, and pushing every open tab's URL and title into arbitrary
-  // web pages' processes is both wasted IPC and a privacy leak. Disposed
-  // WebContents are dropped by safeSend.
-  tabRegistry.onChange((tabs) => {
-    const browserSession = getBrowserSession();
+    this.ipc.handle('tabs:open', (_event, payload: { assetId?: string; url: string; title?: string }) => {
+      const assetId = payload.assetId || `user_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;
 
-    for (const wc of webContents.getAllWebContents()) {
-      if (wc.session === browserSession) continue;
-      safeSend(wc, CHANGE_CHANNEL, tabs);
-    }
-  });
+      return registry.open({ assetId, url: payload.url, title: payload.title, origin: 'user' });
+    });
+
+    this.ipc.handle('tabs:close', (_event, assetId: string) => registry.close(assetId));
+
+    this.ipc.handle('tabs:setActive', (_event, assetId: string) => {
+      registry.setActive(assetId);
+    });
+
+    // Broadcast changes to Sulla's own renderers. Browser-tab guests (and their
+    // popups) share the browser session and are skipped: they never listen on
+    // this channel, and pushing every open tab's URL and title into arbitrary
+    // web pages' processes is both wasted IPC and a privacy leak. Disposed
+    // WebContents are dropped by safeSend.
+    registry.onChange((tabs) => {
+      const browserSession = this.broadcast.browserSession();
+
+      for (const wc of this.broadcast.allWebContents()) {
+        if (wc.session === browserSession) continue;
+        this.broadcast.send(wc, CHANGE_CHANNEL, tabs);
+      }
+    });
+  }
 }
