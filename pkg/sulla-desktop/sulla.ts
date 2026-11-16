@@ -11,190 +11,49 @@ import * as window from '@pkg/window';
 import { vaultViewManager } from '@pkg/window/vaultViewManager';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from './agent/services/IntegrationService';
-import { getSchedulerService } from '@pkg/agent/services/SchedulerService';
-import { getHeartbeatService } from '@pkg/agent/services/HeartbeatService';
-import { getWorkflowSchedulerService } from '@pkg/agent/services/WorkflowSchedulerService';
-import { getWorkflowContainerEventBridge } from '@pkg/agent/services/WorkflowContainerEventBridge';
-import { getExtensionService } from '@pkg/agent/services/ExtensionService';
-import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
-import { SullaIntegrations } from './agent/integrations';
-import { postgresClient } from '@pkg/agent/database/PostgresClient';
-import { redisClient } from '@pkg/agent/database/RedisClient';
-import { ChatCompletionsServer, getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
-import { getMCPServerHost } from '@pkg/main/MCPServerHost';
-import { headlessBrowserReaper } from '@pkg/main/HeadlessBrowserReaper';
 import { startEventLoopLagMonitor } from '@pkg/main/eventLoopLagMonitor';
-import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
 
-import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
-import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import paths from '@pkg/utils/paths';
 import { loopbackOrigin } from '@pkg/utils/instance';
 import * as path from 'path';
-import { app, shell, webContents } from 'electron';
-import { execSync } from 'child_process';
+import { app, shell } from 'electron';
 import * as fs from 'fs';
 
-import { submitErrorReport } from '@pkg/main/errorReporter';
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
-import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
-import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
+import { SullaStartup } from '@pkg/main/startup/SullaStartup';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
 
+/** The one startup composition root; constructing it does no work. */
+const sullaStartup = new SullaStartup();
+
 /** Track whether Sulla services were actually started during this session. */
-let sullaDockerServicesStarted = false;
-
 export function markSullaDockerServicesStarted(): void {
-  sullaDockerServicesStarted = true;
+  sullaStartup.dockerServices.markStarted();
 }
 
-/**
- * Check if the Docker daemon socket is reachable before attempting compose commands.
- */
-const isDockerDaemonRunning = (): boolean => {
-  try {
-    // Quick socket existence check first
-    if (!fs.existsSync('/var/run/docker.sock')) {
-      return false;
-    }
-    execSync('docker info', { encoding: 'utf8', timeout: 5000, stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * Attempt to stop Sulla Docker Compose services.
- * Only runs if services were actually started this session AND Docker daemon is reachable.
- */
-const trySullaComposeDown = (): void => {
-  console.log(`[Shutdown] trySullaComposeDown called — sullaDockerServicesStarted=${ sullaDockerServicesStarted }`);
-  if (!sullaDockerServicesStarted) {
-    console.log('[Shutdown] Skipping compose down — services were not started this session');
-    return;
-  }
-  if (!isDockerDaemonRunning()) {
-    console.log('[Shutdown] Docker daemon not running, skipping compose down');
-    return;
-  }
-  try {
-    const composeFilePath = path.join(process.cwd(), 'pkg/sulla-desktop/assets/sulla-docker-compose.yaml');
-    execSync(`docker-compose -f "${ composeFilePath }" down`, { cwd: process.cwd(), stdio: 'inherit', timeout: 30000 });
-    console.log('[Shutdown] Docker containers stopped');
-  } catch (err) {
-    console.warn('[Shutdown] Docker compose down failed:', err);
-  }
-};
-
-export async function initiateWindowContext(): Promise<void> {
-  // This function serves as the explicit initialization hook
-  console.log('[WindowContext] Sulla window context initialized');
-
-  // Get the user data path from main process
-  const { ipcRenderer } = require('electron');
-  try {
-    const userDataPath = await ipcRenderer.invoke('get-user-data-path');
-    const fallbackPath = require('path').join(userDataPath, 'sulla-settings-fallback.json');
-    SullaSettingsModel.setFallbackFilePath(fallbackPath);
-    console.log('[WindowContext] Fallback path set to:', fallbackPath);
-
-    // Renderer settings share the main-process backends. Wait for the lifecycle
-    // readiness signal instead of racing cold Redis with a short retry budget.
-    // Every window awaits this before mounting, so only hold the mount for a
-    // short bound; on a cold boot finish bootstrapping in the background so
-    // the loading overlay can render while Redis/Postgres come up.
-    const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends');
-    const readyInTime = await Promise.race([
-      backendsReady.then(() => true),
-      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 8_000)),
-    ]);
-
-    if (readyInTime) {
-      await SullaSettingsModel.bootstrap();
-    } else {
-      console.log('[WindowContext] Settings backends still starting; bootstrapping when ready');
-      backendsReady
-        .then(() => SullaSettingsModel.bootstrap())
-        .catch((error: unknown) => console.error('[WindowContext] Failed to initialize settings:', error));
-    }
-  } catch (error) {
-    console.error('[WindowContext] Failed to initialize settings:', error);
-  }
-
-  // Initialize extension service
-  try {
-    const extensionService = getExtensionService();
-    await extensionService.initialize();
-    await reloadExtensionHooks();
-  } catch (error) {
-    console.error('[ExtensionService] Failed to initialize:', error);
-  }
+export function initiateWindowContext(): Promise<void> {
+  return sullaStartup.windowContext.initialize();
 }
 
-let vaultTransition: Promise<void> = Promise.resolve();
 /** Single event-bus entrypoint for every vault state transition. */
 function publishVaultState(unlocked: boolean): Promise<void> {
-  vaultTransition = vaultTransition.catch(() => undefined).then(async() => {
-    const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
-    setUserLoggedIn(unlocked);
-    await getServiceLifecycleManager().setVaultUnlocked(unlocked);
-  });
-  return vaultTransition;
+  return sullaStartup.vaultState.publish(unlocked);
 }
 
-// Boot refreshes the vault container in the background, which can replace the one the
-// lifecycle already unlocked. The lifecycle waits for the refreshed container, and any
-// later replacement re-runs the unlock so a fresh (locked) container never goes unnoticed.
-let vaultContainerReady: Promise<void> | null = null;
-let resolveVaultContainerReady: (() => void) | null = null;
-let vaultLifecycleInitialized = false;
-
 export function expectVaultContainer(): void {
-  if (resolveVaultContainerReady) return;
-  vaultContainerReady = new Promise<void>((resolve) => { resolveVaultContainerReady = resolve });
+  sullaStartup.vaultState.expectContainer();
 }
 
 export function markVaultContainerReady(): void {
-  resolveVaultContainerReady?.();
-  resolveVaultContainerReady = null;
-  if (!vaultLifecycleInitialized) return;
-  void (async() => {
-    const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-    const unlocked = await getVaultKeyService().initialize();
-    console.log(`[Background] Vault container replaced; re-initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
-    await publishVaultState(unlocked);
-  })().catch(error => console.warn('[Vault] Re-initialize after container replacement failed:', error));
-}
-
-async function waitForVaultContainer(timeoutMs = 90_000): Promise<void> {
-  if (!vaultContainerReady) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([vaultContainerReady, new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs) })]);
-  if (timer) clearTimeout(timer);
+  sullaStartup.vaultState.markContainerReady();
 }
 
 /** Refresh non-secret state only; migration and backup run inside the container. */
-export async function onVaultUnlocked(): Promise<void> {
-  try {
-    // Caching the key for auto-unlock is best-effort; it must never stop
-    // the unlock from being published.
-    try {
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      await getVaultKeyService().refreshMasterCache();
-    } catch (err) {
-      console.warn('[Vault] Could not cache the vault key for auto-unlock:', (err as Error).message);
-    }
-    const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
-    const status = await getDesktopVaultClient().status();
-    await publishVaultState(status.unlocked);
-  } catch (err) {
-    console.warn('[Vault] Container state is unavailable:', (err as Error).message);
-    throw err;
-  }
+export function onVaultUnlocked(): Promise<void> {
+  return sullaStartup.vaultState.onVaultUnlocked();
 }
 
 /**
@@ -204,380 +63,8 @@ export async function onVaultUnlocked(): Promise<void> {
  *
  * @see sulla-desktop/background.ts
  */
-export async function instantiateSullaStart(assertCurrent?: () => void): Promise<void> {
-  console.log('[Integrations] Sulla integrations initialized');
-
-  const { configureSignedInVaultBroker } = await import('@pkg/main/configureSignedInVaultBroker');
-
-  configureSignedInVaultBroker();
-
-  // NOTE: initSullaEvents() is now called in background.ts before initUI()
-  // so handlers are registered before any window can invoke them.
-
-  await bootstrapSullaHome();
-
-  const lifecycle = getServiceLifecycleManager();
-
-  // ── Independent services (no DB/Redis dependency) ──────────────────────
-
-  lifecycle.registerOnce('backend-ws', [],
-    async() => {
-      getBackendGraphWebSocketService();
-      console.log('[Background] BackendGraphWebSocketService initialized');
-    },
-    async() => { /* stateless singleton, no teardown */ },
-  );
-
-  lifecycle.registerOnce('relay-tool-tunnel', [],
-    async() => {
-      const { startRelayToolTunnel } = await import('@pkg/main/relayToolTunnel');
-
-      startRelayToolTunnel();
-    },
-    async() => {
-      const { stopRelayToolTunnel } = await import('@pkg/main/relayToolTunnel');
-
-      stopRelayToolTunnel();
-    },
-  );
-
-  // Register model-provider IPC handlers early so the UI can query state
-  // even if Postgres/Redis never come up. State loading still gated on DB below.
-  lifecycle.registerOnce('model-provider-ipc', [],
-    async() => {
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      getModelProviderService().registerIpc();
-      console.log('[Background] ModelProviderService IPC handlers registered');
-    },
-    async() => { /* no teardown */ },
-  );
-
-  // ── Connection readiness gates ─────────────────────────────────────────
-
-  lifecycle.registerOnce('postgres', [],
-    async() => { await postgresClient.waitForReady() },
-    async() => { await postgresClient.end() },
-    { persistOnRestart: true },
-  );
-
-  lifecycle.registerOnce('redis', [],
-    async() => { await redisClient.waitForReady() },
-    async() => { await redisClient.close() },
-    { persistOnRestart: true },
-  );
-
-  // ── Database layer (depends on postgres connection) ────────────────────
-
-  lifecycle.registerOnce('database-manager', ['postgres', 'redis'],
-    async() => { await afterBackgroundLoaded() },
-    async() => { await getDatabaseManager().stop() },
-  );
-
-  // ── Application services (depend on database-manager) ──────────────────
-
-  lifecycle.registerOnce('scheduler', ['database-manager'],
-    async() => {
-      await getSchedulerService().initialize();
-      console.log('[Background] SchedulerService initialized');
-    },
-    async() => {
-      getSchedulerService().destroy();
-      console.log('[Background] SchedulerService destroyed');
-    },
-  );
-
-  lifecycle.registerOnce('heartbeat', ['database-manager', 'redis'],
-    async() => {
-      await getHeartbeatService().initialize();
-      console.log('[Background] HeartbeatService initialized');
-    },
-    async() => {
-      getHeartbeatService().destroy();
-      console.log('[Background] HeartbeatService destroyed');
-    },
-  );
-
-  lifecycle.registerOnce('sulla-files-maintenance', ['database-manager'],
-    async() => {
-      const { getSullaFilesMaintenanceService } = await import('@pkg/agent/services/SullaFilesMaintenanceService');
-      getSullaFilesMaintenanceService().initialize();
-      console.log('[Background] Sulla Files maintenance initialized');
-    },
-    async() => {
-      const { getSullaFilesMaintenanceService } = await import('@pkg/agent/services/SullaFilesMaintenanceService');
-      getSullaFilesMaintenanceService().shutdown();
-    },
-  );
-
-  lifecycle.registerOnce('database-retention', ['database-manager'],
-    async() => {
-      const { databaseRetentionService } = await import('@pkg/agent/services/DatabaseRetentionService');
-      databaseRetentionService.initialize();
-      console.log('[Background] Database retention initialized');
-    },
-    async() => {
-      const { databaseRetentionService } = await import('@pkg/agent/services/DatabaseRetentionService');
-      databaseRetentionService.shutdown();
-    },
-  );
-
-  lifecycle.registerOnce('workflow-recovery', ['database-manager'],
-    async() => {
-      const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');
-      await workflowRecoveryService.start();
-      console.log('[Background] Workflow recovery initialized');
-    },
-    async() => {
-      const { workflowRecoveryService } = await import('@pkg/agent/app/Providers/WorkflowRecoveryServiceProvider');
-      await workflowRecoveryService.stop();
-    },
-  );
-
-  lifecycle.registerOnce('workflow-scheduler', ['database-manager'],
-    async() => {
-      await getWorkflowSchedulerService().initialize();
-      console.log('[Background] WorkflowSchedulerService initialized');
-    },
-    async() => { getWorkflowSchedulerService().shutdown() },
-  );
-
-  lifecycle.registerOnce('workflow-container-events', ['database-manager', 'redis'],
-    async() => {
-      await getWorkflowContainerEventBridge().initialize();
-      console.log('[Background] Workflow container event bridge initialized');
-    },
-    async() => { await getWorkflowContainerEventBridge().shutdown() },
-  );
-
-  lifecycle.registerOnce('chat-server', ['database-manager'],
-    async() => {
-      const chatServer = getChatCompletionsServer();
-
-      await chatServer.start();
-      console.log('[Background] Chat completions API server started');
-    },
-    async() => { await getChatCompletionsServer().stop() },
-    // stop() sweeps leftover agent containers (bounded at 20s); the default 5s
-    // budget reported every quit with containers as a timeout and let the
-    // sweep race the VM shutdown.
-    { stopTimeoutMs: ChatCompletionsServer.STOP_TIMEOUT_MS },
-  );
-
-  // The tunnel authenticates as the vault's principal, so it waits for the
-  // unlock and starts the moment it happens instead of on a backoff timer.
-  lifecycle.registerOnce('local-tool-tunnel', ['chat-server', 'vault'],
-    async() => {
-      const { startLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
-
-      await startLocalToolTunnel();
-      console.log('[Background] Local container tool relay connected');
-    },
-    async() => {
-      const { stopLocalToolTunnel } = await import('@pkg/main/relayToolTunnel');
-
-      stopLocalToolTunnel();
-    },
-    {
-      requiresVault: true,
-      readiness: () => getSullaFilesWatcher().startupStatus().ready,
-      readinessReason: () => {
-        const status = getSullaFilesWatcher().startupStatus();
-
-        return status.reason ?? (status.filesUnlocked ? 'Waiting for the FUSE mount token' : 'Files is not unlocked');
-      },
-    },
-  );
-
-  // In-process MCP server that Claude Code (running in the Sulla VM) can call
-  // back into. No external deps — pure main-process HTTP server. Must start
-  // before any graph execution that invokes Claude Code, which in practice
-  // means before the chat server accepts requests.
-  lifecycle.registerOnce('mcp-server-host', [],
-    async() => {
-      await getMCPServerHost().start();
-      console.log('[Background] MCP server host started');
-    },
-    async() => { await getMCPServerHost().stop() },
-  );
-
-  lifecycle.registerOnce('headless-browser-reaper', [],
-    async() => {
-      headlessBrowserReaper.start();
-      console.log('[Background] Headless browser reaper started');
-    },
-    async() => { headlessBrowserReaper.stop() },
-  );
-
-  lifecycle.registerOnce('accounts', [],
-    async() => {
-      const { getSullaAccountsClient, waitForSullaAccountsService } = await import('@pkg/main/sullaAccountsClient');
-      const { isSullaOptionalServicePlanned } = await import('@pkg/backend/sullaRuntime/state');
-
-      // Nothing waits on accounts, so it starts alongside everything else.
-      // When boot could not set it up this session, say so instead of waiting.
-      if (isSullaOptionalServicePlanned('sulla_accounts') === false) {
-        throw new Error('Local accounts are not running this session');
-      }
-      // Boot starts the accounts container after Desktop is usable; wait for it
-      // instead of failing and backing off.
-      await waitForSullaAccountsService();
-      await getSullaAccountsClient().initialize();
-      console.log('[Background] Local Accounts broker session initialized');
-    },
-    async() => {
-      const { getSullaAccountsClient } = await import('@pkg/main/sullaAccountsClient');
-      getSullaAccountsClient().shutdown();
-    },
-  );
-
-  lifecycle.registerOnce('vault', ['database-manager'],
-    async() => {
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
-      const vaultKeyService = getVaultKeyService();
-
-      // Lets unlock verify a key against real ciphertext if the canary is lost.
-      vaultKeyService.setCiphertextSampleProvider(() => IntegrationValueModel.sampleEncryptedValue());
-      await waitForVaultContainer();
-      const unlocked = await vaultKeyService.initialize();
-      vaultLifecycleInitialized = true;
-
-      console.log(`[Background] Vault initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
-      await publishVaultState(unlocked);
-      // Files starts in its own lifecycle stage after the vault is ready.
-    },
-    async() => {
-      const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-      const { getVaultBackupService } = await import('@pkg/agent/services/VaultBackupService');
-
-      vaultLifecycleInitialized = false;
-      getVaultBackupService().stop();
-      getVaultKeyService().lock();
-      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
-      await getSullaFilesWatcher().lockService().catch(() => undefined);
-    },
-  );
-
-  lifecycle.registerOnce('sulla-files-runtime', ['vault'],
-    async() => {
-      const { startSullaFilesSourceGateway, stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
-      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
-      const watcher = getSullaFilesWatcher();
-      startSullaFilesSourceGateway();
-      try {
-        // Files is optional for the app to be usable: never let it hold the
-        // startup screen. After the budget it keeps starting in the background.
-        const { awaitWithBudget } = await import('@pkg/utils/awaitWithBudget');
-        const { traceAsync, traceEvent } = await import('@pkg/utils/startupTrace');
-        const filesStartup = (async() => {
-          await traceAsync('startup: watcher.initialize', () => watcher.initialize());
-          const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
-          if (getVaultKeyService().isUnlocked()) await traceAsync('startup: watcher.unlockService', () => watcher.unlockServiceWithRetry());
-          else traceEvent('startup: vault locked; skipping Files unlock');
-          console.log('[Background] Sulla Files runtime initialized');
-        })();
-        await awaitWithBudget('Sulla Files runtime', filesStartup, 20_000);
-      } catch (error) {
-        await watcher.shutdown().catch(() => undefined);
-        await stopSullaFilesSourceGateway();
-        throw error;
-      }
-    },
-    async() => {
-      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
-      const { stopSullaFilesSourceGateway } = await import('@pkg/main/sullaFilesSourceGateway');
-      await getSullaFilesWatcher().shutdown();
-      await stopSullaFilesSourceGateway();
-    },
-    { requiresVault: true },
-  );
-
-  lifecycle.registerOnce('model-provider', ['database-manager', 'redis'],
-    async() => {
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      const svc = getModelProviderService();
-
-      await svc.initialize();
-
-      // Invalidate LLM caches whenever the source of truth changes
-      const { LLMRegistry } = await import('@pkg/agent/languagemodels');
-
-      svc.onChange(() => {
-        LLMRegistry.invalidate();
-        console.log('[Background] LLM service caches invalidated via ModelProviderService');
-      });
-
-      console.log('[Background] ModelProviderService initialized');
-    },
-    async() => { /* no teardown needed */ },
-    { requiresVault: true },
-  );
-
-  lifecycle.registerOnce('integrations', ['vault'],
-    async() => {
-      SullaIntegrations();
-      const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
-      const configLoader = getIntegrationConfigLoader();
-
-      await configLoader.loadAll();
-      console.log('[Background] IntegrationConfigLoader ready:', configLoader.getAvailableIntegrations().join(', ') || '(none)');
-    },
-    async() => { /* no teardown */ },
-    { requiresVault: true },
-  );
-
-  lifecycle.registerOnce('oauth', ['database-manager', 'vault'],
-    async() => {
-      const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
-
-      await getOAuthService().resumeRefreshTimers();
-      console.log('[Background] OAuthService refresh timers resumed');
-    },
-    async() => {
-      const { getOAuthService } = await import('@pkg/agent/services/OAuthService');
-
-      getOAuthService().shutdown();
-    },
-    { requiresVault: true },
-  );
-
-  lifecycle.registerOnce('file-search', [],
-    async() => {
-      const { startFileSearchMaintenance } = await import('@pkg/main/fileSearchService');
-
-      startFileSearchMaintenance();
-      console.log('[Background] File-search index warm-up scheduled');
-    },
-    async() => {
-      const { stopFileSearchMaintenance, closeFileSearch } = await import('@pkg/main/fileSearchService');
-
-      stopFileSearchMaintenance();
-      closeFileSearch();
-    },
-  );
-
-  // The Preferences host-access checkbox persists to settings.json, but the
-  // exechost/AppleScript gate reads the SullaSettingsModel dual store — push
-  // the on-disk value across once the stores are reachable, so a toggle made
-  // while the DB was down (or before this sync existed) still takes effect.
-  lifecycle.registerOnce('host-access-sync', ['database-manager', 'redis'],
-    async() => {
-      const { reconcileHostAccessFromDisk } = await import('@pkg/agent/tools/util/hostAccess');
-
-      await reconcileHostAccessFromDisk();
-    },
-    async() => { /* nothing to tear down */ },
-  );
-
-  // MCP servers are initialized lazily — on first tool listing or tool call.
-  console.log('[Background] MCP servers will initialize on first use (lazy init)');
-
-  try {
-    await lifecycle.startAll(assertCurrent);
-  } catch (ex: any) {
-    console.error('[Background] Failed to initialize Sulla:', ex);
-    if (assertCurrent) throw ex;
-  }
+export function instantiateSullaStart(assertCurrent?: () => void): Promise<void> {
+  return sullaStartup.services.start(assertCurrent);
 }
 
 /**
@@ -1573,17 +1060,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
  *
  * @see sulla-desktop/background.ts
  */
-export async function afterBackgroundLoaded() {
-  // Then initialize database manager
-  const dbManager = getDatabaseManager();
-  await dbManager.initialize().catch((err: any) => {
-    // Make database initialization errors quieter during startup
-    if (err.message?.includes('Postgres not connected')) {
-      console.debug('[Background] Database not ready yet (PostgreSQL not available)');
-    } else {
-      console.error('[Background] DatabaseManager failed to initialize:', err);
-    }
-  });
+export function afterBackgroundLoaded(): Promise<void> {
+  return sullaStartup.coreServices.initializeDatabase();
 }
 
 /**
@@ -1593,53 +1071,14 @@ export async function afterBackgroundLoaded() {
  *
  * @see sulla-desktop/background.ts
  */
-export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
-  process.on('SIGTERM', async() => {
-    console.log('[Shutdown] SIGTERM received');
-    const lifecycle = getServiceLifecycleManager();
-
-    await lifecycle.stopAll('full');
-    app.quit();
-  });
-  process.on('SIGINT', async() => {
-    console.log('[Shutdown] SIGINT received');
-    const lifecycle = getServiceLifecycleManager();
-
-    await lifecycle.stopAll('full');
-    app.quit();
-  });
+export function hookSullaEnd(Electron: any, mainEvents: any, window:any): void {
+  sullaStartup.shutdown.hookSignals();
 }
 
 /**
  *
  * @see sulla-desktop/background.ts
  */
-export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
-  const lifecycle = getServiceLifecycleManager();
-
-  // Stop the terminal WebSocket server (kills any live sulla-runtime exec PTYs).
-  try {
-    const { getTerminalServer } = await import('@pkg/main/terminalServer');
-
-    await getTerminalServer().stop();
-  } catch (err) {
-    console.warn('[sullaEnd] Terminal server stop failed:', err);
-  }
-
-  await lifecycle.stopAll(mode);
-
-  // Force-close connection clients if they're still alive.
-  // Lifecycle may think they never started (e.g. slow Docker boot
-  // caused waitForReady to fail), but the clients may have connected
-  // independently via lazy-init or retry loops.
-  if (mode === 'full') {
-    if (postgresClient.isConnected()) {
-      console.log('[sullaEnd] Postgres still connected after lifecycle — force-closing');
-      try { await postgresClient.end() } catch { /* ignore */ }
-    }
-    if (redisClient.getClient()?.status !== 'end') {
-      console.log('[sullaEnd] Redis client still alive after lifecycle — force-closing');
-      try { await redisClient.close() } catch { /* ignore */ }
-    }
-  }
+export function sullaEnd(mode: 'full' | 'restart' = 'full'): Promise<void> {
+  return sullaStartup.shutdown.end(mode);
 }
