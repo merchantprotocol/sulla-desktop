@@ -96,11 +96,13 @@ vi.mock('@pkg/main/ipcMain', () => ({
 vi.mock('@pkg/vault-broker', () => ({
   VaultBrokerError:                 env.VaultBrokerError,
   usesContainerVaultAuthority:      () => env.state.containerVault,
-  getConfiguredApprovalClient:      () => env.approvalClient,
-  requireConfiguredCredentialBroker: () => ({
-    status:              async() => ({ unlocked: env.state.brokerUnlocked }),
-    integrationMetadata: async() => ({ activeAccountId: env.state.brokerActiveAccountId, accounts: env.state.brokerAccounts }),
-  }),
+  configuredVaultBrokerProvider:    {
+    getConfiguredApprovalClient:       () => env.approvalClient,
+    requireConfiguredCredentialBroker: () => ({
+      status:              async() => ({ unlocked: env.state.brokerUnlocked }),
+      integrationMetadata: async() => ({ activeAccountId: env.state.brokerActiveAccountId, accounts: env.state.brokerAccounts }),
+    }),
+  },
 }));
 vi.mock('@pkg/agent/services/IntegrationService', () => ({
   getIntegrationService: () => ({

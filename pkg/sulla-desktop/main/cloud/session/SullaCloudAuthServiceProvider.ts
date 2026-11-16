@@ -17,7 +17,7 @@ import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/main/firstRun/first
 import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { getConfiguredApprovalClient, requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
+import { configuredVaultBrokerProvider, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
 
 import { getDesktopRelayClient } from '../../desktopRelay';
 import { DevicesCloudApi } from '../../devicesCloudApi';
@@ -101,7 +101,7 @@ export class SullaCloudAuthServiceProvider {
     private readonly logger: CloudAuthLogger = Logging.background,
   ) {
     const usesContainerVault = () => usesContainerVaultAuthority();
-    const approvalClient = () => getConfiguredApprovalClient();
+    const approvalClient = () => configuredVaultBrokerProvider.getConfiguredApprovalClient();
     const containerStatus = async() => {
       const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
       const status = await getDesktopVaultClient().status();
@@ -132,7 +132,7 @@ export class SullaCloudAuthServiceProvider {
     this.sessions = new CloudSessionRepository({
       usesContainerVault,
       approvalClient,
-      credentialBroker:               () => requireConfiguredCredentialBroker(),
+      credentialBroker:               () => configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
       integrations:                   () => getIntegrationService(),
       pendingCredential:              integrationId => getPendingCredential(integrationId),
       queuePendingCredential:         entry => queuePendingCredential(entry),
@@ -144,7 +144,7 @@ export class SullaCloudAuthServiceProvider {
     this.startup = new CloudStartupSessionHandoff(this.sessions, new LegacyCloudSessionAdopter(this.transport), {
       usesContainerVault,
       approvalClient,
-      credentialBroker:               () => requireConfiguredCredentialBroker(),
+      credentialBroker:               () => configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
       findLegacyIntegrationSession:   () => IntegrationValueModel.findLegacySullaCloudSession(),
       deleteLegacyIntegrationSession: () => IntegrationValueModel.deleteLegacySullaCloudSession(),
       isInvalidOperation:             error => error instanceof VaultBrokerError && error.code === 'invalid_operation',
