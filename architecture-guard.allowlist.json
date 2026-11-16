@@ -3829,57 +3829,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/cloudRemote/catalogSync.ts": {
-      "rules": {
-        "raw-sql": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/cloudRemote/desktopRequests.ts": {
-      "rules": {
-        "raw-sql": 2
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/cloudSync/chunkSource.ts": {
-      "rules": {
-        "raw-sql": 8
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/cloudSync/envelope.ts": {
-      "rules": {
-        "long-file": 487,
-        "procedural-module": 25
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/cloudSync/remoteContent.ts": {
-      "rules": {
-        "raw-sql": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/cloudSync/repository.ts": {
-      "rules": {
-        "long-file": 687,
-        "raw-sql": 203
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/cloudSync/routes.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/cloudSync/service.ts": {
-      "rules": {
-        "long-file": 728,
-        "raw-sql": 13
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/databaseOperationBatches.ts": {
       "rules": {
         "raw-sql": 31,
