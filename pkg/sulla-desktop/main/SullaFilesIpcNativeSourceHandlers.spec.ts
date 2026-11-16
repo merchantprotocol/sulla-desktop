@@ -43,7 +43,7 @@ function harness(options:{ ready?:boolean; mas?:boolean; bookmarks?:string[]; so
   const mountManager = { status: () => ({ ready: options.ready ?? true }) };
   new SullaFilesIpcNativeSourceHandlers(new SullaFilesIpcApi(client as any), { watcher: () => watcher as any, sourceGateway: () => gateway as any }, mountManager, desktop as any, () => ({ platform: 'darwin', mas: options.mas }))
     .register({ handle: (channel, listener) => { handlers.set(channel, listener) } });
-  const call = (channel:string, input?:unknown) => handlers.get(channel)!({ sender: {} }, input);
+  const call = async(channel:string, input?:unknown) => handlers.get(channel)!({ sender: {} }, input);
 
   return { call, watcher, gateway, client, desktop };
 }
