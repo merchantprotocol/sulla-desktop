@@ -3,25 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-// The runner's BEGIN/COMMIT/ROLLBACK helper (pure move): one pooled client per operation.
+// The sync runner's transaction helper: one pooled client per operation, via the shared PgTransactionRunner.
 
 import type pg from 'pg';
 
 import type { Database } from '../../../db.js';
+import { PgTransactionRunner } from '../../../repositories/PgTransactionRunner.js';
 
 export class PostgresSyncTransaction {
-  async run<T>(db: Database, operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await operation(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
-    }
+  constructor(private readonly transactions: PgTransactionRunner = new PgTransactionRunner()) {}
+
+  /** A failed ROLLBACK keeps the original error and releases the client with the rollback error. */
+  run<T>(db: Database, operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.transactions.run(db, operation);
   }
 }

@@ -7,6 +7,8 @@ import type { FilesKeyBundleContext, FilesKeyBundleEnvelope } from '@sulla/vault
 
 import type { Database, Queryable } from '../db.js';
 
+import { PgTransactionRunner } from './PgTransactionRunner.js';
+
 export interface FilesKeyBundleCurrentRow {
   principal_id:  string;
   collection_id: string;
@@ -31,29 +33,24 @@ export interface FilesKeyBundleRecord {
  * SQL moved verbatim from filesKeyBundleAuthority.ts (E9).
  */
 export class PostgresFilesKeyBundleRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly transactions: PgTransactionRunner = new PgTransactionRunner(),
+  ) {}
 
   /**
    * One transaction holding the per-collection advisory lock. `work` runs
    * after BEGIN and the lock; COMMIT only if it resolves, ROLLBACK otherwise.
    */
   async withCollectionLock<T>(principalId: string, collectionId: string, work: (connection: Queryable) => Promise<T>): Promise<T> {
-    const client = await this.db.connect();
-    try {
-      await client.query('BEGIN');
+    // A failed ROLLBACK releases the connection with its error so the pool destroys it (PgTransactionRunner).
+    return this.transactions.run(this.db, async client => {
       await client.query(
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
         [`sulla:files:key-bundle:${ principalId }:${ collectionId }`],
       );
-      const result = await work(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+      return work(client);
+    });
   }
 
   async findEnvelope(connection: Queryable, context: FilesKeyBundleContext): Promise<FilesKeyBundleEnvelopeRow | undefined> {
