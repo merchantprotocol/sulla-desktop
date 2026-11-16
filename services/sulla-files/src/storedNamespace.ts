@@ -31,12 +31,14 @@ export async function lockStoredNamespace(client:pg.PoolClient, collectionId:str
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [collectionKey]);
     return;
   }
-  // A scoped create shares the collection gate with other creates, but excludes
-  // broad namespace mutations. Ancestor file slots are shared; the target slot
-  // is exclusive. This catches exact-path and file-vs-folder prefix races even
-  // for deep paths, while allowing siblings in one directory to proceed together.
+  // A scoped create takes the collection gate exclusively. The database's
+  // namespace trigger also takes this advisory key exclusively while inserting
+  // file/folder rows, so taking it shared here would make concurrent writers
+  // deadlock while upgrading their transaction locks in the trigger. Ancestor
+  // file slots are shared; the target slot is exclusive. This catches exact-path
+  // and file-vs-folder prefix races even for deep paths.
   // Every transaction acquires the same sorted set of ancestor/target keys.
-  await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [collectionKey]);
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [collectionKey]);
   const ancestors = new Set(storedParentPaths(scopedPath));
   const paths = [...new Set([...ancestors, scopedPath])].sort();
   for (const path of paths) {
