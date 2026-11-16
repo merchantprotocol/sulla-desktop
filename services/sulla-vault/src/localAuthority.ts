@@ -271,6 +271,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.humanSessions.clear();
     this.stagedCacheUpdate?.masterKey.fill(0);
     this.stagedCacheUpdate = null;
+    this.parts.enrollment.discardAllPendingEnrollments();
   }
 
   /**

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { computed, ref } from 'vue';
+import { computed, ref, type Ref } from 'vue';
 
 import type { BookmarkRecord } from '@pkg/agent/database/models/BrowserBookmarkModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -15,48 +15,74 @@ export interface BookmarkNode {
   children: BookmarkNode[];
 }
 
-// Shared across every consumer (pane, browser toolbar star) so there is one
-// list and one IPC subscription for the whole window.
-const records = ref<BookmarkRecord[]>([]);
-const loaded = ref(false);
-const error = ref<string | null>(null);
-let subscribed = false;
-let inflight: Promise<void> | null = null;
-let retryTimer: ReturnType<typeof setTimeout> | null = null;
+type BookmarksIpc = Pick<typeof ipcRenderer, 'invoke' | 'on'>;
 
 // Postgres lives in the VM and can come up well after the window does.
 const RETRY_MS = 3_000;
 
-async function refresh(): Promise<void> {
-  if (inflight) return inflight;
-  inflight = (async() => {
-    try {
-      records.value = await ipcRenderer.invoke('bookmarks:list');
-      loaded.value = true;
-      error.value = null;
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
-      if (!retryTimer) {
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          refresh();
-        }, RETRY_MS);
+/**
+ * Shared across every consumer (pane, browser toolbar star) so there is one
+ * list and one IPC subscription for the whole window.
+ */
+export class BookmarksStore {
+  private static instance: BookmarksStore | null = null;
+
+  /** The single store every component in this window shares. */
+  static shared(): BookmarksStore {
+    if (!BookmarksStore.instance) BookmarksStore.instance = new BookmarksStore(ipcRenderer);
+
+    return BookmarksStore.instance;
+  }
+
+  readonly records: Ref<BookmarkRecord[]> = ref([]);
+  readonly loaded = ref(false);
+  readonly error = ref<string | null>(null);
+  private subscribed = false;
+  private inflight: Promise<void> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(private readonly ipc: BookmarksIpc) {}
+
+  readonly refresh = (): Promise<void> => {
+    if (this.inflight) return this.inflight;
+    this.inflight = (async() => {
+      try {
+        this.records.value = await this.ipc.invoke('bookmarks:list');
+        this.loaded.value = true;
+        this.error.value = null;
+      } catch (err) {
+        this.error.value = err instanceof Error ? err.message : String(err);
+        if (!this.retryTimer) {
+          this.retryTimer = setTimeout(() => {
+            this.retryTimer = null;
+            this.refresh();
+          }, RETRY_MS);
+        }
+      } finally {
+        this.inflight = null;
       }
-    } finally {
-      inflight = null;
-    }
-  })();
+    })();
 
-  return inflight;
-}
+    return this.inflight;
+  };
 
-function subscribe(): void {
-  if (subscribed) return;
-  subscribed = true;
-  try {
-    ipcRenderer.on('bookmarks:changed', () => { refresh() });
-  } catch { /* non-Electron context */ }
-  refresh();
+  /** Subscribe to change events once per window and load the list. */
+  subscribe(): void {
+    if (this.subscribed) return;
+    this.subscribed = true;
+    try {
+      this.ipc.on('bookmarks:changed', () => { this.refresh() });
+    } catch { /* non-Electron context */ }
+    this.refresh();
+  }
+
+  /** Run an IPC mutation, then reload the shared list. */
+  async mutate<T>(fn: (ipc: BookmarksIpc) => Promise<T>): Promise<T> {
+    const result = await fn(this.ipc);
+    await this.refresh();
+
+    return result;
+  }
 }
 
 /** Build the folder tree from flat rows (already ordered by position). */
@@ -94,8 +120,11 @@ export function bookmarkUrlKey(url: string | null | undefined): string {
 }
 
 export function useBookmarks() {
-  subscribe();
+  const store = BookmarksStore.shared();
 
+  store.subscribe();
+
+  const { records } = store;
   const tree = computed(() => buildBookmarkTree(records.value));
   const byUrl = computed(() => {
     const map = new Map<string, BookmarkRecord>();
@@ -110,24 +139,17 @@ export function useBookmarks() {
     return byUrl.value.get(bookmarkUrlKey(url));
   }
 
-  async function mutate<T>(fn: () => Promise<T>): Promise<T> {
-    const result = await fn();
-    await refresh();
-
-    return result;
-  }
-
   return {
     records,
     tree,
-    loaded,
-    error,
-    refresh,
+    loaded:      store.loaded,
+    error:       store.error,
+    refresh:     store.refresh,
     findByUrl,
-    addBookmark: (input: { url: string; title?: string; parentId?: string | null; tabId?: string }) => mutate(() => ipcRenderer.invoke('bookmarks:create', { kind: 'bookmark', ...input })),
-    addFolder:   (title: string, parentId: string | null = null) => mutate(() => ipcRenderer.invoke('bookmarks:create', { kind: 'folder', title, parentId })),
-    update:      (id: string, input: { title?: string; url?: string }) => mutate(() => ipcRenderer.invoke('bookmarks:update', id, input)),
-    remove:      (id: string) => mutate(() => ipcRenderer.invoke('bookmarks:delete', id)),
-    move:        (id: string, parentId: string | null, index: number) => mutate(() => ipcRenderer.invoke('bookmarks:move', id, parentId, index)),
+    addBookmark: (input: { url: string; title?: string; parentId?: string | null; tabId?: string }) => store.mutate(ipc => ipc.invoke('bookmarks:create', { kind: 'bookmark', ...input })),
+    addFolder:   (title: string, parentId: string | null = null) => store.mutate(ipc => ipc.invoke('bookmarks:create', { kind: 'folder', title, parentId })),
+    update:      (id: string, input: { title?: string; url?: string }) => store.mutate(ipc => ipc.invoke('bookmarks:update', id, input)),
+    remove:      (id: string) => store.mutate(ipc => ipc.invoke('bookmarks:delete', id)),
+    move:        (id: string, parentId: string | null, index: number) => store.mutate(ipc => ipc.invoke('bookmarks:move', id, parentId, index)),
   };
 }

@@ -21,17 +21,21 @@ interface ComposeDocument {
  * Last check on every generated compose document, run just before it is
  * written: each secret-bearing service carries every secret env var with the
  * install's value (so none can fall back to an image default), PostgreSQL gets
- * the same password, and no known fallback credential appears anywhere in the
+ * the same password, no service asks PostgreSQL for passwordless (`trust`)
+ * network auth, and no known fallback credential appears anywhere in the
  * YAML unless it genuinely is this install's stored secret.
  */
 export class ComposeSecretGuard {
   /** Credentials that only ever appear as a fallback (baked into images and old builds). */
   static readonly FALLBACK_CREDENTIALS: readonly string[] = ['sulla_dev_password'];
 
+  /** PostgreSQL auth methods that let a network client in without the service secret. */
+  static readonly PASSWORDLESS_AUTH_METHODS: readonly string[] = ['trust'];
+
   constructor(private readonly secret: ServiceSecretComposeValues) {}
 
   assert(compose: ComposeDocument, composeYaml: string): void {
-    const problems = [...this.environmentProblems(compose), ...this.fallbackProblems(composeYaml)];
+    const problems = [...this.environmentProblems(compose), ...this.authMethodProblems(compose), ...this.fallbackProblems(composeYaml)];
 
     if (problems.length > 0) throw new ComposeSecretGuardError(problems);
   }
@@ -59,6 +63,20 @@ export class ComposeSecretGuard {
     }
 
     return problems;
+  }
+
+  /** Any service asking the PostgreSQL entrypoint for passwordless network auth. */
+  private authMethodProblems(compose: ComposeDocument): string[] {
+    return Object.entries(compose.services ?? {})
+      .filter(([, definition]) => ComposeSecretGuard.PASSWORDLESS_AUTH_METHODS.includes(this.hostAuthMethod(definition?.environment)))
+      .map(([service]) => `${ service } POSTGRES_HOST_AUTH_METHOD allows passwordless network logins`);
+  }
+
+  private hostAuthMethod(environment: Record<string, unknown> | string[] | undefined): string {
+    const entries = Array.isArray(environment) ? environment : Object.entries(environment ?? {}).map(([key, value]) => `${ key }=${ value }`);
+    const entry = entries.find(item => typeof item === 'string' && item.trim().startsWith('POSTGRES_HOST_AUTH_METHOD='));
+
+    return entry ? entry.slice(entry.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '').toLowerCase() : '';
   }
 
   private fallbackProblems(composeYaml: string): string[] {

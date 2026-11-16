@@ -19,6 +19,8 @@
  * for audit/history — never as a gate.
  */
 
+import { ArtifactCustodyRepository } from '../app/Repositories/ArtifactCustodyRepository';
+
 export type CustodyWorkKind = 'code' | 'non_code';
 export type CustodyTransition = 'in_review' | 'done';
 
@@ -36,6 +38,8 @@ export interface ArtifactCustody {
 }
 
 export class ArtifactCustodyPolicy {
+  private static readonly custodyRows = new ArtifactCustodyRepository();
+
   /**
    * Structural sanity check only — never a completeness requirement.
    * Absent custody is fine. Present custody just has to be a plain object
@@ -108,10 +112,8 @@ export class ArtifactCustodyPolicy {
     // work_task_artifact_custody.work_kind is NOT NULL; default to the
     // generic bucket when a caller attaches custody without picking one.
     const workKind = custody.workKind ?? 'non_code';
-    await client.query(`
-      INSERT INTO work_task_artifact_custody
-        (id, task_id, transition, work_kind, custody, created_by)
-      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-    `, [`custody-${ randomUUID() }`, taskId, transition, workKind, JSON.stringify(custody), actor]);
+    await ArtifactCustodyPolicy.custodyRows.insertWithClient(client, {
+      id: `custody-${ randomUUID() }`, taskId, transition, workKind, custody, actor,
+    });
   }
 }

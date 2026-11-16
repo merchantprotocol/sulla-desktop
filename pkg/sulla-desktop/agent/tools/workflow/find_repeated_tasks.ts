@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { RoutineReportRepository } from '../../app/Repositories/RoutineReportRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -44,18 +45,7 @@ export class FindRepeatedTasksWorker extends BaseTool {
     const limit     = Math.min(Math.max(Number(input.limit ?? 20) || 20, 1), 100);
 
     try {
-      const rows = await postgresClient.query(`
-        SELECT
-          signature,
-          occurrences,
-          conversations,
-          span_days,
-          to_char(last_seen, 'YYYY-MM-DD') AS last_seen
-        FROM routine_promotion_candidates
-        WHERE conversations >= $1
-        ORDER BY conversations DESC, occurrences DESC
-        LIMIT $2
-      `, [threshold, limit]);
+      const rows = await new RoutineReportRepository(postgresClient).promotionCandidates(threshold, limit);
 
       const list = Array.isArray(rows) ? rows : [];
 
