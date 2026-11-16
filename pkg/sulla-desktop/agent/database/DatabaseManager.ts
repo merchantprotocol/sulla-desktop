@@ -9,6 +9,7 @@
 
 import { migrationsRegistry } from './migrations';
 import { SullaSettingsModel } from './models/SullaSettingsModel';
+import { serviceSecretProvider } from '../app/Providers/ServiceSecretServiceProvider';
 import { skillsRegistry } from './registry/SkillsRegistry';
 import { seedersRegistry } from './seeders';
 
@@ -102,6 +103,9 @@ export class DatabaseManager {
 
     // Now that tables are ready, sync settings to persistent storage
     await SullaSettingsModel.bootstrap();
+    // The service secret was read from the settings file before PostgreSQL was
+    // up; make the database agree now (the database wins on a difference).
+    await serviceSecretProvider.converge();
 
     // Settings are ready to be used in seeding
     await this.runSeeders();
