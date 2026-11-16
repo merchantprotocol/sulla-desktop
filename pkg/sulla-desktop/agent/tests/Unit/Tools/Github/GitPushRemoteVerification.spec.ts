@@ -94,7 +94,9 @@ describe('GitPushWorker remote verification', () => {
       mockCommands(localHead);
       const result = await (new GitPushWorker() as any)._validatedCall({ absolutePath: '/repo', branch });
       expect(result.successBoolean).toBe(true);
-      expect(runCommand).toHaveBeenCalledWith(expect.stringContaining(`push origin ${ branch }`), [], expect.any(Object));
+      // risk: command injection — validated names are still passed to the shell as quoted arguments.
+      expect(runCommand).toHaveBeenCalledWith(expect.stringContaining(`push "origin" "${ branch }"`), [], expect.any(Object));
+      expect(runCommand).toHaveBeenCalledWith(expect.stringContaining(`ls-remote "origin" "refs/heads/${ branch }"`), [], expect.any(Object));
     },
   );
 });

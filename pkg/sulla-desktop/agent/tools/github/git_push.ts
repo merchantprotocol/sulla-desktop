@@ -89,7 +89,7 @@ export class GitPushWorker extends BaseTool {
 
       // Fetch PAT from vault and build an authenticated (token-free-on-the-wire)
       // push target for GitHub remotes.
-      let pushTarget = remote;
+      let pushTarget = `"${ remote }"`;
       let authPrefix = '';
       let credFlags = '';
       if (!localAuthority) {
@@ -100,7 +100,7 @@ export class GitPushWorker extends BaseTool {
 
       if (token) {
         const remoteUrlResult = await runCommand(
-          `git -C "${ repoRoot }" remote get-url ${ remote }`,
+          `git -C "${ repoRoot }" remote get-url "${ remote }"`,
           [],
           { runInGuest: true, timeoutMs: 10_000 },
         );
@@ -128,7 +128,7 @@ export class GitPushWorker extends BaseTool {
         // refs/remotes/<remote>/<branch> and rejects every existing branch as
         // stale. Pin the lease explicitly to the ref refreshed by git_fetch.
         const leaseResult = await runCommand(
-          `git -C "${ repoRoot }" rev-parse --verify refs/remotes/${ remote }/${ targetBranch }`,
+          `git -C "${ repoRoot }" rev-parse --verify "refs/remotes/${ remote }/${ targetBranch }"`,
           [],
           { runInGuest: true, timeoutMs: 10_000 },
         );
@@ -138,19 +138,19 @@ export class GitPushWorker extends BaseTool {
             responseString: `Git push failed: force push requires a fetched ${ remote }/${ targetBranch } ref`,
           };
         }
-        forceFlag = ` --force-with-lease=refs/heads/${ targetBranch }:${ leaseResult.stdout.trim() }`;
+        forceFlag = ` --force-with-lease="refs/heads/${ targetBranch }:${ leaseResult.stdout.trim() }"`;
       }
       const cmd = tags
         ? `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
-        : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
+        : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } "${ targetBranch }"${ forceFlag }`;
       const result = localAuthority
         ? await (async() => {
-          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInGuest: true, timeoutMs: 10_000 });
+          const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url "${ remote }"`, [], { runInGuest: true, timeoutMs: 10_000 });
           if (remoteUrl.exitCode !== 0) return remoteUrl;
           return withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), (proxyUrl) => {
             const brokerCommand = tags
               ? `git -C "${ repoRoot }" push "${ proxyUrl }" --tags${ forceFlag }`
-              : `git -C "${ repoRoot }" push "${ proxyUrl }" ${ targetBranch }${ forceFlag }`;
+              : `git -C "${ repoRoot }" push "${ proxyUrl }" "${ targetBranch }"${ forceFlag }`;
             return runCommand(brokerCommand, [], { runInGuest: true, timeoutMs: 120_000 });
           });
         })()
@@ -161,13 +161,13 @@ export class GitPushWorker extends BaseTool {
       // without updating it.
       if (!tags) {
         const localHead = await runCommand(`git -C "${ repoRoot }" rev-parse HEAD`, [], { runInGuest: true, timeoutMs: 10_000 });
-        const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url ${ remote }`, [], { runInGuest: true, timeoutMs: 10_000 });
+        const remoteUrl = await runCommand(`git -C "${ repoRoot }" remote get-url "${ remote }"`, [], { runInGuest: true, timeoutMs: 10_000 });
         let remoteHead = { stdout: '', stderr: '', exitCode: 1 };
         if (remoteUrl.exitCode === 0) {
-          const verify = (proxyUrl: string) => runCommand(`git -C "${ repoRoot }" ls-remote "${ proxyUrl }" refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
+          const verify = (proxyUrl: string) => runCommand(`git -C "${ repoRoot }" ls-remote "${ proxyUrl }" "refs/heads/${ targetBranch }"`, [], { runInGuest: true, timeoutMs: 30_000 });
           remoteHead = localAuthority
             ? await withGitHubBrokerRemote(this.executionContext, remoteUrl.stdout.trim(), verify)
-            : await runCommand(`${ authPrefix }git ${ credFlags }-C "${ repoRoot }" ls-remote ${ pushTarget } refs/heads/${ targetBranch }`, [], { runInGuest: true, timeoutMs: 30_000 });
+            : await runCommand(`${ authPrefix }git ${ credFlags }-C "${ repoRoot }" ls-remote ${ pushTarget } "refs/heads/${ targetBranch }"`, [], { runInGuest: true, timeoutMs: 30_000 });
         }
         const expectedHead = localHead.stdout.trim();
         const actualHead = remoteHead.exitCode === 0 ? remoteHead.stdout.trim().split(/\s+/)[0] : '';
