@@ -5,6 +5,10 @@
 
 import { BootstrapUnlockService } from './BootstrapUnlockService.js';
 import { HumanSessionService } from './HumanSessionService.js';
+import { HumanItemService } from './HumanItemService.js';
+import { BitwardenImportService } from './BitwardenImportService.js';
+import { AccountPasswordService } from './AccountPasswordService.js';
+import { HumanRecoveryService } from './HumanRecoveryService.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { VaultKeyActivation } from './VaultKeyActivation.js';
 
@@ -16,10 +20,18 @@ export class LocalAuthorityCollaborators {
   readonly bootstrap: BootstrapUnlockService;
   readonly keyActivation: VaultKeyActivation;
   readonly humanSessions: HumanSessionService;
+  readonly humanItems: HumanItemService;
+  readonly bitwarden: BitwardenImportService;
+  readonly accountPasswords: AccountPasswordService;
+  readonly recovery: HumanRecoveryService;
 
   constructor(host: LocalAuthorityHost) {
     this.bootstrap = new BootstrapUnlockService(host);
     this.keyActivation = new VaultKeyActivation(host);
     this.humanSessions = new HumanSessionService(host);
+    this.humanItems = new HumanItemService(host);
+    this.bitwarden = new BitwardenImportService(host);
+    this.accountPasswords = new AccountPasswordService(host);
+    this.recovery = new HumanRecoveryService(host);
   }
 }
