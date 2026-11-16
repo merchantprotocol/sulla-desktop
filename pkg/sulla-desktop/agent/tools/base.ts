@@ -6,6 +6,7 @@
 // src/tools/base.ts
 import { ToolResult } from '../types';
 import { toolRequiresHostAccess } from './util/hostAccessPolicy';
+import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
 
 import type { ToolExecutionContext } from './executionContext';
 
@@ -266,7 +267,10 @@ export abstract class BaseTool<TState = any> {
       }
 
       const { decisionService } = await import('../services/DecisionService');
-      if (this.name !== 'ask_user_question' && await decisionService.requiresApproval(this.name)) {
+      const operations = this.metadata.operationTypes ?? [];
+      const sideEffect = (metadata?.sideEffect as ToolSideEffect | undefined) ?? (operations.length && operations.every(operation => operation === 'read') ? 'read' : undefined);
+      const relayedWrite = metadata?.relayed === true && requiresToolApproval(sideEffect, { relayed: true });
+      if (this.name !== 'ask_user_question' && (relayedWrite || await decisionService.requiresApproval(this.name))) {
         const { record, result } = await decisionService.request({
           kind:           'approval',
           title:          `Allow ${ this.metadata.category } / ${ this.name }?`,
