@@ -48,9 +48,10 @@ class SystemAgentPolicyGateClock implements AgentPolicyGateClock {
  * `now` defaults to the injected clock; the domain refuses an expiring policy without one.
  *
  * Deliberate differences from the legacy copy, pinned in AgentPolicyGateParity.spec.ts:
- *   - When several rules fail at once, the reported reason follows the domain order
- *     (expiry → agent list → server agents → sites → level) instead of Desktop's
- *     (agent list → level → expiry → server agents → sites). Allow/deny never changes.
+ *   - When several rules fail at once, the reported reason follows the gate order
+ *     (owner-only → malformed → host validity → expiry → agent list → server agents → sites → level) instead of
+ *     Desktop's (owner-only → malformed → agent list → level → expiry → server agents → host → sites).
+ *     Allow/deny never changes.
  *   - Sites are matched with the domain's normalization: a trailing dot and a stored `https://` prefix
  *     or path on the site are ignored ("example.com." and "https://example.com/x" both mean example.com).
  *   - An unknown requested level is refused (the legacy copy compared `undefined > n` and allowed it).
