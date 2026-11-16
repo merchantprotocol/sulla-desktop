@@ -8,7 +8,7 @@
 // Exposes high-level methods for sending messages, reacting, fetching users/history/etc.
 // Handles connection lifecycle, graceful shutdown, reconnection
 
-import { Client, GatewayIntentBits, ReactionEmoji, ChannelType } from 'discord.js';
+import { Client, GatewayIntentBits, ReactionEmoji, ChannelType, Events } from 'discord.js';
 
 import { incomingMessage } from './prompts/incoming_message';
 import { usesContainerVaultAuthority } from '../../../vault-broker';
