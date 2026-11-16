@@ -3,331 +3,62 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { constants, open, readdir } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
-import { chunkId, decrypt, decryptChunk, encrypt, encryptChunk, type Envelope } from './crypto.js';
+import { LegacyImportControlRepository } from './Repositories/LegacyImportControlRepository.js';
+import { LegacyImportIdentityRepository } from './Repositories/LegacyImportIdentityRepository.js';
+import { LegacyImportPublicationRepository } from './Repositories/LegacyImportPublicationRepository.js';
+import { LegacyImportReceiptRepository, type LegacyImportCounts } from './Repositories/LegacyImportReceiptRepository.js';
+import { LegacyImportStagingRepository } from './Repositories/LegacyImportStagingRepository.js';
+import { LegacyChunkSource } from './Services/LegacyChunkSource.js';
+import { LegacyImportContinuationRequiredError, LegacyImportDataError, LegacyImportFailurePolicy, LegacyImportTrace } from './Services/LegacyImportTrace.js';
+import { LegacyImportPublisher } from './Services/LegacyImportPublisher.js';
+import { LegacyKeyAuthority } from './Services/LegacyKeyAuthority.js';
+import { LegacyManifestConverter, type LegacyKeys } from './Services/LegacyManifestConverter.js';
+import { LegacyVersionConverter, type LegacyStagedIdentity } from './Services/LegacyVersionConverter.js';
 import { Store } from './store.js';
 
-import type { FileHandle } from 'node:fs/promises';
 import type pg from 'pg';
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CHUNK = /^[0-9a-f]{64}$/;
-const BUCKET = /^[0-9a-f]{2}$/;
-const MASTER_CONTEXT = 'sulla:files:master-check:v1';
-const MASTER_CHECK = Buffer.from('sulla-files-keychain-master-v1');
-const MAX_ENCRYPTED_CHUNK = 32 * 1024 * 1024;
+export { LegacyImportContinuationRequiredError, LegacyImportDataError } from './Services/LegacyImportTrace.js';
 
-type LegacyImportPhase =
-  | 'completion-check'
-  | 'staging-lock'
-  | 'staging-master-verification'
-  | 'staging-source-expansion'
-  | 'staging-protection'
-  | 'staging-collection-maps'
-  | 'staging-file-maps'
-  | 'staging-version-maps'
-  | 'source-layout-scan'
-  | 'native-layout-scan'
-  | 'publish-lock'
-  | 'publish-master-verification'
-  | 'publish-identity-verification'
-  | 'source-key-authentication'
-  | 'shadow-key-authentication'
-  | 'version-manifest-verification'
-  | 'chunk-conversion'
-  | 'manifest-publication'
-  | 'file-publication'
-  | 'version-publication'
-  | 'version-lineage-publication'
-  | 'version-provenance-verification'
-  | 'current-version-publication'
-  | 'access-publication'
-  | 'graph-publication'
-  | 'journal-publication'
-  | 'audit-publication'
-  | 'chunk-reference-publication'
-  | 'publication-verification'
-  | 'publication-commit';
-
-const SAFE_LEGACY_IMPORT_MESSAGES = new Set([
-  'Invalid Files import key material',
-  'Invalid Files master key',
-  'Invalid legacy collection key',
-  'Legacy Files audit provenance mapping is incomplete',
-  'Legacy Files base-version mapping is incomplete',
-  'Legacy Files chunk collection has no authenticated metadata',
-  'Legacy Files chunk conflict does not match converted content',
-  'Legacy Files chunk has an invalid stored size',
-  'Legacy Files chunk identity verification failed',
-  'Legacy Files collection key authentication found ambiguous protected masters',
-  'Legacy Files collection key authentication found no protected master',
-  'Legacy Files collection mapping is incomplete',
-  'Legacy Files converted manifest has no collection mapping',
-  'Legacy Files converted manifest is missing',
-  'Legacy Files current-version mapping is incomplete',
-  'Legacy Files identity mapping is incomplete',
-  'Legacy Files import rejected a non-directory path',
-  'Legacy Files import rejected an unsafe source root',
-  'Legacy Files import requires an absolute source root',
-  'Legacy Files import verification is incomplete',
-  'Legacy Files manifest conflict does not match converted content',
-  'Legacy Files manifest has an invalid size',
-  'Legacy Files manifest size verification failed',
-  'Legacy Files manifested collection has ambiguous source layouts',
-  'Legacy Files manifested collection has no exact source layout',
-  'Legacy Files parent-version mapping is incomplete',
-  'Legacy Files shadow collection key is unavailable',
-  'Legacy Files source manifest authentication failed',
-  'Legacy Files version conflict does not match source provenance',
-  'Legacy Files version identity mapping is incomplete',
-  'Legacy Files version manifest is missing',
-  'Legacy Files version references a missing source collection',
-  'Legacy Files version references an unmapped chunk collection',
-  'Legacy Files version size verification failed',
-  'Native shadow chunk verification failed',
-  'Native source collection key is unavailable',
-  'No legacy Files collections require import',
-]);
-const SAFE_ERROR_CODES = new Set([
-  '08001', '08003', '08006', '23503', '23505', '23514', '40001', '40P01', '57P01',
-  'EACCES', 'EEXIST', 'EISDIR', 'ELOOP', 'EMFILE', 'ENFILE', 'ENOENT', 'ENOSPC', 'ENOTDIR', 'EROFS',
-]);
-
-function safeErrorProperty(error:unknown, property:'name' | 'message' | 'code'):unknown {
-  try { return typeof error === 'object' && error !== null ? Reflect.get(error, property) : undefined } catch { return undefined }
+/** Collaborators of one importer; tests may swap any of them. */
+export interface LegacyImportCollaborators {
+  control:     LegacyImportControlRepository;
+  staging:     LegacyImportStagingRepository;
+  identity:    LegacyImportIdentityRepository;
+  receipt:     LegacyImportReceiptRepository;
+  chunks:      LegacyChunkSource;
+  keys:        LegacyKeyAuthority;
+  versions:    LegacyVersionConverter;
+  publisher:   LegacyImportPublisher;
 }
 
-class LegacyImportTrace {
-  readonly correlationId = randomUUID();
-  private sequence = 0;
-  phase:LegacyImportPhase = 'completion-check';
-
-  mark(phase:LegacyImportPhase):void {
-    this.phase = phase;
-    this.write('legacy-import-stage');
-  }
-
-  completed():void { this.write('legacy-import-completed') }
-
-  sourceKey(details:{ kind:'native' | 'legacy'; hasNativeKey:boolean; hasExternalChunks:boolean; hasNativeChunks:boolean }):void {
-    this.write('legacy-import-source-key', details);
-  }
-
-  versionConflict(details: Record<string, boolean>): void {
-    this.write('legacy-import-version-conflict', details);
-  }
-
-  failed(error:unknown):void {
-    const name = safeErrorProperty(error, 'name');
-    const message = safeErrorProperty(error, 'message');
-    const code = safeErrorProperty(error, 'code');
-    this.write('legacy-import-failed', {
-      errorName: name === 'Error' || name === 'TypeError' || name === 'RangeError' ? name : 'Error',
-      ...(typeof message === 'string' && SAFE_LEGACY_IMPORT_MESSAGES.has(message) ? { reason: message } : {}),
-      ...(typeof code === 'string' && SAFE_ERROR_CODES.has(code) ? { reasonCode: code } : {}),
-    });
-  }
-
-  private write(event:'legacy-import-stage' | 'legacy-import-source-key' | 'legacy-import-version-conflict' | 'legacy-import-completed' | 'legacy-import-failed', details:Record<string, unknown> = {}):void {
-    try {
-      const output = JSON.stringify({ source: 'sulla-files', event, correlationId: this.correlationId, sequence: ++this.sequence, phase: this.phase, ...details });
-      if (event === 'legacy-import-failed') console.error(output); else console.info(output);
-    } catch { /* Diagnostics must never affect import control flow. */ }
-  }
-}
-
-interface Keys { data: Buffer; dedup: Buffer }
-interface SourceCollection { id: string; encrypted_data_key: Envelope; dedup_key_ciphertext: Envelope; compatibility_state: string }
-interface ConvertedManifest { hash: string; ids: string[]; totalSize: number; plaintextHash: string; chunks: Map<string, { size: number; storedSize: number }> }
-
-export class LegacyImportContinuationRequiredError extends Error {}
-
-/** A legacy item failed integrity/authentication checks and can be contained without locking healthy Files data. */
-export class LegacyImportDataError extends Error {
-  constructor(cause:unknown) {
-    super('Legacy Files data was quarantined after import validation failed', { cause });
-    this.name = 'LegacyImportDataError';
-  }
-}
-
-function quarantinableLegacyFailure(error:unknown):boolean {
-  const message = safeErrorProperty(error, 'message');
-  if (typeof message !== 'string') return false;
-  if (message === 'Invalid Files import key material' || message === 'Invalid Files master key') return false;
-  return SAFE_LEGACY_IMPORT_MESSAGES.has(message) ||
-    /^Legacy Files (?:collection|bucket|chunk) does not exist$/.test(message) ||
-    /^Legacy Files import found ambiguous (?:collection|bucket|chunk) identities$/.test(message) ||
-    /^Legacy Files import rejected a linked or non-directory (?:collection|bucket)$/.test(message) ||
-    /^Invalid legacy (?:collection|bucket|chunk) identity$/.test(message) ||
-    /^Completed legacy Files import /.test(message);
-}
-
-function validId(value:string, expression:RegExp, label:string):string {
-  if (!expression.test(value)) throw new Error(`Invalid legacy ${ label } identity`);
-  return value;
-}
-
-function fdPath(handle:FileHandle, name?:string):string {
-  return name === undefined ? `/proc/self/fd/${ handle.fd }` : `/proc/self/fd/${ handle.fd }/${ name }`;
-}
-
-async function openDirectory(path:string):Promise<FileHandle> {
-  if (!isAbsolute(path)) throw new Error('Legacy Files import requires an absolute source root');
-  let handle = await open('/', constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  try {
-    for (const component of path.split('/').filter(Boolean)) {
-      if (component === '.' || component === '..') throw new Error('Legacy Files import rejected an unsafe source root');
-      const child = await open(fdPath(handle, component), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-      if (!(await child.stat()).isDirectory()) { await child.close(); throw new Error('Legacy Files import rejected a non-directory path') }
-      await handle.close(); handle = child;
-    }
-    return handle;
-  } catch (error) { await handle.close(); throw error }
-}
-
-async function entries(handle:FileHandle) {
-  return readdir(fdPath(handle), { withFileTypes: true });
-}
-
-async function exactEntry(parent:FileHandle, requested:string, expression:RegExp, label:string):Promise<string> {
-  validId(requested, expression, label);
-  const matches = (await entries(parent)).filter(entry => expression.test(entry.name) && entry.name.toLowerCase() === requested.toLowerCase());
-  if (matches.length > 1) throw new Error(`Legacy Files import found ambiguous ${ label } identities`);
-  if (!matches.length) throw Object.assign(new Error(`Legacy Files ${ label } does not exist`), { code: 'ENOENT' });
-  return matches[0].name;
-}
-
-async function openChild(parent:FileHandle, requested:string, expression:RegExp, label:string):Promise<FileHandle> {
-  const name = await exactEntry(parent, requested, expression, label);
-  const handle = await open(fdPath(parent, name), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-  if (!(await handle.stat()).isDirectory()) { await handle.close(); throw new Error(`Legacy Files import rejected a linked or non-directory ${ label }`) }
-  return handle;
-}
-
-/** Pins every directory descriptor before opening the next component. */
-export async function readLegacyChunk(root:string, collectionId:string, id:string):Promise<Buffer> {
-  const collection = validId(collectionId, UUID, 'collection');
-  const chunk = validId(id, CHUNK, 'chunk');
-  const rootHandle = await openDirectory(root);
-  let collectionHandle:FileHandle | undefined; let bucketHandle:FileHandle | undefined; let file:FileHandle | undefined;
-  try {
-    collectionHandle = await openChild(rootHandle, collection, UUID, 'collection');
-    bucketHandle = await openChild(collectionHandle, chunk.slice(0, 2), BUCKET, 'bucket');
-    const leaf = await exactEntry(bucketHandle, chunk, CHUNK, 'chunk');
-    file = await open(fdPath(bucketHandle, leaf), constants.O_RDONLY | constants.O_NOFOLLOW);
-    const info = await file.stat();
-    if (!info.isFile() || info.size <= 0 || info.size > MAX_ENCRYPTED_CHUNK) throw new Error('Legacy Files chunk has an invalid stored size');
-    return await file.readFile();
-  } finally { await file?.close(); await bucketHandle?.close(); await collectionHandle?.close(); await rootHandle.close() }
-}
-
-export async function convertLegacyManifest(input:{
-  collectionId: string; chunkIds: string[]; totalSize: number; sourceRoot: string; sourceKeys: Keys; shadowKeys: Keys; store: Store; shadowCollectionId: string;
-}):Promise<ConvertedManifest> {
-  if (!Number.isSafeInteger(input.totalSize) || input.totalSize < 0) throw new Error('Legacy Files manifest has an invalid size');
-  const outputIds:string[] = []; const chunks = new Map<string, { size: number; storedSize: number }>(); const whole = createHash('sha256'); let total = 0;
-  for (const rawId of input.chunkIds) {
-    const sourceId = validId(String(rawId), CHUNK, 'chunk');
-    const encrypted = await readLegacyChunk(input.sourceRoot, input.collectionId, sourceId);
-    const plain = Buffer.from(await decryptChunk(encrypted, input.sourceKeys.data, sourceId));
-    try {
-      const expected = Buffer.from(sourceId, 'hex'); const actual = Buffer.from(chunkId(plain, input.sourceKeys.dedup), 'hex');
-      if (!timingSafeEqual(expected, actual)) throw new Error('Legacy Files chunk identity verification failed');
-      total += plain.length; if (!Number.isSafeInteger(total) || total > input.totalSize) throw new Error('Legacy Files manifest size verification failed');
-      whole.update(plain);
-      const outputId = chunkId(plain, input.shadowKeys.dedup); outputIds.push(outputId);
-      if (!await input.store.has(input.shadowCollectionId, outputId)) await input.store.put(input.shadowCollectionId, outputId, await encryptChunk(plain, input.shadowKeys.data, outputId));
-      const stored = await input.store.get(input.shadowCollectionId, outputId);
-      const verified = Buffer.from(await decryptChunk(stored, input.shadowKeys.data, outputId));
-      try {
-        if (!timingSafeEqual(plain, verified) || chunkId(verified, input.shadowKeys.dedup) !== outputId) throw new Error('Native shadow chunk verification failed');
-        chunks.set(outputId, { size: verified.length, storedSize: stored.length });
-      } finally { verified.fill(0) }
-    } finally { plain.fill(0); encrypted.fill(0) }
-  }
-  if (total !== input.totalSize) throw new Error('Legacy Files manifest size verification failed');
-  const hash = createHash('sha256').update(JSON.stringify({ ids: outputIds, size: total })).digest('hex');
-  return { hash, ids: outputIds, totalSize: total, plaintextHash: whole.digest('hex'), chunks };
-}
-
-async function unwrap(envelope:Envelope, key:Buffer, context:string):Promise<Buffer> {
-  const value = Buffer.from(await decrypt(envelope, key, context));
-  if (value.length !== 32) { value.fill(0); throw new Error('Invalid legacy collection key') }
-  return value;
-}
-
-async function sourceKeys(collection:SourceCollection, nativeMaster:Buffer, legacyMasters:Buffer[], nativeRow?:{ data_key: Envelope; dedup_key: Envelope }):Promise<Keys> {
-  if (collection.compatibility_state === 'native') {
-    if (!nativeRow) throw new Error('Native source collection key is unavailable');
-    const data = await unwrap(nativeRow.data_key, nativeMaster, `sulla:files:data-key:v1:${ collection.id }`);
-    try { return { data, dedup: await unwrap(nativeRow.dedup_key, nativeMaster, `sulla:files:dedup-key:v1:${ collection.id }`) } } catch (error) { data.fill(0); throw error }
-  }
-  const matches:Keys[] = [];
-  for (const master of legacyMasters) {
-    try {
-      const data = await unwrap(collection.encrypted_data_key, master, `sulla:files:data-key:v1:${ collection.id }`);
-      try { matches.push({ data, dedup: await unwrap(collection.dedup_key_ciphertext, master, `sulla:files:dedup-key:v1:${ collection.id }`) }) } catch { data.fill(0) }
-    } catch { /* A candidate may belong to another retired store. */ }
-  }
-  const unique = matches.filter((candidate, index) => matches.findIndex(other => timingSafeEqual(candidate.data, other.data) && timingSafeEqual(candidate.dedup, other.dedup)) === index);
-  for (const candidate of matches) if (!unique.includes(candidate)) { candidate.data.fill(0); candidate.dedup.fill(0) }
-  if (unique.length !== 1) {
-    for (const candidate of unique) { candidate.data.fill(0); candidate.dedup.fill(0) }
-    throw new Error(unique.length === 0
-      ? 'Legacy Files collection key authentication found no protected master'
-      : 'Legacy Files collection key authentication found ambiguous protected masters');
-  }
-  return unique[0];
-}
-
-async function verifyNativeMaster(client:pg.PoolClient, master:Buffer):Promise<void> {
-  if (master.length !== 32) throw new Error('Invalid Files master key');
-  const row = (await client.query('SELECT verifier FROM files_key_state WHERE id=TRUE FOR UPDATE')).rows[0];
-  if (!row) return;
-  const check = Buffer.from(await decrypt(row.verifier, master, MASTER_CONTEXT));
-  try { if (check.length !== MASTER_CHECK.length || !timingSafeEqual(check, MASTER_CHECK)) throw new Error('Invalid Files master key'); } finally { check.fill(0) }
-}
-
-async function legacyLayoutIds(root:string):Promise<Map<string, string>> {
-  const rootHandle = await openDirectory(root); const ids = new Map<string, string>();
-  try {
-    for (const entry of await entries(rootHandle)) {
-      if (!UUID.test(entry.name)) continue;
-      const canonical = entry.name.toLowerCase();
-      if (ids.has(canonical)) throw new Error('Legacy Files import found ambiguous collection identities');
-      let collection:FileHandle | undefined;
-      try {
-        collection = await openChild(rootHandle, entry.name, UUID, 'collection'); let found = false;
-        for (const bucket of await entries(collection)) {
-          if (!BUCKET.test(bucket.name)) continue;
-          let bucketHandle:FileHandle | undefined;
-          try {
-            bucketHandle = await openChild(collection, bucket.name, BUCKET, 'bucket');
-            if ((await entries(bucketHandle)).some(chunk => chunk.isFile() && CHUNK.test(chunk.name))) { found = true; break }
-          } finally { await bucketHandle?.close() }
-        }
-        if (found) ids.set(canonical, entry.name);
-      } finally { await collection?.close() }
-    }
-    return ids;
-  } finally { await rootHandle.close() }
-}
-
-async function optionalLegacyLayoutIds(root:string):Promise<Map<string, string>> {
-  try { return await legacyLayoutIds(root) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
-    throw error;
-  }
-}
-
+/**
+ * Imports the retired runtime's Files data into native shadow collections, idempotently:
+ * staging commits stable identity maps first, publication converts and publishes the whole
+ * set in one snapshot transaction, and a completed receipt short-circuits later runs.
+ */
 export class LegacyFilesImporter {
-  private readonly store: Store;
-  constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string) { this.store = new Store(chunkRoot) }
+  private readonly parts:LegacyImportCollaborators;
 
-  async run(nativeMaster:Buffer, suppliedLegacyMasters:Buffer[]):Promise<{ collections: number; files: number; versions: number }> {
+  constructor(private readonly db:pg.Pool, private readonly sourceRoot:string, private readonly chunkRoot:string, collaborators:Partial<LegacyImportCollaborators> = {}) {
+    const control = collaborators.control ?? new LegacyImportControlRepository();
+    const chunks = collaborators.chunks ?? new LegacyChunkSource();
+    const keys = collaborators.keys ?? new LegacyKeyAuthority(control);
+    this.parts = {
+      control,
+      chunks,
+      keys,
+      staging:   collaborators.staging ?? new LegacyImportStagingRepository(),
+      identity:  collaborators.identity ?? new LegacyImportIdentityRepository(),
+      receipt:   collaborators.receipt ?? new LegacyImportReceiptRepository(),
+      versions:  collaborators.versions ?? new LegacyVersionConverter(new LegacyManifestConverter(chunks, new Store(chunkRoot))),
+      publisher: collaborators.publisher ?? new LegacyImportPublisher(new LegacyImportPublicationRepository(), keys),
+    };
+  }
+
+  async run(nativeMaster:Buffer, suppliedLegacyMasters:Buffer[]):Promise<LegacyImportCounts> {
     const trace = new LegacyImportTrace();
     try {
       if (nativeMaster.length !== 32 || suppliedLegacyMasters.some(key => key.length !== 32) || suppliedLegacyMasters.length === 0) throw new Error('Invalid Files import key material');
@@ -342,112 +73,15 @@ export class LegacyFilesImporter {
       try {
         await this.stage(nativeMaster, trace);
         trace.mark('source-layout-scan');
-        const externalLayout = await optionalLegacyLayoutIds(this.sourceRoot);
+        const externalLayout = await this.parts.chunks.optionalLayoutIds(this.sourceRoot);
         trace.mark('native-layout-scan');
-        const nativeLayout = await legacyLayoutIds(this.chunkRoot);
-        const client = await this.db.connect();
-        try {
-          await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
-          trace.mark('publish-lock');
-          await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['sulla-files-legacy-import']);
-          await client.query('LOCK TABLE collections, files, file_versions, manifests, folder_shares, edges, journal, audit_log IN SHARE ROW EXCLUSIVE MODE');
-          trace.mark('publish-master-verification');
-          await verifyNativeMaster(client, nativeMaster);
-          trace.mark('publish-identity-verification');
-          const collections = (await client.query<SourceCollection>('SELECT id::text,encrypted_data_key,dedup_key_ciphertext,compatibility_state FROM collections WHERE legacy_source=TRUE ORDER BY id FOR UPDATE')).rows;
-          const mappings = (await client.query('SELECT source_collection_id::text,shadow_collection_id::text,published_at FROM files_legacy_collection_map ORDER BY source_collection_id')).rows;
-          if (collections.length !== mappings.length) throw new Error('Legacy Files collection mapping is incomplete');
-          const staged = { collections, mappings };
-          const externalIds = new Set(collections.filter(row => row.compatibility_state !== 'native').map(row => row.id.toLowerCase()));
-          for (const id of externalLayout.keys()) if (!externalIds.has(id)) throw new Error('Legacy Files chunk collection has no authenticated metadata');
-          await client.query(`INSERT INTO files_legacy_file_map(source_file_id,shadow_file_id,source_collection_id,shadow_collection_id)
-          SELECT f.id,gen_random_uuid(),f.collection_id,m.shadow_collection_id FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
-          JOIN files_legacy_collection_map m ON m.source_collection_id=f.collection_id ON CONFLICT(source_file_id) DO NOTHING`);
-          await client.query(`INSERT INTO files_legacy_version_map(source_version_id,shadow_version_id)
-          SELECT v.id,gen_random_uuid() FROM file_versions v JOIN files_legacy_file_map f ON f.source_file_id=v.file_id ON CONFLICT(source_version_id) DO NOTHING`);
-          const incomplete = await client.query(`SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
-          LEFT JOIN files_legacy_file_map fm ON fm.source_file_id=f.id LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=f.current_version_id
-          WHERE fm.source_file_id IS NULL OR (f.current_version_id IS NOT NULL AND vm.source_version_id IS NULL) LIMIT 1`);
-          const missingVersion = await client.query(`SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
-          LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id WHERE vm.source_version_id IS NULL LIMIT 1`);
-          if (incomplete.rowCount || missingVersion.rowCount) throw new Error('Legacy Files identity mapping is incomplete');
-          const converted = new Map<string, ConvertedManifest>(); const collectionKeys = new Map<string, Keys>(); const shadowKeys = new Map<string, Keys>();
-          try {
-          trace.mark('source-key-authentication');
-          for (const collection of collections) {
-            const nativeRow = (await client.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [collection.id])).rows[0];
-            trace.sourceKey({
-              kind: collection.compatibility_state === 'native' ? 'native' : 'legacy',
-              hasNativeKey: Boolean(nativeRow),
-              hasExternalChunks: externalLayout.has(collection.id.toLowerCase()),
-              hasNativeChunks: nativeLayout.has(collection.id.toLowerCase()),
-            });
-            collectionKeys.set(collection.id, await sourceKeys(collection, nativeMaster, legacyMasters, nativeRow));
-          }
-          trace.mark('shadow-key-authentication');
-          for (const mapping of mappings) {
-            const row = (await client.query('SELECT data_key,dedup_key FROM files_collection_keys WHERE collection_id=$1', [mapping.shadow_collection_id])).rows[0];
-            if (!row) throw new Error('Legacy Files shadow collection key is unavailable');
-            shadowKeys.set(mapping.source_collection_id, {
-              data:  await unwrap(row.data_key, nativeMaster, `sulla:files:data-key:v1:${ mapping.shadow_collection_id }`),
-              dedup: await unwrap(row.dedup_key, nativeMaster, `sulla:files:dedup-key:v1:${ mapping.shadow_collection_id }`),
-            });
-          }
-          trace.mark('version-manifest-verification');
-          const versions = (await client.query(`SELECT v.*,m.chunk_ids,m.total_size FROM file_versions v JOIN files f ON f.id=v.file_id
-            LEFT JOIN manifests m ON m.hash=v.manifest_hash JOIN files_legacy_file_map fm ON fm.source_file_id=f.id ORDER BY v.id`)).rows;
-          for (const version of versions) {
-            if (!version.manifest_hash) continue;
-            if (!Array.isArray(version.chunk_ids)) throw new Error('Legacy Files version manifest is missing');
-            const sourceIds = version.chunk_ids.map((id:unknown) => validId(String(id), CHUNK, 'chunk'));
-            const totalSize = Number(version.total_size);
-            if (!Number.isSafeInteger(totalSize) || totalSize < 0 || totalSize !== Number(version.size)) throw new Error('Legacy Files version size verification failed');
-            const sourceManifestHash = createHash('sha256').update(JSON.stringify({ ids: sourceIds, size: totalSize })).digest('hex');
-            if (sourceManifestHash !== version.manifest_hash) throw new Error('Legacy Files source manifest authentication failed');
-            const key = `${ version.chunk_collection_id }:${ version.manifest_hash }`;
-            if (!converted.has(key)) {
-              const source = collectionKeys.get(version.chunk_collection_id); const shadow = shadowKeys.get(version.chunk_collection_id);
-              const mapping = staged.mappings.find(row => row.source_collection_id === version.chunk_collection_id);
-              if (!source || !shadow || !mapping) throw new Error('Legacy Files version references an unmapped chunk collection');
-              const sourceCollection = staged.collections.find(row => row.id === version.chunk_collection_id);
-              if (!sourceCollection) throw new Error('Legacy Files version references a missing source collection');
-              const externalName = externalLayout.get(version.chunk_collection_id.toLowerCase());
-              const nativeName = nativeLayout.get(version.chunk_collection_id.toLowerCase());
-              if (sourceCollection.compatibility_state !== 'native' && externalName && nativeName) throw new Error('Legacy Files manifested collection has ambiguous source layouts');
-              if (sourceCollection.compatibility_state !== 'native' && !externalName && !nativeName) throw new Error('Legacy Files manifested collection has no exact source layout');
-              const nativeSource = sourceCollection.compatibility_state === 'native' || !externalName;
-              const sourceRoot = nativeSource ? this.chunkRoot : this.sourceRoot;
-              const collectionId = nativeSource ? nativeName ?? version.chunk_collection_id : externalName!;
-              trace.mark('chunk-conversion');
-              let item:ConvertedManifest;
-              try {
-                item = await convertLegacyManifest({ collectionId, chunkIds: sourceIds, totalSize, sourceRoot, sourceKeys: source, shadowKeys: shadow, store: this.store, shadowCollectionId: mapping.shadow_collection_id });
-              } catch (error) {
-                // Chunk reads, authentication, identity, and size checks are
-                // scoped to this legacy manifest. Their failure must contain
-                // the item, not lock unrelated Files collections.
-                throw new LegacyImportDataError(error);
-              }
-              converted.set(key, item);
-              trace.mark('version-manifest-verification');
-            }
-            if (converted.get(key)!.totalSize !== totalSize) throw new Error('Legacy Files version size verification failed');
-          }
-          const result = await this.publish(client, nativeMaster, staged, versions, converted, trace);
-          trace.mark('publication-commit');
-          await client.query('COMMIT');
-          trace.completed();
-          return result;
-          } finally {
-            for (const keys of shadowKeys.values()) { keys.data.fill(0); keys.dedup.fill(0) }
-            for (const keys of collectionKeys.values()) { keys.data.fill(0); keys.dedup.fill(0) }
-          }
-        } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+        const nativeLayout = await this.parts.chunks.layoutIds(this.chunkRoot);
+        return await this.publishSnapshot(nativeMaster, legacyMasters, externalLayout, nativeLayout, trace);
       } finally { for (const key of legacyMasters) key.fill(0); }
     } catch (error) {
       trace.failed(error instanceof LegacyImportDataError ? error.cause : error);
       if (error instanceof LegacyImportDataError) throw error;
-      if (quarantinableLegacyFailure(error)) throw new LegacyImportDataError(error);
+      if (LegacyImportFailurePolicy.quarantinable(error)) throw new LegacyImportDataError(error);
       throw error;
     }
   }
@@ -460,230 +94,126 @@ export class LegacyFilesImporter {
   async containFailedSources():Promise<void> {
     const client = await this.db.connect();
     try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['sulla-files-legacy-import']);
-      await client.query(`UPDATE collections SET legacy_source=TRUE,published=FALSE
-        WHERE compatibility_state<>'native' OR legacy_source=TRUE`);
-      await client.query(`INSERT INTO files_protected_files(file_id)
-        SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE c.legacy_source=TRUE
-        ON CONFLICT DO NOTHING`);
-      await client.query(`INSERT INTO files_legacy_preflight(id,state,protected_prefix,reason,detected_at,checked_at)
-        VALUES(TRUE,'secure-import-required',NULL,'quarantined-import-validation',NOW(),NOW())
-        ON CONFLICT(id) DO UPDATE SET state='secure-import-required',reason='quarantined-import-validation',checked_at=NOW()`);
-      await client.query('COMMIT');
+      await this.parts.control.begin(client);
+      await this.parts.control.lockImport(client);
+      await this.parts.receipt.quarantineSources(client);
+      await this.parts.control.commit(client);
     } catch (error) {
-      await client.query('ROLLBACK');
+      await this.parts.control.rollback(client);
       throw error;
     } finally {
       client.release();
     }
   }
 
-  async completedResult():Promise<{ collections: number; files: number; versions: number } | undefined> {
+  async completedResult():Promise<LegacyImportCounts | undefined> {
     const client = await this.db.connect();
+    const { control, receipt } = this.parts;
     try {
-      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      if (!(await client.query("SELECT 1 FROM files_legacy_imports WHERE id=TRUE AND state='completed'")).rowCount) { await client.query('COMMIT'); return undefined }
-      const incompleteIdentity = await client.query(`SELECT 1 FROM collections c LEFT JOIN files_legacy_collection_map cm ON cm.source_collection_id=c.id
-        WHERE c.legacy_source=TRUE AND (cm.source_collection_id IS NULL OR cm.published_at IS NULL)
-        UNION ALL SELECT 1 FROM files f JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
-          LEFT JOIN files_legacy_file_map fm ON fm.source_file_id=f.id WHERE fm.source_file_id IS NULL LIMIT 1`);
-      if (incompleteIdentity.rowCount) throw new Error('Completed legacy Files import source identity changed or mapping is incomplete');
-      const versionDrift = (await client.query(`SELECT count(*)::int count,
-          COALESCE(bool_and(source.current_version_id=v.id AND (
-            (v.parent_version_id IS NULL AND shadow.current_version_id IS NULL) OR parent.shadow_version_id=shadow.current_version_id
-          ) AND (v.base_server_version_id IS NULL OR base.shadow_version_id IS NOT NULL)),FALSE) continuable
-        FROM file_versions v JOIN files source ON source.id=v.file_id JOIN collections c ON c.id=source.collection_id AND c.legacy_source=TRUE
-        JOIN files_legacy_file_map fm ON fm.source_file_id=source.id JOIN files shadow ON shadow.id=fm.shadow_file_id
-        LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id
-        LEFT JOIN files_legacy_version_map parent ON parent.source_version_id=v.parent_version_id
-        LEFT JOIN files_legacy_version_map base ON base.source_version_id=v.base_server_version_id
-        WHERE vm.source_version_id IS NULL`)).rows[0];
-      if (Number(versionDrift.count) > 0) {
+      await control.beginReadOnlySnapshot(client);
+      if (!await receipt.isCompleted(client)) { await control.commit(client); return undefined }
+      if (await receipt.sourceIdentityIncomplete(client)) throw new Error('Completed legacy Files import source identity changed or mapping is incomplete');
+      const versionDrift = await receipt.versionDrift(client);
+      if (versionDrift.count > 0) {
         if (versionDrift.continuable) throw new LegacyImportContinuationRequiredError('Completed legacy Files import has a safe linear version continuation');
         throw new Error('Completed legacy Files import version history changed or diverged');
       }
-      const counts = (await client.query(`SELECT
-        (SELECT count(*)::int FROM files_legacy_collection_map cm JOIN collections c ON c.id=cm.source_collection_id AND c.legacy_source=TRUE) collections,
-        (SELECT count(*)::int FROM files_legacy_file_map fm JOIN files f ON f.id=fm.source_file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE) files,
-        (SELECT count(*)::int FROM files_legacy_version_map vm JOIN file_versions v ON v.id=vm.source_version_id JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE) versions`)).rows[0];
-      await client.query('COMMIT'); return counts;
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      const counts = await receipt.counts(client);
+      await control.commit(client); return counts;
+    } catch (error) { await control.rollback(client); throw error } finally { client.release() }
   }
 
-  private async stage(nativeMaster:Buffer, trace:LegacyImportTrace):Promise<{ collections: SourceCollection[]; mappings: any[] }> {
+  private async stage(nativeMaster:Buffer, trace:LegacyImportTrace):Promise<LegacyStagedIdentity> {
     const client = await this.db.connect();
+    const { control, staging, keys } = this.parts;
     try {
-      await client.query('BEGIN');
+      await control.begin(client);
       trace.mark('staging-lock');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['sulla-files-legacy-import']);
+      await control.lockImport(client);
       trace.mark('staging-master-verification');
-      await verifyNativeMaster(client, nativeMaster);
+      await keys.verifyNativeMaster(client, nativeMaster);
       trace.mark('staging-source-expansion');
       let expanded:number | null = 1;
-      while (expanded) {
-        const result = await client.query(`UPDATE collections c SET legacy_source=TRUE WHERE c.legacy_source=FALSE AND (
-          EXISTS (SELECT 1 FROM files f JOIN file_versions v ON v.file_id=f.id JOIN collections chunks ON chunks.id=v.chunk_collection_id WHERE f.collection_id=c.id AND chunks.legacy_source=TRUE)
-          OR EXISTS (SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections owner ON owner.id=f.collection_id WHERE v.chunk_collection_id=c.id AND owner.legacy_source=TRUE))`);
-        expanded = result.rowCount;
-      }
-      const collections = (await client.query<SourceCollection>('SELECT id::text,encrypted_data_key,dedup_key_ciphertext,compatibility_state FROM collections WHERE legacy_source=TRUE ORDER BY id FOR UPDATE')).rows;
+      while (expanded) expanded = await staging.expandSources(client);
+      const collections = await staging.lockSourceCollections(client);
       if (!collections.length) throw new Error('No legacy Files collections require import');
       trace.mark('staging-protection');
-      await client.query(`INSERT INTO files_protected_files(file_id) SELECT f.id FROM files f JOIN collections c ON c.id=f.collection_id WHERE c.legacy_source=TRUE ON CONFLICT DO NOTHING`);
+      await staging.protectSourceFiles(client);
       // A safe post-receipt continuation must revoke the completed receipt
       // before its identity-map changes commit. A crash then re-enters the
       // normal secure-import path instead of accepting partially published
       // continuation mappings as complete.
-      await client.query("INSERT INTO files_legacy_imports(id,state) VALUES(TRUE,'staging') ON CONFLICT(id) DO UPDATE SET state='staging',completed_at=NULL");
+      await staging.markStaging(client);
       trace.mark('staging-collection-maps');
       for (const source of collections) {
-        const mapping = (await client.query('SELECT * FROM files_legacy_collection_map WHERE source_collection_id=$1', [source.id])).rows[0];
-        if (!mapping) {
-          const id = randomUUID(); const data = randomBytes(32); const dedup = randomBytes(32);
-          try {
-            const wrappedData = await encrypt(data, nativeMaster, `sulla:files:data-key:v1:${ id }`); const wrappedDedup = await encrypt(dedup, nativeMaster, `sulla:files:dedup-key:v1:${ id }`);
-            await client.query(`INSERT INTO collections(id,org_id,owner_user_id,agent_run_id,thread_id,name,kind,home,encryption,encrypted_data_key,dedup_key_ciphertext,retention_policy,created_at,updated_at,compatibility_state,legacy_source,published)
-              SELECT $2,org_id,owner_user_id,agent_run_id,thread_id,name,kind,home,encryption,$3,$4,retention_policy,created_at,updated_at,'native',FALSE,FALSE FROM collections WHERE id=$1`, [source.id, id, wrappedData, wrappedDedup]);
-            await client.query("INSERT INTO files_collection_keys(collection_id,data_key,dedup_key,key_origin) VALUES($1,$2,$3,'random')", [id, wrappedData, wrappedDedup]);
-            await client.query('INSERT INTO files_legacy_collection_map(source_collection_id,shadow_collection_id) VALUES($1,$2)', [source.id, id]);
-          } finally { data.fill(0); dedup.fill(0) }
-        }
+        if (await staging.findCollectionMapping(client, source.id)) continue;
+        const id = randomUUID();
+        const wrapped = await keys.wrapNewCollectionKeys(nativeMaster, id);
+        await staging.createShadowCollection(client, source.id, id, wrapped.data, wrapped.dedup);
       }
-      const mappings = (await client.query('SELECT source_collection_id::text,shadow_collection_id::text,published_at FROM files_legacy_collection_map ORDER BY source_collection_id')).rows;
+      const mappings = await staging.listCollectionMappings(client);
       trace.mark('staging-file-maps');
-      await client.query(`INSERT INTO files_legacy_file_map(source_file_id,shadow_file_id,source_collection_id,shadow_collection_id)
-        SELECT f.id,gen_random_uuid(),f.collection_id,m.shadow_collection_id FROM files f JOIN files_legacy_collection_map m ON m.source_collection_id=f.collection_id ON CONFLICT(source_file_id) DO NOTHING`);
+      await staging.mapFiles(client);
       trace.mark('staging-version-maps');
-      await client.query(`INSERT INTO files_legacy_version_map(source_version_id,shadow_version_id)
-        SELECT v.id,gen_random_uuid() FROM file_versions v JOIN files_legacy_file_map f ON f.source_file_id=v.file_id ON CONFLICT(source_version_id) DO NOTHING`);
-      await client.query('COMMIT'); return { collections, mappings };
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      await staging.mapVersions(client);
+      await control.commit(client); return { collections, mappings };
+    } catch (error) { await control.rollback(client); throw error } finally { client.release() }
   }
 
-  private async publish(client:pg.PoolClient, nativeMaster:Buffer, staged:{ collections: SourceCollection[]; mappings: any[] }, versions:any[], converted:Map<string, ConvertedManifest>, trace:LegacyImportTrace):Promise<{ collections: number; files: number; versions: number }> {
-    trace.mark('manifest-publication');
-    for (const [key, manifest] of converted) {
-      const sourceCollection = key.slice(0, key.indexOf(':')); const mapping = staged.mappings.find(row => row.source_collection_id === sourceCollection);
-      if (!mapping) throw new Error('Legacy Files converted manifest has no collection mapping');
-      await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifest.hash, JSON.stringify(manifest.ids), manifest.totalSize]);
-      const storedManifest = (await client.query('SELECT chunk_ids,total_size FROM manifests WHERE hash=$1', [manifest.hash])).rows[0];
-      if (!storedManifest || Number(storedManifest.total_size) !== manifest.totalSize || JSON.stringify(storedManifest.chunk_ids) !== JSON.stringify(manifest.ids)) throw new Error('Legacy Files manifest conflict does not match converted content');
-      for (const [id, chunk] of manifest.chunks) {
-        const location = `chunks/${ mapping.shadow_collection_id }/${ id }`;
-        await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [mapping.shadow_collection_id, id, chunk.size, chunk.storedSize, location]);
-        const storedChunk = (await client.query('SELECT size,stored_size,location FROM chunks WHERE collection_id=$1 AND id=$2', [mapping.shadow_collection_id, id])).rows[0];
-        if (!storedChunk || Number(storedChunk.size) !== chunk.size || Number(storedChunk.stored_size) !== chunk.storedSize || storedChunk.location !== location) throw new Error('Legacy Files chunk conflict does not match converted content');
+  /** Converts and publishes every staged identity in one REPEATABLE READ transaction. */
+  private async publishSnapshot(nativeMaster:Buffer, legacyMasters:Buffer[], externalLayout:Map<string, string>, nativeLayout:Map<string, string>, trace:LegacyImportTrace):Promise<LegacyImportCounts> {
+    const client = await this.db.connect();
+    const { control, staging, identity, keys } = this.parts;
+    try {
+      await control.beginSnapshot(client);
+      trace.mark('publish-lock');
+      await control.lockImport(client);
+      await control.lockPublicationTables(client);
+      trace.mark('publish-master-verification');
+      await keys.verifyNativeMaster(client, nativeMaster);
+      trace.mark('publish-identity-verification');
+      const collections = await staging.lockSourceCollections(client);
+      const mappings = await staging.listCollectionMappings(client);
+      if (collections.length !== mappings.length) throw new Error('Legacy Files collection mapping is incomplete');
+      const staged = { collections, mappings };
+      const externalIds = new Set(collections.filter(row => row.compatibility_state !== 'native').map(row => row.id.toLowerCase()));
+      for (const id of externalLayout.keys()) if (!externalIds.has(id)) throw new Error('Legacy Files chunk collection has no authenticated metadata');
+      await identity.mapLegacySourceFiles(client);
+      await identity.mapVersions(client);
+      if (await identity.identityIncomplete(client)) throw new Error('Legacy Files identity mapping is incomplete');
+      const collectionKeys = new Map<string, LegacyKeys>(); const shadowKeys = new Map<string, LegacyKeys>();
+      try {
+        trace.mark('source-key-authentication');
+        for (const collection of collections) {
+          const nativeRow = await identity.collectionKeys(client, collection.id);
+          trace.sourceKey({
+            kind: collection.compatibility_state === 'native' ? 'native' : 'legacy',
+            hasNativeKey: Boolean(nativeRow),
+            hasExternalChunks: externalLayout.has(collection.id.toLowerCase()),
+            hasNativeChunks: nativeLayout.has(collection.id.toLowerCase()),
+          });
+          collectionKeys.set(collection.id, await keys.sourceKeys(collection, nativeMaster, legacyMasters, nativeRow));
+        }
+        trace.mark('shadow-key-authentication');
+        for (const mapping of mappings) {
+          const row = await identity.collectionKeys(client, mapping.shadow_collection_id);
+          if (!row) throw new Error('Legacy Files shadow collection key is unavailable');
+          shadowKeys.set(mapping.source_collection_id, await keys.shadowKeys(row, nativeMaster, mapping.shadow_collection_id));
+        }
+        trace.mark('version-manifest-verification');
+        const versions = await identity.mappedVersions(client);
+        const converted = await this.parts.versions.convertAll(versions, {
+          staged, collectionKeys, shadowKeys, externalLayout, nativeLayout, sourceRoot: this.sourceRoot, chunkRoot: this.chunkRoot,
+        }, trace);
+        const result = await this.parts.publisher.publish(client, nativeMaster, staged, versions, converted, trace);
+        trace.mark('publication-commit');
+        await control.commit(client);
+        trace.completed();
+        return result;
+      } finally {
+        for (const value of shadowKeys.values()) { value.data.fill(0); value.dedup.fill(0) }
+        for (const value of collectionKeys.values()) { value.data.fill(0); value.dedup.fill(0) }
       }
-    }
-    trace.mark('file-publication');
-    await client.query(`INSERT INTO files(id,collection_id,path,deleted_at,expires_at,created_by_type,created_by_id,mime,size,created_at,updated_at,extracted_at,extraction_status,person_id)
-        SELECT fm.shadow_file_id,fm.shadow_collection_id,f.path,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id
-        FROM files f JOIN files_legacy_file_map fm ON fm.source_file_id=f.id ON CONFLICT(id) DO NOTHING`);
-    await client.query(`INSERT INTO file_search_text(file_id,path,search_text)
-        SELECT fm.shadow_file_id,f.path,s.search_text FROM files_legacy_file_map fm JOIN files f ON f.id=fm.source_file_id LEFT JOIN file_search_text s ON s.file_id=f.id
-        ON CONFLICT(file_id) DO UPDATE SET search_text=EXCLUDED.search_text WHERE EXISTS(SELECT 1 FROM files target WHERE target.id=EXCLUDED.file_id AND target.current_version_id IS NULL)`);
-    const versionMap = new Map((await client.query('SELECT source_version_id::text,shadow_version_id::text FROM files_legacy_version_map')).rows.map(row => [row.source_version_id, row.shadow_version_id]));
-    const fileMap = new Map((await client.query('SELECT source_file_id::text,shadow_file_id::text FROM files_legacy_file_map')).rows.map(row => [row.source_file_id, row.shadow_file_id]));
-    trace.mark('version-publication');
-    for (const version of versions) {
-      const manifest = version.manifest_hash ? converted.get(`${ version.chunk_collection_id }:${ version.manifest_hash }`) : undefined;
-      const collection = staged.mappings.find(row => row.source_collection_id === version.chunk_collection_id);
-      if (!collection || !versionMap.get(version.id) || !fileMap.get(version.file_id)) throw new Error('Legacy Files version identity mapping is incomplete');
-      if (version.manifest_hash && !manifest) throw new Error('Legacy Files converted manifest is missing');
-      await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id)
-          SELECT $1,$2,$3,NULL,$4,$5,$6,$7,$8,created_at,$9,$10,NULL FROM file_versions WHERE id=$11
-          ON CONFLICT(id) DO NOTHING`, [versionMap.get(version.id), fileMap.get(version.file_id), collection.shadow_collection_id, manifest?.hash ?? null, version.size, version.deleted, version.created_by_type, version.created_by_id, version.message, version.device_id, version.id]);
-      if (manifest) await client.query('UPDATE files_legacy_version_map SET shadow_manifest_hash=$2,plaintext_sha256=$3,verified_at=NOW() WHERE source_version_id=$1', [version.id, manifest.hash, manifest.plaintextHash]);
-    }
-    trace.mark('version-lineage-publication');
-    for (const version of versions) {
-      const parent = version.parent_version_id ? versionMap.get(version.parent_version_id) : null;
-      const base = version.base_server_version_id ? versionMap.get(version.base_server_version_id) : null;
-      if (version.parent_version_id && !parent) throw new Error('Legacy Files parent-version mapping is incomplete');
-      if (version.base_server_version_id && !base) throw new Error('Legacy Files base-version mapping is incomplete');
-      await client.query('UPDATE file_versions SET parent_version_id=$2,base_server_version_id=$3 WHERE id=$1', [versionMap.get(version.id), parent, base]);
-    }
-    trace.mark('version-provenance-verification');
-    const versionConflict = (await client.query(`SELECT
-        COALESCE(bool_or(shadow.file_id IS DISTINCT FROM fm.shadow_file_id),FALSE) file_mapping,
-        COALESCE(bool_or(shadow.chunk_collection_id IS DISTINCT FROM cm.shadow_collection_id),FALSE) collection_mapping,
-        COALESCE(bool_or(shadow.manifest_hash IS DISTINCT FROM vm.shadow_manifest_hash),FALSE) manifest_mapping,
-        COALESCE(bool_or(shadow.parent_version_id IS DISTINCT FROM (SELECT p.shadow_version_id FROM files_legacy_version_map p WHERE p.source_version_id=source.parent_version_id)),FALSE) parent_mapping,
-        COALESCE(bool_or(shadow.base_server_version_id IS DISTINCT FROM (SELECT b.shadow_version_id FROM files_legacy_version_map b WHERE b.source_version_id=source.base_server_version_id)),FALSE) base_mapping,
-        COALESCE(bool_or(shadow.size IS DISTINCT FROM source.size),FALSE) size,
-        COALESCE(bool_or(shadow.deleted IS DISTINCT FROM source.deleted),FALSE) deleted,
-        COALESCE(bool_or(shadow.created_by_type IS DISTINCT FROM source.created_by_type),FALSE) creator_type,
-        COALESCE(bool_or(shadow.created_by_id IS DISTINCT FROM source.created_by_id),FALSE) creator_id,
-        COALESCE(bool_or(shadow.created_at IS DISTINCT FROM source.created_at),FALSE) created_at,
-        COALESCE(bool_or(shadow.message IS DISTINCT FROM source.message),FALSE) message,
-        COALESCE(bool_or(shadow.device_id IS DISTINCT FROM source.device_id),FALSE) device_id
-      FROM file_versions source JOIN files_legacy_version_map vm ON vm.source_version_id=source.id
-        JOIN file_versions shadow ON shadow.id=vm.shadow_version_id JOIN files_legacy_file_map fm ON fm.source_file_id=source.file_id
-        JOIN files_legacy_collection_map cm ON cm.source_collection_id=source.chunk_collection_id`)).rows[0];
-    const versionConflicts = {
-      fileMapping: Boolean(versionConflict.file_mapping),
-      collectionMapping: Boolean(versionConflict.collection_mapping),
-      manifestMapping: Boolean(versionConflict.manifest_mapping),
-      parentMapping: Boolean(versionConflict.parent_mapping),
-      baseMapping: Boolean(versionConflict.base_mapping),
-      size: Boolean(versionConflict.size),
-      deleted: Boolean(versionConflict.deleted),
-      creatorType: Boolean(versionConflict.creator_type),
-      creatorId: Boolean(versionConflict.creator_id),
-      createdAt: Boolean(versionConflict.created_at),
-      message: Boolean(versionConflict.message),
-      deviceId: Boolean(versionConflict.device_id),
-    };
-    if (Object.values(versionConflicts).some(Boolean)) {
-      trace.versionConflict(versionConflicts);
-      throw new Error('Legacy Files version conflict does not match source provenance');
-    }
-    trace.mark('current-version-publication');
-    await client.query(`UPDATE files shadow SET current_version_id=vm.shadow_version_id FROM files source
-        JOIN files_legacy_file_map fm ON fm.source_file_id=source.id LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=source.current_version_id
-        WHERE shadow.id=fm.shadow_file_id`);
-    const currentConflict = await client.query(`SELECT 1 FROM files source JOIN files_legacy_file_map fm ON fm.source_file_id=source.id
-        JOIN files shadow ON shadow.id=fm.shadow_file_id LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=source.current_version_id
-        WHERE shadow.current_version_id IS DISTINCT FROM vm.shadow_version_id LIMIT 1`);
-    if (currentConflict.rowCount) throw new Error('Legacy Files current-version mapping is incomplete');
-    trace.mark('access-publication');
-    await client.query(`INSERT INTO folder_shares(collection_id,folder_path,principal_type,principal_id,role,created_by,created_at,updated_at)
-        SELECT m.shadow_collection_id,s.folder_path,s.principal_type,s.principal_id,s.role,s.created_by,s.created_at,s.updated_at FROM folder_shares s JOIN files_legacy_collection_map m ON m.source_collection_id=s.collection_id ON CONFLICT DO NOTHING`);
-    trace.mark('graph-publication');
-    await client.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,props,created_by,created_at)
-        SELECT e.src_type,CASE WHEN e.src_type='file' THEN COALESCE(src.shadow_file_id::text,e.src_id) ELSE e.src_id END,
-          e.dst_type,CASE WHEN e.dst_type='file' THEN COALESCE(dst.shadow_file_id::text,e.dst_id) ELSE e.dst_id END,e.kind,e.props,e.created_by,e.created_at FROM edges e
-        LEFT JOIN files_legacy_file_map src ON e.src_type='file' AND src.source_file_id::text=e.src_id
-        LEFT JOIN files_legacy_file_map dst ON e.dst_type='file' AND dst.source_file_id::text=e.dst_id
-        WHERE src.shadow_file_id IS NOT NULL OR dst.shadow_file_id IS NOT NULL ON CONFLICT DO NOTHING`);
-    trace.mark('journal-publication');
-    await client.query(`INSERT INTO journal(collection_id,file_id,version_id,op,at)
-        SELECT cm.shadow_collection_id,fm.shadow_file_id,vm.shadow_version_id,j.op,j.at FROM journal j JOIN files_legacy_collection_map cm ON cm.source_collection_id=j.collection_id JOIN files_legacy_file_map fm ON fm.source_file_id=j.file_id JOIN files_legacy_version_map vm ON vm.source_version_id=j.version_id
-        WHERE NOT EXISTS(SELECT 1 FROM journal existing WHERE existing.collection_id=cm.shadow_collection_id AND existing.file_id=fm.shadow_file_id AND existing.version_id=vm.shadow_version_id AND existing.op=j.op AND existing.at=j.at)`);
-    trace.mark('audit-publication');
-    const audits = (await client.query(`SELECT a.*,fm.shadow_file_id,vm.shadow_version_id FROM audit_log a JOIN files_legacy_file_map fm ON fm.source_file_id=a.file_id
-        LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=a.version_id LEFT JOIN files_legacy_audit_map am ON am.source_audit_id=a.id
-        WHERE am.source_audit_id IS NULL ORDER BY a.id`)).rows;
-    for (const audit of audits) {
-      if (audit.version_id && !audit.shadow_version_id) throw new Error('Legacy Files audit provenance mapping is incomplete');
-      const shadowAudit = (await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,at,details,org_id)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [audit.who_type, audit.who_id, audit.device_or_run_id, audit.shadow_file_id, audit.shadow_version_id, audit.action, audit.at, audit.details, audit.org_id])).rows[0];
-      await client.query('INSERT INTO files_legacy_audit_map(source_audit_id,shadow_audit_id) VALUES($1,$2)', [audit.id, shadowAudit.id]);
-    }
-    trace.mark('chunk-reference-publication');
-    await client.query(`UPDATE chunks c SET refcount=q.refs FROM (SELECT v.chunk_collection_id collection_id,x.id,count(*) refs FROM file_versions v JOIN manifests m ON m.hash=v.manifest_hash CROSS JOIN LATERAL jsonb_array_elements_text(m.chunk_ids) x(id)
-        JOIN files_legacy_version_map vm ON vm.shadow_version_id=v.id GROUP BY v.chunk_collection_id,x.id) q WHERE c.collection_id=q.collection_id AND c.id=q.id`);
-    trace.mark('publication-verification');
-    const unverified = await client.query(`SELECT 1 FROM files_legacy_version_map vm JOIN file_versions v ON v.id=vm.source_version_id WHERE v.manifest_hash IS NOT NULL AND vm.verified_at IS NULL LIMIT 1`);
-    const omitted = await client.query(`SELECT 1 FROM file_versions v JOIN files f ON f.id=v.file_id JOIN collections c ON c.id=f.collection_id AND c.legacy_source=TRUE
-        LEFT JOIN files_legacy_version_map vm ON vm.source_version_id=v.id LEFT JOIN file_versions shadow ON shadow.id=vm.shadow_version_id WHERE shadow.id IS NULL LIMIT 1`);
-    if (unverified.rowCount || omitted.rowCount) throw new Error('Legacy Files import verification is incomplete');
-    await client.query('UPDATE collections SET published=TRUE WHERE id IN(SELECT shadow_collection_id FROM files_legacy_collection_map)');
-    await client.query('UPDATE files_legacy_collection_map SET published_at=COALESCE(published_at,NOW())');
-    await client.query("UPDATE files_legacy_imports SET state='completed',completed_at=COALESCE(completed_at,NOW()) WHERE id=TRUE");
-    await client.query("UPDATE files_legacy_preflight SET state='clear',reason='retired-external-chunk-store-converted',checked_at=NOW() WHERE id=TRUE");
-    if (!(await client.query('SELECT 1 FROM files_key_state WHERE id=TRUE')).rowCount) await client.query('INSERT INTO files_key_state(id,verifier) VALUES(TRUE,$1)', [await encrypt(MASTER_CHECK, nativeMaster, MASTER_CONTEXT)]);
-    return { collections: staged.mappings.length, files: fileMap.size, versions: versionMap.size };
+    } catch (error) { await control.rollback(client); throw error } finally { client.release() }
   }
 }
