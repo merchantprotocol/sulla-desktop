@@ -16,7 +16,7 @@ import { MobyClient } from '../containerClient/mobyClient';
 import { LinuxDockerHost, LinuxRuntimePaths, prepareLinuxRuntimePaths } from './dockerHost';
 import { LinuxContainerExecutor, NodeDockerCli } from './linuxContainerExecutor';
 import { LinuxManagedServices } from './linuxManagedServices';
-import { createDesktopLinuxManagedServices } from './linuxServicesWiring';
+import { DesktopLinuxManagedServicesFactory } from './linuxServicesWiring';
 import { LinuxPublishedPort, LinuxRuntimeComposeBuilder } from './linuxRuntimeCompose';
 
 import { RecursivePartial } from '@pkg/utils/typeUtils';
@@ -59,7 +59,7 @@ export class LinuxDockerBackend extends events.EventEmitter implements VMBackend
 
     return new LinuxDockerBackend(options, {
       host,
-      services:            createDesktopLinuxManagedServices(),
+      services:            new DesktopLinuxManagedServicesFactory().create(),
       composeBuilder:      new LinuxRuntimeComposeBuilder(),
       executor:            new LinuxContainerExecutor(cli, LINUX_CONTAINER_NAME),
       preparePaths:        prepareLinuxRuntimePaths,

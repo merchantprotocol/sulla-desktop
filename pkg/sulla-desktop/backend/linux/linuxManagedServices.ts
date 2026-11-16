@@ -166,14 +166,15 @@ export interface LinuxManagedServicesDependencies {
 
 class ServicesCancelled extends Error {}
 
-const SULLA_COMPOSE_PREFIX = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
-const ON_DEMAND_ALLOWED_VERBS = new Set(['inspect', 'start', 'stop', 'pull', 'compose']);
-
 /**
  * Deploys, health-gates and stops the Sulla service project on the outer
  * rootless engine. Every host-docker call goes through the injected runner.
  */
 export class LinuxManagedServices {
+  /** The exact compose invocation onDemandServices issues for the Sulla project. */
+  private readonly sullaComposePrefix: readonly string[] = ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'];
+  /** Host Docker verbs on-demand runtimes may use; anything else is refused. */
+  private readonly onDemandAllowedVerbs: ReadonlySet<string> = new Set(['inspect', 'start', 'stop', 'pull', 'compose']);
   private generation = 0;
   private composeFile = '';
   private wake?: () => void;
@@ -291,11 +292,11 @@ export class LinuxManagedServices {
    * allowlist, so it can never run arbitrary host commands.
    */
   private async runOnDemand(args: string[]): Promise<string> {
-    if (args[0] !== 'docker' || !ON_DEMAND_ALLOWED_VERBS.has(args[1])) throw new Error(`Refused host Docker command: ${ args.slice(0, 2).join(' ') }`);
+    if (args[0] !== 'docker' || !this.onDemandAllowedVerbs.has(args[1])) throw new Error(`Refused host Docker command: ${ args.slice(0, 2).join(' ') }`);
     if (args[1] === 'compose') {
-      if (SULLA_COMPOSE_PREFIX.some((part, index) => args[index] !== part)) throw new Error('Refused compose command outside the Sulla project.');
+      if (this.sullaComposePrefix.some((part, index) => args[index] !== part)) throw new Error('Refused compose command outside the Sulla project.');
 
-      return this.docker(this.composeArgs(...args.slice(SULLA_COMPOSE_PREFIX.length)));
+      return this.docker(this.composeArgs(...args.slice(this.sullaComposePrefix.length)));
     }
 
     return this.docker(args.slice(1));

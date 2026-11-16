@@ -12,34 +12,39 @@ import { LinuxManagedServices, LinuxServicesComposeBuilder } from './linuxManage
  * on-demand runtimes. Every Desktop module is imported lazily, at the moment it
  * is needed, so constructing a backend (and its unit tests) stays light.
  */
-export function createDesktopLinuxManagedServices(): LinuxManagedServices {
-  return new LinuxManagedServices({
-    docker:  dockerRunner(15 * 60_000),
-    builder: new LinuxServicesComposeBuilder(async() => {
-      const [{ default: yaml }, { default: compose }] = await Promise.all([import('yaml'), import('@pkg/assets/sulla-docker-compose.yaml')]);
+export class DesktopLinuxManagedServicesFactory {
+  /** How long one host `docker` call may run before it is abandoned. */
+  constructor(private readonly dockerTimeoutMs = 15 * 60_000) {}
 
-      return typeof compose === 'string' ? yaml.parse(compose) : compose;
-    }),
-    hooks: new DesktopManagedServicesHooks(
-      { emit: event => void import('@pkg/main/mainEvents').then(({ default: mainEvents }) => mainEvents.emit(event)) },
-      {
-        markDockerServicesStarted: () => void import('@pkg/sulla').then(m => m.markSullaDockerServicesStarted()),
-        instantiateStart:          async(assertCurrent) => (await import('@pkg/sulla')).instantiateSullaStart(assertCurrent),
-        markInstalled:             async() => {
-          const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+  create(): LinuxManagedServices {
+    return new LinuxManagedServices({
+      docker:  dockerRunner(this.dockerTimeoutMs),
+      builder: new LinuxServicesComposeBuilder(async() => {
+        const [{ default: yaml }, { default: compose }] = await Promise.all([import('yaml'), import('@pkg/assets/sulla-docker-compose.yaml')]);
 
-          await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
+        return typeof compose === 'string' ? yaml.parse(compose) : compose;
+      }),
+      hooks: new DesktopManagedServicesHooks(
+        { emit: event => void import('@pkg/main/mainEvents').then(({ default: mainEvents }) => mainEvents.emit(event)) },
+        {
+          markDockerServicesStarted: () => void import('@pkg/sulla').then(m => m.markSullaDockerServicesStarted()),
+          instantiateStart:          async(assertCurrent) => (await import('@pkg/sulla')).instantiateSullaStart(assertCurrent),
+          markInstalled:             async() => {
+            const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+
+            await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
+          },
         },
-      },
-    ),
-    composeOptions: async(paths) => {
-      const [{ SullaSettingsModel }, { hostPort }] = await Promise.all([
-        import('@pkg/agent/database/models/SullaSettingsModel'), import('@pkg/utils/instance'),
-      ]);
+      ),
+      composeOptions: async(paths) => {
+        const [{ SullaSettingsModel }, { hostPort }] = await Promise.all([
+          import('@pkg/agent/database/models/SullaSettingsModel'), import('@pkg/utils/instance'),
+        ]);
 
-      return { paths, resolvePort: hostPort, servicePassword: await SullaSettingsModel.getServicePassword() };
-    },
-    configureOnDemand: run => void import('@pkg/backend/onDemandServices').then(m => m.configureOnDemandServices(run)),
-    clearOnDemand:     () => void import('@pkg/backend/onDemandServices').then(m => m.clearOnDemandServices()),
-  });
+        return { paths, resolvePort: hostPort, servicePassword: await SullaSettingsModel.getServicePassword() };
+      },
+      configureOnDemand: run => void import('@pkg/backend/onDemandServices').then(m => m.configureOnDemandServices(run)),
+      clearOnDemand:     () => void import('@pkg/backend/onDemandServices').then(m => m.clearOnDemandServices()),
+    });
+  }
 }
