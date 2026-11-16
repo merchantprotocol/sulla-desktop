@@ -4,7 +4,7 @@
 import {Pool,type PoolClient} from 'pg';
 import {afterAll,beforeAll,describe,expect,it,vi} from 'vitest';
 vi.mock('electron', () => ({}));
-import {AgentJobCustodyRepository} from '../../../app/Repositories/AgentJobCustodyRepository';
+import {AgentJobCustodyRepository,type CustodyDestinationGate} from '../../../app/Repositories/AgentJobCustodyRepository';
 import {JobCustodyAuthorityPolicy,TopLevelHumanSessionAuthorityRule,type CustodyLineagePort,type CustodyOwnerLivenessPort} from '../../../app/Services/JobCustodyAuthorityPolicy';
 import {JobCustodyService} from '../../../app/Services/JobCustodyService';
 import {CustodyCallerVerifier,VerifiedCustodyActor,type TopLevelConversationRegistry} from '../../../app/Services/CustodyCallerVerifier';
@@ -90,5 +90,18 @@ suite('AgentJobCustodyRepository',()=>{
  });
  it('returns retryable without changing anything for an active foreign lease',async()=>{ // risk: stealing in-flight delivery
    const id=`custody-lease-${Date.now()}`;await createJob(id);const messageId=`leased-${Date.now()}`;await database.query(`INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,lease_owner,lease_expires_at) VALUES($1,'old-channel','old-thread','old-agent','worker','contract','done',$2::jsonb,'foreign',now()+interval '5 minutes')`,[messageId,JSON.stringify({messageId,jobId:id})]);expect(await move(service(),id)).toMatchObject({ok:false,code:'lease-active',retryable:true});expect(await database.query(`SELECT * FROM agent_job_custody WHERE job_id=$1`,[id])).toHaveLength(0);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(0);
+ });
+
+ it('uses the transaction-scoped destination gate in audit and inbox routing',async()=>{ // risk: replacement races bypass transaction serialization
+   const id=`custody-gate-${Date.now()}`;await createJob(id);let received:PoolClient|undefined;
+   const redirected:CustodyOwner={channel:'redirect-channel',threadId:'redirect-thread',agentId:'redirect-agent'};
+   const gate:CustodyDestinationGate={resolve:async(client,destination)=>{received=client;return {owner:redirected,retry:false};}};
+   const repository=new AgentJobCustodyRepository(new PgDatabase(pool) as any,undefined,gate);const instance=new JobCustodyService(repository,new JobCustodyAuthorityPolicy(new Alive(),new NoCycles()),new NoopCustodyChangeNotifier(),new FixedClock(new Date('2026-11-05T18:00:00Z')) as any);
+   expect((await move(instance,id)).ok).toBe(true);expect(received).toBeDefined();expect(await instance.resolveOwner(id)).toMatchObject(redirected);expect((await instance.history(id))[0].to).toMatchObject(redirected);
+   expect(await database.query(`SELECT message_id FROM agent_inbox_messages WHERE message_id LIKE $1`,[`custody:${id}:job:1:%`])).toHaveLength(2);
+ });
+ it('cascades custody and audit history when the parent job is deleted',async()=>{ // risk: orphaned sensitive audit rows after retention
+   const id=`custody-cascade-${Date.now()}`;await createJob(id);expect((await move(service(),id)).ok).toBe(true);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(1);
+   await database.query(`DELETE FROM agent_jobs WHERE job_id=$1`,[id]);expect(await database.query(`SELECT * FROM agent_job_custody WHERE job_id=$1`,[id])).toHaveLength(0);expect(await database.query(`SELECT * FROM agent_job_custody_audit WHERE job_id=$1`,[id])).toHaveLength(0);
  });
 });

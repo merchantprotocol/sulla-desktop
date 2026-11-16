@@ -32,6 +32,7 @@ import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
 import { AgentTaskActivityProjector } from '../Services/AgentTaskActivityProjector';
 import { ReviewObligationGate } from '../Services/ReviewObligationGate';
+import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { AgentJobCustodyRepository } from '../Repositories/AgentJobCustodyRepository';
 import { JobCustodyService } from '../Services/JobCustodyService';
 import { JobCustodyAuthorityPolicy, TopLevelHumanSessionAuthorityRule } from '../Services/JobCustodyAuthorityPolicy';
@@ -80,7 +81,7 @@ export class AgentJobServiceProvider {
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const conversations = new GraphRegistryTopLevelConversationRegistry();
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) }, {
-      matches: async owner => { const { GraphRegistry } = await import('../../services/GraphRegistry'); const entry = GraphRegistry.get(owner.threadId); return Boolean(entry); },
+      matches: async owner => { const { GraphRegistry } = await import('../../services/GraphRegistry'); const entry = GraphRegistry.get(owner.threadId); if (!entry) return false; const metadata = entry.state.metadata; return String(metadata.wsChannel ?? '') === owner.channel && resolveAgentIdentity(metadata) === owner.agentId; },
     }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));

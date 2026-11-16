@@ -13,8 +13,8 @@ export interface CustodyTransactionObservation {kind:CustodyTransactionKind;phas
 export interface CustodyTransactionObserver {observe(event:CustodyTransactionObservation):Promise<void>;}
 export class NoopCustodyTransactionObserver implements CustodyTransactionObserver {async observe(_event:CustodyTransactionObservation):Promise<void>{}}
 
-export interface CustodyDestinationGate { resolve(destination: CustodyOwner): Promise<{ owner?: CustodyOwner; retry: boolean }> }
-export class NoopCustodyDestinationGate implements CustodyDestinationGate { async resolve(_destination: CustodyOwner): Promise<{ owner?: CustodyOwner; retry: boolean }> { return { retry: false }; } }
+export interface CustodyDestinationGate { resolve(client: PoolClient, destination: CustodyOwner): Promise<{ owner?: CustodyOwner; retry: boolean }> }
+export class NoopCustodyDestinationGate implements CustodyDestinationGate { async resolve(_client: PoolClient, _destination: CustodyOwner): Promise<{ owner?: CustodyOwner; retry: boolean }> { return { retry: false }; } }
 
 export class AgentJobCustodyRepository {
   constructor(private readonly database: Pick<PostgresClient, 'query'|'transaction'>,private readonly observer:CustodyTransactionObserver=new NoopCustodyTransactionObserver(),private readonly destinationGate:CustodyDestinationGate=new NoopCustodyDestinationGate()) {}
@@ -50,7 +50,7 @@ export class AgentJobCustodyRepository {
         return { ok:false, code:'version-conflict', message:'Custody changed concurrently; retry.', current, retryable:true };
       }
 
-      const gated=await this.destinationGate.resolve(input.to);
+      const gated=await this.destinationGate.resolve(client, input.to);
       if(gated.retry)return {ok:false,code:'replacement-draining',message:'Destination lead is being replaced; retry after its replacement is persisted.',current,retryable:true};
       const effectiveInput={...input,to:gated.owner??input.to};
       const inbox = await client.query<any>(`${this.inboxScopeSql(input.taskIndex)} FOR UPDATE`, [input.jobId, input.taskIndex ?? null]);
@@ -136,6 +136,7 @@ export class AgentJobCustodyRepository {
       FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY task(value,ordinality)
       WHERE j.job_id=$2 AND ($5::int IS NULL OR task.ordinality-1=$5)
         AND task.value->>'status' IN ('queued','running','parked')
+        AND ($5::int IS NOT NULL OR NOT EXISTS (SELECT 1 FROM agent_job_custody override WHERE override.job_id=j.job_id AND override.task_index=task.ordinality-1))
       ON CONFLICT(id) DO NOTHING`,[`${prefix}:worker`,input.jobId,`[Manager changed] Your manager is now ${input.to.agentId}/${input.to.channel} (was ${current.agentId}/${current.channel})`,changedAt,input.taskIndex??null]);
   }
 
@@ -148,7 +149,7 @@ export class AgentJobCustodyRepository {
       input.actor.kind,input.actor.kind==='agent'?input.actor.channel:null,input.actor.kind==='agent'?input.actor.threadId:null,input.actor.kind==='agent'?input.actor.agentId:null,input.reason,nextVersion,changedAt]);
   }
 
-  private resolveSql(): string { return `SELECT c.*, COALESCE(c.version,0) AS version,
+  private resolveSql(): string { return `SELECT j.job_id, c.*, COALESCE(c.version,0) AS version,
       COALESCE(c.owner_channel,j.parent_channel) AS owner_channel, COALESCE(c.owner_thread_id,j.parent_thread_id) AS owner_thread_id,
       COALESCE(c.owner_agent_id,j.parent_agent_id) AS owner_agent_id
     FROM agent_jobs j LEFT JOIN LATERAL (
@@ -157,7 +158,7 @@ export class AgentJobCustodyRepository {
     ) c ON true WHERE j.job_id=$1 AND COALESCE(c.owner_channel,j.parent_channel) IS NOT NULL
       AND COALESCE(c.owner_thread_id,j.parent_thread_id) IS NOT NULL AND COALESCE(c.owner_agent_id,j.parent_agent_id) IS NOT NULL`; }
   private sameSnapshot(left:CustodyRecord,right:CustodyRecord):boolean{return left.version===right.version&&left.channel===right.channel&&left.threadId===right.threadId&&left.agentId===right.agentId;}
-  private mapRecord(row:any, taskIndex?:number):CustodyRecord { return {jobId:String(row.job_id),...(taskIndex===undefined?{}:{taskIndex}),channel:String(row.owner_channel),threadId:String(row.owner_thread_id),agentId:String(row.owner_agent_id),version:Number(row.version),changedAt:new Date(row.changed_at??0)}; }
+  private mapRecord(row:any, taskIndex?:number):CustodyRecord { return {jobId:String(row.job_id),...(taskIndex===undefined?{}:{taskIndex}),channel:String(row.owner_channel),threadId:String(row.owner_thread_id),agentId:String(row.owner_agent_id),version:Number(row.version),changedAt:row.changed_at ? new Date(row.changed_at) : new Date(0)}; }
   private mapOwner(row:any,prefix:string):CustodyOwner{return {channel:String(row[`${prefix}_channel`]),threadId:String(row[`${prefix}_thread_id`]),agentId:String(row[`${prefix}_agent_id`])};}
   private mapAudit(row:any):CustodyAuditRecord { const actor:CustodyActor=row.changed_by_kind==='human'?{kind:'human'}:{kind:'agent',...this.mapOwner(row,'changed_by')}; return {jobId:String(row.job_id),...(row.task_index===null?{}:{taskIndex:Number(row.task_index)}),from:this.mapOwner(row,'from'),to:this.mapOwner(row,'to'),actor,reason:String(row.reason),version:Number(row.version),changedAt:new Date(row.changed_at)}; }
 }
