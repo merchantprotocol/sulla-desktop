@@ -269,12 +269,14 @@ class ProductionFilesFixture {
       file:{id:fileId,collection_id:collectionId,path:`Use Cases/functions/sync-${seq}/function.yaml`,created_by_type:'agent-run',created_by_id:'remote',mime:'text/yaml',size:0,lifecycle_generation:0},
       version:{id:randomUUID(),file_id:fileId,chunk_collection_id:collectionId,parent_version_id:null,manifest_hash:manifest.hash,size:0,deleted:false,created_by_type:'agent-run',created_by_id:'remote',created_at:new Date().toISOString(),message:'remote',device_id:'older-peer',publication_status:'draft',published_at:null,published_by:null}}};
     const entries=[entry(1,missingCollectionId,randomUUID()),entry(2,this.collectionId,validFileId)];
-    const remote=(this.manager as any).remote.bind(this.manager);
-    (this.manager as any).remote=async(path:string)=>path.includes('/journal?after=')?entries.filter(item=>item.seq>Number(new URL(path,'http://sync.test').searchParams.get('after')??0)):remote(path);
+    // Legacy journal sync lives in LegacyFolderSync and talks to the server through its RemoteFilesClient.
+    const sync=(this.manager as any).legacySync;
+    const remote=sync.remote; const json=remote.json;
+    remote.json=async(path:string,...rest:any[])=>path.includes('/journal?after=')?entries.filter(item=>item.seq>Number(new URL(path,'http://sync.test').searchParams.get('after')??0)):json.call(remote,path,...rest);
     try {
-      await (this.manager as any).syncCollection(this.collectionId,false);
-      await (this.manager as any).syncCollection(this.collectionId,false);
-    } finally { (this.manager as any).remote=remote }
+      await sync.syncCollection(this.collectionId,false);
+      await sync.syncCollection(this.collectionId,false);
+    } finally { remote.json=json }
     const cursor=(await this.pool!.query('SELECT last_seq FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2',[this.collectionId,'local-device'])).rows[0];
     const valid=(await this.pool!.query('SELECT id,current_version_id FROM files WHERE id=$1',[validFileId])).rows[0];
     const versionCount=Number((await this.pool!.query('SELECT COUNT(*) AS count FROM file_versions WHERE file_id=$1',[validFileId])).rows[0].count);

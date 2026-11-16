@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { resolve, sep } from 'node:path';
+import { extname, resolve, sep } from 'node:path';
 
 import type { FileRootConfig } from './config.js';
 
@@ -35,5 +35,12 @@ export class TrackedPathFilter {
     const absolute = resolve(root.path, relativePath);
     if (absolute !== root.path && !absolute.startsWith(`${ root.path }${ sep }`)) throw new Error('path escapes Files folder');
     return absolute;
+  }
+
+  /** Dropbox-style sibling name for a losing write: `name (conflicted copy <device> <date>).ext`. */
+  static conflictPath(path:string, device:string, now = new Date()):string {
+    const extension = extname(path); const stem = extension ? path.slice(0, -extension.length) : path;
+    const date = now.toISOString().replace(/T.*/, '');
+    return `${ stem } (conflicted copy ${ device.replace(/[^\w-]/g, '-') } ${ date })${ extension }`;
   }
 }
