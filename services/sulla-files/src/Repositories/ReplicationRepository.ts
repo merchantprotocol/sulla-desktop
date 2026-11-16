@@ -86,17 +86,20 @@ export class ReplicationRepository {
         entry.file.disposal_extended_until ?? null, entry.file.lifecycle_generation ?? 0]);
   }
 
-  async upsertVersion(client:pg.PoolClient, entry:any, replicatedLifecycle:{ publication_status?:string | null; published_at?:unknown; published_by?:unknown }):Promise<void> {
-    await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id,
+  /** Insert or refresh the replicated version; true only when this call inserted the row. */
+  async upsertVersion(client:pg.PoolClient, entry:any, replicatedLifecycle:{ publication_status?:string | null; published_at?:unknown; published_by?:unknown }):Promise<boolean> {
+    const result = await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,created_at,message,device_id,base_server_version_id,
         major_version,minor_version,version_kind,publication_status,published_at,published_by,version_comment)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$1,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT(id) DO UPDATE SET
         major_version=EXCLUDED.major_version,minor_version=EXCLUDED.minor_version,version_kind=EXCLUDED.version_kind,
         publication_status=EXCLUDED.publication_status,published_at=EXCLUDED.published_at,published_by=EXCLUDED.published_by,
-        version_comment=EXCLUDED.version_comment,base_server_version_id=EXCLUDED.id`,
+        version_comment=EXCLUDED.version_comment,base_server_version_id=EXCLUDED.id
+        RETURNING (xmax = 0) AS inserted`,
     [entry.version.id, entry.file.id, entry.version.chunk_collection_id, entry.version.parent_version_id, entry.version.manifest_hash, entry.version.size,
         entry.version.deleted, entry.version.created_by_type, entry.version.created_by_id, entry.version.created_at, entry.version.message, entry.version.device_id,
         entry.version.major_version ?? 0, entry.version.minor_version ?? 1, entry.version.version_kind ?? 'minor', replicatedLifecycle.publication_status ?? 'draft',
         replicatedLifecycle.published_at ?? null, replicatedLifecycle.published_by ?? null, entry.version.version_comment ?? null]);
+    return Boolean(result.rows[0]?.inserted);
   }
 
   async activateVersion(client:pg.PoolClient, fileId:string, versionId:string, publicationStatus:string):Promise<void> {
