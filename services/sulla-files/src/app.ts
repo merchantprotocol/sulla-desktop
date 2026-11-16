@@ -88,6 +88,9 @@ import { FileFeedRoutes } from './routes/FileFeedRoutes.js';
 import { FileDetailRepository } from './Repositories/FileDetailRepository.js';
 import { AgentFileRoutes } from './routes/AgentFileRoutes.js';
 import { AgentFileRepository } from './Repositories/AgentFileRepository.js';
+import { FuseReadRoutes } from './routes/FuseReadRoutes.js';
+import { FuseTreeRepository } from './Repositories/FuseTreeRepository.js';
+import { FuseTreeSnapshotCache } from './Services/FuseTreeSnapshotCache.js';
 import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
 import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
@@ -749,101 +752,8 @@ function composeFilesApp(
     response.setHeader('Cache-Control', 'private, no-store');
     response.json(await requireFuseExperiment().fuseSnapshot(collectionId));
   } catch (error) { next(error) } });
-  // Cache one serialized tree by a database-owned change marker. Most FUSE
-  // lookups now pay for a scalar revision read and receive 304, rather than
-  // rebuilding and transferring the complete multi-megabyte tree every second.
-  const fuseTreeSnapshots=new Map<string,{ body:Buffer; revision:string }>();
-  const fuseTreeSnapshotRequests=new Map<string,Promise<{ body:Buffer; revision:string }>>();
-  const fuseTreeRevision = async():Promise<string> => String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
-  const loadFuseTreeSnapshot = async(area=''):Promise<{ body:Buffer; revision:string }> => {
-    const revision=await fuseTreeRevision();
-    const cached=fuseTreeSnapshots.get(area); if (cached?.revision===revision) return cached;
-    const pending=fuseTreeSnapshotRequests.get(area); if (pending) return pending;
-    const request=(async()=>{
-      // One consistent database snapshot avoids retry starvation during active
-      // ingestion and labels the tree with precisely the revision it represents.
-      const client=await db.connect();
-      try {
-        await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-        const revision=String((await client.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0].revision);
-        const [collections,files,folders]=await Promise.all([
-          client.query(`SELECT id,name,explorer_path AS tree_path,is_default,system_area AS "systemArea",description,naming_hint FROM collections c WHERE published=TRUE AND legacy_source=FALSE AND (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1)
-            AND (kind<>'scratch' OR EXISTS(SELECT 1 FROM files f WHERE f.collection_id=c.id AND f.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM file_folders d WHERE d.collection_id=c.id AND d.deleted_at IS NULL))
-            ORDER BY explorer_path,id`,[area,config.userId]),
-          client.query(`SELECT f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,
-            f.current_version_id AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-            WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND f.deleted_at IS NULL AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$')) AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-            ORDER BY f.collection_id,f.path`,[area,config.userId]),
-          client.query(`SELECT d.id,d.collection_id,d.path,d.description,d.naming_hint,(d.description LIKE 'Created by % — needs description') AS needs_description FROM file_folders d JOIN collections c ON c.id=d.collection_id WHERE (($1='' AND c.id=(SELECT h.id FROM collections h WHERE h.owner_user_id=$2 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$2 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1)) OR c.system_area=$1) AND d.deleted_at IS NULL ORDER BY d.collection_id,d.path`,[area,config.userId]),
-        ]);
-
-        // The mount serves exactly one collection at its root: the owner's home.
-        for (const row of collections.rows) row.tree_path='';
-        const root=collections.rows[0];
-        const body=Buffer.from(JSON.stringify({rootCollectionId:root?.id??null,collections:collections.rows,files:files.rows,folders:folders.rows}));
-        await client.query('COMMIT');
-        const snapshot={body,revision}; fuseTreeSnapshots.set(area,snapshot); return snapshot;
-      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-    })().finally(()=>{fuseTreeSnapshotRequests.delete(area)});
-    fuseTreeSnapshotRequests.set(area,request);
-    return request;
-  };
-  // FUSE v2 reads one directory at a time. The generated parent_path indexes
-  // make both the keyset cursor and direct-child predicate bounded by the page.
-  app.get('/v1/fuse/directory', async(request:RequestWithIdentity, response, next) => { try {
-    requireFuseExperiment(); mountIdentity(request, 'list');
-    const path=cleanPath(String(request.query.path??''),true);
-    const area='';
-    const collectionId=String(request.query.collectionId??'') || String((await db.query(`SELECT h.id FROM collections h WHERE h.owner_user_id=$1 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1`,[config.userId])).rows[0]?.id??'');
-    if(!collectionId) throw new HttpError(404,'Files collection not found');
-    await requireCollection(request, collectionId, 'view');
-    const revision=String((await db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision??'0');
-    const etag=`"dir:${collectionId}:${path}:${revision}"`; response.setHeader('ETag',etag); response.setHeader('Cache-Control','private, no-cache');
-    if(request.header('if-none-match')===etag) return response.status(304).end();
-    const rawLimit=Number(request.query.limit??500); const limit=Math.min(500,Math.max(1,Number.isFinite(rawLimit)?Math.floor(rawLimit):500));
-    const cursor=String(request.query.cursor??'');
-    const rows=await db.query(`SELECT * FROM (
-      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id::text AS "versionId"
-        FROM files f JOIN collections c ON c.id=f.collection_id
-        WHERE f.collection_id=$1 AND f.parent_path=$2 AND f.deleted_at IS NULL
-          AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$'))
-          AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-      UNION ALL
-      SELECT 'directory' AS kind,d.id,d.collection_id,d.path,NULL::text AS mime,0::bigint AS size,d.updated_at,NULL::text AS "versionId"
-        FROM file_folders d JOIN collections c ON c.id=d.collection_id
-        WHERE d.collection_id=$1 AND d.parent_path=$2 AND d.deleted_at IS NULL
-    ) direct_children WHERE path>$3 ORDER BY path LIMIT $4`,[collectionId,path,cursor,limit+1]);
-    const entries=rows.rows.slice(0,limit); const hasMore=rows.rows.length>limit;
-    response.json({rootCollectionId:collectionId,entries,nextCursor:hasMore?entries[entries.length-1].path:null,revision});
-  } catch(error) { next(error) } });
-  app.get('/v1/fuse/entry', async(request:RequestWithIdentity, response, next) => { try {
-    requireFuseExperiment(); mountIdentity(request, 'list');
-    const collectionId=String(request.query.collectionId??'') || String((await db.query(`SELECT h.id FROM collections h WHERE h.owner_user_id=$1 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1`,[config.userId])).rows[0]?.id??'');
-    const path=cleanPath(String(request.query.path??''),false);
-    if(!collectionId) throw new HttpError(404,'Files collection not found');
-    await requireCollection(request, collectionId, 'view');
-    const result=await db.query(`SELECT * FROM (
-      SELECT 'file' AS kind,f.id,f.collection_id,f.path,f.mime,f.size,f.updated_at,f.current_version_id::text AS "versionId" FROM files f JOIN collections c ON c.id=f.collection_id
-      WHERE f.collection_id=$1 AND f.path=$2 AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-        AND (lower(f.path) !~ '(^|/)(master[.]key|wallet|vault|vaults)($|/)' OR (c.system_area='logs' AND f.path ~ '^audit/(files|vault)/[A-Za-z0-9_-]+[.]jsonl$'))
-      UNION ALL SELECT 'directory' AS kind,d.id,d.collection_id,d.path,NULL::text AS mime,0::bigint AS size,d.updated_at,NULL::text AS "versionId" FROM file_folders d WHERE d.collection_id=$1 AND d.path=$2 AND d.deleted_at IS NULL
-    ) entry LIMIT 1`,[collectionId,path]);
-    if(!result.rows[0]) throw new HttpError(404,'Files entry not found'); response.json(result.rows[0]);
-  } catch(error) { next(error) } });
-  app.get('/v1/fuse/tree', async(request:RequestWithIdentity, response, next) => { try {
-    requireFuseExperiment();
-    mountIdentity(request, 'list');
-    const currentRevision=await fuseTreeRevision();
-    // The one Files mount serves the home collection; there are no other mounted areas.
-    const area='';
-    const etag=`"${ area || 'home' }:${ currentRevision }"`;
-    response.setHeader('Cache-Control', 'private, no-cache');
-    response.setHeader('ETag', etag);
-    if (request.header('if-none-match')===etag) return response.status(304).end();
-    const snapshot=await loadFuseTreeSnapshot(area);
-    response.setHeader('ETag', `"${ area || 'home' }:${ snapshot.revision }"`);
-    response.type('application/json').send(snapshot.body);
-  } catch (error) { next(error) } });
+  const fuseTree = new FuseTreeRepository(db);
+  new FuseReadRoutes(accessGate, fuseTree, new FuseTreeSnapshotCache(fuseTree, config.userId), requireFuseExperiment, config.userId).register(app);
   app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
     const collectionId = String(request.query.collectionId ?? '');
     const filePath = cleanPath(String(request.query.path ?? ''), false);
