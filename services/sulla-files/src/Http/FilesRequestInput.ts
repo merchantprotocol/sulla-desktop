@@ -12,6 +12,9 @@ import { HttpError } from './HttpError.js';
 
 /** Pure parsing and validation of Files request input. No I/O. */
 export class FilesRequestInput {
+  /** A version 1-5 UUID (Files ids, native operation ids). */
+  static readonly UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
   static cleanPath(value:unknown, allowEmpty = true):string {
     if (typeof value !== 'string') throw new HttpError(400, 'path must be a string');
     const path = value.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');

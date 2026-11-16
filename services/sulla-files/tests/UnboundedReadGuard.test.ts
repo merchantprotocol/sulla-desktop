@@ -59,7 +59,9 @@ const ALLOWED:Record<string, number> = {
   'Repositories/ChunkAccessRepository.ts': 1,
   // A legacy move/copy selection: the live files under one selected folder (moved from app.ts).
   'Repositories/FileLocatorRepository.ts': 1,
-  'app.ts': 2,
+  // One scratch run's live files, staged for keeping in a permanent collection (moved from app.ts).
+  'Repositories/AgentKeepRepository.ts': 1,
+  'app.ts': 1,
 };
 
 function sources(directory:string):string[] {
