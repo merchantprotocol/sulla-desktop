@@ -4,9 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Queryable } from './db.js';
-
-const MARKER = 'cleanup_vault_outbound_audit_rows';
-const LEGACY_ACTION = 'vault_outbound_request';
+import { PostgresLegacyAuditRepository } from './repositories/PostgresLegacyAuditRepository.js';
 
 export interface PruneOptions {
   batchSize?: number;
@@ -25,41 +23,50 @@ export interface PruneOptions {
  * Only that one action is deletable (the append-only trigger allows nothing
  * else). Does NOT vacuum: run `VACUUM (ANALYZE) audit_log` afterwards to reuse
  * the space, or `VACUUM FULL` in a maintenance window to return it to the OS.
- * Returns rows deleted.
  */
-export async function pruneLegacyOutboundAuditRows(db: Queryable, options: PruneOptions = {}): Promise<number> {
-  const batchSize = Math.min(Math.max(options.batchSize ?? 5000, 1), 20_000);
-  const pauseMs = options.pauseMs ?? 50;
-  const maxBatches = options.maxBatches ?? Number.POSITIVE_INFINITY;
-  const log = options.log ?? ((message) => console.log(message));
-  const sleep = options.sleep ?? ((ms) => new Promise<void>((done) => setTimeout(done, ms)));
+export class LegacyOutboundAuditPruner {
+  static readonly MARKER = 'cleanup_vault_outbound_audit_rows';
+  static readonly LEGACY_ACTION = 'vault_outbound_request';
 
-  const done = await db.query('SELECT 1 FROM vault_schema_migrations WHERE version = $1', [MARKER]);
-  if (done.rows.length) return 0;
+  private readonly batchSize: number;
+  private readonly pauseMs: number;
+  private readonly maxBatches: number;
+  private readonly log: (message: string) => void;
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  let cursor = 0;
-  let deleted = 0;
-  for (let batch = 0; batch < maxBatches; batch++) {
-    const result = await db.query(
-      `WITH victims AS (
-         SELECT id FROM audit_log WHERE action = $1 AND id > $2 ORDER BY id LIMIT $3
-       ), gone AS (
-         DELETE FROM audit_log a USING victims v WHERE a.id = v.id RETURNING a.id
-       )
-       SELECT count(*)::int AS n, COALESCE(max(id), $2)::bigint AS last FROM gone`,
-      [LEGACY_ACTION, cursor, batchSize],
-    );
-    const n = Number(result.rows[0]?.n ?? 0);
-    if (n === 0) {
-      await db.query('INSERT INTO vault_schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING', [MARKER]);
-      log(`sulla-vault: removed ${ deleted } legacy ${ LEGACY_ACTION } audit rows from Postgres; run VACUUM (ANALYZE) audit_log to reclaim the space`);
-      return deleted;
-    }
-    deleted += n;
-    cursor = Number(result.rows[0].last);
-    if (batch % 100 === 99) log(`sulla-vault: audit cleanup removed ${ deleted } legacy rows so far`);
-    await sleep(pauseMs);
+  constructor(private readonly audit: PostgresLegacyAuditRepository, options: PruneOptions = {}) {
+    this.batchSize = Math.min(Math.max(options.batchSize ?? 5000, 1), 20_000);
+    this.pauseMs = options.pauseMs ?? 50;
+    this.maxBatches = options.maxBatches ?? Number.POSITIVE_INFINITY;
+    this.log = options.log ?? ((message) => console.log(message));
+    this.sleep = options.sleep ?? ((ms) => new Promise<void>((done) => setTimeout(done, ms)));
   }
-  log(`sulla-vault: audit cleanup paused after ${ deleted } rows; it resumes on next start`);
-  return deleted;
+
+  /** Runs (or resumes) the sweep. Returns rows deleted by this call. */
+  async prune(): Promise<number> {
+    const { MARKER, LEGACY_ACTION } = LegacyOutboundAuditPruner;
+    if (await this.audit.isSwept(MARKER)) return 0;
+
+    let cursor = 0;
+    let deleted = 0;
+    for (let batch = 0; batch < this.maxBatches; batch++) {
+      const { deleted: n, lastId } = await this.audit.deleteBatch(LEGACY_ACTION, cursor, this.batchSize);
+      if (n === 0) {
+        await this.audit.markSwept(MARKER);
+        this.log(`sulla-vault: removed ${ deleted } legacy ${ LEGACY_ACTION } audit rows from Postgres; run VACUUM (ANALYZE) audit_log to reclaim the space`);
+        return deleted;
+      }
+      deleted += n;
+      cursor = lastId;
+      if (batch % 100 === 99) this.log(`sulla-vault: audit cleanup removed ${ deleted } legacy rows so far`);
+      await this.sleep(this.pauseMs);
+    }
+    this.log(`sulla-vault: audit cleanup paused after ${ deleted } rows; it resumes on next start`);
+    return deleted;
+  }
+}
+
+/** @deprecated Use `new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db), options).prune()`. */
+export function pruneLegacyOutboundAuditRows(db: Queryable, options: PruneOptions = {}): Promise<number> {
+  return new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db), options).prune();
 }

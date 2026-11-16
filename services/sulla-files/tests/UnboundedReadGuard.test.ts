@@ -23,6 +23,8 @@ const ALLOWED:Record<string, number> = {
   // Finder badges: one row per live file of the one requested collection (moved from cloudSync/repository.ts).
   'Repositories/CloudCollectionCatalogRepository.ts': 1,
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Child-folder totals: one GROUP BY row per direct child folder of the open folder, never a row per file.
+  'Repositories/CollectionFilesFeedRepository.ts': 1,
   // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
   'Repositories/FolderSubtreeRepository.ts': 7,
   // Legacy stored folder move: the moved folder's own subtree, locked for update.
