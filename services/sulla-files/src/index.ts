@@ -37,7 +37,7 @@ import { Store } from './store.js';
 import { CachingStore, createChunkStore, type CloudChunkSource } from './chunkCache/index.js';
 import { cleanupStaleUploads } from './uploadCleanup.js';
 import { configuredVaultFilesKeyBundleAuthority } from './vaultKeyBundleAuthority.js';
-import { adoptVaultPrincipal } from './vaultPrincipal.js';
+import { VaultPrincipalAdoption } from './vaultPrincipal.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { MemoryTelemetry } from './MemoryTelemetry.js';
 import { FilesCloudBroker } from './cloudBroker.js';
@@ -88,6 +88,7 @@ const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
   : undefined;
 const chunkStore = createChunkStore({ db, root: config.chunkRoot, keyring: config.keyring, source: config.mode === 'desktop' && !config.filesRoot ? cloudChunkSource : undefined });
 const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
+const vaultPrincipalAdoption = new VaultPrincipalAdoption(db);
 const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
   ? new FilesKeyBundleRecovery(db, config.keyring, vaultAuthority)
   : undefined;
@@ -121,7 +122,7 @@ const initialize = (reportStage:(stage:FilesStartupStage)=>void) => {
     if (vaultAuthority) {
       reportStage('identity-adoption');
       const { principalId } = await vaultAuthority.unlockedPrincipal();
-      await adoptVaultPrincipal(db, config, principalId);
+      await vaultPrincipalAdoption.adopt(config, principalId);
     }
     await migrateSullaCollection(db, config);
     await trashStrayDocs(db, config).catch(error => console.warn('[SullaFiles] stray Docs cleanup failed:', error));
