@@ -16,6 +16,11 @@ export interface AuditLogFileRow { id:string; current_version_id:string | null }
 export class AuditSpoolRepository {
   constructor(private readonly db:Pick<pg.Pool, 'query'>) {}
 
+  /** Spools one validated service audit event for delivery. */
+  async enqueue(event:unknown):Promise<void> {
+    await this.db.query('INSERT INTO files_audit_spool(event) VALUES($1)', [event]);
+  }
+
   /** The oldest pending audit event (delivery order is spool id order). */
   async nextPending():Promise<AuditSpoolRow | undefined> {
     return (await this.db.query('SELECT * FROM files_audit_spool ORDER BY id LIMIT 1')).rows[0];
