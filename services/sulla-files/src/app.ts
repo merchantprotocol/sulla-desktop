@@ -28,7 +28,7 @@ import { ContentReadFailureLog } from './ContentReadFailureLog.js';
 import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { FilesBootstrapAuthority, FilesBootstrapError } from './bootstrapAuthority.js';
 import { loadFileContent } from './preview.js';
-import { assertUnprotectedFile, isProtectedPath, protectedPathError } from './protectedFiles.js';
+import { assertUnprotectedFile, protectedPathError } from './protectedFiles.js';
 import { registerResidencyRoutes } from './residencyHttp.js';
 import { SharesService } from './shares.js';
 import { CatalogSyncService } from './cloudRemote/catalogSync.js';
@@ -86,6 +86,8 @@ import { StarRoutes } from './routes/StarRoutes.js';
 import { FileDetailRoutes } from './routes/FileDetailRoutes.js';
 import { FileFeedRoutes } from './routes/FileFeedRoutes.js';
 import { FileDetailRepository } from './Repositories/FileDetailRepository.js';
+import { AgentFileRoutes } from './routes/AgentFileRoutes.js';
+import { AgentFileRepository } from './Repositories/AgentFileRepository.js';
 import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
 import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
@@ -1203,38 +1205,8 @@ function composeFilesApp(
 
   const collectionSync = new CollectionSyncRoutes(db, accessGate, new CollectionSyncRepository(db, FILE_ROW_JSON_SQL));
   collectionSync.registerListing(app);
-  app.post('/v1/agent-files/query', async(request:RequestWithIdentity, response, next) => {
-    try {
-      if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) throw new HttpError(400, 'valid JSON body required');
-      const runIds = Array.isArray(request.body.runIds) ? [...new Set(request.body.runIds.filter((value:unknown):value is string => typeof value === 'string' && value.length > 0))].slice(0, 100) : [];
-      if (!runIds.length) return response.json([]);
-      const actor = identity(request); const threadId = typeof request.body.threadId === 'string' ? request.body.threadId : '';
-      if (!threadId) throw new HttpError(400, 'threadId is required');
-      const legacy = await db.query(`SELECT count(*)::int AS count FROM files f JOIN collections c ON c.id=f.collection_id
-        JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
-        WHERE c.owner_user_id=$1 AND ($3::text IS NULL OR c.org_id=$3::text) AND ((c.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=c.id AND m.published_at IS NOT NULL))
-          OR (chunks.compatibility_state='legacy-external-data' AND NOT EXISTS(SELECT 1 FROM files_legacy_collection_map m WHERE m.source_collection_id=chunks.id AND m.published_at IS NOT NULL)))
-          AND (c.agent_run_id=ANY($2::text[]) OR f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[]))`, [actor.userId, runIds, actor.orgId ?? null]);
-      if (Number(legacy.rows[0]?.count ?? 0) > 0) throw new HttpError(409, 'Legacy agent files need an explicit secure import from the retired external chunk store; records were preserved and were not opened');
-      const rows = await db.query(`SELECT ${FILE_COLUMNS_SQL},c.kind AS collection_kind,c.agent_run_id
-        FROM files f JOIN collections c ON c.id=f.collection_id JOIN file_versions v ON v.id=f.current_version_id JOIN collections chunks ON chunks.id=v.chunk_collection_id
-        WHERE c.owner_user_id=$1 AND ($4::text IS NULL OR c.org_id=$4::text) AND c.compatibility_state='native' AND c.published=TRUE AND c.legacy_source=FALSE
-          AND chunks.compatibility_state='native' AND chunks.published=TRUE AND chunks.legacy_source=FALSE AND (c.thread_id=$3 OR c.thread_id IS NULL)
-          AND (c.agent_run_id=ANY($2::text[]) OR (f.created_by_type='agent-run' AND f.created_by_id=ANY($2::text[])))
-          AND f.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id)
-        ORDER BY f.updated_at DESC`, [actor.userId, runIds, threadId, actor.orgId ?? null]);
-      response.json(rows.rows.filter(row => !isProtectedPath(row.path)));
-    } catch (error:any) {
-      const databaseCode = typeof error?.code === 'string' && ['22P02', '23503', '23505', '42P01', '42703'].includes(error.code) ? error.code : undefined;
-
-      console.error('[SullaFiles] agent inventory query failed', {
-        category:     error instanceof HttpError && error.status < 500 ? 'invalid-request' : 'internal-error',
-        status:       error instanceof HttpError ? error.status : 500,
-        databaseCode,
-      });
-      next(error);
-    }
-  });
+  const agentFiles = new AgentFileRoutes(db, config, store, accessGate, new AgentFileRepository(db, FILE_COLUMNS_SQL), requestAudit);
+  agentFiles.registerQuery(app);
   app.post('/v1/agent-files', async(request:RequestWithIdentity, response, next) => { try {
     const actor = identity(request);
     const path = cleanPath(request.body.path, false); const collection = await ensureAgentCollection(request, request.body.collectionId);
@@ -1309,28 +1281,7 @@ function composeFilesApp(
     const actor = identity(request); if (!actor.jobId) throw new HttpError(400, 'job identity is required');
     const collection = await ensureAgentCollection(request); response.status(201).json({ collectionId: collection.id });
   } catch (error) { next(error) } });
-  // Agents write Use Case drafts into the home collection; /v1/local/* is desktop-only.
-  app.get('/v1/agent-files/use-case-collection', async(request:RequestWithIdentity, response, next) => { try {
-    identity(request);
-    const row = (await db.query("SELECT id FROM collections WHERE owner_user_id=$1 AND system_area IS NULL AND published=TRUE AND legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=collections.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,is_default DESC,created_at LIMIT 1", [identity(request).userId])).rows[0];
-    if (!row) throw new HttpError(404, 'Home collection is not initialized');
-    response.json({ collectionId: row.id });
-  } catch (error) { next(error) } });
-  app.get('/v1/agent-files/:id', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await requireFile(request, request.params.id, 'view');
-    const versionId = typeof request.query.versionId === 'string' ? request.query.versionId : file.current_version_id;
-    const version = (await db.query('SELECT * FROM file_versions WHERE id=$1 AND file_id=$2 AND NOT deleted', [versionId, file.id])).rows[0];
-    if (!version) throw new HttpError(404, 'file version not found');
-    const content = await loadFileContent(db, config, store, file.id, version.id); if (!content) throw new HttpError(404, 'file content not found');
-    await audit(request, 'get', { ...file, current_version_id: version.id });
-    response.json({ file, version, content_base64: content.buffer.toString('base64') });
-  } catch (error) { next(error) } });
-  app.post('/v1/file-edges', async(request:RequestWithIdentity, response, next) => { try {
-    const file = await requireFile(request, String(request.body.fileId ?? ''), 'edit'); const target = await requireFile(request, String(request.body.targetFileId ?? ''), 'view');
-    if (!['links_to', 'derived_from'].includes(request.body.kind)) throw new HttpError(400, 'invalid edge kind');
-    await db.query(`INSERT INTO edges(src_type,src_id,dst_type,dst_id,kind,created_by) VALUES('file',$1,'file',$2,$3,$4) ON CONFLICT DO NOTHING`, [file.id, target.id, request.body.kind, identity(request).jobId ?? identity(request).userId]);
-    response.status(204).end();
-  } catch (error) { next(error) } });
+  agentFiles.register(app);
   collectionSync.register(app);
   app.use('/v1/chunks/:collection/:id', async(request, _response, next) => {
     try {
@@ -1710,12 +1661,7 @@ function composeFilesApp(
     }
     return count; }); response.json({ count });
   } catch (error) { next(error) } });
-  app.post('/v1/agent-runs/:runId/end', async(request:RequestWithIdentity, response, next) => { try {
-    const actor = identity(request);
-    const result = await db.query(`UPDATE files f SET expires_at=NOW()+INTERVAL '14 days',updated_at=NOW()
-      FROM collections c WHERE f.collection_id=c.id AND c.owner_user_id=$1 AND c.agent_run_id=$2 AND ($3::text IS NULL OR c.org_id=$3::text) AND c.kind='scratch' AND c.published=TRUE AND c.legacy_source=FALSE AND f.expires_at IS NULL AND f.deleted_at IS NULL RETURNING f.id`, [actor.userId, actor.jobId, actor.orgId ?? null]);
-    response.json({ count: result.rowCount ?? result.rows.length });
-  } catch (error) { next(error) } });
+  agentFiles.registerRunEnd(app);
   registerDocumentLifecycleRoutes(app, db, { identity, requireFile, audit,
     deleteChunk:(collectionId,chunkId)=>store.delete(collectionId,chunkId),
     ...(manager?{disposeTrashReceipt:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),

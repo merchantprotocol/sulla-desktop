@@ -3817,8 +3817,8 @@
     },
     "services/sulla-files/src/app.ts": {
       "rules": {
-        "long-file": 1739,
-        "raw-sql": 255
+        "long-file": 1685,
+        "raw-sql": 244
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },

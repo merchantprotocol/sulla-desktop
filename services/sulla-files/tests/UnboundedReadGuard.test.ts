@@ -43,7 +43,9 @@ const ALLOWED:Record<string, number> = {
   'Repositories/SullaCollectionMigrationRepository.ts': 4,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
-  'app.ts': 5,
+  // One thread's inventory of up to 100 agent runs' live files (moved from app.ts).
+  'Repositories/AgentFileRepository.ts': 1,
+  'app.ts': 4,
   'legacyImport.ts': 3,
   'localManager.ts': 3,
 };
