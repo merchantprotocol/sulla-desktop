@@ -21,6 +21,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'
  */
 const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Child-folder totals: one GROUP BY row per direct child folder of the open folder, never a row per file.
+  'Repositories/CollectionFilesFeedRepository.ts': 1,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
   'app.ts': 9,
