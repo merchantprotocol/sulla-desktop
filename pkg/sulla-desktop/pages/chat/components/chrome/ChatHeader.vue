@@ -44,12 +44,11 @@
 
     <div class="ch-actions">
       <button
-        v-if="!dockSide"
         class="ch-btn"
         type="button"
         :class="{ on: subAgentsOpen && subAgents.total > 0, off: subAgents.total === 0 }"
         :aria-pressed="subAgentsOpen && subAgents.total > 0"
-        :title="subAgents.total ? (subAgentsOpen ? 'Hide sub-agents' : 'Show sub-agents') : 'No sub-agents in this chat yet'"
+        :title="subAgents.total ? 'Show sub-agents in the side panel' : 'No sub-agents in this chat yet'"
         @click="subAgents.total && emit('toggle-subagents')"
       >
         <svg
