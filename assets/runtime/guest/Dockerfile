@@ -13,11 +13,8 @@ COPY assets/runtime/guest/unzboot.sh /usr/local/bin/unzboot
 RUN apk add --no-cache alpine-base busybox ca-certificates containerd docker docker-cli-buildx docker-cli-compose \
       blkid e2fsprogs e2fsprogs-extra iproute2 iptables nftables openssl runc tini linux-lts cpio gzip \
       cifs-utils nfs-utils fuse3 \
-      shadow-subids fuse-overlayfs slirp4netns docker-rootless-extras \
       python3 py3-pip git curl wget jq nodejs npm ripgrep tar unzip zstd bash \
       coreutils findutils grep sed gawk openssh-client \
-    && addgroup -g 1000 sulla && adduser -D -u 1000 -G sulla -s /bin/bash sulla \
-    && printf 'sulla:100000:65536\n' > /etc/subuid && printf 'sulla:100000:65536\n' > /etc/subgid \
     && for dir in dev proc sys run tmp var/lib var/log var/tmp mnt/data mnt/worktrees; do mkdir -p "/image/rootfs/$dir"; done \
     && ln -s ../run /image/rootfs/var/run \
     && chmod 1777 /image/rootfs/tmp \
@@ -93,24 +90,6 @@ RUN set -eu; \
     /usr/local/bin/make-artifact /image/rootfs /image/initramfs.img; \
     printf 'sulla-runtime-guest=0.3.0\nalpine=%s\narchitecture=%s\n' "$ALPINE_VERSION" "$TARGETARCH" > /image/VERSION
 
-# WSL2 imports a conventional distribution rootfs instead of the custom
-# initramfs/erofs layout used by the macOS Virtualization.framework runtime.
-# Reassemble the same pinned Alpine userspace and Docker toolchain, but omit
-# the custom PID 1 and kernel modules that are specific to the packaged guest.
-RUN set -eu; \
-    mkdir -p /image/wsl-rootfs; \
-    cp -a /image/rootfs/. /image/wsl-rootfs/; \
-    cp -a /image/usr/. /image/wsl-rootfs/usr/; \
-    rm -f /image/wsl-rootfs/init; \
-    rm -f /image/wsl-rootfs/lib/modules; \
-    rm -rf /image/wsl-rootfs/lib/sulla-boot-modules /image/wsl-rootfs/usr/lib/modules; \
-    mkdir -p /image/wsl-rootfs/run /image/wsl-rootfs/tmp; \
-    test -x /image/wsl-rootfs/usr/bin/newuidmap; test -x /image/wsl-rootfs/usr/bin/rootlesskit; \
-    grep -q '^sulla:x:1000:' /image/wsl-rootfs/etc/passwd; grep -q '^sulla:' /image/wsl-rootfs/etc/subuid; \
-    chmod 1777 /image/wsl-rootfs/tmp; \
-    tar --numeric-owner -C /image/wsl-rootfs -cf /image/wsl-rootfs.tar .; \
-    sha256sum /image/wsl-rootfs.tar | awk '{ print $1 "  rootfs.tar" }' > /image/wsl-rootfs.sha256
-
 # A filesystem image does not depend on the CPU, so mkfs.erofs runs natively
 # instead of under emulation. erofs with LZ4HC because the guest kernel
 # decompresses it fast and in parallel (Alpine builds squashfs with a single
@@ -133,12 +112,55 @@ RUN --mount=type=bind,from=image,source=/image,target=/image \
 FROM scratch AS guest-export
 COPY --from=usr /out/ /
 
+# Everything below is for other platforms and is never reached from
+# guest-export: the macOS Virtualization.framework guest above is built exactly
+# as before. Keep rootless/WSL-only packages, users and files out of the
+# `image`, `usr` and `guest-export` stages.
+#
+# WSL2 imports a conventional distribution rootfs instead of the custom
+# initramfs/erofs layout used by the macOS Virtualization.framework runtime.
+# This stage starts from the guest build stage, reassembles the same pinned
+# Alpine userspace and Docker toolchain from a copy of its rootfs, adds the
+# rootless Docker packages and the uid-1000 `sulla` user to that copy only,
+# and omits the custom PID 1 and kernel modules that are specific to the
+# packaged guest.
+FROM image AS wsl-image
+RUN set -eu; \
+    mkdir -p /image/wsl-rootfs; \
+    cp -a /image/rootfs/. /image/wsl-rootfs/; \
+    cp -a /image/usr/. /image/wsl-rootfs/usr/; \
+    rm -f /image/wsl-rootfs/init; \
+    rm -f /image/wsl-rootfs/lib/modules; \
+    rm -rf /image/wsl-rootfs/lib/sulla-boot-modules /image/wsl-rootfs/usr/lib/modules; \
+    apk info | sort > /tmp/apk-before; \
+    apk add --no-cache shadow-subids fuse-overlayfs slirp4netns docker-rootless-extras; \
+    apk info | sort > /tmp/apk-after; \
+    comm -13 /tmp/apk-before /tmp/apk-after > /tmp/apk-added; \
+    test -s /tmp/apk-added; \
+    apk info -L $(cat /tmp/apk-added) | grep -v -e ' contains:$' -e '^$' > /tmp/apk-added-files; \
+    tar --xattrs --xattrs-include='*' -C / -cf - -T /tmp/apk-added-files \
+      | tar --xattrs --xattrs-include='*' -C /image/wsl-rootfs -xpf -; \
+    addgroup -g 1000 sulla; \
+    adduser -D -u 1000 -G sulla -s /bin/bash sulla; \
+    printf 'sulla:100000:65536\n' > /etc/subuid; \
+    printf 'sulla:100000:65536\n' > /etc/subgid; \
+    mkdir -p /image/wsl-rootfs/home; \
+    cp -a /etc/passwd /etc/group /etc/shadow /etc/subuid /etc/subgid /image/wsl-rootfs/etc/; \
+    cp -a /home/sulla /image/wsl-rootfs/home/; \
+    rm -rf /image/wsl-rootfs/usr/lib/modules /image/wsl-rootfs/lib/modules; \
+    mkdir -p /image/wsl-rootfs/run /image/wsl-rootfs/tmp; \
+    test -x /image/wsl-rootfs/usr/bin/newuidmap; test -x /image/wsl-rootfs/usr/bin/rootlesskit; \
+    grep -q '^sulla:x:1000:' /image/wsl-rootfs/etc/passwd; grep -q '^sulla:' /image/wsl-rootfs/etc/subuid; \
+    chmod 1777 /image/wsl-rootfs/tmp; \
+    tar --numeric-owner -C /image/wsl-rootfs -cf /image/wsl-rootfs.tar .; \
+    sha256sum /image/wsl-rootfs.tar | awk '{ print $1 "  rootfs.tar" }' > /image/wsl-rootfs.sha256
+
 # `docker buildx build --target wsl-import-rootfs --output type=local,dest=...`
 # yields rootfs.tar and rootfs.tar.sha256; the tar entries are at distro root
 # as required by `wsl.exe --import`.
 FROM scratch AS wsl-import-rootfs
-COPY --from=image /image/wsl-rootfs.tar /rootfs.tar
-COPY --from=image /image/wsl-rootfs.sha256 /rootfs.tar.sha256
+COPY --from=wsl-image /image/wsl-rootfs.tar /rootfs.tar
+COPY --from=wsl-image /image/wsl-rootfs.sha256 /rootfs.tar.sha256
 
 # Linux desktop executor: `docker buildx build --target linux-runtime -t sulla-desktop-linux-runtime:<version> .`
 # (see build-linux-runtime.sh). This is NOT a VM image: it is the userspace the
