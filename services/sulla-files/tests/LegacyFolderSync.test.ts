@@ -69,8 +69,9 @@ describe.skipIf(!databaseUrl)('legacy folder sync + replication (real Postgres, 
     await mkdir(join(temp, 'files')); await mkdir(join(temp, 'chunks'));
     collectionId = randomUUID();
     // Unique explorer_path per collection: collections_explorer_path_owner_org is unique per owner.
+    // Separate params: one $n bound to both a uuid and a text column fails with "inconsistent types deduced".
     await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
-      VALUES($1,'sync-user','Files','knowledge','synced','{}','{}','{}',TRUE,FALSE,$1)`, [collectionId]);
+      VALUES($1,'sync-user','Files','knowledge','synced','{}','{}','{}',TRUE,FALSE,$2)`, [collectionId, `fixture-${ collectionId }`]);
     root = { id: 'default', name: 'Files', path: join(temp, 'files'), syncMode: 'server', paused: false, exclusions: [], primary: true };
     store = new Store(join(temp, 'chunks'));
     server = new FakeSyncServer(() => [{ id: collectionId, name: 'Files' }]);
