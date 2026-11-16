@@ -3,12 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ChunkCacheRepository } from '../Repositories/ChunkCacheRepository.js';
 import type pg from 'pg';
 
 export class ChunkAccessTracker {
   private readonly pending = new Map<string, { collectionId:string; chunkId:string }>();
   private timer?:NodeJS.Timeout;
-  constructor(private readonly db:Pick<pg.Pool, 'query'>, private readonly flushMs = 1_000, private readonly maxPending = 1_000) {}
+  constructor(
+    db:Pick<pg.Pool, 'query'>,
+    private readonly flushMs = 1_000,
+    private readonly maxPending = 1_000,
+    private readonly cache = new ChunkCacheRepository(db),
+  ) {}
   get pendingSize():number { return this.pending.size }
   record(collectionId:string, chunkId:string):void {
     const key = `${collectionId}:${chunkId}`;
@@ -22,9 +28,7 @@ export class ChunkAccessTracker {
     this.timer = undefined;
     const entries = [...this.pending.values()]; this.pending.clear();
     if (!entries.length) return;
-    await this.db.query(`INSERT INTO files_chunk_cache(collection_id,chunk_id,state,last_read_at)
-      SELECT collection_id::uuid,chunk_id,'resident',NOW() FROM jsonb_to_recordset($1::jsonb) AS x(collection_id text,chunk_id text)
-      ON CONFLICT(collection_id,chunk_id) DO UPDATE SET last_read_at=EXCLUDED.last_read_at`, [JSON.stringify(entries.map(({ collectionId:collection_id, chunkId:chunk_id }) => ({ collection_id, chunk_id })))]);
+    await this.cache.recordAccess(entries);
   }
   stop():Promise<void> { return this.flush() }
 }
