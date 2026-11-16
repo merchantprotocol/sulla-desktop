@@ -43,6 +43,8 @@ export class AskUserQuestionWorker extends BaseTool {
           question:    { type: 'string', description: 'The full question text shown to the user.' },
           header:      { type: 'string', description: 'Short label/chip shown above the question (≤ ~12 chars), e.g. "Auth method".' },
           multiSelect: { type: 'boolean', description: 'Set true to let the user pick multiple options. Default false (single choice).' },
+          task:        { type: 'boolean', description: 'Set true when you need the user to DO something you cannot (run a command on their Mac, set a secret, sign in, approve something outside Sulla). Renders a task card with a Done button; options default to Done.' },
+          command:     { type: 'string', description: 'For a task: the exact shell command for the user to run, shown with a Copy button. Never include secret values.' },
           options:     {
             type:        'array',
             description: '2–4 distinct options the user can choose from.',
@@ -70,7 +72,8 @@ export class AskUserQuestionWorker extends BaseTool {
       return { successBoolean: false, responseString: error };
     }
 
-    const timeoutMs = clampTimeout(input?.timeoutMs);
+    // A task (run a command, set a secret) takes longer than a pick: wait the longest unless told otherwise.
+    const timeoutMs = clampTimeout(input?.timeoutMs ?? (questions.some(q => q.task) ? MAX_TIMEOUT_MS : undefined));
     const { record, result } = await decisionService.request({
       kind: 'question', title: questions[0].question, questions,
       conversationId: this.state?.metadata?.threadId || '',

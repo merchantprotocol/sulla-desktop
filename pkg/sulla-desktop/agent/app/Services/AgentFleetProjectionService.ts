@@ -71,7 +71,8 @@ export class AgentFleetProjectionService {
 
   /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
   async supervisionCandidates(): Promise<FleetJobView[]> {
-    const all = await this.states.jobsForProjection(5 * 60_000);
+    // liveChildren: a parked manager whose children all finished long ago is exactly the stranded case.
+    const all = await this.states.jobsForProjection(5 * 60_000, { liveChildren: true });
     const childParentThreads = new Set(all.map(job => job.parentThreadId).filter((value): value is string => !!value));
     const managers = all.filter(job => ['running', 'parked'].includes(job.status) && job.tasks.some(task => !!task.threadId && childParentThreads.has(task.threadId)));
     const managerThreads = new Set(managers.flatMap(job => job.tasks.map(task => task.threadId).filter((value): value is string => !!value)));

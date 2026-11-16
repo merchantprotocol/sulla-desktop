@@ -40,7 +40,7 @@ import { agentJobLifecycle } from '../../services/AgentJobLifecycleService';
 import { agentWaitProvider } from '../../services/AgentWaitServices';
 import { AgentWaitRequest } from '../../services/AgentWaitRequest';
 import { DelegatedTurnSettlementPolicy, MissingContractAfterReminderError } from '../../services/DelegatedTurnSettlementPolicy';
-import { DelegatedWakeSettlementPolicy } from '../../services/DelegatedWakeSettlementPolicy';
+import { DelegatedFreshTurnRunner } from '../../services/DelegatedFreshTurnRunner';
 import { DEFAULT_AGENT_RUN_LOCATION } from '../../database/models/AgentDefinitionModel';
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import {
@@ -625,6 +625,7 @@ export class SpawnAgentWorker extends BaseTool {
             promptMessage.content += '\n\n[Container workspace] Agent-local file, shell, and Git work runs in the bounded job workspace shown by pwd. The workspace survives container exit; the container itself is removed when this job ends.';
           }
           const { createAgentContainerLifecycle } = await import('../../services/AgentContainerLauncher');
+          const { delegatedThreadPersistenceKey } = await import('../../services/DelegatedContainerKey');
           const createLifecycle = () => createAgentContainerLifecycle({
             jobId: activityJobId!,
             taskIndex: index,
@@ -635,7 +636,7 @@ export class SpawnAgentWorker extends BaseTool {
             signal: combined?.signal ?? taskAbortSignal,
             // A scheduled wait may exceed the container idle limit. Recreated
             // runtimes must resume the same workspace and provider home.
-            persistenceKey: threadId,
+            persistenceKey: delegatedThreadPersistenceKey(threadId),
           });
           containerLifecycle = new ParkedContainerLifecycle(await createLifecycle(), createLifecycle);
         }
@@ -652,51 +653,27 @@ export class SpawnAgentWorker extends BaseTool {
             String(entry.jobId), Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0,
           )));
         };
-        const wakeSettlementPolicy = new DelegatedWakeSettlementPolicy();
         const failedManagerCompletionRerouter = new FailedManagerCompletionRerouter();
-        const runFreshTurn = async(currentState: any) => {
-          const wakeInput = subState.messages[subState.messages.length - 1];
-          const assistantCount = subState.messages.filter((message: any) => message?.role === 'assistant').length;
-          this.turnPreparer.prepare(subState);
-          currentState = await executeGraph();
-          let returnedAfterTurn = await returnedTask();
-          if (!returnedAfterTurn && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
-            this.turnPreparer.prepare(subState);
-            currentState = await executeGraph();
-            returnedAfterTurn = await returnedTask();
-            if (!returnedAfterTurn && subState.messages.filter((message: any) => message?.role === 'assistant').length === assistantCount) {
-              const job = activityJobId ? await getJob(activityJobId) : undefined;
-              const liveChildren = activityJobId ? await agentJobLifecycle.openChildren(threadId) : 0;
-              const pendingWait = activityJobId ? await agentWaitProvider.repository.pending(activityJobId, index) : undefined;
-              const emptyWakeCount = (job?.tasks[index]?.emptyWakeCount ?? 0) + 1;
-              if (activityJobId && wakeSettlementPolicy.shouldPark({ liveChildren, pendingWait: Boolean(pendingWait), consecutiveEmptyWakes: emptyWakeCount })) {
-                await updateJobTask(activityJobId, index, { emptyWakeCount, waitReason: wakeSettlementPolicy.reason(liveChildren) });
-                await agentJobLifecycle.endWakeTurn(activityJobId, index);
-                await agentJobLifecycle.waitForWake(threadId, taskAbortSignal);
-                if (taskAbortSignal?.aborted) return { finalState: currentState, returned: undefined };
-                await agentJobLifecycle.resume(activityJobId, index);
-                return await runFreshTurn(currentState);
-              } else {
-                const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
-                const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
-                const completionIds = completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',') || 'none';
-                const failureReason = `Delegated wake turn produced no assistant output after retry: job=${ activityJobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
-                if (activityJobId && completionEntries.length) {
-                  const failedManager = await getJob(activityJobId);
-                  if (failedManager) await failedManagerCompletionRerouter.route(failedManager, index, failureReason, completionEntries);
-                }
-                throw new Error(failureReason);
-              }
-            }
-          }
-          if (activityJobId && (returnedAfterTurn || subState.messages.filter((message: any) => message?.role === 'assistant').length > assistantCount)) {
-            const currentTask = (await getJob(activityJobId))?.tasks[index];
-            const completionUpdate = currentTask && wakeSettlementPolicy.completionUpdate(currentTask);
-            if (completionUpdate) await updateJobTask(activityJobId, index, completionUpdate);
-          }
-          await acknowledgeCompletionInput(wakeInput);
-          return { finalState: currentState, returned: returnedAfterTurn };
-        };
+        const freshTurnRunner = new DelegatedFreshTurnRunner({
+          jobId:                  activityJobId,
+          taskIndex:              index,
+          threadId,
+          state:                  subState,
+          signal:                 taskAbortSignal,
+          prepare:                state => this.turnPreparer.prepare(state),
+          execute:                executeGraph,
+          returnedTask,
+          getJob,
+          openChildren:           childThreadId => agentJobLifecycle.openChildren(childThreadId),
+          pendingWait:            (jobId, taskIndex) => agentWaitProvider.repository.pending(jobId, taskIndex),
+          updateJobTask,
+          endWakeTurn:            (jobId, taskIndex) => agentJobLifecycle.endWakeTurn(jobId, taskIndex),
+          waitForWake:            (wakeThreadId, signal) => agentJobLifecycle.waitForWake(wakeThreadId, signal),
+          resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
+          rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
+          acknowledgeCompletions: acknowledgeCompletionInput,
+        });
+        const runFreshTurn = (currentState: any) => freshTurnRunner.run(currentState);
 
         let finalState = await executeGraph();
         let returned = await returnedTask();
@@ -719,7 +696,7 @@ export class SpawnAgentWorker extends BaseTool {
           if (settlement === 'terminal' || settlement === 'fail') break;
 
           if (settlement === 'remind') {
-            subState.messages.push({ role: 'user', content: CONTRACT_REMINDER });
+            subState.messages.push({ role: 'user', content: CONTRACT_REMINDER, metadata: { source: 'contract_reminder' } });
             reminderSent = true;
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
@@ -743,7 +720,7 @@ export class SpawnAgentWorker extends BaseTool {
             }
             await containerLifecycle?.resume();
             subState.metadata.delegatedRunActive = true;
-            subState.messages.push({ role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.' });
+            subState.messages.push({ role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.', metadata: { source: 'auto_park_resume' } });
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
             returned = turn.returned;

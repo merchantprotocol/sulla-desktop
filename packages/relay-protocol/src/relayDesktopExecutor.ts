@@ -34,7 +34,8 @@ export class RelayDesktopExecutor {
     const startedAt = Date.now();
     const controller = new AbortController();
     const deadlineMs = Math.max(1, opts.deadlineMs);
-    const timer = setTimeout(() => controller.abort(), deadlineMs + 250);
+    // Outlast the relay's own grace so the Desktop's detailed result (or timeout) wins the race.
+    const timer = setTimeout(() => controller.abort(), deadlineMs + 2_000);
     try {
       const base = this.options.relayUrl.replace(/\/$/, '');
       const deviceId = ctx.device_id ?? this.options.deviceId;

@@ -37,16 +37,32 @@ class DirectoryApi:
                 "nextCursor": str(end) if end < self.count else None}, f'"revision-{start}"'
 
 
+class FUSEError(Exception):
+    """Like pyfuse3.FUSEError: carries .errno and is not an OSError."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.errno = code
+
+
 def load_adapter():
     pyfuse3 = types.ModuleType("pyfuse3")
     pyfuse3.ROOT_INODE = 1
     pyfuse3.Operations = object
     pyfuse3.EntryAttributes = Attrs
-    pyfuse3.FUSEError = type("FUSEError", (OSError,), {})
+    pyfuse3.FUSEError = FUSEError
     pyfuse3.readdir_reply = Reply()
     trio = types.ModuleType("trio")
     yaml = types.ModuleType("yaml")
-    sys.modules.update(pyfuse3=pyfuse3, trio=trio, yaml=yaml)
+    urllib3 = types.ModuleType("urllib3")
+    urllib3.PoolManager = lambda **_kwargs: types.SimpleNamespace(request=None)
+    urllib3.Timeout = lambda **_kwargs: None
+    urllib3.exceptions = types.SimpleNamespace(
+        HTTPError=type("HTTPError", (Exception,), {}),
+        TimeoutError=type("TimeoutError", (Exception,), {}),
+        NewConnectionError=type("NewConnectionError", (Exception,), {}),
+        ProtocolError=type("ProtocolError", (Exception,), {}),
+    )
+    sys.modules.update(pyfuse3=pyfuse3, trio=trio, yaml=yaml, urllib3=urllib3)
     spec = importlib.util.spec_from_file_location("sulla_files_fuse_test", ROOT / "sulla_files_fuse.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

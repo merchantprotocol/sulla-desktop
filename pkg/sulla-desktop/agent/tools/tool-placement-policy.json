@@ -80,7 +80,6 @@
     "capture/speaker_start",
     "capture/speaker_stop",
     "docker/docker_build",
-    "docker/docker_exec",
     "docker/docker_run",
     "files/open",
     "github/github_claim_files",

@@ -8,12 +8,7 @@
 // Supports multiple accounts per integration via account_id
 
 import { normalizeVaultCredentialValues, type VaultCredentialReadResult } from './vaultCredentialSchema';
-import {
-  getConfiguredApprovalClient,
-  requireConfiguredCredentialBroker,
-  usesContainerVaultAuthority,
-  type BrokerIntegrationMetadataResponse,
-} from '../../vault-broker';
+import { usesContainerVaultAuthority, type BrokerIntegrationMetadataResponse, configuredVaultBrokerProvider } from '../../vault-broker';
 import { IntegrationValueModel } from '../database/models/IntegrationValueModel';
 import { getSelectBoxProvider, type SelectOption } from '../integrations/select_box';
 
@@ -169,7 +164,7 @@ export class IntegrationService {
       const { ipcRenderer } = require('electron');
       return ipcRenderer.invoke('vault:integration-metadata', { integrationId, accountId });
     }
-    return requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
+    return configuredVaultBrokerProvider.requireConfiguredCredentialBroker().integrationMetadata(integrationId, accountId);
   }
 
   private async setLocalActiveAccount(
@@ -181,7 +176,7 @@ export class IntegrationService {
       const { ipcRenderer } = require('electron');
       return ipcRenderer.invoke('vault:integration-active-account', { integrationId, accountId });
     }
-    return requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
+    return configuredVaultBrokerProvider.requireConfiguredCredentialBroker().setActiveIntegrationAccount(integrationId, accountId);
   }
 
   private async getLocalMetadataForSettings(
@@ -246,7 +241,7 @@ export class IntegrationService {
       await ipcRenderer.invoke('vault:integration-oauth-account', { integrationId, accountId, label });
       return;
     }
-    const client = getConfiguredApprovalClient();
+    const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
     if (!client) throw new Error('Desktop vault service is unavailable');
     await client.ensureOAuthAccount(integrationId, accountId, label);
   }

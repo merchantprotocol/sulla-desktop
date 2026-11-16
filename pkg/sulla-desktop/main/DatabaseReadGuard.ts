@@ -51,6 +51,36 @@ export class DatabaseReadGuard {
   private readonly recoveryMinMs: number;
   private readonly recoveryMaxMs: number;
   private recovery: Promise<void> | null = null;
+  private static sharedInstance: DatabaseReadGuard | undefined;
+
+  /** Process-wide guard wired to the Sulla Postgres pool and all renderer windows. */
+  static shared(): DatabaseReadGuard {
+    DatabaseReadGuard.sharedInstance ??= DatabaseReadGuard.createForSullaPostgres();
+
+    return DatabaseReadGuard.sharedInstance;
+  }
+
+  private static createForSullaPostgres(): DatabaseReadGuard {
+    // Required lazily so importing this module never opens a database pool.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { postgresClient } = require('@pkg/agent/database/PostgresClient') as typeof import('@pkg/agent/database/PostgresClient');
+
+    return new DatabaseReadGuard({
+      classifier:      postgresClient.unavailableClassifier,
+      probe:           async() => { await postgresClient.queryWithResult('SELECT 1') },
+      isShuttingDown:  () => postgresClient.isShuttingDown,
+      logger:          { info: message => console.log(message) },
+      notifyAvailable: () => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { webContents } = require('electron') as typeof import('electron');
+        for (const contents of webContents.getAllWebContents()) {
+          try {
+            if (!contents.isDestroyed()) contents.send('database:available');
+          } catch { /* a closing window must not break the broadcast */ }
+        }
+      },
+    });
+  }
 
   constructor(private readonly options: DatabaseReadGuardOptions) {
     this.sleep = options.sleep ?? defaultSleep;
@@ -124,31 +154,7 @@ export class DatabaseReadGuard {
   }
 }
 
-let shared: DatabaseReadGuard | null = null;
-
-/** Process-wide guard wired to the Sulla Postgres pool and all renderer windows. */
+/** Process-wide guard; see DatabaseReadGuard.shared(). */
 export function getDatabaseReadGuard(): DatabaseReadGuard {
-  if (shared) return shared;
-
-  // Required lazily so importing this module never opens a database pool.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { postgresClient } = require('@pkg/agent/database/PostgresClient') as typeof import('@pkg/agent/database/PostgresClient');
-
-  shared = new DatabaseReadGuard({
-    classifier:      postgresClient.unavailableClassifier,
-    probe:           async() => { await postgresClient.queryWithResult('SELECT 1') },
-    isShuttingDown:  () => postgresClient.isShuttingDown,
-    logger:          { info: message => console.log(message) },
-    notifyAvailable: () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { webContents } = require('electron') as typeof import('electron');
-      for (const contents of webContents.getAllWebContents()) {
-        try {
-          if (!contents.isDestroyed()) contents.send('database:available');
-        } catch { /* a closing window must not break the broadcast */ }
-      }
-    },
-  });
-
-  return shared;
+  return DatabaseReadGuard.shared();
 }

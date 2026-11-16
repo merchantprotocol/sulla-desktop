@@ -1,5 +1,15 @@
 {
   "maxLines": 400,
+  "extra_ignore": [
+    "^services/sulla-files/scale/",
+    "^services/sulla-files/experimental/",
+    "^services/sulla-files/scripts/search-bench\\.mjs$"
+  ],
+  "extra_ignore_reasons": {
+    "^services/sulla-files/scale/": "Files scale/load-test harness (own package.json, run by hand against a scratch database); not shipped in the sulla-files image and not production code.",
+    "^services/sulla-files/experimental/": "Hand-run Files FUSE/macOS native proof scripts (run by a developer against a scratch mount); not shipped in the sulla-files image (Dockerfile copies src/, web-src/ and named scripts only) and not imported by production code.",
+    "^services/sulla-files/scripts/search-bench\\.mjs$": "Hand-run search benchmark against a scratch database; not copied into the sulla-files image and not imported by production code. Other scripts/ files stay scanned."
+  },
   "frozen": {
     "services/sulla-vault/src/browserEnvelope/syncRunner.ts": {
       "reason": "Today's v3 Cloud vault sync runner (SR). It stays in service until Replica replaces it (M3 desktop vault OOP); bug fixes only. New sync code goes in browserEnvelope/sync/ or the Replica, not here.",

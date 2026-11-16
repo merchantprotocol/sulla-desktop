@@ -1,0 +1,57 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import type pg from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
+
+import type { Database } from '../db.js';
+
+import { PgTransactionRunner, type TransactionPool } from './PgTransactionRunner.js';
+
+/**
+ * Transaction control and the two integration-state reads that LocalVaultAuthority issued
+ * directly. Moved verbatim from localAuthority.ts (E9): same SQL text, same statement order,
+ * so callers keep their exact transaction boundaries.
+ */
+export class PostgresLocalAuthorityRepository {
+  constructor(
+    private readonly db: Database,
+    private readonly transactions: PgTransactionRunner = new PgTransactionRunner(),
+  ) {}
+
+  /**
+   * One BEGIN … COMMIT unit on a pooled client; the original error surfaces, and a client whose
+   * ROLLBACK failed is released with that error so the pool destroys it (PgTransactionRunner).
+   */
+  transaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.transactions.run(this.db, operation);
+  }
+
+  /** One BEGIN READ ONLY … COMMIT unit on a client of another pool (the legacy credential source), same guarantees. */
+  readOnlyTransaction<T>(pool: TransactionPool, operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    return this.transactions.run(pool, operation, 'BEGIN READ ONLY');
+  }
+
+  /** Serializes legacy credential imports across vault processes for the current transaction. */
+  lockLegacyImport(client: pg.PoolClient): Promise<unknown> {
+    return client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-vault-legacy-import'))");
+  }
+
+  /** The Sulla Cloud account this vault was last signed in to, if any. */
+  findPriorSullaCloudAccount<T extends QueryResultRow = QueryResultRow>(ownerUserId: string): Promise<QueryResult<T>> {
+    return this.db.query<T>(
+      `SELECT active_account_id FROM local_integration_state
+          WHERE owner_user_id=$1 AND integration_id='sulla-cloud' LIMIT 1`, [ownerUserId],
+    );
+  }
+
+  /** The active account chosen for one integration. */
+  findActiveAccount<T extends QueryResultRow = QueryResultRow>(ownerUserId: string, integrationId: string): Promise<QueryResult<T>> {
+    return this.db.query<T>(
+      'SELECT active_account_id FROM local_integration_state WHERE owner_user_id=$1 AND integration_id=$2',
+      [ownerUserId, integrationId],
+    );
+  }
+}

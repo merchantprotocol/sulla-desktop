@@ -283,7 +283,7 @@ export class AgentNode extends BaseNode {
     if (unseenSteers > 0) {
       console.log(`[AgentNode] ${ unseenSteers } steer message(s) not yet seen by the model — continuing the run`);
       agentOutcome.status = 'continue';
-      (state.metadata as any).agent.status = 'continue';
+      (state.metadata as any).agent = { ...((state.metadata as any).agent || {}), status: 'continue' };
       state.metadata.cycleComplete = false;
       state.metadata.waitingForUser = false;
       this.bumpStateVersion(state);

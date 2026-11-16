@@ -9,6 +9,7 @@
 import argparse
 import datetime
 import errno
+import hashlib
 import functools
 import json
 import os
@@ -16,9 +17,8 @@ import random
 import stat
 import tempfile
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
+import urllib3
 import logging
 import contextvars
 import re
@@ -42,12 +42,20 @@ MAX_CACHED_NODES = 50_000
 DIRECTORY_PAGE_SIZE = 500
 # Methods whose outcome doesn't depend on how many times they're applied, so
 # retrying a transient 409 from Files' own SERIALIZABLE-conflict retry loop is safe.
-IDEMPOTENT_RETRY_METHODS = ("DELETE", "PUT")
+IDEMPOTENT_RETRY_METHODS = ("DELETE", "GET", "HEAD", "PUT")
 MAX_CONFLICT_RETRIES = 3
+# A lost Files database connection, a restart or a saturated VM answers 5xx or times out.
+# Those are retried (bounded, ~3 s in total) before a mount client ever sees EIO.
+MAX_TRANSIENT_RETRIES = 5
+TRANSIENT_STATUSES = (500, 502, 503, 504)
+MAX_RETRY_AFTER_SECONDS = 2.0
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
+# Hashing a spooled file to detect a no-op write is only worth it for small files.
+UNCHANGED_CHECK_MAX_BYTES = 8 * 1024 * 1024
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 METADATA_NAME = "_folder-metadata.yaml"
 METADATA_HEADER = """# Folder metadata for: {path}
 # Describes this folder and the files in it. Read this to understand the folder.
@@ -91,6 +99,18 @@ def _rss_kb():
         return None
 
 
+def _spool_sha256(file, size):
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < size:
+        part = os.pread(file.fileno(), min(STREAM_CHUNK_BYTES, size - offset), offset)
+        if not part:
+            break
+        digest.update(part)
+        offset += len(part)
+    return digest.hexdigest()
+
+
 class FileBody:
     """Repeatable bounded request body backed by the spool file, not Python heap."""
     def __init__(self, descriptor, size):
@@ -128,6 +148,16 @@ def traced(operation, describe=None, mutating=False):
                 emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
                      ms=round((time.monotonic() - started) * 1000, 1), **details)
                 raise
+            except OSError as error:
+                # A Files or filesystem failure the operation did not map itself: answer this one
+                # request with its errno (404 ENOENT, 401/403 EACCES, 5xx/timeout EIO after the
+                # bounded retries) and keep the daemon serving every other request.
+                code = HTTP_ERRNO.errno_for_failure(error)
+                quiet = code in QUIET_ERRNOS and not mutating
+                if not quiet: stats["opErrors"] += 1
+                emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
+                     status=getattr(error, "status", None), error=str(error), ms=round((time.monotonic() - started) * 1000, 1), **details)
+                raise pyfuse3.FUSEError(code) from error
             except Exception:
                 stats["opErrors"] += 1
                 log.exception("unhandled error in %s", operation, extra={"event": "fuse-op-crash", "fields": {"op": operation, **details}})
@@ -170,6 +200,47 @@ class ActorResolver:
             return None
 
 
+class HttpErrno:
+    """The one table that turns a Files HTTP failure into the errno a mount client sees.
+
+    404 is ENOENT (a stat before create is the normal case, not an I/O error); EIO is kept for
+    server faults that survived the bounded retries in FilesApi._request.
+    """
+
+    def errno_for(self, status, detail=None):
+        detail = detail or {}
+        code = detail.get("code")
+        message = str(detail.get("error", "")).lower()
+        if code in ("EROFS", "FILE_LOCKED") or status == 423:
+            return errno.EROFS
+        if status in (400, 415, 422, 428):
+            return errno.EINVAL
+        if status in (401, 403):
+            return errno.EACCES
+        if status == 404:
+            return errno.ENOENT
+        if status == 409:
+            if "already occupies" in message or "already exists" in message:
+                return errno.EEXIST
+            if "not empty" in message:
+                return errno.ENOTEMPTY
+            # A write raced another writer ("version changed") or lock contention outlived its retries.
+            return errno.EPERM
+        if status == 413:
+            return errno.EFBIG
+        return errno.EIO
+
+    def errno_for_failure(self, error):
+        """The errno to answer for any OSError: FilesApi already put the mapped errno on it; anything else is EIO."""
+        status = getattr(error, "status", None)
+        if isinstance(status, int) and not isinstance(error.errno, int):
+            return self.errno_for(status, getattr(error, "detail", None))
+        return error.errno if isinstance(error.errno, int) and error.errno > 0 else errno.EIO
+
+
+HTTP_ERRNO = HttpErrno()
+
+
 def _mtime_ms(value):
     try:
         return int(datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp() * 1000)
@@ -182,6 +253,7 @@ class FilesApi:
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
         self.actor_resolver = actor_resolver
+        self.http = urllib3.PoolManager(num_pools=4, maxsize=64, block=True)
 
     def _token(self):
         descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
@@ -196,25 +268,46 @@ class FilesApi:
             raise OSError(errno.EACCES, "Files mount capability is invalid")
         return token.decode("ascii")
 
-    def _request(self, path: str, method="GET", body=None, headers=None):
+    def _request(self, path: str, method="GET", body=None, headers=None, idempotent=None):
+        """Send one Files request with bounded retries.
+
+        `idempotent` marks a POST the caller can safely repeat (create/mkdir reconcile a
+        replayed success themselves); GET/HEAD/PUT/DELETE are idempotent by method. A failure
+        raised after an ambiguous attempt carries `after_retry=True` so callers can reconcile.
+        """
         started = time.monotonic()
         stats["requests"] += 1
         outcome = {"status": None, "bytes": 0, "error": None}
+        repeatable = method in IDEMPOTENT_RETRY_METHODS if idempotent is None else idempotent
         try:
             attempt = 0
+            transient_attempts = 0
             while True:
                 try:
                     result = self._send(path, method, body, headers)
                     outcome["status"], outcome["bytes"] = result[0], len(result[2])
                     return result
                 except OSError as error:
+                    if transient_attempts:
+                        error.after_retry = True
                     detail = getattr(error, "detail", None) or {}
-                    transient = getattr(error, "status", None) == 409 and "concurrently or are busy" in detail.get("error", "")
-                    if method not in IDEMPOTENT_RETRY_METHODS or not transient:
+                    transient_conflict = getattr(error, "status", None) == 409 and (
+                        "concurrently or are busy" in detail.get("error", "").lower()
+                        or "serialization failure" in detail.get("error", "").lower()
+                    )
+                    transient_transport = getattr(error, "transient", False)
+                    transient_status = getattr(error, "status", None) in TRANSIENT_STATUSES
+                    if (transient_transport or transient_status) and repeatable and transient_attempts < MAX_TRANSIENT_RETRIES:
+                        transient_attempts += 1
+                        retry_after = getattr(error, "retry_after", None)
+                        delay = min(MAX_RETRY_AFTER_SECONDS, retry_after) if retry_after is not None else 0.1 * (2 ** (transient_attempts - 1))
+                        time.sleep(min(MAX_RETRY_AFTER_SECONDS, delay) + random.uniform(0, 0.05))
+                        continue
+                    if not transient_conflict:
                         raise
                     if attempt < MAX_CONFLICT_RETRIES:
                         attempt += 1
-                        time.sleep(0.05 * attempt + random.uniform(0, 0.05))
+                        time.sleep(min(0.4, 0.05 * (2 ** (attempt - 1))) + random.uniform(0, 0.05))
                         continue
                     # Files' own SERIALIZABLE-conflict retries were exhausted too: this is
                     # still transient DB contention, not a permission denial, so give agents
@@ -225,26 +318,48 @@ class FilesApi:
         except OSError as error:
             stats["requestErrors"] += 1
             outcome["status"] = getattr(error, "status", None)
-            outcome["error"] = str(error)
+            outcome["error"] = True
             outcome["code"] = (getattr(error, "detail", None) or {}).get("code")
+            outcome["errno"] = error.errno
+            outcome["failure"] = type(error).__name__
             raise
         finally:
             elapsed = time.monotonic() - started
             slow = elapsed >= SLOW_REQUEST_SECONDS
             if slow: stats["slowRequests"] += 1
-            level = logging.WARNING if outcome["error"] else logging.INFO if slow else logging.DEBUG
+            # A 404 is how a stat/lookup learns a path does not exist yet (every create starts with one).
+            expected_miss = outcome["error"] and outcome.get("errno") == errno.ENOENT
+            level = logging.DEBUG if expected_miss and not slow else logging.WARNING if outcome["error"] and not expected_miss else logging.INFO if slow else logging.DEBUG
             if log.isEnabledFor(level):
                 emit("files-request", level, method=method, path=path.split("?", 1)[0], status=outcome["status"],
                      ms=round(elapsed * 1000, 1), sent=len(body) if body is not None else 0, received=outcome["bytes"], actor=request_actor.get(),
-                     slow=slow or None, error=outcome["error"], code=outcome.get("code"))
+                     slow=slow or None, failure=outcome.get("failure"), errno=outcome.get("errno"), code=outcome.get("code"))
 
     def _send(self, path, method, body, headers):
-        request = urllib.request.Request(
-            f"{self.base_url}{path}", method=method, data=body,
-            headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=120 if method == "PUT" else 15) as response:
+            response = self.http.request(
+                method, f"{self.base_url}{path}", body=body,
+                headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
+                timeout=urllib3.Timeout(connect=5.0, read=120.0 if method == "PUT" else 15.0),
+                retries=False, preload_content=False,
+            )
+            try:
+                if response.status >= 400 and response.status != 304:
+                    payload = response.read(MAX_RESPONSE_BYTES + 1)
+                    try:
+                        detail = json.loads(payload or b"{}")
+                    except json.JSONDecodeError:
+                        detail = {}
+                    if not isinstance(detail, dict):
+                        detail = {}
+                    failure = OSError(HTTP_ERRNO.errno_for(response.status, detail), detail.get("error", f"Files HTTP {response.status}"))
+                    failure.status = response.status
+                    failure.detail = detail
+                    try:
+                        failure.retry_after = float(response.headers.get("Retry-After")) if response.headers.get("Retry-After") else None
+                    except (TypeError, ValueError):
+                        failure.retry_after = None
+                    raise failure
                 length = response.headers.get("Content-Length")
                 if length and int(length) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
@@ -252,20 +367,14 @@ class FilesApi:
                 if len(payload) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
                 return response.status, dict(response.headers), payload
-        except urllib.error.HTTPError as error:
-            if error.code == 304:
-                return 304, dict(error.headers), b""
-            payload = error.read(MAX_RESPONSE_BYTES + 1)
-            try:
-                detail = json.loads(payload or b"{}")
-            except json.JSONDecodeError:
-                detail = {}
-            failure = OSError(errno.EFBIG if error.code == 413 else errno.EROFS if detail.get("code") in ("EROFS", "FILE_LOCKED") or error.code == 423 else errno.EPERM if error.code == 409 else errno.EACCES if error.code == 403 else errno.EIO, detail.get("error", f"Files HTTP {error.code}"))
-            failure.status = error.code
-            failure.detail = detail
+            finally:
+                response.release_conn()
+        except OSError:
+            raise
+        except urllib3.exceptions.HTTPError as error:
+            failure = OSError(errno.EIO, "Files service unavailable")
+            failure.transient = isinstance(error, (urllib3.exceptions.TimeoutError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.ProtocolError))
             raise failure from error
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
-            raise OSError(errno.EIO, f"Files service unavailable: {error}") from error
 
     async def directory_page(self, collection_id, path, cursor=None, etag=None):
         query = {"path": path, "limit": DIRECTORY_PAGE_SIZE}
@@ -287,10 +396,10 @@ class FilesApi:
         _, headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content")
         return body, headers.get("ETag", "").strip('"'), headers.get("X-Sulla-Source-Hash", "")
 
-    async def write(self, file_id, file, size, version_id, source_hash):
-        if size > MAX_FILE_BYTES:
-            raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
-        headers = {"Content-Type": "application/octet-stream", "If-Match": f'"{version_id}"', "X-Sulla-Source-Hash": source_hash}
+    def _write_sync(self, file_id, file, size, version_id, source_hash):
+        # The content hash lets Files recognise a retried PUT whose first attempt already committed.
+        headers = {"Content-Type": "application/octet-stream", "If-Match": f'"{version_id}"', "X-Sulla-Source-Hash": source_hash,
+                   "X-Sulla-Content-Hash": _spool_sha256(file, size)}
         if size > STREAMING_WRITE_THRESHOLD:
             body = FileBody(file.fileno(), size)
             headers["Content-Length"] = str(size)
@@ -298,8 +407,13 @@ class FilesApi:
         else:
             body = os.pread(file.fileno(), size, 0)
             path = f"/v1/fuse/files/{file_id}/content"
-        _, response_headers, body = await trio.to_thread.run_sync(self._request, path, "PUT", body, headers)
-        return json.loads(body), response_headers.get("X-Sulla-Merged") == "1"
+        _, response_headers, payload = self._request(path, "PUT", body, headers)
+        return json.loads(payload), response_headers.get("X-Sulla-Merged") == "1"
+
+    async def write(self, file_id, file, size, version_id, source_hash):
+        if size > MAX_FILE_BYTES:
+            raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
+        return await trio.to_thread.run_sync(self._write_sync, file_id, file, size, version_id, source_hash)
 
     async def replace(self, target_id, source_id):
         body = json.dumps({"sourceFileId": source_id}).encode()
@@ -323,10 +437,24 @@ class FilesApi:
         _, _, payload = await trio.to_thread.run_sync(self._request, "/v1/fuse/metadata", "PUT", body, {"Content-Type":"application/json"})
         return json.loads(payload)
 
-    async def create(self, collection_id, path):
+    def _create_sync(self, collection_id, path):
         query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files?{query}", "POST", b"", {"Content-Type":"application/octet-stream"})
-        return json.loads(body)
+        try:
+            _, _, body = self._request(f"/v1/fuse/files?{query}", "POST", b"", {"Content-Type":"application/octet-stream"}, idempotent=True)
+            return json.loads(body)
+        except OSError as error:
+            # The first attempt committed but its reply was lost: the retry finds the empty file it made.
+            if error.errno != errno.EEXIST or not getattr(error, "after_retry", False):
+                raise
+            entry_query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
+            _, _, body = self._request(f"/v1/fuse/entry?{entry_query}")
+            row = json.loads(body)
+            if row.get("kind") != "file" or int(row.get("size") or 0) != 0:
+                raise
+            return {**row, "current_version_id": row.get("versionId")}
+
+    async def create(self, collection_id, path):
+        return await trio.to_thread.run_sync(self._create_sync, collection_id, path)
 
     async def rename(self, file_id, collection_id, path):
         body = json.dumps({"path": path, "targetCollectionId": collection_id}).encode()
@@ -340,9 +468,13 @@ class FilesApi:
     async def delete(self, file_id):
         await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "DELETE")
 
-    async def mkdir(self, collection_id, path):
+    def _mkdir_sync(self, collection_id, path):
         body = json.dumps({"collectionId":collection_id,"path":path}).encode()
-        await trio.to_thread.run_sync(self._request, "/v1/fuse/folders", "POST", body, {"Content-Type":"application/json"})
+        # Creating a folder that exists is a no-op on the server, so a replay is safe.
+        self._request("/v1/fuse/folders", "POST", body, {"Content-Type":"application/json"}, idempotent=True)
+
+    async def mkdir(self, collection_id, path):
+        await trio.to_thread.run_sync(self._mkdir_sync, collection_id, path)
 
     async def rmdir(self, collection_id, path):
         query = urllib.parse.urlencode({"collectionId":collection_id,"path":path})
@@ -436,7 +568,7 @@ class SullaFiles(pyfuse3.Operations):
                 parent["collectionId"] = collection_id
                 self.nodes[pyfuse3.ROOT_INODE]["collectionId"] = collection_id
         except OSError as error:
-            if error.errno == errno.EIO and getattr(error, "status", None) == 404:
+            if getattr(error, "status", None) == 404 or error.errno == errno.ENOENT:
                 raise pyfuse3.FUSEError(errno.ENOENT) from error
             raise
         if not collection_id:
@@ -514,6 +646,21 @@ class SullaFiles(pyfuse3.Operations):
         directory = self.nodes.get(fh)
         if not directory:
             raise pyfuse3.FUSEError(errno.ENOENT)
+        try:
+            await self._list_directory(fh, directory, start_id, token)
+        except OSError as error:
+            if fh != pyfuse3.ROOT_INODE or isinstance(error, pyfuse3.FUSEError):
+                raise
+            # The root must always list: Desktop probes the mount with `ls -A /mnt/sulla-files` and
+            # recreates the adapter when it fails, so an error here became a restart loop. Answer an
+            # empty (or partial) root, log why, and list again on the next readdir.
+            self.directory_complete.discard(directory["path"])
+            self.directory_etags.pop(directory["path"], None)
+            stats["opErrors"] += 1
+            emit("root-listing-failed", logging.ERROR, errno=_errno_name(HTTP_ERRNO.errno_for_failure(error)),
+                 status=getattr(error, "status", None), code=(getattr(error, "detail", None) or {}).get("code"), error=str(error))
+
+    async def _list_directory(self, fh, directory, start_id, token):
         directory_path = directory["path"]
         collection_id = directory.get("collectionId")
         children = self.children.get(directory_path, {})
@@ -526,9 +673,13 @@ class SullaFiles(pyfuse3.Operations):
                         break
                 return
         # A changed or uncached directory is streamed in bounded keyset pages.
-        # Drop only this directory's old children; other cached directories stay hot.
-        for old_name in list(children):
-            self._forget("/".join(filter(None, [directory_path, old_name])))
+        # Inodes must stay stable across a refresh: a process may hold a child directory as its cwd
+        # or an open path, and forgetting it here made its next operation fail with ENOENT
+        # ("nonexistent directory") whenever anything re-listed the parent (health probes, agents).
+        # Only names that are gone after a complete listing are pruned, below.
+        old_names = set(children)
+        seen_names = set()
+        listed_fully = False
         cursor = None
         absolute_index = 0
         total = 0
@@ -546,6 +697,7 @@ class SullaFiles(pyfuse3.Operations):
                 total += 1
                 name = row["path"].rsplit("/", 1)[-1]
                 full_path = "/".join(filter(None, [directory_path, name]))
+                seen_names.add(name)
                 inode = self._node(full_path, row["kind"] == "directory")
                 self.nodes[inode].update({**row, "path": full_path, "filesPath": row.get("path", ""),
                     "collectionId": collection_id, "mtimeMs": _mtime_ms(row.get("updated_at"))})
@@ -555,7 +707,12 @@ class SullaFiles(pyfuse3.Operations):
                     return
             cursor = page.get("nextCursor")
             if not cursor:
+                listed_fully = True
                 break
+        # Only a fully received listing proves a name is gone (not a 304, not a partial reply).
+        if listed_fully:
+            for gone in old_names - seen_names:
+                self._forget("/".join(filter(None, [directory_path, gone])))
         if total <= MAX_CACHED_NODES and len(self.children.get(directory_path, {})) == total:
             self.directory_complete.add(directory_path)
         else:
@@ -577,6 +734,10 @@ class SullaFiles(pyfuse3.Operations):
                 data, version_id, source_hash = await self.api.read(node["id"])
         except OSError as error:
             raise pyfuse3.FUSEError(error.errno) from error
+        return await self._open_handle(inode, flags, ctx, data, version_id, source_hash, current if node.get("virtualMetadata") else None)
+
+    async def _open_handle(self, inode, flags, ctx, data, version_id, source_hash, metadata=None):
+        node = self.nodes[inode]
         handle = self.next_handle
         self.next_handle += 1
         temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
@@ -586,13 +747,15 @@ class SullaFiles(pyfuse3.Operations):
             "inode": inode, "fileId": node.get("id"), "file": temporary, "size": len(data),
             "versionId": version_id, "sourceHash": source_hash, "dirty": False, "failedErrno": None,
             "append": bool(flags & os.O_APPEND),
-            "metadata": current if node.get("virtualMetadata") else None,
+            "metadata": metadata,
             "actor": await self._actor(ctx),
         }
         if flags & os.O_TRUNC:
             os.ftruncate(temporary.fileno(), 0)
             self.handles[handle]["size"] = 0
-            self.handles[handle]["dirty"] = True
+            # Truncating a file that is already empty changes nothing. Marking it dirty made every
+            # `echo > newfile` upload an empty "update" version before the real content.
+            self.handles[handle]["dirty"] = len(data) > 0
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
         info.direct_io = True
@@ -661,12 +824,16 @@ class SullaFiles(pyfuse3.Operations):
             await self.api.put_metadata(collection_id, path, set_values, unset, revision)
             self._invalidate_metadata(collection_id, path)
 
+    @traced("read", lambda s, a: s._handle_info(a[0]))
     async def read(self, fh, offset, length):
-        handle = self.handles[fh]
+        handle = self.handles.get(fh)
+        if handle is None: raise pyfuse3.FUSEError(errno.EBADF)
         return os.pread(handle["file"].fileno(), length, offset)
 
+    @traced("write", lambda s, a: s._handle_info(a[0]))
     async def write(self, fh, offset, buf):
-        handle = self.handles[fh]
+        handle = self.handles.get(fh)
+        if handle is None: raise pyfuse3.FUSEError(errno.EBADF)
         if handle["append"]:
             offset = handle["size"]
         end = offset + len(buf)
@@ -701,6 +868,14 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EOPNOTSUPP)
         return self._attrs(inode)
 
+    def _content_unchanged(self, handle):
+        """True when the spooled bytes hash to the source hash of the version the handle opened."""
+        source_hash = handle.get("sourceHash")
+        if not source_hash or handle["size"] > UNCHANGED_CHECK_MAX_BYTES:
+            return False
+        digest = hashlib.sha256(os.pread(handle["file"].fileno(), handle["size"], 0)).hexdigest()
+        return digest == str(source_hash).lower()
+
     async def _commit(self, fh):
         handle = self.handles[fh]
         if not handle["dirty"]:
@@ -712,6 +887,11 @@ class SullaFiles(pyfuse3.Operations):
             if handle["size"] > MAX_FILE_BYTES:
                 raise pyfuse3.FUSEError(errno.EFBIG)
             node = self.nodes[handle["inode"]]
+            if not node.get("virtualMetadata") and self._content_unchanged(handle):
+                # Content equals the version it was opened from: no new version, no request.
+                handle["dirty"] = False
+                handle["failedErrno"] = None
+                return
             if node.get("virtualMetadata"):
                 data = os.pread(handle["file"].fileno(), handle["size"], 0)
                 await self._as_actor(handle.get("actor"), self._commit_metadata(handle, node, data))
@@ -779,11 +959,12 @@ class SullaFiles(pyfuse3.Operations):
         if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: row=await self._as_actor(await self._actor(ctx), self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error:
-            mapped = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
             log.error("Create rejected: %s", error)
-            raise pyfuse3.FUSEError(mapped) from error
+            raise pyfuse3.FUSEError(error.errno) from error
         inode=self._node(path,False); self.nodes[inode].update({**row,"path":path,"filesPath":self._files_path(path,parent["collectionId"]),"collectionId":parent["collectionId"]})
-        info=await self.open(inode,flags,ctx)
+        # The file was just created empty: open it from what we know instead of downloading it back.
+        if len(self.handles) >= MAX_OPEN_HANDLES: raise pyfuse3.FUSEError(errno.EMFILE)
+        info=await self._open_handle(inode,flags,ctx,b"",str(row.get("current_version_id") or row.get("versionId") or ""),EMPTY_SHA256)
         return info,self._attrs(inode)
 
     @traced("rename", lambda s, a: {**s._child_info(a[0], a[1], a[-1]), "to": s._child_info(a[2], a[3])["path"]}, mutating=True)

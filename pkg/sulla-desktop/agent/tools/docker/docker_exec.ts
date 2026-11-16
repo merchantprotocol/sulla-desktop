@@ -18,6 +18,11 @@ export class DockerExecWorker extends BaseTool {
     return `Error executing command in container ${ container } (exit ${ res.exitCode }): ${ details }`;
   }
 
+  private isProtectedContainer(container: string): boolean {
+    const name = container.toLowerCase();
+    return name.includes('vault') || name.includes('wallet');
+  }
+
   private buildExecArgs(container: string, command: string): string[] {
     // Route through container shell so quoted values / spaces are preserved.
     return ['exec', container, 'sh', '-c', command];
@@ -25,6 +30,13 @@ export class DockerExecWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { container, command } = input;
+
+    if (this.isProtectedContainer(container)) {
+      return {
+        successBoolean: false,
+        responseString: `Refusing to execute commands in protected container ${ container }; vault and wallet containers are sealed.`,
+      };
+    }
 
     const args = this.buildExecArgs(container, command);
 

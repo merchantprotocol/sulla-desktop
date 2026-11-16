@@ -41,7 +41,7 @@ export interface CapabilityRevocationStore {
 }
 
 export class CapabilityTokenError extends Error {
-  constructor(public readonly code: 'missing' | 'malformed' | 'invalid' | 'expired' | 'audience' | 'revoked' | 'scope', message: string) {
+  constructor(public readonly code: 'missing' | 'malformed' | 'invalid' | 'expired' | 'not_yet_valid' | 'audience' | 'revoked' | 'scope', message: string) {
     super(message);
     this.name = 'CapabilityTokenError';
   }
@@ -85,7 +85,7 @@ export function scopeAllows(scopes: string[], category: string, tool: string): b
 export async function verifyCapabilityToken(
   token: string | undefined,
   signingKey: string | Buffer,
-  options: { category?: string; tool?: string; revocations?: CapabilityRevocationStore; now?: number } = {},
+  options: { category?: string; tool?: string; revocations?: CapabilityRevocationStore; now?: number; clockToleranceSeconds?: number } = {},
 ): Promise<CapabilityTokenClaims> {
   if (!token) throw new CapabilityTokenError('missing', 'Missing capability token');
   const parts = token.split('.');
@@ -105,7 +105,21 @@ export async function verifyCapabilityToken(
   } catch { throw new CapabilityTokenError('malformed', 'Malformed capability token') }
   if (claims.v !== 1 || claims.aud !== 'sulla-tools') throw new CapabilityTokenError('audience', 'Capability audience is not sulla-tools');
   const now = options.now ?? Math.floor(Date.now() / 1000);
-  if (!Number.isFinite(claims.exp) || claims.exp <= now) throw new CapabilityTokenError('expired', 'Capability token has expired');
+  const tolerance = options.clockToleranceSeconds ?? 60;
+  if (!Number.isFinite(tolerance) || tolerance < 0 || tolerance > 300) throw new RangeError('clockToleranceSeconds must be between 0 and 300');
+  if (!Number.isFinite(claims.exp)) throw new CapabilityTokenError('malformed', 'Capability token expiry is invalid');
+  if (claims.exp + tolerance < now) {
+    const skew = Math.ceil(now - claims.exp);
+    const reason = `Capability token expired ${skew}s ago (clock skew exceeds ${tolerance}s tolerance)`;
+    console.warn(`[auth] capability token rejected: ${reason}`);
+    throw new CapabilityTokenError('expired', reason);
+  }
+  if (Number.isFinite(claims.iat) && claims.iat - tolerance > now) {
+    const skew = Math.ceil(claims.iat - now);
+    const reason = `Capability token issued ${skew}s in the future (clock skew exceeds ${tolerance}s tolerance)`;
+    console.warn(`[auth] capability token rejected: ${reason}`);
+    throw new CapabilityTokenError('not_yet_valid', reason);
+  }
   if (!claims.iss || !claims.sub || !claims.jti || !Number.isFinite(claims.iat) || !Array.isArray(claims.scopes) || !claims.scopes.every(scope => typeof scope === 'string')) {
     throw new CapabilityTokenError('malformed', 'Capability token is missing required claims');
   }

@@ -7,14 +7,14 @@ import crypto from 'node:crypto';
 import { app } from 'electron';
 
 import { deviceMessage, getDevicePublicKey, signDeviceMessageExact } from '@pkg/main/cloud/deviceKey';
-import { getOrCreateSupportDeviceId, readEnrolledSupportDeviceId } from '@pkg/main/support/supportIdentity';
+import { supportDeviceIdentity } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore } from '@pkg/main/supportState';
 
 function stateStore() { return new SupportStateStore(app.getPath('userData')) }
 
 const ORIGIN = 'https://sulla-workers.merchantprotocol.workers.dev';
 let preferredIdentity: string | null = null;
-function identities(): string[] { return [...new Set([preferredIdentity, readEnrolledSupportDeviceId(), stateStore().read().supportIdentity?.guestDeviceId, getOrCreateSupportDeviceId()].filter((value):value is string=>!!value))] }
+function identities(): string[] { return [...new Set([preferredIdentity, supportDeviceIdentity.readEnrolled(), stateStore().read().supportIdentity?.guestDeviceId, supportDeviceIdentity.getOrCreate()].filter((value):value is string=>!!value))] }
 
 export async function supportCloudRequest(method: string, pathname: string, init: RequestInit = {}): Promise<Response> {
   const url = new URL(pathname.startsWith('/support') || pathname.startsWith('/device-tools') ? pathname : `/support${ pathname }`, ORIGIN);

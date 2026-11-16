@@ -18,21 +18,23 @@ export class PendingDecisionRepository {
     return rows[0]?.record;
   }
 
-  async claimLateAnswer(id: string): Promise<boolean> {
+  /** Claim delivery of a late answer once, saving the answers with the claim. */
+  async claimLateAnswer(id: string, answers: { question: string; selected: string[] }[] = []): Promise<boolean> {
     const rows = await this.client.query<{ id: string }>(`
       UPDATE human_decisions
-      SET record = jsonb_set(record, '{payload,lateAnswerDelivered}', 'true'::jsonb, true), updated_at = NOW()
+      SET record = jsonb_set(jsonb_set(record, '{payload,lateAnswerDelivered}', 'true'::jsonb, true), '{answers}', $2::jsonb, true), updated_at = NOW()
       WHERE id = $1 AND status = 'expired'
         AND COALESCE((record->'payload'->>'lateAnswerDelivered')::boolean, false) = false
-      RETURNING id`, [id]);
+      RETURNING id`, [id, JSON.stringify(answers)]);
     return rows.length > 0;
   }
 
+  /** Undo a claim whose delivery failed, so the answer can be sent again. The answers stay saved. */
   async releaseLateAnswer(id: string): Promise<void> {
-    await this.client.query(`UPDATE human_decisions
-      SET record = record #- '{payload,lateAnswerDelivered}', updated_at = NOW()
-      WHERE id = $1 AND status = 'expired'
-        AND COALESCE((record->'payload'->>'lateAnswerDelivered')::boolean, false) = true`, [id]);
+    await this.client.query(`
+      UPDATE human_decisions
+      SET record = jsonb_set(record, '{payload,lateAnswerDelivered}', 'false'::jsonb, true), updated_at = NOW()
+      WHERE id = $1`, [id]);
   }
 
   async findApproval(sessionId: string, key: string, value: string, now: number): Promise<DecisionRecord | undefined> {

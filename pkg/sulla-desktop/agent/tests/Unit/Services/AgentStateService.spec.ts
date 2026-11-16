@@ -64,6 +64,41 @@ describe('authoritative live agent state', () => {
     expect(history).not.toHaveBeenCalled();
   });
 
+  it('reads only the live working set on the reconciliation and live-refresh paths', async() => {
+    // risk: every poll parses the whole agent_jobs table (3.9k rows, ~35 MB jsonb, ~20 s)
+    const live = job('live', [task()]);
+    const old = job('old', [task({ status: 'completed' })], { status: 'completed', finishedAt: 2_000 });
+    const { states, store, cache } = harness([live, old]);
+    cache.jobs.set('old', structuredClone(old));
+    store.liveJobs = vi.fn(async() => [structuredClone(live)]);
+    const history = vi.spyOn(store, 'allJobs');
+    expect((await states.jobsBeforeReady()).map(item => item.jobId)).toEqual(['live']);
+    expect((await states.refreshLive()).map(item => item.jobId)).toEqual(['live']);
+    expect(history).not.toHaveBeenCalled();
+    // A live read must not evict terminal jobs it never looked at.
+    expect(cache.jobs.has('old')).toBe(true);
+    // A cached job that is no longer live in the database is dropped.
+    cache.jobs.set('gone', job('gone', [task()]));
+    await states.refreshLive();
+    expect(cache.jobs.has('gone')).toBe(false);
+  });
+
+  it('falls back to a full read only when the store has no live read', async() => {
+    const { states, store } = harness([job('a', [task()])]);
+    const history = vi.spyOn(store, 'allJobs');
+    expect((await states.jobsBeforeReady()).map(item => item.jobId)).toEqual(['a']);
+    expect(history).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves jobs for one parent thread through the indexed store read', async() => {
+    const { states, store } = harness([job('a', [task()], { parentThreadId: 'p' }), job('b', [task()], { parentThreadId: 'q' })]);
+    store.jobsForParentThread = vi.fn(async(thread: string) => (await store.allJobs()).filter(item => item.parentThreadId === thread));
+    const history = vi.spyOn(store, 'allJobs');
+    expect((await states.jobsForParentThread('p')).map(item => item.jobId)).toEqual(['a']);
+    expect(store.jobsForParentThread).toHaveBeenCalledWith('p');
+    expect(history).toHaveBeenCalledTimes(1); // only the fake's own filter, not a states.jobs() refresh
+  });
+
   it('shares an outstanding history refresh and permits another after it settles', async() => {
     const { states, store } = harness([job('worker', [task()])]);
     const durable = await store.allJobs();
@@ -126,7 +161,7 @@ describe('authoritative live agent state', () => {
     const second = await cachedStates.descendants('parent-thread');
     expect(second).toEqual(first);
     expect(lineage).toHaveBeenCalledTimes(1);
-    now += 2_001;
+    now += 6_001;
     await cachedStates.descendants('parent-thread');
     expect(lineage).toHaveBeenCalledTimes(2);
   });
@@ -265,8 +300,26 @@ describe('authoritative live agent state', () => {
   it('shows an inactive task as quiet before the longer lost threshold', async() => {
     // risk: an hour-silent task is presented as actively working
     const { states } = harness([job('quiet', [task({ startedAt: 1_000 })])]);
-    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }).snapshot();
-    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true });
+    // Watching since before the task started, so its silence is real.
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 0).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', canMessage: true, canStop: true, runtimeAlive: null });
+  });
+
+  // risk: right after a restart every running agent read "silent · it may have stopped" because in-memory activity was empty
+  it('does not count the time before a restart as silence', async() => {
+    const { states } = harness([job('resumed', [task({ startedAt: 1_000 })])]);
+    const justStarted = new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);
+    expect((await justStarted.snapshot()).rows[0].state).toBe('working');
+    const later = new AgentStateProjector(states, new EmptyTelemetry(), () => 14_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);
+    expect((await later.snapshot()).rows[0].state).toBe('quiet');
+  });
+
+  // risk: a quiet agent whose container is still running read as stopped
+  it('says whether a quiet container agent is still running', async() => {
+    const { states } = harness([job('quiet', [task({ startedAt: 1_000, threadId: 't-quiet' })])]);
+    const runtime = { alive: (thread: string | undefined | null) => thread === 't-quiet' };
+    const snapshot = await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, runtime, 0).snapshot();
+    expect(snapshot.rows[0]).toMatchObject({ state: 'quiet', runtimeAlive: true });
   });
 
   it('keeps snapshot state working when task-scoped model activity is fresh but its check-in is old', async() => {
@@ -409,6 +462,45 @@ describe('authoritative live agent state', () => {
     const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
     expect(rows.find(row => row.taskIndex === 0)?.state).toBe('parked');
     expect(rows.find(row => row.taskIndex === 1)?.state).toBe('blocked');
+  });
+
+  it('marks only a future timer wake as a scheduled wake-up, not a re-parked idle task', async() => {
+    // risk: a worker parked on nothing read as "waiting on 0 agents" and kept its thread looking busy
+    const timer = job('timer', [task({ status: 'parked', wakeAt: 600_000 })], { status: 'parked' });
+    const idle = job('idle', [task({ status: 'parked', wakeAt: 400_000 })], { status: 'parked' });
+    const { states } = harness([timer, idle], 500_000);
+    const rows = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000).snapshot()).rows;
+    expect(rows.find(row => row.jobId === 'timer')).toMatchObject({ state: 'parked', stateReason: 'scheduled wake-up' });
+    expect(rows.find(row => row.jobId === 'idle')).toMatchObject({ state: 'parked', stateReason: null });
+  });
+
+  it('clears a sub-agent blocker once Sulla has delivered an answer after it', async() => {
+    // risk: the live view kept a sub-agent blocked (and the chat bar lit) after Sulla answered it,
+    // because the snapshot never learned when the answer arrived
+    const raised = job('raised', [task()]);
+    const answered = job('answered', [task()]);
+    const { states } = harness([raised, answered], 10_000);
+    const checkin = { createdAt: 5_000, summary: 'Ten vendors researched', blockers: ['Need the Astra account login'] };
+    const telemetry = {
+      latest:          async() => checkin,
+      answeredForJobs: async() => ({ answered: { 0: 6_000 }, raised: { 0: 4_000 } }),
+    };
+
+    const rows = (await new AgentStateProjector(states, telemetry, () => 10_000).snapshot()).rows;
+
+    expect(rows.find(row => row.jobId === 'raised')).toMatchObject({ state: 'blocked', stateReason: 'Need the Astra account login' });
+    expect(rows.find(row => row.jobId === 'answered')?.state).not.toBe('blocked');
+  });
+
+  it('carries a long-running command into the live row and keeps the agent working', async() => {
+    // risk: a worker inside one 7-minute command showed "No progress" in the chat
+    const seeding = job('seeding', [task({ startedAt: 1_000 })]);
+    const { states } = harness([seeding], 500_000);
+    const activity = new AgentTaskActivityProjector({ lastActivityAt: () => 60_000, toolInFlight: () => ({ name: 'a command', startedAt: 80_000 }) }, () => 500_000);
+
+    const [row] = (await new AgentStateProjector(states, new EmptyTelemetry(), () => 500_000, {}, activity).snapshot()).rows;
+
+    expect(row).toMatchObject({ state: 'working', toolInFlight: { name: 'a command', since: new Date(80_000).toISOString() } });
   });
 
   it('settles a job whose blocked task already returned instead of failing and re-notifying it on every restart', async() => {

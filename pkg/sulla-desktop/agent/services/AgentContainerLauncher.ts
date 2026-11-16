@@ -33,15 +33,10 @@ import {
 } from './GuestRuntimeTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
+import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
-import {
-  createProviderCliBridge,
-  getLocalVaultPrincipalId,
-  usesContainerVaultAuthority,
-  type ProviderCliAuthMode,
-  type ProviderCliBridgeLease,
-} from '../../vault-broker';
+import { ProviderBridgeAuthorizeUnavailableError, ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
@@ -275,6 +270,29 @@ export function isContainerGoneError(error: unknown): boolean {
   const text = `${ (error as { stderr?: string })?.stderr ?? '' } ${ (error as Error)?.message ?? '' }`;
 
   return /no such container|is not running/i.test(text);
+}
+
+/**
+ * `sulla-runtime exec` exits 255 with no stderr when the VM's command channel
+ * is not up yet (right after a VM start). Retry an idempotent guest step a few
+ * times instead of failing the whole agent job on that boot race.
+ */
+export async function retryWhileGuestStarting<T>(
+  step: () => Promise<T>,
+  attempts = 5,
+  delayMs = 2_000,
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await step();
+    } catch (error) {
+      const starting = (error as { exitCode?: unknown })?.exitCode === 255 && !(error as { stderr?: string }).stderr?.trim();
+      if (!starting || attempt >= attempts) throw error;
+      console.warn(`[AgentContainer] Guest command channel not ready (attempt ${ attempt }/${ attempts }); retrying`);
+      await sleep(delayMs);
+    }
+  }
 }
 
 function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
@@ -811,7 +829,8 @@ async function provisionContainerSecrets(
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new InfrastructureFailure(`Invalid container secret name ${ key }`);
     return `${ key }\t${ Buffer.from(value).toString('base64') }`;
   }).join('\n') + '\n';
-  await guestExec([
+  // Idempotent (install -d, overwrite each file), so safe to retry.
+  await retryWhileGuestStarting(() => guestExec([
     'sh', '-c',
     [
       'set -eu', 'umask 077',
@@ -829,7 +848,7 @@ async function provisionContainerSecrets(
       ].join('\n'),
     ].join('; '),
     'sulla-container-secrets', secretDir, String(identity.uid), String(identity.gid),
-  ], encoded);
+  ], encoded));
   return secretDir;
 }
 
@@ -893,10 +912,10 @@ async function cleanupContainerResources(
       let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
       try {
         decision = await inspectGuestWorkspaceForCleanup(workspacePath);
-      } catch {
+      } catch (error) {
         decision = {
           remove: false,
-          reason: 'workspace retained because its cleanup state could not be inspected safely',
+          reason: `workspace retained because its cleanup state could not be inspected safely: ${ (error as Error)?.message ?? error }`,
         };
       }
       receipt.workspaceDecisionReason = decision.reason;
@@ -907,7 +926,7 @@ async function cleanupContainerResources(
         } catch (error) {
           failures.push(error);
         }
-      } else {
+      } else if (!decision.persistent) {
         receipt.retainedGuestPaths.push(workspacePath);
         receipt.recoveryWorkspacePath = workspacePath;
       }
@@ -1226,7 +1245,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
           throw new VaultLocked('claude-code', { cause: 'Vault not ready after the startup grace period' });
         }
-        return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
+        return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
       }
 
       // Other providers retain the startup grace period until their resolvers
@@ -1235,7 +1254,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         throw await lockedVaultError();
       }
 
-      return await getLocalVaultPrincipalId(signal);
+      return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal);
     });
     const toolsServiceTask = phase('toolsService', () => waitForToolsService());
     const [{ identity, deviceId }, subject, toolsReady] = await Promise.all([
@@ -1473,7 +1492,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             request_id:       crypto.randomUUID(),
           };
         };
-        const bridge = await createProviderCliBridge({
+        const bridge = await new ProviderCliBridgeService().create({
           context:        bridgeContext(),
           provider,
           accountId,
@@ -1486,7 +1505,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           authorize:      async() => {
             const context = bridgeContext();
             requireAgentContainerRuntime(context);
-            if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
+            // A Redis blip is not a revocation: answer 503 and keep the lease (the lifecycle signal still revokes locally).
+            const revoked = await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`).catch((error: unknown) => { throw new ProviderBridgeAuthorizeUnavailableError('revocation_check_unavailable', { cause: error }) });
+            if (revoked) return false;
             return context;
           },
           // Codex runs on a ChatGPT OAuth session; refresh it in the vault
@@ -1649,7 +1670,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
     const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
     const subject = usesContainerVaultAuthority()
-      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      ? await configuredVaultBrokerProvider.getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
       : metadata.userId;
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames;
@@ -1791,6 +1812,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       const finish = async(error?: Error) => {
         if (settled) return;
         settled = true;
+        runTools.clear(run.state.metadata);
         clearTimeout(idleTimer);
         clearInterval(renewTimer);
         if (abortForceTimer) clearTimeout(abortForceTimer);
@@ -1858,6 +1880,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
           const item = event.item;
           const kind = item.item_type ?? item.type;
+          // Codex: a command or tool call is in flight from started to completed.
+          if (typeof item.id === 'string' && ['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].includes(kind)) {
+            if (event.type === 'item.started') runTools.started(run.state.metadata, item.id, kind === 'command_execution' ? 'a command' : String(item.tool ?? kind));
+            else runTools.finished(run.state.metadata, item.id);
+          }
           if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
             streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
             flushStream(true);
@@ -1878,6 +1905,13 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         }
         if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
           activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
+          // Claude Code: in flight until its tool_result comes back in a user message.
+          if (typeof nested.content_block.id === 'string') runTools.started(run.state.metadata, nested.content_block.id, nested.content_block.name === 'Bash' ? 'a command' : String(nested.content_block.name ?? 'a tool'));
+        }
+        if (event.type === 'user' && Array.isArray(event.message?.content)) {
+          for (const block of event.message.content) {
+            if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') runTools.finished(run.state.metadata, block.tool_use_id);
+          }
         }
       };
       const onData = (chunk: Buffer, parseProvider = false) => {

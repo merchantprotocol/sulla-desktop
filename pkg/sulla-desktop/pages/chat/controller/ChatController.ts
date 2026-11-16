@@ -112,6 +112,9 @@ export interface ThreadPersister {
 }
 
 // ─── Controller ───────────────────────────────────────────────────
+/** Work blocks that show which agent and model produced them. */
+const STAMPED_KINDS: readonly Message['kind'][] = ['thinking', 'tool', 'patch', 'error'];
+
 export class ChatController {
   // ─── Reactive state — THE SINGLE SOURCE OF TRUTH ───────────────
   readonly thread:     Ref<Thread>;
@@ -370,6 +373,7 @@ export class ChatController {
 
   // ─── Message CRUD ───────────────────────────────────────────────
   appendMessage(m: Message): void {
+    m = this.stampAuthor(m);
     this.thread.value = {
       ...this.thread.value,
       messages:  [...this.thread.value.messages, m],
@@ -377,6 +381,23 @@ export class ChatController {
     };
     this.bus.emit({ kind: 'messageAppended', threadId: this.thread.value.id, message: m });
   }
+
+  /**
+   * Record which agent and model produced a work block as it arrives, so the
+   * label stays true after a later model switch. Only live arrivals are
+   * stamped: history restored on load keeps whatever it was saved with.
+   */
+  private stampAuthor(m: Message): Message {
+    if (m.by || !STAMPED_KINDS.includes(m.kind) || Math.abs(Date.now() - m.createdAt) > 2 * 60_000) return m;
+    const agent = this.thread.value.agentId ?? undefined;
+    // An empty model id means the picker shows "Default"/"Auto", a label and
+    // not a model: use the agent's own configured model, else leave it out.
+    const model = this.model.value.id ? this.model.value.name : (agent && this.agentModelOf?.(agent)) || undefined;
+    return { ...m, by: { agent, model } } as Message;
+  }
+
+  /** The model an agent is configured to run on; set by the page that owns the agent list. */
+  agentModelOf?: (agentId: string) => string | null | undefined;
 
   /** Persist a completed batch append, such as backend-thread hydration. */
   persistThread(): void {

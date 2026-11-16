@@ -1,7 +1,7 @@
 {
   "sourceRepository": "https://github.com/merchantprotocol/sulla-core",
-  "sourceRef": "ea82b0530388285b3462b4689188d768039dcb8f",
-  "sourceCommit": "ea82b0530388285b3462b4689188d768039dcb8f",
+  "sourceRef": "6257ccae48191be68c200b82a3917c89ae7954bf",
+  "sourceCommit": "6257ccae48191be68c200b82a3917c89ae7954bf",
   "packages": [
     {
       "package": "@sulla/foundation",
@@ -13,11 +13,11 @@
     },
     {
       "package": "@sulla/domain",
-      "version": "0.3.3",
-      "file": "sulla-domain-0.3.3-ea82b05.tgz",
-      "sha256": "4d3a05011194d7d9b3de0e9fffca68111a364c5698601cb6f92ee15de6b24dc0",
-      "sourceRef": "ea82b05",
-      "source": "sulla-core main ea82b05 (tag domain-v0.3.3, epic PR #54) release artifact: 0.3.2 vault + identity (Account, RequestPrincipal, device identity, DeviceIdentityService, opt-in recovery rotation); defaults byte-identical to 0.3.1; depends on @sulla/foundation 0.1.1."
+      "version": "0.4.2",
+      "file": "sulla-domain-0.4.2-6257cca.tgz",
+      "sha256": "c56167502b8e9c690f734a202d98a537479fccfaa6f748efaef394f43c01fb77",
+      "sourceRef": "6257ccae",
+      "source": "sulla-core merged domain-v0.4.2 release (PR #63, tag domain-v0.4.2); security patch: DesktopLocalCredential.verify accepts only a full 32-byte verifier. Built with typescript 5.9.3 + npm pack; the same build of e11de184 reproduces the 0.4.1 tarball byte-for-byte. Replaces 0.3.3 (services/sulla-vault) and 0.4.1 (root)."
     }
   ]
 }

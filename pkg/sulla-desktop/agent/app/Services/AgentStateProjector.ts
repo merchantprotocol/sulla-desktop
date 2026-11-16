@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { AgentRuntimeLiveness } from './AgentRuntimeLiveness';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentStateRow, AgentStateSnapshot, AgentRowState } from '../../../shared/agentState/AgentStateSnapshot';
 
@@ -14,6 +15,8 @@ export interface AgentTaskCheckin { createdAt: number; summary: string; blockers
 export interface AgentStateTelemetry {
   latest(jobId: string, taskIndex: number): Promise<AgentTaskCheckin | null>;
   latestForJobs?(jobIds: string[]): Promise<Record<string, Record<number, AgentTaskCheckin | null>>>;
+  /** Latest time Sulla's message (its answer) was delivered to each task; a later answer clears a blocker. */
+  answeredForJobs?(jobIds: string[]): Promise<Record<string, Record<number, number | null>>>;
 }
 export interface AgentProjectionConfig { quietAfterMs: number; terminalTtlMs: number; }
 const DEFAULT_CONFIG: AgentProjectionConfig = { quietAfterMs: 5 * 60_000, terminalTtlMs: 2 * 60_000 };
@@ -24,7 +27,10 @@ export class AgentStateProjector {
   private inFlight?: Promise<AgentStateSnapshot>;
   constructor(private readonly states: AgentStateService, private readonly telemetry: AgentStateTelemetry,
     private readonly clock: () => number = Date.now, config: Partial<AgentProjectionConfig> = {},
-    private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs)) { this.config = { ...DEFAULT_CONFIG, ...config }; }
+    private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs),
+    private readonly runtime?: Pick<AgentRuntimeLiveness, 'alive'>,
+    /** When this process started watching: activity before it (a restart) is unknown, not silence. */
+    private readonly observedSince: number = clock()) { this.config = { ...DEFAULT_CONFIG, ...config }; }
 
   snapshot(): Promise<AgentStateSnapshot> {
     if (this.inFlight) return this.inFlight;
@@ -42,9 +48,11 @@ export class AgentStateProjector {
     // renderer can accept the following snapshot instead of discarding it.
     const version = this.states.version;
     const now = this.clock();
-    const latestByJob = this.telemetry.latestForJobs
-      ? await this.telemetry.latestForJobs([...new Set(jobs.map(job => job.jobId))])
-      : undefined;
+    const jobIds = [...new Set(jobs.map(job => job.jobId))];
+    const [latestByJob, answeredByJob] = await Promise.all([
+      this.telemetry.latestForJobs ? this.telemetry.latestForJobs(jobIds) : undefined,
+      this.telemetry.answeredForJobs ? this.telemetry.answeredForJobs(jobIds).catch(() => undefined) : undefined,
+    ]);
     const jobById = new Map(jobs.map(job => [job.jobId, job]));
     const taskByKey = new Map(jobs.flatMap(job => job.tasks.map((task, taskIndex) => [`${ job.jobId }:${ taskIndex }`, task] as const)));
     const waitingByThread = new Map<string, number>();
@@ -63,8 +71,10 @@ export class AgentStateProjector {
         ? latestByJob[job.jobId]?.[taskIndex] ?? null
         : await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
-      const activity = this.activity.project(job, task, taskIndex, checkin);
-      const state = activity.state as AgentViewStatus;
+      const activity = this.activity.project(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null);
+      // Just after a restart the in-memory activity is empty; count silence from when this process began watching.
+      let state = activity.state as AgentViewStatus;
+      if (state === 'quiet' && now - Math.max(activity.lastActivityAt, this.observedSince) < this.config.quietAfterMs) state = 'working';
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? waitingByThread.get(task.threadId) ?? 0 : 0;
@@ -73,10 +83,16 @@ export class AgentStateProjector {
         rootThreadId: lineage.rootThreadId, threadId: task.threadId ?? null,
         depth: lineage.depth, agentId: task.agentId || null, label: task.label || task.agentId,
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
-        stateReason: this.reason(state, job, task, checkin), stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
+        stateReason: this.reason(state, job, task, checkin),
+        // Why a parked task is waiting and when it checks again, so the window can say "waiting on GitHub checks · 12:12".
+        waitReason: state === 'parked' ? task.waitReason ?? null : null,
+        wakeAt: state === 'parked' && task.wakeAt !== undefined && task.wakeAt > now ? this.iso(task.wakeAt) : null,
+        stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
         lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
+        toolInFlight: this.toolView(state, this.activity.toolInFlight(job.jobId, taskIndex)),
+        runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }
     return { version, generatedAt: new Date(now).toISOString(), rows };
@@ -85,6 +101,7 @@ export class AgentStateProjector {
   private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {
     if (state === 'blocked') return checkin?.blockers.join('; ') || task.summary || 'Blocked';
     if (state === 'quiet') return 'No recent check-in';
+    if (state === 'parked' && task.wakeAt !== undefined && task.wakeAt > this.clock()) return 'scheduled wake-up';
     if (['failed', 'lost', 'stopped'].includes(state)) return job.error || task.summary || state;
     return null;
   }
@@ -105,6 +122,10 @@ export class AgentStateProjector {
       depth += 1;
     }
     return { rootThreadId, depth };
+  }
+
+  private toolView(state: AgentViewStatus, tool?: { name: string; startedAt: number }): AgentStateRow['toolInFlight'] {
+    return tool && (state === 'working' || state === 'quiet') ? { name: tool.name, since: new Date(tool.startedAt).toISOString() } : null;
   }
 
   private iso(value?: number | null): string | null { return value ? new Date(value).toISOString() : null; }

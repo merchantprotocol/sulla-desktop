@@ -116,7 +116,34 @@
               <path :d="tab.iconPath" />
             </svg>
           </span>
-          <span class="tab-label">{{ tab.label }}</span>
+          <span
+            v-if="tab.activity && tab.activity !== 'idle'"
+            class="tab-activity-dot"
+            :class="`tab-activity-${tab.activity}`"
+            role="img"
+            :aria-label="ACTIVITY_LABEL[tab.activity]"
+            :title="ACTIVITY_LABEL[tab.activity]"
+          />
+          <input
+            v-if="renamingTabId === tab.id"
+            ref="renameInput"
+            v-model="renameDraft"
+            class="tab-rename"
+            type="text"
+            maxlength="80"
+            aria-label="Tab name"
+            :placeholder="tab.pageTitle"
+            @pointerdown.stop
+            @click.stop.prevent
+            @dblclick.stop
+            @keydown.enter.prevent="commitRename"
+            @keydown.esc.prevent="cancelRename"
+            @blur="onRenameBlur"
+          >
+          <span
+            v-else
+            class="tab-label"
+          >{{ tab.label }}</span>
           <button
             v-if="tab.closeable"
             class="tab-close"
@@ -329,6 +356,14 @@
           </svg>
         </button>
       </div>
+      <!-- Engine status: one dot for the whole app (replaces the chat's ONLINE pill). -->
+      <span
+        class="engine-status"
+        :class="engineStatus.tone"
+        role="status"
+        :title="`Sulla engine: ${engineStatus.label}`"
+        :aria-label="`Sulla engine: ${engineStatus.label}`"
+      />
       <!-- Three-dot menu (rendered in a popup BrowserWindow via IPC — see moreMenuWindow.ts) -->
       <div class="relative hidden lg:flex">
         <button
@@ -430,7 +465,7 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
@@ -438,7 +473,17 @@ import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { orderPinnedFirst, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
+import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
+  working: 'Sulla is working',
+  waiting: 'Waiting on agents or a schedule',
+  you:     'Needs you',
+  stalled: 'No progress: an agent has gone quiet',
+  idle:    'Idle',
+};
 
 // Every page and every browser tab mounts its own AgentHeader, so there is one
 // tab strip per page. They share a single scroll offset so switching tabs
@@ -535,7 +580,7 @@ const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems())
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
-const tabPeek = ref<{ left: number; pinned: boolean; status: string; title: string } | null>(null);
+const tabPeek = ref<{ left: number; pinned: boolean; status: string; title: string; tabId: string } | null>(null);
 let tabPeekTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hideTabPeek() {
@@ -556,11 +601,14 @@ function queueTabPeek(event: MouseEvent, tab: HeaderTab) {
   const left = Math.max(0, Math.min(desiredLeft, wrapperRect.width - width));
 
   tabPeekTimer = setTimeout(() => {
+    tabPeekTimer = null;
+    if (!orderedTabs.value.some(candidate => candidate.id === tab.id)) return;
     tabPeek.value = {
       left,
       pinned: tab.pinned,
       status: tab.statusLine,
       title:  tab.label,
+      tabId:  tab.id,
     };
     tabPeekTimer = null;
   }, tab.pinned ? 250 : 500);
@@ -753,7 +801,27 @@ function onTabWheel(e: WheelEvent) {
   }
 }
 
+// ── Engine status dot ──
+const engineState = ref('STOPPED');
+const ENGINE_STATUS: Record<string, { label: string; tone: string }> = {
+  STARTED:  { label: 'Running', tone: 'ok' },
+  DISABLED: { label: 'Running', tone: 'ok' },
+  STARTING: { label: 'Starting…', tone: 'busy' },
+  STOPPING: { label: 'Shutting down…', tone: 'busy' },
+  ERROR:    { label: 'Error', tone: 'error' },
+  STOPPED:  { label: 'Stopped', tone: 'error' },
+};
+const engineStatus = computed(() => ENGINE_STATUS[engineState.value] ?? { label: engineState.value, tone: 'busy' });
+function onEngineState(_event: unknown, state: unknown): void {
+  engineState.value = String(state);
+}
+
 onMounted(() => {
+  ipcRenderer.on('k8s-check-state' as any, onEngineState);
+  try {
+    const initial = ipcRenderer.sendSync('k8s-state' as any) as string | undefined;
+    if (initial) engineState.value = initial;
+  } catch { /* main not ready; the next state event fills it in */ }
   window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 
@@ -778,7 +846,10 @@ onMounted(() => {
   nextTick(syncTabStrip);
 });
 onActivated(() => nextTick(syncTabStrip));
+// A kept-alive header that is hidden never gets mouseleave, so its preview would stay on screen.
+onDeactivated(hideTabPeek);
 onUnmounted(() => {
+  ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
   hideTabPeek();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -891,6 +962,8 @@ interface HeaderTab {
   isActive:   boolean;
   pinned:     boolean;
   working:    boolean;
+  /** Chat tabs only: what the thread is doing, for the tab's activity dot. */
+  activity?:  ThreadActivityState;
   statusLine: string;
   native?:    boolean;
   favicon?:   string;
@@ -900,6 +973,8 @@ interface HeaderTab {
   browserId?: string;
   /** Bookmark preview tab — replaced by the next bookmark until interacted with. */
   preview?:   boolean;
+  /** The page's own title, shown as the placeholder while renaming. */
+  pageTitle?: string;
 }
 
 /**
@@ -952,13 +1027,15 @@ const allTabsById = computed(() => {
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
     const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
+    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
 
     map.set(id, {
       id,
-      label:      bt.title || 'New Tab',
+      label:      bt.customTitle || bt.title || 'New Tab',
+      pageTitle:  bt.title || 'New Tab',
       route:      `/Browser/${ bt.id }`,
       isActive:   route.path === `/Browser/${ bt.id }`,
       favicon:    bt.favicon,
@@ -970,6 +1047,7 @@ const allTabsById = computed(() => {
       preview:    previewTabId.value === bt.id,
       pinned,
       working,
+      activity,
       statusLine: previewTabId.value === bt.id ? `preview · ${ statusLine }` : statusLine,
     });
   }
@@ -1045,6 +1123,13 @@ watch(
 // The newly active tab's strip becomes visible after the parent re-renders;
 // carry the scroll offset over and keep the focused tab in view.
 watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
+// Sulla closes idle agent tabs by itself; a preview for a tab that disappeared under the
+// pointer never received mouseleave and floated over the page (2026-11-14). Also drop it
+// when the page changes.
+watch(() => orderedTabs.value.map(tab => tab.id), ids => {
+  if (tabPeek.value && !ids.includes(tabPeek.value.tabId)) hideTabPeek();
+});
+watch(() => route.path, hideTabPeek);
 
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
@@ -1214,7 +1299,10 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   // Build the list of menu items for this tab
-  const items: string[] = [tab.pinned ? 'unpin' : 'pin', '---'];
+  const items: string[] = [tab.pinned ? 'unpin' : 'pin'];
+
+  if (tab.browserId) items.push('rename');
+  items.push('---');
 
   if (tab.closeable) items.push('close');
   items.push('closeOther', 'closeRight');
@@ -1242,6 +1330,53 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   });
 }
 
+// ── Rename (right-click → Rename Tab) ──
+// The tab label turns into a text field. Enter or clicking away saves, Esc
+// cancels, and an empty name goes back to the page's own title.
+const renamingTabId = ref<string | null>(null);
+const renameDraft = ref('');
+let renameOriginal = '';
+const renameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
+
+function startRename(tab: HeaderTab): void {
+  renamingTabId.value = tab.id;
+  renameDraft.value = tab.label;
+  renameOriginal = tab.label;
+  void nextTick(() => {
+    const input = Array.isArray(renameInput.value) ? renameInput.value[0] : renameInput.value;
+    // Every page keeps its own header; only the visible one edits, or a hidden
+    // copy would take the keyboard focus.
+    const box = input?.getBoundingClientRect();
+    const onTop = box && box.width > 0 && document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === input;
+    if (!input || !onTop) {
+      renamingTabId.value = null;
+      return;
+    }
+    input.focus();
+    input.select();
+  });
+}
+
+function commitRename(): void {
+  const id = renamingTabId.value;
+  if (!id) return;
+  renamingTabId.value = null;
+  const draft = renameDraft.value.trim();
+  // An untouched name must not be saved: it would freeze the page's live title.
+  if (draft === renameOriginal) return;
+  const browserId = orderedTabs.value.find(t => t.id === id)?.browserId;
+  if (browserId) updateTab(browserId, { customTitle: draft || undefined });
+}
+
+/** Clicking elsewhere in the app saves; the window itself losing focus (menu closing, app switch) does not. */
+function onRenameBlur(): void {
+  if (document.hasFocus()) commitRename();
+}
+
+function cancelRename(): void {
+  renamingTabId.value = null;
+}
+
 /** Handle a context-menu action forwarded back from the popup window via IPC. */
 function handleTabContextMenuAction(
   _event: Electron.IpcRendererEvent,
@@ -1263,6 +1398,10 @@ function handleTabContextMenuAction(
 
   case 'unpin':
     setTabPinned(tabId, false);
+    break;
+
+  case 'rename':
+    if (headerTab?.browserId) startRename(headerTab);
     break;
 
   case 'close':
@@ -1366,6 +1505,23 @@ function handleTabContextMenuAction(
 </style>
 
 <style scoped>
+.tab-activity-dot {
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  flex: none;
+  border-radius: 50%;
+}
+.tab-activity-working { background: var(--accent); animation: tab-activity-breathe 1.6s cubic-bezier(.22, 1, .36, 1) infinite; }
+.tab-activity-waiting { background: color-mix(in srgb, var(--accent) 55%, var(--text-muted)); }
+.tab-activity-you { background: var(--status-warning); }
+.tab-activity-stalled { background: var(--status-error); }
+@keyframes tab-activity-breathe {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
+  70% { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .tab-activity-working { animation: none; } }
 /* Phase 4: Scroll wrapper */
 .tab-scroll-wrapper {
   display: flex;
@@ -1970,6 +2126,97 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-close:hover {
   color: var(--read-1, var(--text-primary));
   background: var(--bg-surface-hover);
+}
+
+/* Tab strip "option A": every tab reads as its own card, the active tab is a
+   solid surface with its close button showing, and pinned tabs carry a pin
+   plus an accent underline. Replaces the sliding glow pill. */
+.app-titlebar .tab-active-indicator {
+  display: none;
+}
+
+.app-titlebar .tab-scroll-container {
+  gap: 6px;
+}
+
+.app-titlebar .tab-item {
+  height: 32px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent);
+}
+
+.app-titlebar .tab-item:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.app-titlebar .tab-active,
+.app-titlebar .tab-active-native {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.app-titlebar .tab-active .tab-close,
+.app-titlebar .tab-active-native .tab-close {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.app-titlebar .tab-pinned {
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent), inset 0 -2px 0 var(--accent);
+}
+
+.app-titlebar .tab-pinned.tab-active,
+.app-titlebar .tab-pinned.tab-active-native {
+  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), inset 0 -2px 0 var(--accent);
+}
+
+.app-titlebar .tab-pinned-boundary::before {
+  background: var(--border-strong, var(--border-default));
+}
+
+.engine-status {
+  width: 9px;
+  height: 9px;
+  margin: 0 4px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 18%, transparent);
+}
+
+.engine-status.busy {
+  background: var(--status-warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 18%, transparent);
+  animation: engine-pulse 1.4s ease-in-out infinite;
+}
+
+.engine-status.error {
+  background: var(--status-error);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-error) 18%, transparent);
+}
+
+@keyframes engine-pulse { 50% { opacity: .4; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .engine-status.busy { animation: none; }
+}
+
+.tab-rename {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  outline: none;
+  color: var(--text-primary);
+  background: var(--bg-page, var(--bg-surface));
+  font: inherit;
 }
 
 .app-titlebar .tab-new {

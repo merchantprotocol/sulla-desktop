@@ -20,7 +20,7 @@ const env = vi.hoisted(() => ({ deviceDir: '', cloud: null as any, broker: null 
 vi.mock('@pkg/utils/paths', () => ({ default: { get sullaConfig() { return env.deviceDir } } }));
 vi.mock('../../../../main/sullaCloudAuth', () => ({ getCurrentUserId: async() => 'user-0001' }));
 vi.mock('../../../../main/cloud/cloudFetch', () => ({ cloudRequest: (method: string, url: string, options: any) => env.cloud.request(method, url, options) }));
-vi.mock('@pkg/vault-broker', () => ({ getConfiguredApprovalClient: () => env.broker }));
+vi.mock('@pkg/vault-broker', () => ({ configuredVaultBrokerProvider: { getConfiguredApprovalClient: () => env.broker } }));
 vi.mock('@pkg/sulla', () => ({ onVaultUnlocked: async() => undefined }));
 vi.mock('electron', () => ({ BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] }, dialog: { showMessageBox: async() => ({ response: 1 }) } }));
 

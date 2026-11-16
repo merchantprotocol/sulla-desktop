@@ -1,0 +1,54 @@
+/*
+ * Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * "Sulla" is a trademark. See TRADEMARK.md.
+ */
+/* The /shelve and /resume panel (ShelfPanel.vue), scoped to that component. */
+.sp {
+  margin-bottom: 8px; border: 1px solid var(--border-default); border-radius: 10px;
+  background: var(--bg-surface); color: var(--text-secondary); font-size: 13px;
+}
+.sp-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-default); }
+.sp-head b { color: var(--text-primary); font-weight: 600; }
+.sp-gap { flex: 1; }
+.sp-body { padding: 10px 12px 12px; max-height: min(50vh, 440px); overflow: auto; }
+.sp-body p { margin: 0 0 8px; }
+.sp-muted { color: var(--text-muted); }
+.sp-warn { color: var(--status-error); }
+.sp-label { color: var(--text-primary); }
+.sp-field { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sp-field span { color: var(--text-muted); min-width: 44px; }
+.sp-field input {
+  flex: 1; height: 30px; padding: 0 10px; border: 1px solid var(--border-default); border-radius: 7px;
+  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary); font: inherit;
+}
+.sp-field input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.sp-list { margin: 0 0 10px; padding-left: 18px; }
+.sp-list li { margin: 3px 0; }
+.sp-list b { color: var(--text-primary); font-weight: 600; }
+.sp-list code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+.sp-actions { display: flex; gap: 6px; }
+.sp-btn {
+  display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border: 1px solid var(--border-default);
+  border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer;
+}
+.sp-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); }
+.sp-btn:disabled { opacity: .45; cursor: default; }
+.sp-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sp-pri { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent, var(--bg-page)); font-weight: 600; }
+.sp-pri:hover:not(:disabled) { color: var(--text-on-accent, var(--bg-page)); }
+.sp-danger:hover:not(:disabled) { color: var(--status-error); border-color: var(--status-error); }
+.sp-danger-solid { background: var(--status-error); border-color: var(--status-error); color: var(--text-on-accent, var(--bg-page)); font-weight: 600; }
+.sp-rows { list-style: none; margin: 0; padding: 0; }
+.sp-row { padding: 9px 0; border-top: 1px solid var(--border-default); }
+.sp-row:first-child { border-top: 0; padding-top: 0; }
+.sp-row.sp-hit .sp-row-main b { color: var(--accent); }
+.sp-row-main { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; margin-bottom: 6px; }
+.sp-row-main b { color: var(--text-primary); font-weight: 600; }
+.sp-when { color: var(--text-muted); font: 12px var(--font-mono, ui-monospace, monospace); }
+.sp-goal { grid-column: 1 / -1; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-row-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.sp-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.sp-confirm label, .sp-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.sp-toggle { margin-top: 8px; font-size: 12px; }

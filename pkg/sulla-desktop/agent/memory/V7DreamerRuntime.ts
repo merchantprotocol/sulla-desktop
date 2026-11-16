@@ -10,104 +10,21 @@
  * manual tool call, a schedule catch-up fire).
  */
 
-import { postgresClient } from '../database/PostgresClient';
+import { V7DreamRepository } from '../app/Repositories/V7DreamRepository';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 import {
   DEFAULT_DREAMER_INTERVAL_MINUTES,
-  DREAMER_WORKER,
   V7Dreamer,
-  type DreamBatch,
-  type DreamContext,
   type DreamCursorStore,
-  type DreamEpisode,
-  type DreamItem,
   type DreamModel,
-  type DreamWindow,
-  type V7DreamStore,
-  type ValidatedDreamWrite,
 } from './V7Dreamer';
 
 export const DREAMER_INTERVAL_SETTING = 'dreamerIntervalMinutes';
 export const DREAMER_CURSOR_SETTING = 'dreamerLastWindowEndMs';
-const MAX_CONTEXT_ITEMS = 150;
 
-export class PostgresV7DreamStore implements V7DreamStore {
-  async loadWindow(window: DreamWindow, limits: { episodes: number; items: number }): Promise<DreamBatch> {
-    // Newest rows win when a window overflows the limits; returned oldest first.
-    const [episodes, items] = await Promise.all([
-      postgresClient.query<DreamEpisode>(
-        `SELECT id, ts, source, text, keys, sentiment FROM (
-           SELECT id, ts, source, text, keys, sentiment FROM subject_memory.episodes
-            WHERE ts >= $1 AND ts < $2 AND coalesce(worker, '') <> $3
-            ORDER BY ts DESC LIMIT $4) recent
-          ORDER BY ts ASC, id ASC`,
-        [window.fromTs, window.toTs, DREAMER_WORKER, limits.episodes],
-      ),
-      postgresClient.query<DreamItem>(
-        `SELECT id, kind, ptype, text, why, scope, origin, ts, supersedes FROM (
-           SELECT id, kind, ptype, text, why, scope, origin, ts, supersedes FROM subject_memory.items
-            WHERE ts >= $1 AND ts < $2 AND coalesce(worker, '') <> $3
-            ORDER BY ts DESC LIMIT $4) recent
-          ORDER BY ts ASC, id ASC`,
-        [window.fromTs, window.toTs, DREAMER_WORKER, limits.items],
-      ),
-    ]);
-
-    return {
-      episodes: episodes.map(row => ({ ...row, ts: Number(row.ts), keys: row.keys ?? [] })),
-      items:    items.map(row => ({ ...row, ts: Number(row.ts), scope: row.scope ?? [] })),
-    };
-  }
-
-  async loadContext(subjectSlugs: string[]): Promise<DreamContext> {
-    const [subjects, currentItems] = await Promise.all([
-      postgresClient.query<{ slug: string; name: string; kind: string }>(
-        'SELECT slug, name, kind FROM subject_memory.subjects ORDER BY slug',
-      ),
-      postgresClient.query<DreamItem>(
-        `SELECT id, kind, ptype, text, why, scope, origin, ts, supersedes
-           FROM subject_memory.current_items()
-          WHERE scope && $1::text[] AND origin <> 'seeded'
-          ORDER BY ts DESC
-          LIMIT $2`,
-        [subjectSlugs, MAX_CONTEXT_ITEMS],
-      ),
-    ]);
-
-    return {
-      subjects,
-      currentItems: currentItems.map(row => ({ ...row, ts: Number(row.ts), scope: row.scope ?? [] })),
-    };
-  }
-
-  async appendDream(write: ValidatedDreamWrite): Promise<{ items: number; evidence: number }> {
-    return postgresClient.transaction(async(client) => {
-      const inserted = { items: 0, evidence: 0 };
-      for (const row of write.items) {
-        // Plain INSERT: an id collision must abort the whole dream, not half-write it.
-        const result = await client.query(
-          `INSERT INTO subject_memory.items
-             (id, kind, ptype, text, why, scope, origin, ts, supersedes, always_on, worker)
-           VALUES ($1, 'conclusion', $2, $3, $4, $5, 'model_inferred', $6, $7, false, $8)`,
-          [row.id, row.ptype, row.text, row.why, row.scope, row.ts, row.supersedes, DREAMER_WORKER],
-        );
-        inserted.items += result.rowCount ?? 0;
-      }
-      for (const row of write.evidence) {
-        const result = await client.query(
-          `INSERT INTO subject_memory.evidence (item_id, episode_id, role)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (item_id, episode_id) DO NOTHING`,
-          [row.item_id, row.episode_id, row.role],
-        );
-        inserted.evidence += result.rowCount ?? 0;
-      }
-
-      return inserted;
-    });
-  }
-}
+/** @deprecated use V7DreamRepository (app/Repositories/V7DreamRepository) */
+export { V7DreamRepository as PostgresV7DreamStore };
 
 export class SettingsDreamCursor implements DreamCursorStore {
   async getLastWindowEnd(): Promise<number | null> {
@@ -144,16 +61,20 @@ export class SubconsciousDreamModel implements DreamModel {
   }
 }
 
-let dreamer: V7Dreamer | null = null;
+/** Owns the one process-wide V7Dreamer, so its single-flight guard covers every caller. */
+export class V7DreamerRuntime {
+  private static instance: V7Dreamer | undefined;
 
-export function getV7Dreamer(): V7Dreamer {
-  if (!dreamer) {
-    dreamer = new V7Dreamer({
-      store:  new PostgresV7DreamStore(),
+  static shared(): V7Dreamer {
+    V7DreamerRuntime.instance ??= new V7Dreamer({
+      store:  new V7DreamRepository(),
       cursor: new SettingsDreamCursor(),
       model:  new SubconsciousDreamModel(),
     });
-  }
 
-  return dreamer;
+    return V7DreamerRuntime.instance;
+  }
 }
+
+/** @deprecated use V7DreamerRuntime.shared() */
+export const getV7Dreamer = (): V7Dreamer => V7DreamerRuntime.shared();

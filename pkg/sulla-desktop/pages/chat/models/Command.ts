@@ -9,7 +9,7 @@ export interface SlashCommand {
   name:   string;     // "/clear" (includes the slash)
   label:  string;     // Human description shown in the popover
   hint?:  string;     // Keyboard hint shown on the right
-  action?: 'clear' | 'new' | 'help' | 'model' | 'tokens' | 'loop' | 'schedule' | 'voice' | 'pin' | 'fork';
+  action?: 'clear' | 'new' | 'help' | 'model' | 'tokens' | 'loop' | 'schedule' | 'voice' | 'pin' | 'fork' | 'shelve' | 'resume';
 }
 
 export interface MentionTarget {
@@ -35,6 +35,8 @@ export const defaultSlashCommands: readonly SlashCommand[] = Object.freeze([
   { name: '/voice',    label: 'start voice input',              hint: '⌘/', action: 'voice' },
   { name: '/pin',      label: 'pin the last reply',                         action: 'pin' },
   { name: '/fork',     label: 'branch this chat',                           action: 'fork' },
+  { name: '/shelve',   label: 'put this thread down to pick up later',      action: 'shelve' },
+  { name: '/resume',   label: 'pick up a shelved thread',                   action: 'resume' },
 ]);
 
 export interface PopoverState {

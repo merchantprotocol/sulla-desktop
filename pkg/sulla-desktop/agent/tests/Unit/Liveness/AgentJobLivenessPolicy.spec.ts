@@ -21,7 +21,13 @@ describe('AgentJobLivenessPolicy', () => {
   });
   it('classifies a no-check-in job as stalled after the grace and stall thresholds', () => {
     // risk: orchestration liveness — genuinely abandoned workers still need attention.
-    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 11 * 60_000 })).toBe(true);
+    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 11 * 60_000 })).toBe(false);
+    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 0, hasCheckin: false, now: 15 * 60_000 })).toBe(true);
+  });
+  it('does not classify a no-check-in job that is still active as stalled once its grace ends', () => {
+    // risk: orchestration liveness — a streaming worker with no check-in yet was killed at ten minutes.
+    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 9 * 60_000, hasCheckin: false, now: 11 * 60_000, stallMs: 30 * 60_000 })).toBe(false);
+    expect(policy.isStalled({ createdAt: 0, startedAt: 0, lastActivityAt: 9 * 60_000, hasCheckin: false, now: 39 * 60_000, stallMs: 30 * 60_000 })).toBe(true);
   });
 
   it('reaps only old hidden non-parked work with no live graph', () => {

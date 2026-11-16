@@ -10,6 +10,15 @@ import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobChec
 
 export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel> {
   protected readonly model = AgentJobMessageModel;
+  private static readonly TELEMETRY_TTL_MS = 5_000;
+  private telemetryVersion = 0;
+  private readonly telemetryReads = new Map<string, { expiresAt: number; version: number; value: Record<string, Record<number, AgentJobTaskTelemetry>> }>();
+  private readonly telemetryInFlight = new Map<string, Promise<Record<string, Record<number, AgentJobTaskTelemetry>>>>();
+  private telemetryClock: () => number = Date.now;
+  /** Test seam for the telemetry cache clock. */
+  setClock(clock: () => number): void { this.telemetryClock = clock; }
+  /** Every check-in/message write goes through this repository; each one invalidates the telemetry cache. */
+  private telemetryChanged(): void { this.telemetryVersion++; this.telemetryReads.clear(); }
   private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined, label: row.label || undefined }; }
   private rowToMessage(row: any): AgentJobMessage { return { id: row.id, jobId: row.job_id, taskIndex: Number(row.task_index), message: row.message, createdAt: new Date(row.created_at).getTime(), deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : undefined }; }
   private rowToCheckin(row: any): AgentJobCheckin { return { step: row.step, summary: row.summary, filesTouched: Array.isArray(row.files_touched) ? row.files_touched : [], blockers: Array.isArray(row.blockers) ? row.blockers : [], percent: row.percent == null ? undefined : Number(row.percent), createdAt: new Date(row.created_at).getTime() }; }
@@ -60,6 +69,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
        RETURNING *`,
       [id, target.jobId, target.taskIndex, message],
     );
+    this.telemetryChanged();
 
     return this.rowToMessage(rows[0]);
   }
@@ -88,6 +98,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         WHERE id = ANY($1::text[]) AND delivered_at IS NULL`,
       [ids as unknown as string, threadId],
     );
+    this.telemetryChanged();
   }
 
   async appendCheckin(threadId: string, input: {
@@ -131,6 +142,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         input.percent ?? null,
       ],
     );
+    this.telemetryChanged();
 
     return { target, checkin: this.rowToCheckin(rows[0]), blockersChanged: Boolean(rows[0].blockers_changed) };
   }
@@ -138,8 +150,11 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
   async telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>> {
     const [checkinRows, messageRows] = await Promise.all([
       this.connection.select<any>(
-        `SELECT * FROM agent_job_checkins
-          WHERE job_id = $1
+        // Only the 3 newest per task are ever kept below; do not drag a long-running job's whole history.
+        `SELECT * FROM (
+           SELECT c.*, row_number() OVER (PARTITION BY task_index ORDER BY created_at DESC) AS rn
+             FROM agent_job_checkins c WHERE job_id = $1
+         ) recent WHERE rn <= 3
           ORDER BY task_index, created_at DESC`,
         [jobId],
       ),
@@ -175,9 +190,37 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     return telemetry;
   }
 
+  /** Newest check-in time (ms) for one task: a single (job_id, task_index, created_at DESC) index probe. */
+  async latestCheckinAt(jobId: string, taskIndex: number): Promise<number | null> {
+    const rows = await this.connection.select<any>(
+      `SELECT created_at FROM agent_job_checkins WHERE job_id = $1 AND task_index = $2 ORDER BY created_at DESC LIMIT 1`,
+      [jobId, taskIndex],
+    );
+    return rows?.[0]?.created_at ? new Date(rows[0].created_at).getTime() : null;
+  }
+
   /** Compact telemetry for a job list: one latest check-in and one message count per task. */
   async latestTelemetryForJobs(jobIds: string[]): Promise<Record<string, Record<number, AgentJobTaskTelemetry>>> {
     if (jobIds.length === 0) return {};
+    // Polled by several surfaces: serve a recent identical read, and share one query between concurrent callers.
+    const key = [...new Set(jobIds)].sort().join('\u0000');
+    const cached = this.telemetryReads.get(key);
+    if (cached && cached.expiresAt > this.telemetryClock() && cached.version === this.telemetryVersion) return cached.value;
+    const running = this.telemetryInFlight.get(key);
+    if (running) return running;
+    const version = this.telemetryVersion;
+    const read = this.queryLatestTelemetry(jobIds).then((value) => {
+      if (version === this.telemetryVersion) {
+        if (this.telemetryReads.size >= 64) this.telemetryReads.delete(this.telemetryReads.keys().next().value!);
+        this.telemetryReads.set(key, { expiresAt: this.telemetryClock() + AgentJobMessagingRepository.TELEMETRY_TTL_MS, version, value });
+      }
+      return value;
+    }).finally(() => { if (this.telemetryInFlight.get(key) === read) this.telemetryInFlight.delete(key); });
+    this.telemetryInFlight.set(key, read);
+    return read;
+  }
+
+  private async queryLatestTelemetry(jobIds: string[]): Promise<Record<string, Record<number, AgentJobTaskTelemetry>>> {
     const [checkinRows, messageRows] = await Promise.all([
       this.connection.select<any>(
         `SELECT DISTINCT ON (job_id, task_index) job_id, task_index, step, summary, files_touched, blockers, percent, created_at

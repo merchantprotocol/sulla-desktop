@@ -26,9 +26,12 @@ import Logging from '@pkg/utils/logging';
 const log = Logging.background;
 
 export interface CodexCatalogModel {
-  id:           string;
-  name:         string;
-  description?: string;
+  id:             string;
+  name:           string;
+  description?:   string;
+  efforts?:       { id: string; description?: string }[];
+  defaultEffort?: string;
+  upgrade?:       string;
 }
 
 /** "Auto" = omit --model so the codex CLI uses its configured default. This is
@@ -47,10 +50,13 @@ export function clearCodexModelCatalogCache(): void {
 }
 
 interface RawCodexModel {
-  slug?:         string;
-  display_name?: string;
-  description?:  string;
-  visibility?:   string;
+  slug?:                       string;
+  display_name?:               string;
+  description?:                string;
+  visibility?:                 string;
+  supported_reasoning_levels?: { effort?: string; description?: string }[];
+  default_reasoning_level?:    string;
+  upgrade?:                    { model?: string } | null;
 }
 
 /**
@@ -102,7 +108,14 @@ export async function listCodexModels(opts?: { force?: boolean }): Promise<Codex
     const parsed = JSON.parse(stdout) as { models?: RawCodexModel[] };
     const dynamic = (parsed.models ?? [])
       .filter(m => m.slug && m.visibility === 'list')
-      .map(m => ({ id: m.slug!, name: m.display_name || m.slug!, description: m.description }));
+      .map(m => ({
+        id:            m.slug!,
+        name:          m.display_name || m.slug!,
+        description:   m.description,
+        efforts:       (m.supported_reasoning_levels ?? []).filter(l => l.effort).map(l => ({ id: l.effort!, description: l.description })),
+        defaultEffort: m.default_reasoning_level,
+        upgrade:       m.upgrade?.model,
+      }));
 
     const models = [AUTO_SENTINEL, ...dynamic];
     cache = { at: Date.now(), models };

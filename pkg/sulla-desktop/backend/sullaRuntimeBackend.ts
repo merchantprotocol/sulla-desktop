@@ -17,6 +17,7 @@ import merge from 'lodash/merge';
 import omit from 'lodash/omit';
 import yaml from 'yaml';
 
+import { SULLA_FILES_FUSE_HEALTHCHECK, SULLA_FILES_HEALTHCHECK } from './sullaFilesHealthchecks';
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import {
@@ -24,28 +25,42 @@ import {
 } from './bundledImages';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
-import { FILES_TLS_DIRECTORY, filesTlsBind } from './filesTlsIdentity';
-import { VAULT_TLS_DIRECTORY, vaultTlsBind } from './vaultTlsIdentity';
+import { filesTlsBind } from './filesTlsIdentity';
+import { vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
+import { UserStoppedContainers } from './sullaContainerHealth';
 import {
-  ContainerHealPlanner, DOCKER_MANAGED_CONTAINERS, describeHealAction, type HealAction, type ManagedContainerRow,
-  UserStoppedContainers,
-} from './sullaContainerHealth';
-import {
-  clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName,
+  clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName, SULLA_COMPOSE_COMMAND,
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import { ComposeDriftActions } from './ComposeDriftActions';
+import { ComposeSecretGuard } from './ComposeSecretGuard';
+import { ContainerDriftReconciler } from './ContainerDriftReconciler';
+import { PostgresAuthLifecycle } from './PostgresAuthLifecycle';
+import { GuestServiceSecretInstallState } from './GuestServiceSecretInstallState';
+import { ServiceSecretComposeValues } from './ServiceSecretComposeValues';
+import { SullaComposeRegeneration } from './SullaComposeRegeneration';
+import {
+  ComposeContainerNameReconciler, ComposeServiceHealthWaiter, type ComposeServiceTarget, type DockerCli,
+} from './sullaComposeContainers';
+import { NamedVolumeMigrator, type NamedVolumeSpec } from './sullaVolumeMigration';
 import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare, SullaRuntimeStartError } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
+import { GuestTlsIdentityProvisioner } from './sullaRuntime/GuestTlsIdentityProvisioner';
+import { HostServiceIdentityStore } from './sullaRuntime/HostServiceIdentityStore';
+import { ManagedContainerHealthWatcher } from './sullaRuntime/ManagedContainerHealthWatcher';
+import { SullaServiceImageFreshness } from './sullaRuntime/SullaServiceImageFreshness';
+import { SullaAccountsDatabaseRepository } from './Repositories/SullaAccountsDatabaseRepository';
 import { sullaRuntimeShareList } from './sullaRuntime/shares';
 import {
   assertSupportedOnSullaRuntime, isSullaRuntimeActive, setSullaOptionalServicesPlanned, setSullaRuntimeActive, setSullaRuntimeStartFailure,
   SullaRuntimeUnsupportedError, takeSullaRuntimeSuspendRequest,
 } from './sullaRuntime/state';
 
+import { serviceSecretProvider } from '@pkg/agent/app/Providers/ServiceSecretServiceProvider';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import PROVISION_VAULT_TLS from '@pkg/assets/scripts/provision-vault-tls';
 import PROVISION_FILES_TLS from '@pkg/assets/scripts/provision-files-tls';
@@ -66,7 +81,6 @@ import { expectVaultContainer, instantiateSullaStart, markSullaDockerServicesSta
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
-import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import { sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
@@ -127,6 +141,11 @@ const OPTIONAL_SERVICE_RECONCILE_MS = 60_000;
 /** How long Docker may take to answer after the guest reports it ready. */
 const DOCKER_API_TIMEOUT_MS = 120_000;
 
+/** Stateful services whose image declares a VOLUME the compose file now names. */
+const SULLA_NAMED_VOLUME_MIGRATIONS: ReadonlyArray<NamedVolumeSpec> = [
+  { service: 'redis', container: 'sulla_redis', mountPath: '/data', volume: 'sulla_redis_data', composeVolume: 'sulla_redis_data' },
+];
+
 /**
  * The VM or its Docker did not come up. `message` is written for the user
  * (background.ts shows it with Try again); the cause stays in the log.
@@ -172,6 +191,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     mainEvents.on('sulla-container-intent', (intent, names) => {
       this.#userStopped.record(intent, names);
     });
+    // The service secret: tell the provider how to inspect and open the guest
+    // database, and regenerate compose when the database's value wins.
+    serviceSecretProvider.useInstallState(new GuestServiceSecretInstallState(
+      this.#quietGuestDocker, target => this.waitForDockerServiceHealthy(target, 300),
+    ));
+    serviceSecretProvider.onChange(reason => this.regenerateComposeAfterSecretChange(reason));
   }
 
   readonly executor = this;
@@ -194,9 +219,54 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #managedServicesGeneration = 0;
   /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
   #staleFilesAdapters = new Set<string>();
-  #healPlanner = new ContainerHealPlanner();
+  /** Every compose service with a fixed container_name, from the last prepared compose file. */
+  #composeTargets: ComposeServiceTarget[] = [];
+  readonly #guestDocker: DockerCli = { run: args => this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', ...args) };
+  /**
+   * Guest Docker that never logs command output: used where stdout carries the service secret.
+   * Bounded; SIGKILL because spawnFile treats a SIGTERM exit as success (empty output would read as "fresh").
+   */
+  readonly #quietGuestDocker: DockerCli = {
+    run: async args => (await childProcess.spawnFile(paths.sullaRuntime, this.guestExecArgs({ root: true }, ['docker', ...args]),
+      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'], timeout: GuestServiceSecretInstallState.DOCKER_TIMEOUT_MS, killSignal: 'SIGKILL' })).stdout,
+  };
+  /** Finds compose containers by label and heals names left by an interrupted re-create. */
+  readonly #composeContainers = new ComposeContainerNameReconciler(this.#guestDocker, 'sulla', console);
+  readonly #composeHealth = new ComposeServiceHealthWaiter(this.#guestDocker, this.#composeContainers);
+  readonly #volumeMigrator = new NamedVolumeMigrator(this.#guestDocker, this.#composeContainers, 'sulla', console);
   /** Sulla containers the person stopped from the Docker tab; supervision leaves them stopped. */
   readonly #userStopped = new UserStoppedContainers();
+  readonly #healthWatcher = new ManagedContainerHealthWatcher(
+    this, this.#userStopped,
+    async() => (await import('@pkg/agent/services/AgentContainerLauncher')).repairHostRelay(),
+    error => error instanceof ManagedServicesReconciliationCancelled,
+  );
+  readonly #identityStore = new HostServiceIdentityStore(() => Electron.safeStorage, () => paths.appHome);
+  readonly #tlsIdentities = new GuestTlsIdentityProvisioner(
+    this, { vault: PROVISION_VAULT_TLS, files: PROVISION_FILES_TLS },
+    { refreshVault: refreshVaultPinnedSessions, refreshFiles: refreshFilesPinnedSessions }, () => paths.appHome,
+  );
+  readonly #imageFreshness = new SullaServiceImageFreshness(this, this.#managedSullaRefreshImages, this.#pinnedSullaImages,
+    (target, timeoutSec, generation) => this.waitForDockerServiceHealthy(target, timeoutSec, generation));
+  readonly #accountsDatabase = new SullaAccountsDatabaseRepository({
+    capture: args => this.execCommand({ capture: true, root: true }, ...args),
+    run:     args => this.execCommand({ root: true }, ...args),
+  });
+  readonly #driftActions = new ComposeDriftActions(this.#guestDocker, (...command) => this.execCommand({ root: true }, ...command),
+    (target, timeoutSec) => this.waitForDockerServiceHealthy(target, timeoutSec), console);
+  /** Mid-session drift sweeps share one reconciler so a container that cannot converge is not recreated in a loop. */
+  readonly #composeDrift = new ContainerDriftReconciler(this.#guestDocker, SULLA_COMPOSE_COMMAND.slice(1),
+    service => this.#driftActions.recreate(service), console, target => this.#driftActions.settle(target));
+  readonly #composeRegeneration = new SullaComposeRegeneration(async() => {
+    await this.prepareSullaComposeFile();
+
+    // The Files mount manager owns the FUSE adapter, and on-demand runtimes
+    // may be mid-invocation; neither carries the service secret.
+    return this.#composeTargets.filter(target => target.service !== 'sulla_files_fuse' && !(target.service in ON_DEMAND_SERVICES));
+  }, this.#composeDrift, console);
+  /** Network logins to PostgreSQL: role password follows the secret, then trust → scram (backend/PostgresAuthLifecycle.ts). */
+  readonly #postgresAuth = PostgresAuthLifecycle.forGuest({ binary: paths.sullaRuntime, guestArgs: command => this.guestExecArgs({ root: true }, command), drift: this.#composeDrift,
+    waitServiceHealthy: (target, timeoutSec) => this.waitForDockerServiceHealthy(target, timeoutSec), accountsPasswordFile: path.join(paths.appHome, 'accounts', 'database.password'), secret: serviceSecretProvider });
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
   /** The native Sulla runtime VM. */
@@ -985,243 +1055,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     throw new Error(message);
   }
 
-  private async loadOrCreateVaultServiceIdentities(): Promise<{
-    bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
-  }> {
-    if (!Electron.safeStorage.isEncryptionAvailable()) {
-      throw new Error('OS-protected storage is required for the local vault service identities');
-    }
-    const files = {
-      bootstrapToken: 'vault-bootstrap-identity.enc',
-      controlToken:   'vault-control-token.enc',
-      approvalToken:  'vault-approval-token.enc',
-      brokerToken:    'vault-broker-token.enc',
-      filesToken:     'vault-files-token.enc',
-    } as const;
-    await fs.promises.mkdir(paths.appHome, { recursive: true });
-    const readProtected = async(file: string): Promise<string | undefined> => {
-      try {
-        const value = Electron.safeStorage.decryptString(await fs.promises.readFile(path.join(paths.appHome, file)));
-        return value.length >= 32 ? value : undefined;
-      } catch {
-        return undefined;
-      }
-    };
-    let identities = {
-      bootstrapToken: await readProtected(files.bootstrapToken),
-      controlToken:   await readProtected(files.controlToken),
-      approvalToken:  await readProtected(files.approvalToken),
-      brokerToken:    await readProtected(files.brokerToken),
-      filesToken:     await readProtected(files.filesToken),
-    };
-    if (Object.values(identities).some(value => !value) || new Set(Object.values(identities)).size !== 5) {
-      identities = {
-        bootstrapToken: crypto.randomBytes(48).toString('base64url'),
-        controlToken:   crypto.randomBytes(48).toString('base64url'),
-        approvalToken:  crypto.randomBytes(48).toString('base64url'),
-        brokerToken:    crypto.randomBytes(48).toString('base64url'),
-        filesToken:     crypto.randomBytes(48).toString('base64url'),
-      };
-    }
-    const writeProtected = async(file: string, value: string): Promise<void> => {
-      const target = path.join(paths.appHome, file);
-      const temporary = `${ target }.${ process.pid }.tmp`;
-      await fs.promises.writeFile(temporary, Electron.safeStorage.encryptString(value), { mode: 0o600 });
-      await fs.promises.rename(temporary, target);
-    };
-    // Repair every exported role identity on every start. These files contain
-    // only safeStorage ciphertext and are never mounted into a container.
-    await writeProtected(files.bootstrapToken, identities.bootstrapToken!);
-    await writeProtected(files.controlToken, identities.controlToken!);
-    await writeProtected(files.approvalToken, identities.approvalToken!);
-    await writeProtected(files.brokerToken, identities.brokerToken!);
-    await writeProtected(files.filesToken, identities.filesToken!);
-
-    return identities as {
-      bootstrapToken: string; controlToken: string; approvalToken: string; brokerToken: string; filesToken: string;
-    };
-  }
-
-  /**
-   * Run a TLS identity script (stdout is the public certificate). The Sulla
-   * runtime guest may lack openssl; there the same script runs in a throwaway
-   * Alpine container that sees only Sulla's guest state directories, so the
-   * private key still never leaves the guest disk.
-   */
-  private async provisionGuestTlsIdentity(script: string, ...args: string[]): Promise<string> {
-    // openssl ships in the runtime guest image; the guest cannot install packages.
-    const hasOpenssl = await this.execCommand({ root: true, expectFailure: true }, 'sh', '-c', 'command -v openssl >/dev/null').then(() => true, () => false);
-    if (!hasOpenssl) {
-      throw new Error('The Sulla runtime guest has no openssl, so it cannot create its TLS identities. Update Sulla Desktop to a runtime that includes it.');
-    }
-
-    return await this.execCommand({ capture: true, root: true }, 'sh', '-c', script, '--', ...args);
-  }
-
-  private async prepareVaultTlsIdentity(): Promise<{ fingerprint: string }> {
-    const certificate = await this.provisionGuestTlsIdentity(
-      PROVISION_VAULT_TLS, VAULT_TLS_DIRECTORY, '/var/lib/sulla/vault-tls', '1000', '1000',
-    );
-    const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
-    // The identity directory is 0700 and contains a private key. Publish only
-    // the public certificate for the unprivileged native console proxy.
-    await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
-    await this.writeFile('/etc/sulla-console/vault.crt', certificate, 0o644);
-    await fs.promises.mkdir(paths.appHome, { recursive: true });
-    await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-certificate.pem'), certificate, { mode: 0o600 });
-    await fs.promises.writeFile(path.join(paths.appHome, 'vault-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
-
-    await refreshVaultPinnedSessions();
-
-    return { fingerprint };
-  }
-
-  private async loadOrCreateFilesBootstrapIdentity():Promise<string> {
-    if (!Electron.safeStorage.isEncryptionAvailable()) throw new Error('OS-protected storage is required for Files bootstrap');
-    const target = path.join(paths.appHome, 'files-bootstrap-identity.enc');
-    let encrypted:Buffer;
-    try {
-      encrypted = await fs.promises.readFile(target);
-      const token = Electron.safeStorage.decryptString(encrypted);
-      if (Buffer.byteLength(token) < 32) throw new Error('Existing Files bootstrap identity is invalid');
-      return token;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    const token = crypto.randomBytes(48).toString('base64url');
-    await fs.promises.mkdir(paths.appHome, { recursive: true });
-    const temporary = `${ target }.${ process.pid }.tmp`;
-    const protectedToken = Electron.safeStorage.encryptString(token);
-    try {
-      const file = await fs.promises.open(temporary, 'wx', 0o600);
-      try { await file.writeFile(protectedToken); await file.sync() } finally { await file.close() }
-      try { await fs.promises.link(temporary, target) } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        const concurrent = Electron.safeStorage.decryptString(await fs.promises.readFile(target));
-        if (Buffer.byteLength(concurrent) < 32) throw new Error('Concurrent Files bootstrap identity is invalid');
-        return concurrent;
-      }
-      const directory = await fs.promises.open(path.dirname(target), fs.constants.O_RDONLY);
-      try { await directory.sync() } finally { await directory.close() }
-    } finally {
-      protectedToken.fill(0);
-      await fs.promises.unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error });
-    }
-    return token;
-  }
-
-  private async prepareAccountsSecrets(databasePassword: string):Promise<{
-    bootstrap:        string;
-    databasePassword: string;
-    databaseUsername: string;
-    encryption:       string;
-    session:          string;
-  }> {
-    const directory = path.join(paths.appHome, 'accounts');
-
-    const directoryInfo = await fs.promises.lstat(directory).catch(error => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw error;
-    });
-    if (directoryInfo?.isSymbolicLink() || (directoryInfo && !directoryInfo.isDirectory())) {
-      throw new Error('Accounts secret directory is not a regular directory');
-    }
-    await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
-    await fs.promises.chmod(directory, 0o700);
-
-    const writeAtomic = async(target: string, value: Buffer | string):Promise<void> => {
-      const targetInfo = await fs.promises.lstat(target).catch(error => {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-        throw error;
-      });
-      if (targetInfo?.isSymbolicLink() || (targetInfo && !targetInfo.isFile())) {
-        throw new Error(`Accounts secret path is not a regular file: ${ path.basename(target) }`);
-      }
-      const temporary = `${ target }.${ process.pid }.${ crypto.randomUUID() }.tmp`;
-      const handle = await fs.promises.open(temporary, 'wx', 0o600);
-      try {
-        await handle.writeFile(value);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      try {
-        await fs.promises.rename(temporary, target);
-        await fs.promises.chmod(target, 0o600);
-      } finally {
-        await fs.promises.unlink(temporary).catch(error => {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        });
-      }
-    };
-    const loadExisting = async(target: string):Promise<Buffer | undefined> => {
-      let handle:fs.promises.FileHandle;
-      try {
-        handle = await fs.promises.open(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-        throw error;
-      }
-      try {
-        const info = await handle.stat();
-        if (!info.isFile()) throw new Error(`Accounts secret path is not a regular file: ${ path.basename(target) }`);
-        await handle.chmod(0o600);
-        return await handle.readFile();
-      } finally {
-        await handle.close();
-      }
-    };
-    const loadOrCreateRaw = async(name: string, bytes: number):Promise<string> => {
-      const target = path.join(directory, name);
-      const existing = await loadExisting(target);
-      if (existing) {
-        if (existing.byteLength !== bytes) throw new Error(`Existing Accounts ${ name } has an invalid length`);
-      } else {
-        const secret = crypto.randomBytes(bytes);
-        try { await writeAtomic(target, secret) } finally { secret.fill(0) }
-      }
-      return target;
-    };
-    const loadOrCreateBearer = async(name: string):Promise<string> => {
-      const target = path.join(directory, name);
-      const existing = await loadExisting(target);
-      if (existing) {
-        const value = existing.toString('utf8').trim();
-        if (!/^[A-Za-z0-9_-]{64}$/.test(value)) throw new Error(`Existing Accounts ${ name } has an invalid format`);
-      } else {
-        const secret = crypto.randomBytes(48).toString('base64url');
-        await writeAtomic(target, secret);
-      }
-      return target;
-    };
-    const databaseUsername = path.join(directory, 'database.username');
-    const databasePasswordPath = path.join(directory, 'database.password');
-
-    await writeAtomic(databaseUsername, 'sulla');
-    await writeAtomic(databasePasswordPath, databasePassword);
-
-    return {
-      bootstrap:         await loadOrCreateBearer('bootstrap.secret'),
-      databasePassword: databasePasswordPath,
-      databaseUsername,
-      encryption:        await loadOrCreateRaw('encryption.key', 32),
-      session:           await loadOrCreateRaw('session.secret', 48),
-    };
-  }
-
-  private async prepareFilesTlsIdentity():Promise<{ fingerprint:string }> {
-    const { uid, gid } = os.userInfo();
-    const certificate = await this.provisionGuestTlsIdentity(PROVISION_FILES_TLS, FILES_TLS_DIRECTORY, String(uid), String(gid));
-    const fingerprint = new crypto.X509Certificate(certificate).fingerprint256;
-    await this.execCommand({ root: true }, 'mkdir', '-p', '-m', '755', '/etc/sulla-console');
-    await this.writeFile('/etc/sulla-console/files.crt', certificate, 0o644);
-    await fs.promises.mkdir(paths.appHome, { recursive: true });
-    await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-certificate.pem'), certificate, { mode: 0o600 });
-    await fs.promises.writeFile(path.join(paths.appHome, 'files-tls-fingerprint'), `${ fingerprint }\n`, { mode: 0o600 });
-    await refreshFilesPinnedSessions();
-    return { fingerprint };
-  }
-
   /**
    * Prepares the Docker Compose file for Sulla services by parsing and modifying dynamic values like passwords.
    */
@@ -1293,8 +1126,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
-    const rawSullaServicePassword = await SullaSettingsModel.getServicePassword();
-    const sullaServicePassword = escapeForCompose(rawSullaServicePassword);
+    // Waits for a readable settings store; never a hardcoded fallback credential.
+    const serviceSecret = await ServiceSecretComposeValues.resolve(serviceSecretProvider);
     const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
     let sullaApiToken = '';
     try {
@@ -1306,10 +1139,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const { chatCompletionsPort } = await import('@pkg/main/chatCompletionsServer');
     const chatApiPort = await chatCompletionsPort();
     sullaApiToken = escapeForCompose(sullaApiToken);
-    const filesBootstrapIdentity = await this.loadOrCreateFilesBootstrapIdentity();
-    const { fingerprint: filesTlsFingerprint } = await this.prepareFilesTlsIdentity();
+    const filesBootstrapIdentity = await this.#identityStore.loadOrCreateFilesBootstrapIdentity();
+    const { fingerprint: filesTlsFingerprint } = await this.#tlsIdentities.prepareFilesTlsIdentity();
     try {
-      const accountsSecrets = await this.prepareAccountsSecrets(rawSullaServicePassword);
+      const accountsSecrets = await this.#identityStore.prepareAccountsSecrets(serviceSecret.raw);
       // The host files remain the value store; the container binds a
       // root-owned guest copy because the VM cannot see host paths.
       await provisionAccountsSecretsInGuest({
@@ -1377,8 +1210,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     } | undefined;
     let vaultTlsFingerprint: string | undefined;
     if (settingsImpl.getSettings().experimental.sullaVaultV2Enabled) {
-      vaultIdentities = await this.loadOrCreateVaultServiceIdentities();
-      ({ fingerprint: vaultTlsFingerprint } = await this.prepareVaultTlsIdentity());
+      vaultIdentities = await this.#identityStore.loadOrCreateVaultServiceIdentities();
+      ({ fingerprint: vaultTlsFingerprint } = await this.#tlsIdentities.prepareVaultTlsIdentity());
       const vaultImage = resolveSullaServiceImage(
         'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
       );
@@ -1404,9 +1237,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           // 256 MB at moderate cost) lives outside the heap, so the limit stays.
           NODE_OPTIONS: serviceNodeOptions(256),
           SULLA_VAULT_MODE: 'desktop',
-          SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
-          SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla_vault`,
-          SULLA_VAULT_LEGACY_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+          // SULLA_VAULT_*DATABASE_URL: set by serviceSecret.applyTo(compose) below.
           SULLA_VAULT_BOOTSTRAP_TOKEN: vaultIdentities.bootstrapToken,
           SULLA_VAULT_DESKTOP_CONTROL_TOKEN: vaultIdentities.controlToken,
           SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
@@ -1473,7 +1304,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       environment: {
         NODE_OPTIONS: serviceNodeOptions(256),
         SULLA_WORKFLOW_ROLE: 'manager',
-        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        // SULLA_DATABASE_URL: set by serviceSecret.applyTo(compose) below.
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
         SULLA_TOOL_API_URL: `http://host.docker.internal:${ chatApiPort }`,
@@ -1558,13 +1389,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // The agent tool code in this image opens its own PostgresClient pool
         // (default 20) next to the service pool above; one caller needs few.
         SULLA_DATABASE_POOL_MAX: '5',
-        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        // SULLA_DATABASE_URL and SULLA_FILES_CAPABILITY_SECRET: set by serviceSecret.applyTo(compose) below.
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
         SULLA_FILES_API_URL:     'https://sulla_files:8792',
         SULLA_FILES_TLS_CA_FILE: '/run/sulla-files-ca/tls.crt',
-        SULLA_FILES_CAPABILITY_SECRET: sullaServicePassword,
         ...(vaultIdentities ? {
           SULLA_VAULT_BROKER_URL:        'https://sulla_vault:8787',
           SULLA_VAULT_BROKER_SERVICE_ID: 'sulla-tools',
@@ -1610,7 +1440,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // 512 is the real heap; the rest of mem_limit covers the Potion table,
         // chunk buffers and the OCR/Whisper/ffmpeg child processes.
         NODE_OPTIONS:                      serviceNodeOptions(512, 4),
-        SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServicePassword }@postgres:5432/sulla`,
+        // SULLA_FILES_DATABASE_URL, _CAPABILITY_SIGNING_KEY, _LOCAL_TOKEN: set by serviceSecret.applyTo(compose) below.
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
         SULLA_FILES_STORED_ONLY:           '1',
@@ -1620,8 +1450,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...((cloudDeviceId: string | null) => (cloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: cloudDeviceId } : {}))(readExistingDesktopDeviceId()),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
-        SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
-        SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
         SULLA_FILES_BOOTSTRAP_SERVICE_ID:  'sulla-desktop-files-bootstrap',
         SULLA_FILES_BOOTSTRAP_TOKEN:       filesBootstrapIdentity,
         SULLA_FILES_TLS_CERTIFICATE_PATH:  '/run/sulla-files-tls/tls.crt',
@@ -1664,12 +1492,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       restart: 'unless-stopped',
       // 1g OOM-killed Files every ~90s on 2026-11-13: steady state is ~1.2g (512 MiB heap plus ~700 MiB native: Potion table, chunk buffers).
       mem_limit: '2g',
+      // BusyBox wget against Files' loopback-only plain-HTTP /healthz: no Node runtime and no TLS
+      // per tick (the old `node -e` https probe cost ~35% of a CPU on a busy 3-vCPU VM and timed
+      // out under load). The node probe remains only as a fallback for an image that predates the
+      // loopback listener. 10s x 6 = a minute of failures before Docker says unhealthy, then the
+      // heal planner still needs UNHEALTHY_TICKS_BEFORE_RESTART one-minute observations.
       healthcheck: {
-        test: [
-          'CMD', 'node', '-e',
-          "const fs=require('fs'),https=require('https');const r=https.get({hostname:'127.0.0.1',port:8792,path:'/healthz',ca:fs.readFileSync('/run/sulla-files-tls/tls.crt')},x=>{x.resume();process.exit(x.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(2500,()=>r.destroy())",
-        ],
-        interval: '5s', timeout: '3s', retries: 10, start_period: '10m',
+        test: ['CMD-SHELL', SULLA_FILES_HEALTHCHECK],
+        interval: '10s', timeout: '5s', retries: 6, start_period: '10m',
       },
     };
 
@@ -1717,25 +1547,21 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         cpus:         0.5,
         depends_on:   { sulla_files: { condition: 'service_healthy' } },
         restart:      'unless-stopped',
+        // The adapter is healthy while its FUSE mount is live and its event loop keeps rewriting
+        // the status file (every 5 s). It no longer starts Python and a TLS round trip to Files
+        // each tick, and a slow Files no longer gets the mount restarted (which would break every
+        // open handle with ENOTCONN); the adapter retries Files itself.
         healthcheck: {
-          test: [
-            'CMD', 'python3', '-c',
-            "import os,ssl,urllib.request; assert os.path.ismount('/mnt/sulla-files'); urllib.request.urlopen('https://sulla_files:8792/healthz', context=ssl.create_default_context(cafile='/run/sulla-files-ca/tls.crt'), timeout=2).read(1)",
-          ],
-          interval: '5s', timeout: '3s', retries: 10,
+          test: ['CMD-SHELL', SULLA_FILES_FUSE_HEALTHCHECK],
+          interval: '10s', timeout: '5s', retries: 6, start_period: '2m',
         },
       };
     }
 
     // Modify dynamic values like passwords
-    if (compose.services?.postgres?.environment) {
-      compose.services.postgres.environment = compose.services.postgres.environment.map((env: string) => {
-        if (env.startsWith('POSTGRES_PASSWORD=')) {
-          return `POSTGRES_PASSWORD=${ sullaServicePassword }`;
-        }
-        return env;
-      });
-    }
+    // Every secret-bearing env var (service DATABASE_URLs, Files tokens, the
+    // PostgreSQL password) is set here and only here, for every generation.
+    serviceSecret.applyTo(compose);
 
     compose.volumes ??= {};
     compose.volumes['sulla-vault-data'] ??= {};
@@ -1771,7 +1597,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
+    // Never write a file where a service lacks its secret env or carries a fallback credential.
+    new ComposeSecretGuard(serviceSecret).assert(compose, composeYaml);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
+    this.#composeTargets = ComposeContainerNameReconciler.targetsOf(compose);
   }
 
   /**
@@ -1840,17 +1669,36 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     if (sinceLast < 30_000 && this.#lastFilesGuestMountFailure) throw new Error(this.#lastFilesGuestMountFailure);
     this.#lastGuestRecovery = Date.now();
-    await this.prepareSullaComposeFile();
-    this.assertManagedServicesGeneration(generation);
-    if (!getSullaFilesMountManager().guestMountAvailable()) {
-      throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
-    }
-    await reconcileComposeService({
-      composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'],
-      service:        'workflow_manager',
-      run:            (...command) => this.execCommand({ root: true }, ...command),
-      checkpoint:     () => this.assertManagedServicesGeneration(generation),
+    // Every other running container drifted by the new file is recreated too
+    // (it used to keep its old definition until the next boot).
+    await this.#composeRegeneration.run('Files guest mount recovery', {
+      checkpoint:  () => this.assertManagedServicesGeneration(generation),
+      beforeSweep: async() => {
+        if (!getSullaFilesMountManager().guestMountAvailable()) {
+          throw new Error(this.#lastFilesGuestMountFailure ?? 'the guest anchor is not prepared');
+        }
+        await reconcileComposeService({
+          composeCommand: [...SULLA_COMPOSE_COMMAND],
+          service:        'workflow_manager',
+          run:            (...command) => this.execCommand({ root: true }, ...command),
+          checkpoint:     () => this.assertManagedServicesGeneration(generation),
+        });
+      },
     });
+  }
+
+  /**
+   * The settings database held a different service secret than the one the
+   * running containers were given: rewrite compose with it and recreate every
+   * running container whose definition changed. Before the first compose file
+   * exists there is nothing to do; boot writes the new value.
+   */
+  private async regenerateComposeAfterSecretChange(reason: string): Promise<void> {
+    await this.#managedServicesReconciliation?.catch(() => undefined);
+    if (this.#composeTargets.length === 0) return;
+    const generation = this.#managedServicesGeneration;
+
+    await this.#postgresAuth.aroundSecretChange(() => this.#composeRegeneration.run(`service secret: ${ reason }`, { checkpoint: () => this.assertManagedServicesGeneration(generation) }));
   }
 
   /**
@@ -1941,8 +1789,35 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         }
       };
 
+      // Desktop leaves some running containers alone below (a live Files
+      // starter, a service still in its start period). Compose's own diff never
+      // runs for those, so compare their config hash with the file just written:
+      // a drifted one (e.g. stale env after the service secret changed) is
+      // recreated; an unchanged one is left alone.
+      const configDrift = new ContainerDriftReconciler(this.#guestDocker, composeCommand.slice(1), startOptionalService, console,
+        target => this.#driftActions.settle(target));
+
       // Retire the old Desktop board container; preserve all database data.
       await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);
+
+      // An interrupted compose re-create can leave a container under
+      // `<id>_<name>` with nothing under its real name. Compose still treats it
+      // as current, so heal the names before compose and the health waits run.
+      await this.#composeContainers.reconcile(this.#composeTargets)
+        .catch(error => console.warn('[Sulla] Could not check compose container names:', (error as Error)?.message?.split('\n')[0]));
+      // Move data off anonymous volumes before compose switches the service to its named one.
+      for (const spec of SULLA_NAMED_VOLUME_MIGRATIONS) {
+        try {
+          const result = await this.#volumeMigrator.migrate(spec);
+
+          if (result.kind === 'migrated') firstRunTrace('services', 'volume migrated', { service: spec.service, from: result.source, to: spec.volume });
+        } catch (error) {
+          // Redis keeps no persistent data (no snapshots, no AOF): never hold startup on it.
+          // The anonymous volume is never deleted, so a failed copy loses nothing.
+          console.warn(`[Sulla] Could not move ${ spec.service } data to volume ${ spec.volume }; continuing:`, (error as Error)?.message?.split('\n')[0]);
+        }
+        this.assertManagedServicesGeneration(generation);
+      }
 
       // Postgres and Redis are stable data services. Compose pulls them only when
       // missing; Desktop does not force-refresh their upstream image tags.
@@ -1952,9 +1827,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       );
       this.assertManagedServicesGeneration(generation);
       await Promise.all([
-        this.waitForDockerServiceHealthy('sulla_postgres', 300, generation),
-        this.waitForDockerServiceHealthy('sulla_redis', 300, generation),
+        this.waitForDockerServiceHealthy({ service: 'postgres', container: 'sulla_postgres' }, 300, generation),
+        this.waitForDockerServiceHealthy({ service: 'redis', container: 'sulla_redis' }, 300, generation),
       ]);
+      await this.#postgresAuth.afterPostgresHealthy();
       mainEvents.emit('first-run-ai-runtime-ready');
 
       this.#activeOptionalSullaServices.clear();
@@ -1976,16 +1852,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
       if (configuredServices.split(/\s+/).includes('sulla_accounts')) {
         try {
-          const accountsDatabaseExists = await this.execCommand(
-            { capture: true, root: true }, 'docker', 'exec', 'sulla_postgres',
-            'psql', '-U', 'sulla', '-d', 'postgres', '-tAc', "SELECT 1 FROM pg_database WHERE datname='sulla_accounts'",
-          );
-          if (accountsDatabaseExists.trim() !== '1') {
-            await this.execCommand(
-              { root: true }, 'docker', 'exec', 'sulla_postgres',
-              'createdb', '-U', 'sulla', '--encoding=UTF8', '--template=template0', 'sulla_accounts',
-            );
-          }
+          await this.#accountsDatabase.ensureExists();
           optionalServices.push({ service: 'sulla_accounts', container: 'sulla_accounts' });
         } catch (error) {
           console.warn('[Sulla] Accounts database provisioning failed; continuing without the optional service:', error);
@@ -2098,13 +1965,17 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               if (service === 'sulla_files') {
                 if (!state.startsWith('running')) {
                   await startOptionalService(service);
-                } else if (await this.sullaServiceImageIsStale(container, service, generation)) {
+                } else if (await this.#imageFreshness.isStale(container, service, generation)) {
                   await startOptionalService(service);
+                } else {
+                  await configDrift.reconcile(entry);
                 }
               } else if (state !== 'running starting') {
                 await startOptionalService(service);
+              } else {
+                await configDrift.reconcile(entry);
               }
-              await this.waitForDockerServiceHealthy(container, service === 'sulla_files' ? 600 : 20, generation);
+              await this.waitForDockerServiceHealthy(entry, service === 'sulla_files' ? 600 : 20, generation);
               this.#activeOptionalSullaServices.add(service);
               bootStatus.set(service, 'healthy');
               if (service === 'sulla_vault') markVaultContainerReady();
@@ -2125,14 +1996,19 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
           this.assertManagedServicesGeneration(generation);
           await Promise.all(orderedOptionalServices.map(run));
+          const allActive = orderedOptionalServices.every(entry => this.#activeOptionalSullaServices.has(entry.service));
+
+          if (allActive || attempt === OPTIONAL_SERVICE_ATTEMPTS) {
+            settleFirstPass();
+            void this.#postgresAuth.afterFirstPass(generation, bootStatus); // in the background: never holds boot
+          }
           if (attempt === 1) {
             console.log(`[Sulla] Boot services: postgres=healthy, redis=healthy, ${
               [...bootStatus].map(([service, status]) => `${ service }=${ status }`).join(', ')
             }`);
           }
           firstRunTrace('services', `optional services attempt ${ attempt }`, Object.fromEntries(bootStatus));
-          if (attempt === OPTIONAL_SERVICE_ATTEMPTS) settleFirstPass();
-          if (orderedOptionalServices.every(entry => this.#activeOptionalSullaServices.has(entry.service))) return;
+          if (allActive) return;
           const delayMs = attempt < OPTIONAL_SERVICE_ATTEMPTS
             ? Math.min(5_000 * attempt, 30_000)
             : OPTIONAL_SERVICE_RECONCILE_MS + Math.round(Math.random() * 15_000);
@@ -2177,7 +2053,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       startReconcile();
       // A desired service with no container at all (never created, or removed)
       // is invisible to the unhealthy-container check; hand it back to the reconcile.
-      this.watchManagedContainerHealth(generation, composeCommand, orderedOptionalServices, (missing) => {
+      this.#healthWatcher.watch(() => this.assertManagedServicesGeneration(generation), composeCommand, orderedOptionalServices, (missing) => {
         for (const entry of missing) this.#activeOptionalSullaServices.delete(entry.service);
         if (this.#wakeOptionalReconcile) this.#wakeOptionalReconcile();
         else if (!reconcileRunning) startReconcile();
@@ -2186,170 +2062,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   /**
-   * Keep managed containers honest: every minute, heal any Sulla container that Docker
-   * reports unhealthy (or restart-looping) past its grace period: restart it first, then
-   * recreate it if the restart did not help (see ContainerHealPlanner). Covers the sulla
-   * compose project and the containers Desktop runs directly (the agent host relay). The
-   * Files adapter's stale guest mount is handled by the Files mount manager, not here.
+   * Waits for a compose service's container to be healthy. The container is
+   * found by its compose labels when it is not under its fixed name, and a
+   * name left over from an interrupted re-create is healed on the way.
    */
-  private watchManagedContainerHealth(
-    generation: number,
-    composeCommand: string[],
-    desired: ReadonlyArray<{ service: string; container: string }>,
-    onMissing: (missing: Array<{ service: string; container: string }>) => void,
-  ): void {
-    this.#healPlanner.reset();
-    let ticking = false;
-    let lastMissing = '';
-    const tick = async(): Promise<void> => {
-      this.assertManagedServicesGeneration(generation);
-      const listing = await this.execCommand(
-        { capture: true, root: true, expectFailure: true }, 'docker', 'ps', '-a',
-        '--format', '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}',
-      );
-      const rows: ManagedContainerRow[] = [];
-
-      for (const line of listing.split('\n').filter(Boolean)) {
-        const [container, project, service] = line.split('\t');
-        const managedBy = project === 'sulla' ? 'compose' : DOCKER_MANAGED_CONTAINERS.includes(container) ? 'docker' : undefined;
-
-        if (!managedBy) continue;
-        const state = (await this.execCommand(
-          { capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
-          '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.State.StartedAt}}', container,
-        ).catch(() => '')).trim().split(' ');
-
-        if (state.length < 3) continue;
-        rows.push({
-          container, service: managedBy === 'compose' ? service : container, managedBy,
-          state: state[0], health: state[1], runningForMs: Date.now() - Date.parse(state[2]),
-        });
-      }
-      // Missing, or stopped for good (exited/dead is not restart-looping, so
-      // the unhealthy check below leaves it alone).
-      const present = new Set(rows.filter(row => row.state !== 'exited' && row.state !== 'dead').map(row => row.container));
-      // A container the person stopped from the Docker tab is not missing; it stays stopped.
-      const missing = this.#userStopped.withoutStopped(desired.filter(entry => !present.has(entry.container)));
-
-      const missingKey = missing.map(entry => entry.container).join(', ');
-
-      if (missingKey !== lastMissing) {
-        if (missingKey) console.warn(`[Sulla] ${ missingKey } not running; reconciling`);
-        lastMissing = missingKey;
-      }
-      if (missing.length) onMissing(missing);
-      for (const action of this.#healPlanner.plan(rows.filter(row => !this.#userStopped.has(row.container)))) {
-        console.warn(describeHealAction(action));
-        await this.runHealAction(action, composeCommand)
-          .catch(error => console.warn(`[Sulla] Could not ${ action.kind } ${ action.container }:`, (error as Error).message?.split('\n')[0]));
-      }
-    };
-    // A failed tick is logged and the next one runs as usual; only the end
-    // of the generation stops the watch. Ticks never overlap.
-    const run = (): void => {
-      if (ticking) return;
-      ticking = true;
-      tick().catch((error) => {
-        if (error instanceof ManagedServicesReconciliationCancelled) clearInterval(timer);
-        else console.warn('[Sulla] Container health check failed; retrying next minute:', (error as Error)?.message?.split('\n')[0]);
-      }).finally(() => { ticking = false });
-    };
-    const timer = setInterval(run, 60_000);
-
-    timer.unref?.();
-    // Containers that survived a crash can be broken before Desktop even starts: sweep once soon
-    // after startup settles instead of waiting a full interval.
-    setTimeout(run, 45_000).unref?.();
-  }
-
-  /** Run one planned heal. The host relay is rebuilt by its launcher, never by compose. */
-  private async runHealAction(action: HealAction, composeCommand: string[]): Promise<void> {
-    if (action.kind === 'give-up') return;
-    if (action.kind === 'restart') {
-      await this.execCommand({ root: true }, 'docker', 'restart', '--time', '10', action.container);
-
-      return;
-    }
-    if (action.managedBy === 'docker') {
-      const { repairHostRelay } = await import('@pkg/agent/services/AgentContainerLauncher');
-
-      await repairHostRelay();
-
-      return;
-    }
-    await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service);
-  }
-
-  /**
-   * After a running service finishes starting, pull its published image and
-   * report whether the container is still on an older one. Failures keep the
-   * running container.
-   */
-  private async sullaServiceImageIsStale(container: string, service: string, generation?: number): Promise<boolean> {
-    await this.waitForDockerServiceHealthy(container, 600, generation);
-    const refreshImage = this.#managedSullaRefreshImages.get(service);
-    const pinnedImage = this.#pinnedSullaImages.get(service);
-
-    if (!refreshImage && pinnedImage) {
-      // Bundled with this app: the container must run exactly that image, never a
-      // leftover (e.g. :latest from an older build). Nothing to pull: it is loaded.
-      try {
-        const [running, pinned] = await Promise.all([
-          this.execCommand({ capture: true, root: true }, 'docker', 'inspect', '--format', '{{.Image}}', container),
-          this.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', pinnedImage),
-        ]);
-
-        return running.trim() !== pinned.trim();
-      } catch (error) {
-        console.warn(`[Sulla] Could not compare ${ container } with its bundled image ${ pinnedImage }; keeping it:`, error);
-
-        return false;
-      }
-    }
-    if (!refreshImage) return false;
-    try {
-      await this.execCommand({ root: true }, 'docker', 'pull', refreshImage);
-      const [running, latest] = await Promise.all([
-        this.execCommand({ capture: true, root: true }, 'docker', 'inspect', '--format', '{{.Image}}', container),
-        this.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', refreshImage),
-      ]);
-
-      return running.trim() !== latest.trim();
-    } catch (error) {
-      console.warn(`[Sulla] Could not check ${ refreshImage } for ${ service }; keeping the running container:`, error);
-
-      return false;
-    }
-  }
-
-  /**
-   * Waits for a specific Docker container to be healthy by polling its status.
-   * @param serviceName The name of the Docker container to check.
-   * @param timeoutSec Maximum time to wait in seconds (default 300).
-   */
-  private async waitForDockerServiceHealthy(serviceName: string, timeoutSec = 300, generation?: number): Promise<void> {
-    const start = Date.now();
-    let delayMs = 300;
-    let lastStatus = 'not created';
-    while (Date.now() - start < timeoutSec * 1000) {
-      if (generation !== undefined) this.assertManagedServicesGeneration(generation);
-      try {
-        const status = await this.execCommand(
-          { capture: true, root: true }, 'docker', 'inspect', '--format',
-          '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}', serviceName,
-        );
-        lastStatus = status.trim();
-        if (lastStatus === 'running healthy' || lastStatus === 'running none') {
-          console.log(`Docker service ${ serviceName } is ready`);
-          return;
-        }
-      } catch {
-        // Service not ready yet
-      }
-      await new Promise(r => setTimeout(r, delayMs));
-      delayMs = Math.min(Math.round(delayMs * 1.5), 1_000);
-    }
-    throw new Error(`Docker service ${ serviceName } not healthy after ${ timeoutSec }s (last status: ${ lastStatus })`);
+  private async waitForDockerServiceHealthy(target: ComposeServiceTarget, timeoutSec = 300, generation?: number): Promise<void> {
+    await this.#composeHealth.waitHealthy(target, timeoutSec,
+      generation === undefined ? undefined : () => this.assertManagedServicesGeneration(generation));
+    console.log(`Docker service ${ target.container } is ready`);
   }
 
   async stop(): Promise<void> {

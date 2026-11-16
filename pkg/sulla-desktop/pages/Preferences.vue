@@ -213,7 +213,11 @@ onBeforeUnmount(() => {
       </nav>
 
       <main class="main">
-        <div class="page narrow">
+        <!-- AI models holds a wide table of roles, models and effort, so it gets the full page width. -->
+        <div
+          class="page"
+          :class="{ narrow: current !== 'models' }"
+        >
           <div
             v-if="!loaded"
             class="loading"

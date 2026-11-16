@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { HeartbeatSeenIssueRepository } from '../../app/Repositories/HeartbeatSeenIssueRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -28,6 +29,10 @@ import { BaseTool, ToolResponse } from '../base';
 export class HeartbeatNewIssuesWorker extends BaseTool {
   name = '';
   description = '';
+
+  protected repository(): HeartbeatSeenIssueRepository {
+    return new HeartbeatSeenIssueRepository(postgresClient);
+  }
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const heartbeatLogin = String(input?.heartbeat_login ?? '').toLowerCase().trim();
@@ -75,26 +80,9 @@ export class HeartbeatNewIssuesWorker extends BaseTool {
     }
 
     // Anti-join against the PG seen-set. One query over just the candidate keys.
-    // Build a VALUES list and match on the composite (owner, repo, number) key.
-    const params: any[] = [];
-    const tuples = notClaimedOnGitHub.map((n) => {
-      const base = params.length;
-      params.push(n.owner, n.repo, n.number);
-      return `($${ base + 1 }, $${ base + 2 }, $${ base + 3 }::int)`;
-    }).join(', ');
-
     let seenKeys = new Set<string>();
     try {
-      const rows = await postgresClient.query<{ repo_owner: string; repo_name: string; issue_number: number }>(
-        `SELECT s.repo_owner, s.repo_name, s.issue_number
-           FROM heartbeat_seen_issues s
-           JOIN (VALUES ${ tuples }) AS c(owner, repo, number)
-             ON s.repo_owner = c.owner
-            AND s.repo_name  = c.repo
-            AND s.issue_number = c.number`,
-        params,
-      );
-      seenKeys = new Set(rows.map(r => `${ r.repo_owner }/${ r.repo_name }#${ r.issue_number }`));
+      seenKeys = await this.repository().seenKeys(notClaimedOnGitHub);
     } catch (error) {
       return {
         successBoolean: false,

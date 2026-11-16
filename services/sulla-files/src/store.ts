@@ -8,8 +8,12 @@ import { constants } from 'node:fs';
 import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import { TransactionScope } from './TransactionScope.js';
+
 export class Store {
   constructor(private root:string) {}
+
+  get rootPath():string { return this.root }
 
   path(collectionId:string, id:string) {
     if (!/^[a-f0-9]{64}$/.test(id) || !/^[\w-]+$/.test(collectionId)) throw new Error('bad chunk');
@@ -22,6 +26,16 @@ export class Store {
       handle = await open(this.path(collectionId, id), constants.O_RDONLY | constants.O_NOFOLLOW);
       return (await handle.stat()).isFile();
     } catch { return false } finally { await handle?.close() }
+  }
+
+  /** Stored (encrypted) size of a chunk, or undefined when it is not in the store. */
+  async storedSize(collectionId:string, id:string):Promise<number | undefined> {
+    let handle;
+    try {
+      handle = await open(this.path(collectionId, id), constants.O_RDONLY | constants.O_NOFOLLOW);
+      const info = await handle.stat();
+      return info.isFile() ? info.size : undefined;
+    } catch { return undefined } finally { await handle?.close() }
   }
 
   async get(collectionId:string, id:string):Promise<Buffer> {
@@ -51,6 +65,8 @@ export class Store {
   }
 
   async put(collectionId:string, id:string, bytes:Uint8Array):Promise<boolean> {
+    // An fsync'd chunk write under load takes seconds: never while a transaction is open.
+    TransactionScope.assertOutside('a chunk store write');
     const target = this.path(collectionId, id);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     const temp = `${ target }.tmp-${ process.pid }-${ randomUUID() }`;

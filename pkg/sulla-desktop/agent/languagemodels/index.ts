@@ -98,22 +98,24 @@ export class LLMRegistryImpl {
    * that model — allowing different slots (primary vs subconscious) to use the
    * same provider at different model tiers.
    */
-  async getServiceByProvider(providerId: string, modelOverride?: string): Promise<BaseLanguageModel> {
+  async getServiceByProvider(providerId: string, modelOverride?: string, effort?: string): Promise<BaseLanguageModel> {
     if (!providerId.trim()) {
       throw new Error('No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.');
     }
-    const key = modelOverride ? `provider:${ providerId }:${ modelOverride }` : `provider:${ providerId }`;
+    // Effort only applies to the CLI providers that take it, and only with an explicit model.
+    const runEffort = modelOverride && (providerId === 'claude-code' || providerId === 'codex') ? effort || '' : '';
+    const key = modelOverride ? `provider:${ providerId }:${ modelOverride }${ runEffort ? `@${ runEffort }` : '' }` : `provider:${ providerId }`;
     let svc = this.services.get(key);
     if (!svc) {
       if (modelOverride && providerId === 'claude-code') {
         // ClaudeCodeService is a singleton — create a fresh instance so the model
         // override doesn't bleed into the primary orchestrator's instance.
         const { createClaudeCodeService } = await import('./ClaudeCodeService');
-        svc = createClaudeCodeService(modelOverride);
+        svc = createClaudeCodeService(modelOverride, runEffort);
       } else if (modelOverride && providerId === 'codex') {
         // Same singleton concern as claude-code.
         const { createCodexService } = await import('./CodexService');
-        svc = createCodexService(modelOverride);
+        svc = createCodexService(modelOverride, runEffort);
       } else if (modelOverride && providerId === 'opencode') {
         const { createOpenCodeService } = await import('./OpenCodeService');
         svc = createOpenCodeService(modelOverride);
@@ -408,7 +410,7 @@ export const modelDispatchService = new ModelDispatchService(
     const { modelRouter } = await import('./modelRouter');
     return modelRouter.resolve(target, choice);
   },
-  (provider, model) => LLMRegistry.getServiceByProvider(provider, model),
+  (provider, model, effort) => LLMRegistry.getServiceByProvider(provider, model, effort),
 );
 
 export const modelRouteService = new ModelRouteService(modelDispatchService, firstRunTrace);
@@ -430,7 +432,7 @@ export const getAgentOverrideService = async(agentCfg?: { model?: string; provid
   }
   return LLMRegistry.getAgentOverrideService(agentCfg);
 };
-export const getServiceByProvider = async(provider: string, model?: string) => LLMRegistry.getServiceByProvider(provider, model);
+export const getServiceByProvider = async(provider: string, model?: string, effort?: string) => LLMRegistry.getServiceByProvider(provider, model, effort);
 export const getHeartbeatService = async() => await LLMRegistry.getHeartbeatLLM();
 export const getSubconsciousService = async() => await LLMRegistry.getSubconsciousLLM();
 

@@ -3,14 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { normalizeFilesIndexCoverage, type FileAccessList, type FilesDataSource, type FilesDetail, type FileShare, type FilesFolderSourceSnapshot, type FilesFolderState, type FilesIndexCoverage, type FilesItem, type FilesOperationCapabilities, type FilesPreview, type FilesSaveConflict, type FilesSaveRequest, type FilesSaveSuccess, type FilesRetentionPolicy, type FilesSnapshot, type FilesTrashFile, type FilesTrashFolder, type FilesTrashItem, type FilesTrashPurgeResult, type FilesTrashRestoreResult, type FilesVersion, type FilesVersioningSettings, type FolderShare, type ShareActivity, type ShareLink, type ShareLinkOptions, type SharePrincipalType } from './types';
-import { fileAccessList, fileShare, filesDetail, filesItem, filesVersion, folderShare, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
+import { filesItem, filesVersion, type FilesApiCollection, type FilesApiFile, type FilesApiRecord } from '../../../../services/sulla-files/web-src/filesApiModels';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { FilesRevealResult, FilesOperationRequest, FilesOperationReceipt, FilesOperationRetry } from './types';
-import { webUtils, type IpcRendererEvent } from 'electron';
+import { DesktopFilesIpcCommands } from './DesktopFilesIpcCommands';
+import { DesktopFilesRecordMapper } from './DesktopFilesRecordMapper';
+import { normalizeFilesIndexCoverage, type FilesDataSource, type FilesFolderState, type FilesFolderSummary, type FilesIndexCoverage, type FilesItem, type FilesPreview, type FilesSnapshot, type FilesVersion } from './types';
+
+import type { IpcRendererEvent } from 'electron';
 import type { SullaFilesNativeRuntimeStatus } from '@pkg/utils/sullaFilesNativeSource';
+
+interface CollectionStats { fileCount:number; totalBytes:number; agentRunCount:number; indexing:FilesIndexCoverage }
 
 interface RemoteCapabilities {
   orgSharing: boolean;
@@ -22,62 +26,9 @@ interface RemoteCapabilities {
   onlineOnlyReason?: string;
 }
 
-interface OperationCapabilities {
-  enabled:boolean;
-  reason?:string;
-  folderReceipts?:boolean;
-  nativeFolderReceipts?:boolean;
-  folderCollisionPolicies?:('replace' | 'keep-both' | 'skip')[];
-  crossCollectionOperations?:'all-authorized' | 'stored-authorized' | 'unavailable';
-}
-
-function operationCapabilities(value:OperationCapabilities):FilesOperationCapabilities {
-  return {
-    enabled:                   value.enabled === true,
-    ...(typeof value.reason === 'string' ? { reason:value.reason } : {}),
-    folderReceipts:            value.folderReceipts === true,
-    nativeFolderReceipts:      value.nativeFolderReceipts === true,
-    folderCollisionPolicies:   Array.isArray(value.folderCollisionPolicies) ? value.folderCollisionPolicies.filter((item):item is 'replace' | 'keep-both' | 'skip' => item === 'replace' || item === 'keep-both' || item === 'skip') : [],
-    crossCollectionOperations: value.crossCollectionOperations === 'all-authorized' || value.crossCollectionOperations === 'stored-authorized' ? value.crossCollectionOperations : 'unavailable',
-  };
-}
-
-function trashItem(value:FilesApiRecord):FilesTrashItem {
-  if (value.kind === 'folder') {
-    return {
-      kind:             'folder',
-      id:               String(value.id),
-      path:             String(value.path),
-      revision:         String(value.revision),
-      deletedAt:        String(value.deleted_at),
-      currentTombstone: value.currentTombstone,
-      capabilities:     value.capabilities,
-    } as FilesTrashFolder;
-  }
-  const item = filesItem(value as FilesApiFile);
-
-  return {
-    ...item,
-    kind:               'file',
-    revision:           String(value.revision),
-    operationRevision:  String(value.revision),
-    currentVersionId:   String(value.currentTombstone?.id),
-    currentTombstone:   value.currentTombstone,
-  } as FilesTrashFile;
-}
-
-function indexCoverage(files:FilesItem[]):FilesIndexCoverage {
-  const coverage = { total: files.length, pending: 0, indexing: 0, indexed: 0, partial: 0, unsupported: 0, failed: 0, complete: true };
-  for (const file of files) {
-    coverage[file.indexStatus]++;
-    if (file.indexStatus === 'indexed' && file.indexReasonCode?.endsWith('_partial')) coverage.partial++;
-  }
-  coverage.complete = coverage.pending === 0 && coverage.indexing === 0 && coverage.partial === 0 && coverage.unsupported === 0 && coverage.failed === 0;
-  return coverage;
-}
-
-export class DesktopFilesDataSource implements FilesDataSource {
-  openPreferences():void { ipcRenderer.send('preferences-open', 'files') }
+/** The Files data source for Sulla Desktop: the open collection, its paged listing and caches, over IPC. */
+export class DesktopFilesDataSource extends DesktopFilesIpcCommands implements FilesDataSource {
+  openPreferences():void { this.ipc.send('preferences-open', 'files') }
   nativeSourceReady = false;
   readonly capabilities = {
     upload:          true,
@@ -101,23 +52,29 @@ export class DesktopFilesDataSource implements FilesDataSource {
 
   onlineOnlyReason = '';
 
-  private files: FilesItem[] = [];
   private filesCursor:string|null = null;
   private filesHasMore = false;
+  private listingPath = '';
   private loadingMore = false;
+  private loadingMorePromise:Promise<FilesItem[]>|null = null;
+  private listingGeneration = 0;
+  private folderListeners = new Set<(files:FilesItem[])=>void>();
+  private statsCache:{ collectionId:string; at:number; value:CollectionStats }|null = null;
+  static readonly statsMaxAgeMs = 30_000;
+  private summaryCache = new Map<string,{ at:number; value:FilesFolderSummary[] }>();
   private watching = false;
   private watchedCollectionId = '';
-  private collectionId = '';
   private rootId = '';
   private capabilitiesGeneration = 0;
   private capabilitiesListeners = new Set<() => void>();
   private nativeRuntimeGeneration = -1;
 
-  constructor() {
+  constructor(ipc: typeof ipcRenderer = ipcRenderer, records = new DesktopFilesRecordMapper()) {
+    super(ipc, records);
     const changed = (_event:IpcRendererEvent, status:SullaFilesNativeRuntimeStatus) => this.applyNativeRuntime(status);
 
-    ipcRenderer.on('files-ui:native-runtime-changed', changed);
-    (ipcRenderer.invoke('files-ui:native-runtime') as Promise<SullaFilesNativeRuntimeStatus>)
+    this.ipc.on('files-ui:native-runtime-changed', changed);
+    (this.ipc.invoke('files-ui:native-runtime') as Promise<SullaFilesNativeRuntimeStatus>)
       .then(status => this.applyNativeRuntime(status))
       .catch(() => this.applyNativeRuntime({ state: 'disabled', ready: false, generation: 0, sourceGrant: 'unsupported' }));
   }
@@ -131,7 +88,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
     this.capabilitiesListeners.forEach(listener => listener());
   }
 
-  selectCollection(collectionId:string):void { this.collectionId = collectionId }
+  selectCollection(collectionId:string):void { if(collectionId!==this.collectionId){this.listingGeneration++;this.listingPath='';this.files=[];this.filesCursor=null;this.filesHasMore=false;} this.collectionId = collectionId }
 
   private resetRemoteCapabilities():void {
     Object.assign(this.capabilities, {
@@ -147,7 +104,7 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   private refreshCapabilities(accessRole:string, generation:number, primaryRoot:boolean):void {
-    (ipcRenderer.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
+    (this.ipc.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
       .then((capabilities) => {
         if (generation !== this.capabilitiesGeneration) return;
         Object.assign(this.capabilities, capabilities, {
@@ -176,6 +133,8 @@ export class DesktopFilesDataSource implements FilesDataSource {
   }
 
   async load():Promise<FilesSnapshot> {
+    const listingGeneration = this.listingGeneration;
+    const listingPath = this.listingPath;
     this.capabilities.durableOperations = false;
     this.capabilities.folderReceipts = false;
     this.capabilities.nativeFolderReceipts = false;
@@ -184,11 +143,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
     const capabilitiesGeneration = ++this.capabilitiesGeneration;
     this.resetRemoteCapabilities();
     const [collections, status, cloudBackupStatus] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
-      ipcRenderer.invoke('files-ui:status'),
-      ipcRenderer.invoke('files-ui:cloud-backup-status').catch(() => null) as Promise<import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus|null>,
+      this.ipc.invoke('sulla-files:collections') as Promise<FilesApiCollection[]>,
+      this.ipc.invoke('files-ui:status'),
+      this.ipc.invoke('files-ui:cloud-backup-status').catch(() => null) as Promise<import('@pkg/main/cloud/filesSyncV1/containerClient').FilesSyncStatus|null>,
     ]);
-    const roots = await ipcRenderer.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
+    const roots = await this.ipc.invoke('files-preferences:list-roots') as { id:string; name:string; collectionId?:string; activation:string; state?:string; pendingFiles?:number; lastError?:string; lastScanAt?:string; lastSyncAt?:string; serverConfigured?:boolean }[];
     const availableCollections = collections.map(collection => ({ id: collection.id,
       name: collection.name || roots.find(root => root.collectionId === collection.id)?.name || collection.explorer_path || '',
       systemArea: (collection as FilesApiCollection & { systemArea?: 'logs' | 'sulla' | null }).systemArea ?? null,
@@ -197,10 +156,11 @@ export class DesktopFilesDataSource implements FilesDataSource {
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
     if (!collection) throw new Error('No Files collection is available yet. Wait for Files to finish starting, then try again.');
+    if (this.collectionId !== collection.id) this.listingPath = '';
     this.collectionId = collection.id;
     if (this.watching && this.watchedCollectionId !== collection.id) {
       this.watchedCollectionId = collection.id;
-      await ipcRenderer.invoke('files-ui:watch', collection.id);
+      await this.ipc.invoke('files-ui:watch', collection.id);
     }
     const currentOperationCapabilities = await this.operationCapabilities(collection.id);
     if (capabilitiesGeneration === this.capabilitiesGeneration) Object.assign(this.capabilities, {
@@ -223,9 +183,10 @@ export class DesktopFilesDataSource implements FilesDataSource {
       status.serverConfigured = selectedRoot.serverConfigured ?? status.serverConfigured;
     }
     this.refreshCapabilities(collection.access_role ?? '', capabilitiesGeneration, selectedRoot?.id === 'default');
-    const [activePage, trash] = await Promise.all([
-      ipcRenderer.invoke('sulla-files:list-page', { collectionId: collection.id }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
-      ipcRenderer.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
+    const [activePage, trash, stats] = await Promise.all([
+      this.ipc.invoke('sulla-files:list-page', { collectionId: collection.id, path:listingPath, children:true }) as Promise<{files:FilesApiFile[];nextCursor:string|null;hasMore:boolean}>,
+      this.ipc.invoke('sulla-files:trash-list', { collectionId: collection.id }) as Promise<FilesApiFile[]>,
+      this.collectionStats(collection.id),
     ]).catch((error) => {
       if (capabilitiesGeneration === this.capabilitiesGeneration) {
         this.capabilitiesGeneration++;
@@ -233,15 +194,22 @@ export class DesktopFilesDataSource implements FilesDataSource {
       }
       throw error;
     });
+    if (listingGeneration !== this.listingGeneration || listingPath !== this.listingPath) return this.load();
 
-    this.files = activePage.files.map(file => filesItem(file));
-    this.filesCursor = activePage.nextCursor;
-    this.filesHasMore = activePage.hasMore;
-    const trashItems = (trash as FilesApiRecord[]).map(trashItem);
+    // File rows are scoped to the open directory; the complete folder tree remains independently paged.
+    const loaded = [...activePage.files];
+    const cursor = activePage.nextCursor;
+    const hasMore = activePage.hasMore;
+    this.files = loaded.map(file => filesItem(file));
+    this.filesCursor = cursor;
+    this.filesHasMore = hasMore && Boolean(cursor);
+    if (this.filesHasMore) void this.completeFolder(listingGeneration,listingPath);
+    this.listingPath = this.listingPath || '';
+    const trashItems = (trash as FilesApiRecord[]).map(record => this.records.trashItem(record));
     if (this.files.some(file => file.syncState === 'conflict')) status.state = 'conflict';
 
     const snapshot:FilesSnapshot = {
-      folders: await ipcRenderer.invoke('sulla-files:folders', { collectionId: collection.id, details: true }).catch(() => []) as FilesFolderState[],
+      folders: await this.ipc.invoke('sulla-files:folders', { collectionId: collection.id, details: true }).catch(() => []) as FilesFolderState[],
       collection: {
         id:              collection.id,
         name:            collection.name,
@@ -250,6 +218,9 @@ export class DesktopFilesDataSource implements FilesDataSource {
         retentionPolicy: collection.retention_policy ?? {},
         storageQuota:    collection.storage_quota === undefined ? undefined : Number(collection.storage_quota),
         keptBytes:       collection.kept_bytes === undefined ? undefined : Number(collection.kept_bytes),
+        fileCount:       stats?.fileCount,
+        totalBytes:      stats?.totalBytes,
+        agentRunCount:   stats?.agentRunCount,
         desktopCount:    collection.desktop_count === undefined ? undefined : Number(collection.desktop_count),
         memberCount:     collection.member_count === undefined ? undefined : Number(collection.member_count),
         accountName:     collection.account_display_name,
@@ -263,226 +234,152 @@ export class DesktopFilesDataSource implements FilesDataSource {
       availableCollections,
       files: this.files,
       trash: trashItems,
-      status: { ...status, indexing: indexCoverage(this.files.filter(file => !file.deletedAt)) },
+      status: { ...status, indexing: stats ? normalizeFilesIndexCoverage(stats.indexing) : this.records.indexCoverage(this.files.filter(file => !file.deletedAt)) },
     };
     return snapshot;
   }
 
-  async loadMore():Promise<FilesItem[]> {
-    if(this.loadingMore || !this.filesHasMore || !this.collectionId) return this.files;
-    this.loadingMore=true;
+  async loadFolder(path:string):Promise<FilesItem[]> {
+    const generation=++this.listingGeneration;
+    this.listingPath=path; this.files=[]; this.filesCursor=null; this.filesHasMore=false;
+    const page=await this.ipc.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+    if(generation!==this.listingGeneration || path!==this.listingPath) return this.files;
+    this.files=page.files.map(file=>filesItem(file)); this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+    void this.completeFolder(generation,path);
+    return this.files;
+  }
+
+  /** Collection-wide totals from the server; cached briefly and dropped on any change event for the collection. */
+  private async collectionStats(collectionId:string):Promise<CollectionStats|undefined> {
+    const cached=this.statsCache;
+    if(cached && cached.collectionId===collectionId && Date.now()-cached.at<DesktopFilesDataSource.statsMaxAgeMs) return cached.value;
     try {
-      const page=await ipcRenderer.invoke('sulla-files:list-page',{collectionId:this.collectionId,cursor:this.filesCursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      const value=await this.ipc.invoke('sulla-files:stats',{collectionId}) as CollectionStats;
+      this.statsCache={collectionId,at:Date.now(),value};
+      return value;
+    } catch { return undefined }
+  }
+
+  async recentFiles(options:{ limit?:number; createdByType?:'user' | 'agent-run' } = {}):Promise<FilesItem[]> {
+    if(!this.collectionId) return [];
+    const rows=await this.ipc.invoke('sulla-files:recent',{collectionId:this.collectionId,limit:options.limit ?? 50,...(options.createdByType?{createdByType:options.createdByType}:{})}) as FilesApiFile[];
+    return rows.map(row=>filesItem(row)).filter(file=>!file.deletedAt);
+  }
+
+  async filesByIds(ids:string[]):Promise<FilesItem[]> {
+    const known=new Map(this.files.map(file=>[file.id,file]));
+    const found:FilesItem[]=[];
+    const pending=[...new Set(ids)];
+    // Bounded fan-out: stars and search hits are resolved a few at a time, never by loading folders.
+    for(let index=0;index<pending.length;index+=8) {
+      const batch=await Promise.all(pending.slice(index,index+8).map(async id=>known.get(id) ?? await (this.ipc.invoke('sulla-files:metadata',{fileId:id}) as Promise<FilesApiFile>).then(record=>filesItem(record)).catch(()=>null)));
+      for(const file of batch) if(file && !file.deletedAt) found.push(file);
+    }
+    return found;
+  }
+
+  listFolderChildren(path:string):Promise<FilesItem[]> { return this.pageAll({ path, children:true }) }
+
+  listFolderTree(path:string):Promise<FilesItem[]> { return this.pageAll({ path, children:false }) }
+
+  async folderSummaries(path:string):Promise<FilesFolderSummary[]> {
+    if(!this.collectionId) return [];
+    // Root summaries scan the whole collection, so the 12-second refresh reuses them until a change event arrives.
+    const key=`${ this.collectionId }\n${ path }`; const cached=this.summaryCache.get(key);
+    if(cached && Date.now()-cached.at<DesktopFilesDataSource.statsMaxAgeMs) return cached.value;
+    const value=await this.ipc.invoke('sulla-files:folder-summary',{collectionId:this.collectionId,path}) as FilesFolderSummary[];
+    this.summaryCache.set(key,{at:Date.now(),value});
+    return value;
+  }
+
+  private async pageAll(input:{ path:string; children:boolean }):Promise<FilesItem[]> {
+    const collectionId=this.collectionId; const files:FilesItem[]=[]; let cursor:string|undefined;
+    for(;;) {
+      const page=await this.ipc.invoke('sulla-files:list-page',{collectionId,path:input.path,children:input.children,...(cursor?{cursor}:{})}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      files.push(...page.files.map(file=>filesItem(file)));
+      if(!page.hasMore || !page.nextCursor || page.nextCursor===cursor) return files;
+      cursor=page.nextCursor;
+    }
+  }
+
+  private async completeFolder(generation:number,path:string):Promise<void> {
+    while(generation===this.listingGeneration && path===this.listingPath && this.filesHasMore) {
+      await this.loadMore(generation);
+    }
+  }
+
+  async loadMore(generation=this.listingGeneration):Promise<FilesItem[]> {
+    if(this.loadingMore) {
+      await this.loadingMorePromise;
+      return generation===this.listingGeneration ? this.loadMore(generation) : this.files;
+    }
+    if(!this.filesHasMore || !this.collectionId) return this.files;
+    const path=this.listingPath;
+    this.loadingMore=true;
+    this.loadingMorePromise=(async()=>{ try {
+      const cursor=this.filesCursor;
+      const page=await this.ipc.invoke('sulla-files:list-page',{collectionId:this.collectionId,path,children:true,cursor}) as {files:FilesApiFile[];nextCursor:string|null;hasMore:boolean};
+      if(generation!==this.listingGeneration || path!==this.listingPath) return this.files;
       this.files.push(...page.files.map(file=>filesItem(file)));
       this.filesCursor=page.nextCursor; this.filesHasMore=page.hasMore;
+      this.folderListeners.forEach(listener=>listener([...this.files]));
       return this.files;
-    } finally { this.loadingMore=false; }
+    } finally { this.loadingMore=false; this.loadingMorePromise=null; } })();
+    return this.loadingMorePromise;
   }
 
   async history(fileId:string, currentVersionId:string):Promise<FilesVersion[]> {
-    const versions = await ipcRenderer.invoke('sulla-files:history', { fileId }) as FilesApiRecord[];
+    const versions = await this.ipc.invoke('sulla-files:history', { fileId }) as FilesApiRecord[];
 
     return versions.map(version => filesVersion(version, currentVersionId));
   }
 
   async preview(fileId:string, versionId?:string):Promise<FilesPreview> {
-    const result = await ipcRenderer.invoke('sulla-files:preview', { fileId, versionId }) as { mime: string; data: Uint8Array };
+    const result = await this.ipc.invoke('sulla-files:preview', { fileId, versionId }) as { mime: string; data: Uint8Array };
 
     return { ...result, data: new Uint8Array(result.data), path: this.files.find(file => file.id === fileId)?.path ?? '' };
   }
 
-  async openLive(fileId:string,onEvent:(event:import('./liveTypes').FilesLiveEvent)=>void):Promise<import('./liveTypes').FilesLiveConnection> {
-    const joined=await ipcRenderer.invoke('sulla-files:live-join',{fileId});if('error' in joined)throw new Error(joined.error);
-    const channel=`sulla-files:live:${joined.peerId}` as const;
-    const listener=(_event:IpcRendererEvent,event:import('./liveTypes').FilesLiveEvent)=>onEvent(event);
-    ipcRenderer.on(channel,listener);
-    const close=async()=>{ipcRenderer.removeListener(channel,listener);await ipcRenderer.invoke('sulla-files:live-leave',{peerId:joined.peerId});};
-    const started=await ipcRenderer.invoke('sulla-files:live-start',{peerId:joined.peerId});if(started.error){await close();throw new Error(started.error);}
-    return {join:joined,close,sync:async(message:string)=>{const result=await ipcRenderer.invoke('sulla-files:live-sync',{peerId:joined.peerId,message});if(result.error)throw new Error(result.error);return {message:result.message??null};}};
-  }
-
-  async saveContent(request:FilesSaveRequest):Promise<FilesSaveSuccess> {
-    const result = await ipcRenderer.invoke('sulla-files:save-content', request) as FilesSaveSuccess | { conflict:FilesSaveConflict };
-
-    if ('conflict' in result) throw Object.assign(new Error(result.conflict.error), { status: 409, ...result.conflict });
-
-    return result;
-  }
-
-  async detail(fileId:string):Promise<FilesDetail> {
-    const result = await ipcRenderer.invoke('sulla-files:metadata', { fileId }) as FilesApiRecord;
-
-    return filesDetail(result);
-  }
-  mediaUrl(fileId:string, versionId?:string):Promise<string> { return ipcRenderer.invoke('files-ui:media-url', { fileId, versionId }) }
-
   async search(query:string):Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }> {
-    const response = await ipcRenderer.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { results:{ id:string }[]; coverage:FilesIndexCoverage };
+    const response = await this.ipc.invoke('sulla-files:search', { query, collectionId: this.collectionId }) as { results:{ id:string }[]; coverage:FilesIndexCoverage };
     const byId = new Map(this.files.map(file => [file.id, file]));
-    return { files: response.results.map(result => byId.get(result.id)).filter((file):file is FilesItem => Boolean(file && !file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
+    const details = await Promise.all(response.results.map(async result => byId.get(result.id) ?? await this.ipc.invoke('sulla-files:metadata',{fileId:result.id}).then(record=>filesItem(record as FilesApiFile)).catch(()=>null)));
+    return { files: details.filter((file):file is FilesItem=>Boolean(file&&!file.deletedAt)), coverage: normalizeFilesIndexCoverage(response.coverage) };
   }
 
-  reindex(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:reindex', { fileId }) }
+  reindex(fileId:string):Promise<void> { return this.ipc.invoke('sulla-files:reindex', { fileId }) }
 
   async setPaused(paused:boolean):Promise<FilesSnapshot['status']> {
     if (!this.rootId) throw new Error('This Files collection is not backed by a tracked folder.');
-    await ipcRenderer.invoke('files-preferences:update-root', { id: this.rootId, paused });
+    await this.ipc.invoke('files-preferences:update-root', { id: this.rootId, paused });
     return (await this.load()).status;
   }
 
-  chooseUpload(destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
-  async chooseNativeSource():Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:pick-native-source')) }
-  listNativeSources():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> { return ipcRenderer.invoke('files-experiment:list-native-sources') }
-  async recoverNativeSource(fileId:string):Promise<boolean> { return Boolean(await ipcRenderer.invoke('files-experiment:recover-native-source', fileId)) }
-  uploadPaths(paths:string[], destination = ''):Promise<number> { return ipcRenderer.invoke('files-ui:upload-paths', { paths, destination, collectionId: this.collectionId }) }
-  uploadDroppedFiles(files:File[], destination = ''):Promise<number> {
-    const paths = files.map(file => webUtils.getPathForFile(file));
-    if (paths.some(value => !value)) throw new Error('Sulla could not read one or more dropped files. Use Choose files instead.');
-    return this.uploadPaths(paths, destination);
-  }
-  createFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
-  updateFolderDescription(folderId:string, description:string, namingHint?:string):Promise<void> { return ipcRenderer.invoke('files-ui:update-folder-description', { folderId, description, namingHint }) }
-  setCollectionCloudSync(collectionId:string, enabled:boolean):Promise<void> { return ipcRenderer.invoke('files-ui:set-collection-cloud-sync', { collectionId, enabled }) }
-  async setCloudBackup(collectionId:string, enabled:boolean):Promise<void> { await ipcRenderer.invoke('files-ui:set-cloud-backup', { collectionId, enabled }) }
-  listCloudCollections():Promise<{ collectionId:string; bytes:number; updatedAt:string }[]> { return ipcRenderer.invoke('files-ui:cloud-collections') }
-  async restoreCloudCollection(collectionId:string, name:string):Promise<void> { await ipcRenderer.invoke('files-ui:restore-cloud-collection', { collectionId, name }) }
-  restoreAllCloudCollections():Promise<{ restored:string[]; failed:Array<{ collectionId:string; error:string }> }> { return ipcRenderer.invoke('files-ui:restore-all-cloud-collections') }
-  createFile(path:string):Promise<void> { return ipcRenderer.invoke('sulla-files:create-empty-file', { collectionId: this.collectionId, path }) }
-  deleteFolder(path:string):Promise<void> { return ipcRenderer.invoke('files-ui:delete-folder', { collectionId: this.collectionId, path }) }
-  keepConflictCopies(file:FilesItem):Promise<void> {
-    if (!file.conflictSourceFileId || !file.conflictSourceVersionId) throw new Error('This conflict cannot be acknowledged safely. Refresh Files and try again.');
-    return ipcRenderer.invoke('sulla-files:keep-conflict-copies', { fileId: file.id, currentVersionId: file.currentVersionId, sourceFileId: file.conflictSourceFileId, sourceVersionId: file.conflictSourceVersionId });
-  }
-  async operationCapabilities(collectionId:string):Promise<FilesOperationCapabilities> {
-    const value = await ipcRenderer.invoke('sulla-files:operation-capabilities', { collectionId }).catch(() => ({ enabled:false, crossCollectionOperations:'unavailable' })) as OperationCapabilities;
-
-    return operationCapabilities(value);
-  }
-  folderOperationState(collectionId:string, path:string):Promise<FilesFolderSourceSnapshot> { return ipcRenderer.invoke('sulla-files:folder-operation-state', { collectionId, path }) }
-
+  chooseUpload(destination = ''):Promise<number> { return this.ipc.invoke('files-ui:pick-upload', { collectionId: this.collectionId, destination }) }
+  createFolder(path:string):Promise<void> { return this.ipc.invoke('files-ui:create-folder', { collectionId: this.collectionId, path }) }
   onCapabilitiesChanged(listener:() => void):() => void {
     this.capabilitiesListeners.add(listener);
     return () => this.capabilitiesListeners.delete(listener);
   }
 
+  onFolderFilesChanged(listener:(files:FilesItem[])=>void):()=>void { this.folderListeners.add(listener); return ()=>this.folderListeners.delete(listener) }
+
   onFilesChanged(listener:(change:{ collectionId:string; seq:string; paths:string[] }) => void):() => void {
-    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => listener(change);
+    const wrapped = (_event:IpcRendererEvent, change:{ collectionId:string; seq:string; paths:string[] }) => { if (this.statsCache?.collectionId === change.collectionId) this.statsCache = null; this.summaryCache.clear(); listener(change) };
     this.watching = true;
-    ipcRenderer.on('files-ui:changed', wrapped);
+    this.ipc.on('files-ui:changed', wrapped);
     if (this.collectionId) {
       this.watchedCollectionId = this.collectionId;
-      void ipcRenderer.invoke('files-ui:watch', this.collectionId);
+      void this.ipc.invoke('files-ui:watch', this.collectionId);
     }
     return () => {
       this.watching = false;
       this.watchedCollectionId = '';
-      ipcRenderer.removeListener('files-ui:changed', wrapped);
-      void ipcRenderer.invoke('files-ui:watch', '');
+      this.ipc.removeListener('files-ui:changed', wrapped);
+      void this.ipc.invoke('files-ui:watch', '');
     };
   }
 
-  onUploadProgress(listener:(progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => void):() => void {
-    const wrapped = (_event:IpcRendererEvent, progress:{ current: number; total: number; name: string; percent: number; done: boolean }) => listener(progress);
-
-    ipcRenderer.on('files-ui:upload-progress', wrapped);
-    return () => ipcRenderer.removeListener('files-ui:upload-progress', wrapped);
-  }
-
-  openFolder():Promise<void> { return ipcRenderer.invoke('files-ui:open-folder', this.collectionId) }
-  openFile(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-file', { fileId, versionId }) }
-  openFileWithDefaultApp(fileId:string, versionId?:string):Promise<void> { return ipcRenderer.invoke('files-ui:open-default', { fileId, versionId }) }
-  openFileWithApp(fileId:string, versionId?:string, application?:string):Promise<{ application?:string; recentApplications:string[] }> { return ipcRenderer.invoke('files-ui:open-with', { fileId, versionId, application }) }
-  recentAppsForFile(name:string):Promise<string[]> { return ipcRenderer.invoke('files-ui:recent-apps', { name }) }
-  revealFile(fileId:string, versionId?:string):Promise<FilesRevealResult> { return ipcRenderer.invoke('files-ui:reveal-file', { fileId, versionId }) }
-  downloadFile(fileId:string, name:string, versionId?:string):Promise<boolean> { return ipcRenderer.invoke('files-ui:download-file', { fileId, versionId, name }) }
-  downloadFiles(items:{ fileId:string; name:string; versionId?:string }[]):Promise<{ count:number; error?:string }> { return ipcRenderer.invoke('files-ui:download-files', items) }
-  listStars(collectionId:string):Promise<{ fileId?:string; folderPath?:string }[]> { return ipcRenderer.invoke('sulla-files:stars', { collectionId }) }
-  setStar(collectionId:string, target:{ fileId?:string; folderPath?:string }, starred:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:set-star', { collectionId, ...target, starred }) }
-  operate(action:'move' | 'copy', collectionId:string, items:{ fileId?:string; folderPath?:string; targetPath:string }[]):Promise<void> { return ipcRenderer.invoke('sulla-files:operate', { action, collectionId, items }) }
-  submitOperation(request:FilesOperationRequest):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-submit', request) }
-  getOperation(operationId:string):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-status', { operationId }) }
-  cancelOperation(operationId:string):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-cancel', { operationId }) }
-  retryOperation(operationId:string, request:FilesOperationRetry = {}):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-retry', { operationId, request }) }
-  undoOperation(operationId:string):Promise<FilesOperationReceipt> { return ipcRenderer.invoke('sulla-files:operation-undo', { operationId }) }
-  restoreVersion(fileId:string, versionId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:restore-version', { fileId, versionId }) }
-  updateLifecycle(fileId:string,settings:FilesVersioningSettings):Promise<void> { return ipcRenderer.invoke('sulla-files:lifecycle', { fileId, settings }) }
-  checkout(fileId:string,force=false):Promise<void> { return ipcRenderer.invoke('sulla-files:checkout', { fileId, force }) }
-  checkin(fileId:string,versionId:string,kind:'major'|'minor',comment:string,publish:boolean):Promise<void> { return ipcRenderer.invoke('sulla-files:checkin', { fileId, versionId, kind, comment, publish }) }
-  publishVersion(fileId:string,versionId:string,expectedDraftVersionId?:string|null,comment?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:publish', { fileId, versionId, expectedDraftVersionId, comment }) }
-  updateRetention(fileId:string,policy:FilesRetentionPolicy):Promise<void> { return ipcRenderer.invoke('sulla-files:retention', { fileId, policy }) }
-  recordLock(fileId:string,status:'ordinary'|'policy'):Promise<void> { return ipcRenderer.invoke('sulla-files:record-lock', { fileId, status }) }
-  unlockRecord(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:record-unlock', { fileId }) }
-  disposalReview(fileId:string,decision:'approve'|'reject'|'extend',extendedUntil?:string):Promise<void> { return ipcRenderer.invoke('sulla-files:disposal-review', { fileId, decision, extendedUntil }) }
-  restoreTrashItem(item:FilesTrashItem):Promise<FilesTrashRestoreResult> {
-    return ipcRenderer.invoke('sulla-files:trash-restore', {
-      id: item.id, kind: item.kind, expectedRevision: item.revision,
-      currentTombstone: { id: item.currentTombstone.id, receiptId: item.currentTombstone.receiptId },
-    });
-  }
-  purgeTrashItem(item:FilesTrashItem):Promise<FilesTrashPurgeResult> {
-    if (item.kind === 'folder') return ipcRenderer.invoke('sulla-files:trash-purge', {
-      id: item.id, kind: 'folder', expectedRevision: item.revision,
-      currentTombstone: { kind: 'receipt', id: item.currentTombstone.id, receiptId: item.currentTombstone.receiptId },
-      invalidateUndo: true,
-    });
-
-    return ipcRenderer.invoke('sulla-files:trash-purge', {
-      id: item.id, expectedRevision: item.revision,
-      currentTombstone: { id: item.currentTombstone.id },
-      ...(item.currentTombstone.receiptId ? { invalidateUndo: true } : {}),
-    });
-  }
-  trashFile(fileId:string):Promise<void> { return ipcRenderer.invoke('sulla-files:trash', { fileId }) }
-  keepOnMac(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'local' }) }
-  makeOnlineOnly(fileId:string):Promise<void> { return ipcRenderer.invoke('files-ui:set-residency', { fileId, desiredState: 'online-only' }) }
-  residencyStatus(fileId:string):Promise<{ desiredState:'local' | 'online-only'; state:string; lastError:string | null }> { return ipcRenderer.invoke('files-ui:residency-status', { fileId }) }
-  createPublicLink(fileId:string, options:ShareLinkOptions):Promise<ShareLink> {
-    return ipcRenderer.invoke('files-ui:create-link', { fileId, ...options });
-  }
-
-  updatePublicLink(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink> {
-    return ipcRenderer.invoke('files-ui:update-link', { id, options });
-  }
-
-  listPublicLinks():Promise<ShareLink[]> { return ipcRenderer.invoke('files-ui:list-links') }
-  revokePublicLink(id:string):Promise<void> { return ipcRenderer.invoke('files-ui:revoke-link', id) }
-  restorePublicLink(id:string, password?:string):Promise<ShareLink> { return ipcRenderer.invoke('files-ui:restore-link', { id, password }) }
-  shareActivity(id?:string):Promise<ShareActivity[]> { return ipcRenderer.invoke('files-ui:link-activity', id) }
-
-  async listFolderShares(collectionId:string):Promise<FolderShare[]> {
-    const shares = await ipcRenderer.invoke('sulla-files:shares', { collectionId });
-    return shares.map(share => folderShare(share, collectionId));
-  }
-
-  async shareFolder(collectionId:string, folderPath:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FolderShare> {
-    const share = await ipcRenderer.invoke('sulla-files:share', { collectionId, folderPath, principalType, principalId, role });
-    return folderShare(share, collectionId, { folderPath, principalType, principalId, role });
-  }
-
-  unshareFolder(share:FolderShare):Promise<void> {
-    return ipcRenderer.invoke('sulla-files:unshare', share);
-  }
-
-  async listFileShares(fileId:string):Promise<FileAccessList> {
-    const access = await ipcRenderer.invoke('sulla-files:file-shares', { fileId });
-    return fileAccessList(access, fileId, this.collectionId);
-  }
-
-  async shareFile(fileId:string, principalType:SharePrincipalType, principalId:string, role:'view' | 'edit'):Promise<FileShare> {
-    const share = await ipcRenderer.invoke('sulla-files:share-file', { fileId, principalType, principalId, role });
-    return fileShare(share, fileId, { principalType, principalId, role });
-  }
-
-  async updateFileShare(fileId:string, shareId:string, role:'view' | 'edit'):Promise<FileShare> {
-    const share = await ipcRenderer.invoke('sulla-files:update-file-share', { fileId, shareId, role });
-    return fileShare(share, fileId);
-  }
-
-  unshareFile(fileId:string, shareId:string):Promise<void> {
-    return ipcRenderer.invoke('sulla-files:unshare-file', { fileId, shareId });
-  }
-
-  listMembers(orgId:string):Promise<{ members:{ id:string; email:string; role:string }[]; groups?:{ id:string; name?:string; encrypted_name?:string; members?:string[] }[] }> {
-    return ipcRenderer.invoke('sulla-files:members', { orgId });
-  }
+  openFolder():Promise<void> { return this.ipc.invoke('files-ui:open-folder', this.collectionId) }
+  restoreVersion(fileId:string, versionId:string):Promise<void> { return this.ipc.invoke('sulla-files:restore-version', { fileId, versionId }) }
 }

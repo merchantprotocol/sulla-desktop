@@ -19,6 +19,13 @@ import { up as up_0154, down as down_0154 } from './0154_create_agent_job_review
 import { up as up_0155, down as down_0155 } from './0155_normalize_agent_job_tasks';
 import { up as up_0156, down as down_0156 } from './0156_prune_database_retention_tables';
 import { up as up_0157, down as down_0157 } from './0157_index_agent_job_messages_job_task';
+import { up as up_0158, down as down_0158 } from './0158_index_agent_job_polling';
+import { up as up_0159, down as down_0159 } from './0159_index_agent_job_retention';
+import { up as up_0160, down as down_0160 } from './0160_correct_database_retention_rules';
+import { up as up_0161, down as down_0161 } from './0161_add_org_agent_inbox_kind';
+import { up as up_0162, down as down_0162 } from './0162_create_org_messaging_state';
+import { up as up_0163, down as down_0163 } from './0163_org_messaging_failures_and_contact_prompts';
+import { up as up_0164, down as down_0164 } from './0164_org_scoped_messaging_outbox';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -290,4 +297,11 @@ export const migrationsRegistry = [
   { name: '0155_normalize_agent_job_tasks', up: up_0155, down: down_0155 },
   { name: '0156_prune_database_retention_tables', up: up_0156, down: down_0156 },
   { name: '0157_index_agent_job_messages_job_task', up: up_0157, down: down_0157 },
+  { name: '0158_index_agent_job_polling', up: up_0158, down: down_0158 },
+  { name: '0159_index_agent_job_retention', up: up_0159, down: down_0159 },
+  { name: '0160_correct_database_retention_rules', up: up_0160, down: down_0160 },
+  { name: '0161_add_org_agent_inbox_kind', up: up_0161, down: down_0161 },
+  { name: '0162_create_org_messaging_state', up: up_0162, down: down_0162 },
+  { name: '0163_org_messaging_failures_and_contact_prompts', up: up_0163, down: down_0163 },
+  { name: '0164_org_scoped_messaging_outbox', up: up_0164, down: down_0164 },
 ] as const;
