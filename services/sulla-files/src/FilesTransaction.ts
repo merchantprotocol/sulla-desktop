@@ -49,15 +49,14 @@ export class DatabaseFailureClassifier {
 type TransactionPool = Pick<pg.Pool, 'connect'>;
 
 /**
- * These transactions contain only reconstructible search/index state, plus atomic audit
- * delivery. Losing an acknowledged audit-append commit also rolls back the spool deletion in
- * that same transaction, so the event is redelivered; it cannot lose file content or audit data.
+ * These transactions contain only reconstructible search/index state. Audit delivery writes
+ * versioned log-file content, so it uses the normal synchronous commit durability.
  * Keep this allowlist exact: all file/version/manifest/chunk and audit-spool writes stay durable.
  */
 export class TransactionDurabilityPolicy {
   private readonly asynchronousCommitNames = new Set([
     'index-accounting-reconcile', 'index-job-claim', 'index-manual-retry',
-    'index-eligibility', 'index-content-commit', 'index-failure', 'audit-append',
+    'index-eligibility', 'index-content-commit', 'index-failure',
   ]);
 
   usesAsynchronousCommit(name:string):boolean { return this.asynchronousCommitNames.has(name) }

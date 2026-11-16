@@ -29,7 +29,11 @@ describe.skipIf(!databaseUrl)('audit spool delivery (real Postgres)', () => {
     await pool.query(`CREATE TABLE files(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),collection_id uuid NOT NULL,path text NOT NULL,
       current_version_id uuid,deleted_at timestamptz,UNIQUE(collection_id,path))`);
     await pool.query('CREATE TABLE files_protected_files(file_id uuid PRIMARY KEY)');
+    await pool.query('CREATE TABLE file_folders(collection_id uuid NOT NULL,path text NOT NULL)');
     await pool.query(migration('031_file_audit_spool.sql'));
+    // The writer now takes the same scoped namespace lock as normal file writes. Keep this
+    // focused fixture aligned with the production function introduced by migration 067.
+    await pool.query(migration('067_scoped_namespace_trigger.sql'));
   });
   afterAll(async() => { await pool.query(`DROP SCHEMA IF EXISTS ${ schema } CASCADE`); await pool.end() });
   beforeEach(async() => {
@@ -40,8 +44,10 @@ describe.skipIf(!databaseUrl)('audit spool delivery (real Postgres)', () => {
   const event = (action:string, subjectId = 'f1') => ({ subjectKind: 'file', subjectId, action, actor: 'agent', result: 'ok' });
   async function spool(...events:object[]) { for (const item of events) await pool.query('INSERT INTO files_audit_spool(event) VALUES($1)', [item]) }
 
-  function writer() {
+  function writer(failFirstAppend = false) {
     const contents = new Map<string, string>();
+    let writes = 0;
+    let failNext = failFirstAppend;
     const audit = new FileAuditWriter(pool,
       async id => Buffer.from(contents.get(id) ?? ''),
       async(collectionId, bytes) => ({ collectionId, size: bytes.length }),
@@ -51,13 +57,15 @@ describe.skipIf(!databaseUrl)('audit spool delivery (real Postgres)', () => {
           ? (await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1 RETURNING id', [fileId, versionId])).rows[0].id
           : (await client.query('INSERT INTO files(collection_id,path,current_version_id) VALUES($1,$2,$3) RETURNING id', [collectionId, path, versionId])).rows[0].id;
         contents.set(id, bytes.toString('utf8'));
+        writes++;
+        if (failNext) { failNext = false; throw new Error('simulated crash before commit') }
       },
       new TransactionRunner(pool, undefined, { slowTransaction: () => undefined }));
     const lines = async(path:string) => {
       const file = (await pool.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2', [logsId, path])).rows[0];
       return (contents.get(file?.id) ?? '').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as AuditEventLine);
     };
-    return { audit, lines };
+    return { audit, lines, writes: () => writes };
   }
 
   function expectValidChain(lines:AuditEventLine[]) {
@@ -81,14 +89,44 @@ describe.skipIf(!databaseUrl)('audit spool delivery (real Postgres)', () => {
     expectValidChain(chain);
   });
 
+  // risk: audit integrity — rows on both sides of a batch boundary remain ordered and chained.
+  it('appends more than one batch in order with one log version per batch', async() => {
+    const actions=Array.from({length:205},(_value,index)=>`event-${index}`);
+    await spool(...actions.map(action=>event(action,'multi-batch')));
+    const {audit,lines,writes}=writer();
+    await audit.drain();
+    const chain=await lines('audit/files/multi-batch.jsonl');
+    expect(chain.map(line=>line.action)).toEqual(actions);
+    expectValidChain(chain);
+    expect(writes()).toBe(3);
+    expect((await pool.query('SELECT count(*)::int n FROM files_audit_spool')).rows[0].n).toBe(0);
+  });
+
+  // risk: audit loss/duplicates — a failed batch commit must leave every selected event for retry.
+  it('redelivers every event once when a batch write rolls back mid-append', async() => {
+    const actions=['create','write','rename','trash','restore'];
+    await spool(...actions.map(action=>event(action,'rollback-batch')));
+    const {audit,lines,writes}=writer(true);
+    await audit.drain();
+    expect((await pool.query('SELECT count(*)::int n FROM files_audit_spool')).rows[0].n).toBe(actions.length);
+    expect(await lines('audit/files/rollback-batch.jsonl')).toEqual([]);
+    await audit.drain();
+    const chain=await lines('audit/files/rollback-batch.jsonl');
+    expect(chain.map(line=>line.action)).toEqual(actions);
+    expect(new Set(chain.map(line=>line.hash)).size).toBe(actions.length);
+    expectValidChain(chain);
+    expect(writes()).toBe(2);
+    expect((await pool.query('SELECT count(*)::int n FROM files_audit_spool')).rows[0].n).toBe(0);
+  });
+
   // risk: audit loss — a vault-secret subject goes to its own log; an invalid event stays queued with an error.
   it('routes vault events to audit/vault and keeps an invalid event queued with a retry error', async() => {
     await spool({ ...event('read', 's1'), subjectKind: 'vault-secret' });
+    await spool({ ...event('write', 's1'), meta: { password: 'x' } });
+    await spool({ ...event('write', 's1'), subjectKind: 'vault-secret' });
     const { audit, lines } = writer();
     await audit.drain();
-    expect((await lines('audit/vault/s1.jsonl')).map(line => line.action)).toEqual(['read']);
-    await spool({ ...event('write'), meta: { password: 'x' } });
-    await audit.drain();
+    expect((await lines('audit/vault/s1.jsonl')).map(line => line.action)).toEqual(['read','write']);
     const left = (await pool.query('SELECT last_error FROM files_audit_spool')).rows;
     expect(left).toEqual([{ last_error: 'Audit append failed; retry pending' }]);
   });

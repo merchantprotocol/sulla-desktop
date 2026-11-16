@@ -35,7 +35,10 @@ describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real
       + `p50=${ result.p50.toFixed(0) }ms p95=${ result.p95.toFixed(0) }ms p99=${ result.p99.toFixed(0) }ms max=${ result.max.toFixed(0) }ms `
       + `maxTransaction=${ result.maxTransactionMs.toFixed(0) }ms failures=${ result.failures.length } `
       + `walSyncs=${ result.walSyncs } walSyncs/file=${ result.walSyncsPerFile.toFixed(3) } `
-      + `auditBacklog=${ await bench.scalar('SELECT COUNT(*) n FROM files_audit_spool') } indexBacklog=${ await bench.scalar("SELECT COUNT(*) n FROM file_index_jobs WHERE status IN ('pending','indexing')") }`);
+      + `indexBacklog=${ await bench.scalar("SELECT COUNT(*) n FROM file_index_jobs WHERE status IN ('pending','indexing')") }`);
+
+    const audit=await bench.auditing(result.ended);
+    console.log(`[files-bench] audit backlogAtBurstEnd=${ audit.backlogAtBurstEnd } drainAfterBurst=${ audit.drainSeconds.toFixed(1) }s remaining=${ audit.remaining }`);
 
     const index = background === 'all' || background === 'indexer' ? await bench.indexing(runId, result.started, result.ended) : undefined;
     if (index) console.log(`[files-bench] index backlogAtBurstEnd=${ index.backlogAtBurstEnd } drainAfterBurst=${ index.drainSeconds.toFixed(1) }s `
@@ -57,6 +60,8 @@ describe.skipIf(!databaseUrl)('concurrent mount writes into one collection (real
       expect(result.filesPerSecond).toBeGreaterThanOrEqual(50);
       expect(result.p99).toBeLessThan(1_000);
       expect(result.maxTransactionMs).toBeLessThan(1_000);
+      expect(audit.remaining).toBe(0);
+      expect(audit.drainSeconds).toBeLessThan(30);
       if (index) {
         expect(index.drainSeconds).toBeLessThan(60);
         expect(index.lagP95).toBeLessThan(30);

@@ -23,7 +23,18 @@ export class AuditSpoolRepository {
 
   /** The oldest pending audit event (delivery order is spool id order). */
   async nextPending():Promise<AuditSpoolRow | undefined> {
-    return (await this.db.query('SELECT * FROM files_audit_spool ORDER BY id LIMIT 1')).rows[0];
+    return (await this.pendingBatch(1))[0];
+  }
+
+  /** A bounded, ordered snapshot for preparing audit-log appends outside a transaction. */
+  async pendingBatch(limit = 100):Promise<AuditSpoolRow[]> {
+    return (await this.db.query('SELECT * FROM files_audit_spool ORDER BY id LIMIT $1', [limit])).rows;
+  }
+
+  /** Locks only rows still pending; the caller checks that every selected ID is present. */
+  async lockPendingBatch(client:pg.PoolClient, ids:Array<string | number>):Promise<AuditSpoolRow[]> {
+    if (!ids.length) return [];
+    return (await client.query('SELECT * FROM files_audit_spool WHERE id=ANY($1::bigint[]) ORDER BY id FOR UPDATE', [ids])).rows;
   }
 
   async findLogsCollectionId():Promise<string | undefined> {
@@ -37,6 +48,10 @@ export class AuditSpoolRepository {
   /** Records why delivery failed; the event stays queued for the next drain. */
   async recordFailure(eventId:string, message:string):Promise<void> {
     await this.db.query('UPDATE files_audit_spool SET last_error=$2 WHERE id=$1', [eventId, message]);
+  }
+
+  async recordFailureInTransaction(client:pg.PoolClient, eventId:string | number, message:string):Promise<void> {
+    await client.query('UPDATE files_audit_spool SET last_error=$2 WHERE id=$1', [eventId, message]);
   }
 
   /** One delivery lock preserves ordering, including across multiple service instances. */
@@ -56,5 +71,9 @@ export class AuditSpoolRepository {
 
   async deletePending(client:pg.PoolClient, id:string | number):Promise<void> {
     await client.query('DELETE FROM files_audit_spool WHERE id=$1', [id]);
+  }
+
+  async deletePendingBatch(client:pg.PoolClient, ids:Array<string | number>):Promise<void> {
+    if (ids.length) await client.query('DELETE FROM files_audit_spool WHERE id=ANY($1::bigint[])', [ids]);
   }
 }
