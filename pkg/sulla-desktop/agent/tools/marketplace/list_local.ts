@@ -57,7 +57,8 @@ export class MarketplaceListLocalWorker extends BaseTool {
       } else if (kind === 'integration') {
         for (const artifact of await IntegrationDefinitionModel.list()) databaseSlugs.add(artifact.slug);
         const { postgresClient } = await import('../../database/PostgresClient');
-        for (const row of await postgresClient.query('SELECT DISTINCT id FROM integration_packages ORDER BY id')) databaseSlugs.add(String(row.id));
+        const { IntegrationPackageRepository } = await import('../../app/Repositories/IntegrationPackageRepository');
+        for (const id of await new IntegrationPackageRepository(postgresClient).listDistinctIds()) databaseSlugs.add(id);
       } else if (kind === 'recipe') {
         for (const artifact of await RecipeDefinitionModel.list()) databaseSlugs.add(artifact.slug);
       } else if (kind === 'workflow') {

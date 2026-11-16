@@ -85,8 +85,8 @@ describe('GuestPostgresAuthRepository', () => {
     expect(await repository.probeTcp(SECRET)).toBe('error');
   });
 
-  // risk: data accuracy — the hba file is replaced atomically as the postgres user
-  it('writes the hba file as postgres through a temp file and rename, with the content on stdin', async() => {
+  // risk: outage — the hba file is replaced atomically and durably (flushed before and after the rename) as the postgres user
+  it('writes the hba file as postgres through a synced temp file and rename, with the content on stdin', async() => {
     const docker = new RecordingDocker();
 
     await new GuestPostgresAuthRepository(docker).writeHbaFile(PATH, 'local all all trust\n');
@@ -94,7 +94,7 @@ describe('GuestPostgresAuthRepository', () => {
     const [call] = docker.calls;
 
     expect(call.args.slice(0, 6)).toEqual(['exec', '-i', '-u', 'postgres', 'sulla_postgres', 'sh']);
-    expect(call.args[7]).toBe('umask 077 && cat > "$1.sulla-tmp" && mv -f "$1.sulla-tmp" "$1"');
+    expect(call.args[7]).toBe('umask 077 && cat > "$1.sulla-tmp" && sync && mv -f "$1.sulla-tmp" "$1" && sync');
     expect(call.args.slice(-2)).toEqual(['sh', PATH]);
     expect(call.input).toBe('local all all trust\n');
   });
@@ -145,5 +145,23 @@ describe('GuestPostgresAuthRepository', () => {
   // risk: permissions — the role name is interpolated into SQL, so only plain identifiers are accepted
   it('refuses a role name that is not a plain identifier', () => {
     expect(() => new GuestPostgresAuthRepository(new RecordingDocker(), 'sulla_postgres', "sulla'; DROP ROLE x; --")).toThrow(/unsupported/);
+  });
+
+  // risk: permissions — "live" is claimed only when the file on disk predates the last configuration load
+  it('reads whether the hba file was loaded from its mtime and the last configuration load, with the path quoted', async() => {
+    const docker = new RecordingDocker();
+    const repository = new GuestPostgresAuthRepository(docker);
+
+    docker.result = result(0, 't\n');
+    expect(await repository.hbaFileLoaded(PATH)).toBe(true);
+    const sql = docker.calls[0].args.at(-1);
+
+    expect(sql).toBe(`SELECT (pg_stat_file('${ PATH }')).modification < date_trunc('second', pg_conf_load_time())`);
+    docker.result = result(0, 'f\n');
+    expect(await repository.hbaFileLoaded(PATH)).toBe(false);
+    await repository.hbaFileLoaded("/data/it's/pg_hba.conf");
+    expect(docker.calls.at(-1)?.args.at(-1)).toContain("pg_stat_file('/data/it''s/pg_hba.conf')");
+    docker.result = result(2, '', 'psql: error');
+    await expect(repository.hbaFileLoaded(PATH)).rejects.toThrow(/psql failed/);
   });
 });

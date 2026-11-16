@@ -13,6 +13,7 @@ import { GuestPostgresAuthRepository } from '@pkg/backend/Repositories/GuestPost
 
 const SECRET = 'Kq3_real-ServiceSecret_value-9zXw7uVt2sRp1oNm0LkJi';
 const DEV_PASSWORD = 'sulla_dev_password';
+const WRONG_PASSWORD = 'a-wrong-password-for-the-probe';
 const HBA_PATH = '/var/lib/postgresql/data/pgdata/pg_hba.conf';
 /** What docker-library's entrypoint leaves behind with POSTGRES_HOST_AUTH_METHOD=trust. */
 const TRUST_INSTALL_HBA = 'local all all trust\nhost all all 127.0.0.1/32 trust\nhost all all ::1/128 trust\nhost all all all trust\n';
@@ -40,6 +41,9 @@ class FakeGuestPostgres implements StdinDockerCli {
   refusesSecret = false;
   /** TCP is unreachable. */
   tcpDown = false;
+  /** How many TCP probes after the next reload still see the old rules (pg_reload_conf is an async SIGHUP). */
+  reloadLag = 0;
+  private pending: string | null = null;
   readonly calls: { args: string[], input?: string }[] = [];
 
   constructor(readonly events: string[]) {}
@@ -99,20 +103,32 @@ class FakeGuestPostgres implements StdinDockerCli {
     }
     if (sql.includes('pg_reload_conf')) {
       this.events.push('reload');
-      this.loaded = this.hba;
+      if (this.reloadLag > 0) {
+        this.pending = this.hba;
+      } else {
+        this.loaded = this.hba;
+      }
 
       return ok('t\n');
     }
-    if (sql.includes('pg_terminate_backend')) {
-      this.events.push('terminate');
+    if (sql.includes('pg_conf_load_time')) {
+      this.events.push('loaded?');
 
-      return ok('2\n');
+      return ok(this.loaded === this.hba ? 't\n' : 'f\n');
     }
     throw new Error(`unexpected SQL ${ sql }`);
   }
 
   private probe(password: string): GuestDockerResult {
     this.events.push('probe');
+    if (this.pending !== null) {
+      if (this.reloadLag > 0) {
+        this.reloadLag--;
+      } else {
+        this.loaded = this.pending;
+        this.pending = null;
+      }
+    }
     if (this.tcpDown) {
       return { code: 2, stdout: '', stderr: 'psql: error: connection to server at "172.18.0.2", port 5432 failed: Connection refused' };
     }
@@ -131,6 +147,8 @@ class FakeConsumers implements PostgresAuthConsumers {
   drifted: string[] = [];
   accounts = true;
   healthError?: Error;
+  /** waitHealthy() never settles (a consumer that never answers). */
+  hang = false;
 
   constructor(private readonly events: string[]) {}
 
@@ -149,7 +167,27 @@ class FakeConsumers implements PostgresAuthConsumers {
   async waitHealthy(): Promise<void> {
     this.events.push('health');
     if (this.healthError) throw this.healthError;
+    if (this.hang) await new Promise(() => undefined);
   }
+}
+
+const HEALTH_TIMEOUT_MS = 30_000;
+
+/** Records every sleep; retry delays pass at once, the health timeout fires only when `healthExpired`. */
+class FakeClock {
+  readonly sleeps: number[] = [];
+  healthExpired = false;
+
+  readonly sleep = (ms: number): Promise<void> => {
+    this.sleeps.push(ms);
+
+    return ms === HEALTH_TIMEOUT_MS && !this.healthExpired ? new Promise(() => undefined) : Promise.resolve();
+  };
+}
+
+/** True when any docker call could end another session (pg_terminate_backend / pg_cancel_backend). */
+function endsSessions(server: FakeGuestPostgres): boolean {
+  return server.calls.some(call => /pg_(terminate|cancel)_backend/i.test(`${ call.args.join(' ') } ${ call.input ?? '' }`));
 }
 
 class Logger {
@@ -163,20 +201,21 @@ function setup(secret = SECRET) {
   const server = new FakeGuestPostgres(events);
   const consumers = new FakeConsumers(events);
   const logger = new Logger();
+  const clock = new FakeClock();
   const source = { current: secret, async value() { return this.current; } };
   const hardening = new PostgresAuthHardening(new GuestPostgresAuthRepository(server), source, consumers, logger,
-    () => 'a-wrong-password-for-the-probe', DEV_PASSWORD);
+    () => WRONG_PASSWORD, DEV_PASSWORD, { sleep: clock.sleep, healthTimeoutMs: HEALTH_TIMEOUT_MS });
 
-  return { events, server, consumers, logger, source, hardening };
+  return { events, server, consumers, logger, source, clock, hardening };
 }
 
 describe('PostgresAuthHardening', () => {
   // risk: permissions — an upgraded trust install ends with network logins requiring the secret
-  it('switches an upgraded trust install to scram in order: role password, gates, backup, write, rule check, reload, verify, reconnect, health', async() => {
+  it('switches an upgraded trust install to scram in order: role password, gates, backup, write, rule check, reload, verify, health', async() => {
     const { events, server, logger, hardening } = setup();
 
     expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
-    expect(events).toEqual(['alter-role', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'terminate', 'health']);
+    expect(events).toEqual(['alter-role', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'health']);
     expect(server.hba).toBe(PostgresAuthHardening.MANAGED_HBA);
     expect(server.hba.split('\n')[0]).toBe('# managed-by: sulla-desktop postgres-auth v1');
     expect(server.backup).toBe(TRUST_INSTALL_HBA);
@@ -208,15 +247,17 @@ describe('PostgresAuthHardening', () => {
     expect(logger.lines.join('\n')).toContain('[redacted]');
   });
 
-  // risk: data accuracy — a converged install is left alone on every later boot
-  it('does nothing when the managed file is in place and the role already matches the secret', async() => {
-    const { events, logger, hardening } = setup();
+  // risk: data accuracy — a converged install is left alone on every later boot, without a deliberate failed login (FATAL noise)
+  it('does nothing when the managed file is live and the role already matches, and never probes a wrong password', async() => {
+    const { events, server, logger, hardening } = setup();
 
     await hardening.apply();
     events.length = 0;
+    server.calls.length = 0;
 
     expect(await hardening.apply()).toEqual({ kind: 'scram', changed: false });
-    expect(events).toEqual(['probe', 'probe']);
+    expect(events).toEqual(['rules', 'loaded?', 'probe']);
+    expect(server.calls.some(call => call.input === WRONG_PASSWORD)).toBe(false);
     expect(logger.lines).toContain('[PostgresAuth] state=scram');
   });
 
@@ -230,7 +271,7 @@ describe('PostgresAuthHardening', () => {
     events.length = 0;
 
     expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
-    expect(events).toEqual(['probe', 'probe', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'terminate', 'health']);
+    expect(events).toEqual(['rules', 'loaded?', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'health']);
     expect(server.loaded).toBe(PostgresAuthHardening.MANAGED_HBA);
     expect(server.backup).toBe(TRUST_INSTALL_HBA);
   });
@@ -261,10 +302,11 @@ describe('PostgresAuthHardening', () => {
 
   // risk: permissions — the public development password must not be the only thing guarding the database
   it('keeps trust and says so when the stored secret is the legacy development password', async() => {
-    const { server, logger, hardening } = setup(DEV_PASSWORD);
+    const { events, server, logger, hardening } = setup(DEV_PASSWORD);
 
     expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'legacy-development-secret' });
-    expect(server.calls).toEqual([]);
+    expect(events).toEqual([]); // only reads: no role change, write or reload
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
     expect(logger.lines).toEqual(['[PostgresAuth] state=trust (legacy development secret; rotation pending)']);
   });
 
@@ -290,7 +332,6 @@ describe('PostgresAuthHardening', () => {
     expect(server.loaded).toBe(TRUST_INSTALL_HBA);
     expect(events.slice(-4)).toEqual(['probe', 'probe', 'write', 'reload']);
     expect(logger.lines.some(line => line.startsWith('[PostgresAuth] rolled back:'))).toBe(true);
-    expect(events).not.toContain('terminate');
   });
 
   // risk: outage — the secret itself refused after the reload must put trust back
@@ -305,13 +346,13 @@ describe('PostgresAuthHardening', () => {
   });
 
   // risk: outage — a consumer that cannot reconnect under scram puts trust back
-  it('rolls back when a database consumer is not healthy after its sessions reconnect', async() => {
+  it('rolls back when a database consumer is not healthy over fresh connections', async() => {
     const { events, server, consumers, hardening } = setup();
 
     consumers.healthError = new Error('sulla_vault did not become healthy');
 
     expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'rolled-back', detail: 'sulla_vault did not become healthy' });
-    expect(events.slice(-4)).toEqual(['terminate', 'health', 'write', 'reload']);
+    expect(events.slice(-4)).toEqual(['probe', 'health', 'write', 'reload']);
     expect(server.loaded).toBe(TRUST_INSTALL_HBA);
   });
 
@@ -414,5 +455,107 @@ describe('PostgresAuthHardening', () => {
 
     await hardening.converge();
     expect(await hardening.verify()).toBe(false);
+  });
+
+  // risk: outage — consumers hold session-level advisory locks (workflow scheduler leader, launch locks, Files jobs); ending their sessions kills the manager and breaks mutual exclusion
+  it('never terminates or cancels any backend, on a switch, a rollback or a converged boot', async() => {
+    const { server, consumers, hardening } = setup();
+
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: false });
+    server.hba = TRUST_INSTALL_HBA;
+    server.loaded = TRUST_INSTALL_HBA;
+    consumers.healthError = new Error('sulla_tools did not become healthy');
+    expect(await hardening.apply()).toMatchObject({ kind: 'trust', reason: 'rolled-back' });
+
+    expect(endsSessions(server)).toBe(false);
+  });
+
+  // risk: outage — a managed scram file left on disk under a trust result would lock consumers out at the next PostgreSQL start
+  it('restores the backup and reloads when a managed file is on disk and a gate keeps trust', async() => {
+    const { events, server, consumers, hardening } = setup();
+
+    await hardening.converge();
+    server.hba = PostgresAuthHardening.MANAGED_HBA; // interrupted switch: written, never loaded
+    server.backup = TRUST_INSTALL_HBA;
+    consumers.drifted = ['sulla_files'];
+    events.length = 0;
+
+    expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'consumer-drift', detail: 'sulla_files' });
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
+    expect(server.loaded).toBe(TRUST_INSTALL_HBA);
+    expect(events.slice(-2)).toEqual(['write', 'reload']);
+  });
+
+  // risk: outage — a live managed file whose secret no longer logs in is put back to trust on disk and in memory
+  it('restores trust when the managed file is live but the secret is refused over TCP', async() => {
+    const { server, hardening } = setup();
+
+    await hardening.apply();
+    server.refusesSecret = true;
+
+    expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'probe-failed', detail: 'auth-failed' });
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
+    expect(server.loaded).toBe(TRUST_INSTALL_HBA);
+  });
+
+  // risk: permissions/outage — the reported state matches the disk even for the legacy development secret
+  it('restores the backup when a managed file is on disk and the secret is the development password', async() => {
+    const { server, hardening } = setup(DEV_PASSWORD);
+
+    server.hba = PostgresAuthHardening.MANAGED_HBA;
+    server.loaded = PostgresAuthHardening.MANAGED_HBA;
+    server.backup = TRUST_INSTALL_HBA;
+
+    expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'legacy-development-secret' });
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
+    expect(server.loaded).toBe(TRUST_INSTALL_HBA);
+  });
+
+  // risk: outage — a gate that throws (Docker hiccup) still leaves the disk at trust
+  it('restores trust on disk when a gate throws with a managed file in place', async() => {
+    const { server, consumers, hardening } = setup();
+
+    await hardening.converge();
+    server.hba = PostgresAuthHardening.MANAGED_HBA;
+    server.backup = TRUST_INSTALL_HBA;
+    consumers.driftedConsumers = () => Promise.reject(new Error('docker ps failed'));
+
+    expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'unavailable', detail: 'docker ps failed' });
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
+  });
+
+  // risk: availability — pg_reload_conf() is an async SIGHUP; a probe that still sees trust must not cause a needless rollback
+  it('retries verification while the reload has not taken effect yet', async() => {
+    const { server, clock, hardening } = setup();
+
+    server.reloadLag = 2; // the first verify attempt (two probes) still sees trust
+
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
+    expect(server.loaded).toBe(PostgresAuthHardening.MANAGED_HBA);
+    expect(clock.sleeps.filter(ms => ms === 200)).toEqual([200]);
+  });
+
+  // risk: permissions — retries are bounded: a server that keeps accepting any password is rolled back after five attempts
+  it('gives up after five verification attempts', async() => {
+    const { server, clock, hardening } = setup();
+
+    server.acceptsAnyPassword = true;
+
+    expect(await hardening.apply()).toMatchObject({ kind: 'trust', reason: 'rolled-back' });
+    expect(server.calls.filter(call => call.input === WRONG_PASSWORD)).toHaveLength(5);
+    expect(clock.sleeps.filter(ms => ms === 200)).toHaveLength(4);
+  });
+
+  // risk: availability — a consumer that never answers cannot hang boot with scram half-applied
+  it('rolls back when consumers are not healthy within the bound', async() => {
+    const { server, consumers, clock, hardening } = setup();
+
+    consumers.hang = true;
+    clock.healthExpired = true;
+
+    expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'rolled-back', detail: 'database consumers were not healthy within 30s' });
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
+    expect(server.loaded).toBe(TRUST_INSTALL_HBA);
   });
 });
