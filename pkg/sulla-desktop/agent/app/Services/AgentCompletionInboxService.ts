@@ -6,6 +6,8 @@ import { Service } from '@sulla/foundation';
 import type { AgentJob, AgentJobResult, AgentJobTask } from '../../tools/agents/jobRegistry';
 import { CompletionFormatter } from './CompletionFormatter';
 import { CompletionIdleDispatcher, type CompletionDispatch } from './CompletionIdleDispatcher';
+import { CompletionKey } from './CompletionKey';
+import { CompletionRequeueBackoff } from './CompletionRequeueBackoff';
 
 export interface AgentTerminalNotice {
   status: 'stopped' | 'failed';
@@ -38,6 +40,7 @@ export class AgentCompletionInboxService extends Service {
   constructor(
     private readonly idleDispatcher: CompletionIdleDispatcher,
     private readonly formatter: CompletionFormatter,
+    private readonly backoff: CompletionRequeueBackoff = new CompletionRequeueBackoff(),
   ) {
     super();
   }
@@ -49,9 +52,9 @@ export class AgentCompletionInboxService extends Service {
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
-    const entryKey = completion.dedupeKey ?? `completion:${ completion.jobId }:${ completion.taskIndex }`;
-    const duplicate = this.claimedKeys.has(entryKey) || this.acknowledgedKeys.has(entryKey) || inbox.entries.some(entry =>
-      (entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`) === entryKey);
+    const entryKey = this.entryKey(completion);
+    const duplicate = this.claimedKeys.has(entryKey) || this.acknowledgedKeys.has(entryKey) || this.backoff.isWaiting(entryKey) ||
+      inbox.entries.some(entry => this.entryKey(entry) === entryKey);
     if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
     if (!inbox.stopped && !duplicate) this.idleDispatcher.dispatch(channel, threadId);
@@ -98,6 +101,39 @@ export class AgentCompletionInboxService extends Service {
     return this.enqueue(channel, threadId, entry);
   }
 
+  /**
+   * Hands a claimed completion back after its delivery FAILED. It returns to
+   * the inbox (and wakes the idle dispatcher) only after an exponential,
+   * capped delay, so a persistent failure cannot become a hot retry loop.
+   * Returns the delay in ms, or -1 when a retry for it is already pending.
+   */
+  requeueAfterFailure(channel: string, threadId: string, entry: PendingCompletion): number {
+    const key = this.entryKey(entry);
+    this.claimedKeys.delete(key);
+    this.acknowledgedKeys.delete(key);
+    return this.backoff.schedule(key, () => this.enqueue(channel, threadId, entry));
+  }
+
+  /**
+   * Hands a claimed completion back to a thread whose turn is still running,
+   * without waking the dispatcher: that run's own end drains the inbox.
+   */
+  requeueQuietly(channel: string, threadId: string, entry: PendingCompletion): void {
+    const key = this.entryKey(entry);
+    this.claimedKeys.delete(key);
+    this.acknowledgedKeys.delete(key);
+    if (this.backoff.isWaiting(key)) return;
+    const inboxKey = this.keyFor(channel, threadId);
+    const inbox = this.inboxes.get(inboxKey) ?? { entries: [], stopped: false };
+    if (!inbox.entries.some(existing => this.entryKey(existing) === key)) inbox.entries.push(entry);
+    this.inboxes.set(inboxKey, inbox);
+  }
+
+  /** Drops this process's claim without redelivering; the durable record still holds it for recovery. */
+  releaseClaim(entry: PendingCompletion): void {
+    this.claimedKeys.delete(this.entryKey(entry));
+  }
+
   format(entries: PendingCompletion[]): string {
     return this.formatter.format(entries);
   }
@@ -110,6 +146,7 @@ export class AgentCompletionInboxService extends Service {
     this.inboxes.clear();
     this.claimedKeys.clear();
     this.acknowledgedKeys.clear();
+    this.backoff.clear();
     this.idleDispatcher.clear();
   }
 
@@ -118,6 +155,7 @@ export class AgentCompletionInboxService extends Service {
     this.inboxes.clear();
     this.claimedKeys.clear();
     this.acknowledgedKeys.clear();
+    this.backoff.clear();
     this.idleDispatcher.clear();
   }
 
@@ -126,7 +164,7 @@ export class AgentCompletionInboxService extends Service {
   }
 
   private entryKey(entry: PendingCompletion): string {
-    return entry.dedupeKey ?? `completion:${ entry.jobId }:${ entry.taskIndex }`;
+    return CompletionKey.of(entry);
   }
 
   private keyFor(channel: string, threadId: string): string {
