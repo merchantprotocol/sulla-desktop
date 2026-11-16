@@ -16,8 +16,8 @@ class AdvisoryLockRecorder {
 }
 
 describe('stored namespace locks', () => {
-  // risk: unrelated FUSE creates in the same collection must not queue behind one collection-wide exclusive lock.
-  it('lets sibling creates use shared parent slots, distinct target locks and a shared collection gate', async () => {
+  // risk: a shared collection lock deadlocks when the namespace trigger upgrades it to exclusive.
+  it('takes the trigger-compatible exclusive collection gate and keeps distinct target locks', async () => {
     const first = new AdvisoryLockRecorder();
     const second = new AdvisoryLockRecorder();
     await Promise.all([
@@ -25,8 +25,10 @@ describe('stored namespace locks', () => {
       lockStoredNamespace(second.client, 'collection-a', 'alpha/two.txt'),
     ]);
 
-    expect(first.statements[0]).toContain('pg_advisory_xact_lock_shared');
-    expect(second.statements[0]).toContain('pg_advisory_xact_lock_shared');
+    expect(first.statements[0]).toContain('pg_advisory_xact_lock(');
+    expect(first.statements[0]).not.toContain('pg_advisory_xact_lock_shared');
+    expect(second.statements[0]).toContain('pg_advisory_xact_lock(');
+    expect(second.statements[0]).not.toContain('pg_advisory_xact_lock_shared');
     expect(first.values[0]).toEqual(second.values[0]);
     expect(first.values[1]).toEqual(second.values[1]);
     expect(first.statements[1]).toContain('pg_advisory_xact_lock_shared');
