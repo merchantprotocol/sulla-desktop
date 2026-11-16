@@ -54,7 +54,7 @@ describe.skipIf(!databaseUrl)('tracked root catalog (real Postgres)', () => {
   async function seedWorkCollection():Promise<string> {
     const id = collectionIdFor(userId, roots[1].id);
     await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
-      VALUES($1,$2,'Work','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$1)`, [id, userId]);
+      VALUES($1,$2,'Work','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [id, userId, `fixture-${ id }`]);
     return id;
   }
   const rows = async() => (await pool.query("SELECT id,enabled,state,paused,exclusions FROM file_roots WHERE id=ANY($1::text[]) ORDER BY id", [[...roots.map(root => root.id), 'gone-' + userId]])).rows;
