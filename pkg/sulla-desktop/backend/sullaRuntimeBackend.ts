@@ -37,6 +37,7 @@ import {
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
 import { ContainerDriftReconciler } from './ContainerDriftReconciler';
+import { ServiceSecretComposeValues } from './ServiceSecretComposeValues';
 import {
   ComposeContainerNameReconciler, ComposeServiceHealthWaiter, type ComposeServiceTarget, type DockerCli,
 } from './sullaComposeContainers';
@@ -73,7 +74,6 @@ import { expectVaultContainer, instantiateSullaStart, markSullaDockerServicesSta
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
-import { sullaFilesCapabilityKey } from '@pkg/utils/sullaFilesKey';
 import { sullaFilesNativeSourceRolloutRequested } from '@pkg/utils/sullaFilesNativeSource';
 import Logging from '@pkg/utils/logging';
 import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
@@ -1313,11 +1313,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // Escape '$' as '$$' so Docker Compose doesn't interpret it as a variable.
     const escapeForCompose = (val: string) => val.replace(/\$/g, '$$$$');
     // Waits for a readable settings store; never a hardcoded fallback credential.
-    const rawSullaServicePassword = await serviceSecretProvider.get();
-    const sullaServicePassword = escapeForCompose(rawSullaServicePassword);
-    // Inside postgresql:// URLs the secret is percent-encoded: older generated
-    // passwords can hold `#`, `%` or `@`, which break URL parsing when raw.
-    const sullaServiceUrlPassword = escapeForCompose(encodeURIComponent(rawSullaServicePassword));
+    const serviceSecret = await ServiceSecretComposeValues.resolve(serviceSecretProvider);
+    const rawSullaServicePassword = serviceSecret.raw;
+    const sullaServicePassword = serviceSecret.envValue;
     const tokenFile = path.join(paths.appHome, 'chat-api-token.json');
     let sullaApiToken = '';
     try {
@@ -1427,9 +1425,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           // 256 MB at moderate cost) lives outside the heap, so the limit stays.
           NODE_OPTIONS: serviceNodeOptions(256),
           SULLA_VAULT_MODE: 'desktop',
-          SULLA_VAULT_ADMIN_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
-          SULLA_VAULT_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla_vault`,
-          SULLA_VAULT_LEGACY_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
+          SULLA_VAULT_ADMIN_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
+          SULLA_VAULT_DATABASE_URL: serviceSecret.databaseUrl('sulla_vault'),
+          SULLA_VAULT_LEGACY_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
           SULLA_VAULT_BOOTSTRAP_TOKEN: vaultIdentities.bootstrapToken,
           SULLA_VAULT_DESKTOP_CONTROL_TOKEN: vaultIdentities.controlToken,
           SULLA_VAULT_APPROVAL_TOKEN: vaultIdentities.approvalToken,
@@ -1496,7 +1494,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       environment: {
         NODE_OPTIONS: serviceNodeOptions(256),
         SULLA_WORKFLOW_ROLE: 'manager',
-        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
+        SULLA_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_MANAGER_URL: 'http://workflow_manager:8788',
         SULLA_TOOL_API_URL: `http://host.docker.internal:${ chatApiPort }`,
@@ -1581,7 +1579,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // The agent tool code in this image opens its own PostgresClient pool
         // (default 20) next to the service pool above; one caller needs few.
         SULLA_DATABASE_POOL_MAX: '5',
-        SULLA_DATABASE_URL: `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
+        SULLA_DATABASE_URL: serviceSecret.databaseUrl('sulla'),
         SULLA_REDIS_URL: 'redis://redis:6379',
         SULLA_RELAY_URL: 'http://sulla_relay:8790',
         SULLA_RELAY_TOKEN: sullaApiToken,
@@ -1633,7 +1631,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         // 512 is the real heap; the rest of mem_limit covers the Potion table,
         // chunk buffers and the OCR/Whisper/ffmpeg child processes.
         NODE_OPTIONS:                      serviceNodeOptions(512, 4),
-        SULLA_FILES_DATABASE_URL:          `postgresql://sulla:${ sullaServiceUrlPassword }@postgres:5432/sulla`,
+        SULLA_FILES_DATABASE_URL:          serviceSecret.databaseUrl('sulla'),
         SULLA_FILES_CHUNK_ROOT:            '/var/lib/sulla-files/chunks',
         SULLA_FILES_DATA_ROOT:             '/var/lib/sulla-files',
         SULLA_FILES_STORED_ONLY:           '1',
@@ -1643,7 +1641,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         ...((cloudDeviceId: string | null) => (cloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: cloudDeviceId } : {}))(readExistingDesktopDeviceId()),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
-        SULLA_FILES_CAPABILITY_SIGNING_KEY: sullaFilesCapabilityKey(sullaServicePassword),
+        SULLA_FILES_CAPABILITY_SIGNING_KEY: serviceSecret.filesCapabilitySigningKey,
         SULLA_FILES_LOCAL_TOKEN:           sullaServicePassword,
         SULLA_FILES_BOOTSTRAP_SERVICE_ID:  'sulla-desktop-files-bootstrap',
         SULLA_FILES_BOOTSTRAP_TOKEN:       filesBootstrapIdentity,
@@ -1755,12 +1753,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     // Modify dynamic values like passwords
     if (compose.services?.postgres?.environment) {
-      compose.services.postgres.environment = compose.services.postgres.environment.map((env: string) => {
-        if (env.startsWith('POSTGRES_PASSWORD=')) {
-          return `POSTGRES_PASSWORD=${ sullaServicePassword }`;
-        }
-        return env;
-      });
+      compose.services.postgres.environment = serviceSecret.applyToPostgresEnvironment(compose.services.postgres.environment);
     }
 
     compose.volumes ??= {};
