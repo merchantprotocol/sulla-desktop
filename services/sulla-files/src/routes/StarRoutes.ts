@@ -43,7 +43,9 @@ export class StarRoutes {
   }
 
   private target(request:RequestWithIdentity):{ collectionId:string; fileId?:string; folderPath?:string } {
-    const collectionId = String(request.body.collectionId ?? ''); const fileId = typeof request.body.fileId === 'string' ? request.body.fileId : undefined; const folderPath = typeof request.body.folderPath === 'string' ? FilesRequestInput.cleanPath(request.body.folderPath, false) : undefined;
+    // Express 5 leaves body undefined when a request carries none; that is a 400, not a TypeError 500.
+    const body = request.body ?? {};
+    const collectionId = String(body.collectionId ?? ''); const fileId = typeof body.fileId === 'string' ? body.fileId : undefined; const folderPath = typeof body.folderPath === 'string' ? FilesRequestInput.cleanPath(body.folderPath, false) : undefined;
     if (Boolean(fileId) === Boolean(folderPath)) throw new HttpError(400, 'provide exactly one fileId or folderPath');
     return { collectionId, fileId, folderPath };
   }
