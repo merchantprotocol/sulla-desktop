@@ -12,7 +12,7 @@ import { FilesMasterKeyRejectedError, type FilesKeyring } from './keyring.js';
 import { LegacyFilesImporter, LegacyImportContinuationRequiredError, LegacyImportDataError } from './legacyImport.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { FilesStartupDiagnostics, type FilesStartupStage } from './startupDiagnostics.js';
-import { FilesKeyStateRepository } from './Repositories/FilesKeyStateRepository.js';
+import { FilesBootstrapStateRepository } from './Repositories/FilesBootstrapStateRepository.js';
 
 import type pg from 'pg';
 
@@ -40,7 +40,7 @@ export class FilesLifecycle implements FilesBootstrapLifecycle {
     private readonly config:Config,
     private readonly keyring:FilesKeyring,
     private readonly hooks:LifecycleHooks,
-    private readonly keyState = new FilesKeyStateRepository(db),
+    private readonly keyState = new FilesBootstrapStateRepository(db),
   ) {}
 
   get generation():number { return this.currentGeneration }

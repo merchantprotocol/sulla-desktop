@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Real-Postgres characterization of Files unlock/bootstrap (FilesLifecycle + FilesKeyStateRepository).
+// Real-Postgres characterization of Files unlock/bootstrap (FilesLifecycle + FilesBootstrapStateRepository).
 // Point SULLA_FILES_TEST_DATABASE_URL at a throwaway Postgres, e.g.
 //   docker run --rm -e POSTGRES_PASSWORD=x -p 55432:5432 postgres:16-alpine
 // Each run creates and drops its own schema and applies the real 007/011 key-state migrations.

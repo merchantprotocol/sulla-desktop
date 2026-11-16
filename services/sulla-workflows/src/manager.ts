@@ -775,6 +775,7 @@ async function establishLegacyOwnership(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  if (!config.databaseUrl) throw new Error('SULLA_DATABASE_URL is required');
   await new StartupDatabaseWait({ name: 'workflow-manager' }).until('connect', () => pool.query('SELECT 1'));
   await migrate();
   await establishLegacyOwnership();
