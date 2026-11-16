@@ -30,7 +30,7 @@ describe('Files transaction resource guard',()=>{
   // risk: data loss — derived indexing and spool-atomic audit delivery may replay; user versions and spool inserts stay synchronous.
   it('disables synchronous commit only for reconstructible index state',async()=>{
     const calls:string[]=[];
-    const runner=new TransactionRunner({connect:async()=>({query:async(sql:string)=>{calls.push(sql)},release:()=>undefined})} as any);
+    const runner=new TransactionRunner({connect:async()=>({query:async(sql:string)=>{calls.push(sql);return {command:sql.split(' ')[0].toUpperCase()}},release:()=>undefined})} as any);
     await runner.run('index-content-commit',async()=>undefined);
     expect(calls).toEqual(['BEGIN','SET LOCAL synchronous_commit = off','COMMIT']);
     calls.length=0;

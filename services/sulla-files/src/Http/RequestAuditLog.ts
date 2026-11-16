@@ -16,7 +16,7 @@ export class RequestAuditLog {
 
   readonly record = async(request:RequestWithIdentity, action:string, file?:any, details:Record<string, unknown> = {}, client?:pg.PoolClient):Promise<void> => {
     const actor = this.access.identity(request);
-    await this.rows.insert({
+    const row = {
       whoType: actor.agentId ? 'agent' : actor.kind === 'capability' ? 'agent-or-device' : 'user',
       whoId: actor.agentId ?? actor.userId,
       deviceOrRunId: actor.jobId ?? actor.deviceId ?? null,
@@ -25,6 +25,10 @@ export class RequestAuditLog {
       action,
       orgId: details.orgId ?? null,
       details,
-    }, client).catch(error => console.error('[SullaFiles] PostgreSQL audit dual-write failed; file-change event remains in durable spool', error));
+    };
+    const write = client
+      ? this.rows.insertWithinSavepoint(row, client)
+      : this.rows.insert(row);
+    await write.catch(error => console.error('[SullaFiles] PostgreSQL audit dual-write failed; file-change event remains in durable spool', error));
   };
 }

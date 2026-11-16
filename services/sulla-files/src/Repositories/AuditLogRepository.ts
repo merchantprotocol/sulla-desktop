@@ -18,4 +18,16 @@ export class AuditLogRepository {
     await (client ?? this.db).query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,org_id,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       [row.whoType, row.whoId, row.deviceOrRunId, row.fileId, row.versionId, row.action, row.orgId, row.details]);
   }
+
+  async insertWithinSavepoint(row:AuditLogRow, client:pg.PoolClient):Promise<void> {
+    await client.query('SAVEPOINT request_audit_log');
+    try {
+      await this.insert(row, client);
+      await client.query('RELEASE SAVEPOINT request_audit_log');
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT request_audit_log');
+      await client.query('RELEASE SAVEPOINT request_audit_log');
+      throw error;
+    }
+  }
 }

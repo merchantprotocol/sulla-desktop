@@ -7,6 +7,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { RequestAuditLog } from '../src/Http/RequestAuditLog.js';
 import { AuditLogRepository } from '../src/Repositories/AuditLogRepository.js';
+import { FilesTransactionAbortedError } from '../src/Repositories/TransactionControlRepository.js';
 import { TransactionRunner } from '../src/FilesTransaction.js';
 
 const databaseUrl=process.env.SULLA_FILES_TEST_DATABASE_URL;
@@ -41,5 +42,13 @@ describe.skipIf(!databaseUrl)('request audit transaction attachment (real Postgr
     expect((await pool.query('SELECT action,who_id,device_or_run_id FROM audit_log')).rows).toEqual([
       {action:'fuse-create',who_id:'agent-1',device_or_run_id:'job-1'},
     ]);
+  });
+
+  // risk: data loss — a swallowed statement error must not make TransactionRunner report a rollback as success.
+  it('rejects when PostgreSQL rolls back a transaction after swallowed statement failure',async()=>{
+    await expect(transactions.run('swallowed-statement-failure',async client=>{
+      await client.query("INSERT INTO audit_log(who_type,who_id,action,details) VALUES('user','bad','x','not-json'::jsonb)").catch(()=>undefined);
+      return 'apparently successful';
+    })).rejects.toBeInstanceOf(FilesTransactionAbortedError);
   });
 });
