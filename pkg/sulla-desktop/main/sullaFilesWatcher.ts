@@ -61,12 +61,8 @@ export class SullaFilesWatcher {
   private unlockPermitted = false;
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
-  private readonly startup = new VaultFilesStartup();
-  private readonly nativeSourceRevalidator = new NativeSourceRevalidator({
-    post: (handles, replaceExisting) => this.filesRequests.rawLocalRequest('/v1/local/native-sources/revalidate', {
-      method: 'POST', body: JSON.stringify({ handles, replaceExisting }),
-    }),
-  });
+  private readonly startup:VaultFilesStartup;
+  private readonly nativeSourceRevalidator:NativeSourceRevalidator;
   private readonly nativeBroker = new SullaFilesNativeBroker({
     actions: async() => {
       const response = await this.filesRequests.rawLocalRequest('/v1/local/native-sources/actions');
@@ -87,6 +83,13 @@ export class SullaFilesWatcher {
     finish:   (operationId, result) => this.finishNativePublication(operationId, result),
     logError: (message, error) => console.debug(`[SullaFiles] ${ message }:`, error),
   });
+
+  constructor(startup:VaultFilesStartup, createNativeSourceRevalidator:(post:ConstructorParameters<typeof NativeSourceRevalidator>[0]['post']) => NativeSourceRevalidator) {
+    this.startup = startup;
+    this.nativeSourceRevalidator = createNativeSourceRevalidator((handles, replaceExisting) => this.filesRequests.rawLocalRequest('/v1/local/native-sources/revalidate', {
+      method: 'POST', body: JSON.stringify({ handles, replaceExisting }),
+    }));
+  }
 
   private async appUnlocked(): Promise<boolean> {
     const { getVaultKeyService } = await import('@pkg/agent/services/VaultKeyService');
