@@ -14,7 +14,7 @@
 //
 // How to add a new type:
 //   1. Add the key to CUSTOM_FIELD_TYPES and a friendly name to CUSTOM_FIELD_TYPE_LABELS.
-//   2. Add a validator branch in customFieldValueError() (return a message, or null when valid).
+//   2. Add a validator branch in CustomFieldValidator.valueError() (return a message, or null when valid).
 //   3. If the value is a secret, add it to SECRET_CUSTOM_FIELD_TYPES.
 //   4. Mirror steps 1–3 in console/local/customFields.js, then give it an editor input and a
 //      detail renderer in console/local/local.js. The parity test covers steps 1–3.
@@ -61,136 +61,170 @@ export interface VaultItemCustomField {
   hidden?: boolean;
 }
 
-const FIELD_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
-const FUTURE_TYPE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
-
-export function isKnownCustomFieldType(type: unknown): type is CustomFieldType {
-  return typeof type === 'string' && (CUSTOM_FIELD_TYPES as readonly string[]).includes(type);
-}
-
-export function isSecretCustomField(field: Pick<VaultItemCustomField, 'type' | 'hidden'>): boolean {
-  return field.hidden === true || (SECRET_CUSTOM_FIELD_TYPES as readonly string[]).includes(field.type);
-}
-
-function validCalendarDate(value: string): boolean {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return false;
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-function validTotpSecret(value: string): boolean {
-  const trimmed = value.trim();
-  if (/^otpauth:\/\//i.test(trimmed)) {
-    try {
-      const url = new URL(trimmed);
-      if (url.protocol !== 'otpauth:' || !['totp', 'hotp'].includes(url.hostname.toLowerCase())) return false;
-      const secret = url.searchParams.get('secret') ?? '';
-      return /^[A-Z2-7]{16,}=*$/i.test(secret.replace(/\s+/g, ''));
-    } catch {
-      return false;
-    }
-  }
-  return /^[A-Z2-7]{16,}=*$/i.test(trimmed.replace(/[\s-]+/g, ''));
-}
-
 /**
- * Returns a human-readable problem with `value` for `type`, or null when it is valid.
- * Messages never include the value. Empty values are allowed for every type except boolean.
+ * Validates custom field types, values and lists. Stateless; the legacy named functions below
+ * delegate to `CustomFieldValidator.shared()`.
  */
-export function customFieldValueError(type: string, value: unknown): string | null {
-  if (typeof value !== 'string') return 'must be text';
-  if (new TextEncoder().encode(value).length > CUSTOM_FIELD_LIMITS.maxValueBytes) {
-    return `must be ${ CUSTOM_FIELD_LIMITS.maxValueBytes / 1024 } KiB or less`;
+export class CustomFieldValidator {
+  private static sharedInstance: CustomFieldValidator | undefined;
+
+  private static readonly FIELD_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+  private static readonly FUTURE_TYPE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+  // eslint-disable-next-line no-control-regex
+  private static readonly CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+  private static readonly FIELD_KEYS: readonly string[] = ['id', 'label', 'type', 'value', 'hidden'];
+
+  private readonly encoder = new TextEncoder();
+
+  static shared(): CustomFieldValidator {
+    CustomFieldValidator.sharedInstance ??= new CustomFieldValidator();
+    return CustomFieldValidator.sharedInstance;
   }
-  if (type === 'boolean') return value === 'true' || value === 'false' ? null : 'must be Yes or No';
-  if (value === '' || !isKnownCustomFieldType(type)) return null;
-  const trimmed = value.trim();
-  switch (type) {
-  case 'text':
-  case 'linked':
-  case 'password':
-    return /[\r\n]/.test(value) ? 'must be a single line' : null;
-  case 'multiline':
-    return null;
-  case 'url':
-    try {
-      const url = new URL(trimmed);
-      return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? null : 'must start with https://, http:// or mailto:';
-    } catch {
-      return 'must be a full URL such as https://example.com';
+
+  isKnownType(type: unknown): type is CustomFieldType {
+    return typeof type === 'string' && (CUSTOM_FIELD_TYPES as readonly string[]).includes(type);
+  }
+
+  isSecret(field: Pick<VaultItemCustomField, 'type' | 'hidden'>): boolean {
+    return field.hidden === true || (SECRET_CUSTOM_FIELD_TYPES as readonly string[]).includes(field.type);
+  }
+
+  /**
+   * Returns a human-readable problem with `value` for `type`, or null when it is valid.
+   * Messages never include the value. Empty values are allowed for every type except boolean.
+   */
+  valueError(type: string, value: unknown): string | null {
+    if (typeof value !== 'string') return 'must be text';
+    if (this.encoder.encode(value).length > CUSTOM_FIELD_LIMITS.maxValueBytes) {
+      return `must be ${ CUSTOM_FIELD_LIMITS.maxValueBytes / 1024 } KiB or less`;
     }
-  case 'email':
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) ? null : 'must be an email address';
-  case 'number':
-    return /^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed) && Number.isFinite(Number(trimmed)) ? null : 'must be a number';
-  case 'date':
-    return validCalendarDate(trimmed) ? null : 'must be a date (YYYY-MM-DD)';
-  case 'phone':
-    return /^\+?[0-9 ().-]{3,32}$/.test(trimmed) && (trimmed.match(/\d/g)?.length ?? 0) >= 3 ? null : 'must be a phone number';
-  case 'one-time':
-    return validTotpSecret(value) ? null : 'must be a base32 secret or an otpauth:// URI';
+    if (type === 'boolean') return value === 'true' || value === 'false' ? null : 'must be Yes or No';
+    if (value === '' || !this.isKnownType(type)) return null;
+    const trimmed = value.trim();
+    switch (type) {
+    case 'text':
+    case 'linked':
+    case 'password':
+      return /[\r\n]/.test(value) ? 'must be a single line' : null;
+    case 'multiline':
+      return null;
+    case 'url':
+      try {
+        const url = new URL(trimmed);
+        return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? null : 'must start with https://, http:// or mailto:';
+      } catch {
+        return 'must be a full URL such as https://example.com';
+      }
+    case 'email':
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) ? null : 'must be an email address';
+    case 'number':
+      return /^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed) && Number.isFinite(Number(trimmed)) ? null : 'must be a number';
+    case 'date':
+      return this.validCalendarDate(trimmed) ? null : 'must be a date (YYYY-MM-DD)';
+    case 'phone':
+      return /^\+?[0-9 ().-]{3,32}$/.test(trimmed) && (trimmed.match(/\d/g)?.length ?? 0) >= 3 ? null : 'must be a phone number';
+    case 'one-time':
+      return this.validTotpSecret(value) ? null : 'must be a base32 secret or an otpauth:// URI';
+    }
+    return null;
   }
-  return null;
+
+  /**
+   * Validates an item's customFields array. Fails closed. Error messages identify fields by
+   * position only, never by label or value, so they are safe to return from the service.
+   *
+   * `preserved` lists stored fields whose unknown type may round-trip: a field with a type this
+   * build does not know is accepted only when the same id already had that type in `preserved`.
+   */
+  validate(input: unknown, options: { preserved?: readonly VaultItemCustomField[] } = {}): CustomFieldsValidation {
+    if (input === undefined) return { ok: true, fields: [] };
+    if (!Array.isArray(input)) return { ok: false, error: 'Custom fields must be a list' };
+    if (input.length > CUSTOM_FIELD_LIMITS.maxFields) {
+      return { ok: false, error: `Items can have at most ${ CUSTOM_FIELD_LIMITS.maxFields } custom fields` };
+    }
+    const preservedTypes = new Map((options.preserved ?? []).map(field => [field.id, field.type]));
+    const labels = new Set<string>();
+    const ids = new Set<string>();
+    const fields: VaultItemCustomField[] = [];
+    for (const [index, raw] of input.entries()) {
+      const where = `Custom field ${ index + 1 }`;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: `${ where } is invalid` };
+      const field = raw as Record<string, unknown>;
+      const extra = Object.keys(field).filter(key => !CustomFieldValidator.FIELD_KEYS.includes(key));
+      if (extra.length) return { ok: false, error: `${ where } has unsupported properties` };
+      if (typeof field.id !== 'string' || !CustomFieldValidator.FIELD_ID_PATTERN.test(field.id)) return { ok: false, error: `${ where } has an invalid id` };
+      if (ids.has(field.id)) return { ok: false, error: `${ where } repeats another field's id` };
+      if (typeof field.label !== 'string') return { ok: false, error: `${ where } needs a label` };
+      const label = field.label.trim();
+      if (!label || label.length > CUSTOM_FIELD_LIMITS.maxLabelLength) {
+        return { ok: false, error: `${ where } label must be 1–${ CUSTOM_FIELD_LIMITS.maxLabelLength } characters` };
+      }
+      if (CustomFieldValidator.CONTROL_CHARACTERS.test(label)) return { ok: false, error: `${ where } label contains control characters` };
+      if (labels.has(label.toLowerCase())) return { ok: false, error: `${ where } label is already used on this item` };
+      if (typeof field.type !== 'string') return { ok: false, error: `${ where } needs a type` };
+      if (!this.isKnownType(field.type)) {
+        if (!CustomFieldValidator.FUTURE_TYPE_PATTERN.test(field.type) || preservedTypes.get(field.id) !== field.type) {
+          return { ok: false, error: `${ where } has an unsupported type` };
+        }
+      }
+      if (field.hidden !== undefined && typeof field.hidden !== 'boolean') return { ok: false, error: `${ where } hidden flag is invalid` };
+      const problem = this.valueError(field.type, field.value);
+      if (problem) return { ok: false, error: `${ where } ${ problem }` };
+      ids.add(field.id);
+      labels.add(label.toLowerCase());
+      fields.push({
+        id: field.id, label, type: field.type, value: field.value as string,
+        ...(field.hidden === undefined ? {} : { hidden: field.hidden }),
+      });
+    }
+    return { ok: true, fields };
+  }
+
+  private validCalendarDate(value: string): boolean {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return false;
+    const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  }
+
+  private validTotpSecret(value: string): boolean {
+    const trimmed = value.trim();
+    if (/^otpauth:\/\//i.test(trimmed)) {
+      try {
+        const url = new URL(trimmed);
+        if (url.protocol !== 'otpauth:' || !['totp', 'hotp'].includes(url.hostname.toLowerCase())) return false;
+        const secret = url.searchParams.get('secret') ?? '';
+        return /^[A-Z2-7]{16,}=*$/i.test(secret.replace(/\s+/g, ''));
+      } catch {
+        return false;
+      }
+    }
+    return /^[A-Z2-7]{16,}=*$/i.test(trimmed.replace(/[\s-]+/g, ''));
+  }
 }
 
 export type CustomFieldsValidation =
   | { ok: true; fields: VaultItemCustomField[] }
   | { ok: false; error: string };
 
-/**
- * Validates an item's customFields array. Fails closed. Error messages identify fields by
- * position only, never by label or value, so they are safe to return from the service.
- *
- * `preserved` lists stored fields whose unknown type may round-trip: a field with a type this
- * build does not know is accepted only when the same id already had that type in `preserved`.
- */
+export function isKnownCustomFieldType(type: unknown): type is CustomFieldType {
+  return CustomFieldValidator.shared().isKnownType(type);
+}
+
+export function isSecretCustomField(field: Pick<VaultItemCustomField, 'type' | 'hidden'>): boolean {
+  return CustomFieldValidator.shared().isSecret(field);
+}
+
+/** See CustomFieldValidator.valueError. */
+export function customFieldValueError(type: string, value: unknown): string | null {
+  return CustomFieldValidator.shared().valueError(type, value);
+}
+
+/** See CustomFieldValidator.validate. */
 export function validateCustomFields(
   input: unknown,
   options: { preserved?: readonly VaultItemCustomField[] } = {},
 ): CustomFieldsValidation {
-  if (input === undefined) return { ok: true, fields: [] };
-  if (!Array.isArray(input)) return { ok: false, error: 'Custom fields must be a list' };
-  if (input.length > CUSTOM_FIELD_LIMITS.maxFields) {
-    return { ok: false, error: `Items can have at most ${ CUSTOM_FIELD_LIMITS.maxFields } custom fields` };
-  }
-  const preservedTypes = new Map((options.preserved ?? []).map(field => [field.id, field.type]));
-  const labels = new Set<string>();
-  const ids = new Set<string>();
-  const fields: VaultItemCustomField[] = [];
-  for (const [index, raw] of input.entries()) {
-    const where = `Custom field ${ index + 1 }`;
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: `${ where } is invalid` };
-    const field = raw as Record<string, unknown>;
-    const extra = Object.keys(field).filter(key => !['id', 'label', 'type', 'value', 'hidden'].includes(key));
-    if (extra.length) return { ok: false, error: `${ where } has unsupported properties` };
-    if (typeof field.id !== 'string' || !FIELD_ID_PATTERN.test(field.id)) return { ok: false, error: `${ where } has an invalid id` };
-    if (ids.has(field.id)) return { ok: false, error: `${ where } repeats another field's id` };
-    if (typeof field.label !== 'string') return { ok: false, error: `${ where } needs a label` };
-    const label = field.label.trim();
-    if (!label || label.length > CUSTOM_FIELD_LIMITS.maxLabelLength) {
-      return { ok: false, error: `${ where } label must be 1–${ CUSTOM_FIELD_LIMITS.maxLabelLength } characters` };
-    }
-    if (CONTROL_CHARACTERS.test(label)) return { ok: false, error: `${ where } label contains control characters` };
-    if (labels.has(label.toLowerCase())) return { ok: false, error: `${ where } label is already used on this item` };
-    if (typeof field.type !== 'string') return { ok: false, error: `${ where } needs a type` };
-    if (!isKnownCustomFieldType(field.type)) {
-      if (!FUTURE_TYPE_PATTERN.test(field.type) || preservedTypes.get(field.id) !== field.type) {
-        return { ok: false, error: `${ where } has an unsupported type` };
-      }
-    }
-    if (field.hidden !== undefined && typeof field.hidden !== 'boolean') return { ok: false, error: `${ where } hidden flag is invalid` };
-    const problem = customFieldValueError(field.type, field.value);
-    if (problem) return { ok: false, error: `${ where } ${ problem }` };
-    ids.add(field.id);
-    labels.add(label.toLowerCase());
-    fields.push({
-      id: field.id, label, type: field.type, value: field.value as string,
-      ...(field.hidden === undefined ? {} : { hidden: field.hidden }),
-    });
-  }
-  return { ok: true, fields };
+  return CustomFieldValidator.shared().validate(input, options);
 }

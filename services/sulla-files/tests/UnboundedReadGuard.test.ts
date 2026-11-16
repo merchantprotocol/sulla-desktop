@@ -25,6 +25,10 @@ const ALLOWED:Record<string, number> = {
   'Repositories/LegacyImportIdentityRepository.ts': 1,
   'Repositories/LegacyImportPublicationRepository.ts': 1,
   'Repositories/LegacyImportReceiptRepository.ts': 1,
+  // Bounded by the caller's path array: the ancestors of one path being created (moved from storedNamespace.ts).
+  'Repositories/StoredNamespaceRepository.ts': 1,
+  // One-time Sulla-collection merge and stray-Docs cleanup, moved row by row (moved from sullaCollectionMigration.ts).
+  'Repositories/SullaCollectionMigrationRepository.ts': 4,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
   'app.ts': 9,
@@ -33,7 +37,6 @@ const ALLOWED:Record<string, number> = {
   'folderOperationBatches.ts': 12,
   'localManager.ts': 3,
   'shares.ts': 1,
-  'sullaCollectionMigration.ts': 4,
 };
 
 function sources(directory:string):string[] {
