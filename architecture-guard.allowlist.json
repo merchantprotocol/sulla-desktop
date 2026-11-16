@@ -1,6 +1,6 @@
 {
   "about": "Architecture guard allowlist. Today's offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.",
-  "entries": 1041,
+  "entries": 1032,
   "files": {
     "background.ts": {
       "rules": {
@@ -4251,21 +4251,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/databaseOperationBatches.ts": {
-      "rules": {
-        "raw-sql": 31,
-        "procedural-module": 6
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/databaseOperations.ts": {
-      "rules": {
-        "long-file": 571,
-        "raw-sql": 169,
-        "procedural-module": 13
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/db.ts": {
       "rules": {
         "raw-sql": 7,
@@ -4303,14 +4288,6 @@
         "raw-sql": 4
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/folderOperationBatches.ts": {
-      "rules": {
-        "long-file": 477,
-        "raw-sql": 175,
-        "procedural-module": 5
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
     "services/sulla-files/src/index.ts": {
       "rules": {
@@ -4391,12 +4368,6 @@
         "procedural-module": 2
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/operationCancellation.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "services/sulla-files/src/preview.ts": {
       "rules": {

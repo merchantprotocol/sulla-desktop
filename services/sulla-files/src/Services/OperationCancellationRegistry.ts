@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-const sharedSlot = Symbol.for('sulla-files.operation-cancellation-registry');
+const sharedSlot = Symbol('sulla-files.operation-cancellation-registry');
 
 /**
  * Cooperative cancellation for batch operations.

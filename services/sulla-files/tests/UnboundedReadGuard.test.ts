@@ -21,12 +21,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'
  */
 const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
+  'Repositories/FolderSubtreeRepository.ts': 7,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'ChunkMetadataReconciler.ts': 1,
   'app.ts': 9,
   'cloudSync/repository.ts': 1,
   'fileOperations.ts': 1,
-  'folderOperationBatches.ts': 12,
   'legacyImport.ts': 3,
   'localManager.ts': 3,
   'shares.ts': 1,
