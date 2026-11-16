@@ -25,6 +25,8 @@ const ALLOWED:Record<string, number> = {
   'Repositories/CloudFolderCoverageRepository.ts': 1,
   // Legacy server sync push queue (moved from localManager.ts): one device's unpushed journal per pass.
   'Repositories/LegacySyncRepository.ts': 1,
+  // Folder move/copy plan lock (moved from localManager.ts): one user-selected folder subtree.
+  'Repositories/PathOperationPublishRepository.ts': 1,
   // Legacy import: converts every legacy version once; counts and provenance checks are one-row aggregates.
   'Repositories/LegacyImportIdentityRepository.ts': 1,
   'Repositories/LegacyImportPublicationRepository.ts': 1,
@@ -50,7 +52,7 @@ const ALLOWED:Record<string, number> = {
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
   'app.ts': 5,
-  'localManager.ts': 2,
+  'localManager.ts': 1,
 };
 
 function sources(directory:string):string[] {
