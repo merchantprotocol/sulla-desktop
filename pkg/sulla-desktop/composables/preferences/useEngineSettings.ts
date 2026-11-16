@@ -13,7 +13,9 @@
  * shows a bar to apply or discard them.
  */
 import _ from 'lodash';
-import { computed, ref } from 'vue';
+import {
+  computed, ref, type ComputedRef, type Ref,
+} from 'vue';
 import { useStore } from 'vuex';
 
 import type { Settings } from '@pkg/config/settings';
@@ -22,28 +24,67 @@ import { decideApply } from '@pkg/utils/preferencesModel';
 
 type Held = 'restart' | 'reset';
 
-// One Preferences tab per window, so this state is shared by every section.
-const held = ref<Held | null>(null);
-const error = ref('');
-const applying = ref(false);
+/** The slice of the renderer IPC the controller needs (swappable in tests). */
+export interface EngineSettingsIpc {
+  invoke(channel: string, ...args: any[]): Promise<any>;
+}
 
-export function useEngineSettings() {
-  const store = useStore();
+/** The parts of the Vuex store the controller reads and dispatches to. */
+export interface EngineSettingsStore {
+  getters:  Record<string, any>;
+  state:    any;
+  dispatch(type: string, payload?: unknown): Promise<any>;
+}
 
-  const settings = computed<Settings>(() => store.getters['preferences/getPreferences']);
+/**
+ * The held-changes bar state. One Preferences tab per window, so a single
+ * instance is shared by every section.
+ */
+export class EngineSettingsState {
+  private static instance: EngineSettingsState | undefined;
 
-  function get<T = any>(path: string): T {
-    return _.get(settings.value, path) as T;
+  static get shared(): EngineSettingsState {
+    EngineSettingsState.instance ??= new EngineSettingsState();
+
+    return EngineSettingsState.instance;
   }
 
-  function isLocked(path: string): boolean {
-    return !!store.getters['preferences/isPreferenceLocked'](path);
+  readonly held = ref<Held | null>(null);
+  readonly error = ref('');
+  readonly applying = ref(false);
+}
+
+/** Reads, saves, holds and applies engine settings through the preferences store. */
+export class EngineSettingsController {
+  readonly settings: ComputedRef<Settings>;
+  readonly held: Ref<Held | null>;
+  readonly error: Ref<string>;
+  readonly applying: Ref<boolean>;
+
+  constructor(
+    private readonly store: EngineSettingsStore,
+    private readonly ipc: EngineSettingsIpc,
+    shared: EngineSettingsState,
+  ) {
+    this.settings = computed<Settings>(() => store.getters['preferences/getPreferences']);
+    this.held = shared.held;
+    this.error = shared.error;
+    this.applying = shared.applying;
   }
+
+  get = <T = any>(path: string): T => {
+    return _.get(this.settings.value, path) as T;
+  };
+
+  isLocked = (path: string): boolean => {
+    return !!this.store.getters['preferences/isPreferenceLocked'](path);
+  };
 
   /** Change several settings at once, so linked choices are checked together. */
-  async function setMany(changes: Record<string, unknown>): Promise<void> {
-    const before = _.cloneDeep(settings.value);
-    const next = _.cloneDeep(settings.value);
+  setMany = async(changes: Record<string, unknown>): Promise<void> => {
+    const { store, held, error } = this;
+    const before = _.cloneDeep(this.settings.value);
+    const next = _.cloneDeep(this.settings.value);
 
     for (const [path, value] of Object.entries(changes)) {
       _.set(next, path, value);
@@ -73,19 +114,21 @@ export function useEngineSettings() {
       await store.dispatch('preferences/setPreferences', before).catch(() => undefined);
       error.value = `Sulla could not save this setting: ${ err instanceof Error ? err.message : String(err) }`;
     }
-  }
+  };
 
-  function set(path: string, value: unknown): Promise<void> {
-    return setMany({ [path]: value });
-  }
+  set = (path: string, value: unknown): Promise<void> => {
+    return this.setMany({ [path]: value });
+  };
 
-  async function applyHeld(): Promise<void> {
+  applyHeld = async(): Promise<void> => {
+    const { held, applying, error } = this;
+
     if (!held.value || applying.value) {
       return;
     }
     if (held.value === 'reset') {
       const cancelId = 1;
-      const result = await ipcRenderer.invoke('show-message-box', {
+      const result = await this.ipc.invoke('show-message-box', {
         title:    'Sulla Desktop - Reset',
         type:     'warning',
         message:  'Apply these changes and reset the virtual machine?',
@@ -100,20 +143,32 @@ export function useEngineSettings() {
     }
     applying.value = true;
     try {
-      await store.dispatch('preferences/commitPreferences');
+      await this.store.dispatch('preferences/commitPreferences');
       held.value = null;
     } catch (err) {
       error.value = `Sulla could not save these settings: ${ err instanceof Error ? err.message : String(err) }`;
     } finally {
       applying.value = false;
     }
-  }
+  };
 
-  async function discardHeld(): Promise<void> {
-    await store.dispatch('preferences/setPreferences', store.state.preferences.initialPreferences);
-    held.value = null;
-    error.value = '';
-  }
+  discardHeld = async(): Promise<void> => {
+    await this.store.dispatch('preferences/setPreferences', this.store.state.preferences.initialPreferences);
+    this.held.value = null;
+    this.error.value = '';
+  };
+}
+
+/** Vue entry point: the engine settings for this window's Preferences tab. */
+export function useEngineSettings() {
+  const controller = new EngineSettingsController(
+    useStore() as unknown as EngineSettingsStore,
+    ipcRenderer as unknown as EngineSettingsIpc,
+    EngineSettingsState.shared,
+  );
+  const {
+    settings, get, set, setMany, isLocked, held, error, applying, applyHeld, discardHeld,
+  } = controller;
 
   return {
     settings, get, set, setMany, isLocked, held, error, applying, applyHeld, discardHeld,

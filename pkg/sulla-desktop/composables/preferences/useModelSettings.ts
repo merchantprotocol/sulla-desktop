@@ -40,8 +40,28 @@ interface ProviderState {
   subconsciousModelId:  string;
 }
 
-export function useModelSettings() {
-  const state = reactive<ProviderState>({
+/** The slice of the renderer IPC the controller needs (swappable in tests). */
+export interface ModelSettingsIpc {
+  invoke(channel: string, ...args: any[]): Promise<any>;
+  on(channel: string, listener: (...args: any[]) => void): unknown;
+  removeListener(channel: string, listener: (...args: any[]) => void): unknown;
+}
+
+/** The window events the controller listens to (swappable in tests). */
+export interface ModelSettingsWindow {
+  addEventListener(type: 'focus', listener: () => void): void;
+  removeEventListener(type: 'focus', listener: () => void): void;
+}
+
+const SLOTS: readonly ModelSlot[] = ['primary', 'secondary', 'subconscious'];
+const PROVIDER_RETRY_DELAYS: readonly number[] = [1000, 3000, 6000];
+
+/**
+ * Mirrors ModelProviderService's provider/model state and sends the user's
+ * picks back over the `model-provider:*` IPC.
+ */
+export class ModelSettingsController {
+  readonly state = reactive<ProviderState>({
     primaryProvider:      '',
     secondaryProvider:    '',
     subconsciousProvider: 'default',
@@ -49,21 +69,35 @@ export function useModelSettings() {
     secondaryModelId:     '',
     subconsciousModelId:  '',
   });
-  const providers = ref<ProviderOption[]>([]);
-  const models = reactive<Record<ModelSlot, ModelOption[]>>({ primary: [], secondary: [], subconscious: [] });
-  const accounts = reactive<Record<ModelSlot, AccountOption[]>>({ primary: [], secondary: [], subconscious: [] });
-  const loading = ref(true);
-  const error = ref('');
-  const saved = ref(false);
-  let savedTimer: ReturnType<typeof setTimeout> | undefined;
-  let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  let retryAttempt = 0;
 
-  function message(err: unknown) {
+  readonly providers = ref<ProviderOption[]>([]);
+  readonly models = reactive<Record<ModelSlot, ModelOption[]>>({ primary: [], secondary: [], subconscious: [] });
+  readonly accounts = reactive<Record<ModelSlot, AccountOption[]>>({ primary: [], secondary: [], subconscious: [] });
+  readonly loading = ref(true);
+  readonly error = ref('');
+  readonly saved = ref(false);
+
+  readonly runsLocally = computed(() => LOCAL_PROVIDERS.includes(this.state.primaryProvider));
+  readonly localProvider = computed(() => this.providers.value.find(p => LOCAL_PROVIDERS.includes(p.id) && p.connected));
+  readonly onlineProvider = computed(() => this.providers.value.find(p => !LOCAL_PROVIDERS.includes(p.id) && p.connected));
+
+  private savedTimer: ReturnType<typeof setTimeout> | undefined;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private retryAttempt = 0;
+
+  constructor(
+    private readonly ipc: ModelSettingsIpc,
+    private readonly win: ModelSettingsWindow,
+  ) {}
+
+  private message(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
   }
 
-  function slotProvider(slot: ModelSlot): string {
+  /** The provider a slot actually uses ('default' subconscious follows the primary). */
+  slotProvider(slot: ModelSlot): string {
+    const { state } = this;
+
     if (slot === 'primary') {
       return state.primaryProvider;
     }
@@ -74,41 +108,39 @@ export function useModelSettings() {
     return state.subconsciousProvider === 'default' ? state.primaryProvider : state.subconsciousProvider;
   }
 
-  async function loadModels(slot: ModelSlot) {
-    const id = slotProvider(slot);
+  private async loadModels(slot: ModelSlot): Promise<void> {
+    const id = this.slotProvider(slot);
 
     if (!id) {
-      models[slot] = [];
+      this.models[slot] = [];
 
       return;
     }
     try {
-      models[slot] = await ipcRenderer.invoke('model-provider:get-models', id) || [];
+      this.models[slot] = await this.ipc.invoke('model-provider:get-models', id) || [];
     } catch (err) {
-      models[slot] = [];
-      error.value = `Could not load models: ${ message(err) }`;
+      this.models[slot] = [];
+      this.error.value = `Could not load models: ${ this.message(err) }`;
     }
   }
 
-  async function loadAccounts(slot: ModelSlot) {
-    const id = slotProvider(slot);
+  private async loadAccounts(slot: ModelSlot): Promise<void> {
+    const id = this.slotProvider(slot);
 
     if (!id) {
       return;
     }
     try {
-      const all = await ipcRenderer.invoke('model-provider:get-accounts', id) || [];
+      const all = await this.ipc.invoke('model-provider:get-accounts', id) || [];
 
-      accounts[slot] = all.filter(account => account.connected === true);
+      this.accounts[slot] = all.filter((account: AccountOption) => account.connected === true);
     } catch {
-      accounts[slot] = [];
+      this.accounts[slot] = [];
     }
   }
 
-  async function loadSlots() {
-    const slots: ModelSlot[] = ['primary', 'secondary', 'subconscious'];
-
-    await Promise.all(slots.flatMap(slot => [loadModels(slot), loadAccounts(slot)]));
+  private async loadSlots(): Promise<void> {
+    await Promise.all(SLOTS.flatMap(slot => [this.loadModels(slot), this.loadAccounts(slot)]));
   }
 
   /**
@@ -116,21 +148,23 @@ export function useModelSettings() {
    * list usually means the vault wasn't unlocked yet, so retry a few times
    * before showing the connect-provider empty state.
    */
-  async function loadProviders() {
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      retryTimer = undefined;
+  loadProviders = async(): Promise<void> => {
+    const { state } = this;
+
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
     }
     let suspicious = false;
 
     try {
-      const all = await ipcRenderer.invoke('model-provider:get-providers');
+      const all = await this.ipc.invoke('model-provider:get-providers');
       const list: ProviderOption[] = (Array.isArray(all) ? all : [])
         .map(p => ({ id: p.id, name: p.name, connected: p.connected === true }))
         .filter(p => p.connected);
 
       list.sort((a, b) => a.name.localeCompare(b.name));
-      providers.value = list;
+      this.providers.value = list;
 
       // A stale saved choice must never pull models from a disconnected
       // provider into Preferences. Point the visible slots at connected
@@ -144,23 +178,24 @@ export function useModelSettings() {
         state.subconsciousProvider = 'default';
       }
       if (previousSlots.some((provider, index) => provider !== [state.primaryProvider, state.secondaryProvider, state.subconsciousProvider][index])) {
-        await loadSlots();
+        await this.loadSlots();
       }
       suspicious = list.length === 0;
     } catch (err) {
-      error.value = `Could not load providers: ${ message(err) }`;
+      this.error.value = `Could not load providers: ${ this.message(err) }`;
       suspicious = true;
     }
-    const delays = [1000, 3000, 6000];
 
-    if (suspicious && retryAttempt < delays.length) {
-      retryTimer = setTimeout(loadProviders, delays[retryAttempt++]);
+    if (suspicious && this.retryAttempt < PROVIDER_RETRY_DELAYS.length) {
+      this.retryTimer = setTimeout(this.loadProviders, PROVIDER_RETRY_DELAYS[this.retryAttempt++]);
     } else if (!suspicious) {
-      retryAttempt = 0;
+      this.retryAttempt = 0;
     }
-  }
+  };
 
-  function applyState(next: Partial<ProviderState>) {
+  applyState(next: Partial<ProviderState>): void {
+    const { state } = this;
+
     for (const key of Object.keys(state) as (keyof ProviderState)[]) {
       if (next[key] !== undefined) {
         state[key] = next[key] || (key === 'subconsciousProvider' ? 'default' : '');
@@ -168,152 +203,160 @@ export function useModelSettings() {
     }
   }
 
-  function onStateChanged(_event: unknown, next: Partial<ProviderState>) {
-    const primaryChanged = next.primaryProvider !== undefined && next.primaryProvider !== state.primaryProvider;
+  private onStateChanged = (_event: unknown, next: Partial<ProviderState>): void => {
+    const primaryChanged = next.primaryProvider !== undefined && next.primaryProvider !== this.state.primaryProvider;
 
-    applyState(next);
+    this.applyState(next);
     if (primaryChanged) {
-      void loadSlots();
+      void this.loadSlots();
     }
-    void loadProviders();
-  }
+    void this.loadProviders();
+  };
 
-  function onVaultUnlocked() {
-    loading.value = true;
-    retryAttempt = 0;
-    void Promise.all([loadProviders(), loadSlots()]).finally(() => { loading.value = false });
-  }
+  private onVaultUnlocked = (): void => {
+    this.loading.value = true;
+    this.retryAttempt = 0;
+    void Promise.all([this.loadProviders(), this.loadSlots()]).finally(() => { this.loading.value = false });
+  };
 
-  async function run(work: () => Promise<unknown>) {
-    error.value = '';
-    saved.value = false;
+  private async run(work: () => Promise<unknown>): Promise<void> {
+    this.error.value = '';
+    this.saved.value = false;
     try {
       await work();
-      saved.value = true;
-      if (savedTimer) clearTimeout(savedTimer);
-      savedTimer = setTimeout(() => { saved.value = false }, 2_000);
+      this.saved.value = true;
+      if (this.savedTimer) clearTimeout(this.savedTimer);
+      this.savedTimer = setTimeout(() => { this.saved.value = false }, 2_000);
     } catch (err) {
-      error.value = message(err);
+      this.error.value = this.message(err);
     }
   }
 
   /** Switch the main model's provider, keeping that provider's preferred model. */
-  function setPrimaryProvider(id: string) {
-    return run(async() => {
-      const config = await ipcRenderer.invoke('model-provider:get-provider-config', id);
+  setPrimaryProvider = (id: string): Promise<void> => {
+    return this.run(async() => {
+      const config = await this.ipc.invoke('model-provider:get-provider-config', id);
 
-      applyState(await ipcRenderer.invoke('model-provider:select-model', id, config?.model || ''));
-      await loadSlots();
+      this.applyState(await this.ipc.invoke('model-provider:select-model', id, config?.model || ''));
+      await this.loadSlots();
     });
-  }
+  };
 
-  function setPrimaryModel(modelId: string) {
-    return run(async() => {
-      applyState(await ipcRenderer.invoke('model-provider:select-model', state.primaryProvider, modelId));
+  setPrimaryModel = (modelId: string): Promise<void> => {
+    return this.run(async() => {
+      this.applyState(await this.ipc.invoke('model-provider:select-model', this.state.primaryProvider, modelId));
     });
-  }
+  };
 
-  function setSecondaryProvider(id: string) {
-    return run(async() => {
-      await ipcRenderer.invoke('model-provider:set-secondary', id);
-      state.secondaryProvider = id;
-      await Promise.all([loadModels('secondary'), loadAccounts('secondary')]);
+  setSecondaryProvider = (id: string): Promise<void> => {
+    return this.run(async() => {
+      await this.ipc.invoke('model-provider:set-secondary', id);
+      this.state.secondaryProvider = id;
+      await Promise.all([this.loadModels('secondary'), this.loadAccounts('secondary')]);
     });
-  }
+  };
 
-  function setSecondaryModel(modelId: string) {
-    return run(async() => {
-      await ipcRenderer.invoke('model-provider:set-secondary-model', modelId);
-      state.secondaryModelId = modelId;
+  setSecondaryModel = (modelId: string): Promise<void> => {
+    return this.run(async() => {
+      await this.ipc.invoke('model-provider:set-secondary-model', modelId);
+      this.state.secondaryModelId = modelId;
     });
-  }
+  };
 
-  function setSubconsciousProvider(id: string) {
-    return run(async() => {
-      await ipcRenderer.invoke('model-provider:set-subconscious', id);
-      state.subconsciousProvider = id || 'default';
-      await Promise.all([loadModels('subconscious'), loadAccounts('subconscious')]);
+  setSubconsciousProvider = (id: string): Promise<void> => {
+    return this.run(async() => {
+      await this.ipc.invoke('model-provider:set-subconscious', id);
+      this.state.subconsciousProvider = id || 'default';
+      await Promise.all([this.loadModels('subconscious'), this.loadAccounts('subconscious')]);
     });
-  }
+  };
 
-  function setSubconsciousModel(modelId: string) {
-    return run(async() => {
-      await ipcRenderer.invoke('model-provider:set-subconscious-model', modelId);
-      state.subconsciousModelId = modelId;
+  setSubconsciousModel = (modelId: string): Promise<void> => {
+    return this.run(async() => {
+      await this.ipc.invoke('model-provider:set-subconscious-model', modelId);
+      this.state.subconsciousModelId = modelId;
     });
-  }
+  };
 
   /** Pick which saved connection (vault account) a slot's provider uses. */
-  function setConnection(slot: ModelSlot, accountId: string) {
-    return run(async() => {
-      await ipcRenderer.invoke('model-provider:set-active-account', slotProvider(slot), accountId);
-      await loadAccounts(slot);
+  setConnection = (slot: ModelSlot, accountId: string): Promise<void> => {
+    return this.run(async() => {
+      await this.ipc.invoke('model-provider:set-active-account', this.slotProvider(slot), accountId);
+      await this.loadAccounts(slot);
     });
-  }
-
-  const runsLocally = computed(() => LOCAL_PROVIDERS.includes(state.primaryProvider));
-  const localProvider = computed(() => providers.value.find(p => LOCAL_PROVIDERS.includes(p.id) && p.connected));
-  const onlineProvider = computed(() => providers.value.find(p => !LOCAL_PROVIDERS.includes(p.id) && p.connected));
+  };
 
   /** "Where models run": move the main model between an online provider and Ollama. */
-  function setWhere(where: 'online' | 'local') {
-    const target = where === 'local' ? localProvider.value : onlineProvider.value;
+  setWhere = (where: 'online' | 'local'): Promise<void> | undefined => {
+    const target = where === 'local' ? this.localProvider.value : this.onlineProvider.value;
 
-    if (target && target.id !== state.primaryProvider) {
-      return setPrimaryProvider(target.id);
+    if (target && target.id !== this.state.primaryProvider) {
+      return this.setPrimaryProvider(target.id);
     }
-  }
 
-  function onFocus() {
-    void loadProviders();
-    void Promise.all((['primary', 'secondary', 'subconscious'] as ModelSlot[]).map(loadAccounts));
-  }
+    return undefined;
+  };
 
-  onMounted(async() => {
-    ipcRenderer.on('model-provider:state-changed', onStateChanged);
-    ipcRenderer.on('vault:logged-in' as any, onVaultUnlocked);
-    window.addEventListener('focus', onFocus);
+  private onFocus = (): void => {
+    void this.loadProviders();
+    void Promise.all(SLOTS.map(slot => this.loadAccounts(slot)));
+  };
+
+  /** Start listening for changes and load the current state. */
+  async mount(): Promise<void> {
+    this.ipc.on('model-provider:state-changed', this.onStateChanged);
+    this.ipc.on('vault:logged-in', this.onVaultUnlocked);
+    this.win.addEventListener('focus', this.onFocus);
     try {
-      applyState(await ipcRenderer.invoke('model-provider:get-state'));
+      this.applyState(await this.ipc.invoke('model-provider:get-state'));
     } catch (err) {
-      error.value = `Could not read the current models: ${ message(err) }`;
+      this.error.value = `Could not read the current models: ${ this.message(err) }`;
     }
-    await loadProviders();
-    await loadSlots();
-    loading.value = false;
-  });
+    await this.loadProviders();
+    await this.loadSlots();
+    this.loading.value = false;
+  }
 
-  onBeforeUnmount(() => {
-    ipcRenderer.removeListener('model-provider:state-changed', onStateChanged);
-    ipcRenderer.removeListener('vault:logged-in' as any, onVaultUnlocked);
-    window.removeEventListener('focus', onFocus);
-    if (retryTimer) {
-      clearTimeout(retryTimer);
+  /** Stop listening and cancel pending timers. */
+  unmount(): void {
+    this.ipc.removeListener('model-provider:state-changed', this.onStateChanged);
+    this.ipc.removeListener('vault:logged-in', this.onVaultUnlocked);
+    this.win.removeEventListener('focus', this.onFocus);
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
     }
-    if (savedTimer) {
-      clearTimeout(savedTimer);
+    if (this.savedTimer) {
+      clearTimeout(this.savedTimer);
     }
-  });
+  }
+}
+
+/** Vue entry point: model routing state for Preferences › AI models and › Heartbeat. */
+export function useModelSettings() {
+  const controller = new ModelSettingsController(ipcRenderer as unknown as ModelSettingsIpc, window);
+
+  onMounted(() => controller.mount());
+  onBeforeUnmount(() => controller.unmount());
 
   return {
-    state,
-    providers,
-    models,
-    accounts,
-    loading,
-    error,
-    saved,
-    runsLocally,
-    localProvider,
-    onlineProvider,
-    loadProviders,
-    setPrimaryProvider,
-    setPrimaryModel,
-    setSecondaryProvider,
-    setSecondaryModel,
-    setSubconsciousProvider,
-    setSubconsciousModel,
-    setConnection,
-    setWhere,
+    state:                   controller.state,
+    providers:               controller.providers,
+    models:                  controller.models,
+    accounts:                controller.accounts,
+    loading:                 controller.loading,
+    error:                   controller.error,
+    saved:                   controller.saved,
+    runsLocally:             controller.runsLocally,
+    localProvider:           controller.localProvider,
+    onlineProvider:          controller.onlineProvider,
+    loadProviders:           controller.loadProviders,
+    setPrimaryProvider:      controller.setPrimaryProvider,
+    setPrimaryModel:         controller.setPrimaryModel,
+    setSecondaryProvider:    controller.setSecondaryProvider,
+    setSecondaryModel:       controller.setSecondaryModel,
+    setSubconsciousProvider: controller.setSubconsciousProvider,
+    setSubconsciousModel:    controller.setSubconsciousModel,
+    setConnection:           controller.setConnection,
+    setWhere:                controller.setWhere,
   };
 }

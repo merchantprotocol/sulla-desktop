@@ -1,0 +1,33 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import { describe, expect, it, vi } from 'vitest';
+import { ArtifactCreateWorker } from '../../../tools/chat/artifact_create';
+
+const create = vi.hoisted(() => vi.fn());
+vi.mock('../../../services/ChatArtifactService', () => ({ getChatArtifactService: () => ({ create }) }));
+
+describe('ArtifactCreateWorker', () => {
+  it('preserves the Files reference text and exposes created versus updated metadata', async() => {
+    // risk: data correctness — callers must not report an update as a newly created artifact.
+    const worker = new ArtifactCreateWorker() as any;
+    worker.state = { metadata: { threadId: 'thread-1' } };
+    const artifact = { id: 'artifact-1', name: 'Plan', kind: 'document', status: 'open', version: 2, content: 'body', filesRegistrationStatus: 'synced', filesFileId: 'file-1', filesVersionId: 'version-1', filesPath: 'Plan.md' };
+    create.mockResolvedValueOnce({ artifact, created: true }).mockResolvedValueOnce({ artifact, created: false });
+
+    // _validatedCall returns the raw ToolResponse, so BaseTool.call's pipeline (unmocked deps) is not run.
+    const newlyCreated = await worker._validatedCall({ name: 'Plan', kind: 'document', content: 'body' });
+    const updated = await worker._validatedCall({ name: 'Plan', kind: 'document', content: 'body' });
+
+    expect(newlyCreated.responseString).toContain('inlineReference: sulla-file://file-1?version=version-1');
+    expect(newlyCreated.responseString).toContain('Created artifact: Plan');
+    expect(newlyCreated.artifact).toMatchObject({ record: artifact, created: true, updated: false });
+    // risk: data correctness — BaseTool.call spreads `{ result: responseString, ...extra }`; the raw response must not carry its own `result` key that could overwrite the text.
+    expect(newlyCreated).not.toHaveProperty('result');
+    expect(updated.responseString).toContain('inlineReference: sulla-file://file-1?version=version-1');
+    expect(updated.artifact).toMatchObject({ record: artifact, created: false, updated: true });
+    expect(updated).not.toHaveProperty('result');
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+});
