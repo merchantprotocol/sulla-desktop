@@ -1081,18 +1081,6 @@
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/agent/tools/agents/agentConversations.ts": {
-      "rules": {
-        "mutable-state": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/tools/agents/jobExchange.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/agent/tools/agents/spawn_agent.ts": {
       "rules": {
         "long-file": 791
