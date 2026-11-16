@@ -21,7 +21,7 @@
 <template>
   <div
     class="chat-root"
-    :class="{ 'artifact-open': !dockSide && hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': !dockSide && artifactExpanded, 'subagents-open': !dockSide && subAgentRailVisible && !subAgentsCollapsed, 'chat-files-open': !dockSide && chatFilesOpen, 'dock-side': dockSide }"
+    :class="{ 'artifact-open': !dockSide && hasArtifact && !artifactCollapsed, 'history-open': historyOpen, 'artifact-expanded': !dockSide && artifactExpanded, 'subagents-open': !dockSide && subAgentCounts.total > 0 && !subAgentsCollapsed, 'chat-files-open': !dockSide && chatFilesOpen, 'dock-side': dockSide }"
     :style="{ '--side-ratio': String(sideRatio) }"
   >
     <Canvas />
@@ -39,16 +39,15 @@
         @close="controller.toggleHistory()"
       />
 
-      <SubAgentRail
-        ref="subAgentRail"
-        :parent-thread-id="subAgentParentThreadId"
-        :collapsed="subAgentsCollapsed"
-        :selected-key="selectedSubAgentKey"
-        @toggle-collapse="subAgentsCollapsed = !subAgentsCollapsed"
-        @select="selectSubAgent"
-        @visibility="subAgentRailVisible = $event"
-        @counts="subAgentCounts = $event"
-      />
+      <!-- Agents in this chat: the same lanes as the side dock's Sulla tab, docked left
+           while the message box is at the bottom. The header's Sub-agents button toggles it. -->
+      <aside
+        v-if="!dockSide && subAgentCounts.total > 0 && !subAgentsCollapsed"
+        class="sd-agent-rail"
+        aria-label="Agents in this chat"
+      >
+        <AgentLanes />
+      </aside>
 
       <main class="main">
         <!--
@@ -98,10 +97,7 @@
       <template v-if="!dockSide">
         <ArtifactSidebar
           :collapsed="artifactCollapsed"
-          :agent="selectedSubAgent"
           @toggle-collapse="artifactCollapsed = !artifactCollapsed"
-          @open-agent="openSubAgentCard"
-          @dismiss-agent="dismissSubAgent"
         />
         <ChatFilesDrawer
           :open="chatFilesOpen"
@@ -123,10 +119,7 @@
         <template #artifacts>
           <ArtifactSidebar
             :collapsed="false"
-            :agent="selectedSubAgent"
             @toggle-collapse="sideDock?.selectTab('sulla')"
-            @open-agent="openSubAgentCard"
-            @dismiss-agent="dismissSubAgent"
           />
         </template>
       </SideDock>
@@ -150,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import Canvas             from './components/chrome/Canvas.vue';
 import ChatHeader         from './components/chrome/ChatHeader.vue';
@@ -167,12 +160,14 @@ import HistoryRail       from './components/history/HistoryRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
-import SubAgentRail      from './components/subagent/SubAgentRail.vue';
+import AgentLanes        from './components/sidedock/AgentLanes.vue';
 import SideDock          from './components/sidedock/SideDock.vue';
 import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
 import { DockPositions } from './composables/useDockPosition';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
-import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
+import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 import { restoreChatFromHistory } from './services/historyRestore';
 
@@ -399,8 +394,6 @@ const onSupportPrompt = (event:Event) => {
 };
 window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
 onBeforeUnmount(() => window.removeEventListener('sulla:support-chat-prompt', onSupportPrompt));
-const subAgentRailVisible = ref(false);
-const subAgentCounts = ref({ total: 0, live: 0 });
 
 // Side panels can be tucked away to a tab on the edge; the choice
 // sticks across tabs and restarts.
@@ -414,37 +407,19 @@ watch([subAgentsCollapsed, artifactCollapsed], ([subagents, artifact]) => {
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify({ subagents, artifact })) } catch { /* storage full/unavailable */ }
 });
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
-const subAgentRail = ref<InstanceType<typeof SubAgentRail> | null>(null);
-const selectedSubAgent = ref<ThreadAgentCard | null>(null);
-const selectedSubAgentKey = computed(() => selectedSubAgent.value ? `${ selectedSubAgent.value.kind }:${ selectedSubAgent.value.jobId }:${ selectedSubAgent.value.taskIndex }` : '');
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
+// Agents in this chat, for the header's Sub-agents button and the left lanes drawer.
+const agentStateClient = inject(AGENT_STATE_CLIENT_KEY);
+const LIVE_AGENT_STATES = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
+const subAgentCounts = computed(() => {
+  const threadId = subAgentParentThreadId.value;
+  if (!agentStateClient || !threadId) return { total: 0, live: 0 };
+  const builder = new AgentTreeBuilder(agentStateClient.snapshot.value.rows);
+  const rows = builder.flatten(builder.forThread(threadId));
+  return { total: rows.length, live: rows.filter(node => LIVE_AGENT_STATES.has(node.row.state)).length };
+});
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
-
-function selectSubAgent(card: ThreadAgentCard): void {
-  const isNewSelection = selectedSubAgentKey.value !== `${ card.kind }:${ card.jobId }:${ card.taskIndex }`;
-  selectedSubAgent.value = card;
-  if (isNewSelection) artifactCollapsed.value = false;
-}
-
-function openSubAgentCard(card: ThreadAgentCard): void {
-  if (card.kind === 'tab' && card.agentTab) {
-    const info = card.agentTab;
-    let tab = tabs.find(t => t.mode === 'chat' && t.agentChat?.contractId === info.contractId);
-    if (!tab) {
-      tab = createTab('about:blank', { mode: 'chat', title: card.label, agentChat: { threadId: info.threadId, agentId: card.agentId, agentName: info.agentName, parentThreadId: subAgentParentThreadId.value || '', parentAgentId: info.parentAgentId, parentAgentName: info.parentAgentId, contractId: info.contractId, depth: info.depth } });
-      localStorage.setItem(`chat_threadId_sulla-desktop_${ tab.id }`, info.threadId);
-    }
-    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
-  } else if (card.conversationId) {
-    openSubAgentConversation({ agentId: card.agentId, label: card.label, conversationId: card.conversationId });
-  }
-}
-
-function dismissSubAgent(card: ThreadAgentCard): void {
-  void subAgentRail.value?.dismiss(card);
-  selectedSubAgent.value = null;
-}
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;
@@ -458,7 +433,7 @@ onBeforeUnmount(() => {
 });
 
 // ─── Derived state ────────────────────────────────────────────────
-const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0 || !!selectedSubAgent.value);
+const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0);
 // The persona's hasSentMessage lives in a per-tab localStorage scope that is
 // LRU-evicted after 20 tabs, so a conversation reopened from History (its
 // transcript hydrated from the thread store / DB) would otherwise be hidden
@@ -942,8 +917,8 @@ onBeforeUnmount(() => {
 }
 
 .chat-root.history-open   .main { left: 260px; }
-.chat-root.subagents-open .main { left: 272px; }
-.chat-root.subagents-open.history-open .main { left: 532px; }
+.chat-root.subagents-open .main { left: 320px; }
+.chat-root.subagents-open.history-open .main { left: 580px; }
 .chat-root.artifact-open  .main { right: 436px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 .chat-root.chat-files-open .main { right: 300px; }
@@ -958,6 +933,20 @@ onBeforeUnmount(() => {
   z-index: 6;
 }
 .chat-root.history-open .shell :deep(.sd-agent-rail) { left: 260px; }
+/* Left lanes drawer (bottom layout). */
+.shell .sd-agent-rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 8;
+  width: 320px;
+  overflow-y: auto;
+  padding: 8px 6px;
+  border-right: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+  backdrop-filter: blur(12px);
+  color: var(--text-primary);
+}
+.chat-root.history-open .shell .sd-agent-rail { left: 260px; }
 /* The drawer sizes itself (420px + 8px margins = the 436px .main leaves free);
    this only docks it to the right edge. */
 .shell :deep(.sd-artifact-panel) {
@@ -987,8 +976,6 @@ onBeforeUnmount(() => {
 /* useResizeSync sets these inline from the bottom box; on the side nothing sits over the transcript. */
 .chat-root.dock-side .main { --composer-h: 0px !important; --scroller-pad-b: 48px !important; }
 .chat-root.dock-side .composer-backdrop { display: none; }
-/* The Sulla tab's lanes replace the Sub-agents rail (kept mounted for its counts). */
-.chat-root.dock-side .shell :deep(.sd-agent-rail) { display: none; }
 .chat-root.dock-side .shell :deep(.sdk-embed .chat-files-drawer) {
   position: static; display: flex; width: auto; height: 100%; border-left: 0; background: none; backdrop-filter: none;
 }
