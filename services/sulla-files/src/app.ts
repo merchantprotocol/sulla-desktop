@@ -35,6 +35,7 @@ import { SharesService } from './shares.js';
 import { CatalogSyncService } from './cloudRemote/catalogSync.js';
 import { DesktopRequestSyncService } from './cloudRemote/desktopRequests.js';
 import { Store } from './store.js';
+import { ChunkMetadataReconciler } from './ChunkMetadataReconciler.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload, streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
@@ -1258,8 +1259,17 @@ export function createApp(
     }
     return {expired,disposal}; });
     await drainPendingChunkGc(db, (collectionId, chunkId) => store.delete(collectionId, chunkId));
+    const chunkMetadataRepair = config.keyring
+      ? await new ChunkMetadataReconciler(db, store, config.keyring).run({ apply:true })
+      : undefined;
     const receiptGc=manager?await manager.expireTrashReceipts(now):{invalidated:0,disposed:0,preserved:0};
-    response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc });
+    response.json({ expiredFiles: expired.length, pendingDisposals: disposal.rowCount ?? disposal.rows.length,receiptGc,chunkMetadataRepair });
+  } catch (error) { next(error) } });
+
+  app.post('/v1/local/chunk-metadata/reconcile', async(request, response, next) => { try {
+    if (!config.keyring) return response.status(503).json({ error:'Files keyring is unavailable' });
+    const report = await new ChunkMetadataReconciler(db, store, config.keyring).run({ apply:request.body?.apply === true });
+    response.json(report);
   } catch (error) { next(error) } });
 
   app.post('/v1/search', async(request:RequestWithIdentity, response, next) => {
