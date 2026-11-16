@@ -28,7 +28,7 @@ vi.mock('../../../../main/cloud/cloudFetch', () => ({
     return env.cloud.request(method, url, options);
   },
 }));
-vi.mock('@pkg/vault-broker', () => ({ getConfiguredApprovalClient: () => env.broker }));
+vi.mock('@pkg/vault-broker', () => ({ configuredVaultBrokerProvider: { getConfiguredApprovalClient: () => env.broker } }));
 vi.mock('@pkg/sulla', () => ({ onVaultUnlocked: async() => undefined }));
 vi.mock('electron', () => ({
   BrowserWindow: { getFocusedWindow: () => null, getAllWindows: () => [] },

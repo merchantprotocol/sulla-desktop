@@ -6,7 +6,7 @@
 import { NobleCryptoPrimitives, WebCryptoRandomSource } from '@sulla/domain';
 import { SystemClock } from '@sulla/foundation';
 
-import { getConfiguredApprovalClient } from '@pkg/vault-broker';
+import { configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import { getCurrentUserId } from '../../sullaCloudAuth';
 import { cloudRequest } from '../cloudFetch';
 import { desktopDeviceIdentity } from '../device/DesktopDeviceIdentity';
@@ -60,7 +60,7 @@ export class DesktopVaultEnrollmentModule {
       authHeaders: async() => ({}),
     });
     const transport = new CloudEnrollmentTransport(http, new VaultSyncRequestSigner(identity, crypto, clock), new SignedInCloudUser());
-    const broker = new VaultEnrollmentBrokerSource(() => getConfiguredApprovalClient());
+    const broker = new VaultEnrollmentBrokerSource(() => configuredVaultBrokerProvider.getConfiguredApprovalClient());
     this.coordinator = new DesktopEnrollmentCoordinator({
       session: new SignedInCloudUser(),
       transport,
