@@ -1,6 +1,8 @@
 // Copyright © 2026 Merchant Protocol, LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { CollectionAccessRepository } from './Repositories/CollectionAccessRepository.js';
+
 import type pg from 'pg';
 import type { FilesIdentity } from './auth.js';
 
@@ -22,17 +24,22 @@ export class CollectionRoleGate {
   }
 }
 
-export async function resolveCollectionAccess(
+/** Resolves what a caller may do in a collection. Today every published, non-legacy collection is the owner's: manage. */
+export class CollectionAccessResolver {
+  constructor(private readonly collections:CollectionAccessRepository) {}
+
+  async resolve(_actor:FilesIdentity, collectionId:string):Promise<CollectionAccess> {
+    const collection = await this.collections.findAccessible(collectionId);
+    if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
+    return { role: 'manage', paths: [], files: [], collection };
+  }
+}
+
+/** Delegating shim for app.ts: builds the resolver from the passed-in pool or transaction client. */
+export function resolveCollectionAccess(
   db:pg.Pool | pg.PoolClient,
   actor:FilesIdentity,
   collectionId:string,
 ):Promise<CollectionAccess> {
-  const result = await db.query(
-    'SELECT * FROM collections WHERE id=$1 AND published=TRUE AND legacy_source=FALSE',
-    [collectionId],
-  );
-  const collection = result.rows[0];
-  if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
-
-  return { role: 'manage', paths: [], files: [], collection };
+  return new CollectionAccessResolver(new CollectionAccessRepository(db)).resolve(actor, collectionId);
 }
