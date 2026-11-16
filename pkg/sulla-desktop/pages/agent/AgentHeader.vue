@@ -847,6 +847,7 @@ onMounted(() => {
   }
   nextTick(syncTabStrip);
 });
+onActivated(() => nextTick(syncTabStrip));
 // A kept-alive header that is hidden never gets mouseleave, so its preview would stay on screen.
 onDeactivated(hideTabPeek);
 onUnmounted(() => {
@@ -1122,6 +1123,9 @@ watch(
   { flush: 'post' },
 );
 
+// The newly active tab's strip becomes visible after the parent re-renders;
+// carry the scroll offset over and keep the focused tab in view.
+watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
 // Sulla closes idle agent tabs by itself; a preview for a tab that disappeared under the
 // pointer never received mouseleave and floated over the page (2026-11-14). Also drop it
 // when the page changes.
