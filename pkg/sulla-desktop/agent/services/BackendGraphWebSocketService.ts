@@ -20,6 +20,7 @@ import { agentWaitProvider } from './AgentWaitServices';
 import { RunActivity } from './RunActivity';
 import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
+import { ChatErrorDiagnostics } from './ChatErrorDiagnostics';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
@@ -277,6 +278,16 @@ export class BackendGraphWebSocketService {
   /** Resolves an org the human belongs to (default: active org); refuses non-member orgs. */
   resolveMessagingOrg(org?: string): Promise<OrgMembership> {
     return this.orgMessengerFleet.resolveOrg(org);
+  }
+
+  /** The target org and the caller's id on that org's host (Cloud user id, or the Server subject). */
+  orgMessagingParticipant(org?: string): Promise<{ membership: OrgMembership; userId: string }> {
+    return this.orgMessengerFleet.participant(org);
+  }
+
+  /** The target org's people and agent addresses, read from the org's own host. */
+  loadOrgDirectory(org?: string): Promise<{ membership: OrgMembership; directory: { people: readonly unknown[] } }> {
+    return this.orgMessengerFleet.loadDirectory(org);
   }
 
   /** LiveEvents wake hook for org messaging; polling every 60 s remains the fallback. */
@@ -1082,7 +1093,12 @@ export class BackendGraphWebSocketService {
         const content = err?.name === 'AgentLaunchError'
           ? (err.retryable ? `${ err.message }. Please try again in a minute.` : err.message)
           : `Agent error: ${ err.message || String(err) }`;
-        firstRunTrace('chat', 'chat error surfaced', { shown: content, message: err?.message || String(err) });
+        firstRunTrace('chat', 'chat error surfaced', {
+          shown: content,
+          ...new ChatErrorDiagnostics().describe(err, {
+            channelId, threadId, agentId, state, wakeTurnJobId: wakeTurnToRepark?.jobId, wakeTurnTaskIdx: wakeTurnToRepark?.taskIndex,
+          }),
+        });
         this.emitMessage(channelId, 'assistant_message', {
           content,
           role:      'assistant',

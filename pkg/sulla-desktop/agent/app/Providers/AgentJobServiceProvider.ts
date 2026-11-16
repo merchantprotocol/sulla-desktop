@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { SystemClock } from '@sulla/foundation';
+import Logging from '@pkg/utils/logging';
 import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection';
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
 import { AgentJobReviewItemRepository } from '../Repositories/AgentJobReviewItemRepository';
@@ -12,7 +13,8 @@ import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeReposi
 import { CompletionAcknowledgementService } from '../Services/CompletionAcknowledgementService';
 import { AgentJobService } from '../Services/AgentJobService';
 import { AgentFleetProjectionService } from '../Services/AgentFleetProjectionService';
-import { AgentStateService } from '../Services/AgentStateService';
+import { AgentJobFailureLogger } from '../Services/AgentJobFailureLogger';
+import { AgentJobMutationQueue, AgentStateService } from '../Services/AgentStateService';
 import { JobIdGenerator } from '../Services/JobIdGenerator';
 import { JobRecoveryService } from '../Services/JobRecoveryService';
 import { JobRuntimeRegistry } from '../Services/JobRuntimeRegistry';
@@ -56,7 +58,7 @@ export class AgentJobServiceProvider {
     this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
-    this.states = new AgentStateService(this.jobs, this.runtime);
+    this.states = new AgentStateService(this.jobs, this.runtime, Date.now, new AgentJobMutationQueue(), new AgentJobFailureLogger({ error: message => Logging.background.error(message) }));
     this.activity = new AgentTaskActivityProjector(runActivity);
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);

@@ -3,13 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { AgentInbox } from './AgentInbox';
+import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClient';
 import { CloudOrgMessagingTransport, PinnedOrgCloudSession } from './CloudOrgMessagingTransport';
+import type { OrgHosting } from './OrgHostingResolver';
 import type { OrgMembership } from './OrgMembershipDirectory';
 import { OrgMessenger, type OrgContactRequestPrompter, type OrgConversationHaltHandler, type OrgInboxTargetResolver, type OrgMessagingSession } from './OrgMessenger';
 import type { OrgMessengerFactory } from './OrgMessengerFleet';
 import type { OrgMessagingStateRepository } from './OrgMessagingStateRepository';
 
-/** Production factory: one Cloud transport pinned to each member org, sharing the org-keyed state store and local inbox. */
+/**
+ * Production factory: one org messaging transport pinned to each member org, sharing the org-keyed state store and
+ * local inbox. Cloud and Server orgs use the same transport class; only the base URL and credentials differ.
+ */
 export class DesktopOrgMessengerFactory implements OrgMessengerFactory {
   constructor(
     private readonly state: OrgMessagingStateRepository,
@@ -19,8 +24,9 @@ export class DesktopOrgMessengerFactory implements OrgMessengerFactory {
     private readonly haltHandler?: OrgConversationHaltHandler,
   ) {}
 
-  create(membership: OrgMembership, session: OrgMessagingSession): OrgMessenger {
-    const transport = new CloudOrgMessagingTransport(undefined, new PinnedOrgCloudSession(membership.orgId));
+  create(membership: OrgMembership, session: OrgMessagingSession, hosting: OrgHosting): OrgMessenger {
+    const http = new SullaCloudHttpClient(undefined, hosting.baseUrl);
+    const transport = new CloudOrgMessagingTransport(http, new PinnedOrgCloudSession(membership.orgId, hosting.credentials), undefined, hosting.kind);
     return new OrgMessenger(transport, session, this.state, this.inbox, this.targetResolver, this.contactPrompter, this.haltHandler);
   }
 }
