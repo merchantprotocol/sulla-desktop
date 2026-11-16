@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 // Ephemeral express server for the E9 route equivalence specs (listen(0) on
-// loopback, same approach as Feature/Vault/VaultEnrollmentRoutes.spec.ts).
+// loopback, requests sent with node:http because the agent spec setup forbids fetch).
 // Unhandled errors end in a deterministic 599 so stack traces never differ.
 // Delete in final cleanup.
 
@@ -53,13 +53,36 @@ export class E9HttpHarness {
     if (request.rawBody !== undefined) body = request.rawBody;
     else if (request.body !== undefined) body = JSON.stringify(request.body);
     if (body !== undefined && !Object.keys(headers).some(name => name.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
-    const response = await fetch(`${ this.baseUrl }${ request.path }`, { method: request.method, headers, body });
-    return {
-      status:       response.status,
-      cacheControl: response.headers.get('cache-control'),
-      contentType:  response.headers.get('content-type'),
-      body:         await response.text(),
-    };
+    return this.request(request.method, request.path, headers, body);
+  }
+
+  /** node:http, not global fetch: the agent spec setup forbids every fetch. */
+  private request(method: string, path: string, headers: Record<string, string>, body: string | undefined): Promise<E9HttpResponse> {
+    const outgoingHeaders: Record<string, string | number> = { ...headers };
+    if (body !== undefined) outgoingHeaders['content-length'] = Buffer.byteLength(body);
+    return new Promise<E9HttpResponse>((resolve, reject) => {
+      const outgoing = http.request(new URL(path, this.baseUrl), { method, headers: outgoingHeaders, agent: false }, response => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('error', reject);
+        response.on('end', () => {
+          resolve({
+            status:       response.statusCode ?? 0,
+            cacheControl: E9HttpHarness.header(response.headers['cache-control']),
+            contentType:  E9HttpHarness.header(response.headers['content-type']),
+            body:         Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      });
+      outgoing.on('error', reject);
+      if (body !== undefined) outgoing.write(body);
+      outgoing.end();
+    });
+  }
+
+  private static header(value: string | string[] | undefined): string | null {
+    if (value === undefined) return null;
+    return Array.isArray(value) ? value.join(', ') : value;
   }
 
   async stop(): Promise<void> {

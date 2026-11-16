@@ -18,8 +18,21 @@ import type { Database } from '../../../../../../services/sulla-vault/src/db';
 class E9EmbeddedClient {
   constructor(private readonly pglite: PGlite) {}
 
+  /**
+   * Mirrors node-postgres: a call without parameters uses the simple query protocol,
+   * which accepts several statements (ensureSyncSchema sends SYNC_SCHEMA_SQL that way).
+   * PGlite query() always prepares, so those calls go through exec() and return the
+   * last statement's result, like pg does for a single-result call.
+   */
   async query<T>(sql: string, values?: unknown[]): Promise<{ rows: T[]; rowCount: number }> {
-    const result = await this.pglite.query<T>(sql, values) as { rows: T[]; affectedRows?: number };
+    if (values === undefined || values.length === 0) {
+      const results = await this.pglite.exec(sql) as { rows: T[]; affectedRows?: number }[];
+      return E9EmbeddedClient.shape(results[results.length - 1] ?? { rows: [] });
+    }
+    return E9EmbeddedClient.shape(await this.pglite.query<T>(sql, values) as { rows: T[]; affectedRows?: number });
+  }
+
+  private static shape<T>(result: { rows: T[]; affectedRows?: number }): { rows: T[]; rowCount: number } {
     return { rows: result.rows, rowCount: result.rows.length > 0 ? result.rows.length : result.affectedRows ?? 0 };
   }
 

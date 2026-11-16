@@ -21,6 +21,9 @@ import * as legacy from '../../Support/E9Legacy/filesCloudEscrow.legacy';
 import { E9Outcome } from '../../Support/E9Legacy/E9FilesKeysOutcome';
 import { E9VaultTestDatabase } from '../../Support/E9Legacy/E9FilesKeysDatabase';
 
+/** Explicit node:crypto type (the DOM global CryptoKeyPair trips eslint no-undef). */
+type EcdhKeyPair = webcrypto.CryptoKeyPair;
+
 const subtle = webcrypto.subtle;
 const USER = '10000000-0000-4000-8000-0000000000e9';
 const OTHER_USER = '10000000-0000-4000-8000-0000000000aa';
@@ -30,10 +33,10 @@ const REQUEST = '5b6c7d8e-9f0a-4b1c-9d2e-3f4a5b6c7d8e';
 
 /** Pins the ECDH ephemeral key pair and the AES-GCM nonce so a transport wrap is deterministic. */
 class PinnedRandomness {
-  private pair!: CryptoKeyPair;
+  private pair!: EcdhKeyPair;
 
   async prepare(): Promise<void> {
-    this.pair = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']) as CryptoKeyPair;
+    this.pair = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']) as EcdhKeyPair;
   }
 
   pin(nonceByte = 0x2a): void {
@@ -44,11 +47,11 @@ class PinnedRandomness {
 
 /** The receiving side of the transport (what sulla-files does), used to prove the wire contract. */
 class TransportRecipient {
-  pair!: CryptoKeyPair;
+  pair!: EcdhKeyPair;
   publicKey = '';
 
   async prepare(): Promise<void> {
-    this.pair = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as CryptoKeyPair;
+    this.pair = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as EcdhKeyPair;
     this.publicKey = Buffer.from(await subtle.exportKey('raw', this.pair.publicKey)).toString('base64url');
   }
 
