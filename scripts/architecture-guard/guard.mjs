@@ -233,9 +233,10 @@ function baseFrozen() {
 function writeAllowlist(files) {
   const sorted = Object.fromEntries(Object.keys(files).sort().map((k) => [k, files[k]]));
   const total = Object.values(sorted).reduce((a, e) => a + Object.keys(e.rules).length, 0);
+  // No stored entry counter: every pruning PR changed that one line, so parallel PRs
+  // always conflicted. The total is computed and printed, never persisted.
   const doc = {
     about: 'Architecture guard allowlist. Today\'s offenders only. It may only shrink: never add files or raise counts. See ARCHITECTURE-GUARD.md.',
-    entries: total,
     files: sorted,
   };
   writeFileSync(ALLOWLIST_PATH, JSON.stringify(doc, null, 2) + '\n');
