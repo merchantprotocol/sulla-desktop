@@ -2648,7 +2648,7 @@
     "pkg/sulla-desktop/main/sullaCloudAuth.ts": {
       "rules": {
         "long-file": 1619,
-        "mutable-state": 12,
+        "mutable-state": 8,
         "procedural-module": 8
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"

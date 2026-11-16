@@ -50,6 +50,7 @@ import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialSer
 import { SessionBindSigner } from './cloud/device/SessionBindSigner';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
 import { CloudSessionStartupRestorer, VaultNotReadyError } from './cloud/session/CloudSessionStartupRestorer';
+import { cloudSessionKeyProvider } from './cloud/session/CloudSessionKeyServiceProvider';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
 import { getDesktopRelayClient } from './desktopRelay';
@@ -71,18 +72,11 @@ const accountTransport = new ElectronCloudAccountTransport({
 const passwordSignIn = new CloudPasswordSignIn(accountTransport, () => CloudAccountCredentialService.forDesktop(), firstRunTrace);
 const legacyAdopter = new LegacyCloudSessionAdopter(accountTransport);
 
-let pendingCloudMasterKey: Uint8Array | undefined;
-let pendingCloudAccountKdf: AccountKdf | undefined;
-let pendingCloudUserId: string | undefined;
-let quitCleanupInstalled = false;
 let accountWrapFlushHookInstalled = false;
 let unshownRecoveryKey: { recoveryKey: string; storage: ReturnType<typeof recoveryKeyStorageStatus>; madeAt: string } | undefined;
 
 function zeroPendingCloudMasterKey(): void {
-  pendingCloudMasterKey?.fill(0);
-  pendingCloudMasterKey = undefined;
-  pendingCloudAccountKdf = undefined;
-  pendingCloudUserId = undefined;
+  cloudSessionKeyProvider.keys.clear();
 }
 
 /**
@@ -90,9 +84,7 @@ function zeroPendingCloudMasterKey(): void {
  * caller, which must zero it after wrapping/flush. Nothing is persisted.
  */
 export function takePendingCloudMasterKey(): Uint8Array | undefined {
-  const key = pendingCloudMasterKey;
-  pendingCloudMasterKey = undefined;
-  return key;
+  return cloudSessionKeyProvider.keys.take();
 }
 
 export function clearPendingCloudMasterKey(): void {
@@ -108,19 +100,11 @@ function retainCloudMasterKey(key: Uint8Array, kdf: AccountKdf, userId: string):
     updateFirstRunState({ credentialsSaved: undefined });
     firstRunTrace('vault', 'cleared the expired-sign-in hold; a fresh Cloud key is here');
   }
-  zeroPendingCloudMasterKey();
-  pendingCloudMasterKey = key;
-  pendingCloudAccountKdf = kdf;
-  pendingCloudUserId = userId;
-  if (!quitCleanupInstalled) {
-    quitCleanupInstalled = true;
-    process.once('exit', zeroPendingCloudMasterKey);
-  }
+  cloudSessionKeyProvider.keys.retain(key, kdf, userId);
 }
 
-async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ recoveryKey?: string }> {
-  const kdf = pendingCloudAccountKdf;
-  const key = pendingCloudMasterKey;
+async function flushAccountPasswordWrap(userId = cloudSessionKeyProvider.keys.context().userId): Promise<{ recoveryKey?: string }> {
+  const { key, kdf } = cloudSessionKeyProvider.keys.context();
   if (!key || !kdf || !userId || !usesContainerVaultAuthority()) {
     return {};
   }
