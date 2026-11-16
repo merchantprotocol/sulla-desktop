@@ -49,6 +49,10 @@ import {
 import { CloudAccountCredentialService } from './cloud/CloudAccountCredentialService';
 import { SessionBindSigner } from './cloud/device/SessionBindSigner';
 import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSessionRefreshers';
+import { CloudSessionStartupRestorer, VaultNotReadyError } from './cloud/session/CloudSessionStartupRestorer';
+import { cloudSessionStartupRestoreProvider } from './cloud/session/CloudSessionStartupRestoreCoordinator';
+import { cloudSessionKeyProvider } from './cloud/session/CloudSessionKeyServiceProvider';
+import { cloudRecoveryKeyProvider } from './cloud/session/CloudRecoveryKeyServiceProvider';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
 import { getDesktopRelayClient } from './desktopRelay';
@@ -70,18 +74,10 @@ const accountTransport = new ElectronCloudAccountTransport({
 const passwordSignIn = new CloudPasswordSignIn(accountTransport, () => CloudAccountCredentialService.forDesktop(), firstRunTrace);
 const legacyAdopter = new LegacyCloudSessionAdopter(accountTransport);
 
-let pendingCloudMasterKey: Uint8Array | undefined;
-let pendingCloudAccountKdf: AccountKdf | undefined;
-let pendingCloudUserId: string | undefined;
-let quitCleanupInstalled = false;
 let accountWrapFlushHookInstalled = false;
-let unshownRecoveryKey: { recoveryKey: string; storage: ReturnType<typeof recoveryKeyStorageStatus>; madeAt: string } | undefined;
 
 function zeroPendingCloudMasterKey(): void {
-  pendingCloudMasterKey?.fill(0);
-  pendingCloudMasterKey = undefined;
-  pendingCloudAccountKdf = undefined;
-  pendingCloudUserId = undefined;
+  cloudSessionKeyProvider.keys.clear();
 }
 
 /**
@@ -89,9 +85,7 @@ function zeroPendingCloudMasterKey(): void {
  * caller, which must zero it after wrapping/flush. Nothing is persisted.
  */
 export function takePendingCloudMasterKey(): Uint8Array | undefined {
-  const key = pendingCloudMasterKey;
-  pendingCloudMasterKey = undefined;
-  return key;
+  return cloudSessionKeyProvider.keys.take();
 }
 
 export function clearPendingCloudMasterKey(): void {
@@ -107,19 +101,11 @@ function retainCloudMasterKey(key: Uint8Array, kdf: AccountKdf, userId: string):
     updateFirstRunState({ credentialsSaved: undefined });
     firstRunTrace('vault', 'cleared the expired-sign-in hold; a fresh Cloud key is here');
   }
-  zeroPendingCloudMasterKey();
-  pendingCloudMasterKey = key;
-  pendingCloudAccountKdf = kdf;
-  pendingCloudUserId = userId;
-  if (!quitCleanupInstalled) {
-    quitCleanupInstalled = true;
-    process.once('exit', zeroPendingCloudMasterKey);
-  }
+  cloudSessionKeyProvider.keys.retain(key, kdf, userId);
 }
 
-async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ recoveryKey?: string }> {
-  const kdf = pendingCloudAccountKdf;
-  const key = pendingCloudMasterKey;
+async function flushAccountPasswordWrap(userId = cloudSessionKeyProvider.keys.context().userId): Promise<{ recoveryKey?: string }> {
+  const { key, kdf } = cloudSessionKeyProvider.keys.context();
   if (!key || !kdf || !userId || !usesContainerVaultAuthority()) {
     return {};
   }
@@ -141,9 +127,9 @@ async function flushAccountPasswordWrap(userId = pendingCloudUserId): Promise<{ 
       } catch (error) {
         console.warn('[SullaCloudAuth] Recovery key was created but Keychain save failed:', error instanceof Error ? error.message : String(error));
       }
-      unshownRecoveryKey = { recoveryKey: result.recoveryKey, storage, madeAt: new Date().toISOString() };
+      const notice = cloudRecoveryKeyProvider.notices.publish(result.recoveryKey, storage);
       for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send('sulla-cloud:recovery-key-created', unshownRecoveryKey);
+        window.webContents.send('sulla-cloud:recovery-key-created', notice);
       }
     }
     return { recoveryKey: result.recoveryKey };
@@ -207,8 +193,6 @@ const SIGN_IN_AGAIN = 'Sign in to Sulla Cloud again.';
 let startupAdoptionComplete = false;
 let startupAdoptionPromise: Promise<void> | null = null;
 let startupAdoptionError: string | undefined;
-let wakeStartupRestore: (() => void) | undefined;
-let restartStartupRestore: (() => void) | undefined;
 
 /**
  * Something changed that may make a Cloud session loadable (e.g. the first-run
@@ -216,8 +200,7 @@ let restartStartupRestore: (() => void) | undefined;
  * again if it already finished: otherwise nothing ever loads that session.
  */
 export function signalSullaCloudStartupRestore(): void {
-  if (wakeStartupRestore) wakeStartupRestore();
-  else restartStartupRestore?.();
+  cloudSessionStartupRestoreProvider.signal();
 }
 
 function vaultSessionError(error: unknown, action: 'sign in' | 'sign out'): string {
@@ -345,8 +328,6 @@ async function loadSessionIdentity(): Promise<SessionIdentity | null> {
   return { userId: accountId, activeContractorId: accountId, contractors: [] };
 }
 
-class VaultNotReadyError extends Error {}
-
 /**
  * Startup-restore variant of loadSessionIdentity. getAccounts() swallows vault
  * errors and returns [] so settings stay usable while the vault boots — but
@@ -357,35 +338,14 @@ class VaultNotReadyError extends Error {}
  */
 async function loadSessionIdentityForRestore(): Promise<SessionIdentity | null> {
   if (!usesContainerVaultAuthority()) return loadSessionIdentity();
-  let metadata: Awaited<ReturnType<ReturnType<typeof configuredVaultBrokerProvider.requireConfiguredCredentialBroker>['integrationMetadata']>>;
-  try {
-    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
-    const status = await broker.status();
-    if (!status.unlocked) throw new Error('vault is locked');
-    await ensureLegacySessionAdopted();
-    metadata = await broker.integrationMetadata(INTEGRATION_ID);
-  } catch (err) {
-    const message = (err as Error)?.message || String(err);
-    const code = (err as any)?.code ?? (err as any)?.cause?.code;
-    if (err instanceof VaultBrokerError && (err.code === 'vault_locked' || err.status === 423) ||
-        ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNRESET'].includes(code) ||
-        /locked|unavailable|timeout|timed out|not ready|starting|connection/i.test(message)) {
-      throw new VaultNotReadyError(`vault not ready: ${ message }`);
-    }
-    throw err;
-  }
-  const accountId = activeConnectedAccountId(metadata);
-  // A first-run sign-in held in memory is written into the vault right after
-  // it unlocks. Retry until it lands instead of reporting a signed-out Mac.
-  if (!accountId && getPendingCredential(INTEGRATION_ID)) {
-    throw new VaultNotReadyError('vault not ready: the Sulla Cloud session is still being saved');
-  }
-  if (!accountId) {
-    startupAdoptionError = SIGN_IN_AGAIN;
-    return null;
-  }
-  startupAdoptionError = undefined;
-  return { userId: accountId, activeContractorId: accountId, contractors: [] };
+  const restorer = new CloudSessionStartupRestorer({
+    broker: () => configuredVaultBrokerProvider.requireConfiguredCredentialBroker(),
+    ensureLegacySessionAdopted,
+    hasPendingCredential: () => !!getPendingCredential(INTEGRATION_ID),
+    signInAgainMessage: SIGN_IN_AGAIN,
+    setAdoptionError: (message) => { startupAdoptionError = message; },
+  });
+  return restorer.restore();
 }
 
 /**
@@ -660,7 +620,7 @@ export function initSullaCloudAuthEvents(): void {
       // First run never calls, waits on, or creates the vault while its sign-in
       // is held only in memory for a returning Cloud session.
       holdUntilWizardCloses: () => getFirstRunState().credentialsSaved === false,
-      hasPendingKey:         () => !!pendingCloudMasterKey,
+      hasPendingKey:         () => !!cloudSessionKeyProvider.keys.context().key,
       containerStatus:       async() => {
         const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
         const status = await getDesktopVaultClient().status();
@@ -673,7 +633,9 @@ export function initSullaCloudAuthEvents(): void {
       },
       enrollmentComplete: async() => {
         const { DesktopVaultEnrollment } = await import('./cloud/enrollment/DesktopVaultEnrollmentModule');
-        return DesktopVaultEnrollment.coordinator.complete(pendingCloudMasterKey!, pendingCloudUserId!);
+        const { key, userId } = cloudSessionKeyProvider.keys.context();
+
+        return DesktopVaultEnrollment.coordinator.complete(key!, userId!);
       },
       createOrRewrap: async() => {
         const creating = !lifecycle.isVaultUnlocked();
@@ -707,7 +669,7 @@ export function initSullaCloudAuthEvents(): void {
     const queued = getPendingCredential(INTEGRATION_ID);
     return {
       sessionInMemory: !!queued,
-      masterKeyRetained: !!pendingCloudMasterKey,
+      masterKeyRetained: !!cloudSessionKeyProvider.keys.context().key,
       email: queued?.values.email || queued?.values.contractors_json && JSON.parse(queued.values.contractors_json || '[]')[0]?.email || undefined,
       oldVaultLocked,
     };
@@ -728,8 +690,8 @@ export function initSullaCloudAuthEvents(): void {
     firstRunTrace('account', 'pending first-run Cloud sign-in cleared');
     return { ok: true };
   });
-  ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => unshownRecoveryKey);
-  ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { unshownRecoveryKey = undefined });
+  ipcMainProxy.handle('sulla-cloud:recovery-key-pending', async() => cloudRecoveryKeyProvider.notices.pending());
+  ipcMainProxy.handle('sulla-cloud:recovery-key-shown', async() => { cloudRecoveryKeyProvider.notices.clear() });
 
   ipcMainProxy.handle('sulla-cloud:get-status', async(): Promise<AuthStatus> => {
     return buildStatus();
@@ -1190,115 +1152,17 @@ export function initSullaCloudAuthEvents(): void {
     return buildStatus();
   });
 
-  // Auto-pair relay on startup if we have a signed-in session.
-  //
-  // This needs to be resilient to a DB that isn't ready yet. On a fresh app
-  // launch the Sulla Postgres container can take 30-60s to come up while
-  // The runtime provisions the VM and docker compose brings up the service, so
-  // loadSession() — which reads from integration_values — throws
-  // ECONNREFUSED if we fire it too early. Previously the IIFE ran once,
-  // caught the error, and gave up. That left the relay permanently
-  // disconnected for the entire app session even though the user was
-  // signed in, which surfaced as mobile peer-offline errors until the
-  // user manually re-signed-in.
-  //
-  // Retry strategy: backoff 2s → 60s cap, up to ~10 minutes total. Only
-  // retries on transient connection errors (ECONNREFUSED, ETIMEDOUT, etc.
-  // plus generic network failures). Stops on the first successful
-  // loadSession() call — whether that returns a session (pair + start
-  // services) or null (no signed-in user — nothing to do).
-  let restoreRunning = false;
-  const runStartupRestore = () => {
-    if (restoreRunning) return;
-    restoreRunning = true;
-    const lifecycle = getServiceLifecycleManager();
-    let restoreWakeVersion = 0;
-    let wakeRestore: (() => void) | undefined;
-    const signalRestore = () => {
-      restoreWakeVersion++;
-      wakeRestore?.();
-      wakeRestore = undefined;
-    };
-    wakeStartupRestore = signalRestore;
-    const onVaultState = (unlocked: boolean) => { if (unlocked) signalRestore() };
-    const onServiceReady = (name: string) => { if (name === 'vault') signalRestore() };
-
-    lifecycle.on('vault:state', onVaultState);
-    lifecycle.on('service:ready', onServiceReady);
-
-    (async() => {
-      const RETRY_BASE_MS  = 2_000;
-      const RETRY_MAX_MS   = 60_000;
-      const RETRY_GIVEUP_MS = 10 * 60_000;
-      const startedAt = Date.now();
-      let delay = RETRY_BASE_MS;
-
-      const isTransient = (err: any): boolean => {
-        if (err instanceof VaultNotReadyError) return true;
-        const code = err?.code ?? err?.cause?.code;
-        if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' || code === 'ECONNRESET') return true;
-        const msg = String(err?.message || err || '').toLowerCase();
-        return /econnrefused|etimedout|enotfound|econnreset|connect.*failed|pool.*shutting down|database.*not ready/.test(msg);
-      };
-
-      while (true) {
-        const attemptWakeVersion = restoreWakeVersion;
-        try {
-          const session = await loadSessionIdentityForRestore();
-          if (session) {
-            await getDesktopRelayClient().setPairedUserId(session.userId);
-            // Always connected while signed in: registration, heartbeat,
-            // secure channel, and whichever syncs the owner opted into.
-            try {
-              const { startCloudServices } = await import('./cloud/cloudLifecycle');
-              await startCloudServices();
-            } catch (err) {
-              console.warn('[SullaCloudAuth] Failed to start cloud services on restore:', err);
-              throw new VaultNotReadyError(`cloud services unavailable: ${ (err as Error)?.message || err }`);
-            }
-            console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
-            firstRunTrace('account', 'startup restore: Cloud session found in the vault', { userId: session.userId });
-          } else {
-            console.log('[SullaCloudAuth] Startup restore: no signed-in session');
-            firstRunTrace('account', 'startup restore: no Cloud session in the vault');
-          }
-          // Success (either a session was restored or none exists) — stop retrying.
-          return;
-        } catch (err) {
-          // A locked vault waits for the owner to unlock it, however long that takes.
-          const giveUp = !(err instanceof VaultNotReadyError) && (Date.now() - startedAt) >= RETRY_GIVEUP_MS;
-          if (!isTransient(err) || giveUp) {
-            console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
-            firstRunTrace('account', 'startup restore gave up', { error: err });
-            startupAdoptionError = `Sulla Cloud restore stopped: ${ (err as Error)?.message || err }`;
-            return;
-          }
-          console.log(`[SullaCloudAuth] Startup restore not ready yet (${ (err as Error)?.message || err }); retrying in ${ delay }ms or on vault readiness`);
-          if (restoreWakeVersion === attemptWakeVersion) {
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(() => {
-                if (wakeRestore === wake) wakeRestore = undefined;
-                resolve();
-              }, delay);
-              const wake = () => {
-                clearTimeout(timer);
-                resolve();
-              };
-              wakeRestore = wake;
-              // Close the event/listener registration gap.
-              if (restoreWakeVersion !== attemptWakeVersion) wake();
-            });
-          }
-          delay = Math.min(delay * 2, RETRY_MAX_MS);
-        }
-      }
-    })().finally(() => {
-      restoreRunning = false;
-      if (wakeStartupRestore === signalRestore) wakeStartupRestore = undefined;
-      lifecycle.off('vault:state', onVaultState);
-      lifecycle.off('service:ready', onServiceReady);
-    });
-  };
-  restartStartupRestore = runStartupRestore;
-  runStartupRestore();
+  // Restore the signed-in Cloud session when vault and storage are ready.
+  void cloudSessionStartupRestoreProvider.start({
+    lifecycle: getServiceLifecycleManager(),
+    restoreIdentity: loadSessionIdentityForRestore,
+    pairRelay: userId => getDesktopRelayClient().setPairedUserId(userId),
+    startCloudServices: async() => {
+      const { startCloudServices } = await import('./cloud/cloudLifecycle');
+      await startCloudServices();
+    },
+    trace: (message, metadata) => firstRunTrace('account', message, metadata),
+    logger: console,
+    setLastError: message => { startupAdoptionError = message; },
+  });
 }
