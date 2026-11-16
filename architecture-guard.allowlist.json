@@ -3864,25 +3864,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-files/src/residency.ts": {
-      "rules": {
-        "long-file": 642,
-        "raw-sql": 51
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/residencyHttp.ts": {
-      "rules": {
-        "raw-sql": 4
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/safeFilesystem.ts": {
-      "rules": {
-        "long-file": 586
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "services/sulla-files/src/shares.ts": {
       "rules": {
         "long-file": 560,
