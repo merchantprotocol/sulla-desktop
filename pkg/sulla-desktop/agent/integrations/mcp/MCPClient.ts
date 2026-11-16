@@ -16,7 +16,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-import { requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '../../../vault-broker';
+import { usesContainerVaultAuthority, VaultBrokerError, configuredVaultBrokerProvider } from '../../../vault-broker';
 
 import type { ToolExecutionContext } from '../../tools/executionContext';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -333,7 +333,7 @@ export class MCPClient {
         body = text;
         try { body = JSON.parse(text) } catch { /* preserve MCP text payload */ }
       }
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       try {
         return await broker.executeStream(broker.requestFor(ctx, {
           operation: 'mcp.http',

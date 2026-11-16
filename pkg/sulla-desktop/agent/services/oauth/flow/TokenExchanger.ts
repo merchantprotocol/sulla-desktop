@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { issueLocalBrokerContext, requireConfiguredCredentialBroker } from '../../../../vault-broker';
+import { configuredVaultBrokerProvider } from '../../../../vault-broker';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 
 import type { OAuthProviderConfig, OAuthTokenSet } from '../../../integrations/oauth/OAuthProvider';
@@ -47,11 +47,11 @@ export class TokenExchanger {
           { field: 'client_secret', target: 'form' as const, name: 'client_secret', scheme: 'raw' as const },
         ];
       if (cfg.clientAuthMethod === 'none') body.client_id = clientId;
-      const context = await issueLocalBrokerContext({
+      const context = await configuredVaultBrokerProvider.issueLocalBrokerContext({
         agentId: 'oauth-exchange', podId: 'desktop-main',
         credentialScope: { integration_id: integrationId, account_id: accountId },
       });
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       let result;
       try {
         result = await broker.execute(broker.requestFor(context, {

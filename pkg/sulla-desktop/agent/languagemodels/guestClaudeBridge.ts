@@ -6,13 +6,7 @@
 import * as childProcess from 'node:child_process';
 import crypto from 'node:crypto';
 
-import {
-  createProviderCliBridge,
-  issueLocalBrokerContext,
-  usesContainerVaultAuthority,
-  type ProviderCliAuthMode,
-  type ProviderCliBridgeLease,
-} from '../../vault-broker';
+import { ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
@@ -91,7 +85,7 @@ export async function createGuestClaudeAuth(input: {
 
   const { integrationId, accountId, authMode } = await resolveAccount();
   const metadata = (input.state?.metadata ?? {}) as { agentId?: string; wsChannel?: string; orgId?: string };
-  const base = await issueLocalBrokerContext({
+  const base = await configuredVaultBrokerProvider.issueLocalBrokerContext({
     agentId:         metadata.agentId ?? metadata.wsChannel ?? 'sulla',
     podId:           `sulla-guest-claude-${ crypto.randomUUID() }`,
     credentialScope: { integration_id: integrationId, account_id: accountId },
@@ -105,7 +99,7 @@ export async function createGuestClaudeAuth(input: {
     return { ...context, iat: now, exp: now + CONTEXT_TTL_S };
   };
 
-  const lease = await createProviderCliBridge({
+  const lease = await new ProviderCliBridgeService().create({
     context:        renewed(),
     provider:       'claude-code',
     accountId,

@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Notification } from 'electron';
 
-import { getSullaFilesClient } from './sullaFilesClient';
+import { getSullaFilesClient, type SullaFilesClient } from './sullaFilesClient';
 import { VAULT_HTTPS_ORIGIN } from './vaultTls';
 
 import { parseMountInfo } from '@pkg/backend/guestMountInfo';
@@ -16,20 +16,32 @@ import { desktopVaultFetch, loadDesktopApprovalIdentity } from '@pkg/vault-broke
 import type { VMExecutor } from '@pkg/backend/backend';
 import type { BackupFailureAlert } from '../../../services/sulla-files/src/backup/scheduler';
 
+type BackupControlClient=Pick<SullaFilesClient,'backupJson'>;
+type HostUser={uid:number;gid:number};
+/** Vault access used to mint a one-shot SMB credential; never logged. */
+export interface BackupVaultCredentials {
+  loadIdentity():Promise<{serviceId:string;serviceToken:string}>;
+  fetch(input:string,init:RequestInit):Promise<Response>;
+}
 type Destination={id:string;kind:'local'|'nas'|'s3';label:string;config:{share?:string;protocol?:'smb'|'nfs';vaultCredentialId?:string};status?:{state:string}};
 const ROOT='/mnt/sulla-backups';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-class SullaFilesBackups {
+export class SullaFilesBackups {
   private executor?:VMExecutor;
   private timer?:NodeJS.Timeout;
   private polling=false;
   private readonly failed=new Set<string>();
   private lastAlertPoll=0;
   private readonly preparing=new Set<string>();
-  private readonly alerts:BackupFailureAlert={firstFailure:async({message})=>{
-    if(Notification.isSupported()) new Notification({title:'Sulla Files backup failed',body:message}).show();
-  }};
+
+  constructor(
+    private readonly client:()=>BackupControlClient,
+    private readonly alerts:BackupFailureAlert,
+    private readonly vault:BackupVaultCredentials,
+    private readonly hostUser:()=>HostUser=()=>os.userInfo(),
+    private readonly now:()=>number=()=>Date.now(),
+  ) {}
 
   configureGuest(executor:VMExecutor):void {
     this.executor=executor;
@@ -50,14 +62,14 @@ class SullaFilesBackups {
     if(!anchor) await executor.execCommand({root:true},'mount','--bind',ROOT,ROOT);
     await executor.execCommand({root:true},'mount','--make-rshared',ROOT);
     // Files drops privileges to the desktop UID/GID; do not recursively chown mounted shares.
-    await executor.execCommand({root:true},'chown',`${ os.userInfo().uid }:${ os.userInfo().gid }`,ROOT);
+    await executor.execCommand({root:true},'chown',`${ this.hostUser().uid }:${ this.hostUser().gid }`,ROOT);
     await executor.execCommand({root:true},'chmod','0700',ROOT);
   }
   private async poll():Promise<void> {
     if(this.polling || !this.executor) return;
     this.polling=true;
     try {
-      const state=await getSullaFilesClient().backupJson('/v1/local/backups') as {destinations:Destination[];runtimeRequests:{id:string;destinationId:string;action:'mount'|'unmount'}[]};
+      const state=await this.client().backupJson('/v1/local/backups') as {destinations:Destination[];runtimeRequests:{id:string;destinationId:string;action:'mount'|'unmount'}[]};
       for(const request of state.runtimeRequests??[]) {
         if(this.preparing.has(request.id)) continue;
         const destination=state.destinations.find(item=>item.id===request.destinationId && item.kind==='nas');
@@ -65,12 +77,12 @@ class SullaFilesBackups {
         void (async()=>{
           let ok=false;
           try { if(destination) { if(request.action==='unmount') await this.unmount(destination.id); else await this.mount(destination);ok=true } } catch { /* Never log mount stderr or credential material. */ }
-          try { await getSullaFilesClient().backupJson(`/v1/local/backups/runtime/${ encodeURIComponent(request.id) }`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ok})}) } catch { /* Run times out if Files restarted. */ }
+          try { await this.client().backupJson(`/v1/local/backups/runtime/${ encodeURIComponent(request.id) }`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ok})}) } catch { /* Run times out if Files restarted. */ }
           finally { this.preparing.delete(request.id) }
         })();
       }
-      if(Date.now()-this.lastAlertPoll>=2*60_000) {
-        this.lastAlertPoll=Date.now();
+      if(this.now()-this.lastAlertPoll>=2*60_000) {
+        this.lastAlertPoll=this.now();
         for(const destination of state.destinations) {
           if(destination.status?.state==='failed') {
             if(!this.failed.has(destination.id)) {
@@ -109,8 +121,8 @@ class SullaFilesBackups {
       return;
     }
     if(!vaultCredentialId) throw new Error('SMB Vault credential is required');
-    const identity=await loadDesktopApprovalIdentity();
-    const response=await desktopVaultFetch(`${ VAULT_HTTPS_ORIGIN }/v1/desktop/backup-credentials`,{
+    const identity=await this.vault.loadIdentity();
+    const response=await this.vault.fetch(`${ VAULT_HTTPS_ORIGIN }/v1/desktop/backup-credentials`,{
       method:'POST',headers:{'content-type':'application/json','x-sulla-service-id':identity.serviceId,authorization:`Bearer ${ identity.serviceToken }`},
       body:JSON.stringify({itemId:vaultCredentialId,target:share}),signal:AbortSignal.timeout(15_000),
     });
@@ -128,7 +140,7 @@ class SullaFilesBackups {
         child.stdin?.on('error',()=>reject(new Error('NAS credential transfer failed')));
         child.stdin?.end(payload);
       });
-      await executor.execCommand({root:true,expectFailure:true},'timeout','-s','KILL','60','mount','-t','cifs','-o',`nosuid,nodev,noexec,credentials=${ credentialFile },uid=${ os.userInfo().uid },gid=${ os.userInfo().gid },file_mode=0600,dir_mode=0700`,source,point);
+      await executor.execCommand({root:true,expectFailure:true},'timeout','-s','KILL','60','mount','-t','cifs','-o',`nosuid,nodev,noexec,credentials=${ credentialFile },uid=${ this.hostUser().uid },gid=${ this.hostUser().gid },file_mode=0600,dir_mode=0700`,source,point);
     } finally {
       payload.fill(0);
       credentials.password='';credentials.username='';credentials.domain='';
@@ -147,9 +159,23 @@ class SullaFilesBackups {
   }
   async remove(id:string):Promise<void> {
     if(!UUID.test(id)) throw new Error('Invalid backup destination');
-    await getSullaFilesClient().backupJson(`/v1/local/backups/destinations/${ encodeURIComponent(id) }`,{method:'DELETE',signal:AbortSignal.timeout(3*60_000)});
+    await this.client().backupJson(`/v1/local/backups/destinations/${ encodeURIComponent(id) }`,{method:'DELETE',signal:AbortSignal.timeout(3*60_000)});
   }
 }
 
-const backups=new SullaFilesBackups();
-export function getSullaFilesBackups():SullaFilesBackups { return backups }
+/** Binds the one main-process backup controller to Files, Vault and desktop notifications. */
+export class SullaFilesBackupsProvider {
+  private instance?:SullaFilesBackups;
+  constructor(private readonly factory:()=>SullaFilesBackups=()=>new SullaFilesBackups(
+    ()=>getSullaFilesClient(),
+    {firstFailure:async({message})=>{
+      if(Notification.isSupported()) new Notification({title:'Sulla Files backup failed',body:message}).show();
+    }},
+    {loadIdentity:()=>loadDesktopApprovalIdentity(),fetch:(input,init)=>desktopVaultFetch(input,init)},
+  )) {}
+  resolve():SullaFilesBackups { return this.instance??=this.factory() }
+}
+
+export const sullaFilesBackupsProvider=new SullaFilesBackupsProvider();
+/** Compatibility getter for sullaRuntimeBackend.ts and sullaFilesIpc.ts. */
+export function getSullaFilesBackups():SullaFilesBackups { return sullaFilesBackupsProvider.resolve() }
