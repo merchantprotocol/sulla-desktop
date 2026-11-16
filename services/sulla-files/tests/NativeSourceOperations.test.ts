@@ -32,8 +32,9 @@ describe.skipIf(!databaseUrl)('native source operations (real Postgres)', () => 
   afterAll(async() => { await pool?.end(); await admin.query(`DROP SCHEMA IF EXISTS "${ schema }" CASCADE`); await admin.end() });
   beforeEach(async() => {
     collectionId = randomUUID();
-    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source)
-      VALUES($1,'u1','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE)`, [collectionId]);
+    // Unique explorer_path per collection: collections_explorer_path_owner_org is unique per owner.
+    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
+      VALUES($1,'u1','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$1)`, [collectionId]);
     service = new NativeSourceOperations(pool, host, new NativeSourceOperationRepository(pool), undefined, 200);
   });
 
