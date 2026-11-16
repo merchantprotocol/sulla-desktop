@@ -8,7 +8,7 @@ import type pg from 'pg';
 import { FilesMutationCoordinator } from './safeFilesystem.js';
 import type { FileFingerprint, DirectoryReceipt, PinnedRegularFile } from './safeFilesystem.js';
 import { isProtectedPath,protectedPathError } from './protectedFiles.js';
-import { assertOperationNotCancelled } from './operationCancellation.js';
+import { OperationCancellationRegistry } from './Services/OperationCancellationRegistry.js';
 
 type Fingerprint = { dev:string; ino:string; size:number; mtimeMs:number };
 interface Leaf {
@@ -62,7 +62,7 @@ async function verify(pinned:PinnedRegularFile,hash:string,expected?:Fingerprint
 export class NativeOperationJournal {
   constructor(private readonly db:pg.Pool,private readonly resolve:(collectionId:string)=>Promise<NativeJournalRoot|null>,
     private readonly verifyVersion:(fileId:string,versionId:string,hash:string)=>Promise<void>,
-    private readonly readVersion:(fileId:string,versionId:string)=>Promise<AsyncIterable<Uint8Array>>) {}
+    private readonly readVersion:(fileId:string,versionId:string)=>Promise<AsyncIterable<Uint8Array>>,private readonly cancellation:OperationCancellationRegistry=OperationCancellationRegistry.sharedBy(db)) {}
 
   async occupied(collectionId:string,path:string):Promise<boolean> {
     const root=await this.resolve(collectionId);
@@ -177,7 +177,7 @@ export class NativeOperationJournal {
       await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,$2,'planned',$3)`,[receipt.id,receipt.action,plan]);
       await this.db.query("UPDATE files_path_operations SET state='publishing' WHERE operation_id=$1",[receipt.id]);
       for (const leaf of plan.leaves) {
-        assertOperationNotCancelled(operationId);
+        this.cancellation.assertNotCancelled(operationId);
         if (leaf.kind==='mkdir') {
           const staged=await m.stageDirectory(leaf.stage);
           leaf.directory={...staged,path:leaf.target!};
@@ -187,7 +187,7 @@ export class NativeOperationJournal {
         await this.forward(m,leaf);
         await this.save(receipt.id,plan);
       }
-      assertOperationNotCancelled(operationId);
+      this.cancellation.assertNotCancelled(operationId);
       const displacedFileIds=new Set(displacedRecords.map((record:any)=>record.before_state?.fileId).filter(Boolean));
       for (const w of watched) if (receipt.action!=='copy' || displacedFileIds.has(w.file_id) || w.file_id===displacedFileBefore?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[w.file_id]);
       for (const state of [...records.map((r:any)=>r.after_state),displacedFileAfter]) {
@@ -273,7 +273,7 @@ export class NativeOperationJournal {
       await this.db.query(`INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,$2,'planned',$3)`,[receipt.id,receipt.action,plan]);
       await this.db.query("UPDATE files_path_operations SET state='publishing' WHERE operation_id=$1",[receipt.id]);
       for (const leaf of plan.leaves) {
-        assertOperationNotCancelled(operationId);
+        this.cancellation.assertNotCancelled(operationId);
         const root=rootById(leaf.rootId);
         if (leaf.kind==='publish') await this.stageCrossLeaf(plan,leaf,root,source);
         if (leaf.kind==='mkdir') {
@@ -284,7 +284,7 @@ export class NativeOperationJournal {
         await this.forwardCross(leaf,root);
         leaf.completed=true; await this.save(receipt.id,plan);
       }
-      assertOperationNotCancelled(operationId);
+      this.cancellation.assertNotCancelled(operationId);
       for (const record of displaced) if (record.before?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[record.before.fileId]);
       if (receipt.action!=='copy') for (const record of incoming) if (record.before?.fileId) await client.query('DELETE FROM watched_folder_state WHERE file_id=$1',[record.before.fileId]);
       for (const record of [...incoming,...displaced]) {

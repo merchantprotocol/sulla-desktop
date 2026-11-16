@@ -23,6 +23,8 @@ const ALLOWED:Record<string, number> = {
   // Finder badges: one row per live file of the one requested collection (moved from cloudSync/repository.ts).
   'Repositories/CloudCollectionCatalogRepository.ts': 1,
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
+  'Repositories/FolderSubtreeRepository.ts': 7,
   // Bounded by the caller's path array: the ancestors of one path being created (moved from storedNamespace.ts).
   'Repositories/StoredNamespaceRepository.ts': 1,
   // One-time Sulla-collection merge and stray-Docs cleanup, moved row by row (moved from sullaCollectionMigration.ts).
@@ -31,7 +33,6 @@ const ALLOWED:Record<string, number> = {
   'Repositories/ChunkMetadataRepairRepository.ts': 1,
   'app.ts': 9,
   'fileOperations.ts': 1,
-  'folderOperationBatches.ts': 12,
   'legacyImport.ts': 3,
   'localManager.ts': 3,
   'shares.ts': 1,

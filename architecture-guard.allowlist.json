@@ -3823,21 +3823,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/databaseOperationBatches.ts": {
-      "rules": {
-        "raw-sql": 31,
-        "procedural-module": 6
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "services/sulla-files/src/databaseOperations.ts": {
-      "rules": {
-        "long-file": 571,
-        "raw-sql": 169,
-        "procedural-module": 13
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/documentLifecycle.ts": {
       "rules": {
         "raw-sql": 125,
@@ -3850,14 +3835,6 @@
         "raw-sql": 34
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/folderOperationBatches.ts": {
-      "rules": {
-        "long-file": 477,
-        "raw-sql": 175,
-        "procedural-module": 5
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
     "services/sulla-files/src/index.ts": {
       "rules": {
@@ -3899,12 +3876,6 @@
         "raw-sql": 64
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/operationCancellation.ts": {
-      "rules": {
-        "mutable-state": 1
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
     "services/sulla-files/src/residency.ts": {
       "rules": {
