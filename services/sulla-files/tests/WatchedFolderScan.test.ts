@@ -42,8 +42,9 @@ describe.skipIf(!databaseUrl)('watched folder scan and ingest (real Postgres + t
     await mkdir(filesRoot, { recursive: true }); await mkdir(chunkRoot, { recursive: true });
     collectionId = randomUUID();
     // Unique explorer_path per collection: collections_explorer_path_owner_org is unique per owner.
+    // Separate params: one $n bound to both a uuid and a text column fails with "inconsistent types deduced".
     await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
-      VALUES($1,'scan-user','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$1)`, [collectionId]);
+      VALUES($1,'scan-user','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$2)`, [collectionId, `fixture-${ collectionId }`]);
     const keyring = { unlocked: true, keys: async() => ({ data: Buffer.alloc(32, 1), dedup: Buffer.alloc(32, 2) }) };
     const config:any = { chunkRoot, dataRoot: temp, filesRoot, mode: 'desktop', deviceId: 'scan-device', userId: 'scan-user', paused: true, keyring,
       capabilitySigningKey: Buffer.alloc(32, 9), fileRoots: [{ id: `root-${ collectionId.slice(0, 8) }`, name: 'Files', path: filesRoot, syncMode: 'local', paused: true, exclusions: ['*.skip'], primary: true }] };
