@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { getConfiguredApprovalClient, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
+import { usesContainerVaultAuthority, VaultBrokerError, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 
 import { getPendingCredential } from '../firstRun/pendingCredentials';
 import { getCurrentAccessToken, isCloudSignedIn } from '../sullaCloudAuth';
@@ -42,7 +42,7 @@ export async function cloudRequest(method: string, path: string, options: {
       ...(options.body instanceof ReadableStream ? { duplex: 'half' } as any : {}),
     });
   }
-  const client = getConfiguredApprovalClient();
+  const client = configuredVaultBrokerProvider.getConfiguredApprovalClient();
   if (!client) throw new Error('Desktop vault cloud service is unavailable');
   let body: unknown = options.body ?? undefined;
   let bodyEncoding: 'base64' | undefined;
