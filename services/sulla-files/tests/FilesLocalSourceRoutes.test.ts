@@ -37,7 +37,8 @@ describe.skipIf(!databaseUrl)('Files local source routes (real app, real Postgre
     const again = await fixture.request(url, 'PUT', { body: bytes, headers: { 'content-type': 'text/markdown', 'x-sulla-source-hash': sha256(bytes) } });
     expect(again.status).toBe(200);
     expect((await fixture.pool.query('SELECT current_version_id FROM files WHERE id=$1', [file.id])).rows[0].current_version_id).toBe(file.current_version_id);
-    expect(await fixture.request(url, 'PUT', { body: bytes, headers: { 'x-sulla-source-hash': sha256(Buffer.from('other')) } })).toMatchObject({ status: 409, body: { error: 'system-area bytes do not match their declared hash' } });
+    // Production callers always send a content-type; without one express.raw leaves no body (see follow-up).
+    expect(await fixture.request(url, 'PUT', { body: bytes, headers: { 'content-type': 'text/markdown', 'x-sulla-source-hash': sha256(Buffer.from('other')) } })).toMatchObject({ status: 409, body: { error: 'system-area bytes do not match their declared hash' } });
   });
 
   it('records system-area audit events for home files and 404s unknown ones', async() => {
@@ -63,7 +64,8 @@ describe.skipIf(!databaseUrl)('Files local source routes (real app, real Postgre
     const bytes = Buffer.from('native');
     expect(await fixture.request(`/v1/local/native-sources/ingest?collectionId=${ fixture.collectionId }&path=n.txt`, 'PUT', { body: bytes })).toMatchObject({ status: 400, body: { error: 'valid native source operation metadata is required' } });
     const metadata = { 'x-sulla-operation-id': randomUUID(), 'x-sulla-source-handle': 'a'.repeat(43), 'x-sulla-source-revision': 'b'.repeat(64), 'x-sulla-source-hash': 'c'.repeat(64) };
-    expect(await fixture.request(`/v1/local/native-sources/ingest?collectionId=${ fixture.collectionId }&path=n.txt`, 'PUT', { body: bytes, headers: metadata })).toMatchObject({ status: 409, body: { error: 'native source bytes do not match their declared hash' } });
+    // Production callers always send a content-type; without one express.raw leaves no body (see follow-up).
+    expect(await fixture.request(`/v1/local/native-sources/ingest?collectionId=${ fixture.collectionId }&path=n.txt`, 'PUT', { body: bytes, headers: { ...metadata, 'content-type': 'application/octet-stream' } })).toMatchObject({ status: 409, body: { error: 'native source bytes do not match their declared hash' } });
     expect(await fixture.request('/v1/local/native-sources/publications', 'POST', { body: { fileId: 'x', baseVersionId: 'y' }, headers: metadata })).toMatchObject({ status: 400, body: { error: 'valid Files publication identity is required' } });
     expect(await fixture.request(`/v1/local/native-sources/publications/${ randomUUID() }/finish`, 'POST', { body: { nextSourceRevision: 'zz' } })).toMatchObject({ status: 400, body: { error: 'next source revision is invalid' } });
     expect(await fixture.request(`/v1/local/native-sources/publications/${ randomUUID() }/finish`, 'POST', { body: { conflictFileId: 'nope' } })).toMatchObject({ status: 400, body: { error: 'native conflict recovery proof is invalid' } });
