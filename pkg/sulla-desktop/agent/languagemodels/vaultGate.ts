@@ -23,8 +23,8 @@ const VAULT_POLL_MS = 3_000;
 
 async function vaultAvailable(): Promise<boolean> {
   try {
-    const { requireConfiguredCredentialBroker } = await import('@pkg/vault-broker');
-    const status = await requireConfiguredCredentialBroker().status(AbortSignal.timeout(5_000));
+    const { configuredVaultBrokerProvider } = await import('@pkg/vault-broker');
+    const status = await configuredVaultBrokerProvider.requireConfiguredCredentialBroker().status(AbortSignal.timeout(5_000));
 
     return status.unlocked === true;
   } catch {

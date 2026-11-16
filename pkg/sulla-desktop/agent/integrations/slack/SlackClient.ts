@@ -22,11 +22,7 @@ import {
 } from '../../services/WebSocketClientService';
 import { withSuppressedConnectionStatus } from '../integrationFlags';
 import { incomingMessage } from './prompts/incoming_message';
-import {
-  issueLocalBrokerContext,
-  requireConfiguredCredentialBroker,
-  usesContainerVaultAuthority,
-} from '../../../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../../vault-broker';
 
 import type { AgentGraphState } from '../../nodes/Graph';
 import type { ToolExecutionContext } from '../../tools/executionContext';
@@ -461,7 +457,7 @@ ${ incomingMessage }`.trim();
     const accountId = await service.getActiveAccountId(INTEGRATION_ID);
     const abortController = new AbortController();
     const context = await this.issueSlackBrokerContext(accountId, abortController.signal);
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     const relay = await broker.createRelay(
       context,
       'slack.socket-mode',
@@ -480,7 +476,7 @@ ${ incomingMessage }`.trim();
 
   private async issueSlackBrokerContext(accountId?: string, signal?: AbortSignal): Promise<ToolExecutionContext> {
     const resolvedAccountId = accountId ?? await getIntegrationService().getActiveAccountId(INTEGRATION_ID);
-    return issueLocalBrokerContext({
+    return configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId:         'slack-relay',
       podId:           'desktop-main',
       credentialScope: { integration_id: INTEGRATION_ID, account_id: resolvedAccountId },
@@ -489,7 +485,7 @@ ${ incomingMessage }`.trim();
   }
 
   private async consumeVaultRelay(relayId: string, signal: AbortSignal): Promise<void> {
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     try {
       for await (const relayEvent of broker.relayEventStream(relayId, signal)) {
         if (signal.aborted) break;
@@ -548,7 +544,7 @@ ${ incomingMessage }`.trim();
     this.relayAbortController = null;
     this.relayId = null;
     this.connected = false;
-    if (relayId) await requireConfiguredCredentialBroker().closeRelay(relayId).catch(() => undefined);
+    if (relayId) await configuredVaultBrokerProvider.requireConfiguredCredentialBroker().closeRelay(relayId).catch(() => undefined);
   }
 
   private async stopApp(): Promise<void> {
@@ -664,7 +660,7 @@ ${ incomingMessage }`.trim();
           executionContext.credential_scope.account_id !== accountId) {
         throw new Error('slack.web-api requires a signed credential scope for the active Slack account');
       }
-      const broker = requireConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
       const result = await broker.execute(broker.requestFor(executionContext, {
         operation:    'slack.web-api',
         ref:          { integrationId: INTEGRATION_ID, accountId },
