@@ -4327,12 +4327,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
-    "services/sulla-vault/console/local/local.js": {
-      "rules": {
-        "long-file": 647
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "services/sulla-vault/src/app.ts": {
       "rules": {
         "long-file": 1904,
