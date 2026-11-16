@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-// Delegating shims for callers outside the E5 S5 slice (app.ts, localManager.ts, fileOperations.ts,
+// Delegating shims for callers outside the E5 S5 slice (app.ts, NativeSourceOperations.ts, NativePathOperationPublisher.ts,
+// WatchedFileIngestor.ts, fileOperations.ts,
 // cloudSync/repository.ts, CloudFolderCoverageRepository.ts). The logic lives in
 // Services/StoredNamespaceGuard.ts and the SQL in Repositories/StoredNamespaceRepository.ts. Each
 // call builds its guard from the passed-in client; nothing is held at module level.
