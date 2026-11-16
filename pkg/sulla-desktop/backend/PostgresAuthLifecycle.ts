@@ -107,24 +107,36 @@ export class PostgresAuthLifecycle {
   /**
    * Converges the role password on the chain. Waits for its turn at most
    * `bootWaitMs` (false when it did not get it; the converge still runs in
-   * order). Never throws.
+   * order). Once its turn starts, waits for the converge itself to finish.
+   * Never throws.
    */
   async afterPostgresHealthy(): Promise<boolean> {
-    const converged = this.serial(() => this.hardening.converge().catch(() => false));
+    let began!: () => void;
+    const started = new Promise<true>((resolve) => {
+      began = () => resolve(true);
+    });
+    const converged = this.serial(() => {
+      began();
+
+      return this.hardening.converge().catch(() => false);
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const waited = new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => {
-        this.logger.warn('[PostgresAuth] the role password converge is queued behind a running step; boot continues');
-        resolve(false);
-      }, this.bootWaitMs);
+    const waited = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), this.bootWaitMs);
       timer.unref?.();
     });
 
     try {
-      return await Promise.race([converged, waited]);
+      if (!await Promise.race([started, waited])) {
+        this.logger.warn('[PostgresAuth] the role password converge is queued behind a running step; boot continues');
+
+        return false;
+      }
     } finally {
       clearTimeout(timer);
     }
+
+    return converged;
   }
 
   /**

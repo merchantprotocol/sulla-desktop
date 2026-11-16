@@ -180,6 +180,23 @@ describe('PostgresAuthLifecycle', () => {
     expect(recorder.order).toEqual(['converge']);
   });
 
+  // risk: sign-in — on an idle chain boot waits for the whole converge, so consumers never start before the role has the secret
+  it('waits for a slow converge that started at once instead of reporting it as queued', async() => {
+    const recorder = new Recorder();
+    const lifecycle = new PostgresAuthLifecycle(recorder.hardening, recorder.accounts, { log: () => undefined, warn: line => recorder.lines.push(line) }, 5);
+
+    recorder.hardening.converge = async() => {
+      recorder.order.push('converge');
+      await new Promise(resolve => setTimeout(resolve, 30)); // slower than bootWaitMs
+
+      return true;
+    };
+
+    expect(await lifecycle.afterPostgresHealthy()).toBe(true);
+    expect(recorder.order).toEqual(['converge']);
+    expect(recorder.lines.some(line => line.includes('queued behind'))).toBe(false);
+  });
+
   // risk: sign-in — apply with secret A racing a secret change to B must end with the role on B, never scram with A
   it('ends with the role on the new secret when a secret change lands while apply runs (real hardening)', async() => {
     const events: string[] = [];
