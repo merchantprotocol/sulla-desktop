@@ -4,16 +4,14 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { resolveMime } from './mimeTypes.js';
 import { open, readFile } from 'node:fs/promises';
 
-import * as Automerge from '@automerge/automerge';
+import type * as Automerge from '@automerge/automerge';
 import express from 'express';
 
-import { LiveTextSessions } from './liveText.js';
 import { auditContext } from './auditContext.js';
-import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, textDocumentHeads, utf8Text, versionCheckedTextSave, type TextDocument } from './automergeText.js';
-import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
+import type { TextDocument } from './automergeText.js';
+import { FileAuditWriter } from './fileAudit.js';
 
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
@@ -35,7 +33,6 @@ import { Store } from './store.js';
 import { isSystemArea, mirrorSystemAreaFile, shouldSkipSearchIndex, SKIP_SEARCH_INDEX_HEADER } from './systemAreaIngest.js';
 import { assertStoredFilePath, ensureStoredFileParents, ensureStoredFolder, lockStoredNamespace, storedParentPaths } from './storedNamespace.js';
 import { insertStreamingUpload, streamUploadChunks, commitStreamedUpload } from './streamingUpload.js';
-import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
 import { isUseCasePath } from './useCasePaths.js';
 import { isSullaWritablePath } from './systemPaths.js';
 import { beginUploadIntent, completeUploadIntent } from './uploadCleanup.js';
@@ -60,6 +57,16 @@ import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepositor
 import type pg from 'pg';
 import { DatabaseFailureClassifier, RetryableDatabaseError, TransactionRunner } from './FilesTransaction.js';
 import { VersionContentStager, type StagedVersionContent } from './VersionContentStager.js';
+import { LocalManagerGate } from './Http/LocalManagerGate.js';
+import { VersionWriter } from './Services/VersionWriter.js';
+import { VersionWriteRepository } from './Repositories/VersionWriteRepository.js';
+import { AutomergeDocumentRepository } from './Repositories/AutomergeDocumentRepository.js';
+import { AutomergeTextStore } from './Services/AutomergeTextStore.js';
+import { LiveTextCoordinator } from './Services/LiveTextCoordinator.js';
+import { TextVersionMerger } from './Services/TextVersionMerger.js';
+import { LiveTextRoutes } from './routes/LiveTextRoutes.js';
+import { AuditEventRoutes } from './routes/AuditEventRoutes.js';
+import { AuditSpoolRepository } from './Repositories/AuditSpoolRepository.js';
 import { FileListingQuery } from './FileListingQuery.js';
 import { HttpError } from './Http/HttpError.js';
 import { FilesRequestInput } from './Http/FilesRequestInput.js';
@@ -103,7 +110,6 @@ import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
 import { CollectionFilesFeed } from './CollectionFilesFeed.js';
 
-const CHUNK_BYTES = 4 * 1024 * 1024;
 const FUSE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 // search_text (450 MB) and search_vector (378 MB) must never be serialized to API responses or loaded into bulk result sets.
 const FILE_COLUMNS_SQL = 'f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extracted_at,f.extraction_status,f.person_id,f.extraction_reason_code,f.extraction_reason,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.major_minor_enabled,f.require_approval,f.require_checkout,f.checked_out_by_user_id,f.checked_out_by_device_id,f.checked_out_at,f.retention_mode,f.retain_until,f.retention_event_type,f.retention_event_at,f.retention_duration_days,f.record_lock_type,f.record_locked_at,f.record_locked_by,f.disposal_status,f.disposal_review_at,f.disposal_extended_until,f.lifecycle_generation,f.operation_revision';
@@ -270,6 +276,18 @@ function composeFilesApp(
       action:request.body?.action === 'copy' || (Array.isArray(request.body?.items) && request.body.items.some((item:any)=>item?.action==='copy')) ? 'copy' : /\/restore$/.test(request.path) ? 'restore' : undefined},next);
   });
   registerCloudSyncRoutes(app, config, cloudSync);
+  const accessGate = new FilesAccessGate(db);
+  const { identity, collectionRow, requireCollection, requirePath, fileRow, requireFile, visibleVersion } = accessGate;
+  const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db)); const audit = requestAudit.record;
+  const managers = new LocalManagerGate(config, manager); const requireFuseExperiment = managers.fuseExperiment; const nativeSourceManager = managers.nativeSources;
+  const versionWriter = new VersionWriter(config, accessGate, store, contentStager, chunkRegistry, new VersionWriteRepository());
+  const { stage: stageVersionContent, insert: insertVersion, manifestHashFor } = versionWriter;
+  const automergeDocuments = new AutomergeDocumentRepository(db); const automergeTexts = new AutomergeTextStore(automergeDocuments);
+  const saveAutomergeVersion = (client:pg.PoolClient, fileId:string, versionId:string, document:Automerge.Doc<TextDocument>) => automergeTexts.save(client, fileId, versionId, document);
+  const liveText = new LiveTextCoordinator(db, config, store, accessGate, transactions, versionWriter, automergeDocuments, automergeTexts, requestAudit);
+  const live = liveText.sessions; const adoptLive = liveText.adopt;
+  app.locals.liveTextSessions = live;
+  const textSave = new TextVersionMerger(automergeDocuments, automergeTexts, live, managers).merge;
   const auditWriter=new FileAuditWriter(db, async(id,versionId) => {
     const content=await loadFileContent(db,config,store,id,versionId);
     if (!content) throw new Error('Audit log content unavailable');
@@ -277,14 +295,7 @@ function composeFilesApp(
   }, (collectionId,bytes) => stageVersionContent(collectionId,bytes), (client,collectionId,path,bytes,staged,fileId) => insertVersion(client,{collectionId,path,bytes,staged,fileId,mime:'application/x-ndjson',
     actor:{userId:config.userId,deviceId:config.deviceId,kind:'capability'},createdByType:'user',createdById:'sulla-files',message:'Append audit event'}));
   app.locals.auditWriter=auditWriter;
-  app.post('/v1/system/audit-events',async(request,response,next)=>{try {
-    const event=validateAuditEvent(request.body);
-    await db.query('INSERT INTO files_audit_spool(event) VALUES($1)',[event]);
-    response.status(202).json({ok:true});
-    void auditWriter.drain().catch(error=>console.error('[SullaFiles] audit delivery failed; retry pending',error));
-  } catch(error) {next(error)} });
-  const accessGate = new FilesAccessGate(db);
-  const { identity, collectionRow, requireCollection, requirePath, fileRow, requireFile, visibleVersion } = accessGate;
+  new AuditEventRoutes(new AuditSpoolRepository(db), auditWriter).register(app);
   const actorScope = (actor:FilesIdentity):string => actor.jobId
     ? `job:${ actor.jobId }:agent:${ actor.agentId ?? '' }:thread:${ actor.threadId ?? '' }:device:${ actor.deviceId }`
     : `device:${ actor.deviceId || config.deviceId }`;
@@ -292,180 +303,7 @@ function composeFilesApp(
   const originalReveal = new OriginalRevealRoutes(config, accessGate, manager);
   originalReveal.register(app);
   if (residency) registerResidencyRoutes(app, residency, async(request, fileId) => { await requireFile(request as RequestWithIdentity, fileId, 'edit') });
-  const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db)); const audit = requestAudit.record;
-  /** The manifest hash insertVersion would store for these bytes (keyed chunk ids; nothing is written). */
-  async function manifestHashFor(collectionId:string, bytes:Buffer):Promise<string> {
-    const { dedup: dedupKey } = await config.keyring!.keys(collectionId); const chunkIds:string[] = [];
-    for (let offset = 0; offset < Math.max(1, bytes.length); offset += CHUNK_BYTES) chunkIds.push(chunkId(bytes.subarray(offset, Math.min(bytes.length, offset + CHUNK_BYTES)), dedupKey));
-    return createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: bytes.length })).digest('hex');
-  }
-  /** Encrypts and durably writes a version's chunks. Call this before opening the transaction that commits it. */
-  async function stageVersionContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
-    return contentStager.stage(collectionId, bytes);
-  }
-  async function insertVersion(client:pg.PoolClient, input:{ collectionId: string; fileId?: string; createFileId?: boolean; versionId?: string; path: string; mime: string; bytes: Buffer; actor: FilesIdentity; createdByType?: string; createdById?: string; message: string; baseVersionId?: string | null; staged: StagedVersionContent }) {
-    input = { ...input, mime: resolveMime(input.path, input.mime) };
-    const agentWrite = input.createdByType === 'agent-run' || input.createdByType === 'agent' || Boolean(input.actor.agentId || input.actor.jobId || input.actor.threadId);
-    const collection = await collectionRow(input.collectionId, client);
-    const createdByType = input.actor.agentId ? 'agent' : agentWrite ? 'agent-run' : (input.createdByType ?? 'user');
-    const createdById = input.createdById ?? input.actor.jobId ?? input.actor.agentId ?? input.actor.userId;
-    const publicationStatus = new PublicationLifecyclePolicy().statusForWrite({ collection, path:input.path, createdByType });
-    await assertStoredFilePath(client, input.collectionId, input.path, input.fileId);
-    await ensureStoredFileParents(client, input.collectionId, input.path, input.actor);
-    // Every writer must stage before entering its metadata transaction. Never add a fallback here.
-    const staged = input.staged;
-    if (staged.collectionId !== input.collectionId || staged.size !== input.bytes.length) throw new Error('staged content does not match the version being written');
-    const chunkIds = [...staged.chunkIds]; const chunks = staged.chunks; const manifestHash = staged.manifestHash;
-    await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(chunkIds), input.bytes.length]);
-    for (const chunk of chunks) await client.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING`, [input.collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ input.collectionId }/${ chunk.id }`]);
-    await chunkRegistry.assertRegistered(client, input.collectionId, chunkIds);
-    let file:any;
-    if (input.fileId) {
-      file = (await client.query('SELECT * FROM files WHERE id=$1 FOR UPDATE', [input.fileId])).rows[0];
-      if (!file && input.createFileId) {
-        file = (await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size)
-          VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [input.fileId, input.collectionId, input.path, createdByType, createdById, input.mime, input.bytes.length])).rows[0];
-      } else {
-        if (file?.collection_id !== input.collectionId) throw new HttpError(404, 'file not found');
-        await client.query('UPDATE files SET path=$2,mime=$3,size=$4,deleted_at=NULL,updated_at=NOW() WHERE id=$1', [file.id, input.path, input.mime, input.bytes.length]);
-      }
-    } else file = (await client.query(`INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [input.collectionId, input.path, createdByType, createdById, input.mime, input.bytes.length])).rows[0];
-    const parent = input.baseVersionId === undefined ? file.current_version_id : input.baseVersionId;
-    const version = (await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id,publication_status)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$4,$11) RETURNING *`, [input.versionId ?? randomUUID(), file.id, input.collectionId, parent, manifestHash, input.bytes.length, createdByType, createdById, input.message, input.actor.jobId || input.actor.deviceId || config.deviceId, publicationStatus])).rows[0];
-    await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
-    if (version.publication_status === 'draft') await client.query(`INSERT INTO audit_log(who_type,who_id,device_or_run_id,file_id,version_id,action,details) VALUES($1,$2,$3,$4,$5,'draft-write',$6)`, [agentWrite?'agent-or-device':'user',createdById,input.actor.deviceId||null,file.id,version.id,{path:input.path,message:input.message}]);
-    await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [input.collectionId, chunkIds]);
-    // Chunk GC takes a table lock on file_versions, so once the version row above is in, no GC that
-    // could still delete these chunks is running. One that finished between staging and now could
-    // have reclaimed a deduplicated chunk: check the blobs (a local stat each) before committing.
-    for (const chunk of chunks) if (!await store.has(input.collectionId, chunk.id)) throw Object.assign(new HttpError(503, 'Files storage changed while saving; retry the request'), { code: 'FILES_DB_RETRYABLE' });
-    await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'put')", [input.collectionId, file.id, version.id]); return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status:version.publication_status };
-  }
-
-  async function saveAutomergeVersion(client:pg.PoolClient,fileId:string,versionId:string,document:Automerge.Doc<TextDocument>):Promise<void> {
-    const bytes=saveTextDocument(document), heads=textDocumentHeads(document);
-    await client.query(`INSERT INTO file_automerge_docs(file_id,document,heads,updated_at) VALUES($1,$2,$3,NOW())
-      ON CONFLICT(file_id) DO UPDATE SET document=EXCLUDED.document,heads=EXCLUDED.heads,updated_at=EXCLUDED.updated_at`,[fileId,bytes,JSON.stringify(heads)]);
-    await client.query(`INSERT INTO file_automerge_versions(version_id,file_id,document,heads) VALUES($1,$2,NULL,$3)
-      ON CONFLICT(version_id) DO UPDATE SET document=NULL,heads=EXCLUDED.heads`,[versionId,fileId,JSON.stringify(heads)]);
-    // Saving touches only this version row. Scanning every snapshot here made
-    // write latency and native Automerge allocations grow with file history.
-    // Historical payloads are trimmed by the bounded background retention job;
-    // their heads remain available for stale-base merges.
-  }
-
-  async function currentAutomergeDocument(client:pg.PoolClient,fileId:string,versionId:string):Promise<Automerge.Doc<TextDocument>|undefined> {
-    const stored=(await client.query('SELECT document FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0];
-    if(stored)return loadTextDocument(stored.document);
-    // One-time compatibility bridge for rows written before migration 063.
-    const legacy=(await client.query('SELECT document FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2 AND document IS NOT NULL',[versionId,fileId])).rows[0];
-    return legacy?loadTextDocument(legacy.document):undefined;
-  }
-
-  async function textSave(client:pg.PoolClient,file:any,baseVersionId:string,submitted:Buffer,currentBytes:Buffer,readVersion:(fileId:string,versionId:string)=>Promise<Buffer> = (fileId,versionId)=>requireFuseExperiment().readStoredVersion(fileId,versionId)):Promise<{bytes:Buffer;document?:Automerge.Doc<TextDocument>;merged:boolean}> {
-    const baseBytes=baseVersionId===file.current_version_id?currentBytes:await readVersion(file.id,baseVersionId);
-    const baseText=utf8Text(baseBytes),currentText=utf8Text(currentBytes),submittedText=utf8Text(submitted);
-    if(live.has(file.id)&&(submittedText===undefined||submitted.length>8*1024*1024))throw new HttpError(415,'Cannot replace an active live document with binary or oversized content');
-    const stale=baseVersionId!==file.current_version_id;
-    const planned=versionCheckedTextSave({baseVersionId,currentVersionId:file.current_version_id,base:baseBytes,current:currentBytes,submitted});
-    if(planned.status===409)throw new HttpError(409,'Files mount version changed');
-    if(baseText===undefined||currentText===undefined||submittedText===undefined)return {bytes:submitted,merged:false};
-    let document:Automerge.Doc<TextDocument>;
-    if(stale){
-      const savedBase=(await client.query('SELECT heads FROM file_automerge_versions WHERE version_id=$1 AND file_id=$2',[baseVersionId,file.id])).rows[0];
-      const savedCurrent=await currentAutomergeDocument(client,file.id,file.current_version_id);
-      let baseDocument:Automerge.Doc<TextDocument>|undefined,currentDocument:Automerge.Doc<TextDocument>|undefined;
-      if(savedCurrent){currentDocument=savedCurrent;if(savedBase){try{baseDocument=Automerge.view(currentDocument,Array.isArray(savedBase.heads)?savedBase.heads:JSON.parse(savedBase.heads));}catch{/* A pre-reset head is rebuilt from the plain version below. */}}}
-      if(baseDocument&&currentDocument) {
-        document=Automerge.merge(Automerge.clone(currentDocument),editTextDocument(Automerge.clone(baseDocument),submittedText));
-      } else {
-        const baseDocument=newTextDocument(baseText);
-        const rebuiltCurrent=editTextDocument(Automerge.clone(baseDocument),currentText);
-        document=Automerge.merge(rebuiltCurrent,editTextDocument(Automerge.clone(baseDocument),submittedText));
-      }
-    } else {
-      const saved=await currentAutomergeDocument(client,file.id,file.current_version_id);
-      document=editTextDocument(saved??newTextDocument(currentText),submittedText);
-    }
-    const active=live.document(file.id);
-    if(active) document=Automerge.merge(Automerge.clone(active),document);
-    return {bytes:Buffer.from(document.text,'utf8'),document,merged:stale};
-  }
-
-  const liveWriters=new Map<string,RequestWithIdentity>();
-  const live = new LiveTextSessions(2_000,id=>liveWriters.delete(id));
-  app.locals.liveTextSessions=live;
-  function adoptLive(request:RequestWithIdentity,fileId:string,document:Automerge.Doc<TextDocument>){if(!live.has(fileId))return;liveWriters.set(fileId,request);const actor=identity(request);live.adopt(fileId,document,{name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});}
-  const liveOwner=(request:RequestWithIdentity)=>{const a=identity(request);return JSON.stringify([a.userId,a.deviceId,a.agentId,a.jobId]);};
-  const liveBase=(id:string)=>`/v1/files/${id}/live`;
-  async function livePeer(request:RequestWithIdentity,right:Right='view') {
-    const file=await requireFile(request,request.params.id,right);
-    await visibleVersion(request,file,file.current_version_id);
-    live.peer(file.id,request.params.peerId,liveOwner(request));return file;
-  }
-  app.post('/v1/files/:id/live',async(request:RequestWithIdentity,response,next)=>{try{
-    // Load and build the document first; the transaction only re-checks the version and saves it.
-    const file=await requireFile(request,request.params.id,'view');
-    await visibleVersion(request,file,file.current_version_id);
-    let editable=true;try{await requireFile(request,file.id,'edit')}catch(error){if((error as HttpError).status!==403)throw error;editable=false;}
-    const actor=identity(request);
-    if(editable)liveWriters.set(file.id,request);
-    if(!live.has(file.id)){
-      const loaded=await loadFileContent(db,config,store,file.id,file.current_version_id);const text=loaded&&utf8Text(loaded.buffer);
-      if(typeof text!=='string'||loaded!.buffer.length>8*1024*1024)throw new HttpError(415,'Live editing requires UTF-8 text up to 8 MiB');
-      const saved=await currentAutomergeDocument(db as unknown as pg.PoolClient,file.id,file.current_version_id);
-      const document=saved??newTextDocument(text);
-      await transactions.run('live-open',async client=>{
-        await lockStoredNamespace(client,file.collection_id,file.path);
-        const current=await requireFile(request,file.id,'view',client);
-        if(current.current_version_id!==file.current_version_id||current.path!==file.path) throw new HttpError(409,'Files changed concurrently or are busy; retry');
-        await saveAutomergeVersion(client,file.id,file.current_version_id,document);
-      });
-      // Reauthorize on each durable write; revoked rights and protected paths fail closed.
-      if(!live.has(file.id)) live.open(file.id,document,snapshot=>flushLiveDocument(file.id,snapshot));
-    }
-    const peer=live.join(file.id,{owner:liveOwner(request),editable,name:actor.agentId??actor.jobId??actor.userId,kind:actor.agentId||actor.jobId?'agent':'user'});
-    response.json({...peer,versionId:file.current_version_id,events:`${liveBase(file.id)}/${peer.peerId}/events`});
-  }catch(error){next(error)}});
-  /**
-   * Persist a live document. Merging, reading the current version and encrypting run outside any
-   * transaction; the transaction re-checks the version and the stored document under the path lock
-   * and records the result. A concurrent writer in between makes the snapshot stale: redo (bounded).
-   */
-  async function flushLiveDocument(fileId:string,snapshot:Automerge.Doc<TextDocument>):Promise<void>{
-    const request=liveWriters.get(fileId);if(!request)throw new HttpError(403,'No authorized live writer');const actor=identity(request);
-    for(let attempt=1;;attempt++){
-      const current=await requireFile(request,fileId,'edit');
-      const latest=(await db.query('SELECT document,updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0];
-      if(latest)snapshot=Automerge.merge(snapshot,loadTextDocument(latest.document));
-      const bytes=Buffer.from(snapshot.text);const existing=await loadFileContent(db,config,store,fileId,current.current_version_id);
-      const changed=!existing?.buffer.equals(bytes);
-      const staged=changed?await stageVersionContent(current.collection_id,bytes):undefined;
-      const outcome=await transactions.run('live-flush',async tx=>{
-        await lockStoredNamespace(tx,current.collection_id,current.path);
-        const locked=await requireFile(request,fileId,'edit',tx);
-        const stamp=(await tx.query('SELECT updated_at::text AS stamp FROM file_automerge_docs WHERE file_id=$1',[fileId])).rows[0]?.stamp;
-        if(locked.current_version_id!==current.current_version_id||locked.path!==current.path||stamp!==latest?.stamp) return undefined;
-        if(!changed){await tx.query('UPDATE file_automerge_docs SET document=$2,heads=$3,updated_at=NOW() WHERE file_id=$1',[fileId,saveTextDocument(snapshot),JSON.stringify(textDocumentHeads(snapshot))]);return {};}
-        const result=await insertVersion(tx,{collectionId:current.collection_id,fileId:current.id,path:current.path,mime:current.mime,bytes,staged:staged!,actor,message:'Live document edit',baseVersionId:current.current_version_id});
-        await saveAutomergeVersion(tx,current.id,result.current_version_id,snapshot);
-        return {result};
-      });
-      if(outcome){if(outcome.result)await audit(request,'live-edit',outcome.result,{versionId:outcome.result.current_version_id});return;}
-      if(attempt>=4)throw new HttpError(409,'Files changed concurrently or are busy; retry');
-    }
-  }
-  app.post('/v1/files/:id/live/:peerId/sync',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);const p=live.peer(request.params.id,request.params.peerId);const message=request.body?.message;if(typeof message!=='string'||message.length>12*1024*1024)throw new HttpError(400,'Invalid sync message');
-    // Live versions are attributed to the last peer that actually sent changes, not the last one to sync.
-    if(p.editable&&Automerge.decodeSyncMessage(Buffer.from(message,'base64')).changes.length){await requireFile(request,request.params.id,'edit');liveWriters.set(request.params.id,request);}response.json({message:live.receive(request.params.id,request.params.peerId,Buffer.from(message,'base64'),p.editable)});}catch(error){next(error)}});
-  app.get('/v1/files/:id/live/:peerId/events',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);response.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});response.flushHeaders();
-    let delivery=Promise.resolve();
-    const unsubscribe=live.subscribe(request.params.id,request.params.peerId,event=>{delivery=delivery.then(async()=>{await livePeer(request);response.write(`data: ${JSON.stringify(event)}\n\n`);}).catch(()=>{response.end();});});
-    const heartbeat=setInterval(()=>{void livePeer(request).then(()=>response.write(': heartbeat\n\n')).catch(()=>response.end());},20_000);heartbeat.unref();
-    request.on('close',()=>{clearInterval(heartbeat);unsubscribe();void live.leave(request.params.id,request.params.peerId).catch(()=>{});});
-  }catch(error){next(error)}});
-  app.delete('/v1/files/:id/live/:peerId',async(request:RequestWithIdentity,response,next)=>{try{await livePeer(request);await live.leave(request.params.id,request.params.peerId);response.sendStatus(204);}catch(error){next(error)}});
+  new LiveTextRoutes(accessGate, liveText).register(app);
 
   async function ensureAgentCollection(request:RequestWithIdentity, requestedId?:unknown):Promise<any> {
     const actor = identity(request);
@@ -576,14 +414,6 @@ function composeFilesApp(
     response.json((await db.query(`SELECT home.id,'sulla' AS "systemArea" FROM (${ homeQuery }) home`,[config.userId])).rows);
   } catch(error) {next(error)} });
   app.get('/v1/local/status', (_request, response) => response.json(manager ? manager.status() : { state: 'error', pendingFiles: 0, lastError: 'watched folder disabled', serverConfigured: false }));
-  const requireFuseExperiment = () => {
-    if (!config.fuseExperiment || !manager || config.mode !== 'desktop') throw new HttpError(404, 'experimental Files mount is unavailable');
-    return manager;
-  };
-  const nativeSourceManager = () => {
-    if (!manager || config.mode !== 'desktop') throw new HttpError(404, 'native Files sources are unavailable');
-    return manager;
-  };
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const nativeMetadata = (request:express.Request) => {
     const operationId = request.header('x-sulla-operation-id') ?? '';
