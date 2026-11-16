@@ -24,9 +24,10 @@ describe.skipIf(!databaseUrl)('schema migration ledger (real Postgres)', () => {
 
   it('records a migration only when its script commits, so a failed script is retried on the next start', async() => {
     // risk: schema integrity — a migration marked applied without its changes would never run again.
+    // The pool has one connection: probe it before checking that connection out, or the ping waits forever.
+    await schema.ping(pool);
     const client = await pool.connect();
     try {
-      await schema.ping(pool);
       await schema.ensureLedger(client); await schema.ensureLedger(client);
       expect(await schema.isApplied(client, '900_spec.sql')).toBe(false);
 
