@@ -73,7 +73,9 @@ export class FilesRoutesFixture {
     const token = options.token === undefined ? this.token() : options.token;
     const json = options.body && !Buffer.isBuffer(options.body);
     const payload = json ? Buffer.from(JSON.stringify(options.body)) : options.body as Buffer | undefined;
-    const headers:Record<string, string> = { 'x-sulla-files-token': 'test-local', ...(token ? { authorization: `Bearer ${ token }` } : {}), ...(json ? { 'content-type': 'application/json' } : {}), ...options.headers };
+    const headers:Record<string, string> = { 'x-sulla-files-token': 'test-local', ...(token ? { authorization: `Bearer ${ token }` } : {}), ...(json ? { 'content-type': 'application/json' } : {}),
+      // node:http does not frame a DELETE body by default; without content-length the server never sees it.
+      ...(payload ? { 'content-length': String(payload.length) } : {}), ...options.headers };
     return new Promise((done, reject) => {
       const request = httpRequest(new URL(path, this.baseUrl), { method, headers }, response => {
         const parts:Buffer[] = []; response.on('data', part => parts.push(Buffer.from(part)));
