@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+
+import { CapabilityKeyCandidates, type SigningKey } from './CapabilityKeyCandidates.js';
 
 import { decrypt, encrypt, type Envelope } from './crypto.js';
 import { TransactionRunner } from './FilesTransaction.js';
 import { CollectionKeyRepository } from './Repositories/CollectionKeyRepository.js';
 import { FilesKeyStateRepository } from './Repositories/FilesKeyStateRepository.js';
+import { LegacySigningKeySelector } from './Services/LegacySigningKeySelector.js';
 
 import type pg from 'pg';
 
@@ -36,14 +39,16 @@ export class FilesKeyring {
     private readonly collectionKeys = new CollectionKeyRepository(db),
     private readonly keyState = new FilesKeyStateRepository(db),
     private readonly transactions = new TransactionRunner(db),
+    /** Chooses between the current and pre-#2369 signing key; absent, the current key is always used. */
+    private readonly legacyKeys?:LegacySigningKeySelector,
   ) {}
   get unlocked():boolean { return Boolean(this.master) }
 
-  async unlock(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
-    return this.unlockInternal(master, legacySigningKey);
+  async unlock(master:Buffer, legacySigningKey:SigningKey | CapabilityKeyCandidates):Promise<void> {
+    return this.unlockInternal(master, CapabilityKeyCandidates.of(legacySigningKey));
   }
 
-  private async unlockInternal(master:Buffer, legacySigningKey:string | Buffer):Promise<void> {
+  private async unlockInternal(master:Buffer, legacySigningKey:CapabilityKeyCandidates):Promise<void> {
     if (master.length !== 32) throw new Error('Invalid Files master key');
     const epoch = this.epoch;
     if (this.pending) await this.pending;
@@ -57,7 +62,7 @@ export class FilesKeyring {
     try { await this.pending } finally { this.pending = undefined }
   }
 
-  private async initialize(master:Buffer, legacySigningKey:string | Buffer, epoch:number):Promise<void> {
+  private async initialize(master:Buffer, legacySigningKeys:CapabilityKeyCandidates, epoch:number):Promise<void> {
     try {
       await this.transactions.run('files-keyring-unlock', async client => {
         await this.keyState.lockState(client);
@@ -79,8 +84,9 @@ export class FilesKeyring {
           const rows = await this.collectionKeys.lockNativeCollectionsForLegacyMigration(client);
           for (const row of rows) {
             // The legacy master.key wrapped metadata only; content used these deterministic keys.
-            const data = createHmac('sha256', legacySigningKey).update(`sulla:files:data-key:v1:${ row.id }`).digest();
-            const dedup = createHmac('sha256', legacySigningKey).update(`sulla:files:dedup-key:v1:${ row.id }`).digest();
+            const legacySigningKey = this.legacyKeys ? await this.legacyKeys.select(client, row.id, legacySigningKeys) : legacySigningKeys.current;
+            const data = LegacySigningKeySelector.dataKey(legacySigningKey, row.id);
+            const dedup = LegacySigningKeySelector.dedupKey(legacySigningKey, row.id);
             try {
               const wrappedData = await encrypt(data, master, `sulla:files:data-key:v1:${ row.id }`);
               const wrappedDedup = await encrypt(dedup, master, `sulla:files:dedup-key:v1:${ row.id }`);
