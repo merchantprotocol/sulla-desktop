@@ -110,8 +110,10 @@ export class VaultEnrollmentService {
           b.bundleGeneration,
           createHash('sha256').update(JSON.stringify(b)).digest('hex'),
         ], client);
+        // Locked while the rows were written: throwing here rolls them back, so a lock never leaves an adopted vault behind.
+        this.host.requireStableGeneration(generation);
       });
-      // Locked while the rows were written: they stay (the user unlocks with the password), the keys never load.
+      // Locked between the row writes and COMMIT returning: the keys never load.
       this.host.requireStableGeneration(generation);
       this.host.lockNow();this.host.keys={userId:b.vaultUserId,publicKey:b.publicKey,userKey:Uint8Array.from(staged.userKey),privateKey:Uint8Array.from(staged.privateKey)};this.host.generation+=1;this.host.migrationState='unlocked';this.host.stageCacheUpdate(staged.masterKey);return{adopted:true};
     }finally{VaultEnrollmentService.erase(staged)}

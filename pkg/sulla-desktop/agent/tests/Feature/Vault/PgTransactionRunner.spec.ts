@@ -25,8 +25,10 @@ class FlakyClient {
   readonly log: string[] = [];
   readonly releasedWith: unknown[][] = [];
   constructor(private readonly failing: Record<string, Error> = {}) {}
+  readonly begins: string[] = [];
   async query(sql: string) {
     this.log.push(sql.split(' ')[0]);
+    if (sql.startsWith('BEGIN')) this.begins.push(sql);
     const failure = Object.entries(this.failing).find(([statement]) => sql.startsWith(statement));
     if (failure) throw failure[1];
     return { rows: [], rowCount: 0 };
@@ -53,6 +55,11 @@ const helpers: { name: string; statements: string[]; run(client: FlakyClient, wo
     name: 'local authority store transaction',
     statements: ['BEGIN'],
     run: (client, work) => new PostgresLocalAuthorityRepository(client.asDatabase()).transaction(work as never),
+  },
+  {
+    name: 'legacy-source read-only transaction',
+    statements: ['BEGIN'],
+    run: (client, work) => new PostgresLocalAuthorityRepository({} as Database).readOnlyTransaction(client.asDatabase(), work as never),
   },
 ];
 
@@ -85,5 +92,13 @@ describe.each(helpers)('$name', ({ statements, run }) => {
     expect(client.log).toEqual([...statements, 'UPDATE', 'COMMIT']);
     expect(client.releasedWith).toHaveLength(1);
     expect(client.releasedWith[0][0]).toBeUndefined();
+  });
+});
+
+describe('legacy-source read-only transaction', () => {
+  it('opens with BEGIN READ ONLY so the legacy source can never be written', async() => { // risk: migration writes into the legacy credential database
+    const client = new FlakyClient();
+    await new PostgresLocalAuthorityRepository({} as Database).readOnlyTransaction(client.asDatabase(), async() => 'rows');
+    expect(client.begins).toEqual(['BEGIN READ ONLY']);
   });
 });

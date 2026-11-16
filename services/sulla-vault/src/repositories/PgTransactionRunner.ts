@@ -10,6 +10,9 @@ export interface TransactionPool {
   connect(): Promise<pg.PoolClient>;
 }
 
+/** The statement that opens the transaction; read-only sources open with BEGIN READ ONLY. */
+export type TransactionBegin = 'BEGIN' | 'BEGIN READ ONLY';
+
 /**
  * One BEGIN … COMMIT unit on a pooled client, shared by every vault transaction helper.
  * The operation's own error always surfaces. If ROLLBACK itself fails, the connection may still
@@ -17,11 +20,13 @@ export interface TransactionPool {
  * rollback error and the pool destroys it instead of handing it to the next caller.
  */
 export class PgTransactionRunner {
-  async run<T>(pool: TransactionPool, operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+  async run<T>(
+    pool: TransactionPool, operation: (client: pg.PoolClient) => Promise<T>, begin: TransactionBegin = 'BEGIN',
+  ): Promise<T> {
     const client = await pool.connect();
     let brokenConnection: Error | undefined;
     try {
-      await client.query('BEGIN');
+      await client.query(begin);
       const result = await operation(client);
       await client.query('COMMIT');
       return result;
