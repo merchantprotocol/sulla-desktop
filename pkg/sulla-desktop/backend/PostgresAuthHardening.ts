@@ -7,10 +7,12 @@ import { randomBytes } from 'crypto';
 
 import { ServiceSecretProvider } from '@pkg/agent/app/Services/ServiceSecret/ServiceSecretProvider';
 
+import { PostgresAuthReporter } from './PostgresAuthReporter';
+import { PostgresHbaRestore } from './PostgresHbaRestore';
 import { PostgresScramVerifier, ScramVerifierUnsupportedPasswordError } from './PostgresScramVerifier';
+import type { PostgresProbeOutcome } from './Repositories/GuestPostgresAuthRepository';
 import type {
   PostgresAuthConsumers, PostgresAuthLogger, PostgresAuthRepository, PostgresAuthSecretSource, PostgresAuthState, PostgresAuthTiming,
-  PostgresAuthTrustReason,
 } from './PostgresAuthTypes';
 
 export type {
@@ -32,6 +34,8 @@ export type {
  *   back. Whenever the result is trust, a managed file left on disk is restored
  *   and reloaded, so the next PostgreSQL start never loads an unverified file.
  *   Never terminates backends. Never throws; returns and logs the resulting state.
+ *   A managed file that is loaded and valid but whose TCP probe keeps erroring
+ *   (not refusing) stays scram, reported as unverified.
  * - verify(): the right secret logs in over TCP and a wrong one gets 28P01.
  * - rollback(): restore the pre-switch hba (or a trust file) and reload.
  *
@@ -39,28 +43,18 @@ export type {
  * The secret never goes to argv or to a log line.
  */
 export class PostgresAuthHardening {
-  static readonly MANAGED_HEADER = '# managed-by: sulla-desktop postgres-auth v1';
-  static readonly MANAGED_HBA = `${ PostgresAuthHardening.MANAGED_HEADER }\nlocal all all trust\nhost all all all scram-sha-256\n`;
+  static readonly MANAGED_HEADER = PostgresHbaRestore.MANAGED_HEADER;
+  static readonly MANAGED_HBA = PostgresHbaRestore.MANAGED_HBA;
   /** Written by rollback when no unmanaged backup exists. */
-  static readonly TRUST_HBA = 'local all all trust\nhost all all all trust\n';
+  static readonly TRUST_HBA = PostgresHbaRestore.TRUST_HBA;
 
-  private static readonly REASON_TEXT: Record<PostgresAuthTrustReason, string> = {
-    'legacy-development-secret': 'legacy development secret; rotation pending',
-    'unsupported-secret':        'service secret cannot be turned into a SCRAM verifier',
-    'role-password-not-set':     'role password could not be set',
-    'consumer-drift':            'a database consumer still runs an outdated configuration',
-    'accounts-stale':            'accounts has not picked up the current database password',
-    'probe-failed':              'the service secret did not log in over TCP',
-    'hba-rule-errors':           'the managed hba file has rule errors',
-    'switch-failed':             'the hba switch did not complete',
-    'rolled-back':               'rolled back after verification failed',
-    unavailable:                 'PostgreSQL could not be inspected',
-  };
-
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly verifyAttempts: number;
   private readonly verifyDelayMs: number;
   private readonly healthTimeoutMs: number;
+  private readonly loadSettleMs: number;
+  private readonly reporter: PostgresAuthReporter;
+  private readonly hba: PostgresHbaRestore;
 
   constructor(
     private readonly repository: PostgresAuthRepository,
@@ -71,10 +65,13 @@ export class PostgresAuthHardening {
     private readonly developmentPassword: string = ServiceSecretProvider.DEVELOPMENT_PASSWORD,
     timing: PostgresAuthTiming = {},
   ) {
-    this.sleep = timing.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms).unref?.()));
+    this.sleep = timing.sleep ?? PostgresAuthHardening.abortableSleep;
     this.verifyAttempts = Math.max(1, timing.verifyAttempts ?? 5);
     this.verifyDelayMs = timing.verifyDelayMs ?? 200;
     this.healthTimeoutMs = timing.healthTimeoutMs ?? 120_000;
+    this.loadSettleMs = Math.max(1000, timing.loadSettleMs ?? 1100);
+    this.reporter = new PostgresAuthReporter(logger);
+    this.hba = new PostgresHbaRestore(repository, logger, this.reporter);
   }
 
   /** Sets the role password when its verifier does not match the secret. True when it matches afterwards. Never throws. */
@@ -86,7 +83,7 @@ export class PostgresAuthHardening {
 
       return await this.convergeWith(secret);
     } catch (error) {
-      this.logger.warn(`[PostgresAuth] role password not converged: ${ this.describe(error, secret) }`);
+      this.logger.warn(`[PostgresAuth] role password not converged: ${ this.reporter.describe(error, secret) }`);
 
       return false;
     }
@@ -99,10 +96,10 @@ export class PostgresAuthHardening {
     try {
       secret = await this.secret.value();
     } catch (error) {
-      return this.report({ kind: 'trust', reason: 'unavailable', detail: this.describe(error, secret) });
+      return this.reporter.report({ kind: 'trust', reason: 'unavailable', detail: this.reporter.describe(error, secret) });
     }
 
-    return this.report(await this.applyWith(secret));
+    return this.reporter.report(await this.applyWith(secret));
   }
 
   /** True when the secret logs in over TCP and a wrong password is refused with 28P01. Never throws. */
@@ -116,51 +113,11 @@ export class PostgresAuthHardening {
 
   /** Restores the pre-switch hba file (or a trust file when there is no usable backup) and reloads. True on success. */
   async rollback(reason: string): Promise<boolean> {
-    return this.restore(reason, true);
-  }
-
-  /**
-   * Puts the pre-switch hba file back. `reload` is false only when the managed
-   * file cannot have been loaded (a fresh switch failed before its reload): the
-   * running rules are still the old ones, so restoring the file is enough.
-   */
-  private async restore(reason: string, reload: boolean): Promise<boolean> {
-    try {
-      const path = await this.repository.hbaPath();
-      const restore = await this.restoreContent(path);
-
-      if (restore !== null) {
-        await this.repository.writeHbaFile(path, restore);
-      }
-      if (reload) {
-        await this.repository.reload();
-      }
-      this.logger.warn(`[PostgresAuth] rolled back: ${ reason }`);
-
-      return true;
-    } catch (error) {
-      this.logger.warn(`[PostgresAuth] rollback failed (${ reason }): ${ this.describe(error, '') }`);
-
-      return false;
-    }
-  }
-
-  /**
-   * What rollback writes: the unmanaged backup; else a trust file when the
-   * current file is managed; else null (an unmanaged file is left as it is).
-   */
-  private async restoreContent(path: string): Promise<string | null> {
-    const backup = await this.repository.readHbaBackup(path);
-
-    if (backup !== null && !PostgresAuthHardening.isManaged(backup)) {
-      return backup;
-    }
-
-    return PostgresAuthHardening.isManaged(await this.repository.readHbaFile(path)) ? PostgresAuthHardening.TRUST_HBA : null;
+    return this.hba.restore(reason, true);
   }
 
   static isManaged(content: string): boolean {
-    return content.split('\n', 1)[0].trim() === PostgresAuthHardening.MANAGED_HEADER;
+    return PostgresHbaRestore.isManaged(content);
   }
 
   /** Decides, then makes the file on disk agree with a trust result. Never throws. */
@@ -170,11 +127,11 @@ export class PostgresAuthHardening {
     try {
       state = await this.decide(secret);
     } catch (error) {
-      state = { kind: 'trust', reason: 'unavailable', detail: this.describe(error, secret) };
+      state = { kind: 'trust', reason: 'unavailable', detail: this.reporter.describe(error, secret) };
     }
 
     if (state.kind === 'trust') {
-      await this.restoreIfManaged(state.reason);
+      await this.hba.restoreIfManaged(this.reporter.reasonText(state.reason));
     }
 
     return state;
@@ -191,7 +148,7 @@ export class PostgresAuthHardening {
     } catch (error) {
       return error instanceof ScramVerifierUnsupportedPasswordError
         ? { kind: 'trust', reason: 'unsupported-secret' }
-        : { kind: 'trust', reason: 'role-password-not-set', detail: this.describe(error, secret) };
+        : { kind: 'trust', reason: 'role-password-not-set', detail: this.reporter.describe(error, secret) };
     }
 
     const path = await this.repository.hbaPath();
@@ -200,34 +157,51 @@ export class PostgresAuthHardening {
     // Already managed and live: nothing to do, and no deliberate wrong-password
     // login (FATAL log noise) on every boot. A managed file that is on disk but
     // not loaded (a switch interrupted before its reload) goes through the gates.
-    if (current === PostgresAuthHardening.MANAGED_HBA && await this.managedAndLive(path, secret)) {
-      return { kind: 'scram', changed: false };
+    if (current === PostgresAuthHardening.MANAGED_HBA) {
+      const live = await this.managedAndLive(path, secret);
+
+      if (live !== null) {
+        return live;
+      }
     }
 
     return await this.gate(secret) ?? this.switchTo(path, secret, PostgresAuthHardening.isManaged(current));
   }
 
-  /** The managed file parses, is the one loaded, and the secret logs in over TCP. */
-  private async managedAndLive(path: string, secret: string): Promise<boolean> {
-    return (await this.ruleErrors()).length === 0
-      && await this.repository.hbaFileLoaded(path)
-      && await this.repository.probeTcp(secret) === 'ok';
+  /**
+   * scram when the managed file parses, is the one loaded, and the secret logs in
+   * over TCP; null sends the install through the gates. A probe that keeps
+   * erroring (a flaky docker exec, not a refusal) on a loaded, valid managed file
+   * keeps scram as unverified instead of downgrading to trust.
+   */
+  private async managedAndLive(path: string, secret: string): Promise<PostgresAuthState | null> {
+    if ((await this.ruleErrors()).length > 0 || !await this.repository.hbaFileLoaded(path)) {
+      return null;
+    }
+    const probe = await this.probeRetryingErrors(secret);
+
+    if (probe === 'ok') {
+      return { kind: 'scram', changed: false };
+    }
+
+    return probe === 'error' ? { kind: 'scram', changed: false, unverified: true } : null;
   }
 
-  /** Trust was decided: a managed file must not stay on disk (or loaded). Never throws. */
-  private async restoreIfManaged(reason: PostgresAuthTrustReason): Promise<void> {
-    let managed: boolean;
+  /** probeTcp, retried while it ends in 'error' (up to verifyAttempts); a refusal is returned at once. */
+  private async probeRetryingErrors(secret: string): Promise<PostgresProbeOutcome> {
+    let outcome: PostgresProbeOutcome = 'error';
 
-    try {
-      managed = PostgresAuthHardening.isManaged(await this.repository.readHbaFile(await this.repository.hbaPath()));
-    } catch (error) {
-      this.logger.warn(`[PostgresAuth] could not check the hba file after keeping trust: ${ this.describe(error, '') }`);
+    for (let attempt = 1; attempt <= this.verifyAttempts; attempt++) {
+      outcome = await this.repository.probeTcp(secret);
+      if (outcome !== 'error') {
+        return outcome;
+      }
+      if (attempt < this.verifyAttempts) {
+        await this.sleep(this.verifyDelayMs);
+      }
+    }
 
-      return;
-    }
-    if (managed) {
-      await this.restore(PostgresAuthHardening.REASON_TEXT[reason], true);
-    }
+    return outcome;
   }
 
   /** The first gate that fails, or null when the switch may go ahead. */
@@ -251,31 +225,36 @@ export class PostgresAuthHardening {
       await this.repository.backupHbaOnce(path);
     } catch (error) {
       // Nothing was written yet: trust is untouched.
-      return { kind: 'trust', reason: 'switch-failed', detail: this.describe(error, secret) };
+      return { kind: 'trust', reason: 'switch-failed', detail: this.reporter.describe(error, secret) };
     }
     try {
       await this.repository.writeHbaFile(path, PostgresAuthHardening.MANAGED_HBA);
     } catch (error) {
       // The write is atomic (temp file + rename); put trust back in case it landed anyway.
-      await this.restore('the managed hba file could not be written', startedManaged);
+      await this.hba.restore('the managed hba file could not be written', startedManaged);
 
-      return { kind: 'trust', reason: 'switch-failed', detail: this.describe(error, secret) };
+      return { kind: 'trust', reason: 'switch-failed', detail: this.reporter.describe(error, secret) };
     }
 
     const errors = await this.ruleErrors();
 
     if (errors.length > 0) {
-      await this.restore('the managed hba file has rule errors', startedManaged);
+      await this.hba.restore('the managed hba file has rule errors', startedManaged);
 
       return { kind: 'trust', reason: 'hba-rule-errors', detail: errors.join('; ') };
     }
+
+    // pg_stat_file reports whole seconds and hbaFileLoaded() treats a same-second
+    // write and load as "not loaded"; reload in a later second than the write so
+    // the next boot recognises the live file and takes the fast path.
+    await this.sleep(this.loadSettleMs);
 
     try {
       await this.repository.reload();
     } catch (error) {
       await this.rollback('the configuration reload failed');
 
-      return { kind: 'trust', reason: 'switch-failed', detail: this.describe(error, secret) };
+      return { kind: 'trust', reason: 'switch-failed', detail: this.reporter.describe(error, secret) };
     }
 
     if (!await this.verifyAfterReload(secret)) {
@@ -289,7 +268,7 @@ export class PostgresAuthHardening {
     try {
       await this.waitHealthyBounded();
     } catch (error) {
-      const detail = this.describe(error, secret);
+      const detail = this.reporter.describe(error, secret);
 
       await this.rollback(`a database consumer could not authenticate (${ detail })`);
 
@@ -330,13 +309,41 @@ export class PostgresAuthHardening {
     return false;
   }
 
+  /** Races consumers.waitHealthy() against the bound; either way the timer is cleared and the checks are told to stop. */
   private async waitHealthyBounded(): Promise<void> {
     const seconds = Math.round(this.healthTimeoutMs / 1000);
-    const timeout = this.sleep(this.healthTimeoutMs).then(() => {
-      throw new Error(`database consumers were not healthy within ${ seconds }s`);
+    const stop = new AbortController();
+    const timeout = this.sleep(this.healthTimeoutMs, stop.signal).then(() => {
+      if (!stop.signal.aborted) {
+        throw new Error(`database consumers were not healthy within ${ seconds }s`);
+      }
     });
 
-    await Promise.race([this.consumers.waitHealthy(), timeout]);
+    try {
+      await Promise.race([this.consumers.waitHealthy(stop.signal), timeout]);
+    } finally {
+      stop.abort();
+    }
+  }
+
+  /** setTimeout-based sleep that clears its timer and resolves early when `signal` aborts. */
+  static abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+
+        return;
+      }
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+
+      timer.unref?.();
+      signal?.addEventListener('abort', done, { once: true });
+    });
   }
 
   private async verifyWith(secret: string): Promise<boolean> {
@@ -357,31 +364,7 @@ export class PostgresAuthHardening {
     try {
       return await this.repository.hbaRuleErrors();
     } catch (error) {
-      return [`rule check failed: ${ this.describe(error, '') }`];
+      return [`rule check failed: ${ this.reporter.describe(error, '') }`];
     }
-  }
-
-  private report(state: PostgresAuthState): PostgresAuthState {
-    if (state.kind === 'scram') {
-      this.logger.log(`[PostgresAuth] state=scram${ state.changed ? ' (switched from trust)' : '' }`);
-    } else {
-      const detail = state.detail ? `: ${ state.detail }` : '';
-      const line = `[PostgresAuth] state=trust (${ PostgresAuthHardening.REASON_TEXT[state.reason] }${ detail })`;
-
-      if (state.reason === 'legacy-development-secret') {
-        this.logger.warn(line);
-      } else {
-        this.logger.log(line);
-      }
-    }
-
-    return state;
-  }
-
-  /** An error's first line with the secret masked out (defence in depth; no caller should carry it). */
-  private describe(error: unknown, secret: string): string {
-    const text = (error instanceof Error ? error.message : String(error)).split('\n')[0];
-
-    return secret ? text.split(secret).join('[redacted]') : text;
   }
 }

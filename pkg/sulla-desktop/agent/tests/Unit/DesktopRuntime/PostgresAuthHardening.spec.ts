@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PostgresAuthHardening } from '@pkg/backend/PostgresAuthHardening';
 import type { PostgresAuthConsumers } from '@pkg/backend/PostgresAuthHardening';
@@ -22,14 +22,56 @@ function ok(stdout = ''): GuestDockerResult {
   return { code: 0, stdout, stderr: '' };
 }
 
+const HEALTH_TIMEOUT_MS = 30_000;
+
+/**
+ * A fake clock in milliseconds. Sleeps advance it at once (and are traced as
+ * `sleep:<ms>` events); the health bound never fires unless `healthExpired`.
+ */
+class FakeClock {
+  readonly sleeps: number[] = [];
+  readonly healthSignals: (AbortSignal | undefined)[] = [];
+  healthExpired = false;
+  /** Starts on a whole second, so a run of fast docker calls stays inside one second. */
+  now = 1_794_000_000_000;
+
+  constructor(private readonly events: string[]) {}
+
+  readonly sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+    this.sleeps.push(ms);
+    if (ms === HEALTH_TIMEOUT_MS) {
+      this.healthSignals.push(signal);
+
+      return this.healthExpired ? Promise.resolve() : new Promise(() => undefined);
+    }
+    this.events.push(`sleep:${ ms }`);
+    this.now += ms;
+
+    return Promise.resolve();
+  };
+
+  second(): number {
+    return Math.floor(this.now / 1000);
+  }
+}
+
 /**
  * Just enough of `docker exec sulla_postgres …` to behave like PostgreSQL 16:
  * psql over the local socket (always trusted), the hba file on disk versus the
  * rules loaded at the last reload, the role's SCRAM verifier, and TCP logins
  * that honour the loaded rules. Records every argv, stdin and step in order.
+ *
+ * Time: every docker call takes 10 ms of the fake clock. Like pg_stat_file, the
+ * file's mtime is kept in whole seconds, and "loaded" (the repository's
+ * hbaFileLoaded query) is true only when the mtime second is before the second
+ * of the last configuration load.
  */
 class FakeGuestPostgres implements StdinDockerCli {
-  hba = TRUST_INSTALL_HBA;
+  private content = TRUST_INSTALL_HBA;
+  /** Whole-second mtime of the hba file. */
+  mtimeSecond: number;
+  /** Whole second of the last configuration load (pg_conf_load_time). */
+  loadSecond: number;
   loaded = TRUST_INSTALL_HBA;
   backup: string | null = null;
   verifier: string | null = null;
@@ -41,14 +83,29 @@ class FakeGuestPostgres implements StdinDockerCli {
   refusesSecret = false;
   /** TCP is unreachable. */
   tcpDown = false;
+  /** How many of the next TCP probes end in a transient 'error' (a docker exec timeout). */
+  probeErrors = 0;
   /** How many TCP probes after the next reload still see the old rules (pg_reload_conf is an async SIGHUP). */
   reloadLag = 0;
   private pending: string | null = null;
   readonly calls: { args: string[], input?: string }[] = [];
 
-  constructor(readonly events: string[]) {}
+  constructor(readonly events: string[], private readonly clock: FakeClock) {
+    this.mtimeSecond = clock.second() - 60;
+    this.loadSecond = clock.second() - 30;
+  }
+
+  get hba(): string {
+    return this.content;
+  }
+
+  set hba(content: string) {
+    this.content = content;
+    this.mtimeSecond = this.clock.second();
+  }
 
   async run(args: string[], input?: string): Promise<GuestDockerResult> {
+    this.clock.now += 10;
     this.calls.push({ args, input });
     if (args.includes('psql')) {
       return this.psql(args, input);
@@ -107,6 +164,7 @@ class FakeGuestPostgres implements StdinDockerCli {
         this.pending = this.hba;
       } else {
         this.loaded = this.hba;
+        this.loadSecond = this.clock.second();
       }
 
       return ok('t\n');
@@ -114,7 +172,7 @@ class FakeGuestPostgres implements StdinDockerCli {
     if (sql.includes('pg_conf_load_time')) {
       this.events.push('loaded?');
 
-      return ok(this.loaded === this.hba ? 't\n' : 'f\n');
+      return ok(this.loaded === this.hba && this.mtimeSecond < this.loadSecond ? 't\n' : 'f\n');
     }
     throw new Error(`unexpected SQL ${ sql }`);
   }
@@ -126,8 +184,14 @@ class FakeGuestPostgres implements StdinDockerCli {
         this.reloadLag--;
       } else {
         this.loaded = this.pending;
+        this.loadSecond = this.clock.second();
         this.pending = null;
       }
+    }
+    if (this.probeErrors > 0) {
+      this.probeErrors--;
+
+      return { code: 1, stdout: '', stderr: 'docker exec timed out' };
     }
     if (this.tcpDown) {
       return { code: 2, stdout: '', stderr: 'psql: error: connection to server at "172.18.0.2", port 5432 failed: Connection refused' };
@@ -149,6 +213,7 @@ class FakeConsumers implements PostgresAuthConsumers {
   healthError?: Error;
   /** waitHealthy() never settles (a consumer that never answers). */
   hang = false;
+  readonly signals: (AbortSignal | undefined)[] = [];
 
   constructor(private readonly events: string[]) {}
 
@@ -164,25 +229,12 @@ class FakeConsumers implements PostgresAuthConsumers {
     return this.accounts;
   }
 
-  async waitHealthy(): Promise<void> {
+  async waitHealthy(signal?: AbortSignal): Promise<void> {
+    this.signals.push(signal);
     this.events.push('health');
     if (this.healthError) throw this.healthError;
     if (this.hang) await new Promise(() => undefined);
   }
-}
-
-const HEALTH_TIMEOUT_MS = 30_000;
-
-/** Records every sleep; retry delays pass at once, the health timeout fires only when `healthExpired`. */
-class FakeClock {
-  readonly sleeps: number[] = [];
-  healthExpired = false;
-
-  readonly sleep = (ms: number): Promise<void> => {
-    this.sleeps.push(ms);
-
-    return ms === HEALTH_TIMEOUT_MS && !this.healthExpired ? new Promise(() => undefined) : Promise.resolve();
-  };
 }
 
 /** True when any docker call could end another session (pg_terminate_backend / pg_cancel_backend). */
@@ -198,10 +250,10 @@ class Logger {
 
 function setup(secret = SECRET) {
   const events: string[] = [];
-  const server = new FakeGuestPostgres(events);
+  const clock = new FakeClock(events);
+  const server = new FakeGuestPostgres(events, clock);
   const consumers = new FakeConsumers(events);
   const logger = new Logger();
-  const clock = new FakeClock();
   const source = { current: secret, async value() { return this.current; } };
   const hardening = new PostgresAuthHardening(new GuestPostgresAuthRepository(server), source, consumers, logger,
     () => WRONG_PASSWORD, DEV_PASSWORD, { sleep: clock.sleep, healthTimeoutMs: HEALTH_TIMEOUT_MS });
@@ -215,7 +267,7 @@ describe('PostgresAuthHardening', () => {
     const { events, server, logger, hardening } = setup();
 
     expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
-    expect(events).toEqual(['alter-role', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'health']);
+    expect(events).toEqual(['alter-role', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'sleep:1100', 'reload', 'probe', 'probe', 'health']);
     expect(server.hba).toBe(PostgresAuthHardening.MANAGED_HBA);
     expect(server.hba.split('\n')[0]).toBe('# managed-by: sulla-desktop postgres-auth v1');
     expect(server.backup).toBe(TRUST_INSTALL_HBA);
@@ -271,7 +323,7 @@ describe('PostgresAuthHardening', () => {
     events.length = 0;
 
     expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
-    expect(events).toEqual(['rules', 'loaded?', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'reload', 'probe', 'probe', 'health']);
+    expect(events).toEqual(['rules', 'loaded?', 'drift', 'accounts', 'probe', 'backup', 'write', 'rules', 'sleep:1100', 'reload', 'probe', 'probe', 'health']);
     expect(server.loaded).toBe(PostgresAuthHardening.MANAGED_HBA);
     expect(server.backup).toBe(TRUST_INSTALL_HBA);
   });
@@ -557,5 +609,115 @@ describe('PostgresAuthHardening', () => {
     expect(await hardening.apply()).toEqual({ kind: 'trust', reason: 'rolled-back', detail: 'database consumers were not healthy within 30s' });
     expect(server.hba).toBe(TRUST_INSTALL_HBA);
     expect(server.loaded).toBe(TRUST_INSTALL_HBA);
+  });
+
+  // risk: data accuracy — pg_stat_file has whole-second mtimes; a reload in the write's second leaves the live file looking unloaded and redoes the switch every boot
+  it('reloads in a later whole second than the write, so the next boot takes the fast path', async() => {
+    const { events, server, clock, hardening } = setup();
+    let writeSecond = -1;
+    const run = server.run.bind(server);
+
+    server.run = async(args, input) => {
+      const result = await run(args, input);
+
+      if (events.at(-1) === 'write' && writeSecond < 0) {
+        writeSecond = clock.second();
+      }
+
+      return result;
+    };
+
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: true });
+    const write = events.indexOf('write');
+
+    expect(events.slice(write, events.indexOf('reload') + 1)).toEqual(['write', 'rules', 'sleep:1100', 'reload']);
+    expect(server.loadSecond).toBeGreaterThan(writeSecond);
+    expect(server.mtimeSecond).toBeLessThan(server.loadSecond);
+
+    events.length = 0;
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: false });
+    expect(events).toEqual(['rules', 'loaded?', 'probe']);
+  });
+
+  // risk: permissions — a flaky docker exec on an install already on scram must not silently downgrade it to trust
+  it('retries a probe that errors on a live managed file and stays scram without rewriting', async() => {
+    const { events, server, hardening } = setup();
+
+    await hardening.apply();
+    events.length = 0;
+    server.probeErrors = 2;
+
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: false });
+    expect(events).toEqual(['rules', 'loaded?', 'probe', 'sleep:200', 'probe', 'sleep:200', 'probe']);
+    expect(server.hba).toBe(PostgresAuthHardening.MANAGED_HBA);
+  });
+
+  // risk: permissions — a probe that keeps erroring keeps scram (reported unverified) instead of restoring trust
+  it('reports scram as unverified, and keeps the managed file, when every probe on a live managed file errors', async() => {
+    const { events, server, logger, hardening } = setup();
+
+    await hardening.apply();
+    events.length = 0;
+    server.probeErrors = 99;
+
+    expect(await hardening.apply()).toEqual({ kind: 'scram', changed: false, unverified: true });
+    expect(events.filter(event => event === 'probe')).toHaveLength(5);
+    expect(events).not.toContain('write');
+    expect(events).not.toContain('drift');
+    expect(server.hba).toBe(PostgresAuthHardening.MANAGED_HBA);
+    expect(server.loaded).toBe(PostgresAuthHardening.MANAGED_HBA);
+    expect(logger.lines.at(-1)).toBe('[PostgresAuth] state=scram (unverified: the TCP login probe did not complete)');
+  });
+
+  // risk: availability — the health bound's timer is cleared and the consumer checks are told to stop once apply() stops waiting
+  it('aborts the health bound and the consumer checks once the wait ends, on success and on timeout', async() => {
+    const ok1 = setup();
+
+    expect(await ok1.hardening.apply()).toEqual({ kind: 'scram', changed: true });
+    expect(ok1.consumers.signals[0]?.aborted).toBe(true);
+    expect(ok1.clock.healthSignals[0]).toBe(ok1.consumers.signals[0]);
+
+    const late = setup();
+
+    late.consumers.hang = true;
+    late.clock.healthExpired = true;
+    expect(await late.hardening.apply()).toMatchObject({ kind: 'trust', reason: 'rolled-back' });
+    expect(late.consumers.signals[0]?.aborted).toBe(true);
+  });
+});
+
+describe('PostgresAuthHardening.abortableSleep', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // risk: availability — a left-over 120 s timer keeps work queued after the bound is no longer needed
+  it('clears its timer and resolves at once when the signal aborts', async() => {
+    vi.useFakeTimers();
+    const stop = new AbortController();
+    let done = false;
+    const sleeping = PostgresAuthHardening.abortableSleep(120_000, stop.signal).then(() => {
+      done = true;
+    });
+
+    expect(vi.getTimerCount()).toBe(1);
+    stop.abort();
+    await sleeping;
+    expect(done).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('resolves after the delay when not aborted', async() => {
+    vi.useFakeTimers();
+    let done = false;
+    const sleeping = PostgresAuthHardening.abortableSleep(1_100).then(() => {
+      done = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(1_099);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await sleeping;
+    expect(done).toBe(true);
   });
 });

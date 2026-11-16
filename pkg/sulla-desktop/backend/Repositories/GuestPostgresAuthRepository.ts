@@ -103,6 +103,9 @@ export class GuestPostgresAuthRepository {
    * True when the server loaded the hba file after its last change: the file's
    * mtime (whole seconds) is before the second of the last configuration load.
    * Same-second edits count as not loaded, so a doubt never reads as "live".
+   * A writer that wants the file recognised as loaded must therefore reload in a
+   * later whole second than the write: PostgresAuthHardening waits
+   * `loadSettleMs` (1.1 s) between writeHbaFile() and reload().
    */
   async hbaFileLoaded(path: string): Promise<boolean> {
     const literal = path.split("'").join("''");
