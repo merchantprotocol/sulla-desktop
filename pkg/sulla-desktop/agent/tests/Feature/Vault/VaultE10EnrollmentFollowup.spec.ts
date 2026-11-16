@@ -281,7 +281,7 @@ describe('Committing an enrollment never unlocks a vault the user locked meanwhi
     transaction.gate.release();
 
     await expect(pending).rejects.toMatchObject({ code: 'vault_locked', status: 423 });
-    expect(transaction.calls).toBe(1); // the rows were written; the user unlocks them with the password
+    expect(transaction.calls).toBe(1); // the lock landed after COMMIT: the rows stay (the user unlocks them with the password), the keys never load
     expect(fx.state.keys).toBeNull();
     expect(fx.state.migrationState).toBe('locked');
     expect(fx.state.stagedCacheUpdate).toBeNull();
