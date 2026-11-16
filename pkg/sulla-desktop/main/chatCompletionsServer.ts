@@ -13,7 +13,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
-import { getConfiguredCredentialBroker, getLocalVaultPrincipalId, issueLocalBrokerContext, usesContainerVaultAuthority } from '../vault-broker';
+import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
@@ -119,6 +119,13 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
 
 export class ChatCompletionsServer {
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
+  /** Grace for in-flight responses before open sockets are cut on stop. */
+  static readonly CONNECTION_DRAIN_MS = 1_000;
+  /** Upper bound on the agent-container sweep that runs on stop. */
+  static readonly REAP_BUDGET_MS = 20_000;
+  /** Lifecycle stop budget: drain + sweep, plus headroom so the sweep is never cut off mid-way. */
+  static readonly STOP_TIMEOUT_MS = ChatCompletionsServer.CONNECTION_DRAIN_MS + ChatCompletionsServer.REAP_BUDGET_MS + 4_000;
+
   private app = express();
   private server:            any = null;
   private readonly wsService = getWebSocketClientService();
@@ -440,6 +447,8 @@ export class ChatCompletionsServer {
         return res.json({ success: true, result });
       } catch (error) {
         const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
+        // One line per failed tool call, so routine tool errors can be told apart from platform outages.
+        console.warn(`[DesktopExecutor] ${ toolName } failed after ${ Date.now() - startedAt } ms: ${ (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300) }`);
         return res.status(timedOut ? 504 : 500).json({
           success: false,
           error: {
@@ -1272,7 +1281,7 @@ export class ChatCompletionsServer {
           const accountId = await getIntegrationService().getActiveAccountId('github');
           const graphPodId = String(metadata.podId ?? '').trim();
           trustedDesktopSessionFallback = !graphPodId;
-          sessionContext = await issueLocalBrokerContext({
+          sessionContext = await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId,
             podId:              graphPodId || `desktop:${ threadId }`,
             credentialScope:    { integration_id: 'github', account_id: accountId },
@@ -1293,7 +1302,7 @@ export class ChatCompletionsServer {
             return res.status(403).json({ success: false, error: 'Vault tool session is missing trusted graph identity' });
           }
           const graphPodId = String(metadata.podId ?? '').trim();
-          sessionContext = await issueLocalBrokerContext({
+          sessionContext = await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId,
             podId:              graphPodId || `desktop:${ threadId}`,
             credentialScope:    {},
@@ -1373,7 +1382,7 @@ export class ChatCompletionsServer {
                 scopes: executionContext.scopes.length ? executionContext.scopes : [`${ canonicalCategory }/*`],
                 expiresInSeconds: Math.max(1, Math.min(60, executionContext.exp - now)),
               } : {
-                sub: await getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
+                sub: await configuredVaultBrokerProvider.getLocalVaultPrincipalId(), agent_id: 'desktop-cli', pod_id: 'desktop-main',
                 scopes: [`${ canonicalCategory }/*`], expiresInSeconds: 60,
               }, deriveCapabilitySigningKey(this.apiToken!));
               const upstream = await fetch(`${ loopbackOrigin('http', 30123) }/v1/tools/internal/${ encodeURIComponent(canonicalCategory) }/${ encodeURIComponent(endpoint) }/call`, {
@@ -1445,9 +1454,10 @@ export class ChatCompletionsServer {
         // calls to a fresh detached graph and start that graph only after the
         // tool has attached an active playbook. Read-only checkpoint listing
         // remains stateless and does not create a graph.
-        const { callStatefulWorkflowTool, needsStatefulWorkflowDispatch } = await import('./statefulCliWorkflowTool');
-        if (needsStatefulWorkflowDispatch(toolName, params)) {
-          const result = await callStatefulWorkflowTool(tool, toolName, params);
+        const { StatefulCliWorkflowDispatcher } = await import('./statefulCliWorkflowTool');
+        const statefulDispatcher = new StatefulCliWorkflowDispatcher();
+        if (statefulDispatcher.needsDispatch(toolName, params)) {
+          const result = await statefulDispatcher.call(tool, toolName, params);
           return res.json({ success: true, result });
         }
 
@@ -1472,7 +1482,7 @@ export class ChatCompletionsServer {
           ? (await getIntegrationService().getAccounts('mcp')).find(account => account.account_id === accountId)
           : undefined;
         const executionContext = usesContainerVaultAuthority() && mcpAccount?.credentialRequired !== false
-          ? await issueLocalBrokerContext({
+          ? await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId: 'desktop-integration-api', podId: 'desktop-main',
             credentialScope: { integration_id: slug, account_id: accountId },
             requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
@@ -1516,7 +1526,7 @@ export class ChatCompletionsServer {
 
       const { params = {}, body, raw } = req.body || {};
       const executionContext = usesContainerVaultAuthority() && epConfig.endpoint.auth !== 'none'
-        ? await issueLocalBrokerContext({
+        ? await configuredVaultBrokerProvider.issueLocalBrokerContext({
           agentId: 'desktop-integration-api', podId: 'desktop-main',
           credentialScope: { integration_id: slug, account_id: accountId },
           requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
@@ -1630,7 +1640,7 @@ export class ChatCompletionsServer {
         }
       }
 
-      const broker = getConfiguredCredentialBroker();
+      const broker = configuredVaultBrokerProvider.getConfiguredCredentialBroker();
       if (broker) {
         try {
           const { getIntegrationConfigLoader } = await import('@pkg/agent/integrations/configApi');
@@ -1645,7 +1655,7 @@ export class ChatCompletionsServer {
           } else if (auth?.api_key_fallback?.enabled) {
             injections.push({ field: 'api_key', target: 'query', name: auth.api_key_fallback.param_name, scheme: 'raw' });
           }
-          const ctx = await issueLocalBrokerContext({
+          const ctx = await configuredVaultBrokerProvider.issueLocalBrokerContext({
             agentId: 'desktop-proxy-api', podId: 'desktop-main',
             credentialScope: { integration_id: slug, account_id: accountId },
             requestId: req.header('X-Request-Id') ?? crypto.randomUUID(),
@@ -1986,18 +1996,33 @@ export class ChatCompletionsServer {
       const server = this.server;
       this.server = null;
 
+      // close() stops accepting, but its callback waits for every active
+      // request, and a streaming chat response can stay open indefinitely.
+      // Give in-flight responses a short grace, then cut what is left.
       await new Promise<void>((resolve) => {
+        const force = setTimeout(() => server.closeAllConnections(), ChatCompletionsServer.CONNECTION_DRAIN_MS);
+
         server.close(() => {
+          clearTimeout(force);
           console.log('[ChatCompletionsAPI] Server stopped');
           resolve();
         });
       });
     }
 
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+
     await Promise.race([
       import('@pkg/agent/services/AgentContainerLauncher').then(({ reapOrphanAgentContainers }) => reapOrphanAgentContainers()),
-      new Promise<void>(resolve => setTimeout(resolve, 20_000).unref?.()),
-    ]).catch(error => console.warn('[ChatCompletionsAPI] Agent container cleanup on stop skipped:', error));
+      new Promise<void>((resolve) => {
+        reapTimer = setTimeout(() => {
+          console.warn(`[ChatCompletionsAPI] Agent container cleanup still running after ${ ChatCompletionsServer.REAP_BUDGET_MS }ms; continuing shutdown`);
+          resolve();
+        }, ChatCompletionsServer.REAP_BUDGET_MS);
+        reapTimer.unref?.();
+      }),
+    ]).catch(error => console.warn('[ChatCompletionsAPI] Agent container cleanup on stop skipped:', error))
+      .finally(() => clearTimeout(reapTimer));
   }
 }
 

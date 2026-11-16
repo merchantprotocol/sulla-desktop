@@ -4,10 +4,11 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import {
-  AuthExpired, AuthRevoked, CliExhausted, ProviderFailure, QuotaExceeded, RateLimited,
+  AuthExpired, AuthRevoked, CliExhausted, ProviderFailure, QuotaExceeded, RateLimited, VaultLocked, VaultUnreachable,
   legacyProviderFailure,
 } from './failures';
-import { InfrastructureFailure } from './providerRecovery';
+import { InfrastructureFailure, ProviderBridgeDeniedFailure, isProviderBridgeDenial } from './providerRecovery';
+import { VaultAvailabilityGate, type VaultGate } from './vaultGate';
 
 export const CLI_RECOVERY_MAX_ATTEMPTS = 2;
 export const CLI_RECOVERY_BACKOFF_MS = 750;
@@ -190,18 +191,42 @@ export async function runWithCliFaultRecovery<T>(
     onRetry?:     (error: CliFaultError, nextAttempt: number) => void;
     maxAttempts?: number;
     backoffMs?:   number;
+    /** Told when the run pauses for a locked or unreachable vault. */
+    onVaultWait?: (kind: 'locked' | 'unreachable') => void;
+    vaultGate?:   VaultGate;
   },
 ): Promise<T> {
   const maxAttempts = options.maxAttempts ?? CLI_RECOVERY_MAX_ATTEMPTS;
+  const vaultGate = options.vaultGate ?? new VaultAvailabilityGate();
   let lastFault: CliFaultError | undefined;
+  let vaultWaited = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (options.signal?.aborted) throw abortError();
+    const attemptStartedAt = Date.now();
     try {
       return await operation(attempt);
     } catch (error) {
       if (isAbortFailure(error, options.signal)) throw abortError();
+      // The CLI only saw failed requests; the bridge recorded that the vault was the cause.
+      // Retrying cannot help until the vault is back, so wait for it once (without spending
+      // an attempt), then report the vault itself if it never returns.
+      const vault = vaultGate.failureSince(attemptStartedAt);
+      if (vault) {
+        if (!vaultWaited && options.canRetry()) {
+          vaultWaited = true;
+          options.onVaultWait?.(vault);
+          if (await vaultGate.waitUntilAvailable(options.signal)) {
+            attempt--;
+            continue;
+          }
+          if (options.signal?.aborted) throw abortError();
+        }
+        throw vault === 'locked' ? new VaultLocked('vault', { status: 423, cause: error }) : new VaultUnreachable('vault', { status: 503, cause: error });
+      }
       if (isContainerLifecycleLost(error)) throw new ContainerLifecycleLostError(error);
+      // A denied bridge lease fails identically on every re-run: fail fast, once.
+      if (isProviderBridgeDenial(error)) throw error instanceof InfrastructureFailure ? error : new ProviderBridgeDeniedFailure(error);
       if (!isCliFault(error)) throw error;
       lastFault = error;
       if (attempt >= maxAttempts) break;

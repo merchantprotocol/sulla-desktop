@@ -12,7 +12,7 @@ import WebSocket from 'ws';
 
 import type { VMBackend } from '@pkg/backend/backend';
 import { supportCloudRequest } from '@pkg/main/support/supportCloud';
-import { getOrCreateSupportDeviceId } from '@pkg/main/support/supportIdentity';
+import { supportDeviceIdentity } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore, type RemoteSupportActivity, type SupportState } from '@pkg/main/supportState';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -207,7 +207,7 @@ export class RemoteSupportService {
   async request(message: string): Promise<SupportState> {
     const clean = message.trim();
     if (!clean || clean.length > 4000) throw new Error('Describe the problem in 1 to 4,000 characters.');
-    const deviceId = getOrCreateSupportDeviceId(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
+    const deviceId = supportDeviceIdentity.getOrCreate(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
     const result = await jsonCloud('POST', '/support/sessions', {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
       deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(),
@@ -221,7 +221,7 @@ export class RemoteSupportService {
     const current = this.state().remote;
     if (current.status !== 'approval' || !current.sessionId) throw new Error('This support request is not ready for approval.');
     const token = crypto.randomBytes(32).toString('base64url');
-    const deviceId = getOrCreateSupportDeviceId();
+    const deviceId = supportDeviceIdentity.getOrCreate();
     const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token, deviceId });
     const expiresAt = result.grant?.expiresAt || result.session?.expiresAt;
     if (typeof expiresAt !== 'string') throw new Error('Cloud did not return a support expiry.');
@@ -292,7 +292,7 @@ export class RemoteSupportService {
     if (this.starting || this.socket?.readyState === WebSocket.OPEN || !this.state().remote.grant) return;
     this.starting = true;
     try {
-      const deviceId = getOrCreateSupportDeviceId();
+      const deviceId = supportDeviceIdentity.getOrCreate();
       const grant = this.state().remote.grant!;
       console.info('[RemoteSupport] requesting host ticket');
       const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId });
@@ -528,7 +528,7 @@ export class RemoteSupportService {
 
   private async reportDeviceStatus() {
     const remote = this.state().remote; if (!remote.sessionId || !remote.grant) return;
-    const deviceId=getOrCreateSupportDeviceId(); const deviceName=require('node:os').hostname() || 'Sulla Desktop';
+    const deviceId=supportDeviceIdentity.getOrCreate(); const deviceName=require('node:os').hostname() || 'Sulla Desktop';
     await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, appVersion: app.getVersion(), updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), deviceName });
   }
 }

@@ -60,6 +60,7 @@ export function useAccountSettings() {
   const loading = ref(true);
   const saving = ref(false);
   const saved = ref(false);
+  const profileError = ref('');
 
   const userName = ref('');
   const email = ref('');
@@ -134,6 +135,7 @@ export function useAccountSettings() {
       subscribeToUpdates.value = sub !== null ? sub : true;
     } catch (err) {
       console.error('[Preferences] Profile load failed:', err);
+      profileError.value = `Could not load your profile: ${ err instanceof Error ? err.message : String(err) }`;
     } finally {
       loading.value = false;
     }
@@ -155,6 +157,7 @@ export function useAccountSettings() {
   async function saveProfile() {
     saving.value = true;
     saved.value = false;
+    profileError.value = '';
     try {
       await SullaSettingsModel.set('primaryUserName', userName.value, 'string');
       await SullaSettingsModel.set('sullaEmail', email.value, 'string');
@@ -163,6 +166,7 @@ export function useAccountSettings() {
       setTimeout(() => { saved.value = false }, 2000);
     } catch (err) {
       console.error('[Preferences] Save failed:', err);
+      profileError.value = `Could not save your profile: ${ err instanceof Error ? err.message : String(err) }`;
     } finally {
       saving.value = false;
     }
@@ -369,6 +373,9 @@ export function useAccountSettings() {
         return;
       }
       otpSent.value = true;
+    } catch (err) {
+      // Never fail silently: a thrown error (network, service down) is shown like any other.
+      cloudError.value = err instanceof Error ? err.message : String(err);
     } finally {
       busy.value = false;
     }
@@ -390,6 +397,9 @@ export function useAccountSettings() {
       }
       resetPhoneFlow();
       await refreshCloudStatus();
+    } catch (err) {
+      // Never fail silently: a thrown error (network, service down) is shown like any other.
+      cloudError.value = err instanceof Error ? err.message : String(err);
     } finally {
       busy.value = false;
     }
@@ -416,6 +426,9 @@ export function useAccountSettings() {
         return;
       }
       emailCodeSent.value = true;
+    } catch (err) {
+      // Never fail silently: a thrown error (network, service down) is shown like any other.
+      cloudError.value = err instanceof Error ? err.message : String(err);
     } finally {
       busy.value = false;
     }
@@ -444,6 +457,9 @@ export function useAccountSettings() {
       emailCode.value = '';
       emailCodeSent.value = false;
       await refreshCloudStatus();
+    } catch (err) {
+      // Never fail silently: a thrown error (network, service down) is shown like any other.
+      cloudError.value = err instanceof Error ? err.message : String(err);
     } finally {
       busy.value = false;
     }
@@ -475,6 +491,9 @@ export function useAccountSettings() {
       }
       emailPassword.value = '';
       await refreshCloudStatus();
+    } catch (err) {
+      // Never fail silently: a thrown error (network, service down) is shown like any other.
+      cloudError.value = err instanceof Error ? err.message : String(err);
     } finally {
       busy.value = false;
     }
@@ -497,6 +516,9 @@ export function useAccountSettings() {
       }
       appleToken.value = '';
       await refreshCloudStatus();
+    } catch (err) {
+      // Never fail silently: a thrown error (network, service down) is shown like any other.
+      cloudError.value = err instanceof Error ? err.message : String(err);
     } finally {
       busy.value = false;
     }
@@ -541,6 +563,7 @@ export function useAccountSettings() {
     loading,
     saving,
     saved,
+    profileError,
     userName,
     email,
     subscribeToUpdates,

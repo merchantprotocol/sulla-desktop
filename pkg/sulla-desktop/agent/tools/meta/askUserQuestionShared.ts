@@ -84,8 +84,12 @@ export function normalizeQuestions(input: any): { questions: UserQuestion[]; err
       options.push({ label, description });
     }
 
+    // A task is something the user does, not picks: it is answered with Done.
+    const task = q?.task === true;
+    const command = task && typeof q?.command === 'string' && q.command.trim() ? q.command.trim().slice(0, 4000) : undefined;
+    if (task && !options.some(o => /^done$/i.test(o.label))) options.unshift({ label: 'Done' });
     if (options.length === 0) continue;
-    questions.push({ question, header, multiSelect, options });
+    questions.push({ question, header, multiSelect: task ? false : multiSelect, options, ...(task ? { task, ...(command ? { command } : {}) } : {}) });
   }
 
   if (questions.length === 0) {

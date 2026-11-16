@@ -323,7 +323,8 @@
           v-if="persistenceLabel"
           class="save-status"
           :class="persistence.status.value"
-        >· {{ persistenceLabel }}</span>
+          :title="persistence.error.value ?? undefined"
+        >· {{ persistenceLabel }}<template v-if="persistence.status.value === 'error' && persistence.error.value">: {{ persistence.error.value }}</template></span>
       </div>
       <div
         class="title-main"
@@ -1832,11 +1833,11 @@ async function togglePublished(): Promise<void> {
   statusBusy.value = true;
   try {
     const result = await ipcRenderer.invoke('workflow-move', props.workflowId, next);
-    if (result?.success) {
-      workflowStatus.value = result.newStatus ?? next;
-    }
+    if (!result?.success) throw new Error('the workflow status did not change');
+    workflowStatus.value = result.newStatus ?? next;
   } catch (err) {
     console.error('[AgentRoutines] workflow-move failed:', err);
+    window.alert(`Couldn't ${ next === 'production' ? 'publish' : 'move back to draft' }: ${ err instanceof Error ? err.message : String(err) }`);
   } finally {
     statusBusy.value = false;
   }
@@ -2400,12 +2401,16 @@ async function onNodeCtxRunFromHere() {
   await launchRoutine({ startNodeId: id, label: `from ${ label }` });
 }
 
-// Checkpoint inspection — needs an IPC that reads the stored output for
-// a given (workflowId, nodeId) pair. Stubbed until that lands.
+// Open the run-mode output drawer (NodeOutputPanel) on this node. It shows
+// the node's latest execution output, turns and error from node.data.execution.
 function onNodeCtxInspectOutput() {
   const id = nodeCtx.nodeId;
-  console.log('[AgentRoutines] Inspect output (stub) — target node:', id);
   closeNodeCtx();
+  if (!id) return;
+  // toggleMode() clears the selection when it enters run mode, so switch
+  // first and select after.
+  if (mode.value !== 'run') toggleMode();
+  selectedNodeId.value = id;
 }
 
 function closeConfig() {

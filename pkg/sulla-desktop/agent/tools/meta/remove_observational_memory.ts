@@ -4,7 +4,6 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ObservationsModel } from '../../database/models/ObservationsModel';
-import { generateClaudeCodeMemoryFile } from '../../prompts/generateClaudeCodeMemoryFile';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -31,7 +30,6 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
       }
 
       await ObservationsModel.archive(id);
-      generateClaudeCodeMemoryFile().catch(() => {});
       return {
         successBoolean: true,
         responseString: `Archived (soft-deleted): "${ existing.content }" (id: ${ id })`,

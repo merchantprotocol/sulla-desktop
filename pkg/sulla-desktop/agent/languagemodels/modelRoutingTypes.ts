@@ -19,10 +19,24 @@ export interface RoutingRow {
  enabled: boolean; // false = skipped without disconnecting
 }
 
+/** A provider-neutral rule that picks a model from the provider's live list. */
+export type ModelRule = { kind: 'first' } | { kind: 'contains'; text: string };
+
 /** One model inside a class, in the order Sulla tries them. */
 export interface ClassModel {
  provider: string;
- model: string; // provider's model id
+ model: string; // provider's model id; for a rule, the model the rule picked at the last check
+ rule?: ModelRule; // set when the model follows a rule instead of a fixed ID
+ effort?: string; // reasoning effort sent with the run; unset = the provider's default for the model
+ chosen?: boolean; // true once the human picked this entry (otherwise it came from Sulla's built-in defaults)
+}
+
+/** What changed in the providers' live model lists at the last Refresh models. */
+export interface ModelCatalogReport {
+ checkedAt: string | null;
+ added: ClassModel[]; // models a provider lists now that it did not list at the previous check
+ removed: ClassModel[]; // models a provider no longer lists
+ moved: { class: ModelClass; provider: string; from: string; to: string }[]; // rule entries that now pick another model
 }
 
 export type ProviderStatus = 'ready' | 'cooling' | 'error' | 'skipped' | 'disconnected';
@@ -36,7 +50,24 @@ export interface RoutingProviderInfo {
  status: ProviderStatus;
  coolingUntil: string | null; // ISO time the usage limit resets
  lastError: string | null;
- models: { id: string; label: string }[];
+ models: RoutingModelInfo[];
+}
+
+/**
+ * A model and effort pair Sulla never runs, saved together. `effort` is one level, or 'any' to keep the
+ * model out at every level. A role entry that would run a blocked pair is skipped, and rules never pick a
+ * model blocked at 'any'.
+ */
+export interface NeverUsePair { provider: string; model: string; effort: string }
+
+/** One model in a provider's list, with what the provider says about it. */
+export interface RoutingModelInfo {
+ id: string;
+ label: string;
+ efforts?: { id: string; description?: string }[]; // effort levels the model accepts
+ defaultEffort?: string;
+ upgrade?: string; // the model the provider recommends moving to
+ unverified?: boolean; // from a fixed list, not reported by the provider
 }
 
 /** The part of the routing state the human edits (and Reset restores). */
@@ -45,12 +76,17 @@ export interface EditableRoutingState {
  subconsciousList: RoutingRow[];
  classes: Record<ModelClass, ClassModel[]>;
  followProviderOrder: Record<ModelClass, boolean>;
+ neverUse: NeverUsePair[]; // model and effort pairs Sulla never runs
 }
 
 export interface ModelRoutingState extends EditableRoutingState {
  providers: RoutingProviderInfo[];
  /** What each Reset link restores. The UI disables a Reset link while its section already equals this. */
  recommended?: EditableRoutingState;
+ /** The last Refresh models report. */
+ catalog?: ModelCatalogReport;
+ /** Agent names whose model choice is each class (built-in workers and custom agents). */
+ classUsers?: Partial<Record<ModelClass, string[]>>;
 }
 
 /** How an agent picks its model. Default is { mode: 'list' }. */
@@ -62,7 +98,8 @@ export type AgentModelChoice =
 /** IPC channel names (ipcRenderer.invoke / ipcMain.handle, and one push event). */
 export const MODEL_ROUTING_IPC = {
  get: 'model-routing:get', // () => ModelRoutingState (with `recommended`)
- set: 'model-routing:set', // (patch: Partial<Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'>>) => ModelRoutingState
+ set: 'model-routing:set', // (patch: Partial<Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'|'neverUse'>>) => ModelRoutingState
+ refresh: 'model-routing:refresh', // () => ModelRoutingState, after re-fetching every connected provider's model list
  reset: 'model-routing:reset', // (target: { section: 'agents'|'subconscious'|'classes'; class?: ModelClass }) => ModelRoutingState
  status: 'model-routing:status', // main → renderer push: RoutingProviderInfo[] whenever a provider's status changes
 } as const;

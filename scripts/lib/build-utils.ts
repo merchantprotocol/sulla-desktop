@@ -166,7 +166,8 @@ export default {
       ],
       devtool:     this.isDevelopment ? 'source-map' : false,
       resolve:     {
-        alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'sulla-desktop') },
+        // posix-node is only used on Linux; on macOS its addons would be bundled and signed for nothing.
+        alias:      { '@pkg': path.resolve(this.rootDir, 'pkg', 'sulla-desktop'), ...(process.platform === 'darwin' ? { 'posix-node': false } : {}) },
         extensions: ['.ts', '.js', '.json', '.node'],
         // ESM-style './x.js' imports of TypeScript sources (packages/vault-crypto).
         extensionAlias: { '.js': ['.ts', '.js'] },

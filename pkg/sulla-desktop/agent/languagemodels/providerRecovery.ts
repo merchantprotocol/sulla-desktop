@@ -5,7 +5,7 @@
 
 import {
   AuthExpired, AuthRevoked, CliExhausted, EmptyResponse, Interrupted, ProviderFailure, QuotaExceeded, RateLimited,
-  RoutingUnavailable, TimedOut, Transient, Unknown, VaultLocked, legacyProviderFailure,
+  RoutingUnavailable, TimedOut, Transient, Unknown, legacyProviderFailure, findVaultFailure,
 } from './failures';
 
 export type LLMFailureKind =
@@ -65,6 +65,33 @@ export function isProviderBridgeFailure(error: unknown): boolean {
   return false;
 }
 
+/**
+ * The provider bridge refused the request outright (revoked lifecycle,
+ * identity change, model outside the lease, bad capability). Unlike a 503
+ * "temporarily unavailable" bridge failure this is permanent for the lease, so
+ * re-running the same CLI process can only fail the same way.
+ */
+export function isProviderBridgeDenial(error: unknown): boolean {
+  let current: any = error;
+  for (let depth = 0; current && depth < 8; depth++) {
+    if (current.providerBridgeRevoked === true) return true;
+    const text = String(current?.message ?? (typeof current === 'string' ? current : '')).toLowerCase();
+    if (text.includes('provider bridge request denied')) return true;
+    current = current?.cause;
+  }
+  return false;
+}
+
+/** A bridge denial surfaced as one Sulla-side failure instead of a retried CLI fault. */
+export class ProviderBridgeDeniedFailure extends InfrastructureFailure {
+  readonly providerBridgeDenied = true;
+
+  constructor(cause: unknown) {
+    super(`Sulla's provider bridge refused this model request: ${ redactLLMFailureMessage(cause) }`, cause);
+    this.name = 'ProviderBridgeDeniedFailure';
+  }
+}
+
 export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
   const name = (error as any)?.name;
   const message = redactLLMFailureMessage(error);
@@ -80,6 +107,11 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     lower.includes('getservicebyprovider');
   if (infrastructure) {
     return { kind: 'infrastructure', retryPrimary: false, fallbackAllowed: false, userMessage: 'Sulla could not start the model runtime.' };
+  }
+  // A locked or unreachable vault is Sulla-side: never count it against the provider or ask to reconnect a model.
+  const vault = findVaultFailure(error);
+  if (vault) {
+    return { kind: 'infrastructure', retryPrimary: false, fallbackAllowed: false, userMessage: vault.userMessage };
   }
   // Every CLI provider shares the bridge, so a bridge outage is Sulla's, never the provider's (Jonathon's routing rule).
   if (isProviderBridgeFailure(error)) {
@@ -118,7 +150,7 @@ export function classifyLLMFailure(error: unknown): LLMFailureRecovery {
     };
   }
 
-  if (typed instanceof AuthExpired || typed instanceof AuthRevoked || typed instanceof VaultLocked) {
+  if (typed instanceof AuthExpired || typed instanceof AuthRevoked) {
     return {
       kind:            'auth',
       retryPrimary:    false,

@@ -39,6 +39,7 @@ import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
+import { TurnOutputCounter } from '../services/TurnOutputCounter';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -825,8 +826,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|reflex_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -877,7 +878,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['installed_skills', 'skillRecallContext'],
       // Remote support restrictions are control context, not historical recall.
       ['support_context', 'supportContext'],
-      ['reflex_context', 'reflexContext'],
       ['team_directory', 'teamDirectoryContext'],
       ['subagent_directory', 'subagentDirectoryContext'],
       ['brain_memory', 'brainMemoryContext'],
@@ -1239,7 +1239,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const attemptEpoch = index === 0 ? primaryAttemptEpoch : modelRouter.attemptToken?.(candidate.provider);
         let service: BaseLanguageModel;
         try {
-          service = index === 0 ? this.llm : await getServiceByProvider(candidate.provider, candidate.model);
+          service = index === 0 ? this.llm : await getServiceByProvider(candidate.provider, candidate.model, candidate.effort);
         } catch (serviceError) {
           lastErr = serviceError;
           lastRecovery = classifyLLMFailure(serviceError);
@@ -1422,6 +1422,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const hasToolUseBlocks = Array.isArray(rawProviderContent) &&
             rawProviderContent.some((b: any) => b?.type === 'tool_use');
 
+    // Real model output for DelegatedTurnProgressProbe, counted before the
+    // dedup/blank-after-strip early returns below (a wrapper-only or repeated
+    // reply is still the model answering).
+    if (contentStr.trim() || hasToolUseBlocks) new TurnOutputCounter(state.metadata as any).record();
+
     // If pure tool_use response with no text, still store the native content
     if (!normalizedContent && !hasToolUseBlocks && !keepPrivateOverheardContext) {
       return;
@@ -1520,6 +1525,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         console.log(`[VoiceTrace] ${ JSON.stringify({ turnId: voiceTurnId, stage: 'first_token', ts: new Date().toISOString(), durationMs: Date.now() - voiceStartedAt, size: token.length }) }`);
       }
       contentBuffer += token;
+      new TurnOutputCounter(state.metadata as any).recordToken(token);
 
       // Sub-agent inactivity watchdog in PlaybookController reads this —
       // every token proves the LLM is generating, not hung.
@@ -1601,6 +1607,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // transcript. Flush the open streaming bubble first, same as onActivity,
     // so the patch block lands between text segments rather than mid-stream.
     const onFilePatch = (info: import('../util/linePatch').FilePatchInfo): void => {
+      new TurnOutputCounter(state.metadata as any).record();
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
       if (!isVoiceMode && contentBuffer.trim()) {
@@ -1627,22 +1634,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
       providerToolStarted = true;
+      new TurnOutputCounter(state.metadata as any).record();
       this.logConversationToolCall(state, event.toolName, event.input, {
         chars: event.resultChars,
         error: event.isError || undefined,
       });
-      // Keep this turn's CLI-internal tool calls on state so post-turn
-      // observers (the Reflex Trainer) can see what actually ran — these
-      // never appear as tool_use blocks in state.messages.
-      const meta = state.metadata as any;
-      const events = Array.isArray(meta.turnToolEvents) ? meta.turnToolEvents : (meta.turnToolEvents = []);
-      if (events.length < 50) {
-        let input = '';
-        try { input = JSON.stringify(event.input ?? {}).slice(0, 2000) } catch { /* unserializable input */ }
-        events.push({ toolName: event.toolName, input, isError: !!event.isError });
-      }
     };
-    const onToolStarted = (): void => { providerToolStarted = true };
+    const onToolStarted = (): void => {
+      providerToolStarted = true;
+      new TurnOutputCounter(state.metadata as any).record();
+    };
 
     let reply: NormalizedResponse | null;
     try {

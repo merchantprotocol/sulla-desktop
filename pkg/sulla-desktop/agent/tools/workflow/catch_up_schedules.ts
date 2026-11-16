@@ -169,7 +169,7 @@ export class CatchUpSchedulesWorker extends BaseTool {
         const dispatched = result.results.filter(item => item.status === 'dispatched');
         return {
           successBoolean: true,
-          responseString: `Workflow manager catch-up: ${ missed.length } missed fire(s), ${ dispatched.length } dispatched.\n${ result.results.map(item => `  • ${ item.workflowId } — ${ item.status } (${ item.expectedAt })`).join('\n') }`,
+          responseString: `Workflow manager catch-up: ${ missed.length } missed fire(s), ${ dispatched.length } dispatched.\n${ result.results.map(item => `  • ${ item.workflowId } — ${ item.status }${ item.reason || item.error ? `: ${ item.reason ?? item.error }` : '' } (${ item.expectedAt })`).join('\n') }`,
         };
       }
       manager.logFallback('schedule catch-up');

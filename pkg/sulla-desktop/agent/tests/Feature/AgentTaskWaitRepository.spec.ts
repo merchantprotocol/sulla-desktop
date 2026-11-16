@@ -60,6 +60,23 @@ dbDescribe('AgentTaskWaitRepository with real Postgres', () => {
     expect(await repository.cancel(job.jobId, 0)).toBe(false);
   });
 
+  it('releases an undelivered claimed wake back to the schedule, but never revives a cancelled one', async() => {
+    // risk: a claimed wake that failed to deliver stayed claimed forever; restarts only reload 'scheduled' rows
+    const job = await registry.createJob([
+      { agentId: 'worker', label: 'waiter', prompt: 'wait', status: 'running', threadId: 'release-thread' },
+    ]);
+    expect(await schedule({ jobId: job.jobId, taskIndex: 0, wakeAt: new Date(Date.now() + 60_000), reason: 'deploy', state: 'scheduled' })).toBe(true);
+    expect(await repository.claim(job.jobId, 0)).toMatchObject({ state: 'claimed' });
+
+    const retryAt = new Date(Date.now() + 30_000);
+    expect(await repository.release(job.jobId, 0, retryAt)).toMatchObject({ state: 'scheduled', reason: 'deploy', wakeAt: retryAt });
+    expect((await repository.scheduled()).map(wait => wait.jobId)).toContain(job.jobId);
+
+    expect(await repository.cancel(job.jobId, 0)).toBe(true);
+    expect(await repository.release(job.jobId, 0, retryAt)).toBeNull();
+    expect(await repository.pending(job.jobId, 0)).toBeNull();
+  });
+
   it('keeps the job running while a sibling task remains running', async() => {
     // risk: lifecycle policy — parking one sibling must not hide another live worker from recovery.
     const job = await registry.createJob([

@@ -3,63 +3,54 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { readdir, readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import pg from 'pg';
-const MIGRATION_APPLICATION = 'sulla-files-migrate';
-const MIGRATION_LOCK = 8_795_043;
-const MIGRATION_RETRIES = 3;
-const sleep = (ms:number) => new Promise(resolve => setTimeout(resolve, ms));
-export async function connect(url:string, max = 10) {
-  const db = new pg.Pool({ connectionString: url, max });
-  // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
-  db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
-  await db.query('SELECT 1'); return db
-}
-export async function connectOptional(url?:string) { if (!url) return undefined; return connect(url) }
-function retryableMigrationError(error:unknown):boolean {
-  return typeof error === 'object' && error !== null && ['55P03', '40P01', '40001'].includes(String((error as { code?:string }).code));
-}
-export async function migrate(db:pg.Pool) {
-  const here = dirname(fileURLToPath(import.meta.url)); const dir = resolve(here, '../migrations');
-  const files = (await readdir(dir)).filter(f => /^\d+_.+\.sql$/.test(f)).sort();
-  const c = await db.connect();
-  try {
-    // Use an unnamed connection until the lock is held: concurrent live
-    // starters then wait instead of terminating each other.
-    await c.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-      WHERE application_name=$1 AND pid<>pg_backend_pid()`, [MIGRATION_APPLICATION]);
-    await c.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK]);
-    await c.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-      WHERE application_name=$1 AND pid<>pg_backend_pid()`, [MIGRATION_APPLICATION]);
-    await c.query("SELECT set_config('application_name',$1,false)", [MIGRATION_APPLICATION]);
-    await c.query('CREATE TABLE IF NOT EXISTS files_schema_migrations(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
-    for (const file of files) {
-      if ((await c.query('SELECT 1 FROM files_schema_migrations WHERE version=$1', [file])).rowCount) continue;
-      const sql = await readFile(resolve(dir, file), 'utf8');
-      for (let attempt = 1; ; attempt++) {
-        const started = Date.now();
-        console.log(`[SullaFiles] migration ${ file } starting (attempt ${ attempt }/${ MIGRATION_RETRIES })`);
-        try {
-          await c.query('BEGIN'); await c.query(sql);
-          await c.query('INSERT INTO files_schema_migrations(version) VALUES($1)', [file]); await c.query('COMMIT');
-          console.log(`[SullaFiles] migration ${ file } completed in ${ Date.now() - started }ms`); break;
-        } catch (error) {
-          await c.query('ROLLBACK').catch(() => undefined);
-          if (!retryableMigrationError(error) || attempt >= MIGRATION_RETRIES) throw error;
-          const delay = attempt * 1_000;
-          console.warn(`[SullaFiles] migration ${ file } lock contention after ${ Date.now() - started }ms; retrying in ${ delay }ms`);
-          await sleep(delay);
-        }
-      }
-    }
-  // A database first started on the stock image records the optional migration without pgvector.
-  // Retry it after an image upgrade; it is idempotent and returns immediately once the table exists.
-    const vectorReady = await c.query("SELECT to_regclass('file_search_vectors') IS NOT NULL ready, EXISTS(SELECT 1 FROM pg_available_extensions WHERE name='vector') available");
-    if (!vectorReady.rows[0].ready && vectorReady.rows[0].available) await c.query(await readFile(resolve(dir, '045_pgvector_search.sql'), 'utf8'));
-  } finally {
-    await c.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK]).catch(() => undefined); c.release();
+
+import { TransactionScope } from './TransactionScope.js';
+import { StartupDatabaseWait } from './StartupDatabaseWait.js';
+import { FilesMigrator } from './FilesMigrator.js';
+import { SchemaMigrationRepository } from './Repositories/SchemaMigrationRepository.js';
+
+export { FilesMigrator } from './FilesMigrator.js';
+
+/** Builds the Files service's guarded Postgres pool and waits (bounded) until it answers. */
+export class FilesDatabase {
+  constructor(private readonly schema = new SchemaMigrationRepository()) {}
+
+  static poolMax(value = process.env.SULLA_FILES_DB_POOL_MAX):number {
+    if (value === undefined) return 12;
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 64) throw new Error('SULLA_FILES_DB_POOL_MAX must be an integer from 1 to 64');
+    return parsed;
   }
+
+  async connect(url:string, max = FilesDatabase.poolMax(), startup = new StartupDatabaseWait({ name: 'SullaFiles' })):Promise<pg.Pool> {
+    // A request that cannot get a connection within 20 s fails (as a retryable 503) instead of
+    // waiting forever: a pool starved by clients that each wait on the pool again never recovers.
+    // On a 3-vCPU / 5-GB VM, 12 short metadata sessions absorb Desktop + agent bursts
+    // without spending hundreds of MB on mostly waiting backends. More sessions do not
+    // fix nested acquisition. Keep headroom for the other services; override for measured load.
+    // 15s bounds abandoned transactions; 30s bounds individual statements (including lock waits).
+    // Migrations can explicitly SET LOCAL statement_timeout for exceptional maintenance.
+    const db = TransactionScope.guardPool(new pg.Pool({ connectionString: url, max,
+      connectionTimeoutMillis: 20_000, idle_in_transaction_session_timeout: 15_000, statement_timeout: 30_000 }));
+    // An idle client dropped by Postgres (restart, admin terminate) is replaced on next use; unhandled, it kills the service.
+    db.on('error', error => console.error('[SullaFiles] idle database connection lost:', error.message));
+    // pg-pool only listens on idle clients. A checked-out client that Postgres
+    // terminates mid-transaction (25P03 idle-in-transaction timeout, admin
+    // terminate) emits 'error' with no listener and crashes the whole service.
+    // The in-flight query still rejects to its caller; this only stops the crash.
+    db.on('connect', client => client.on('error', error => console.error('[SullaFiles] database connection lost during use:', error.message)));
+    // Postgres may still be starting (or its DNS name not registered yet): wait, bounded.
+    await startup.until('connect', () => this.schema.ping(db)); return db;
+  }
+
+  async connectOptional(url?:string):Promise<pg.Pool | undefined> { if (!url) return undefined; return this.connect(url) }
 }
+
+// Function exports kept for index.ts, app.ts and specs (outside this slice).
+export function filesPoolMax(value = process.env.SULLA_FILES_DB_POOL_MAX):number { return FilesDatabase.poolMax(value) }
+export function connect(url:string, max = filesPoolMax(), startup = new StartupDatabaseWait({ name: 'SullaFiles' })):Promise<pg.Pool> {
+  return new FilesDatabase().connect(url, max, startup);
+}
+export function connectOptional(url?:string):Promise<pg.Pool | undefined> { return new FilesDatabase().connectOptional(url) }
+export function migrate(db:pg.Pool):Promise<void> { return new FilesMigrator().migrate(db) }

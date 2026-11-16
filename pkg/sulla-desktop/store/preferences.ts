@@ -147,7 +147,7 @@ export const actions = {
     const { port, user, password } = rootState.credentials.credentials;
     const { payload } = args;
 
-    await fetch(
+    const response = await fetch(
       settingsUri(port),
       {
         method:  'PUT',
@@ -157,6 +157,15 @@ export const actions = {
         }),
         body: JSON.stringify(payload ?? normalizePreferences(getters.getPreferences, 'submit')),
       });
+
+    if (!response.ok) {
+      // Saving failed: reload what is really stored and tell the caller, so
+      // the screen shows an error instead of silently snapping back.
+      const detail = (await response.text().catch(() => '')).trim();
+
+      await dispatch('preferences/fetchPreferences', {}, { root: true });
+      throw new Error(detail || `The settings service answered ${ response.status }.`);
+    }
 
     await dispatch('preferences/fetchPreferences', {}, { root: true });
   },

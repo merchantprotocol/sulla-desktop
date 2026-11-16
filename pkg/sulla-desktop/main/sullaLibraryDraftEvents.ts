@@ -28,6 +28,7 @@ import * as path from 'path';
 
 import yazl from 'yazl';
 
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import Logging from '@pkg/utils/logging';
@@ -144,7 +145,7 @@ export function initSullaLibraryDraftEvents(): void {
     try {
       const { LibraryDraftModel } = await import('@pkg/agent/database/models/LibraryDraftModel');
 
-      return await LibraryDraftModel.listAll(kind);
+      return await getDatabaseReadGuard().run('library-drafts-list', () => LibraryDraftModel.listAll(kind), []);
     } catch (err) {
       console.error('[Sulla] library-drafts-list failed:', err);
 

@@ -3,283 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-export type FilesSyncState = 'synced' | 'syncing' | 'paused' | 'error' | 'conflict';
-export type FilesIndexState = 'pending' | 'indexing' | 'indexed' | 'unsupported' | 'failed';
-export interface FilesIndexCoverage { total:number; pending:number; indexing:number; indexed:number; partial:number; unsupported:number; failed:number; complete:boolean }
+// The Files renderer contract. Value and entity types live in themed modules and are re-exported
+// here so every importer keeps using './types'.
+import type { FilesIndexCoverage, FilesItem, FilesItemCapabilities, FilesPreview, FilesRetentionPolicy, FilesSnapshot, FilesVersion, FilesVersioningSettings } from './filesItemTypes';
+import type { FilesCollisionPolicy, FilesCrossCollectionCapability, FilesFolderSourceSnapshot, FilesFolderSummary, FilesOperationCapabilities, FilesOperationReceipt, FilesOperationRequest, FilesOperationRetry, FilesRevealResult, FilesTrashItem, FilesTrashPurgeResult, FilesTrashRestoreResult } from './filesOperationTypes';
+import type { FileAccessList, FileShare, FilesSaveRequest, FilesSaveSuccess, FolderShare, ShareActivity, ShareLink, ShareLinkOptions, SharePrincipalType } from './filesSharingTypes';
 
-export type FilesPublicationStatus = 'draft' | 'published' | 'superseded';
-export type FilesPublicationState = 'draft' | 'published';
-export type FilesRetentionMode = 'none' | 'retain-until' | 'event';
-
-export interface FilesRetentionPolicy {
-  mode: FilesRetentionMode;
-  retainUntil?: string | null;
-  eventType?: string | null;
-  eventOccurredAt?: string | null;
-  durationDays?: number | null;
-  reason?: string | null;
-  active?: boolean;
-}
-
-export interface FilesItemCapabilities {
-  canEdit: boolean;
-  canManage: boolean;
-  canViewDraft: boolean;
-  canPublish: boolean;
-}
-
-export interface FilesVersioningSettings {
-  enabled: boolean;
-  majorMinor: boolean;
-  requireApproval: boolean;
-  requireCheckout: boolean;
-}
-
-export interface FilesCheckout {
-  userId: string;
-  deviceId?: string;
-  at: string;
-}
-
-export interface FilesRecordStatus {
-  status: 'none' | 'ordinary' | 'policy';
-  lockedAt?: string | null;
-  lockedBy?: string | null;
-}
-
-export interface FilesDisposalStatus {
-  status: 'none' | 'pending' | 'approved' | 'rejected';
-  reviewAt?: string | null;
-  extendedUntil?: string | null;
-}
-
-export function normalizeFilesIndexCoverage(coverage:Omit<FilesIndexCoverage, 'partial'> & { partial?:number }):FilesIndexCoverage {
-  const knowsPartial = Number.isFinite(coverage.partial);
-  const partial = knowsPartial ? Number(coverage.partial) : 0;
-
-  return { ...coverage, partial, complete: coverage.complete && knowsPartial && partial === 0 };
-}
-
-export interface FilesLocation {
-  kind: 'local' | 'server' | 'cloud';
-  label: string;
-}
-
-export interface FilesItem {
-  id: string;
-  path: string;
-  mime: string;
-  size: number;
-  updatedAt: string;
-  deletedAt?: string;
-  currentVersionId: string;
-  /** Decimal database revision used for receipt-backed mutation CAS. */
-  operationRevision?: string;
-  versionCount: number;
-  createdByType: string;
-  createdById: string;
-  ownerDisplayName?: string;
-  ownerAvatarUrl?: string;
-  syncState?: 'synced' | 'syncing' | 'online-only' | 'conflict';
-  conflictDevices?: number;
-  conflictSourceFileId?: string;
-  conflictSourceVersionId?: string;
-  indexStatus: FilesIndexState;
-  indexReasonCode?: string;
-  indexReason: string;
-  indexedAt?: string;
-  draftVersionId?: string | null;
-  publishedVersionId?: string | null;
-  publicationState?: FilesPublicationState;
-  versioning?: FilesVersioningSettings;
-  checkout?: FilesCheckout | null;
-  retention?: FilesRetentionPolicy;
-  record?: FilesRecordStatus;
-  disposal?: FilesDisposalStatus;
-  capabilities?: FilesItemCapabilities;
-}
-
-export function filesItemHasActiveProtection(item:Pick<FilesItem, 'retention' | 'record' | 'disposal'>, now = Date.now()):boolean {
-  if (item.retention?.active !== undefined) return item.retention.active;
-  if (item.record?.status === 'ordinary' || item.record?.status === 'policy') return true;
-  const extension = Date.parse(item.disposal?.extendedUntil ?? '');
-
-  if (Number.isFinite(extension) && extension > now) return true;
-  if (item.retention?.mode === 'retain-until') {
-    const retainUntil = Date.parse(item.retention.retainUntil ?? '');
-
-    return Number.isFinite(retainUntil) && retainUntil > now;
-  }
-  if (item.retention?.mode === 'event') {
-    const durationDays = item.retention.durationDays;
-
-    if (!item.retention.eventOccurredAt || typeof durationDays !== 'number' || !Number.isSafeInteger(durationDays) || durationDays < 0) return true;
-    const occurredAt = Date.parse(item.retention.eventOccurredAt);
-
-    return !Number.isFinite(occurredAt) || occurredAt + durationDays * 86_400_000 > now;
-  }
-
-  return false;
-}
-
-export interface FilesVersion {
-  id: string;
-  parent_version_id?: string;
-  size: number;
-  deleted: boolean;
-  created_by_type: string;
-  created_by_id: string;
-  created_at: string;
-  message?: string;
-  device_id?: string;
-  current: boolean;
-  versionNumber?: string;
-  versionKind?: 'major' | 'minor';
-  publicationStatus?: FilesPublicationStatus;
-}
-
-export interface FilesSnapshot {
-  collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean; cloudBackup?: { enabled:boolean; status:'off'|'idle'|'syncing'|'error'|'needs-vault'; lastSyncAt?:string|null; pendingBytes:number; conflicts:number; lastError?:string|null; cryptoModule:{provider:string;version:string;fips:boolean} } };
-  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'sulla' | null }[];
-  folders?:(string | FilesFolderState)[];
-  files: FilesItem[];
-  trash?: FilesTrashItem[];
-  status: {
-    state: FilesSyncState;
-    pendingFiles: number;
-    lastError?: string;
-    lastScanAt?: string;
-    lastSyncAt?: string;
-    serverConfigured: boolean;
-    location?: 'local' | 'server' | 'cloud';
-    serverLabel?: string;
-    legacyImport?: { state: 'clear' | 'secure-import-required'; protectedPrefix?: string; code?: string; action?: string };
-    indexing: FilesIndexCoverage;
-  };
-}
-
-export interface FilesPreview {
-  data: Uint8Array;
-  mime: string;
-  path: string;
-}
-
-export type FilesRevealResult =
-  | { status:'revealed'; target:'tracked-original' | 'materialized-copy'; fileId:string; versionId:string }
-  | { status:'unavailable'; code:'no-local-copy' | 'local-copy-changed'; reason:string };
-
-export type FilesCollisionPolicy = 'replace' | 'keep-both' | 'skip';
-export type FilesCrossCollectionCapability = 'all-authorized' | 'stored-authorized' | 'unavailable';
-export interface FilesOperationCapabilities {
-  enabled:boolean;
-  reason?:string;
-  folderReceipts:boolean;
-  nativeFolderReceipts:boolean;
-  folderCollisionPolicies:FilesCollisionPolicy[];
-  crossCollectionOperations:FilesCrossCollectionCapability;
-}
-export interface FilesFolderState { collectionId?:string; folderId:string; path:string; revision:string; description?:string|null; namingHint?:string|null; needsDescription?:boolean }
-export interface FilesFolderSourceSnapshot {
-  collectionId:string;
-  path:string;
-  folderId?:string;
-  revision?:string;
-  subtreeSignature:string;
-}
-export interface FilesFolderReplacementDestination extends FilesFolderState { subtreeSignature:string }
-export function isFilesFolderState(value:unknown):value is FilesFolderState {
-  if (!value || typeof value !== 'object') return false;
-  const state=value as Record<string, unknown>;
-
-  return !('fileId' in state) && typeof state.folderId === 'string' && typeof state.path === 'string' && typeof state.revision === 'string' &&
-    (state.collectionId === undefined || typeof state.collectionId === 'string');
-}
-export type FilesTrashUndoState = 'available' | 'invalidated' | 'recovery-required' | 'unavailable';
-export interface FilesTrashUndo { state:FilesTrashUndoState; expiresAt?:string }
-export type FilesTrashTombstone =
-  | { kind:'version'; id:string; receiptId?:string; operationId?:string; undo:FilesTrashUndo }
-  | { kind:'receipt'; id:string; receiptId:string; operationId?:string; undo:FilesTrashUndo };
-export interface FilesTrashFile extends FilesItem {
-  kind:'file';
-  revision:string;
-  currentTombstone:Extract<FilesTrashTombstone, { kind:'version' }>;
-}
-export interface FilesTrashFolder {
-  kind:'folder';
-  id:string;
-  path:string;
-  revision:string;
-  deletedAt:string;
-  currentTombstone:Extract<FilesTrashTombstone, { kind:'receipt' }>;
-  capabilities?:FilesItemCapabilities;
-}
-export type FilesTrashItem = FilesTrashFile | FilesTrashFolder;
-export type FilesTrashRestoreResult = {
-  status:'restored'; kind:FilesTrashItem['kind']; id:string; path:string; revision:string;
-  currentTombstone:null; receiptId:string | null; versionId?:string;
-};
-export type FilesTrashPurgeResult =
-  | { status:'purged'; metadataPurged:true; chunks:'complete'; retainedArtifacts:'none' | 'complete'; undo:'invalidated' | 'unavailable'; receiptId:string | null }
-  | { status:'recovery-required'; metadataPurged:true; chunks:'pending' | 'complete'; retainedArtifacts:'preserved' | 'complete'; undo:'invalidated' | 'unavailable'; receiptId:string | null; reason?:string }
-  | { status:'purged'; kind:'folder'; id:string; path:string; revision:string; currentTombstone:null; metadataPurged:true; chunks?:'complete'; retainedArtifacts:'none' | 'complete'; undo:'invalidated'; receiptId:string }
-  | { status:'recovery-required'; kind:'folder'; id:string; path:string; revision:string; currentTombstone:null; metadataPurged:true; chunks?:'pending' | 'complete'; retainedArtifacts:'preserved' | 'complete'; undo:'invalidated'; receiptId:string; reason?:string };
-export interface FilesOperationState { collectionId?:string; fileId:string; path:string; versionId:string; revision:string; deleted:boolean }
-export type FilesCollisionDestination = FilesOperationState | FilesFolderReplacementDestination;
-export function isFilesOperationState(value:unknown):value is FilesOperationState {
-  if (!value || typeof value !== 'object') return false;
-  const state=value as Record<string, unknown>;
-
-  return !('folderId' in state) && typeof state.fileId === 'string' && typeof state.path === 'string' && typeof state.versionId === 'string' &&
-    typeof state.revision === 'string' && typeof state.deleted === 'boolean' &&
-    (state.collectionId === undefined || typeof state.collectionId === 'string');
-}
-export function isFilesFolderReplacementDestination(value:unknown):value is FilesFolderReplacementDestination {
-  if (!isFilesFolderState(value)) return false;
-  const state=value as FilesFolderReplacementDestination;
-
-  return typeof state.subtreeSignature === 'string' && /^[0-9a-f]{64}$/.test(state.subtreeSignature);
-}
-export interface FilesOperationItem {
-  itemId:string;
-  action:'move' | 'copy' | 'rename' | 'trash' | 'create-folder';
-  kind?:'file' | 'folder';
-  fileId?:string;
-  folderPath?:string;
-  expectedFolder?:FilesFolderState;
-  expectedVersionId?:string;
-  expectedRevision?:string;
-  targetPath?:string;
-  targetCollectionId?:string;
-  sourceSubtreeSignature?:string;
-  collisionPolicy?:FilesCollisionPolicy;
-  expectedDestination?:FilesCollisionDestination;
-}
-export interface FilesOperationRequest { idempotencyKey:string; collectionId:string; items:FilesOperationItem[] }
-export interface FilesOperationRetry { items?:{ itemId:string; collisionPolicy?:FilesCollisionPolicy; expectedDestination?:FilesCollisionDestination }[] }
-export interface FilesOperationItemReceipt {
-  itemId:string;
-  action:FilesOperationItem['action'];
-  state:'pending' | 'completed' | 'skipped' | 'failed' | 'cancelled' | 'undone';
-  receiptId:string | null;
-  before:FilesOperationState | FilesFolderState | null;
-  after:FilesOperationState | FilesFolderState | null;
-  displacedBefore?:FilesOperationState | FilesFolderState;
-  displacedAfter?:FilesOperationState | FilesFolderState;
-  error:{ status:number; code:string; message:string; destination?:FilesCollisionDestination } | null;
-  undoSupported:boolean;
-  retryable:boolean;
-}
-export interface FilesOperationReceipt {
-  operationId:string;
-  collectionId:string;
-  state:'pending' | 'completed' | 'partial' | 'failed' | 'cancelled' | 'undone';
-  cancelRequested:boolean;
-  undoSupported:boolean;
-  retryable:boolean;
-  createdAt:string;
-  updatedAt:string;
-  items:FilesOperationItemReceipt[];
-}
+export * from './filesItemTypes';
+export * from './filesOperationTypes';
+export * from './filesSharingTypes';
 
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
@@ -314,98 +46,6 @@ export interface FilesCapabilities {
   crossCollectionOperations?: FilesCrossCollectionCapability;
 }
 
-export type ShareAccessMode = 'view' | 'download';
-export type ShareAssetKind = 'file' | 'capture' | 'artifact';
-export type SharePrincipalType = 'user' | 'group';
-
-export interface SharePrincipal {
-  id: string;
-  type: SharePrincipalType;
-  name: string;
-  detail?: string;
-  role?: string;
-}
-
-export interface FolderShare {
-  id?: string;
-  collectionId: string;
-  folderPath: string;
-  principalType: SharePrincipalType;
-  principalId: string;
-  principalName?: string;
-  role: 'view' | 'edit';
-}
-
-export interface FileShare {
-  id: string;
-  fileId: string;
-  principalType: SharePrincipalType;
-  principalId: string;
-  principalName?: string;
-  role: 'view' | 'edit';
-}
-
-export interface InheritedFileShare {
-  id: string;
-  collectionId: string;
-  source: 'collection' | 'folder';
-  folderPath?: string;
-  principalType: SharePrincipalType;
-  principalId: string;
-  principalName?: string;
-  role: 'view' | 'use-by-agents' | 'edit' | 'manage';
-}
-
-export interface FileAccessList {
-  ownerId?: string;
-  direct: FileShare[];
-  inherited: InheritedFileShare[];
-}
-
-export interface ShareLinkOptions {
-  mode: ShareAccessMode;
-  password?: string;
-  expiresAt?: string | null;
-  displaySharerName: boolean;
-  keepAvailable: boolean;
-  keepUntil?: string | null;
-  assetKind?: ShareAssetKind;
-  captureMetadata?: Record<string, unknown>;
-}
-
-export interface ShareLink {
-  id: string;
-  url: string;
-  name: string;
-  mode: ShareAccessMode;
-  password: boolean;
-  expiresAt?: string;
-  viewCount: number;
-  lastViewedAt?: string;
-  keepAvailable: boolean;
-  keepUntil?: string;
-  displaySharerName: boolean;
-  servedFrom: 'desktop' | 'server' | 'cloud';
-  assetKind: ShareAssetKind;
-  source?: string;
-  targetId?: string;
-  targetType?: 'file' | 'capture' | 'artifact';
-  collectionId?: string;
-  revokedAt?: string;
-  createdAt?: string;
-}
-
-export interface ShareActivity {
-  id: string;
-  action: 'created' | 'viewed' | 'downloaded' | 'updated' | 'revoked';
-  occurredAt: string;
-  detail?: string;
-}
-
-export interface FilesSaveRequest { fileId:string; baseVersionId:string; content:string }
-export interface FilesSaveSuccess { status:'saved' | 'merged'; fileId:string; path:string; mime:string; content:string; versionId:string }
-export interface FilesSaveConflict { code:'VERSION_CONFLICT'; error:string; currentVersionId:string }
-
 export interface FilesDataSource {
   openLive?(fileId:string,onEvent:(event:import('./liveTypes').FilesLiveEvent)=>void):Promise<import('./liveTypes').FilesLiveConnection>;
 
@@ -418,6 +58,19 @@ export interface FilesDataSource {
   retryOperation?(operationId:string, request?:FilesOperationRetry):Promise<FilesOperationReceipt>;
   undoOperation?(operationId:string):Promise<FilesOperationReceipt>;
   load(): Promise<FilesSnapshot>;
+  loadMore?():Promise<FilesItem[]>;
+  loadFolder?(path:string):Promise<FilesItem[]>;
+  onFolderFilesChanged?(listener:(files:FilesItem[])=>void):()=>void;
+  /** Newest active files of the open collection from the server (bounded), optionally only one creator type. */
+  recentFiles?(options?:{ limit?:number; createdByType?:'user' | 'agent-run' }):Promise<FilesItem[]>;
+  /** Resolve file ids (e.g. stars) to rows wherever they live, without loading their folders. */
+  filesByIds?(ids:string[]):Promise<FilesItem[]>;
+  /** Every direct child file of `path`, paged to completion, independent of the open folder listing. */
+  listFolderChildren?(path:string):Promise<FilesItem[]>;
+  /** Every active file at or below `path`, paged to completion (used when folder receipts are unavailable). */
+  listFolderTree?(path:string):Promise<FilesItem[]>;
+  /** Server totals for each direct child folder of `path`. */
+  folderSummaries?(path:string):Promise<FilesFolderSummary[]>;
   openPreferences?():void;
   selectCollection?(collectionId:string):void;
   operationCapabilities?(collectionId:string):Promise<FilesOperationCapabilities>;

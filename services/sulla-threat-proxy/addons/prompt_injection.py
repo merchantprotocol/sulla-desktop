@@ -138,6 +138,14 @@ class PromptInjectionScanner:
         ctype = (flow.response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
         if ctype == "text/event-stream":
             flow.response.stream = True
+            return
+        # A body this scanner will never look at (package tarballs, images, archives,
+        # allowlisted hosts, scanning off) gains nothing from being held in memory.
+        # Buffering them made parallel `npm install`/`yarn` runs in several agents hold
+        # many multi-MB bodies at once, which pushed the proxy past its memory limit:
+        # the kernel killed it and Docker restarted it mid-install.
+        if not self._should_scan(flow):
+            flow.response.stream = True
 
     def response(self, flow: http.HTTPFlow) -> None:
         # Streamed flows (see responseheaders) have no buffered .content; guard so

@@ -220,14 +220,4 @@ export class PostgresVaultAuditLogRepository {
     return client.query<T>(`INSERT INTO audit_log(actor_user_id,item_id,action,metadata,blocked)
        VALUES ($1,$2,$3,'{}'::jsonb,false)`, values);
   }
-
-  recordOutboundRequest<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
-    return client.query<T>(`INSERT INTO audit_log(actor_user_id,org_id,collection_id,item_id,action,pod_id,metadata,blocked,reason)
-       VALUES ($1,$2,$3,$4,'vault_outbound_request',$5,$6,$7,$8)`, values);
-  }
-
-  recordOutboundDenial<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
-    return client.query<T>(`INSERT INTO audit_log(actor_user_id,item_id,action,pod_id,metadata,blocked,reason)
-       VALUES ($1,NULL,'vault_outbound_request',$2,$3,true,$4)`, values);
-  }
 }

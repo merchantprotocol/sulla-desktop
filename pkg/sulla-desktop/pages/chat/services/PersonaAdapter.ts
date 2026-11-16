@@ -28,7 +28,6 @@ import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
 
-import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
@@ -85,6 +84,8 @@ export class PersonaAdapter {
    *  once per backend id so re-mapping a long-finished thinking bubble
    *  doesn't drift the frozen elapsed label. */
   private firstCompletedAt = new Map<string, number>();
+  /** Thinking bubbles this window saw before they finished. */
+  private seenRunning = new Set<string>();
   /** Hash of the last-mapped transcript Message per backend id, for skipping no-op updates. */
   private lastMappedHash = new Map<string, string>();
   /**
@@ -125,37 +126,19 @@ export class PersonaAdapter {
       onStop:     () => this.ci.stop(),
       onContinue: () => this.ci.continueRun(),
     });
-    const channelId = opts.channelId ?? 'sulla-desktop';
-    const routeUnsub = getWebSocketClientService().onMessage(channelId, (message) => {
-      if (message.type !== 'agent_routed' || !message.data || typeof message.data !== 'object') return;
-      const route = message.data as Record<string, unknown>;
-      if (route.threadId !== this.ci.threadId.value || typeof route.agentId !== 'string') return;
-
-      // Preserve the chat-local provider/model while making future sends carry
-      // the routed persona selected before the first agent turn.
-      this.controller.selectForChat(
-        this.controller.model.value,
-        this.controller.thread.value.providerId ?? null,
-        route.agentId,
-      );
-      const name = typeof route.name === 'string' && route.name.trim() ? route.name.trim() : route.agentId;
-      this.controller.appendMessage({
-        id:        asMessageId(`reflex-route-${ String(route.decisionId || Date.now()) }`),
-        kind:      'thinking',
-        thoughts:  [route.reason === 'default' ? `Chat opened with ${ name }` : `⚡ Reflex routed this chat to ${ name }`],
-        startedAt: Date.now(),
-        completed: true,
-        createdAt: Date.now(),
-      });
-    });
-    if (routeUnsub) this.stopWatchers.push(routeUnsub);
-
     const onArtifactChanged = (_event: unknown, change: ChatArtifactChangedEvent) => {
       if (change?.threadId !== this.ci.threadId.value) return;
       this.applyPersistentArtifact(change.artifact, !!change.focus);
     };
     ipcRenderer.on('chat-artifacts:changed', onArtifactChanged);
     this.stopWatchers.push(() => ipcRenderer.removeListener('chat-artifacts:changed', onArtifactChanged));
+    // The list came back "not ready" while the database was starting; load it now.
+    const onDatabaseAvailable = () => {
+      this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
+        console.warn('[PersonaAdapter] artifact load failed:', err));
+    };
+    ipcRenderer.on('database:available', onDatabaseAvailable);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('database:available', onDatabaseAvailable));
 
     const unsubscribeArtifactClose = this.controller.on('artifactClosed', (event) => {
       if (!this.persistentArtifacts.has(event.artifactId)) return;
@@ -215,6 +198,13 @@ export class PersonaAdapter {
     this.controller.setConnection('online');
 
     const applyDecision = (_event: unknown, record: import('@pkg/shared/decisions').DecisionRecord) => {
+      this.decisionStatus.set(record.id, record.status);
+      this.decisionExpiry.set(record.id, record.expiresAt);
+      for (const message of this.controller.thread.value.messages) {
+        if (message.kind === 'tool_question' && message.questionId === record.id && message.expiresAt !== record.expiresAt) {
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, { expiresAt: record.expiresAt });
+        }
+      }
       if (['pending', 'deferred'].includes(record.status)) return;
       for (const message of this.controller.thread.value.messages) {
         if (message.kind === 'tool_approval' && message.approvalId === record.id) {
@@ -229,6 +219,18 @@ export class PersonaAdapter {
     };
     ipcRenderer.on('decisions:changed', applyDecision);
     this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
+    // Question and approval cards are rebuilt from history as "pending"; their real
+    // outcome lives in the decisions store. Without this, every answered card from
+    // an earlier session reopens after a restart and invites a second answer.
+    ipcRenderer.invoke('decisions:list' as any)
+      .then((records: import('@pkg/shared/decisions').DecisionRecord[]) => {
+        for (const record of records ?? []) applyDecision(undefined, record);
+        this.settleKnownDecisions();
+      })
+      .catch(() => undefined);
+    // Cards also come back from the chat's local save, possibly after the list above
+    // resolved; settle any of those against the known outcomes as they appear.
+    this.stopWatchers.push(watch(() => this.controller.thread.value.messages.length, () => this.settleKnownDecisions()));
 
     const reconnectClaude = (_event: unknown, payload: { type?: string; providerId?: string; message?: string }) => {
       if (payload?.type !== 'provider-auth-reconnect-required' || payload.providerId !== 'claude-code') return;
@@ -385,7 +387,10 @@ export class PersonaAdapter {
     };
     await this.ci.send(selection, resolved.length ? resolved : undefined);
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
-    await this.loadPersistentArtifacts(this.ci.threadId.value ?? '');
+    // The message is already sent; a failed artifact refresh must not turn
+    // send() into a rejection.
+    await this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
+      console.warn('[PersonaAdapter] artifact load failed:', err));
   }
 
   private agentTextForVoice(text: string, identity: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): string {
@@ -418,6 +423,7 @@ export class PersonaAdapter {
     this.seen.clear();
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
+    this.seenRunning.clear();
     this.lastMappedHash.clear();
     this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
@@ -437,6 +443,7 @@ export class PersonaAdapter {
     this.stopWatchers = [];
     this.firstSeenAt.clear();
     this.firstCompletedAt.clear();
+    this.seenRunning.clear();
     this.lastMappedHash.clear();
     this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
@@ -469,6 +476,49 @@ export class PersonaAdapter {
   // run. The leading update is synchronous so visible progress never depends
   // on reaching an animation-frame boundary. During a continuous stream, a
   // short timer publishes the latest accumulated state at a bounded rate.
+  /** Known outcome of each decision by id, so re-mapped cards keep their resolved state. */
+  private readonly decisionStatus = new Map<string, import('@pkg/shared/decisions').DecisionRecord['status']>();
+  private readonly decisionExpiry = new Map<string, number>();
+
+  private settleKnownDecisions(): void {
+    this.controller.removeDuplicateMessages();
+    for (const message of this.controller.thread.value.messages) {
+      if (message.kind === 'tool_question' && message.status === 'pending') {
+        const status = this.questionStatus(message.questionId);
+        if (status !== 'pending') this.controller.updateMessage<ToolQuestionMessage>(message.id, { status });
+      } else if (message.kind === 'tool_approval' && message.decision === 'pending') {
+        const decision = this.approvalDecision(message.approvalId);
+        if (decision !== 'pending') this.controller.updateMessage<ToolApprovalMessage>(message.id, { decision });
+      }
+    }
+  }
+
+  /** A re-mapped card starts "pending"; never let that reopen one already resolved. */
+  private keepResolution(existing: Message | undefined, mapped: Message): Message {
+    if (existing?.kind === 'tool_question' && mapped.kind === 'tool_question' && existing.status !== 'pending') {
+      return { ...mapped, status: existing.status, answers: existing.answers };
+    }
+    if (existing?.kind === 'tool_approval' && mapped.kind === 'tool_approval' && existing.decision !== 'pending') {
+      return { ...mapped, decision: existing.decision };
+    }
+
+    return mapped;
+  }
+
+  private questionStatus(questionId: string | undefined): ToolQuestionMessage['status'] {
+    const status = questionId ? this.decisionStatus.get(questionId) : undefined;
+    if (!status || status === 'pending' || status === 'deferred') return 'pending';
+
+    return status === 'answered' ? 'answered' : 'timed_out';
+  }
+
+  private approvalDecision(approvalId: string | undefined): ToolApprovalMessage['decision'] {
+    const status = approvalId ? this.decisionStatus.get(approvalId) : undefined;
+    if (!status || status === 'pending' || status === 'deferred') return 'pending';
+
+    return status === 'approved' ? 'approved' : status === 'denied' ? 'denied' : 'timed_out';
+  }
+
   private syncMessages(): void {
     const backend = this.ci.messages.value;
     for (const b of backend) {
@@ -486,8 +536,12 @@ export class PersonaAdapter {
         this.seen.add(b.id);
         continue;
       }
-      if (this.seen.has(b.id)) {
-        this.controller.updateMessage(mapped.id, mapped as Partial<Message>);
+      // Also update when the message was restored from the local save: appending
+      // it again would create a duplicate card that updates can never reach.
+      const existing = this.controller.thread.value.messages.find(m => m.id === mapped.id);
+      if (this.seen.has(b.id) || existing) {
+        this.seen.add(b.id);
+        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>);
       } else {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
@@ -629,8 +683,12 @@ export class PersonaAdapter {
     if (b.kind === 'thinking') {
       const thoughts = splitThoughts(b.content ?? '');
       const completed = (b as any)._completed === true || !this.ci.graphRunning.value;
+      // Completion time is only known when this window saw it still running.
+      // A bubble replayed already finished has no true end time; leave it
+      // unset (and keep any saved one) rather than stamping the replay time.
       let completedAt: number | undefined;
-      if (completed) {
+      if (!completed) this.seenRunning.add(b.id);
+      else if (this.seenRunning.has(b.id)) {
         completedAt = this.firstCompletedAt.get(b.id);
         if (completedAt === undefined) {
           completedAt = Date.now();
@@ -644,7 +702,7 @@ export class PersonaAdapter {
         thoughts,
         startedAt: createdAt,
         completed,
-        completedAt,
+        ...(completedAt !== undefined ? { completedAt } : {}),
         summary:   completed ? firstLineOf(b.content ?? '') : undefined,
       } satisfies ThinkingMessage;
     }
@@ -715,7 +773,7 @@ export class PersonaAdapter {
         createdAt,
         reason:     b.toolApproval.reason,
         command:    b.toolApproval.command,
-        decision:   'pending',
+        decision:   this.approvalDecision(b.toolApproval.approvalId),
         approvalId: b.toolApproval.approvalId,
         origin:     b.toolApproval.origin,
       } satisfies ToolApprovalMessage;
@@ -733,7 +791,8 @@ export class PersonaAdapter {
         createdAt,
         questionId: b.toolQuestion.questionId,
         questions:  b.toolQuestion.questions,
-        status:     'pending',
+        status:     this.questionStatus(b.toolQuestion.questionId),
+        expiresAt:  this.decisionExpiry.get(b.toolQuestion.questionId),
       } satisfies ToolQuestionMessage;
     }
 
@@ -846,6 +905,7 @@ export class PersonaAdapter {
         createdAt,
         headline: b.proactive.headline,
         body:     b.proactive.body,
+        ...(b.proactive.result ? { result: b.proactive.result } : {}),
       } satisfies ProactiveMessage;
     }
 
@@ -965,9 +1025,13 @@ export class PersonaAdapter {
   private stableCreatedAt(backendId: string): number {
     const existing = this.firstSeenAt.get(backendId);
     if (existing !== undefined) return existing;
+    // Backend ids start with their creation time (`1794753730205_ws_thinking`).
+    // Use it so a replay after a restart keeps the real time, not the replay time.
     const now = Date.now();
-    this.firstSeenAt.set(backendId, now);
-    return now;
+    const minted = Number(/^(\d{13})_/.exec(backendId)?.[1]);
+    const at = minted > 1_500_000_000_000 && minted <= now + 60_000 ? minted : now;
+    this.firstSeenAt.set(backendId, at);
+    return at;
   }
 
   // ─── Workflow artifact driver ─────────────────────────────────────
@@ -1203,8 +1267,9 @@ export class PersonaAdapter {
 
   private async loadPersistentArtifacts(threadId: string): Promise<void> {
     if (!threadId) return;
-    const records = await ipcRenderer.invoke('chat-artifacts:list', { threadId }) as ChatArtifactRecord[];
-    if (threadId !== this.ci.threadId.value) return;
+    const records = await ipcRenderer.invoke('chat-artifacts:list', { threadId }) as ChatArtifactRecord[] | null;
+    // null: database not reachable yet. Keep what is shown; `database:available` reloads.
+    if (!records || threadId !== this.ci.threadId.value) return;
     this.persistentArtifacts = new Set(records.map(record => record.id));
     this.controller.syncPersistentArtifacts(records.map(record => this.mapPersistentArtifact(record)));
   }

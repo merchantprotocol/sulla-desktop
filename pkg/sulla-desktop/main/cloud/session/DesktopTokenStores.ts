@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { AuthSession, InProcessRefreshLock, TokenPair, type TokenStore } from '@sulla/domain';
+import { AuthSession, InProcessRefreshLock, TokenPair, type PendingRevocationQueue, type TokenStore } from '@sulla/domain';
 import type { Resolver } from '@sulla/foundation';
 
 /** One lock for every Desktop refresh of the Cloud session (legacy and first-run), so one refresh token is never spent twice at once. */
@@ -29,6 +29,8 @@ export interface StoredCloudSession {
 export interface CloudSessionStorage<S extends StoredCloudSession> {
   load(): Promise<S | null>;
   save(session: S): Promise<void>;
+  /** Deletes the stored session (sign-out). Throws when it could not, so the server revoke is never sent first. */
+  clear(): Promise<void>;
 }
 
 /**
@@ -85,6 +87,47 @@ export class LegacyTokenStore<S extends StoredCloudSession> implements TokenStor
   private toSession(stored: S): AuthSession {
     return new AuthSession(stored.userId, stored.activeContractorId, new TokenPair(stored.tokens.accessToken, stored.tokens.refreshToken), this.revision);
   }
+}
+
+/**
+ * The TokenStore `SignOutService` uses. Reads go through the legacy store; `clear()` really deletes the stored session
+ * (unlike `LegacyTokenStore.clear`, which a rejected refresh must not trigger) and first invalidates every earlier read,
+ * so no refresh can write tokens back. Sign-out never writes, so compare-and-set always refuses.
+ */
+export class LegacySignOutTokenStore<S extends StoredCloudSession> implements TokenStore {
+  constructor(private readonly legacy: LegacyTokenStore<S>, private readonly storage: CloudSessionStorage<S>) {}
+
+  read(): Promise<AuthSession | null> {
+    return this.legacy.read();
+  }
+
+  async compareAndSet(_expected: AuthSession | null, _next: AuthSession): Promise<boolean> {
+    return false;
+  }
+
+  async clear(_expected?: AuthSession | null): Promise<boolean> {
+    this.legacy.invalidate();
+    await this.storage.clear();
+    return true;
+  }
+}
+
+/**
+ * Desktop server mode has no supported durable store for refresh tokens awaiting a revoke (the session's own storage is
+ * deleted by sign-out, and first-run credentials live only in memory). Rather than pretend with an in-memory queue that
+ * a restart loses, `push` refuses: `SignOutService` reports `queued: false`, and an unrevoked Cloud session simply
+ * expires on the server.
+ */
+export class UnavailableRevocationQueue implements PendingRevocationQueue {
+  async push(_refreshToken: string): Promise<void> {
+    throw new Error('Desktop has no durable store for pending Cloud revocations');
+  }
+
+  async drain(): Promise<string[]> {
+    return [];
+  }
+
+  async remove(_refreshToken: string): Promise<void> {}
 }
 
 /** TokenStore over one first-run pending entry (main-process memory). A rejected refresh is remembered, tokens stay as before. */

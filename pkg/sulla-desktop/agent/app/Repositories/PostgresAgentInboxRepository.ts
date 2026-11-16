@@ -11,16 +11,16 @@ export class PostgresAgentInboxRepository implements AgentInboxRepository {
   constructor(private readonly connection: PostgresConnection) {}
   async enqueue(entry: AgentInboxEntry): Promise<boolean> {
     const rows = await this.connection.select<{ message_id: string }>(`INSERT INTO agent_inbox_messages
-      (message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(message_id) DO NOTHING RETURNING message_id`,
-    [entry.envelope.ids.messageId, entry.target.channel, entry.target.threadId ?? null, entry.target.agentId ?? null, entry.envelope.from, entry.envelope.kind, entry.envelope.body, JSON.stringify(entry.envelope.ids)]);
+      (message_id,receiver_channel,receiver_thread_id,receiver_agent_id,sender,kind,body,ids,host_seq)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9) ON CONFLICT(message_id) DO NOTHING RETURNING message_id`,
+    [entry.envelope.ids.messageId, entry.target.channel, entry.target.threadId ?? null, entry.target.agentId ?? null, entry.envelope.from, entry.envelope.kind, entry.envelope.body, JSON.stringify(entry.envelope.ids), entry.envelope.kind === 'org' ? entry.envelope.ids.hostSeq ?? null : null]);
     return Boolean(rows?.length);
   }
   async claim(target: AgentInboxTarget, owner: string): Promise<AgentInboxClaim> {
     const rows = await this.connection.select<any>(`WITH candidates AS (
       SELECT message_id FROM agent_inbox_messages WHERE receiver_channel=$1 AND delivered_at IS NULL
         AND ($2::text IS NULL OR receiver_thread_id=$2 OR receiver_thread_id IS NULL)
-        AND (lease_expires_at IS NULL OR lease_expires_at<now()) ORDER BY created_at,message_id FOR UPDATE SKIP LOCKED)
+        AND (lease_expires_at IS NULL OR lease_expires_at<now()) ORDER BY CASE WHEN kind='org' THEN host_seq END NULLS LAST,created_at,message_id FOR UPDATE SKIP LOCKED)
       UPDATE agent_inbox_messages inbox SET lease_owner=$3,lease_expires_at=now()+($4*interval '1 second')
       FROM candidates WHERE inbox.message_id=candidates.message_id RETURNING inbox.*`, [target.channel, target.threadId ?? null, owner, LEASE_SECONDS]);
     return { owner, target, entries: rows.map(row => this.map(row, target)) };

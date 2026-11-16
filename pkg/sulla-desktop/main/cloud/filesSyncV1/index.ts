@@ -128,7 +128,7 @@ class FilesSyncV1Impl {
       for(let i=0;i<100;i++){
         const prepared=await FilesSyncContainer.prepare(); if(!prepared||prepared.op!=='delete')return;
         const wait=Math.max(0,MIN_SIGNATURE_MS-(Date.now()-this.lastSignatureAt)); if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
-        const proof=signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
+        const proof=await signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
         const sent=await FilesSyncContainer.send(prepared.handle,who.deviceId,proof.ts,proof.signature);
         if(sent.status!=='sent')throw new FilesSyncClientError(`delete_${sent.status}`,502);
       }
@@ -155,7 +155,7 @@ class FilesSyncV1Impl {
       const prepared=await FilesSyncContainer.prepare();
       if(!prepared){this.backoff=1_000;this.schedule(IDLE_MS);return}
       const wait=Math.max(0,MIN_SIGNATURE_MS-(Date.now()-this.lastSignatureAt)); if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
-      const proof=signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
+      const proof=await signDeviceMessage('files-sync-v1',[who.userId,who.deviceId,prepared.collectionId,prepared.op,prepared.sha256]); this.lastSignatureAt=Date.now();
       const sent=await FilesSyncContainer.send(prepared.handle,who.deviceId,proof.ts,proof.signature);
       if(sent.status==='failed')throw new FilesSyncClientError('send_failed',502);
       if(sent.status==='sent') {

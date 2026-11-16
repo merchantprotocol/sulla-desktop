@@ -22,6 +22,8 @@ import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientServic
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
+import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
+import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
@@ -190,7 +192,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   // but must not flip graphRunning, otherwise stop button visibility
   // gets driven by background activity instead of the user's own loop.
   if (msg.type !== 'subconscious_message') {
-    ctx.graphRunning.value = true;
+    ctx.graphRunning.value = !isTerminalRunError(msg);
+    if (!ctx.graphRunning.value) ctx.registry.setLoading(agentId, false);
   }
 
   // user_message: already pushed locally before send — skip
@@ -337,6 +340,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       question:    typeof q?.question === 'string' ? q.question : '',
       header:      typeof q?.header === 'string' ? q.header : undefined,
       multiSelect: q?.multiSelect === true,
+      task:        q?.task === true || undefined,
+      command:     q?.task === true && typeof q?.command === 'string' ? q.command : undefined,
       options:     Array.isArray(q?.options)
         ? q.options.map((o: any) => ({
           label:       typeof o?.label === 'string' ? o.label : '',
@@ -368,6 +373,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       ? data.body.trim()
       : (typeof data?.content === 'string' ? data.content.trim() : '');
     if (!headline && !body) return;
+    const result = readAgentResultCard(data?.result);
 
     ctx.messages.push({
       id:        `${ Date.now() }_ws_proactive`,
@@ -376,7 +382,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       role:      'assistant',
       kind:      'proactive',
       content:   body,
-      proactive: { headline: headline || 'Sulla', body },
+      proactive: { headline: headline || 'Sulla', body, ...(result ? { result } : {}) },
     });
     return;
   }

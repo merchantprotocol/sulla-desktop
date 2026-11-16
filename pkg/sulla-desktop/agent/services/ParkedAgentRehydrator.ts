@@ -6,12 +6,25 @@ import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { failJob } from '../tools/agents/jobRegistry';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
+import { delegatedThreadPersistenceKey } from './DelegatedContainerKey';
 
 import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
 
 export interface ParkedAgentIdentity { job: AgentJob; task: AgentJobTask; taskIndex: number; agentId: string; }
 export interface ParkedJobReader { findByTaskThread(threadId: string): Promise<AgentJob | undefined>; }
 export interface AgentDefinitionReader { findBySlug(slug: string): Promise<unknown | null>; }
+
+/**
+ * The container persistence key a rehydrated thread must reuse. A hidden task
+ * first ran in-process through spawn_agent, which keys its workspace and
+ * provider homes by the bare thread id; a woken turn that used the chat key
+ * instead landed in a new empty workspace. Tab jobs always ran as chats, so
+ * they keep the chat key (undefined here).
+ */
+export function delegatedContainerPersistenceKey(identity: ParkedAgentIdentity): string | undefined {
+  const visibility = identity.task.visibility ?? identity.job.visibility;
+  return visibility === 'tab' || !identity.task.threadId ? undefined : delegatedThreadPersistenceKey(identity.task.threadId);
+}
 
 /** Resolves a durable parked thread without ever falling back to the default persona. */
 export class ParkedAgentRehydrator {
@@ -61,6 +74,8 @@ export class ParkedAgentRehydrator {
     state.metadata.delegatedJobId = identity.job.jobId;
     state.metadata.workflowParentChannel = identity.job.parentChannel;
     state.metadata.delegatedRunActive = false;
+    const persistenceKey = delegatedContainerPersistenceKey(identity);
+    if (persistenceKey) state.metadata.containerPersistenceKey = persistenceKey;
     state.metadata.agent = {
       ...(state.metadata.agent ?? {}),
       ...(identity.task.provider ? { provider: identity.task.provider } : {}),

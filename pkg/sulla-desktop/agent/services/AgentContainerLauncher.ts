@@ -20,6 +20,7 @@ import {
   createGuestRuntimeDirectory,
   GUEST_AGENT_WORKSPACES_ROOT,
   GUEST_CONVERSATIONS_ROOT,
+  GUEST_PROVIDER_FILES_ROOT,
   GUEST_RUNTIME_ROOT,
   ensureGuestRuntimeDirectories,
   getGuestRuntimeIdentity,
@@ -32,15 +33,10 @@ import {
 } from './GuestRuntimeTransport';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
+import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
-import {
-  createProviderCliBridge,
-  getLocalVaultPrincipalId,
-  usesContainerVaultAuthority,
-  type ProviderCliAuthMode,
-  type ProviderCliBridgeLease,
-} from '../../vault-broker';
+import { ProviderBridgeAuthorizeUnavailableError, ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
@@ -49,6 +45,8 @@ import {
   type ProviderTransportContext,
 } from '../languagemodels/ProviderExecutionTransport';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
+import { ContainerLifecycleLostError, isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
+import { ProviderBridgeLeasePool } from './ProviderBridgeLeasePool';
 import { claudeCredentialResolver } from '../languagemodels/credentials/ClaudeCredentialResolver';
 import { VaultLocked } from '../languagemodels/failures';
 import { onSteer, steerText } from '../utils/steerChannel';
@@ -272,6 +270,29 @@ export function isContainerGoneError(error: unknown): boolean {
   const text = `${ (error as { stderr?: string })?.stderr ?? '' } ${ (error as Error)?.message ?? '' }`;
 
   return /no such container|is not running/i.test(text);
+}
+
+/**
+ * `sulla-runtime exec` exits 255 with no stderr when the VM's command channel
+ * is not up yet (right after a VM start). Retry an idempotent guest step a few
+ * times instead of failing the whole agent job on that boot race.
+ */
+export async function retryWhileGuestStarting<T>(
+  step: () => Promise<T>,
+  attempts = 5,
+  delayMs = 2_000,
+  sleep: (ms: number) => Promise<void> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await step();
+    } catch (error) {
+      const starting = (error as { exitCode?: unknown })?.exitCode === 255 && !(error as { stderr?: string }).stderr?.trim();
+      if (!starting || attempt >= attempts) throw error;
+      console.warn(`[AgentContainer] Guest command channel not ready (attempt ${ attempt }/${ attempts }); retrying`);
+      await sleep(delayMs);
+    }
+  }
 }
 
 function guestExec(args: string[], input?: string): Promise<{ stdout: string; stderr: string }> {
@@ -509,6 +530,8 @@ pidfile="$dir/relay.pid"
 need_restart=0
 if test -S "$sock"; then
   if ! test -f "$verfile" || [ "$(cat "$verfile" 2>/dev/null)" != "$ver" ]; then need_restart=1; fi
+  # A relay that died leaves its socket behind; restart it when its process is gone.
+  if ! kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then need_restart=1; fi
 else
   need_restart=1
 fi
@@ -527,9 +550,17 @@ for i in 1 2 3 4 5; do test -S "$sock" && exit 0; sleep 0.1; done
 exit 1`;
   if (!nativeRuntime) await guestExec(['sh', '-c', bootstrap, 'sh', HOST_RELAY_SOCKET, relayVersion, vmRelay]);
   await guestExec(ensureAgentNetworkCommand());
+  // Healthy only while the bridge accepts connections and (VM relay) the guest
+  // relay behind it does: Desktop's container supervisor restarts it otherwise.
+  const upstreamProbe = nativeRuntime ? 'process.exit(0)' : `n.connect("${ HOST_RELAY_SOCKET }").on("connect",()=>process.exit(0)).on("error",()=>process.exit(1))`;
+  const healthProbe = `const n=require("net");setTimeout(()=>process.exit(1),2500);n.connect(${ HOST_RELAY_PORT },"127.0.0.1").on("connect",function(){this.destroy();${ upstreamProbe }}).on("error",()=>process.exit(1))`;
+  const healthArgs = [
+    '--health-cmd', `node -e '${ healthProbe }'`, '--health-interval', '10s', '--health-timeout', '3s',
+    '--health-retries', '3', '--health-start-period', '10s',
+  ];
   // Same versioning as the VM relay: a container left by an older build keeps
-  // running its old script, so replace it when the script changes.
-  const bridgeVersion = crypto.createHash('sha256').update(bridge).digest('hex').slice(0, 12);
+  // running its old script, so replace it when the script or its healthcheck changes.
+  const bridgeVersion = crypto.createHash('sha256').update(bridge).update(healthProbe).update('compose-project:sulla;compose-service:host-relay').digest('hex').slice(0, 12);
   const inspectRelay = () => guestExec(['docker', 'inspect', '--format',
     `{{index .Config.Labels "${ HOST_RELAY_VERSION_LABEL }"}} {{.State.Running}}`, HOST_RELAY_NAME])
     .then(({ stdout }) => {
@@ -551,6 +582,8 @@ exit 1`;
   try {
     await guestExec(['docker', 'run', '--detach', '--restart', 'unless-stopped', '--name', HOST_RELAY_NAME,
       '--label', `${ HOST_RELAY_VERSION_LABEL }=${ bridgeVersion }`,
+      '--label', 'com.docker.compose.project=sulla',
+      '--label', 'com.docker.compose.service=host-relay', ...healthArgs,
       '--network', AGENT_NETWORK, ...(nativeRuntime ? [] : ['--volume', '/run/sulla-host-relay:/run/sulla-host-relay']),
       '--entrypoint', 'node', image, '-e', bridge]);
   } catch (error) {
@@ -575,6 +608,18 @@ function ensureHostRelay(image: string): Promise<void> {
   }
 
   return hostRelayReady;
+}
+
+/**
+ * Rebuild the host relay from scratch: Desktop's container supervisor calls this when a
+ * restart did not make the relay healthy. Restarts the guest relay process if it died and
+ * replaces the relay container.
+ */
+export async function repairHostRelay(): Promise<void> {
+  const image = await ensureAgentImage();
+
+  await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]).catch(() => undefined);
+  await ensureHostRelay(image);
 }
 
 /** How long a launch waits for the threat proxy to publish its CA after a cold boot. */
@@ -784,7 +829,8 @@ async function provisionContainerSecrets(
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new InfrastructureFailure(`Invalid container secret name ${ key }`);
     return `${ key }\t${ Buffer.from(value).toString('base64') }`;
   }).join('\n') + '\n';
-  await guestExec([
+  // Idempotent (install -d, overwrite each file), so safe to retry.
+  await retryWhileGuestStarting(() => guestExec([
     'sh', '-c',
     [
       'set -eu', 'umask 077',
@@ -802,7 +848,7 @@ async function provisionContainerSecrets(
       ].join('\n'),
     ].join('; '),
     'sulla-container-secrets', secretDir, String(identity.uid), String(identity.gid),
-  ], encoded);
+  ], encoded));
   return secretDir;
 }
 
@@ -866,10 +912,10 @@ async function cleanupContainerResources(
       let decision: Awaited<ReturnType<typeof inspectGuestWorkspaceForCleanup>>;
       try {
         decision = await inspectGuestWorkspaceForCleanup(workspacePath);
-      } catch {
+      } catch (error) {
         decision = {
           remove: false,
-          reason: 'workspace retained because its cleanup state could not be inspected safely',
+          reason: `workspace retained because its cleanup state could not be inspected safely: ${ (error as Error)?.message ?? error }`,
         };
       }
       receipt.workspaceDecisionReason = decision.reason;
@@ -880,7 +926,7 @@ async function cleanupContainerResources(
         } catch (error) {
           failures.push(error);
         }
-      } else {
+      } else if (!decision.persistent) {
         receipt.retainedGuestPaths.push(workspacePath);
         receipt.recoveryWorkspacePath = workspacePath;
       }
@@ -924,7 +970,9 @@ interface ContainerProviderTransportOptions {
   secretDir:     string;
   files:         ContainerProviderFileTransport;
   identity:      GuestRuntimeIdentity;
-  bridgeFor(provider: ProviderName): Promise<ProviderCliBridgeLease>;
+  bridgeFor(provider: ProviderName, launchModel?: string): Promise<ProviderCliBridgeLease>;
+  /** Aborted when the container lifecycle ends; later provider calls fail fast. */
+  lifecycle:     AbortSignal;
   ownsBridge(ref: string): boolean;
 }
 
@@ -939,11 +987,16 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
   }
 
   async context(input: Parameters<ProviderExecutionTransport['context']>[0]): Promise<ProviderTransportContext> {
+    // Background graphs started inside this job (subconscious observers) keep
+    // this transport after the job's container is gone. Their calls must stop
+    // here as a lifecycle loss, not retry and fail over against a removed
+    // container, revoked bridge and deleted provider-file directory.
+    this.assertLive();
     // The provider bridge and graph MCP config are independent. Starting them
     // together removes one host→guest round trip from every CLI turn. Both are
     // lifecycle-cached below, so later turns normally resolve without I/O.
     const [bridge, toolConfig] = await Promise.all([
-      this.options.bridgeFor(input.provider),
+      this.options.bridgeFor(input.provider, input.model),
       input.toolSessionId ? this.ensureToolConfig(input.toolSessionId) : Promise.resolve(undefined),
       input.provider === 'codex' ? this.configureCodexHome() : Promise.resolve(),
     ]);
@@ -1030,11 +1083,21 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
     return proc;
   }
 
+  private assertLive(): void {
+    if (this.options.lifecycle.aborted) {
+      throw new ContainerLifecycleLostError(new Error(`Agent container ${ this.options.containerName } lifecycle already ended`));
+    }
+  }
+
   private async configureCodexHome(): Promise<void> {
     await guestExec([
       'docker', 'exec', this.options.containerName, '/bin/sh', '-c',
       'codex features disable plugins >/dev/null; codex features disable remote_plugin >/dev/null',
-    ]).catch(error => log.warn(`[AgentContainer] Codex plugin config failed: ${ (error as Error)?.message ?? error }`));
+    ]).catch(error => {
+      // The container ended under us; the provider spawn reports that loss itself.
+      if (this.options.lifecycle.aborted || isContainerLifecycleLost(error)) return;
+      log.warn(`[AgentContainer] Codex plugin config failed: ${ (error as Error)?.message ?? error }`);
+    });
   }
 
   private cleanupCodexPluginTemp(): void {
@@ -1139,7 +1202,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let workspacePath: string | undefined;
   let unregisterRuntime: (() => void) | undefined;
   const guestRuntimePaths: string[] = [];
-  const providerBridges = new Map<ProviderName, Promise<ProviderCliBridgeLease>>();
+  let providerBridges: ProviderBridgeLeasePool | undefined;
   const providerBridgeRefs = new Set<string>();
   let toolSession: ReturnType<ReturnType<typeof getMCPServerHost>['registerSession']> | undefined;
   let renewTimer: ReturnType<typeof setInterval> | undefined;
@@ -1182,7 +1245,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
           throw new VaultLocked('claude-code', { cause: 'Vault not ready after the startup grace period' });
         }
-        return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
+        return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
       }
 
       // Other providers retain the startup grace period until their resolvers
@@ -1191,7 +1254,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         throw await lockedVaultError();
       }
 
-      return await getLocalVaultPrincipalId(signal);
+      return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal);
     });
     const toolsServiceTask = phase('toolsService', () => waitForToolsService());
     const [{ identity, deviceId }, subject, toolsReady] = await Promise.all([
@@ -1367,10 +1430,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       try { graphAbort?.abort?.() } catch { /* graph is already unwinding */ }
       lifecycleAbort.abort();
     };
-    const bridgeFor = (provider: ProviderName): Promise<ProviderCliBridgeLease> => {
-      const existing = providerBridges.get(provider);
-      if (existing) return existing;
-      const created = (async() => {
+    const createBridge = (provider: ProviderName, pinnedModel: string | undefined): Promise<ProviderCliBridgeLease> => {
+      return (async() => {
         let integrationId: 'anthropic' | 'claude-code' | 'codex' | 'openai';
         let accountId: string;
         let authMode: ProviderCliAuthMode | undefined;
@@ -1431,11 +1492,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             request_id:       crypto.randomUUID(),
           };
         };
-        // A slot/tier alias ('primary', 'fast', …) is not a model id; pinning
-        // it denied every real request the CLI made through this bridge.
-        // 'fast' pins the light model the CLI is launched with instead.
-        const pinnedModel = run.provider === provider ? cliPinnedModelId(provider, run.model) : undefined;
-        const bridge = await createProviderCliBridge({
+        const bridge = await new ProviderCliBridgeService().create({
           context:        bridgeContext(),
           provider,
           accountId,
@@ -1448,7 +1505,9 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           authorize:      async() => {
             const context = bridgeContext();
             requireAgentContainerRuntime(context);
-            if (await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`)) return false;
+            // A Redis blip is not a revocation: answer 503 and keep the lease (the lifecycle signal still revokes locally).
+            const revoked = await redisClient.get(`sulla:capability:revoked:${ capabilityJti }`).catch((error: unknown) => { throw new ProviderBridgeAuthorizeUnavailableError('revocation_check_unavailable', { cause: error }) });
+            if (revoked) return false;
             return context;
           },
           // Codex runs on a ChatGPT OAuth session; refresh it in the vault
@@ -1464,10 +1523,18 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         providerBridgeRefs.add(bridge.config.opaqueConfigRef);
         return bridge;
       })();
-      providerBridges.set(provider, created);
-      created.catch(() => providerBridges.delete(provider));
-      return created;
     };
+    const bridgePool = new ProviderBridgeLeasePool({
+      runProvider: run.provider,
+      runModel:    run.model,
+      // A slot/tier alias ('primary', 'fast', …) is not a model id; pinning
+      // it denied every real request the CLI made through this bridge.
+      // 'fast' pins the light model the CLI is launched with instead.
+      pinFor:      cliPinnedModelId,
+      create:      createBridge,
+    });
+    providerBridges = bridgePool;
+    const bridgeFor = (provider: ProviderName, launchModel?: string): Promise<ProviderCliBridgeLease> => bridgePool.lease(provider, launchModel);
     const providerTransport = new ContainerProviderExecutionTransport({
       containerName,
       workspacePath: providerWorkspace,
@@ -1475,6 +1542,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       files:         providerFiles,
       identity,
       bridgeFor,
+      lifecycle:     lifecycleAbort.signal,
       ownsBridge:    ref => providerBridgeRefs.has(ref),
     });
     renewTimer = setInterval(() => {
@@ -1525,7 +1593,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         unregisterRuntime?.();
         unregisterRuntime = undefined;
         toolSession?.revoke();
-        const bridges = await Promise.allSettled([...providerBridges.values()]);
+        const bridges = await Promise.allSettled(providerBridges?.all() ?? []);
         for (const bridge of bridges) {
           if (bridge.status !== 'fulfilled') continue;
           bridge.value.revoke();
@@ -1562,7 +1630,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     if (livenessTimer) clearInterval(livenessTimer);
     unregisterRuntime?.();
     toolSession?.revoke();
-    const bridges = await Promise.allSettled([...providerBridges.values()]);
+    const bridges = await Promise.allSettled(providerBridges?.all() ?? []);
     for (const bridge of bridges) {
       if (bridge.status !== 'fulfilled') continue;
       bridge.value.revoke();
@@ -1602,7 +1670,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
     const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
     const subject = usesContainerVaultAuthority()
-      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      ? await configuredVaultBrokerProvider.getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
       : metadata.userId;
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames;
@@ -1744,6 +1812,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       const finish = async(error?: Error) => {
         if (settled) return;
         settled = true;
+        runTools.clear(run.state.metadata);
         clearTimeout(idleTimer);
         clearInterval(renewTimer);
         if (abortForceTimer) clearTimeout(abortForceTimer);
@@ -1811,6 +1880,11 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
           const item = event.item;
           const kind = item.item_type ?? item.type;
+          // Codex: a command or tool call is in flight from started to completed.
+          if (typeof item.id === 'string' && ['command_execution', 'mcp_tool_call', 'file_change', 'web_search'].includes(kind)) {
+            if (event.type === 'item.started') runTools.started(run.state.metadata, item.id, kind === 'command_execution' ? 'a command' : String(item.tool ?? kind));
+            else runTools.finished(run.state.metadata, item.id);
+          }
           if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
             streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
             flushStream(true);
@@ -1831,6 +1905,13 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         }
         if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
           activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
+          // Claude Code: in flight until its tool_result comes back in a user message.
+          if (typeof nested.content_block.id === 'string') runTools.started(run.state.metadata, nested.content_block.id, nested.content_block.name === 'Bash' ? 'a command' : String(nested.content_block.name ?? 'a tool'));
+        }
+        if (event.type === 'user' && Array.isArray(event.message?.content)) {
+          for (const block of event.message.content) {
+            if (block?.type === 'tool_result' && typeof block.tool_use_id === 'string') runTools.finished(run.state.metadata, block.tool_use_id);
+          }
         }
       };
       const onData = (chunk: Buffer, parseProvider = false) => {
@@ -1915,5 +1996,22 @@ export async function reapOrphanAgentContainers(): Promise<void> {
     await guestExec(['sh', '-c', 'sudo find /dev/shm/sulla-agent-secrets -mindepth 2 -maxdepth 2 -type f -delete 2>/dev/null || true; sudo find /dev/shm/sulla-agent-secrets -mindepth 1 -maxdepth 1 -type d -empty -delete 2>/dev/null || true']);
   } catch (error) {
     log.error(`[AgentContainer] startup orphan secret cleanup failed: ${ (error as Error).message }`);
+  }
+  try {
+    // Provider-file roots normally go with their lifecycle; ones left by a
+    // crash or force-quit have no container mounting them and would pile up.
+    // Skip the sweep entirely when Docker cannot list containers.
+    await guestExec(['sh', '-c', [
+      'set -u',
+      'root="$1"',
+      '[ -d "$root" ] || exit 0',
+      'ids=$(docker ps -aq) || exit 0',
+      'used=""',
+      '[ -z "$ids" ] || used=$(docker inspect --format \'{{range .Mounts}}{{println .Source}}{{end}}\' $ids) || exit 0',
+      'for dir in "$root"/container-*; do [ -d "$dir" ] || continue; printf "%s\\n" "$used" | grep -qxF -- "$dir" || sudo rm -rf -- "$dir"; done',
+      'sudo find "$root" -mindepth 1 -maxdepth 1 -name "file-*" -mmin +60 -exec rm -rf -- {} + 2>/dev/null || true',
+    ].join('; '), 'sulla-provider-files-sweep', GUEST_PROVIDER_FILES_ROOT]);
+  } catch (error) {
+    log.error(`[AgentContainer] orphan provider-file cleanup failed: ${ (error as Error).message }`);
   }
 }

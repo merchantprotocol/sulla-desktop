@@ -131,6 +131,8 @@ export interface ProviderExecutionTransport {
   readonly runtime: ProviderRuntime;
   context(input: {
     provider:           ProviderName;
+    /** Model the CLI is launched with (`--model`); scopes the provider bridge lease. */
+    model?:             string;
     conversationId:     string;
     state?:             BaseThreadState;
     providerSessionId?: string;

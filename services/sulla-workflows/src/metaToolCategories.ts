@@ -30,5 +30,7 @@ export const META_TOOL_CATEGORIES: Readonly<Record<string, string>> = {
   recall_index_lookup: 'memory',
   recall_index_store: 'memory',
   recall_conversations: 'memory',
+  // The Dreamer core routine's tool-call node (agent/tools/episodic/dream.ts).
+  dream_recent_memories: 'memory',
   browse_tools: 'meta',
 };

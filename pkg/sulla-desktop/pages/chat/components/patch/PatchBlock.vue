@@ -10,95 +10,115 @@
   dims the body.
 -->
 <template>
-  <div :class="['patch', stateClass]">
-    <div class="patch-head">
-      <span>Patch</span>
-      <span class="path">{{ msg.path }}</span>
-      <span class="stat">
-        <span class="plus">+{{ msg.stat.added }}</span>
-        <span class="minus">−{{ msg.stat.removed }}</span>
-      </span>
-      <button
-        class="patch-copy"
-        type="button"
-        @click="copyPatch"
-      >
-        {{ copied ? 'Copied' : 'Copy' }}
-      </button>
-    </div>
-    <div class="patch-body">
+  <WorkBlock
+    icon="±"
+    tone="patch"
+    :by="msg.by"
+    :line-id="msg.id"
+    :default-open="false"
+  >
+    <template #title>
+      <span
+        class="pb-state"
+        :class="`pb-${msg.state}`"
+      >{{ STATE_LABEL[msg.state] }}</span> · <b>{{ fileName }}</b><template v-if="folder">
+        · {{ folder }}
+      </template>
+    </template>
+    <template #meta>
+      <span class="pb-plus">+{{ msg.stat.added }}</span> <span class="pb-minus">−{{ msg.stat.removed }}</span>
+    </template>
+
+    <p class="pb-path">
+      <code>{{ msg.path }}</code><span>{{ isNewFile ? 'new file · ' : '' }}{{ flatLines.length }} line{{ flatLines.length === 1 ? '' : 's' }}</span>
+    </p>
+    <div class="pb-diff">
       <div
-        v-for="(line, idx) in flatLines"
+        v-for="(line, idx) in shownLines"
         :key="idx"
-        :class="['l', line.op]"
+        :class="['pb-l', `pb-${line.op}`]"
       >
-        <span class="n">{{ line.n }}</span>
+        <span class="pb-n">{{ line.n }}</span>
+        <span class="pb-op">{{ line.op === 'add' ? '+' : line.op === 'remove' ? '−' : '' }}</span>
         <span v-html="line.text" />
       </div>
+      <button
+        v-if="hiddenCount"
+        type="button"
+        class="pb-more"
+        @click="showAll = true"
+      >
+        Show {{ hiddenCount }} more line{{ hiddenCount === 1 ? '' : 's' }}
+      </button>
     </div>
-    <div class="patch-actions">
-      <template v-if="msg.state === 'proposed'">
+    <div
+      v-if="msg.state !== 'proposed'"
+      class="pb-acts"
+    >
+      <button
+        type="button"
+        class="pb-btn"
+        @click="open"
+      >
+        Open file
+      </button>
+      <button
+        type="button"
+        class="pb-btn pb-quiet"
+        @click="copyPatch"
+      >
+        {{ copied ? 'Copied' : 'Copy patch' }}
+      </button>
+      <span class="pb-sp" />
+      <button
+        v-if="msg.state === 'applied' && canRevert"
+        type="button"
+        class="pb-btn pb-quiet pb-danger"
+        :disabled="reverting"
+        @click="revert"
+      >
+        {{ reverting ? 'Reverting…' : 'Revert' }}
+      </button>
+    </div>
+
+    <!-- A proposed patch waits on the user: its decision stays visible without expanding. -->
+    <template #after>
+      <div
+        v-if="msg.state === 'proposed'"
+        class="pb-acts pb-decide"
+      >
         <button
-          class="apply"
           type="button"
+          class="pb-btn pb-pri"
           @click="apply"
         >
           Apply
         </button>
-        <span class="sep">·</span>
         <button
-          class="open"
           type="button"
+          class="pb-btn"
           @click="open"
         >
-          Open File
+          Open file
         </button>
-        <span class="sep">·</span>
+        <span class="pb-sp" />
         <button
-          class="reject"
           type="button"
+          class="pb-btn pb-quiet pb-danger"
           @click="reject"
         >
           Reject
         </button>
-      </template>
-      <template v-else-if="msg.state === 'applied'">
-        <button
-          class="open"
-          type="button"
-          @click="open"
-        >
-          Open File
-        </button>
-        <template v-if="canRevert">
-          <span class="sep">·</span>
-          <button
-            class="revert"
-            type="button"
-            :disabled="reverting"
-            @click="revert"
-          >
-            {{ reverting ? 'Reverting…' : 'Revert' }}
-          </button>
-        </template>
-      </template>
-      <template v-else>
-        <button
-          class="open"
-          type="button"
-          @click="open"
-        >
-          Open File
-        </button>
-      </template>
-    </div>
-  </div>
+      </div>
+    </template>
+  </WorkBlock>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
+import WorkBlock from '../transcript/WorkBlock.vue';
 
 import type { CodePayload } from '../../models/Artifact';
 import type { PatchMessage } from '../../models/Message';
@@ -110,9 +130,15 @@ const reverting = ref(false);
 const copied = ref(false);
 
 const flatLines = computed(() => props.msg.hunks.flatMap(h => h.lines));
-const stateClass = computed(() => props.msg.state === 'applied'
-  ? 'applied'
-  : props.msg.state === 'rejected' ? 'rejected' : '');
+const PREVIEW_LINES = 6;
+const STATE_LABEL = { proposed: 'Proposed', applied: 'Applied', rejected: 'Rejected' } as const;
+const showAll = ref(false);
+const shownLines = computed(() => (showAll.value ? flatLines.value : flatLines.value.slice(0, PREVIEW_LINES)));
+const hiddenCount = computed(() => Math.max(0, flatLines.value.length - shownLines.value.length));
+const fileName = computed(() => props.msg.path.split('/').pop() || props.msg.path);
+/** The last two folders, enough to tell files apart without the full path. */
+const folder = computed(() => props.msg.path.split('/').slice(0, -1).filter(Boolean).slice(-2).join(' / '));
+const isNewFile = computed(() => props.msg.stat.removed === 0 && flatLines.value.length > 0 && flatLines.value.every(line => line.op === 'add'));
 const canRevert = computed(() => !!props.msg.revertMeta);
 
 function apply(): void {
@@ -156,69 +182,29 @@ function copyPatch(): void {
 </script>
 
 <style scoped>
-.patch {
-  margin: 8px 0 0;
-  border-left: 1px solid var(--accent-dim);
-  padding-left: 22px; position: relative;
-}
-.patch::before {
-  content: ""; position: absolute; left: -4px; top: 20px;
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--accent-glow);
-}
-.patch-head {
-  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--accent, var(--accent));
-  display: flex; align-items: baseline; gap: 14px; margin: 8px 0 10px;
-}
-.patch-head .path {
-  font-family: var(--font-mono); font-size: 11px;
-  color: var(--text-primary); letter-spacing: 0.02em; text-transform: none;
-}
-.patch-head .stat { margin-left: auto; font-size: 10px; color: var(--text-secondary); }
-.patch-head .stat .plus  { color: var(--status-success); }
-.patch-head .stat .minus { color: var(--status-error); margin-left: 6px; }
-.patch-copy { display: none; }
-.patch-body {
-  font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
-  color: var(--text-primary);
-  padding: 14px 0 16px;
-  border-top: 1px solid var(--accent-dim);
-  border-bottom: 1px solid var(--accent-dim);
-}
-.patch-body .l { display: flex; gap: 12px; padding: 0 2px; }
-.patch-body .l .n { color: var(--text-muted); min-width: 22px; text-align: right; user-select: none; font-size: 11.5px; }
-.patch-body .l.add { background: var(--status-success-soft); border-radius: 2px; }
-.patch-body .l.add .n { color: var(--status-success); }
-.patch-body .l.add::before { content: "+ "; color: var(--status-success); margin-left: 2px; }
-.patch-body .l.context::before { content: "  "; white-space: pre; }
-.patch-body .l.context { color: var(--text-secondary); }
-.patch-body .l.remove { background: var(--status-error-soft); }
-.patch-body .l.remove .n { color: var(--status-error); }
-.patch-body .l.remove::before { content: "- "; color: var(--status-error); margin-left: 2px; }
-
-.patch-actions {
-  display: flex; gap: 14px; margin-top: 14px; align-items: center;
-  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em;
-  text-transform: uppercase;
-}
-.patch-actions button {
-  font: inherit; border: none; background: none; cursor: pointer;
-  padding: 0; letter-spacing: inherit; text-transform: inherit;
-  transition: color 0.15s ease;
-}
-.patch-actions .apply  { color: var(--text-primary); font-weight: 700; }
-.patch-actions .apply:hover { color: var(--accent, var(--accent)); }
-.patch-actions .open   { color: var(--accent, var(--accent)); }
-.patch-actions .open:hover { color: var(--text-primary); }
-.patch-actions .reject { color: var(--text-secondary); }
-.patch-actions .reject:hover { color: var(--status-error); }
-.patch-actions .revert { color: var(--text-secondary); }
-.patch-actions .revert:hover { color: var(--status-error); }
-.patch-actions .revert:disabled { color: var(--text-muted); cursor: wait; }
-.patch-actions .sep    { color: var(--text-muted); }
-.patch.applied .patch-body { opacity: 0.55; }
-.patch.applied .patch-head::before { content: "◆ APPLIED · "; color: var(--status-success); letter-spacing: 0.18em; }
-.patch.rejected .patch-body { opacity: 0.4; filter: saturate(0.3); }
-.patch.rejected .patch-head::before { content: "◇ REJECTED · "; color: var(--status-error); letter-spacing: 0.18em; }
+.pb-state { font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.pb-applied { color: var(--status-success); }
+.pb-proposed { color: var(--status-warning); }
+.pb-rejected { color: var(--wb-ink-3); }
+.pb-plus { color: var(--status-success); }
+.pb-minus { color: var(--status-error); }
+.pb-path { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0; font-size: 12.5px; color: var(--wb-ink-3); }
+.pb-path code { color: var(--text-primary); font: 12px var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.pb-diff { overflow: hidden; border: 1px solid var(--border-default); border-radius: 8px; font: 12.5px/1.6 var(--font-mono, ui-monospace, monospace); }
+.pb-l { display: grid; grid-template-columns: 36px 14px minmax(0, 1fr); padding: 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--wb-ink-2); }
+.pb-n { color: var(--wb-ink-3); }
+.pb-add { background: color-mix(in srgb, var(--status-success) 9%, transparent); color: color-mix(in srgb, var(--status-success) 70%, var(--text-primary)); }
+.pb-remove { background: color-mix(in srgb, var(--status-error) 9%, transparent); color: color-mix(in srgb, var(--status-error) 70%, var(--text-primary)); }
+.pb-more { display: block; width: 100%; padding: 6px; border: 0; border-top: 1px solid var(--border-default); background: var(--wb-raised); color: var(--accent); font-family: var(--font-body); font-size: 12.5px; cursor: pointer; }
+.pb-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.pb-decide { margin: 0; padding: 0 12px 10px 44px; }
+.pb-sp { flex: 1; }
+.pb-btn { height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: transparent; color: var(--text-primary); font-family: var(--font-body); font-size: 12.5px; cursor: pointer; }
+.pb-btn:hover:not(:disabled) { border-color: var(--accent); }
+.pb-btn:focus-visible, .pb-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pb-btn:disabled { opacity: .5; cursor: wait; }
+.pb-quiet { border-color: transparent; color: var(--wb-ink-2); }
+.pb-danger { color: var(--status-error); }
+.pb-pri { background: var(--accent); border-color: var(--accent); color: var(--bg-page); font-weight: 650; }
+@media (max-width: 640px) { .pb-decide { padding-left: 12px; } }
 </style>

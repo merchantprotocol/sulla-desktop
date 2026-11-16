@@ -13,6 +13,7 @@ import { ipcMain } from 'electron';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
+import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import type { RecordConversationInput, ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
 import { enqueueSyncOp } from '@pkg/main/sync/syncQueue';
@@ -91,10 +92,23 @@ export function initConversationHistoryIpc(): void {
     }
   });
 
+  // An acknowledged path for the History dialog. Keep the legacy send
+  // listener above for existing callers, but never guess completion by timer.
+  ipcMain.handle('conversation-history:clear-confirmed', async(_event, olderThan?: string) => {
+    const cutoff = olderThan ? new Date(olderThan) : undefined;
+    const deleted = await ConversationHistoryModel.clearHistory(cutoff);
+    await cleanupFiles(deleted);
+    mainEvents.emit('conversation-history:cleared' as any, olderThan);
+    mainEvents.emit('conversation-history:changed' as any);
+
+    return { success: true };
+  });
+
   // ── Invoke handlers (renderer → main, with return value) ──
 
+  // Read handlers below return [] while the database is still starting; HistoryTab reloads on `database:available`.
   ipcMain.handle('conversation-history:list', async(_event, options?: { view?: 'active' | 'archived' | 'deleted'; limit?: number; type?: string }) => {
-    return await ConversationHistoryModel.list(options?.view, options?.limit, options?.type as any);
+    return await getDatabaseReadGuard().run('conversation-history:list', () => ConversationHistoryModel.list(options?.view, options?.limit, options?.type as any), []);
   });
 
   ipcMain.handle('conversation-history:update', async(_event, id: string, patch: { title?: string; pinned?: boolean; archived?: boolean; unread_count?: number; deleted?: boolean }) => {
@@ -123,10 +137,7 @@ export function initConversationHistoryIpc(): void {
 
   ipcMain.handle('conversation-history:get-recent', async(_event, limit?: number, type?: string) => {
     try {
-      return await ConversationHistoryModel.getRecent(
-        limit ?? 50,
-        type as any,
-      );
+      return await getDatabaseReadGuard().run('conversation-history:get-recent', () => ConversationHistoryModel.getRecent(limit ?? 50, type as any), []);
     } catch (err) {
       console.error('[ConversationHistoryIpc] Failed to get recent:', err);
       return [];
@@ -134,17 +145,12 @@ export function initConversationHistoryIpc(): void {
   });
 
   ipcMain.handle('conversation-history:search', async(_event, query: string, options?: { view?: 'active' | 'archived' | 'deleted'; type?: string }) => {
-    try {
-      return options ? await ConversationHistoryModel.searchView(query, options.view, options.type as any) : await ConversationHistoryModel.search(query);
-    } catch (err) {
-      console.error('[ConversationHistoryIpc] Failed to search:', err);
-      return [];
-    }
+    return await getDatabaseReadGuard().run('conversation-history:search', () => options ? ConversationHistoryModel.searchView(query, options.view, options.type as any) : ConversationHistoryModel.search(query), []);
   });
 
   ipcMain.handle('conversation-history:get-by-date-range', async(_event, from: string, to: string) => {
     try {
-      return await ConversationHistoryModel.getByDateRange(new Date(from), new Date(to));
+      return await getDatabaseReadGuard().run('conversation-history:get-by-date-range', () => ConversationHistoryModel.getByDateRange(new Date(from), new Date(to)), []);
     } catch (err) {
       console.error('[ConversationHistoryIpc] Failed to get by date range:', err);
       return [];

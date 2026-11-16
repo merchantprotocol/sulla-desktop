@@ -6,8 +6,6 @@
 -->
 
 <script setup lang="ts">
-import os from 'os';
-
 import PrefCard from '../PrefCard.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
@@ -15,8 +13,8 @@ import PrefToggle from '../PrefToggle.vue';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 
 const { get, set, isLocked } = useEngineSettings();
-// Administrator access is only accepted on macOS.
-const isMac = os.platform() === 'darwin';
+// "Allow administrator access" was removed: nothing in Sulla reads
+// application.adminAccess or asks for an administrator password, so it did nothing.
 </script>
 
 <template>
@@ -38,18 +36,6 @@ const isMac = os.platform() === 'darwin';
           :disabled="isLocked('application.hostAccess')"
           label="Let agents run commands on this Mac"
           @update:model-value="set('application.hostAccess', $event)"
-        />
-      </PrefRow>
-      <PrefRow
-        v-if="isMac"
-        title="Allow administrator access"
-        subtitle="Sulla asks for your password to set up networking."
-      >
-        <PrefToggle
-          :model-value="get('application.adminAccess')"
-          :disabled="isLocked('application.adminAccess')"
-          label="Allow administrator access"
-          @update:model-value="set('application.adminAccess', $event)"
         />
       </PrefRow>
     </PrefCard>

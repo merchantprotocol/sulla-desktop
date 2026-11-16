@@ -80,7 +80,12 @@ function clear() {
 }
 function run() {
   const value = command.value.trim();
-  if (!value || busy.value || !window.ddClient) return;
+  if (!value || busy.value) return;
+  if (!window.ddClient) {
+    lines.value.push({ kind: 'error', text: 'Docker isn’t connected to this window yet. Try again when Docker has started.' });
+
+    return;
+  }
   command.value = '';
   busy.value = true;
   lines.value.push({ kind: 'command', text: `${ props.containerName } $ ${ value }` });
@@ -104,7 +109,10 @@ function run() {
         });
         busy.value = false;
       },
-      onClose: () => {
+      onClose: (code: number) => {
+        if (code) {
+          lines.value.push({ kind: 'error', text: `exit ${ code }` });
+        }
         busy.value = false;
         processHandle = undefined;
       },

@@ -100,12 +100,35 @@ export class CliExhausted extends ProviderFailure {
   }
 }
 
+/**
+ * Sulla's Password Vault, not the model provider, is the problem. These are
+ * classified as infrastructure so they never mark a provider unhealthy or
+ * prompt the user to reconnect a model.
+ */
 export class VaultLocked extends ProviderFailure {
   readonly retryable = false;
   readonly code = 'vault_locked';
   constructor(providerId = 'vault', options: ProviderFailureOptions = { status: 423 }) {
-    super(providerId, 'Your secure account is unavailable. Sign out and sign in again.', options.status ?? 423, options.exitCode, options.cause);
+    super(providerId, 'Your Password Vault is locked, so Sulla can\'t reach your AI models. Unlock the vault and your work will continue.', options.status ?? 423, options.exitCode, options.cause);
   }
+}
+
+export class VaultUnreachable extends ProviderFailure {
+  readonly retryable = true;
+  readonly code = 'vault_unreachable';
+  constructor(providerId = 'vault', options: ProviderFailureOptions = { status: 503 }) {
+    super(providerId, 'Sulla can\'t reach its Password Vault, so it can\'t reach your AI models. This usually means Sulla\'s engine is restarting or overloaded; your model connections are fine.', options.status ?? 503, options.exitCode, options.cause);
+  }
+}
+
+/** The vault failure anywhere in an error's cause chain, if there is one. */
+export function findVaultFailure(error: unknown): VaultLocked | VaultUnreachable | undefined {
+  let current: any = error;
+  for (let depth = 0; current && depth < 8; depth++) {
+    if (current instanceof VaultLocked || current instanceof VaultUnreachable) return current;
+    current = current.cause;
+  }
+  return undefined;
 }
 
 export class Unknown extends ProviderFailure {
@@ -135,6 +158,9 @@ export function legacyProviderFailure(providerId: string, value: unknown, option
   if (/timeout|timed out|etimedout|stalled/.test(message)) return make(TimedOut);
   if (/no response|empty response|returned empty|no extractable prompt/.test(message)) return make(EmptyResponse);
   if (message.includes('workspace routing discovery failed')) return make(RoutingUnavailable);
+  // Sulla's own bridge refused the lease (it answers 401/403). The provider
+  // account is fine, so this must never read as an expired sign-in.
+  if (message.includes('provider bridge request denied')) return make(Unknown);
   // Generic forbidden/access-denied transport text is not proof that credentials were revoked.
   if (/(?:oauth|credential|token|access) (?:was |has been )?revoked|revoked (?:oauth|credential|token|access)/.test(message)) return make(AuthRevoked);
   if (/unauthorized|invalid api key|expired token|not logged in|sign.?in required|\b401\b/.test(message)) return make(AuthExpired);

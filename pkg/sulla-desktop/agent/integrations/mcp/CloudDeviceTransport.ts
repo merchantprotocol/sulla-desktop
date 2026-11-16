@@ -50,7 +50,7 @@ export interface CloudDeviceChannel {
   getManifest(deviceId: string): Promise<CloudToolManifest>;
   rpc(deviceId: string, envelope: RpcEnvelope, signature: string): Promise<any>;
   identity(): Promise<{ userId: string; deviceId: string }>;
-  sign(parts: (string | number)[], ts: number): { ts: number; signature: string };
+  sign(parts: (string | number)[], ts: number): Promise<{ ts: number; signature: string }>;
 }
 
 function canonicalJson(value: unknown): string {
@@ -101,8 +101,8 @@ export const defaultCloudDeviceChannel: CloudDeviceChannel = {
     if (!userId) throw new Error('Sign in to Sulla Cloud to use app tools.');
     return { userId, deviceId };
   },
-  sign(parts, ts) {
-    return { ts, signature: signDeviceMessageExact('device-tools-rpc-v1', parts) };
+  async sign(parts, ts) {
+    return { ts, signature: await signDeviceMessageExact('device-tools-rpc-v1', parts) };
   },
 };
 
@@ -177,7 +177,7 @@ export class CloudDeviceTransport {
       body: { jsonrpc: '2.0', id: callId, method, ...(params === undefined ? {} : { params }) },
     };
     const digest = crypto.createHash('sha256').update(canonicalJson(envelope)).digest('hex');
-    const proof = this.channel.sign([userId, deviceId, this.targetDeviceId, callId, ts, digest], ts);
+    const proof = await this.channel.sign([userId, deviceId, this.targetDeviceId, callId, ts, digest], ts);
     if (proof.ts !== ts) {
       throw new Error('Device signing clock changed while preparing the Cloud tool call.');
     }

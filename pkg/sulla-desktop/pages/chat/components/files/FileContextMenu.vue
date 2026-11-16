@@ -167,13 +167,14 @@ export default defineComponent({
   border-radius: 6px;
   padding: 4px 0;
   box-shadow: 0 4px 16px var(--bg-overlay), 0 1px 3px var(--bg-hover);
-  font-size: var(--fs-code);
+  font-family: var(--type-menus-font, inherit);
+  font-size: var(--type-menus-size, var(--fs-code));
 }
 .ctx-item {
   display: flex; align-items: center; gap: 8px;
   width: 100%; padding: 6px 12px;
   border: none; background: none;
-  color: var(--text); cursor: pointer; text-align: left; line-height: 1;
+  color: var(--type-menus-color, var(--text)); cursor: pointer; text-align: left; line-height: 1;
 }
 .ctx-item:hover { background: var(--surface-3); }
 .ctx-item.danger { color: var(--status-error); }

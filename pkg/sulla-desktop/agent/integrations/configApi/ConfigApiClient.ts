@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { requireConfiguredCredentialBroker, usesContainerVaultAuthority, VaultBrokerError } from '../../../vault-broker';
+import { usesContainerVaultAuthority, VaultBrokerError, configuredVaultBrokerProvider } from '../../../vault-broker';
 import { getIntegrationService } from '../../services/IntegrationService';
 
 import type {
@@ -316,7 +316,7 @@ export class ConfigApiClient {
     if (typeof body === 'string') {
       try { body = JSON.parse(body) } catch { /* preserve non-JSON request body */ }
     }
-    const broker = requireConfiguredCredentialBroker();
+    const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
     try {
       const result = await broker.execute(broker.requestFor(ctx, {
         operation: 'catalog.http',

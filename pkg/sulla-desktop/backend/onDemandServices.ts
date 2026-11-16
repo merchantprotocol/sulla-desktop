@@ -115,7 +115,16 @@ async function start(service: OnDemandServiceName): Promise<void> {
   const container = ON_DEMAND_SERVICES[service];
   const current = state(service);
 
-  if (ready(await containerStatus(container))) return;
+  const status = await containerStatus(container);
+
+  if (ready(status)) return;
+  // Already running and still starting (or briefly unhealthy): starting it again
+  // does nothing useful and compose could recreate it. Just wait for health.
+  if (status.startsWith('running ')) {
+    await waitReady(container);
+
+    return;
+  }
   const composeUp = () => guest()([...SULLA_COMPOSE_COMMAND, 'up', '-d', '--no-deps', service]);
   const dockerStart = () => guest()(['docker', 'start', container]);
 

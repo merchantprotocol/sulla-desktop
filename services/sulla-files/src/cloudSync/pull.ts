@@ -6,7 +6,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ChangesPage } from './cloudApi.js';
-import { openManifest, stateHash, type ManifestPlain, type NamespaceManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
+import { streamingStateHash } from './stateHashStream.js';
+import { openManifest, type ManifestPlain, type NamespaceManifestPlain, type StateEntry, type SyncHead } from './envelope.js';
 import {
   assertNamespaceCommitBinding,
   assertRemoteMatchesManifest,
@@ -54,8 +55,8 @@ export interface ApplyRemoteInput {
 
 /** Everything the puller needs from the database. PgCloudSyncRepository implements it. */
 export interface PullRepository {
-  /** Per-file cloud heads this device last saw (files_cloud_file_heads). */
-  cloudHeads(collectionId:string):Promise<StateEntry[]>;
+  /** Per-file cloud heads this device last saw (files_cloud_file_heads), in fileId order, one bounded page at a time. */
+  cloudHeadPages(collectionId:string):AsyncIterable<StateEntry[]>;
   /** The version already exists locally (we pushed it, or applied it before). */
   hasLocalVersion(versionId:string):Promise<boolean>;
   /** The version is known to Cloud: pushed from here or applied from a pull. */
@@ -224,12 +225,8 @@ export class CloudPuller {
 
   /** stateHash is over every file's cloud head after this page, never over local files (which may hold unpushed edits). */
   private async assertStateHash(collectionId:string, opened:OpenedVersion[], head:SyncHead):Promise<void> {
-    const projected = new Map<string, StateEntry>();
-    for (const entry of await this.repository.cloudHeads(collectionId)) projected.set(entry.fileId, entry);
-    for (const { remote } of opened) {
-      projected.set(remote.fileId, { fileId: remote.fileId, versionId: remote.versionId, deleted: remote.deleted });
-    }
-    if (await stateHash([...projected.values()]) !== head.stateHash) {
+    const overrides = opened.map(({ remote }) => ({ fileId: remote.fileId, versionId: remote.versionId, deleted: remote.deleted }));
+    if (await streamingStateHash(this.repository.cloudHeadPages(collectionId), overrides) !== head.stateHash) {
       throw new CloudSyncIntegrityError('cloud head state does not match the listed versions');
     }
   }

@@ -15,6 +15,9 @@ import { enqueueAgentCompletion, type AgentTerminalNotice } from '../../services
 import { OrphanedChildResultService, type OrphanedChildJobStore } from '../../services/OrphanedChildResultService';
 import { OrphanedChildRerouter } from '../../services/OrphanedChildRerouter';
 import { contractResultOutput, contractReturnStatus, normalizeContract } from './contract';
+import { AgentResultCardBuilder, subconsciousResultModel } from '../../services/agentResults/AgentResultCardBuilder';
+
+import type { AgentResultCardData } from '../../../shared/agentResults/AgentResultCard';
 
 import type { AgentJob, AgentJobResult, AgentJobTask } from './jobRegistry';
 
@@ -66,7 +69,9 @@ export function buildWakeContent(
 
   return `[sub-agent job ${ jobId } complete — ${ results.length } result(s)]\n\n` +
     'These are the results returned by the sub-agent(s) you launched. ' +
-    'Continue your orchestration using them (do NOT call check_agent_jobs for this job — the results are below):\n\n' +
+    'Continue your orchestration using them (do NOT call check_agent_jobs for this job — the results are below). ' +
+    'The user already sees a result card in the chat with each agent\'s outcome, so do not restate it: ' +
+    'reply only with your judgment, a decision you need from them, or the next step.\n\n' +
     formatted;
 }
 
@@ -106,6 +111,7 @@ export async function emitProactiveCompletion(
   failureReason?: string,
   parentThreadId?: string,
   terminal?: AgentTerminalNotice,
+  card?: AgentResultCardData,
 ): Promise<void> {
   try {
     const ws = getWebSocketClientService();
@@ -146,6 +152,7 @@ export async function emitProactiveCompletion(
         headline,
         body,
         content: body,
+        ...(card?.items.length ? { result: card } : {}),
       },
     });
   } catch (e) {
@@ -163,7 +170,7 @@ export class JobCompletionDelivery {
   private readonly orphanedChildResults: OrphanedChildResultService;
   private readonly orphanedChildRerouter: OrphanedChildRerouter;
 
-  constructor(jobs: OrphanedChildJobStore) {
+  constructor(jobs: OrphanedChildJobStore, private readonly cards = new AgentResultCardBuilder(subconsciousResultModel)) {
     this.orphanedChildResults = new OrphanedChildResultService(jobs);
     this.orphanedChildRerouter = new OrphanedChildRerouter();
   }
@@ -193,7 +200,11 @@ export class JobCompletionDelivery {
       return wakeParentGraph(orphan.route.channel, orphan.route.threadId, job.jobId, orphanResults, orphanReason, taskIndex, terminal);
     }
     const channel = job.parentChannel || 'sulla-desktop';
-    await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal);
+    // Bounded (a few seconds at most) and never fatal: a plain card is the fallback.
+    const card = results.length && !failureReason
+      ? await this.cards.build(job, results, taskIndex).catch(() => undefined)
+      : undefined;
+    await emitProactiveCompletion(channel, job.jobId, results, failureReason, job.parentThreadId, terminal, card);
     return wakeParentGraph(channel, job.parentThreadId, job.jobId, results, failureReason, taskIndex, terminal);
   }
 }

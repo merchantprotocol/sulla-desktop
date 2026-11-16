@@ -18,18 +18,18 @@
  *      process via `ipcRenderer.send()` instead of the iframe-era
  *      `window.parent.postMessage()` or webview-era
  *      `ipcRenderer.sendToHost()`.
- *   2. Listen for messages from the main process and forward them
- *      to the guest bridge if needed.
- *   3. Inject the guest bridge script at DOMContentLoaded so
- *      `window.sullaBridge` is available as early as possible.
+ *   2. Inject the guest bridge script at document-start (through
+ *      webFrame, so CSP-strict pages accept it) so `window.sullaBridge`
+ *      is available as early as possible.
  *
  * This file must be compiled to JS and referenced as the `preload`
  * option when creating the browser tab's WebContentsView session.
  */
 
-import { ipcRenderer } from 'electron';
+import { ipcRenderer, webFrame } from 'electron';
 
 import { buildGuestBridgeScript } from '../agent/scripts/injected/GuestBridgePreload';
+import { GuestBridgeInjector } from './guestBridgeInjector';
 import { shouldFallbackToRootScroll } from './browserScrollFallback';
 import { DEFAULT_THEME_ID } from '../config/theme';
 
@@ -191,20 +191,7 @@ ipcRenderer.on('sulla:theme-changed', (_event, theme: string) => {
 };
 
 /* ------------------------------------------------------------------ */
-/*  2. Listen for commands from the main process                      */
-/* ------------------------------------------------------------------ */
-
-ipcRenderer.on('browser-tab-view:execute', (_event, code: string) => {
-  try {
-    // eslint-disable-next-line no-eval
-    (0, eval)(code);
-  } catch (err) {
-    console.error(`${ LOG_PREFIX } execute failed`, { code: code.slice(0, 200), err });
-  }
-});
-
-/* ------------------------------------------------------------------ */
-/*  3. Inject the guest bridge IMMEDIATELY at document-start          */
+/*  2. Inject the guest bridge IMMEDIATELY at document-start          */
 /* ------------------------------------------------------------------ */
 //
 // Do NOT wait for DOMContentLoaded. The preload runs before any page
@@ -221,19 +208,18 @@ ipcRenderer.on('browser-tab-view:execute', (_event, code: string) => {
 // window — which is exactly when tools like `browser/snapshot` tried to
 // call them, timed out, and the agent retried (spawning yet more tabs).
 //
-// Eval synchronously here. All DOM mutations (appendChild to body, etc.)
+// Inject through webFrame.executeJavaScript, not eval. With contextIsolation
+// off the preload shares the page's main world, so `(0, eval)(script)` is
+// checked against the page's Content-Security-Policy and is refused on any
+// site without 'unsafe-eval' (GitHub, sulladesktop.com, most banks). Scripts
+// the embedder executes through webFrame are not page eval and are not subject
+// to script-src, the same reason the main process's executeJavaScript calls
+// (context menu, vault autofill) work on those sites. All DOM mutations
 // inside the script are guarded behind function invocations or
 // DOMContentLoaded handlers they themselves register.
 
-function injectGuestBridge(): void {
-  try {
-    const script = buildGuestBridgeScript();
-    // eslint-disable-next-line no-eval
-    (0, eval)(script);
-    console.log(`${ LOG_PREFIX } guest bridge injected`, { url: location.href, readyState: document.readyState });
-  } catch (err) {
-    console.error(`${ LOG_PREFIX } guest bridge injection failed`, err);
-  }
-}
-
-injectGuestBridge();
+new GuestBridgeInjector(
+  script => webFrame.executeJavaScript(script),
+  console,
+  LOG_PREFIX,
+).inject(buildGuestBridgeScript(), location.href);

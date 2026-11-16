@@ -44,6 +44,27 @@ export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttribu
     created_at:     'timestamp',
   };
 
+  /** Delete a bounded batch of non-resumable terminal history older than 30 days. */
+  static async deleteExpiredBatch(limit = 250): Promise<number> {
+    const rows = await postgresClient.queryAll<{ id: number }>(`
+      WITH expired AS (
+        SELECT checkpoint.id FROM workflow_checkpoints AS checkpoint
+        JOIN workflow_executions AS execution USING (execution_id)
+        WHERE execution.status NOT IN ('running', 'suspended', 'waiting', 'completed')
+          AND checkpoint.created_at < NOW() - INTERVAL '30 days'
+        ORDER BY checkpoint.created_at LIMIT $1
+      )
+      DELETE FROM workflow_checkpoints AS checkpoint USING expired
+      WHERE checkpoint.id = expired.id RETURNING checkpoint.id
+    `, [limit]);
+    return rows.length;
+  }
+
+  /** Completed runs no longer need resumable state. */
+  static async deleteForExecution(executionId: string): Promise<void> {
+    await postgresClient.query('DELETE FROM workflow_checkpoints WHERE execution_id = $1', [executionId]);
+  }
+
   /**
    * Get all checkpoints for an execution, ordered by sequence.
    */
@@ -145,6 +166,7 @@ export class WorkflowCheckpointModel extends BaseModel<WorkflowCheckpointAttribu
       created_at:     new Date(),
     } as any;
     await checkpoint.save();
+    await WorkflowCheckpointModel.deleteExpiredBatch();
     return checkpoint;
   }
 }

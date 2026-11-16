@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { RoutineReportRepository } from '../../app/Repositories/RoutineReportRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -21,6 +22,10 @@ import { BaseTool, ToolResponse } from '../base';
 export class RoutineReportWorker extends BaseTool {
   name = 'routine_report';
   description = 'Drill-down report for a routine: last-run status, timing, error, and the step-by-step tool-call trace (from workflow_checkpoints) explaining why it did what it did. Call this when routines_digest flags a routine failed/blocked/stalled. Args: slug (required), executionId (optional, target one run), last_k (optional, default 1).';
+
+  protected repository(): RoutineReportRepository {
+    return new RoutineReportRepository(postgresClient);
+  }
 
   schemaDef = {
     slug:        { type: 'string' as const, optional: true, description: 'Routine slug (source_template_slug), e.g. "planning-triage". Provide slug or executionId.' },
@@ -53,15 +58,7 @@ export class RoutineReportWorker extends BaseTool {
     }
 
     try {
-      const runs = await postgresClient.query(`
-        SELECT execution_id, routine_slug, routine_name, status,
-               started_at, completed_at, duration_seconds, error, is_zombie
-        FROM routine_run_history
-        WHERE ($1::text IS NULL OR routine_slug = $1)
-          AND ($2::text IS NULL OR execution_id = $2)
-        ORDER BY started_at DESC
-        LIMIT $3
-      `, [slug, executionId, k]);
+      const runs = await this.repository().runs(slug, executionId, k);
 
       const runRows = Array.isArray(runs) ? runs : [];
       if (runRows.length === 0) {
@@ -73,12 +70,7 @@ export class RoutineReportWorker extends BaseTool {
 
       const blocks: string[] = [];
       for (const run of runRows) {
-        const checkpoints = await postgresClient.query(`
-          SELECT sequence, node_id, node_label, node_subtype, node_output
-          FROM workflow_checkpoints
-          WHERE execution_id = $1
-          ORDER BY sequence ASC
-        `, [run.execution_id]);
+        const checkpoints = await this.repository().checkpoints(run.execution_id);
         const cpRows = Array.isArray(checkpoints) ? checkpoints : [];
 
         const head =

@@ -127,6 +127,20 @@ describe('package target integrity', () => {
     expect(manifest.problems('/repo', target, fs)).toContain(`${ target.nativeDependencyPaths[0] } is missing for darwin-x64`);
   });
 
+  it('requires sherpa-onnx dylibs beside the hoisted addon, where @loader_path finds them', () => {
+    // risk: native runtime — a real yarn install hoists sherpa-onnx-darwin-<arch>; a nested-only path made every real package fail the gate.
+    const target = PackageTargetSpec.resolve('darwin', 'x64');
+    const fs = new MemoryFileSystem();
+    const manifest = new PackageTargetNativeDependencyManifest();
+    const hoisted = ['sherpa-onnx.node', 'libonnxruntime.dylib', 'libsherpa-onnx-c-api.dylib'].map(name => `node_modules/sherpa-onnx-darwin-x64/${ name }`);
+
+    target.nativeDependencyPaths.forEach(file => fs.files.set(`/repo/${ file }`, 'binary'));
+    hoisted.forEach(file => expect(target.nativeDependencyPaths).toContain(file));
+    expect(target.nativeDependencyPaths.some(file => file.includes('sherpa-onnx-node/node_modules'))).toBe(false);
+    fs.files.delete('/repo/node_modules/sherpa-onnx-darwin-x64/libsherpa-onnx-c-api.dylib');
+    expect(manifest.problems('/repo', target, fs)).toEqual(['node_modules/sherpa-onnx-darwin-x64/libsherpa-onnx-c-api.dylib is missing for darwin-x64']);
+  });
+
   it('requires host runtime and guest-image assets while keeping guest images separate from host executable audits', () => {
     // risk: VM boot integrity — host Mach-O validation must not misclassify Linux guest payloads.
     const fs = new MemoryFileSystem();

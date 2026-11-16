@@ -17,9 +17,9 @@ import Electron from 'electron';
 
 import { getSettings } from '@pkg/config/settingsImpl';
 import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
-import { getInstallId } from '@pkg/main/installId';
+import { InstallIdStore } from '@pkg/main/installId';
 import { SupportStateStore } from '@pkg/main/supportState';
-import { recordSupportTimeline } from '@pkg/main/supportTimeline';
+import { supportTimeline } from '@pkg/main/supportTimeline';
 
 const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
 const MAX_ERROR_MESSAGE_LENGTH = 1_024;
@@ -110,7 +110,7 @@ export async function submitErrorReport(report: ErrorReportPayload): Promise<{ s
     payload.notify_email = report.notify_email;
   }
 
-  void recordSupportTimeline('error', { errorType: payload.error_type, message: truncateUtf8(payload.error_message, MAX_ERROR_MESSAGE_LENGTH) });
+  void supportTimeline.record('error', { errorType: payload.error_type, message: truncateUtf8(payload.error_message, MAX_ERROR_MESSAGE_LENGTH) });
 
   if (supportState && !supportState.read().privacy.errorReports) return { success: false, action: 'support_error_reports_disabled' };
 
@@ -154,7 +154,7 @@ async function submitCloudError(report: ErrorReportPayload): Promise<void> {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        installId:    getInstallId(Electron.app.getPath('userData')),
+        installId:    new InstallIdStore(Electron.app.getPath('userData')).get(),
         appVersion:   report.app_version || getAppVersion(),
         platform:     report.os_platform || process.platform,
         arch:         process.arch,

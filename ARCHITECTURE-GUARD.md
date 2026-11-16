@@ -21,6 +21,26 @@ Only production code is checked. Tests, fixtures, `node_modules`, build output, 
 | `raw-sql` | SQL strings (`SELECT … FROM`, `INSERT INTO`, `UPDATE … SET`, `DELETE FROM`, `CREATE/ALTER/DROP TABLE`), `sql` tagged templates, or `db/pool/client/…​.query/prepare/exec/…(` calls outside `Repositories/`, `Models/` or `migrations/` folders | move the data access into a Repository |
 | `long-file` | a file over 400 lines that isn't on the allowlist | split it into classes |
 | `procedural-module` | a file that exports free functions doing I/O or business logic (await, fetch, fs, IPC, storage, db calls) and exports no class. UI components (`.vue/.tsx/.jsx`), `*.config.*` and `scripts/` are exempt | make it a Service, Repository or other class |
+| `frozen` | a file listed under `"frozen"` in `architecture-guard.config.json` grows past its `maxLines` or exports a name not in its `exports` list | bug fixes only: keep the fix inside the budget and put new code in the replacement (see below) |
+| `domain-owned` | a local copy of logic the shared `@sulla/domain` package owns (config `domainOwned`; today: Bitwarden export parsing, matched by Bitwarden field names in code or strings). Comments, tests and fixtures are ignored. Never allowlisted | call the domain service (for Bitwarden: `services/sulla-vault/src/bitwarden/BitwardenExportImporter.ts`) |
+
+## Frozen files: bug fixes only
+Some legacy files stay in service until their replacement lands. They're listed under `"frozen"` in `architecture-guard.config.json` with a `reason`, an `until` (what ends the freeze), a `maxLines` budget, the `exports` they may have, and an `exceptions` list. Today: `services/sulla-vault/src/browserEnvelope/syncRunner.ts` (the v3 Cloud vault sync runner) is frozen until Replica replaces it.
+
+The check fails when a frozen file:
+- has more lines than `maxLines` (counted like `wc -l`), or
+- exports a name that isn't in `exports` (`export class/function/const/type/interface/enum`, `export { … }`, `export *`, `export default`);
+- and, against the PR base: when a PR raises `maxLines` or adds to `exports` without adding a new `exceptions` entry, or removes the frozen entry while the file still exists.
+
+Shrinking is always fine; the guard prints a warning so you can lower the budget.
+
+**Exception path.** A bug fix that truly can't fit the budget (or needs a new export) raises it in the same PR and appends one entry to `exceptions`:
+
+```json
+{ "date": "2026-11-12", "reason": "why the fix can't live in the replacement", "approvedBy": "who approved it (the epic owner)", "pr": "#1234" }
+```
+
+`date`, `reason` and `approvedBy` are required. Reviewers check the reason; the guard only checks that a raise came with an entry. **Ending the freeze:** delete the file and its frozen entry in the same PR. The rule's code and tests: `scripts/architecture-guard/FrozenFileGuard.mjs`, `node --test scripts/architecture-guard/FrozenFileGuard.test.mjs`.
 
 ## The allowlist only shrinks
 `architecture-guard.allowlist.json` lists today's offenders (file → rule counts + reason). The check fails when:

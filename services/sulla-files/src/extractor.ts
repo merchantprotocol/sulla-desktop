@@ -11,7 +11,9 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 const MAX_TEXT = 4 * 1024 * 1024;
-const MAX_DOCUMENT_BYTES = 512 * 1024 * 1024;
+// Indexing is intentionally stricter than content storage: oversized files
+// remain downloadable, but never fan out into large native extractor buffers.
+export const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_PDF_OCR_PAGES = 20;
@@ -159,29 +161,36 @@ async function mediaTranscript(path:string):Promise<ExtractedText> {
 }
 
 /** Extracts current-version content locally with explicit resource bounds and outcomes. */
-export async function extractIndexText(path:string, mime:string):Promise<ExtractedText> {
-  try {
-    const size = (await stat(path)).size;
-    if (size > MAX_DOCUMENT_BYTES && !mime.startsWith('audio/') && !mime.startsWith('video/')) {
-      return outcome('unsupported', null, 'document_too_large', 'Text, PDF, Office, and image indexing supports files up to 512 MB.');
+export class IndexTextExtractor {
+  async extract(path:string, mime:string):Promise<ExtractedText> {
+    try {
+      const size = (await stat(path)).size;
+      if (size > MAX_DOCUMENT_BYTES && !mime.startsWith('audio/') && !mime.startsWith('video/')) {
+        return outcome('unsupported', null, 'document_too_large', 'Text, PDF, Office, and image indexing supports files up to 512 MB.');
+      }
+      if (mime.startsWith('text/') || ['application/json', 'application/yaml', 'application/xml'].includes(mime)) {
+        const handle = await open(path, 'r');
+        try {
+          const bytes = Buffer.alloc(Math.min(size, MAX_TEXT)); const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+          const partial = size > MAX_TEXT;
+          return outcome('indexed', bytes.subarray(0, bytesRead).toString('utf8').replace(/\uFFFD$/, ''), partial ? 'text_extracted_partial' : 'text_extracted', partial ? 'Text was partially indexed; only the first 4 MiB is searchable.' : 'Text indexed locally.', partial);
+        } finally { await handle.close() }
+      }
+      if (mime === 'application/pdf') return pdfText(path);
+      if (mime === 'application/msword') return commandText('antiword', [path], 'word_extracted', 'Word document text indexed locally.');
+      if (mime.includes('wordprocessingml')) return ooxmlText(path, 'document');
+      if (mime.includes('spreadsheetml')) return ooxmlText(path, 'sheet');
+      if (mime.includes('presentationml')) return ooxmlText(path, 'slides');
+      if (mime.startsWith('image/')) return imageOcr(path);
+      if (mime.startsWith('audio/') || mime.startsWith('video/')) return mediaTranscript(path);
+      return outcome('unsupported', null, 'format_unsupported', `This file type (${ mime || 'unknown' }) does not have a local text extractor.`);
+    } catch {
+      return outcome('failed', null, 'extractor_failed', 'The local extractor could not read this file safely.');
     }
-    if (mime.startsWith('text/') || ['application/json', 'application/yaml', 'application/xml'].includes(mime)) {
-      const handle = await open(path, 'r');
-      try {
-        const bytes = Buffer.alloc(Math.min(size, MAX_TEXT)); const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-        const partial = size > MAX_TEXT;
-        return outcome('indexed', bytes.subarray(0, bytesRead).toString('utf8').replace(/\uFFFD$/, ''), partial ? 'text_extracted_partial' : 'text_extracted', partial ? 'Text was partially indexed; only the first 4 MiB is searchable.' : 'Text indexed locally.', partial);
-      } finally { await handle.close() }
-    }
-    if (mime === 'application/pdf') return pdfText(path);
-    if (mime === 'application/msword') return commandText('antiword', [path], 'word_extracted', 'Word document text indexed locally.');
-    if (mime.includes('wordprocessingml')) return ooxmlText(path, 'document');
-    if (mime.includes('spreadsheetml')) return ooxmlText(path, 'sheet');
-    if (mime.includes('presentationml')) return ooxmlText(path, 'slides');
-    if (mime.startsWith('image/')) return imageOcr(path);
-    if (mime.startsWith('audio/') || mime.startsWith('video/')) return mediaTranscript(path);
-    return outcome('unsupported', null, 'format_unsupported', `This file type (${ mime || 'unknown' }) does not have a local text extractor.`);
-  } catch {
-    return outcome('failed', null, 'extractor_failed', 'The local extractor could not read this file safely.');
   }
+}
+
+/** Delegating shim for existing callers (tests); new code injects IndexTextExtractor. */
+export function extractIndexText(path:string, mime:string):Promise<ExtractedText> {
+  return new IndexTextExtractor().extract(path, mime);
 }

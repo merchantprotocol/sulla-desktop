@@ -24,6 +24,11 @@ export class CloudAgentStateProjection {
       return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) => [jobId,
         Object.fromEntries(Object.entries(tasks).map(([taskIndex, value]) => [taskIndex, value.latestCheckin]))]));
     },
+    answeredForJobs: async(jobIds) => {
+      const telemetry = await agentJobProvider.messaging.latestTelemetryForJobs(jobIds);
+      return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) => [jobId,
+        Object.fromEntries(Object.entries(tasks).map(([taskIndex, value]) => [taskIndex, value.lastMessageDeliveredAt ?? null]))]));
+    },
   }, Date.now, {}, agentJobProvider.activity)) {}
 
   async build(deviceId = ''): Promise<CloudAgentProjection[]> {

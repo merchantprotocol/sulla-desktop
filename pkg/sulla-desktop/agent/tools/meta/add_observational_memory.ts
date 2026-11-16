@@ -4,7 +4,6 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ObservationsModel } from '../../database/models/ObservationsModel';
-import { generateClaudeCodeMemoryFile } from '../../prompts/generateClaudeCodeMemoryFile';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -33,7 +32,6 @@ export class AddObservationalMemoryWorker extends BaseTool {
           };
         }
 
-        generateClaudeCodeMemoryFile().catch(() => {});
         return {
           successBoolean: true,
           responseString: `Remembering (updated): "${ content }" (id: ${ updated.id }, priority: ${ updated.priority })`,
@@ -46,7 +44,6 @@ export class AddObservationalMemoryWorker extends BaseTool {
       if (duplicate) {
         // Update the existing row: refresh priority and content.
         await ObservationsModel.update(duplicate.id, { priority, content, source });
-        generateClaudeCodeMemoryFile().catch(() => {});
         return {
           successBoolean: true,
           responseString: `Remembering (updated): "${ content }" (id: ${ duplicate.id }, priority: ${ priority })`,
@@ -55,7 +52,6 @@ export class AddObservationalMemoryWorker extends BaseTool {
 
       // Insert a new observation row.
       const record = await ObservationsModel.insert({ id: generateTinyId(), priority, content, source });
-      generateClaudeCodeMemoryFile().catch(() => {});
       return {
         successBoolean: true,
         responseString: `Remembering: "${ content }" (id: ${ record.id }, priority: ${ priority })`,

@@ -20,15 +20,15 @@ export class AgentWaitServiceProvider {
     this.scheduler = new AgentWakeScheduler(this.repository, async(wait) => {
       const job = await getJob(wait.jobId);
       const task = job?.tasks[wait.taskIndex];
-      if (!job || !task?.threadId || task.status !== 'parked') return;
+      // Nothing left to wake: the task already resumed, settled or was stopped.
+      if (!job || !task?.threadId || task.status !== 'parked') return true;
       const { getBackendGraphWebSocketService } = await import('./BackendGraphWebSocketService');
-      await getBackendGraphWebSocketService().wakeParkedAgent(job.parentChannel ?? 'sulla-desktop', task.threadId,
+      // false = deferred (a turn is already running); the scheduler retries it.
+      return getBackendGraphWebSocketService().wakeParkedAgent(job.parentChannel ?? 'sulla-desktop', task.threadId,
         `[Wait complete]\n${ wait.reason }`, task.agentId, { jobId: wait.jobId, taskIndex: wait.taskIndex, source: 'agent_wait_timer' });
     });
     this.parking = new AgentTaskParkingService(this.repository, async(wait) => Boolean(await agentJobProvider.states.mutateJob(wait.jobId, current =>
-      current.tasks[wait.taskIndex]?.status === 'running' ? { ...current, waitingOnChildren: 0,
-        tasks: current.tasks.map((task, index) => index === wait.taskIndex
-          ? { ...task, status: 'parked', waitReason: wait.reason, wakeAt: wait.wakeAt.getTime() } : task) } : undefined)), this.scheduler);
+      AgentTaskParkingService.parkedJob(current, wait))), this.scheduler);
   }
 
   async cancel(jobId: string, taskIndex: number): Promise<boolean> {

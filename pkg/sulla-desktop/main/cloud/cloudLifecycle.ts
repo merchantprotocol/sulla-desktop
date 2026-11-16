@@ -34,12 +34,14 @@ import { SyncDriverSupervisor } from './syncDriverSupervisor';
 import { NetworkResumeMonitor, type NetworkResumePowerSource, type NetworkStatusSource } from './networkResumeMonitor';
 import { CloudResumeSync } from './cloudResumeSync';
 import { getDeviceKeyFingerprint } from './deviceKey';
+import { DeviceSyncGate } from './device/DeviceSyncGate';
 import { SecureDesktopChannel } from './secureChannel';
 import { ConversationSyncService } from './conversationSync';
 import { CloudRuntimeProjectionSync, syncRuntimeProjections } from './runtimeProjection/sync';
 import { dispatchCloudAgentCommand } from '@pkg/agent/tools/agents/cloudProjection';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { openUrlInApp } from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -190,14 +192,22 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
     DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); ByoUsageSync.stop(); return;
   }
   if (prefs.conversations) { await startConversationSync(); ConversationSyncService.start(); } else { await stopConversationSync(); ConversationSyncService.stop(); }
-  if (prefs.vault) VaultSyncV3.start(); else VaultSyncV3.stop();
-  if (prefs.files) FilesSyncV1.start(); else FilesSyncV1.stop();
+  // A revoked or key-refused device never starts device-signed sync (see DeviceSyncGate).
+  const deviceTrusted = syncGate.allowsSync(DevicesCloudApi.getState());
+  if (prefs.vault && deviceTrusted) VaultSyncV3.start(); else VaultSyncV3.stop();
+  if (prefs.files && deviceTrusted) FilesSyncV1.start(); else FilesSyncV1.stop();
   if (prefs.memory) MemorySyncV1.start(); else MemorySyncV1.stop();
   // Marketplace/installable projections are intentionally not user-syncable.
   DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop();
   if (prefs.usage) CloudDataSync.start(); else CloudDataSync.stop();
   if (prefs.usage) ByoUsageSync.start(); else ByoUsageSync.stop();
 }
+
+// One immutable gate; services are reached lazily (import cycle: vaultSyncV3/filesSyncV1 -> sullaCloudAuth -> here), so nothing is captured by value at load.
+const syncGate = new DeviceSyncGate(
+  { channel: { start: () => getChannel().start(), stop: () => getChannel().stop() }, vault: { start: () => VaultSyncV3.start(), stop: () => VaultSyncV3.stop() }, files: { start: () => FilesSyncV1.start(), stop: () => FilesSyncV1.stop() } },
+  async kind => isCloudKindEnabled(await getCloudPreferences(), kind),
+);
 
 function installPrefsListener() {
   if (prefsListenerInstalled) return;
@@ -211,10 +221,9 @@ function installPrefsListener() {
     broadcast();
   });
   DevicesCloudApi.onStateChange((state) => {
-    // Revoked from the dashboard: stop the channel; heartbeats keep polling
-    // so a restore brings it back without a restart.
-    if (state.revoked) { getChannel().stop(); FilesSyncV1.stop() }
-    else if (signedIn && state.registered) { getChannel().start(); getCloudPreferences().then(p => { if (isCloudKindEnabled(p, 'files')) FilesSyncV1.start() }).catch(() => undefined) }
+    // Revoked from the dashboard (or key refused): stop the channel, vault and files sync; heartbeats keep
+    // polling so a restore (or a re-link) brings them back without a restart.
+    syncGate.apply(state, signedIn).catch(() => undefined);
     broadcast();
   });
 }
@@ -231,7 +240,7 @@ export async function startCloudServices(): Promise<void> {
   VaultDeviceApproval.start();
   // The channel needs the key enrolled first; if registration failed it
   // retries on its own backoff.
-  if (deviceId && !DevicesCloudApi.getState().revoked) getChannel().start();
+  if (deviceId && syncGate.allowsSync(DevicesCloudApi.getState())) getChannel().start();
   await applySyncPreferences(prefs).catch(err => console.warn('[CloudLifecycle] sync services start failed:', err));
   broadcast();
 }
@@ -271,7 +280,7 @@ export interface CloudConnectionStatus {
 
 export async function getCloudConnectionStatus(): Promise<CloudConnectionStatus> {
   let fingerprint: string | null = null;
-  try { fingerprint = getDeviceKeyFingerprint() } catch { /* key unreadable */ }
+  try { fingerprint = await getDeviceKeyFingerprint() } catch { /* key unreadable */ }
   return {
     signedIn,
     preferences:     await getCloudPreferences().catch(() => null),
@@ -296,6 +305,18 @@ export function initCloudConnectionEvents(): void {
   const ipc = getIpcMainProxy(console);
 
   ipc.handle('sulla-cloud-connection:get-status', async() => getCloudConnectionStatus());
+
+  // Registered with the other Cloud handlers (always present), unlike the extension manager's
+  // open-external listener, which only exists once the backend has started.
+  ipc.handle('sulla-cloud-connection:open-devices-page', async() => { openUrlInApp('https://sulladesktop.com/cloud/devices.html') });
+
+  // Re-link this computer after Cloud refused its key (device_key_mismatch). Human-driven from the Devices card.
+  ipc.handle('sulla-cloud-connection:relink-device', async() => {
+    const result = await DevicesCloudApi.relink();
+    broadcast();
+
+    return result;
+  });
 
   ipc.handle('sulla-cloud-connection:set-preferences', async(_e: unknown, patch: Partial<Record<keyof CloudPreferences, unknown>>) => {
     await setCloudPreferences(patch ?? {});

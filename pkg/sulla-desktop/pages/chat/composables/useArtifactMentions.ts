@@ -65,99 +65,132 @@ interface WorkflowDbRow {
 }
 
 
-// ─── Module-level cache (shared across component mounts) ─────────
+// ─── Shared cache (one instance per window, across component mounts) ──
 
-const items = ref<MentionTarget[]>([]);
-const loaded = ref(false);
-let inflight: Promise<void> | null = null;
+/** Loads and caches the mentionable artifacts; shared via ArtifactMentionStore.shared(). */
+export class ArtifactMentionStore {
+  private static instance: ArtifactMentionStore | undefined;
 
-async function invokeSafe<T>(channel: string): Promise<T[]> {
-  try {
-    const result = await ipcRenderer.invoke(channel);
-    return Array.isArray(result) ? (result as T[]) : [];
-  } catch (err) {
-    console.warn(`[useArtifactMentions] IPC ${ channel } failed:`, err);
-    return [];
+  static shared(): ArtifactMentionStore {
+    ArtifactMentionStore.instance ??= new ArtifactMentionStore();
+
+    return ArtifactMentionStore.instance;
   }
-}
 
-function toToken(kind: MentionTarget['kind'], slugOrId: string): string {
-  return `@${ kind }:${ slugOrId }`;
-}
+  readonly items = ref<MentionTarget[]>([]);
+  readonly loaded = ref(false);
+  inflight: Promise<void> | null = null;
+  private watchingDatabase = false;
 
-function labelFrom(row: { name?: string; slug?: string; id?: string; description?: string }): string {
-  const name = row.name?.trim();
-  const slug = row.slug?.trim() || row.id?.trim() || '';
-  const desc = row.description?.trim();
-  const primary = name && name.length > 0 ? name : slug;
-  if (desc) return `${ primary } — ${ desc }`;
-  return primary;
-}
+  constructor(private readonly ipc: Pick<typeof ipcRenderer, 'invoke' | 'on'> = ipcRenderer) {}
 
-async function loadAll(): Promise<void> {
-  if (inflight) return inflight;
-
-  inflight = (async() => {
-    const [routines, skills, functions, recipes, integrations, workflows] = await Promise.all([
-      invokeSafe<LibraryRoutineRow>('routines-template-list'),
-      invokeSafe<LibrarySkillRow>('library-list-skills'),
-      invokeSafe<LibraryFunctionRow>('functions-list'),
-      invokeSafe<LibraryRecipeRow>('library-list-recipes'),
-      invokeSafe<LibraryIntegrationRow>('library-list-integrations'),
-      invokeSafe<WorkflowDbRow>('workflow-db-list'),
-    ]);
-
-    const next: MentionTarget[] = [];
-
-    for (const r of routines) {
-      if (!r?.slug) continue;
-      next.push({ token: toToken('routine', r.slug), label: labelFrom(r), kind: 'routine' });
+  private async invokeSafe<T>(channel: string): Promise<T[]> {
+    try {
+      const result = await this.ipc.invoke(channel);
+      return Array.isArray(result) ? (result as T[]) : [];
+    } catch (err) {
+      console.warn(`[useArtifactMentions] IPC ${ channel } failed:`, err);
+      return [];
     }
-    for (const s of skills) {
-      if (!s?.slug) continue;
-      next.push({ token: toToken('skill', s.slug), label: labelFrom(s), kind: 'skill' });
-    }
-    for (const f of functions) {
-      if (!f?.slug) continue;
-      next.push({ token: toToken('function', f.slug), label: labelFrom(f), kind: 'function' });
-    }
-    for (const r of recipes) {
-      if (!r?.slug) continue;
-      next.push({ token: toToken('recipe', r.slug), label: labelFrom(r), kind: 'recipe' });
-    }
-    for (const i of integrations) {
-      if (!i?.slug) continue;
-      next.push({ token: toToken('integration', i.slug), label: labelFrom(i), kind: 'integration' });
-    }
-    for (const w of workflows) {
-      if (!w?.id) continue;
-      // Archived workflows are fair game — user might want to reference a
-      // past job. Drafts with no name get labeled by id so they're still
-      // findable.
-      next.push({ token: toToken('workflow', w.id), label: labelFrom(w), kind: 'workflow' });
-    }
+  }
 
-    items.value = next;
-    loaded.value = true;
-  })().finally(() => { inflight = null; });
+  private static toToken(kind: MentionTarget['kind'], slugOrId: string): string {
+    return `@${ kind }:${ slugOrId }`;
+  }
 
-  return inflight;
+  private static labelFrom(row: { name?: string; slug?: string; id?: string; description?: string }): string {
+    const name = row.name?.trim();
+    const slug = row.slug?.trim() || row.id?.trim() || '';
+    const desc = row.description?.trim();
+    const primary = name && name.length > 0 ? name : slug;
+    if (desc) return `${ primary } — ${ desc }`;
+    return primary;
+  }
+
+  /**
+   * Lists come back empty while the database is still starting. Reload once
+   * main reports it reachable, after any load already in flight.
+   */
+  private reloadWhenDatabaseAvailable(): void {
+    if (this.watchingDatabase) return;
+    this.watchingDatabase = true;
+    this.ipc.on('database:available', () => {
+      void (this.inflight ?? Promise.resolve()).then(() => this.loadAll());
+    });
+  }
+
+  loadAll(): Promise<void> {
+    if (this.inflight) return this.inflight;
+    this.reloadWhenDatabaseAvailable();
+
+    const toToken = ArtifactMentionStore.toToken;
+    const labelFrom = ArtifactMentionStore.labelFrom;
+
+    this.inflight = (async() => {
+      const [routines, skills, functions, recipes, integrations, workflows] = await Promise.all([
+        this.invokeSafe<LibraryRoutineRow>('routines-template-list'),
+        this.invokeSafe<LibrarySkillRow>('library-list-skills'),
+        this.invokeSafe<LibraryFunctionRow>('functions-list'),
+        this.invokeSafe<LibraryRecipeRow>('library-list-recipes'),
+        this.invokeSafe<LibraryIntegrationRow>('library-list-integrations'),
+        this.invokeSafe<WorkflowDbRow>('workflow-db-list'),
+      ]);
+
+      const next: MentionTarget[] = [];
+
+      for (const r of routines) {
+        if (!r?.slug) continue;
+        next.push({ token: toToken('routine', r.slug), label: labelFrom(r), kind: 'routine' });
+      }
+      for (const s of skills) {
+        if (!s?.slug) continue;
+        next.push({ token: toToken('skill', s.slug), label: labelFrom(s), kind: 'skill' });
+      }
+      for (const f of functions) {
+        if (!f?.slug) continue;
+        next.push({ token: toToken('function', f.slug), label: labelFrom(f), kind: 'function' });
+      }
+      for (const r of recipes) {
+        if (!r?.slug) continue;
+        next.push({ token: toToken('recipe', r.slug), label: labelFrom(r), kind: 'recipe' });
+      }
+      for (const i of integrations) {
+        if (!i?.slug) continue;
+        next.push({ token: toToken('integration', i.slug), label: labelFrom(i), kind: 'integration' });
+      }
+      for (const w of workflows) {
+        if (!w?.id) continue;
+        // Archived workflows are fair game — user might want to reference a
+        // past job. Drafts with no name get labeled by id so they're still
+        // findable.
+        next.push({ token: toToken('workflow', w.id), label: labelFrom(w), kind: 'workflow' });
+      }
+
+      this.items.value = next;
+      this.loaded.value = true;
+    })().finally(() => { this.inflight = null; });
+
+    return this.inflight;
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────
 
 export function useArtifactMentions() {
+  const store = ArtifactMentionStore.shared();
+  const { items, loaded } = store;
+
   /** Kick off the first load eagerly. Safe to call many times. */
   function prefetch(): void {
-    if (loaded.value || inflight) return;
-    void loadAll();
+    if (loaded.value || store.inflight) return;
+    void store.loadAll();
   }
 
   /** Re-scan after the user installs/publishes something. */
   function invalidate(): void {
     loaded.value = false;
-    inflight = null;
-    void loadAll();
+    store.inflight = null;
+    void store.loadAll();
   }
 
   /**

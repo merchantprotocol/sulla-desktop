@@ -1,7 +1,7 @@
 # Local vault consumer migration matrix
 
-This inventory is for `SULLA_VAULT_MODE=desktop`. Server-mode compatibility is
-not evidence that a Desktop consumer is safe. A row is complete only when no
+This inventory is for `SULLA_VAULT_MODE=desktop`, the only mode Desktop runs. Compatibility
+with any other deployment is not evidence that a Desktop consumer is safe. A row is complete only when no
 credential plaintext, wrapped key, or decrypt callback crosses into the caller.
 
 | Consumer | Current branch state | Remaining contract/work |

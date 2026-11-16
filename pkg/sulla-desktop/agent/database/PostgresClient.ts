@@ -10,6 +10,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { hostPort } from '@pkg/utils/instance';
 
+import { DatabaseOutageState, DatabaseUnavailableClassifier } from './DatabaseAvailability';
+
 // Node's AsyncLocalStorage is unsafe in an Electron renderer: there the async
 // context slot is shared with Blink, so getStore() can read a Blink object and
 // V8 aborts the whole renderer (it took down the password vault on its first
@@ -22,26 +24,57 @@ export class PostgresClient {
   private connected = false;
   private shuttingDown = false;
   private statementTimeout: AsyncLocalStorage<number> | null = IN_RENDERER ? null : new AsyncLocalStorage<number>();
+  private readonly socketOutage = new DatabaseOutageState();
+  private classifier: DatabaseUnavailableClassifier | null = null;
+
+  /** Host port the pool connects to (honours SULLA_DATABASE_URL). */
+  get databasePort(): number | undefined {
+    const url = process.env.SULLA_DATABASE_URL;
+    if (!url) return hostPort(30116);
+    try {
+      return Number(new URL(url).port || 5432);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Classifies errors that only mean "the database is not reachable right now". */
+  get unavailableClassifier(): DatabaseUnavailableClassifier {
+    this.classifier ??= new DatabaseUnavailableClassifier(this.databasePort);
+
+    return this.classifier;
+  }
 
   get isShuttingDown(): boolean {
     return this.shuttingDown;
   }
+
+  /**
+   * Password callback for the host pool. node-postgres calls it once for every
+   * new connection, so a rotated service secret reaches the next connection
+   * instead of staying pinned to the value read at boot. An arrow property so
+   * the pool can call it unbound.
+   */
+  private readonly servicePassword = async(): Promise<string> => {
+    // The provider reads settings, whose model imports this client. Load it only on use;
+    // value() never syncs through this client, so it cannot wait on itself.
+    const { serviceSecretProvider } = await import('../app/Providers/ServiceSecretServiceProvider');
+
+    return serviceSecretProvider.value();
+  };
 
   public async initialize(): Promise<void> {
     if (this.shuttingDown) return; // Don't reconnect during shutdown
     if (this.pool) return; // Already initialized
 
     const connectionString = process.env.SULLA_DATABASE_URL;
-    let password: string | undefined;
-    if (!connectionString) {
-      // Settings extends BaseModel, which imports this client. Load it only on use.
-      const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-      password = await SullaSettingsModel.getServicePassword();
-    }
+    // Read once up front so a secret that cannot be resolved still fails
+    // initialize() as before; the pool then re-reads it per connection.
+    if (!connectionString) await this.servicePassword();
 
     this.pool = new Pool({
       ...(connectionString ? { connectionString } : {
-        host: '127.0.0.1', port: hostPort(30116), user: 'sulla', password, database: 'sulla',
+        host: '127.0.0.1', port: hostPort(30116), user: 'sulla', password: this.servicePassword, database: 'sulla',
       }),
       max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
@@ -50,14 +83,40 @@ export class PostgresClient {
       connectionTimeoutMillis: Number(process.env.SULLA_DATABASE_CONNECT_TIMEOUT_MS ?? 10000),
     });
 
-    // Graceful pool error handling
-    this.pool.on('error', (err) => {
-      if (this.shuttingDown) return; // suppress noise during shutdown
-      console.error('[PostgresPool] Unexpected error on idle client', err);
-      this.connected = false;
+    // pg-pool only listens for 'error' on a client while it sits idle in the
+    // pool and removes that listener while the client is checked out. When
+    // Postgres restarts (VM stop, cold boot) every checked-out client emits
+    // 'error' with no listener, and Node turns each one into an
+    // UncaughtException "Connection terminated unexpectedly". Give every
+    // client a permanent listener; the in-flight query still rejects with the
+    // same error, so callers see the real failure.
+    this.pool.on('connect', (client) => {
+      client.on('error', err => this.handleSocketError('client', err));
+      const downForMs = this.socketOutage.markAvailable();
+      if (downForMs !== null) {
+        console.log(`[PostgresPool] Connection restored after ${ Math.round(downForMs / 1000) }s`);
+      }
     });
+    this.pool.on('error', err => this.handleSocketError('idle client', err));
 
     await this.connect();
+  }
+
+  /**
+   * A pooled socket died. Logged once per outage so a Postgres restart does
+   * not print one line per open connection.
+   */
+  private handleSocketError(kind: 'client' | 'idle client', err: Error): void {
+    this.connected = false;
+    if (this.shuttingDown) return; // suppress noise during shutdown
+    if (!this.unavailableClassifier.isUnavailable(err)) {
+      console.error(`[PostgresPool] Unexpected error on ${ kind }`, err);
+
+      return;
+    }
+    if (this.socketOutage.markUnavailable()) {
+      console.warn(`[PostgresPool] Database connection lost (${ err.message }); pooled connections will reconnect when it is back`);
+    }
   }
 
   /**
@@ -184,12 +243,11 @@ export class PostgresClient {
    * explicit maxAttempts value.
    */
   async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
-    // Settings extends BaseModel, which imports this client. Load it only on use.
-    const { SullaSettingsModel } = await import('./models/SullaSettingsModel');
-    const password = await SullaSettingsModel.getServicePassword();
-
     for (let i = 1; i <= maxAttempts; i++) {
       let probe: Pool | null = null;
+      // Outside the try: a secret that cannot be resolved rejects at once, as
+      // before. Read per attempt so a secret that changes mid-wait is used.
+      const password = await this.servicePassword();
 
       try {
         probe = new Pool({
@@ -201,21 +259,50 @@ export class PostgresClient {
           max:                     1,
           connectionTimeoutMillis: 2000,
         });
+        // A socket that dies after the probe query must not become an
+        // UncaughtException; the probe is ended right after anyway.
+        probe.on('error', () => { /* probe is disposable */ });
         await probe.query('SELECT 1');
         console.log(`[PostgresClient] Host database port reachable (attempt ${ i })`);
 
         return;
-      } catch {
+      } catch (error: unknown) {
+        const reason = this.describeConnectFailure(error);
+
         if (i === maxAttempts) {
-          throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts`);
+          throw new Error(`PostgreSQL not reachable after ${ maxAttempts } attempts (${ reason.summary })`);
         }
         const attemptLabel = Number.isFinite(maxAttempts) ? `${ i }/${ maxAttempts }` : `${ i }`;
-        console.log(`[PostgresClient] waitForReady attempt ${ attemptLabel } failed, retrying...`);
+        if (reason.authFailed) {
+          console.error(`[PostgresClient] waitForReady attempt ${ attemptLabel }: authentication failed (${ reason.summary }); the database rejected the service secret, retrying...`);
+        } else {
+          console.log(`[PostgresClient] waitForReady attempt ${ attemptLabel } failed (${ reason.summary }), retrying...`);
+        }
         await new Promise(resolve => setTimeout(resolve, intervalMs));
       } finally {
         try { await probe?.end() } catch { /* ignore */ }
       }
     }
+  }
+
+  /**
+   * Names why a readiness probe failed without echoing the error message,
+   * which can carry connection details. A Postgres error reports its SQLSTATE
+   * and class; a socket error its Node code. 28P01 (invalid_password) and 28000
+   * (invalid_authorization_specification) mean the server answered but refused
+   * the secret, which is not the same as "not up yet".
+   */
+  private describeConnectFailure(error: unknown): { authFailed: boolean; summary: string } {
+    const { code, severity } = (error && typeof error === 'object' ? error : {}) as { code?: unknown; severity?: unknown };
+
+    if (typeof code === 'string' && typeof severity === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
+      return { authFailed: code === '28P01' || code === '28000', summary: `SQLSTATE ${ code }, class ${ code.slice(0, 2) }` };
+    }
+    if (typeof code === 'string' && /^[A-Z_]+$/.test(code)) {
+      return { authFailed: false, summary: `unreachable: ${ code }` };
+    }
+
+    return { authFailed: false, summary: 'unreachable: no error code' };
   }
 
   async end(): Promise<void> {

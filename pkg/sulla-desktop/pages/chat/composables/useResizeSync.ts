@@ -36,6 +36,8 @@ export function useResizeSync(
     if (!t || !c) return;
     const pad = Math.max(min, c.offsetHeight + buffer);
     t.style.setProperty(cssVar, pad + 'px');
+    // Floating UI (the "New messages" pill) docks just above the composer.
+    t.style.setProperty('--composer-h', c.offsetHeight + 'px');
   };
 
   onMounted(() => {

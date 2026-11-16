@@ -33,6 +33,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import RecipeLogs from '@pkg/components/recipes/RecipeLogs.vue';
 import RecipeShell from '@pkg/components/recipes/RecipeShell.vue';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import StudioTopbar from './StudioTopbar.vue';
 interface Recipe { slug: string; name: string; description: string; version: string; image?: string; extension?: string; updatedAt: string }
@@ -51,11 +52,12 @@ async function load() { loading.value = true; error.value = ''; try { recipes.va
 function openRecipe(recipe: Recipe, nextTab: 'overview'|'logs'|'shell' = 'overview') { active.value = recipe; tab.value = nextTab; actionMessage.value = ''; void refresh(recipe.slug); }
 function closeDetail() { active.value = null; actionMessage.value = ''; }
 async function start(slug: string) { actions[slug] = true; actionMessage.value = ''; try { const result = await ipcRenderer.invoke('recipe-start-stream', slug); actionMessage.value = `Starting recipe (${result.sessionId}).`; actionError.value = false; setTimeout(() => void refresh(slug), 1200); } catch (e) { actionError.value = true; actionMessage.value = e instanceof Error ? e.message : String(e); } finally { actions[slug] = false; } }
-async function stop(slug: string) { actions[slug] = true; const result = await ipcRenderer.invoke('recipe-stop', slug); actions[slug] = false; actionError.value = !result.ok; actionMessage.value = result.ok ? 'Recipe stopped.' : result.error ?? result.stderr ?? 'Could not stop recipe.'; await refresh(slug); }
+async function stop(slug: string) { actions[slug] = true; try { const result = await ipcRenderer.invoke('recipe-stop', slug); actionError.value = !result.ok; actionMessage.value = result.ok ? 'Recipe stopped.' : result.error ?? result.stderr ?? 'Could not stop recipe.'; } catch (e) { actionError.value = true; actionMessage.value = e instanceof Error ? e.message : String(e); } finally { actions[slug] = false; } await refresh(slug).catch(() => undefined); }
 async function restart(slug: string) { await stop(slug); if (!actionError.value) await start(slug); }
 // Recipe dashboards open in the Sulla browser, like the Use Cases dashboard link.
 function openPort(port: string | number) { const n = extractPort(port); if (n) window.open(`http://localhost:${n}`, '_blank', 'noopener'); }
 function openDashboard(status?: RecipeStatus) { const port = primaryPort(status); if (port) openPort(port); }
+useDatabaseAvailableReload(load, 'StudioRecipesPage');
 onMounted(async() => { await load(); timer = setInterval(() => void refreshAll(), 10000); }); onBeforeUnmount(() => { if (timer) clearInterval(timer); });
 </script>
 

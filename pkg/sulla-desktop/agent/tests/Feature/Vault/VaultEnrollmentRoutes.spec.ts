@@ -36,7 +36,6 @@ class EnrollmentRouteFixture {
       mode: 'desktop',
       port: 0,
       databaseUrl: 'postgresql://synthetic/unused',
-      jwtSecret: 'j'.repeat(64),
       extensionOrigins: [],
       bootstrapServiceId: 'sulla-desktop-bootstrap',
       bootstrapServiceToken: 'bootstrap_' + 'a'.repeat(64),

@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 
 import Electron, { WebContentsView } from 'electron';
 
+import { VaultPermissionPolicy } from './vaultPermissionPolicy';
+
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
 import { getWindow } from '@pkg/window';
 
@@ -16,6 +18,7 @@ const DESKTOP_INTEGRATIONS_PATH = '/vault/desktop/integrations';
 // The guided connect screen navigates here after saving a new integration account.
 const DESKTOP_CONNECTED_PATH = '/vault/desktop/connected';
 const SAFE_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const permissionPolicy = new VaultPermissionPolicy(VAULT_ORIGIN);
 
 export interface VaultViewReservation {
   ownerId:    string;
@@ -126,8 +129,9 @@ export class VaultViewManager {
     // rapid reopen must not let that cleanup erase the new human session.
     const isolatedSession = Electron.session.fromPartition(`sulla-vault-human-${ process.pid }-${ randomUUID() }`, { cache: false });
     await configureVaultPinnedSession(isolatedSession);
-    isolatedSession.setPermissionCheckHandler(() => false);
-    isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    // Deny everything except the clipboard write the vault's Copy buttons need.
+    isolatedSession.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permissionPolicy.allows(permission, requestingOrigin));
+    isolatedSession.setPermissionRequestHandler((_contents, permission, callback, details) => callback(permissionPolicy.allows(permission, details?.requestingUrl)));
     isolatedSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
       try {
         callback({ cancel: new URL(details.url).origin !== VAULT_ORIGIN });

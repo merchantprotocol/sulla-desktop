@@ -61,7 +61,7 @@ interface ElephantEvidence {
   role: string;
 }
 
-interface ElephantWrite {
+export interface ElephantWrite {
   episodes: ElephantEpisode[];
   items: ElephantItem[];
   evidence: ElephantEvidence[];
@@ -360,10 +360,27 @@ async function validateWrite(raw: unknown): Promise<ElephantWrite> {
   return { episodes, items, evidence };
 }
 
-/** Validate the model's data-only response and append it with parameterized SQL. */
-export async function appendV7ElephantOutput(response: string): Promise<ElephantAppendResult> {
+export type V7ElephantValidation =
+  | { ok: true; write: ElephantWrite }
+  | { ok: false; reason: string };
+
+/**
+ * Validate the model's data-only response WITHOUT writing it. The per-turn
+ * pipeline holds a validated draft in memory while goldfish reviews it, and
+ * appends only the final (or the draft as a fallback), so nothing is written
+ * twice and nothing is lost when a later stage fails.
+ */
+export async function validateV7ElephantOutput(response: string): Promise<V7ElephantValidation> {
   try {
-    const write = await validateWrite(parseOutput(response));
+    return { ok: true, write: await validateWrite(parseOutput(response)) };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Append an already-validated write in one transaction with parameterized SQL. */
+export async function appendV7ElephantWrite(write: ElephantWrite): Promise<ElephantAppendResult> {
+  try {
     return await postgresClient.transaction(async (client) => {
       const inserted = { episodes: 0, items: 0, evidence: 0 };
       for (const row of write.episodes) {
@@ -426,5 +443,16 @@ export async function appendV7ElephantOutput(response: string): Promise<Elephant
       evidence: 0,
       reason: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+/** Postgres-backed store used by the per-turn elephant/goldfish pipeline. */
+export class V7SubjectMemoryStore {
+  validate(response: string): Promise<V7ElephantValidation> {
+    return validateV7ElephantOutput(response);
+  }
+
+  append(write: ElephantWrite): Promise<ElephantAppendResult> {
+    return appendV7ElephantWrite(write);
   }
 }

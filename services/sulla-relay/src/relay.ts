@@ -9,6 +9,8 @@ import { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { bearerToken, tokenMatches, verifyDeviceToken } from './auth.js';
+import { RedisHealthProbe } from './RedisHealthProbe.js';
+import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
 
 import type { RelayConfig } from './config.js';
 import type {
@@ -48,6 +50,8 @@ type BusMessage =
   | { kind: 'result'; envelope: RelayToolResultEnvelope }
   | { kind: 'cancel'; requestId: string; deviceId: string };
 
+/** Desktop enforces the deadline itself; the relay waits a little longer so a result landing at the deadline still reaches its caller. */
+const RESULT_GRACE_MS = 1_000;
 const presenceKey = (deviceId: string) => `sulla:relay:device:${ deviceId }`;
 const replicaChannel = (replicaId: string) => `sulla:relay:replica:${ replicaId }`;
 
@@ -79,6 +83,7 @@ export class RelayService {
   readonly webSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
   private readonly redis:      Redis;
   private readonly subscriber: Redis;
+  private readonly redisHealth: RedisHealthProbe;
   private readonly devices = new Map<string, DeviceConnection>();
   private readonly pendingHttp = new Map<string, PendingHttp>();
   private readonly localRoutes = new Map<string, LocalRoute>();
@@ -86,6 +91,11 @@ export class RelayService {
   constructor(private readonly config: RelayConfig) {
     this.redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 2 });
     this.subscriber = this.redis.duplicate();
+    // ioredis reconnects (and resubscribes) with backoff; /healthz reports the outage meanwhile.
+    for (const [label, client] of [['command', this.redis], ['subscriber', this.subscriber]] as const) {
+      client.on('error', (error: Error) => console.warn(`[sulla-relay] Redis ${ label } connection error; reconnecting:`, error.message));
+    }
+    this.redisHealth = new RedisHealthProbe(this.redis);
   }
 
   async start(): Promise<void> {
@@ -107,11 +117,15 @@ export class RelayService {
     this.pendingHttp.clear();
     this.localRoutes.clear();
     this.webSockets.close();
-    await Promise.all([this.redis.quit(), this.subscriber.quit()]);
+    // Redis may already be closed (it is stopped alongside the relay); quit() then rejects
+    // with "Connection is closed". Fall back to a hard disconnect so shutdown always completes.
+    await Promise.all([this.redis, this.subscriber].map(async client => {
+      try { await client.quit() } catch { client.disconnect() }
+    }));
   }
 
   async healthy(): Promise<boolean> {
-    return await this.redis.ping() === 'PONG';
+    return await this.redisHealth.reachable();
   }
 
   upgrade(request: IncomingMessage, socket: any, head: Buffer): void {
@@ -133,9 +147,9 @@ export class RelayService {
   async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://relay');
     if (request.method === 'GET' && url.pathname === '/healthz') {
-      try { sendJson(response, 200, { ok: await this.healthy(), replicaId: this.config.replicaId, devices: this.devices.size }) } catch {
-        sendJson(response, 503, { ok: false, error: 'redis_unavailable' });
-      }
+      // 503 while Redis is unreachable so the container healthcheck (and Desktop) see it.
+      if (await this.healthy()) sendJson(response, 200, { ok: true, replicaId: this.config.replicaId, devices: this.devices.size });
+      else sendJson(response, 503, { ok: false, error: 'redis_unavailable' });
       return;
     }
     const match = /^\/v1\/devices\/([^/]+)\/tools\/([^/]+)\/([^/]+)$/.exec(url.pathname);
@@ -179,7 +193,7 @@ export class RelayService {
     const startedAt = Date.now();
     const timer = setTimeout(() => {
       this.timeoutRequest(requestId).catch(error => console.error('[sulla-relay] Timeout cleanup failed:', error));
-    }, deadlineMs);
+    }, deadlineMs + RESULT_GRACE_MS);
     this.pendingHttp.set(requestId, {
       response, ownerReplicaId: presence.replicaId, deviceId, timer, category, tool,
       operationTypes: envelope.operationTypes ?? [], startedAt, deadlineMs,
@@ -294,7 +308,7 @@ export class RelayService {
       connection.inflight.delete(envelope.requestId);
       this.localRoutes.delete(envelope.requestId);
       this.sendToDevice(connection, { type: 'tool-call', action: 'cancel', requestId: envelope.requestId, deviceId: envelope.deviceId });
-    }, Math.max(1, (envelope.deadlineAt ?? Date.now()) - Date.now()));
+    }, Math.max(1, (envelope.deadlineAt ?? Date.now()) - Date.now()) + RESULT_GRACE_MS);
     this.localRoutes.set(envelope.requestId, { originReplicaId: envelope.originReplicaId!, deviceId: envelope.deviceId, timer });
     this.sendToDevice(connection, envelope);
   }
@@ -335,15 +349,8 @@ export class RelayService {
     const pending = this.pendingHttp.get(requestId);
     if (!pending) return;
     this.pendingHttp.delete(requestId);
-    const sideEffectUnknown = pending.operationTypes.some(type => ['create', 'update', 'delete', 'execute'].includes(type));
-    const toolName = `${ pending.category }/${ pending.tool }`;
-    const details = {
-      tool: toolName,
-      deadlineMs: pending.deadlineMs,
-      elapsedMs: Date.now() - pending.startedAt,
-      ...(sideEffectUnknown ? { sideEffectUnknown: true } : {}),
-      hint: sideEffectUnknown ? `check state before retrying, e.g. github/list_prs for ${ pending.tool }` : 'safe to retry once',
-    };
+    const details = new ToolDeadlinePolicy().timeoutDetails(
+      `${ pending.category }/${ pending.tool }`, pending.deadlineMs, Date.now() - pending.startedAt, pending.operationTypes);
     sendJson(pending.response, 504, { error: { ...relayError('DEADLINE_EXCEEDED', 'Desktop tool call deadline exceeded', true), details } });
     await this.publishOrCancelLocal(pending.ownerReplicaId, requestId, pending.deviceId);
   }

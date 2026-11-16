@@ -1,0 +1,182 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+// E9 legacy: verbatim copy of services/sulla-vault/src/db.ts at ddbe28884 for E9 equivalence specs; delete in final cleanup.
+// Only deviations: import paths point at the real modules, and `here` points at services/sulla-vault/src so the
+// migrations directory resolves exactly as it does for the real db.ts.
+
+import { readdir, readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import pg from 'pg';
+
+import type { VaultConfig } from '../../../../../../services/sulla-vault/src/config';
+
+const { Pool } = pg;
+export type Database = pg.Pool;
+export type Queryable = Pick<pg.Pool, 'query'> | Pick<pg.PoolClient, 'query'>;
+
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNREFUSED', 'ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE',
+]);
+
+/** Host and port of the configured Postgres (read on demand, no module state), so socket errors can be attributed to it or not. */
+function databaseEndpoint(): { host: string; port: number } | null {
+  const connectionString = process.env.SULLA_VAULT_DATABASE_URL;
+  if (!connectionString) return null;
+  try {
+    const url = new URL(connectionString);
+    return { host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port) || 5432 };
+  } catch {
+    return null; // unparseable URL: keep the permissive classification
+  }
+}
+
+/** Does a socket-level error (EAI_AGAIN, ECONNRESET, ...) point at Postgres rather than some other host? */
+function networkErrorTargetsDatabase(e: { hostname?: unknown; address?: unknown; port?: unknown }): boolean {
+  const endpoint = databaseEndpoint();
+  if (!endpoint) return true; // endpoint unknown (startup wait, tests): legacy behavior
+  if (typeof e.hostname === 'string') return e.hostname === endpoint.host;
+  if (typeof e.port === 'number' && e.port !== endpoint.port) return false;
+  if (typeof e.address === 'string' && e.port === undefined) return e.address === endpoint.host;
+  // No host/port on the error: pg reports e.g. ECONNRESET on an established pool socket this way.
+  return typeof e.port === 'number' ? e.port === endpoint.port : true;
+}
+
+/**
+ * Postgres being down, restarting or still starting is expected (container
+ * restarts, VM resume). Only connection-class failures are retried; real SQL
+ * or migration errors still fail fast.
+ *
+ * Generic socket errors (EAI_AGAIN, ETIMEDOUT, ...) only count when they came
+ * from the Postgres connection. The same codes from an upstream fetch
+ * (Anthropic, OpenAI, Sulla Cloud) are egress failures, not a database outage.
+ */
+export function isTransientDbError(error: unknown): boolean {
+  const e = error as { code?: unknown; message?: unknown; errors?: unknown[]; hostname?: unknown; address?: unknown; port?: unknown } | null;
+  if (!e || typeof e !== 'object') return false;
+  const code = typeof e.code === 'string' ? e.code : '';
+  // 57P01-3 admin shutdown / crash / cannot connect now, 08xxx connection exceptions, 53300 too many connections.
+  if (/^(57P0[123]|08|53300)/.test(code)) return true;
+  if (TRANSIENT_NETWORK_CODES.has(code)) return networkErrorTargetsDatabase(e);
+  if (Array.isArray(e.errors) && e.errors.length && e.errors.every(isTransientDbError)) return true;
+  return typeof e.message === 'string' && /Connection terminated|connection.*(?:closed|ended)|timeout exceeded when trying to connect/i.test(e.message);
+}
+
+/** One short line for an error; never the full pg client/pool object. */
+export function describeDbError(error: unknown): string {
+  const e = error as { code?: string; message?: string } | null;
+  return [e?.code, e?.message?.split('\n')[0]].filter(Boolean).join(' ') || 'unknown error';
+}
+
+let lastOutageLog = 0;
+/** Log "database unavailable" at most once per 30s regardless of request volume. */
+export function warnDatabaseUnavailable(error: unknown): void {
+  const now = Date.now();
+  if (now - lastOutageLog < 30_000) return;
+  lastOutageLog = now;
+  console.warn(`sulla-vault: Postgres unavailable, requests return 503 until it recovers (${ describeDbError(error) })`);
+}
+
+const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+/** Retry an operation until Postgres is reachable, with capped exponential backoff. */
+export async function untilDatabaseReady<T>(label: string, operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isTransientDbError(error)) throw error;
+      const delay = Math.min(500 * 2 ** Math.min(attempt - 1, 4), 5000);
+      // First miss, then roughly once a minute: an outage is one line, not a flood.
+      if (attempt === 1 || attempt % 12 === 0) {
+        console.warn(`sulla-vault: waiting for Postgres during ${ label } (attempt ${ attempt }, ${ describeDbError(error) }); retrying every ${ delay / 1000 }s`);
+      }
+      await sleep(delay);
+    }
+  }
+}
+
+/**
+ * An idle pooled client can be terminated by the server (restart, 57P01).
+ * Without a listener Node throws the 'error' event and kills the process; with
+ * one, pg discards the dead client and the next query reconnects.
+ */
+function survivePoolErrors(pool: pg.Pool, label: string): pg.Pool {
+  pool.on('error', (error) => {
+    warnDatabaseUnavailable(error);
+  });
+  return pool;
+}
+
+export async function ensureVaultDatabase(config: VaultConfig): Promise<void> {
+  if (!config.adminDatabaseUrl) {
+    return;
+  }
+  const admin = survivePoolErrors(new Pool({ connectionString: config.adminDatabaseUrl, max: 1 }), 'admin');
+  try {
+    const existing = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', ['sulla_vault']);
+    if (existing.rowCount === 0) {
+      await admin.query('CREATE DATABASE sulla_vault');
+    }
+  } finally {
+    await admin.end();
+  }
+}
+
+export async function connectDatabase(config: VaultConfig): Promise<Database> {
+  await untilDatabaseReady('database setup', () => ensureVaultDatabase(config));
+  const db = survivePoolErrors(new Pool({
+    connectionString:        config.databaseUrl,
+    max:                     10,
+    // Fail fast when the pool is starved instead of queueing callers forever.
+    connectionTimeoutMillis: 10_000,
+    idleTimeoutMillis:       30_000,
+  }), 'vault');
+  await untilDatabaseReady('connect', () => db.query('SELECT 1'));
+  return db;
+}
+
+export async function migrate(db: Database): Promise<void> {
+  const here = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../../services/sulla-vault/src');
+  let dir: string | undefined;
+  let files: string[] = [];
+  for (const candidate of [resolve(here, '../migrations'), resolve(here, '../../migrations')]) {
+    try {
+      files = (await readdir(candidate)).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
+      if (files.length) {
+        dir = candidate;
+        break;
+      }
+    } catch {
+      // Try the source-tree path after the container path.
+    }
+  }
+  if (!dir) {
+    throw new Error('Could not find vault migrations');
+  }
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('sulla-vault-migrations'))");
+    for (const file of files) {
+      const version = file.replace(/\.sql$/, '');
+      // 001 creates vault_schema_migrations itself, so it always runs (it is idempotent).
+      if (version !== '001_initial') {
+        const done = await client.query('SELECT 1 FROM vault_schema_migrations WHERE version = $1', [version]);
+        if (done.rowCount) continue;
+      }
+      await client.query(await readFile(resolve(dir, file), 'utf8'));
+      await client.query('INSERT INTO vault_schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING', [version]);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
