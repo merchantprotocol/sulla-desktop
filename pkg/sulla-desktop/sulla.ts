@@ -38,6 +38,7 @@ import * as fs from 'fs';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
+import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { parseCSV } from '@pkg/agent/services/vaultImportParsers';
 import Logging from '@pkg/utils/logging';
 
@@ -376,7 +377,15 @@ export async function instantiateSullaStart(assertCurrent?: () => void): Promise
 
       stopLocalToolTunnel();
     },
-    { requiresVault: true },
+    {
+      requiresVault: true,
+      readiness: () => getSullaFilesWatcher().startupStatus().ready,
+      readinessReason: () => {
+        const status = getSullaFilesWatcher().startupStatus();
+
+        return status.reason ?? (status.filesUnlocked ? 'Waiting for the FUSE mount token' : 'Files is not unlocked');
+      },
+    },
   );
 
   // In-process MCP server that Claude Code (running in the Sulla VM) can call

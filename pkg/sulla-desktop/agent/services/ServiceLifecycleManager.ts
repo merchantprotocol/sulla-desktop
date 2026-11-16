@@ -53,6 +53,9 @@ interface ServiceDefinition {
   retry?:            boolean;
   /** How long stop() may run before it is reported as timed out. Defaults to 5s. */
   stopTimeoutMs?:    number;
+  /** Runtime readiness gate for services whose startup can finish asynchronously. */
+  readiness?:        () => boolean;
+  readinessReason?:  () => string | undefined;
 }
 
 type StopMode = 'full' | 'restart';
@@ -100,7 +103,7 @@ export class ServiceLifecycleManager extends EventEmitter {
     dependencies: string[],
     start: () => Promise<void>,
     stop: () => Promise<void>,
-    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean; stopTimeoutMs?: number },
+    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean; stopTimeoutMs?: number; readiness?:() => boolean; readinessReason?:() => string | undefined },
   ): void {
     if (this.services.has(name)) {
       console.warn(`[Lifecycle] Service '${ name }' already registered, overwriting`);
@@ -114,6 +117,8 @@ export class ServiceLifecycleManager extends EventEmitter {
       requiresVault:    opts?.requiresVault ?? false,
       retry:            opts?.retry ?? true,
       stopTimeoutMs:    opts?.stopTimeoutMs,
+      readiness:        opts?.readiness,
+      readinessReason:  opts?.readinessReason,
     });
     if (opts?.alreadyStarted) {
       this.started.add(name);
@@ -127,7 +132,7 @@ export class ServiceLifecycleManager extends EventEmitter {
     dependencies: string[],
     start: () => Promise<void>,
     stop: () => Promise<void>,
-    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean; stopTimeoutMs?: number },
+    opts?: { persistOnRestart?: boolean; alreadyStarted?: boolean; requiresVault?: boolean; retry?: boolean; stopTimeoutMs?: number; readiness?:() => boolean; readinessReason?:() => string | undefined },
   ): void {
     if (this.services.has(name)) return;
     this.register(name, dependencies, start, stop, opts);
@@ -179,7 +184,8 @@ export class ServiceLifecycleManager extends EventEmitter {
   /** Emit 'all:ready' once every registered service is running. */
   private maybeAllReady(): void {
     if (this._allReady || !this._startupComplete || this._shuttingDown) return;
-    if ([...this.services.keys()].some(name => !this.started.has(name))) return;
+    if ([...this.services.values()].some(service => !this.started.has(service.name) ||
+        this.statuses.get(service.name)?.status !== 'ready' || service.readiness?.() === false)) return;
     this._allReady = true;
     this.emit('all:ready');
     console.log('[Lifecycle] All services ready');
@@ -218,7 +224,13 @@ export class ServiceLifecycleManager extends EventEmitter {
   }
 
   serviceStatuses(): LifecycleServiceStatus[] {
-    return [...this.statuses.values()].map(value => ({ ...value }));
+    return [...this.statuses.values()].map(value => {
+      const service = this.services.get(value.name);
+
+      return service?.readiness?.() === false && value.status === 'ready'
+        ? { ...value, status: 'starting' as LifecycleStatusName, reason: service.readinessReason?.() ?? 'Waiting for runtime readiness' }
+        : { ...value };
+    });
   }
 
   waitingOnUnlock(): string[] {
@@ -236,12 +248,31 @@ export class ServiceLifecycleManager extends EventEmitter {
   }
 
   private async startService(name: string): Promise<boolean> {
-    if (this.started.has(name)) return true;
+    const svc = this.services.get(name);
+
+    if (this.started.has(name)) {
+      if (svc?.readiness?.() === false) {
+        this._allReady = false;
+        this.transition(name, 'starting', svc.readinessReason?.() ?? 'Waiting for runtime readiness');
+        this.scheduleRetry(name);
+        return false;
+      }
+      if (svc && this.statuses.get(name)?.status !== 'ready') {
+        this.transition(name, 'ready');
+        this.emitStep('startup:step', { name, status: 'ready' });
+        this.emit('service:ready', name);
+        for (const dependent of this.services.values()) {
+          if (dependent.dependencies.includes(name) && this.statuses.get(dependent.name)?.status === 'waiting-on-dependency') {
+            void this.startService(dependent.name);
+          }
+        }
+      }
+      this.maybeAllReady();
+      return true;
+    }
     const existing = this.starts.get(name);
 
     if (existing) return existing;
-
-    const svc = this.services.get(name);
 
     if (!svc || this._shuttingDown) return false;
 
@@ -274,6 +305,12 @@ export class ServiceLifecycleManager extends EventEmitter {
             this.transition(name, 'pending', 'Stopped');
           }
 
+          return false;
+        }
+        if (svc.readiness?.() === false) {
+          this._allReady = false;
+          this.transition(name, 'starting', svc.readinessReason?.() ?? 'Waiting for runtime readiness');
+          this.scheduleRetry(name);
           return false;
         }
         this.transition(name, 'ready');

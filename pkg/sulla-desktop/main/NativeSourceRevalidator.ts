@@ -8,22 +8,25 @@ export interface NativeSourceRevalidationResponse {
 }
 
 export interface NativeSourceRevalidatorDependencies {
-  post(handles:string[]):Promise<NativeSourceRevalidationResponse>;
+  post(handles:string[], replaceExisting:boolean):Promise<NativeSourceRevalidationResponse>;
 }
 
 /** Revalidates bounded pages; Files rejects a request with more than 256 handles. */
 export class NativeSourceRevalidator {
   private static readonly PAGE_SIZE = 256;
+  private readonly dependencies:NativeSourceRevalidatorDependencies;
 
-  constructor(private readonly dependencies:NativeSourceRevalidatorDependencies) {}
+  constructor(dependencies:NativeSourceRevalidatorDependencies) { this.dependencies = dependencies }
 
   async revalidate(handles:string[]):Promise<void> {
     // An empty page is meaningful: it marks persisted sessions from an earlier
     // Desktop process as requiring reselection.
     const pages = handles.length === 0 ? [[]] : this.pages(handles);
 
-    for (const page of pages) {
-      const response = await this.dependencies.post(page);
+    for (const [index, page] of pages.entries()) {
+      // The first page revokes handles left by an earlier Desktop process;
+      // later pages extend the same new session instead of revoking earlier pages.
+      const response = await this.dependencies.post(page, index === 0);
 
       if (!response.ok) throw new Error(`Native source sessions could not be revalidated (${ response.status })`);
     }

@@ -793,8 +793,10 @@ export function createApp(
   } catch (error) { next(error) } });
   app.post('/v1/local/native-sources/revalidate', async(request, response, next) => { try {
     const handles = request.body.handles;
+    const replaceExisting = request.body.replaceExisting === undefined ? true : request.body.replaceExisting;
+    if (typeof replaceExisting !== 'boolean') throw new HttpError(400, 'native source revalidation mode is invalid');
     if (!Array.isArray(handles) || handles.length > 256 || handles.some((handle:unknown) => typeof handle !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(handle))) throw new HttpError(400, 'native source handles are invalid');
-    await nativeSourceManager().revalidateNativeSessions(handles);
+    await nativeSourceManager().revalidateNativeSessions(handles, replaceExisting);
     response.status(204).end();
   } catch (error) { next(error) } });
   app.post('/v1/local/native-sources/reselect-interrupted-publication', async(request, response, next) => { try {

@@ -58,6 +58,8 @@ export interface SullaFilesMountCredentials {
 export class SullaFilesMountManager extends EventEmitter {
   private executor?: VMExecutor;
   private credentialProvider?: () => Promise<SullaFilesMountCredentials>;
+  private onTokenWritten?:() => void;
+  private onMounted?:() => void;
   private refreshTimer?: NodeJS.Timeout;
   private healthTimer?: NodeJS.Timeout;
   private retryTimer?: NodeJS.Timeout;
@@ -121,7 +123,7 @@ export class SullaFilesMountManager extends EventEmitter {
     return this.guestAnchorConfirmed && !this.guestPreparationFailure;
   }
 
-  async start(provider:() => Promise<SullaFilesMountCredentials>):Promise<void> {
+  async start(provider:() => Promise<SullaFilesMountCredentials>, onTokenWritten?:() => void, onMounted?:() => void):Promise<void> {
     if (!sullaFilesNativeSourceRolloutRequested()) {
       this.publish('disabled', DISABLED_REASON);
       return;
@@ -129,6 +131,8 @@ export class SullaFilesMountManager extends EventEmitter {
     // Unlock (re)starts the schedule from the first, shortest delay.
     this.wanted = true;
     this.credentialProvider = provider;
+    this.onTokenWritten = onTokenWritten;
+    this.onMounted = onMounted;
     this.retryFailures = 0;
     this.cancelRetry();
     const lifecycle = this.lifecycle;
@@ -210,6 +214,7 @@ export class SullaFilesMountManager extends EventEmitter {
       await traceAsync('mount: stop stale guest', () => this.stopGuest());
       if (await traceAsync('mount: classify anchor', () => this.mountState(executor)) !== 'anchor') throw new Error('The Files propagation anchor is unavailable');
       await traceAsync('mount: refresh credentials', () => this.refreshCredentials(credentialGeneration));
+      this.onTokenWritten?.();
       await traceAsync('mount: compose up adapter', () => executor.execCommand(
         { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
         'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
@@ -228,6 +233,7 @@ export class SullaFilesMountManager extends EventEmitter {
         console.warn(`[SullaFiles] Could not reattach every running agent mount: ${ error instanceof Error ? error.message : String(error) }`);
       });
       this.publish('ready', undefined, MOUNT_PATH);
+      this.onMounted?.();
       this.armRefresh(credentialGeneration);
     } catch (error) {
       await this.stopGuest().catch(() => undefined);
@@ -256,6 +262,8 @@ export class SullaFilesMountManager extends EventEmitter {
       await this.credentialWrite?.catch(() => undefined);
       await this.stopGuest();
       this.credentialProvider = undefined;
+      this.onTokenWritten = undefined;
+      this.onMounted = undefined;
       this.publish(sullaFilesNativeSourceRolloutRequested() ? 'starting' : 'disabled',
         sullaFilesNativeSourceRolloutRequested() ? 'Files is locked; the guest mount is unavailable.' : DISABLED_REASON);
     } catch (error) {

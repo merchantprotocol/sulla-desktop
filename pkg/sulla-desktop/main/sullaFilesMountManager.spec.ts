@@ -2,11 +2,42 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { VMExecutor } from '@pkg/backend/backend';
 import { SullaFilesMountManager } from './sullaFilesMountManager';
 
 describe('SullaFilesMountManager agent mount recovery', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('rewrites a missing token after the adapter remains in waiting-token for 30 seconds', async() => {
+    // risk: availability — a lost bind-mounted token must not leave the FUSE adapter stuck indefinitely.
+    vi.useFakeTimers();
+    const startedAt = Date.now();
+    let mounted = false;
+    const execCommand = vi.fn(async(_options:unknown, ...args:string[]) => {
+      if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
+        return mounted
+          ? '1 0 0:42 / /mnt/sulla-files rw - fuse.sulla-files sulla-files rw'
+          : '1 0 8:1 /mnt/sulla-files /mnt/sulla-files rw - ext4 /dev/vda rw';
+      }
+      if (args[0] === 'docker' && args[1] === 'exec' && args[3] === 'cat') {
+        return JSON.stringify({ phase: 'waiting-token', updatedAt: new Date(Date.now()).toISOString() });
+      }
+      if (args[0] === 'docker' && args[1] === 'exec' && args.includes('sh')) return '';
+      return '';
+    });
+    const manager = new SullaFilesMountManager();
+    const repair = vi.fn(async() => { mounted = true });
+
+    (manager as any).refreshCredentials = repair;
+    const waiting = (manager as any).waitForAdapter({ execCommand } as unknown as VMExecutor, 1) as Promise<void>;
+    await vi.advanceTimersByTimeAsync(31_000);
+    await waiting;
+
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(30_000);
+    expect(repair).toHaveBeenCalledTimes(1);
+  });
+
   it('reattaches stale running agents after a remount and leaves healthy agents alone', async() => {
     // risk: availability — live jobs must recover their Files view without restarting healthy containers
     const calls:string[][] = [];

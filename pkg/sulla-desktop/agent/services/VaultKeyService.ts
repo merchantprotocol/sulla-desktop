@@ -17,6 +17,7 @@ import path from 'node:path';
 import { app } from 'electron';
 
 import { getDesktopVaultClient } from './DesktopVaultClient';
+import { VaultBootstrapRetry } from './VaultBootstrapRetry';
 
 import paths from '@pkg/utils/paths';
 
@@ -44,13 +45,16 @@ export class VaultKeyService {
   private readonly masterKeyPath = path.join(paths.appHome, 'vault-v2-key.enc');
   private readonly legacyVmkPath = path.join(paths.sullaConfig, 'vault-key.enc');
   private readonly tlsFingerprintPath = path.join(paths.appHome, 'vault-tls-fingerprint');
+  private readonly bootstrapRetry:VaultBootstrapRetry;
   private bootstrapRun: Promise<boolean> | null = null;
   private cacheUpdateRun: Promise<boolean> | null = null;
   private lastCacheUpdateAttempt = 0;
 
   // Kept for source compatibility with old synthetic fixtures. Arguments are
   // deliberately ignored; this facade never accepts an in-process decryptor.
-  constructor(_sullaDir?: string, _safeStorageOverride?: SafeStorageLike) {}
+  constructor(_sullaDir?: string, _safeStorageOverride?: SafeStorageLike, bootstrapRetry = new VaultBootstrapRetry()) {
+    this.bootstrapRetry = bootstrapRetry;
+  }
 
   initialize(): Promise<boolean> {
     this.bootstrapRun ??= this.runBootstrapProcess().finally(() => { this.bootstrapRun = null });
@@ -61,7 +65,7 @@ export class VaultKeyService {
     if (![this.identityPath, this.masterKeyPath].every(file => fs.existsSync(file))) {
       return getDesktopVaultClient().status().then(status => status.unlocked, () => false);
     }
-    const result = await this.runIsolatedHelper('--sulla-vault-bootstrap-helper');
+    const result = await this.bootstrapRetry.run(() => this.runIsolatedHelper('--sulla-vault-bootstrap-helper'));
     if (!result.ok || !result.state) {
       console.warn('[VaultKeyService] Isolated bootstrap did not unlock the vault:', result.error ?? 'unknown error');
       return false;
