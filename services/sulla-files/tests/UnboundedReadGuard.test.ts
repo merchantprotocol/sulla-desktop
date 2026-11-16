@@ -23,6 +23,10 @@ const ALLOWED:Record<string, number> = {
   // Finder badges: one row per live file of the one requested collection (moved from cloudSync/repository.ts).
   'Repositories/CloudCollectionCatalogRepository.ts': 1,
   'Repositories/CloudFolderCoverageRepository.ts': 1,
+  // Legacy import: converts every legacy version once; counts and provenance checks are one-row aggregates.
+  'Repositories/LegacyImportIdentityRepository.ts': 1,
+  'Repositories/LegacyImportPublicationRepository.ts': 1,
+  'Repositories/LegacyImportReceiptRepository.ts': 1,
   // Shared-folder listing for a public folder link (moved from shares.ts, same read).
   'Repositories/ShareLinkRepository.ts': 1,
   // Child-folder totals: one GROUP BY row per direct child folder of the open folder, never a row per file.
@@ -46,7 +50,6 @@ const ALLOWED:Record<string, number> = {
   // One thread's inventory of up to 100 agent runs' live files (moved from app.ts).
   'Repositories/AgentFileRepository.ts': 1,
   'app.ts': 4,
-  'legacyImport.ts': 3,
   'localManager.ts': 3,
 };
 

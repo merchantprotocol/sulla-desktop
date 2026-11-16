@@ -116,7 +116,8 @@ export class FilesMutationCoordinator {
           try {
             if (!sameIdentity(current.fingerprint, backup.fingerprint)) throw new Error('Replacement target identity changed before publication');
           } finally { await current.close() }
-          await this.files.renameNoReplace(input.staged, input.target);
+          // The target exists by construction (pinned + verified above), so a no-clobber rename always fails EEXIST.
+          await this.files.renameReplacing(input.staged, input.target);
           published = true;
           await Promise.all([this.paths.syncParent(input.staged), this.paths.syncParent(input.target)]);
           const replaced = await this.files.pinVerified(input.target, input.verifyStaged);

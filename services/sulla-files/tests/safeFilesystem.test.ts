@@ -7,6 +7,7 @@
 // class was split (W3-C) so the split is proven not to loosen any check. Linux-only: the
 // coordinator pins parents through /proc/self/fd. Renames need the native no-replace helper,
 // so rename specs skip when /usr/local/bin/sulla-files-rename-noreplace is absent.
+import { existsSync } from 'node:fs';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -266,6 +267,56 @@ describe.skipIf(!linux)('FilesMutationCoordinator path safety (characterization)
       await link(join(root, 'orig.txt'), join(root, 'hard.txt'));
       const staged = await stage('h.stage', 'incoming');
       await expect(coordinator.publishVerified({ staged, target: 'hard.txt', verify: accept })).rejects.toThrow(/will not overwrite/);
+    });
+  });
+
+  describe('verified replacement (replaceVerified)', () => {
+    const helperPresent = existsSync('/usr/local/bin/sulla-files-rename-noreplace');
+    const hashOf = (expected:string) => async(file:any) => {
+      const chunks:Buffer[] = []; for await (const chunk of file.createReadStream()) chunks.push(Buffer.from(chunk));
+      if (Buffer.concat(chunks).toString() !== expected) throw new Error('content mismatch');
+    };
+    async function stage(name:string, body:string):Promise<string> {
+      const path = `.sulla-trash/.operations/${ name }`;
+      const handle = await coordinator.openPrivateExclusive(path);
+      await handle.write(Buffer.from(body)); await handle.sync(); await handle.close();
+      return path;
+    }
+
+    // risk: data accuracy — regression for #2050: replacing a verified existing target must succeed,
+    // not fail EEXIST through the no-clobber helper, and must keep the prior bytes as the backup.
+    it('replaces an existing verified target and keeps the prior bytes as the backup', async() => {
+      await writeFile(join(root, 'note.md'), 'original');
+      const staged = await stage('op1/note.md.write', 'updated by agent');
+      const receipt = await coordinator.replaceVerified({ staged, target: 'note.md', backup: '.sulla-trash/.operations/op1/note.md.source',
+        conflict: 'note (conflicted copy).md', verifyStaged: hashOf('updated by agent'), verifyTarget: hashOf('original') });
+      expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('updated by agent');
+      expect(await readFile(join(root, receipt.backup), 'utf8')).toBe('original');
+      expect(await coordinator.exists('note (conflicted copy).md')).toBe(false);
+      await coordinator.finalizeReplacement(receipt);
+      expect(await coordinator.exists(receipt.backup)).toBe(false);
+      expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('updated by agent');
+    });
+
+    // risk: lost update — a target that no longer matches the expected bytes is never replaced.
+    it('refuses to replace a target that changed since it was indexed', async() => {
+      await writeFile(join(root, 'note.md'), 'edited outside Files');
+      const staged = await stage('op2/note.md.write', 'updated by agent');
+      await expect(coordinator.replaceVerified({ staged, target: 'note.md', backup: '.sulla-trash/.operations/op2/note.md.source',
+        conflict: 'note (conflicted copy).md', verifyStaged: hashOf('updated by agent'), verifyTarget: hashOf('original') })).rejects.toThrow(/content mismatch/);
+      expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('edited outside Files');
+      expect(await readFile(join(root, staged), 'utf8')).toBe('updated by agent');
+    });
+
+    // risk: data loss — quarantine/rollback/retain moves still use the no-clobber helper and never
+    // overwrite an occupied destination (only replaceVerified replaces).
+    it.skipIf(!helperPresent)('no-clobber moves still refuse an occupied destination', async() => {
+      await writeFile(join(root, 'src.txt'), 'source');
+      await mkdir(join(root, '.sulla-trash/.residency'), { recursive: true });
+      await writeFile(join(root, '.sulla-trash/.residency/q.evict'), 'occupied');
+      await expect((coordinator as any).files.renameNoReplace('src.txt', '.sulla-trash/.residency/q.evict')).rejects.toThrow(/errno 17/);
+      expect(await readFile(join(root, '.sulla-trash/.residency/q.evict'), 'utf8')).toBe('occupied');
+      expect(await readFile(join(root, 'src.txt'), 'utf8')).toBe('source');
     });
   });
 
