@@ -1375,8 +1375,7 @@
     },
     "pkg/sulla-desktop/backend/sullaRuntimeBackend.ts": {
       "rules": {
-        "long-file": 2415,
-        "raw-sql": 1
+        "long-file": 2162
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
