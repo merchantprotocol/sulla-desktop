@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-// Legacy entry points kept for app.ts, localManager.ts and the Desktop spec until the composition
+// Legacy entry points kept for app.ts, NativePathOperationPublisher.ts and the Desktop spec until the composition
 // root injects StoredFileOperationService. The implementation lives in Services/ and Repositories/.
 import type pg from 'pg';
 import type { FilesIdentity } from './auth.js';
