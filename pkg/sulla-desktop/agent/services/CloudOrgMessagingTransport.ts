@@ -27,7 +27,7 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
   constructor(
     private readonly http = new SullaCloudHttpClient(),
     private readonly session: OrgCloudSession = new DesktopOrgCloudSession(),
-    private readonly pollIntervalMs = 15_000,
+    private readonly pollIntervalMs = 60_000,
   ) {}
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

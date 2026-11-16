@@ -64,13 +64,17 @@ export class OrgContactRequestDecisionPrompter implements OrgContactRequestPromp
     private readonly timeoutMs = 30 * 60_000,
   ) {}
 
-  request(prompt: OrgContactPrompt): Promise<OrgContactPromptOutcome> {
+  request(prompt: OrgContactPrompt): Promise<void> {
     const key = `${prompt.messages[0]?.data.orgId ?? ''}:${prompt.senderUserId}`;
     const existing = this.active.get(key);
-    if (existing) return existing;
-    const pending = this.ask(prompt).finally(() => this.active.delete(key));
+    if (existing) return Promise.resolve();
+    const pending = this.ask(prompt).catch(error => {
+      console.warn('[OrgContactRequest] Prompt did not complete; request remains held:', error);
+      return 'unanswered' as const;
+    }).finally(() => this.active.delete(key));
     this.active.set(key, pending);
-    return pending;
+    // Scheduling the human interaction must not hold up sync/outbox/inbox work.
+    return Promise.resolve();
   }
 
   private async ask(prompt: OrgContactPrompt): Promise<OrgContactPromptOutcome> {

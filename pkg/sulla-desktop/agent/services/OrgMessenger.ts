@@ -7,7 +7,16 @@ import type { AgentInbox, AgentInboxTarget } from './AgentInbox';
 import type { OrgMessagingStateRepository } from './OrgMessagingStateRepository';
 
 export interface OrgMessagingSession { orgId(): Promise<string>; userId(): Promise<string> }
-export interface OrgContactRequestPrompter { request(senderUserId: string, messages: readonly MessageEnvelope[], resolve: (choice: ContactRequestChoice) => Promise<readonly number[]>): Promise<void> }
+export interface OrgContactPrompt {
+  orgId: string;
+  senderUserId: string;
+  senderName: string;
+  messages: readonly MessageEnvelope[];
+  shown(): Promise<void>;
+  resolve(choice: ContactRequestChoice): Promise<readonly number[]>;
+}
+export type OrgContactPromptOutcome = 'answered' | 'unsent' | 'unanswered';
+export interface OrgContactRequestPrompter { request(prompt: OrgContactPrompt): Promise<void> }
 export interface OrgInboxTargetResolver { target(envelope: MessageEnvelope): Promise<AgentInboxTarget> }
 export interface OrgConversationHaltHandler { halt(target: AgentInboxTarget): Promise<void> }
 export interface OrgMessagingDeviceIdentity { deviceId(): Promise<string> }
@@ -18,6 +27,9 @@ export interface OrgConversationStartRequest {
 }
 export interface OrgConversationStarter {
   startConversation(request: OrgConversationStartRequest): Promise<{ conversationId: string }>;
+}
+export interface OrgMessagingDirectory extends OrgMessagingTransport {
+  loadDirectory(): Promise<{ people: readonly unknown[] }>;
 }
 
 /** Coordinates durable outbox retries, cursor-driven inbox delivery, and first-contact holds. */
@@ -37,6 +49,12 @@ export class OrgMessenger {
   ) {}
 
   private readonly haltedConversations = new Set<string>();
+  private readonly promptCooldownMs = 6 * 60 * 60_000;
+  private readonly directoryRefreshMs = 10 * 60_000;
+  private lastDirectoryRefresh = 0;
+  private activeOrgHasTeammates = false;
+  private directoryOrgId?: string;
+  private liveWake?: () => void;
 
   async send(envelope: MessageEnvelope): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
@@ -77,6 +95,11 @@ export class OrgMessenger {
     let sent = 0;
     for (const item of await this.state.pending()) {
       const result = await this.transport.submit(this.codec.decode(item.envelope));
+      if (result.status === 'denied') {
+        const reason = (result as typeof result & { reason?: string }).reason || 'Message denied by organization host';
+        await this.state.markFailed(item.messageId, reason);
+        throw new Error(reason);
+      }
       if (result.status === 'accepted' || result.status === 'duplicate' || result.status === 'held') {
         await this.state.markSent(item.messageId);
         sent++;
@@ -121,6 +144,7 @@ export class OrgMessenger {
   async checkContactRequests(): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     const requests = await this.transport.contactRequests(orgId, userId);
+    const directory = await this.loadDirectoryIfDue();
     const senders = new Map<string, MessageEnvelope[]>();
     for (const request of requests) {
       const sender = request.data.from.userId;
@@ -129,8 +153,35 @@ export class OrgMessenger {
       senders.set(sender, group);
     }
     for (const [sender, messages] of senders) {
-      await this.contactPrompter.request(sender, messages, choice => this.transport.resolveContactRequest(orgId, userId, sender, choice));
+      const lastAsked = await this.state.lastContactPrompt(orgId, userId, sender);
+      if (lastAsked !== undefined && Date.now() - lastAsked < this.promptCooldownMs) continue;
+      const person = directory.people.find(raw => {
+        const entry = raw as { userId?: string; id?: string };
+        return (entry.userId ?? entry.id) === sender;
+      }) as { displayName?: string; name?: string } | undefined;
+      void this.contactPrompter.request({
+        orgId, senderUserId: sender, senderName: person?.displayName || person?.name || sender, messages,
+        shown: () => this.state.recordContactPrompt(orgId, userId, sender, Date.now()),
+        resolve: choice => this.transport.resolveContactRequest(orgId, userId, sender, choice),
+      }).catch(error => console.warn('[OrgMessenger] Could not show contact request prompt:', error));
     }
+  }
+
+  private async loadDirectoryIfDue(): Promise<{ people: readonly unknown[] }> {
+    const directoryTransport = this.transport as OrgMessagingDirectory;
+    const orgId = await this.session.orgId();
+    if (typeof directoryTransport.loadDirectory === 'function' && (orgId !== this.directoryOrgId || Date.now() - this.lastDirectoryRefresh >= this.directoryRefreshMs)) {
+      const directory = await directoryTransport.loadDirectory();
+      this.lastDirectoryRefresh = Date.now();
+      this.directoryOrgId = orgId;
+      return directory;
+    }
+    const directory = { people: (this.transport as OrgMessagingTransport & { directory?: () => { people: readonly unknown[] } }).directory?.().people ?? [] };
+    if (typeof directoryTransport.loadDirectory !== 'function') {
+      this.lastDirectoryRefresh = Date.now();
+      this.directoryOrgId = orgId;
+    }
+    return directory;
   }
 
   async syncOnce(): Promise<{ sent: number; delivered: number }> {
@@ -141,22 +192,31 @@ export class OrgMessenger {
   }
 
   async run(signal: AbortSignal): Promise<void> {
-    let backoffMs = 15_000;
+    let backoffMs = 60_000;
     while (!signal.aborted) {
       try {
         const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
         if (!orgId || !userId) {
-          await this.wait(signal, 15_000);
+          await this.wait(signal, 60_000);
+          continue;
+        }
+        if (orgId !== this.directoryOrgId || Date.now() - this.lastDirectoryRefresh >= this.directoryRefreshMs) {
+          const directory = await this.loadDirectoryIfDue();
+          this.activeOrgHasTeammates = directory.people.some(raw => {
+            const person = raw as { userId?: string; id?: string };
+            return (person.userId ?? person.id) !== userId;
+          });
+        }
+        if (!this.activeOrgHasTeammates) {
+          await this.wait(signal, 60_000);
           continue;
         }
         const deviceId = await this.deviceIdentity.deviceId();
         const lease = await this.transport.claimAgentHost(deviceId);
         if (lease.deviceId !== deviceId || (lease.userId && lease.userId !== userId)) throw new Error('This Desktop does not hold the organization agent-host lease');
         await this.syncOnce();
-        backoffMs = 15_000;
-        // Cloud transport wakeups are polling-based today. This interval also
-        // renews the host lease and observes sign-out / active-org changes.
-        await this.wait(signal, 15_000);
+        backoffMs = 60_000;
+        await this.wait(signal, 60_000);
       } catch {
         await this.wait(signal, backoffMs);
         backoffMs = Math.min(backoffMs * 2, 120_000);
@@ -164,12 +224,19 @@ export class OrgMessenger {
     }
   }
 
+  /** LiveEvents consumers can wake this service immediately; polling remains the fallback. */
+  onLiveEvent(topic: string): void {
+    if (topic === 'conversations') this.liveWake?.();
+  }
+
   private wait(signal: AbortSignal, milliseconds: number): Promise<void> {
     if (signal.aborted) return Promise.resolve();
     return new Promise(resolve => {
-      const timer = setTimeout(done, milliseconds);
+      let timer: ReturnType<typeof setTimeout>;
       const onAbort = () => done();
-      function done() { clearTimeout(timer); signal.removeEventListener('abort', onAbort); resolve(); }
+      const done = () => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); if (this.liveWake === done) this.liveWake = undefined; resolve(); };
+      this.liveWake = done;
+      timer = setTimeout(done, milliseconds);
       signal.addEventListener('abort', onAbort, { once: true });
     });
   }

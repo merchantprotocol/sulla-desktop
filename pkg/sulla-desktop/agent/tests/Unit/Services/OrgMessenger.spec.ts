@@ -5,17 +5,22 @@
 import { InMemoryOrgMessagingTransport, MessageAdmissionService, MessageEnvelope, OrgMessagingTransportContract, ParticipantAddress, type ContactRequestChoice, type InboxCursor, type OrgMessagingTransport, type WakeHint } from '@sulla/domain';
 import { describe, expect, it } from 'vitest';
 import { AgentInbox, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from '../../../services/AgentInbox';
-import { OrgMessenger, type OrgConversationStartRequest, type OrgMessagingSession } from '../../../services/OrgMessenger';
+import { OrgMessenger, type OrgContactPrompt, type OrgConversationStartRequest, type OrgMessagingSession } from '../../../services/OrgMessenger';
 import type { OrgMessagingStateRepository, PendingOrgMessage } from '../../../services/OrgMessagingStateRepository';
 
 class MemoryState implements OrgMessagingStateRepository {
   readonly outbox = new Map<string, PendingOrgMessage>();
   readonly cursors = new Map<string, number>();
+  readonly failures = new Map<string, string>();
+  readonly askedAt = new Map<string, number>();
   async enqueue(message: PendingOrgMessage) { this.outbox.set(message.messageId, message); }
-  async pending() { return [...this.outbox.values()]; }
+  async pending() { return [...this.outbox.values()].filter(item => !this.failures.has(item.messageId)); }
   async markSent(messageId: string) { this.outbox.delete(messageId); }
+  async markFailed(messageId: string, reason: string) { this.failures.set(messageId, reason); }
   async cursor(orgId: string, userId: string): Promise<InboxCursor> { return { orgId, userId, since: this.cursors.get(`${orgId}:${userId}`) ?? 0 }; }
   async advanceCursor(cursor: InboxCursor) { this.cursors.set(`${cursor.orgId}:${cursor.userId}`, cursor.since); }
+  async lastContactPrompt(orgId: string, userId: string, senderUserId: string) { return this.askedAt.get(`${orgId}:${userId}:${senderUserId}`); }
+  async recordContactPrompt(orgId: string, userId: string, senderUserId: string, at: number) { this.askedAt.set(`${orgId}:${userId}:${senderUserId}`, at); }
 }
 
 class MemoryInboxRepository implements AgentInboxRepository {
@@ -41,10 +46,14 @@ class TestTransport implements OrgMessagingTransport {
   readonly submittedConversations: string[] = [];
   readonly operations: string[] = [];
   readonly started: OrgConversationStartRequest[] = [];
+  people: readonly unknown[] = [];
+  leaseClaims = 0;
+  directoryLoads = 0;
   private readonly conversations = new Map<string, string>();
   failNextSubmit = false;
   holdNext() { this.admission = 'held'; }
   acceptNext() { this.admission = 'accepted'; }
+  denyNext() { this.admission = 'denied'; }
   async startConversation(request: OrgConversationStartRequest) {
     this.operations.push('start');
     this.started.push(request);
@@ -67,8 +76,9 @@ class TestTransport implements OrgMessagingTransport {
   pull(cursor: InboxCursor, limit: number) { return this.host.pull(cursor, limit); }
   ack(cursor: InboxCursor, stage: 'stored' | 'consumed') { return this.host.ack(cursor, stage); }
   wakeups() { return this.host.wakeups(); }
-  directory() { return this.host.directory(); }
-  claimAgentHost(deviceId: string) { return this.host.claimAgentHost(deviceId); }
+  directory() { return { people: this.people }; }
+  loadDirectory() { this.directoryLoads++; return Promise.resolve(this.directory()); }
+  claimAgentHost(deviceId: string) { this.leaseClaims++; return this.host.claimAgentHost(deviceId); }
   count() { return this.host.count(); }
 }
 
@@ -88,9 +98,9 @@ function outboundMessage(messageId: string, conversationId = 'conversation-1'): 
     createdAt: new Date(0).toISOString() });
 }
 
-function messenger(transport: TestTransport, state: MemoryState, delivered: string[], capturePrompt?: (resolve: (choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) => void, halt?: (target: AgentInboxTarget) => Promise<void>, inboxDeliveries?: AgentInboxEntry[], inboxRepository: AgentInboxRepository = new MemoryInboxRepository()) {
+function messenger(transport: TestTransport, state: MemoryState, delivered: string[], capturePrompt?: (resolve: (choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) => void, halt?: (target: AgentInboxTarget) => Promise<void>, inboxDeliveries?: AgentInboxEntry[], inboxRepository: AgentInboxRepository = new MemoryInboxRepository(), requestPrompt?: (prompt: OrgContactPrompt) => Promise<void>) {
   const inbox = new AgentInbox(inboxRepository, { isRunning: () => false, wake: async (_target, _batch, entries) => { inboxDeliveries?.push(...entries); delivered.push(...entries.map(entry => entry.envelope.ids.messageId)); return 'accepted'; } });
-  return new OrgMessenger(transport, new TestSession(), state, inbox, { target: async () => ({ channel: 'user-1', threadId: 'conversation-1' }) }, { request: async (_sender, _messages, resolve) => capturePrompt?.(resolve) }, { halt: async target => halt?.(target) });
+  return new OrgMessenger(transport, new TestSession(), state, inbox, { target: async () => ({ channel: 'user-1', threadId: 'conversation-1' }) }, { request: async prompt => { capturePrompt?.(prompt.resolve); await requestPrompt?.(prompt); } }, { halt: async target => halt?.(target) }, { deviceId: async () => 'device-1' });
 }
 
 function haltMessage(): MessageEnvelope {
@@ -168,6 +178,17 @@ describe('OrgMessenger', () => {
     expect(state.outbox.size).toBe(0);
   });
 
+  it('marks denied outbox items failed once and returns the denial to send()', async () => {
+    // risk: denied messages retry forever or agents miss the authorization failure
+    const state = new MemoryState(); const transport = new TestTransport();
+    transport.denyNext();
+    const service = messenger(transport, state, []);
+    await expect(service.send(outboundMessage('denied-id'))).rejects.toThrow('Message denied by organization host');
+    await service.flushOutbox();
+    expect(transport.submitted).toEqual(['denied-id']);
+    expect(state.failures.get('denied-id')).toBe('Message denied by organization host');
+  });
+
   it('persists the host inbox cursor and delivers the org message once across messenger restarts', async () => {
     // risk: duplicate or lost delivery
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
@@ -196,6 +217,50 @@ describe('OrgMessenger', () => {
     await resolveRequest?.('allow_always');
     await service.syncOnce();
     expect(delivered).toEqual(['held-request-1', 'held-request-2']);
+  });
+
+  it('keeps pulling inbox while a contact decision is still open', async () => {
+    // risk: a human decision stalls unrelated message delivery
+    const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
+    transport.holdNext();
+    await transport.submit(message('held-open'));
+    let unblock!: () => void;
+    const openPrompt = new Promise<void>(resolve => { unblock = resolve; });
+    const service = messenger(transport, state, delivered, undefined, undefined, undefined, undefined, async () => openPrompt);
+    await expect(Promise.race([
+      service.syncOnce(),
+      new Promise(resolve => setTimeout(() => resolve('blocked-by-prompt'), 25)),
+    ])).resolves.not.toBe('blocked-by-prompt');
+    unblock();
+  });
+
+  it('uses the directory display name and suppresses another prompt for six hours', async () => {
+    // risk: repeated trust prompts train users to dismiss or blindly approve them
+    const state = new MemoryState(); const transport = new TestTransport();
+    transport.people = [{ userId: 'user-2', displayName: 'Dana' }];
+    transport.holdNext();
+    await transport.submit(message('held-name'));
+    const prompts: string[] = [];
+    const service = messenger(transport, state, [], undefined, undefined, undefined, undefined, async prompt => {
+      prompts.push(prompt.senderName);
+      await prompt.shown();
+    });
+    await service.syncOnce();
+    await service.syncOnce();
+    expect(prompts).toEqual(['Dana']);
+    expect(state.askedAt.has('org-1:user-1:user-2')).toBe(true);
+  });
+
+  it('does not claim a host lease or poll when the org has no other members', async () => {
+    // risk: unnecessary Cloud polling and load for solo accounts
+    const state = new MemoryState(); const transport = new TestTransport(); const service = messenger(transport, state, []);
+    const controller = new AbortController();
+    const running = service.run(controller.signal);
+    while (!transport.directoryLoads) await new Promise(resolve => setTimeout(resolve, 0));
+    expect(transport.leaseClaims).toBe(0);
+    controller.abort();
+    await running;
+    expect(transport.operations).toEqual([]);
   });
 
   it('refuses agent posts after a control halt and cancels the local running conversation', async () => {
