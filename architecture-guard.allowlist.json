@@ -3822,13 +3822,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/documentLifecycle.ts": {
-      "rules": {
-        "raw-sql": 125,
-        "procedural-module": 5
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "services/sulla-files/src/legacyImport.ts": {
       "rules": {
         "long-file": 690,
@@ -3844,23 +3837,10 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "services/sulla-files/src/lifecycle.ts": {
-      "rules": {
-        "raw-sql": 12
-      },
-      "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
     "services/sulla-files/src/localManager.ts": {
       "rules": {
         "long-file": 1669,
         "raw-sql": 409
-      },
-      "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
-    },
-    "services/sulla-files/src/shares.ts": {
-      "rules": {
-        "long-file": 560,
-        "raw-sql": 52
       },
       "reason": "pre-existing file over the line limit; split into classes; pre-existing raw SQL outside a repository; move into app/Repositories"
     },
