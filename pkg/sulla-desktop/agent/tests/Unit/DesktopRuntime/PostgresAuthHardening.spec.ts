@@ -510,6 +510,36 @@ describe('PostgresAuthHardening', () => {
     expect(logger.lines.join('\n')).not.toContain(rotated);
   });
 
+  // risk: outage — a secret that changed mid-apply must not start a switch: compose still hands consumers the old secret
+  it('keeps trust without reloading a managed file when the secret changes after a drift gate kept trust', async() => {
+    const { events, server, consumers, source, logger, hardening } = setup();
+    const rotated = 'Rotated_ServiceSecret-adopted-from-the-database-03';
+    let drift = 0;
+
+    consumers.driftedConsumers = async() => {
+      events.push('drift');
+      if (drift++ === 0) {
+        source.current = rotated; // the provider adopts the stored value while the first decision runs
+
+        return ['sulla_vault'];
+      }
+
+      return []; // compose is not regenerated yet, so the old secret looks current
+    };
+    consumers.healthError = new Error('sulla_vault: password authentication failed (28P01)'); // consumers still send the old secret
+
+    expect(await hardening.apply()).toEqual({
+      kind: 'trust', reason: 'consumer-drift', detail: 'service secret changed; consumers not yet regenerated',
+    });
+    expect(events).not.toContain('write');
+    expect(events).not.toContain('reload');
+    expect(server.hba).toBe(TRUST_INSTALL_HBA);
+    expect(server.loaded).toBe(TRUST_INSTALL_HBA);
+    expect(PostgresScramVerifier.parse(server.verifier)?.matches(rotated)).toBe(true); // the role follows the new secret
+    expect(logger.lines.at(-1)).toBe('[PostgresAuth] state=trust (a database consumer still runs an outdated configuration: service secret changed; consumers not yet regenerated)');
+    expect(logger.lines.join('\n')).not.toContain(rotated);
+  });
+
   // risk: sign-in — a secret that will not settle never leaves scram live with a role the consumers may not match
   it('restores trust when the secret keeps changing while apply runs', async() => {
     const { server, source, hardening } = setup();

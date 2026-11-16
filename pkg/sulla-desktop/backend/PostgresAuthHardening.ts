@@ -150,7 +150,11 @@ export class PostgresAuthHardening {
    * meanwhile (ServiceSecretProvider adopting the stored database value), the
    * role may now hold the stale value: decide again with the new one, so the
    * role, the hba file and the reported state follow the latest secret. A
-   * secret that keeps moving restores trust. Never throws.
+   * secret that keeps moving restores trust. The re-decision never starts a
+   * new switch: compose still hands consumers the old secret until the queued
+   * secret-change step regenerates it, so the gates would check stale
+   * consumers. Only an already-live managed file stays scram; otherwise trust,
+   * and the next boot switches. Never throws.
    */
   private async followSecretChange(used: string, state: PostgresAuthState): Promise<PostgresAuthState> {
     let current = used;
@@ -173,16 +177,22 @@ export class PostgresAuthHardening {
       }
       this.logger.log('[PostgresAuth] the service secret changed while apply ran; deciding again with the new value');
       current = latest;
-      state = await this.applyWith(latest);
+      const next = await this.applyWith(latest, true);
+
+      // A switch that went live earlier in this apply is still a switch.
+      state = next.kind === 'scram' && state.kind === 'scram' && state.changed ? { ...next, changed: true } : next;
     }
   }
 
-  /** Decides, then makes the file on disk agree with a trust result. Never throws. */
-  private async applyWith(secret: string): Promise<PostgresAuthState> {
+  /**
+   * Decides, then makes the file on disk agree with a trust result. Never throws.
+   * `secretChanged`: consumers may not have the secret yet, so no new switch.
+   */
+  private async applyWith(secret: string, secretChanged = false): Promise<PostgresAuthState> {
     let state: PostgresAuthState;
 
     try {
-      state = await this.decide(secret);
+      state = await this.decide(secret, secretChanged);
     } catch (error) {
       state = { kind: 'trust', reason: 'unavailable', detail: this.reporter.describe(error, secret) };
     }
@@ -194,7 +204,7 @@ export class PostgresAuthHardening {
     return state;
   }
 
-  private async decide(secret: string): Promise<PostgresAuthState> {
+  private async decide(secret: string, secretChanged: boolean): Promise<PostgresAuthState> {
     if (secret === this.developmentPassword) {
       return { kind: 'trust', reason: 'legacy-development-secret' };
     }
@@ -220,6 +230,10 @@ export class PostgresAuthHardening {
       if (live !== null) {
         return live;
       }
+    }
+
+    if (secretChanged) {
+      return { kind: 'trust', reason: 'consumer-drift', detail: 'service secret changed; consumers not yet regenerated' };
     }
 
     return await this.gate(secret) ?? this.switchTo(path, secret, PostgresAuthHardening.isManaged(current));
