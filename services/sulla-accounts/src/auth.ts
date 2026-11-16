@@ -50,7 +50,7 @@ export function authenticateOwner(db: Database, config: AccountsConfig) {
 
 export async function verifyOwnerSession(db: Database, config: AccountsConfig, token: string | undefined): Promise<{ profileId: string; jti: string }> {
   if (!token) throw new Error('missing owner token');
-  const payload = jwt.verify(token, config.sessionSecret, { algorithms: ['HS256'], audience: 'sulla-accounts', issuer: config.publicUrl });
+  const payload = jwt.verify(token, config.sessionSecret, { algorithms: ['HS256'], audience: 'sulla-accounts', issuer: config.publicUrl, clockTolerance: 60 });
   if (typeof payload === 'string' || !payload.sub || !payload.jti || typeof payload.exp !== 'number' || payload.exp <= Date.now() / 1000) {
     throw new Error('invalid owner session');
   }
@@ -108,7 +108,7 @@ export async function verifyOidcToken(
   if (matches.length !== 1) throw new Error(matches.length ? 'ambiguous signing key' : 'signing key not found');
   const key = matches[0];
   const publicKey = createPublicKey({ key: key as import('node:crypto').JsonWebKey, format: 'jwk' });
-  const payload = jwt.verify(token, publicKey, { algorithms: [...allowedAlgorithms], issuer, audience });
+  const payload = jwt.verify(token, publicKey, { algorithms: [...allowedAlgorithms], issuer, audience, clockTolerance: 60 });
   if (typeof payload === 'string') throw new Error('invalid token');
   if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= Date.now() / 1000) throw new Error('token expiry is invalid');
   if (payload.iss !== issuer) throw new Error('token issuer is invalid');

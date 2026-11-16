@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 
 
-export interface CapabilityClaims { sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; thread_id?: string; device_id?: string; collection_id?: string; scopes: string[]; exp: number; aud: string; v: number }
+export interface CapabilityClaims { sub: string; org_id?: string; group_ids?: string[]; agent_id?: string; job_id?: string; thread_id?: string; device_id?: string; collection_id?: string; scopes: string[]; exp: number; iat?: number; aud: string; v: number }
 export interface FilesIdentity { userId: string; deviceId: string; kind: 'capability'; scopes?:string[]; orgId?: string; groupIds?: string[]; agentId?: string; jobId?: string; threadId?: string; collectionId?: string }
 const encode = (value:Buffer | string) => Buffer.from(value).toString('base64url');
 export function deriveCapabilitySigningKey(secret:string | Buffer):Buffer { return crypto.createHmac('sha256', secret).update('sulla-tools-capability-v1').digest() }
@@ -18,7 +18,7 @@ export function issueCapabilityToken(input:{ sub: string; org_id?: string; group
 
   return `${ header }.${ payload }.${ signature }`;
 }
-export function verifyCapabilityToken(token:string | undefined, key:string | Buffer):CapabilityClaims {
+export function verifyCapabilityToken(token:string | undefined, key:string | Buffer, nowSeconds = Math.floor(Date.now() / 1_000), toleranceSeconds = 60):CapabilityClaims {
   if (!token) throw new Error('Missing capability token');
   const [header, payload, signature, extra] = token.split('.');
   if (!header || !payload || !signature || extra) throw new Error('Malformed capability token');
@@ -26,7 +26,10 @@ export function verifyCapabilityToken(token:string | undefined, key:string | Buf
   const actual = Buffer.from(signature, 'base64url');
   if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) throw new Error('Invalid capability signature');
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as CapabilityClaims;
-  if (claims.v !== 1 || claims.aud !== 'sulla-tools' || claims.exp <= Math.floor(Date.now() / 1_000) || !claims.sub) throw new Error('Invalid capability claims');
+  if (!Number.isFinite(toleranceSeconds) || toleranceSeconds < 0 || toleranceSeconds > 300) throw new RangeError('clock tolerance must be between 0 and 300 seconds');
+  if (claims.v !== 1 || claims.aud !== 'sulla-tools' || !Number.isFinite(claims.exp) || !claims.sub) throw new Error('Invalid capability claims');
+  if (claims.exp + toleranceSeconds < nowSeconds) throw new Error(`Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds ${toleranceSeconds}s tolerance`);
+  if (Number.isFinite(claims.iat) && claims.iat! - toleranceSeconds > nowSeconds) throw new Error(`Capability issued ${Math.ceil(claims.iat! - nowSeconds)}s in the future; clock skew exceeds ${toleranceSeconds}s tolerance`);
   if (!claims.scopes?.some(scope => scope === '*' || scope === 'files/*' || scope === 'files/fuse')) throw new Error('Capability does not allow files');
   return claims;
 }
