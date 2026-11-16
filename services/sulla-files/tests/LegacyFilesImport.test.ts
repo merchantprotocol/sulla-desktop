@@ -17,7 +17,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { chunkId, decrypt, decryptChunk, encrypt, encryptChunk, type Envelope } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
-import { LegacyFilesImporter, LegacyImportDataError } from '../src/legacyImport.js';
+import { LegacyFilesImporter, LegacyImportContinuationRequiredError, LegacyImportDataError } from '../src/legacyImport.js';
 import { isLegacyInternalPath, runLegacyPreflight } from '../src/legacyPreflight.js';
 
 const databaseUrl = process.env.SULLA_FILES_TEST_DATABASE_URL;
@@ -190,6 +190,20 @@ describe.skipIf(!databaseUrl)('legacy Files preflight and import (real Postgres)
     expect(second).toEqual(first);
     expect(await fixture.counts()).toEqual(after);
     expect(await fixture.importer().completedResult()).toEqual(first);
+  });
+
+  // risk: data loss — a legacy save written after the receipt must be imported as a safe linear continuation.
+  it('continues a completed import when a legacy file gained a linear new version', async() => {
+    const collection = await fixture.collection('Old docs');
+    const file = await fixture.file(collection, 'a.md', ['one'], ['two']);
+    await fixture.importer().run(fixture.nativeMaster, [fixture.legacyMaster]);
+    await fixture.version(collection, file.fileId, ['three'], file.versions[1]);
+
+    await expect(fixture.importer().completedResult()).rejects.toBeInstanceOf(LegacyImportContinuationRequiredError);
+    expect(await fixture.importer().run(fixture.nativeMaster, [fixture.legacyMaster])).toEqual({ collections: 1, files: 1, versions: 3 });
+    expect((await fixture.shadowContent(file.fileId)).content).toBe('three');
+    expect((await pool.query('SELECT count(*)::int n FROM files_legacy_collection_map')).rows[0].n).toBe(1);
+    expect(await fixture.importer().completedResult()).toEqual({ collections: 1, files: 1, versions: 3 });
   });
 
   // risk: data loss after a crash — a failed import must publish nothing, then resume on the same shadows.
