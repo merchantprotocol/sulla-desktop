@@ -9,8 +9,8 @@ import Electron from 'electron';
 
 import { getSettings } from '@pkg/config/settingsImpl';
 import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
-import { getInstallId } from '@pkg/main/installId';
-import { recordSupportTimeline } from '@pkg/main/supportTimeline';
+import { InstallIdStore } from '@pkg/main/installId';
+import { supportTimeline } from '@pkg/main/supportTimeline';
 
 const LAUNCH_DELAY_MS = 30_000;
 const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1_000;
@@ -25,7 +25,7 @@ function telemetryEnabled(): boolean {
 }
 
 async function sendPing(event: PingEvent): Promise<void> {
-  if (event === 'launch') void recordSupportTimeline('installed', { platform: process.platform, arch: process.arch });
+  if (event === 'launch') void supportTimeline.record('installed', { platform: process.platform, arch: process.arch });
   if (!telemetryEnabled()) {
     return;
   }
@@ -38,7 +38,7 @@ async function sendPing(event: PingEvent): Promise<void> {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
-        installId:  getInstallId(Electron.app.getPath('userData')),
+        installId:  new InstallIdStore(Electron.app.getPath('userData')).get(),
         appVersion: Electron.app.getVersion(),
         platform:   process.platform,
         arch:       process.arch,
