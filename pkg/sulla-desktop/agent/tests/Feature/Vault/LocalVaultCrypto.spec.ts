@@ -21,11 +21,18 @@ import {
   unwrapUserPrivateKey,
   type EncryptedEnvelope,
 } from '@sulla/vault-crypto';
-import { verifyLoginHash } from '../../../../../../services/sulla-vault/src/auth';
+import { VaultLoginVerifier } from '../../../../../../services/sulla-vault/src/auth/VaultLoginVerifier';
 import { DesktopHumanBackup } from '../../../../../../services/sulla-vault/src/localCrypto/DesktopHumanBackup';
 import type { LocalVaultCrypto } from '../../../../../../services/sulla-vault/src/localCrypto/LocalVaultCrypto';
 import { LocalVaultCryptoProvider } from '../../../../../../services/sulla-vault/src/localCrypto/LocalVaultCryptoProvider';
 import { NodeScryptFunction } from '../../../../../../services/sulla-vault/src/localCrypto/NodeScryptFunction';
+
+/** The server writer's verifier for this login hash and salt, compared byte for byte (32 bytes, fixed length). */
+class LoginVerifierOracle {
+  static matches(loginHash: string, salt: Uint8Array, stored: Uint8Array): boolean {
+    return stored.byteLength === 32 && new VaultLoginVerifier().make(loginHash, Buffer.from(salt)).verifier.equals(Buffer.from(stored));
+  }
+}
 
 /** Synthetic fixtures only. */
 class LocalCryptoScenario {
@@ -61,8 +68,8 @@ describe('Desktop local vault crypto on @sulla/domain (M3 S7)', () => {
     const salt = Uint8Array.from({ length: 16 }, (_, index) => index + 1);
     const native = new NodeScryptFunction().derive(password, salt, 32);
     expect(Buffer.from(native).equals(Buffer.from(new NobleScryptFunction().derive(password, salt, 32)))).toBe(true);
-    expect(verifyLoginHash('login-hash-text', salt, native)).toBe(true);
-    expect(verifyLoginHash('login-hash-text', salt, new NodeScryptFunction().derive(new TextEncoder().encode('other'), salt, 32))).toBe(false);
+    expect(LoginVerifierOracle.matches('login-hash-text', salt, native)).toBe(true);
+    expect(LoginVerifierOracle.matches('login-hash-text', salt, new NodeScryptFunction().derive(new TextEncoder().encode('other'), salt, 32))).toBe(false);
   });
 
   it('a new vault account opens with the old vault-crypto readers and the old login verifier', async() => {
@@ -76,7 +83,7 @@ describe('Desktop local vault crypto on @sulla/domain (M3 S7)', () => {
     expect(Buffer.from(userKey).equals(Buffer.from(account.userKey))).toBe(true);
     const privateKey = await unwrapUserPrivateKey(account.encryptedPrivateKey as EncryptedEnvelope, userKey);
     expect(Buffer.from(privateKey).equals(Buffer.from(account.privateKey))).toBe(true);
-    expect(verifyLoginHash(await deriveLoginHash(legacyMaster.key), account.verifier.salt, account.verifier.verifier)).toBe(true);
+    expect(LoginVerifierOracle.matches(await deriveLoginHash(legacyMaster.key), account.verifier.salt, account.verifier.verifier)).toBe(true);
     expect(Buffer.isBuffer(account.verifier.salt) && Buffer.isBuffer(account.verifier.verifier)).toBe(true);
     expect(account.publicKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
@@ -137,7 +144,7 @@ describe('Desktop local vault crypto on @sulla/domain (M3 S7)', () => {
     const metadata = JSON.parse(rotation.row.recoverySalt) as { kdf: string; verifier: string; parameters: { memoryBytes: number; operations: number } };
     expect(Object.keys(metadata)).toEqual(['kdf', 'verifier', 'parameters']);
     const legacy = await deriveMasterKey(rotation.recoveryKey, metadata.kdf, metadata.parameters);
-    expect(verifyLoginHash(await deriveLoginHash(legacy.key), Buffer.from(metadata.verifier, 'base64url'), Buffer.from(rotation.row.recoveryVerifier, 'base64url'))).toBe(true);
+    expect(LoginVerifierOracle.matches(await deriveLoginHash(legacy.key), Buffer.from(metadata.verifier, 'base64url'), Buffer.from(rotation.row.recoveryVerifier, 'base64url'))).toBe(true);
     const opened = await decryptWithKey(rotation.row.encryptedUserKey as EncryptedEnvelope, legacy.key, 'sulla:recovery-user-key:v1');
     expect(Buffer.from(opened).equals(Buffer.from(userKey))).toBe(true);
 

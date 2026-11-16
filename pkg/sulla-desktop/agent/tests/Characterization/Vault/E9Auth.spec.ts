@@ -70,37 +70,16 @@ describe('E9 auth.ts login verifiers match the pre-refactor implementation', () 
     expect(Hex.of(legacy.makeLoginVerifier('fresh-salt', first.salt).verifier)).toBe(Hex.of(first.verifier));
   });
 
-  it('verifyLoginHash gives the same decision (or the same error) as legacy for every case', () => { // risk: authentication bypass
+  it('verifyLoginHash is removed: the legacy copy accepted empty and truncated verifiers', () => { // risk: authentication bypass
     const [loginHash, saltHex, verifierHex] = vectors[0];
     const salt = Hex.bytes(saltHex);
     const verifier = Hex.bytes(verifierHex);
-    const flipped = Buffer.from(verifier);
-    flipped[31] ^= 1;
-    const cases: Array<[string, string, Uint8Array, Uint8Array]> = [
-      ['correct', loginHash, salt, verifier],
-      ['correct as Uint8Array', loginHash, new Uint8Array(salt), new Uint8Array(verifier)],
-      ['wrong hash', 'login-hash-texT', salt, verifier],
-      ['empty hash', '', salt, verifier],
-      ['wrong salt', loginHash, Hex.bytes('000102030405060708090a0b0c0d0e0e'), verifier],
-      ['tampered verifier', loginHash, salt, flipped],
-      ['short verifier prefix', loginHash, salt, verifier.subarray(0, 16)],
-      ['long verifier', loginHash, salt, Buffer.concat([verifier, verifier])],
-      ['empty verifier', loginHash, salt, new Uint8Array(0)],
-      ['empty salt', loginHash, new Uint8Array(0), verifier],
-    ];
-    for (const [name, hash, s, expected] of cases) {
-      expect([name, ErrorShape.of(() => current.verifyLoginHash(hash, s, expected))]).toEqual([name, ErrorShape.of(() => legacy.verifyLoginHash(hash, s, expected))]);
-    }
-    expect(current.verifyLoginHash(loginHash, salt, verifier)).toBe(true);
-    expect(current.verifyLoginHash('login-hash-texT', salt, verifier)).toBe(false);
-    expect(current.verifyLoginHash(loginHash, salt, flipped)).toBe(false);
-    // Pinned current behaviour (latent weakness, not fixed in E9): scrypt output is prefix-consistent
-    // (scrypt(x, s, 16) equals the first 16 bytes of scrypt(x, s, 32)) and the verifier length comes from the
-    // stored verifier, so a truncated verifier is accepted. verifyLoginHash is not used in production.
-    expect(current.verifyLoginHash(loginHash, salt, verifier.subarray(0, 16))).toBe(true);
+    // Legacy behaviour kept on record: the output length came from the stored verifier, and scrypt output is
+    // prefix-consistent, so a truncated verifier matched and an empty one matched any hash. It had no production
+    // caller (sign-in uses LocalVaultCrypto#verifyPassword), so the hardening PR deleted it and its alias.
     expect(legacy.verifyLoginHash(loginHash, salt, verifier.subarray(0, 16))).toBe(true);
-    // Pinned current behaviour (reported as a latent bug, not fixed in E9): an empty stored verifier verifies any hash.
-    expect(current.verifyLoginHash('anything', salt, new Uint8Array(0))).toBe(true);
+    expect(legacy.verifyLoginHash('anything', salt, new Uint8Array(0))).toBe(true);
+    expect('verifyLoginHash' in current).toBe(false);
   });
 });
 

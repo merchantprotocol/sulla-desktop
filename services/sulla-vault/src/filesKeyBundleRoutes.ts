@@ -40,7 +40,8 @@ export class FilesKeyBundleRoutes {
     const router = express.Router();
     router.use((request, response, next) => {
       const serviceId = request.header('x-sulla-service-id');
-      const token = request.header('authorization')?.replace(/^Bearer\s+/i, '');
+      // Only the "Bearer <token>" form: a bare token (no scheme) is refused.
+      const token = /^Bearer\s+(.+)$/i.exec(request.header('authorization') ?? '')?.[1];
       if (serviceId !== identity.serviceId || !this.constantEqual(token, identity.token)) {
         response.status(401).json({ error: 'invalid_service_identity', message: 'Files service identity is invalid' });
         return;

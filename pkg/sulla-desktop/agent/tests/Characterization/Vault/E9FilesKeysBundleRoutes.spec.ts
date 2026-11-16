@@ -125,7 +125,6 @@ describe.sequential('E9 Files keys: key bundle router equivalence (legacy copy v
       { 'x-sulla-service-id': 'sulla-tools', authorization: `Bearer ${ TOKEN }` },
       { 'x-sulla-service-id': SERVICE_ID, authorization: `Bearer ${ TOKEN }x` },
       { 'x-sulla-service-id': SERVICE_ID, authorization: `Bearer ${ TOKEN.slice(0, -1) }f` },
-      { 'x-sulla-service-id': SERVICE_ID, authorization: TOKEN },
       { 'x-sulla-service-id': SERVICE_ID, authorization: `bearer   ${ TOKEN }` },
       { 'x-sulla-service-id': SERVICE_ID, authorization: `Basic ${ TOKEN }` },
     ];
@@ -139,8 +138,8 @@ describe.sequential('E9 Files keys: key bundle router equivalence (legacy copy v
     const denied = await fx.both({ method: 'GET', path: '/v1/desktop/files/principal' });
     expect(denied.response).toMatchObject({ status: 401, body: JSON.stringify({ error: 'invalid_service_identity', message: 'Files service identity is invalid' }) });
     expect(denied.calls).toEqual([]);
-    const bareToken = await fx.both({ method: 'GET', path: '/v1/desktop/files/principal', headers: { 'x-sulla-service-id': SERVICE_ID, authorization: TOKEN } });
-    expect(bareToken.response.status).toBe(200);
+    // A bare token (no "Bearer " scheme) is an intentional divergence from legacy: legacy accepted it, live refuses it
+    // (VaultE9SecurityHardening.spec.ts).
   });
 
   it('serves principal, custody recipient, registration and device recovery identically', async() => { // risk: Files key exchange contract drift
