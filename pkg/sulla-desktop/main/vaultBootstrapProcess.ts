@@ -17,7 +17,7 @@ import path from 'node:path';
 
 import { app, safeStorage, session } from 'electron';
 
-import { VaultBootstrapProcess } from './vaultBootstrapLifecycle';
+import { VaultBootstrapProcess, type VaultBootstrapProcessRuntime } from './vaultBootstrapLifecycle';
 export { VaultBootstrapProcess } from './vaultBootstrapLifecycle';
 export type { VaultBootstrapProcessRuntime } from './vaultBootstrapLifecycle';
 
@@ -211,13 +211,27 @@ async function updateMasterCache(): Promise<void> {
 }
 
 
-new VaultBootstrapProcess({
-  whenReady: () => app.whenReady(),
-  exit: code => app.exit(code),
-  argv: process.argv,
-  writeStdout: value => process.stdout.write(value),
-  waitForExit: () => new Promise<never>(() => undefined),
-  configurePinnedTls,
-  bootstrap,
-  updateMasterCache,
-}).run();
+/** Wires the real Electron-backed runtime into the one-shot bootstrap helper. No work happens until run(). */
+export class VaultBootstrapEntry {
+  createRuntime(): VaultBootstrapProcessRuntime {
+    return {
+      whenReady:   () => app.whenReady(),
+      exit:        code => app.exit(code),
+      argv:        process.argv,
+      writeStdout: (value) => { process.stdout.write(value); },
+      waitForExit: () => new Promise<never>(() => undefined),
+      configurePinnedTls,
+      bootstrap,
+      updateMasterCache,
+    };
+  }
+
+  run(): Promise<never> {
+    return new VaultBootstrapProcess(this.createRuntime()).run();
+  }
+}
+
+/** The only entry point: bootstrapEntry calls this once. Importing this module has no side effects. */
+export function runVaultBootstrapProcess(): Promise<never> {
+  return new VaultBootstrapEntry().run();
+}

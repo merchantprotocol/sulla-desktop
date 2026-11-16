@@ -26,7 +26,7 @@ if (process.platform === 'darwin' && (filesBootstrapHelper || vaultBootstrapHelp
 if (filesBootstrapHelper) {
   void import('@pkg/main/sullaFilesBootstrapProcess').then(module => module.runSullaFilesBootstrapProcess());
 } else if (vaultBootstrapHelper) {
-  void import('@pkg/main/vaultBootstrapProcess').then(({ VaultBootstrapProcess }) => new VaultBootstrapProcess().run());
+  void import('@pkg/main/vaultBootstrapProcess').then(module => module.runVaultBootstrapProcess());
 } else {
   void import('./background').then(
     () => e2eTrace('background module loaded'),

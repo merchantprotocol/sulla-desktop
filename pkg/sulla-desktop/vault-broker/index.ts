@@ -351,5 +351,3 @@ export class LocalVaultBrokerClient {
 export { LocalVaultApprovalClient } from './LocalVaultApprovalClient';
 import { LocalVaultApprovalClient } from './LocalVaultApprovalClient';
 
-import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
-export { VaultBrokerServiceProvider } from './VaultBrokerServiceProvider';
