@@ -36,8 +36,9 @@ describe.skipIf(!databaseUrl)('database operation batches (real Postgres)', () =
   beforeEach(async() => {
     onFile = () => undefined;
     collectionId = randomUUID();
-    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source)
-      VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE)`, [collectionId, actor.userId]);
+    // A unique explorer_path per collection: published collections of one owner share a unique index on it.
+    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
+      VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [collectionId, actor.userId, collectionId]);
   });
 
   async function seedFile(path:string):Promise<{ id:string; versionId:string }> {
