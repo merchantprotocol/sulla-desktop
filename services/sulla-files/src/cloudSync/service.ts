@@ -7,13 +7,13 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type pg from 'pg';
 
-import type { FilesIdentity } from '../auth.js';
 import type { FilesCloudBroker } from '../cloudBroker.js';
 import type { Config } from '../config.js';
 import type { FilesKeyring } from '../keyring.js';
 import type { Store } from '../store.js';
 import { FilesSyncCloudApi } from './cloudApi.js';
 import { CloudSignedResponseHandler, type SendStatus } from './CloudSignedResponseHandler.js';
+import { CloudSyncActor } from './CloudSyncActor.js';
 import { CloudSyncErrorText, HttpStatusError } from './CloudSyncErrors.js';
 import { CloudSyncRepositories } from './CloudSyncRepositories.js';
 import { CloudSyncScheduler, CollectionLocks } from './CloudSyncScheduler.js';
@@ -76,8 +76,8 @@ export class CloudSyncService {
     this.cryptoModule = configureCryptoModule();
     this.api = new FilesSyncCloudApi(broker);
     this.roots = new CloudRootKeyStore(keyring);
-    const actor:FilesIdentity = { userId: config.userId, deviceId: config.deviceId, kind: 'capability', orgId: config.orgId };
-    this.repositories = new CloudSyncRepositories(db, actor);
+    // A live actor, never a copy of config.userId: Vault unlock re-owns Files after this is built.
+    this.repositories = new CloudSyncRepositories(db, new CloudSyncActor(config));
     this.staging = new CloudStagingStore(config.dataRoot);
     this.puller = new CloudPuller(this.api, this.repositories.pull, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
     const candidates = new PgCloudPushCandidateRepository(db);
