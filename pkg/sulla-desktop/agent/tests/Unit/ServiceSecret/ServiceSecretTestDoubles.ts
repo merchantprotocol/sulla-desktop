@@ -4,7 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { ServiceSecretSettingsStore } from '../../../app/Repositories/ServiceSecretRepository';
-import type { ServiceSecretClock, ServiceSecretLogger } from '../../../app/Services/ServiceSecret/ServiceSecretProvider';
+import type {
+  ServiceSecretClock, ServiceSecretInstallState, ServiceSecretLogger,
+} from '../../../app/Services/ServiceSecret/ServiceSecretProvider';
 
 /**
  * In-memory stand-in for SullaSettingsModel's two stores: the pre-database
@@ -23,6 +25,8 @@ export class FakeSettingsStores implements ServiceSecretSettingsStore {
   databaseFailures: Error[] = [];
   readonly writes: Array<{ store: 'file' | 'database'; property: string; value: unknown }> = [];
   quarantined = 0;
+  /** What a repair can still read out of the corrupt file (the real model salvages complete pairs). */
+  salvageable: Record<string, unknown> = {};
 
   async getSetting(property: string, fallback: unknown = null): Promise<unknown> {
     const failure = this.databaseFailures.shift();
@@ -56,12 +60,10 @@ export class FakeSettingsStores implements ServiceSecretSettingsStore {
     this.writes.push({ store: 'file', property, value });
   }
 
-  async quarantineBootstrapFile(): Promise<string> {
+  async repairBootstrapFile(): Promise<void> {
     this.quarantined++;
     this.filePermanentFailure = undefined;
-    this.file = null;
-
-    return '/fake/sulla-settings-fallback.json.corrupt-1';
+    this.file = { ...this.salvageable };
   }
 }
 
@@ -108,5 +110,27 @@ export class SequenceGenerator {
     this.calls++;
 
     return `generated-secret-${ this.calls }`;
+  }
+}
+
+/**
+ * The runtime's answers: is this a fresh install, and open the database
+ * (which flips the fake settings to database-backed, as bootstrap() does).
+ */
+export class FakeInstallState implements ServiceSecretInstallState {
+  fresh = false;
+  openFailure?: Error;
+  opened = 0;
+
+  constructor(private readonly stores: FakeSettingsStores) {}
+
+  async isFresh(): Promise<boolean> {
+    return this.fresh;
+  }
+
+  async openDatabase(): Promise<void> {
+    this.opened++;
+    if (this.openFailure) throw this.openFailure;
+    this.stores.ready = true;
   }
 }

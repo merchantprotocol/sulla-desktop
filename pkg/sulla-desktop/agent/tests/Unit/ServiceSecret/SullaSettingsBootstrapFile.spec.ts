@@ -36,9 +36,18 @@ describe('SullaSettingsModel bootstrap file (pre-database store)', () => {
     await fs.rm(directory, { recursive: true, force: true });
   });
 
-  function provider(): ServiceSecretProvider {
-    return new ServiceSecretProvider(new ServiceSecretRepository(SullaSettingsModel), new ServiceSecretGenerator(),
+  function provider(fresh = false): ServiceSecretProvider {
+    const result = new ServiceSecretProvider(new ServiceSecretRepository(SullaSettingsModel), new ServiceSecretGenerator(),
       new FakeClock(), new RecordingLogger(), { maxWaitMs: 1_000, baseDelayMs: 100, maxDelayMs: 500 });
+
+    result.useInstallState({
+      isFresh:      async() => fresh,
+      openDatabase: async() => {
+        throw new Error('no database in this test');
+      },
+    });
+
+    return result;
   }
 
   // risk: data accuracy — concurrent boot writes used to drop each other's keys
@@ -75,6 +84,25 @@ describe('SullaSettingsModel bootstrap file (pre-database store)', () => {
     expect(await fs.readFile(path.join(directory, aside[0]), 'utf8')).toBe('not json');
   });
 
+  // risk: data accuracy (B3) — a write against a truncated file used to drop every other key, the secret included
+  it('a write against a truncated file keeps every key that is still readable', async() => {
+    await fs.writeFile(file, '{\n  "sullaInstalled": true,\n  "sullaServicePassword": "Kept_Secret",\n  "nested": {"a": [1, "}"]},\n  "cutOff": "tru');
+
+    await SullaSettingsModel.set('heartbeatEnabled', true);
+
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({
+      sullaInstalled: true, sullaServicePassword: 'Kept_Secret', nested: { a: [1, '}'] }, heartbeatEnabled: true,
+    });
+  });
+
+  // risk: sign-in (B3) — the secret survives a file that stays corrupt through the whole wait
+  it('the provider recovers the secret from a truncated file instead of generating one', async() => {
+    await fs.writeFile(file, '{"sullaServicePassword": "Kept_Secret", "other": 12, "cutOff": "tr');
+
+    expect(await provider().get()).toBe('Kept_Secret');
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ sullaServicePassword: 'Kept_Secret', other: 12 });
+  });
+
   // risk: sign-in — the stored install secret is returned unchanged
   it('returns the install secret already in the bootstrap file', async() => {
     await fs.writeFile(file, JSON.stringify({ sullaServicePassword: 'Existing_Install_Secret' }));
@@ -83,15 +111,23 @@ describe('SullaSettingsModel bootstrap file (pre-database store)', () => {
   });
 
   // risk: security — the old code path returned and persisted the public dev password here
-  it('on a file without the secret, generates and persists a strong one, never the dev password', async() => {
+  it('on a fresh install without the secret, generates and persists a strong one, never the dev password', async() => {
     await fs.writeFile(file, JSON.stringify({ sullaInstalled: false }));
 
-    const secret = await provider().get();
+    const secret = await provider(true).get();
     const data = JSON.parse(await fs.readFile(file, 'utf8'));
 
     expect(secret).not.toBe('sulla_dev_password');
     expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(data.sullaServicePassword).toBe(secret);
     expect(data.sullaInstalled).toBe(false);
+  });
+
+  // risk: irreversible side effect (B1) — an installed system never gets a new secret because the file lacks it
+  it('on an installed system without the secret and no database to ask, fails instead of generating', async() => {
+    await fs.writeFile(file, JSON.stringify({ sullaInstalled: true }));
+
+    await expect(provider(false).get()).rejects.toThrow(/settings database could not be opened/);
+    expect(JSON.parse(await fs.readFile(file, 'utf8'))).toEqual({ sullaInstalled: true });
   });
 });

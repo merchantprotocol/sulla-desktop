@@ -149,4 +149,36 @@ describe('ContainerDriftReconciler', () => {
     expect(lines.join('\n')).toContain('01234567');
     expect(lines.join('\n')).not.toContain('0123456789abcdef-desired');
   });
+
+  // risk: availability (review c) — a container whose label never matches must not be recreated on every sweep
+  it('does not recreate the same container twice for the same desired definition', async() => {
+    const { docker, recreated, lines, reconciler } = setup();
+
+    docker.desired.set('tools', 'desired');
+    docker.containers.set('sulla_tools', { running: true, hash: 'skewed' });
+
+    expect((await reconciler.reconcile(TOOLS)).kind).toBe('recreated');
+    expect((await reconciler.reconcile(TOOLS)).kind).toBe('unknown');
+    expect(recreated).toEqual(['tools']);
+    expect(lines.some(line => line.includes('still reports a different config hash'))).toBe(true);
+  });
+
+  // risk: availability (review b) — a Files container mid-migration is given time before it is recreated
+  it('runs the before-recreate hook (wait for a starting service) only for a drifted container, before recreating', async() => {
+    const docker = new FakeDocker();
+    const order: string[] = [];
+    const reconciler = new ContainerDriftReconciler(docker, COMPOSE, async(service) => {
+      order.push(`recreate ${ service }`);
+    }, { log: () => undefined, warn: () => undefined }, async(target) => {
+      order.push(`settle ${ target.service }`);
+    });
+
+    docker.desired.set('sulla_files', 'new').set('tools', 'same');
+    docker.containers.set('sulla_files', { running: true, hash: 'old' }).set('sulla_tools', { running: true, hash: 'same' });
+
+    await reconciler.reconcileAll([FILES, TOOLS]);
+
+    expect(order).toEqual(['settle sulla_files', 'recreate sulla_files']);
+  });
 });
+

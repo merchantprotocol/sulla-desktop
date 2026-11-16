@@ -36,6 +36,7 @@ import {
   clearOnDemandServices, configureOnDemandServices, ON_DEMAND_SERVICES, type OnDemandServiceName, SULLA_COMPOSE_COMMAND,
 } from './onDemandServices';
 import { reconcileComposeService } from './sullaServiceReconcile';
+import { ComposeDriftActions } from './ComposeDriftActions';
 import { ComposeSecretGuard } from './ComposeSecretGuard';
 import { ContainerDriftReconciler } from './ContainerDriftReconciler';
 import { GuestServiceSecretInstallState } from './GuestServiceSecretInstallState';
@@ -225,11 +226,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   readonly #volumeMigrator = new NamedVolumeMigrator(this.#guestDocker, this.#composeContainers, 'sulla', console);
   /** Sulla containers the person stopped from the Docker tab; supervision leaves them stopped. */
   readonly #userStopped = new UserStoppedContainers();
+  readonly #driftActions = new ComposeDriftActions(this.#guestDocker, (...command) => this.execCommand({ root: true }, ...command),
+    (target, timeoutSec) => this.waitForDockerServiceHealthy(target, timeoutSec), console);
   /** Mid-session drift sweeps share one reconciler so a container that cannot converge is not recreated in a loop. */
-  readonly #composeDrift = new ContainerDriftReconciler(
-    this.#guestDocker, SULLA_COMPOSE_COMMAND.slice(1), service => this.recreateComposeService(service), console,
-    target => this.settleBeforeRecreate(target),
-  );
+  readonly #composeDrift = new ContainerDriftReconciler(this.#guestDocker, SULLA_COMPOSE_COMMAND.slice(1),
+    service => this.#driftActions.recreate(service), console, target => this.#driftActions.settle(target));
   readonly #composeRegeneration = new SullaComposeRegeneration(async() => {
     await this.prepareSullaComposeFile();
 
@@ -1908,30 +1909,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await this.#composeRegeneration.run(`service secret: ${ reason }`, { checkpoint: () => this.assertManagedServicesGeneration(generation) });
   }
 
-  /** Recreate one service from the current compose file (compose's own diff decides). */
-  private async recreateComposeService(service: string): Promise<void> {
-    await reconcileComposeService({
-      composeCommand: [...SULLA_COMPOSE_COMMAND],
-      service,
-      run:            (...command) => this.execCommand({ root: true }, ...command),
-    });
-  }
-
-  /**
-   * Before a drifted container is recreated: if it is still in its start
-   * period (Files may be applying a schema migration), give it a bounded wait
-   * to become healthy so the recreate never interrupts a migration.
-   */
-  private async settleBeforeRecreate(target: ComposeServiceTarget): Promise<void> {
-    const health = (await this.#guestDocker.run([
-      'inspect', '--format', '{{if .State.Health}}{{.State.Health.Status}}{{end}}', target.container,
-    ]).catch(() => '')).trim();
-
-    if (health !== 'starting') return;
-    await this.waitForDockerServiceHealthy(target, target.service === 'sulla_files' ? 600 : 120)
-      .catch(error => console.warn(`[Sulla] ${ target.service } did not become healthy before its recreate: ${ (error as Error)?.message?.split('\n')[0] }`));
-  }
-
   /**
    * How many optional services may be starting at once: a few on a guest
    * under 3 GiB, otherwise all of them.
@@ -2026,7 +2003,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       // a drifted one (e.g. stale env after the service secret changed) is
       // recreated; an unchanged one is left alone.
       const configDrift = new ContainerDriftReconciler(this.#guestDocker, composeCommand.slice(1), startOptionalService, console,
-        target => this.settleBeforeRecreate(target));
+        target => this.#driftActions.settle(target));
 
       // Retire the old Desktop board container; preserve all database data.
       await this.execCommand({ root: true }, 'docker', 'rm', '-f', 'sulla_projects').catch(() => undefined);

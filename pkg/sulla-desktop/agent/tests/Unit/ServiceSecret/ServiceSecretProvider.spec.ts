@@ -11,7 +11,7 @@ import {
   ServiceSecretProvider, ServiceSecretUnavailableError,
 } from '../../../app/Services/ServiceSecret/ServiceSecretProvider';
 import {
-  corruptFileError, FakeClock, FakeSettingsStores, RecordingLogger, SequenceGenerator,
+  corruptFileError, FakeClock, FakeInstallState, FakeSettingsStores, RecordingLogger, SequenceGenerator,
 } from './ServiceSecretTestDoubles';
 
 const PROPERTY = 'sullaServicePassword';
@@ -22,10 +22,13 @@ function build(stores = new FakeSettingsStores(), generator = new SequenceGenera
   const clock = new FakeClock();
   const logger = new RecordingLogger();
   const repository = new ServiceSecretRepository(stores, logger);
+  const install = new FakeInstallState(stores);
   const provider = new ServiceSecretProvider(repository, generator as unknown as ServiceSecretGenerator, clock, logger,
     { maxWaitMs: 10_000, baseDelayMs: 100, maxDelayMs: 1_000 });
 
-  return { stores, generator, clock, logger, provider };
+  provider.useInstallState(install);
+
+  return { stores, generator, clock, logger, provider, install };
 }
 
 describe('ServiceSecretProvider', () => {
@@ -39,7 +42,6 @@ describe('ServiceSecretProvider', () => {
     const secret = await provider.get();
 
     expect(secret).toBe(REAL);
-    expect(secret).not.toBe(DEV_PASSWORD);
     expect(clock.sleeps).toEqual([100, 200]);
     expect(generator.calls).toBe(0);
     expect(stores.writes).toEqual([]);
@@ -57,53 +59,78 @@ describe('ServiceSecretProvider', () => {
   });
 
   // risk: irreversible side effect — double generation would split containers and Desktop
-  it('generates once on a confirmed-absent value, persists it, and concurrent callers share it', async() => {
-    const { stores, generator, provider } = build();
+  it('on a fresh install generates once, persists it, and concurrent callers share it', async() => {
+    const { stores, generator, provider, install } = build();
 
-    stores.file = { sullaInstalled: false };
+    install.fresh = true;
+    stores.file = null;
 
     const results = await Promise.all([provider.get(), provider.get(), provider.get(), provider.get()]);
 
     expect(new Set(results).size).toBe(1);
     expect(results[0]).toBe('generated-secret-1');
     expect(generator.calls).toBe(1);
-    expect(stores.file?.[PROPERTY]).toBe('generated-secret-1');
-    expect(await provider.get()).toBe('generated-secret-1');
-  });
-
-  // risk: data accuracy — a missing bootstrap file on a fresh install counts as absent
-  it('treats a missing bootstrap file as absent and creates it with the new secret', async() => {
-    const { stores, provider } = build();
-
-    stores.file = null;
-
-    expect(await provider.get()).toBe('generated-secret-1');
     expect(stores.file).toEqual({ [PROPERTY]: 'generated-secret-1' });
+    expect(install.opened).toBe(0);
   });
 
-  // risk: security — the public dev password must never be emitted even when a store holds it
-  it('replaces a stored retired development password instead of returning it', async() => {
+  // risk: sign-in / data accuracy (B1) — file without the key on an installed system: the database decides
+  it('on an installed system whose file lacks the secret, opens the database and adopts its value', async() => {
+    const { stores, generator, provider, install } = build();
+
+    stores.file = {};
+    stores.database.set(PROPERTY, REAL);
+
+    expect(await provider.get()).toBe(REAL);
+    expect(generator.calls).toBe(0);
+    expect(install.opened).toBe(1);
+    expect(stores.file?.[PROPERTY]).toBe(REAL);
+  });
+
+  // risk: irreversible side effect (B1) — never invent a secret on an install that already has data
+  it('on an installed system with no stored secret anywhere, throws with recovery guidance', async() => {
+    const { stores, generator, provider } = build();
+
+    stores.file = {};
+
+    await expect(provider.get()).rejects.toThrow(/Restore "sullaServicePassword"/);
+    expect(generator.calls).toBe(0);
+  });
+
+  // risk: irreversible side effect (B1) — a database that cannot be opened is not "absent"
+  it('throws when the database cannot be opened to look, and generates nothing', async() => {
+    const { stores, generator, provider, install } = build();
+
+    stores.file = {};
+    install.openFailure = new Error('No such container: sulla_postgres');
+
+    await expect(provider.get()).rejects.toBeInstanceOf(ServiceSecretUnavailableError);
+    expect(generator.calls).toBe(0);
+  });
+
+  // risk: security (B4) — no rotation this release; the stored dev password is consulted against PostgreSQL
+  it('when the file holds the dev password and PostgreSQL holds another value, uses the PostgreSQL value', async() => {
     const { stores, generator, provider } = build();
 
     stores.file = { [PROPERTY]: DEV_PASSWORD };
+    stores.database.set(PROPERTY, REAL);
 
-    const secret = await provider.get();
-
-    expect(secret).not.toBe(DEV_PASSWORD);
-    expect(generator.calls).toBe(1);
-    expect(stores.file?.[PROPERTY]).toBe(secret);
+    expect(await provider.get()).toBe(REAL);
+    expect(stores.file?.[PROPERTY]).toBe(REAL);
+    expect(generator.calls).toBe(0);
   });
 
-  // risk: data accuracy — once the database is up both stores must hold the same value
-  it('with the database ready, saves a generated secret to the database and mirrors it to the file', async() => {
-    const { stores, provider } = build();
+  // risk: data accuracy (B4) — Files keys, backup HMACs and recipes derive from the stored secret
+  it('keeps the dev password when PostgreSQL holds it too (it is this install\'s real secret)', async() => {
+    const { stores, generator, provider, logger } = build();
 
-    stores.ready = true;
+    stores.file = { [PROPERTY]: DEV_PASSWORD };
+    stores.database.set(PROPERTY, DEV_PASSWORD);
 
-    const secret = await provider.get();
-
-    expect(stores.database.get(PROPERTY)).toBe(secret);
-    expect(stores.file?.[PROPERTY]).toBe(secret);
+    expect(await provider.get()).toBe(DEV_PASSWORD);
+    expect(generator.calls).toBe(0);
+    expect(logger.lines.some(line => line.includes('historical development password'))).toBe(true);
+    expect(logger.lines.join('\n')).not.toContain(DEV_PASSWORD);
   });
 
   // risk: data accuracy — a value only in PostgreSQL must reach the pre-database file for the next boot
@@ -119,30 +146,94 @@ describe('ServiceSecretProvider', () => {
     expect(generator.calls).toBe(0);
   });
 
-  // risk: data accuracy — compose used the bootstrap value; later Desktop readers must agree with it
-  it('converges the database to the value compose used once the database becomes ready', async() => {
+  // risk: data accuracy (B2) — the database is authoritative: a differing value wins and is announced
+  it('when the database becomes ready with a different value, adopts it, mirrors it and announces the change', async() => {
     const { stores, provider } = build();
+    const changes: string[] = [];
 
+    provider.onChange(reason => {
+      changes.push(reason);
+    });
+    stores.file = { [PROPERTY]: 'value-compose-used' };
+    stores.database.set(PROPERTY, REAL);
+
+    expect(await provider.get()).toBe('value-compose-used');
+    stores.ready = true;
+    expect(await provider.get()).toBe(REAL);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stores.database.get(PROPERTY)).toBe(REAL);
+    expect(stores.file?.[PROPERTY]).toBe(REAL);
+    expect(changes).toHaveLength(1);
+    expect(stores.writes.filter(write => write.store === 'database')).toEqual([]);
+  });
+
+  // risk: data accuracy (B2) — the database is written only when it confirms it has no value
+  it('writes the bootstrap value to the database only when the database has none', async() => {
+    const { stores, provider } = build();
+    const changes: string[] = [];
+
+    provider.onChange(reason => {
+      changes.push(reason);
+    });
     stores.file = { [PROPERTY]: REAL };
-    stores.database.set(PROPERTY, 'stale-database-value');
 
     expect(await provider.get()).toBe(REAL);
     stores.ready = true;
-    expect(await provider.get()).toBe(REAL);
+    await provider.converge();
+
     expect(stores.database.get(PROPERTY)).toBe(REAL);
+    expect(changes).toEqual([]);
   });
 
-  // risk: availability — a persistently corrupt file is moved aside instead of bricking every boot
-  it('quarantines a bootstrap file that stays corrupt for the whole wait, then generates', async() => {
-    const { stores, provider } = build();
+  // risk: availability / data accuracy (B3) — a corrupt file keeps its readable secret
+  it('repairs a file that stays corrupt and keeps the secret still readable from it', async() => {
+    const { stores, generator, provider } = build();
+
+    stores.filePermanentFailure = corruptFileError();
+    stores.salvageable = { [PROPERTY]: REAL, sullaInstalled: true };
+
+    expect(await provider.get()).toBe(REAL);
+    expect(stores.quarantined).toBe(1);
+    expect(stores.file).toEqual({ [PROPERTY]: REAL, sullaInstalled: true });
+    expect(generator.calls).toBe(0);
+  });
+
+  // risk: irreversible side effect (B3) — corrupt + DB has the value: use it, never generate
+  it('repairs a corrupt file without the secret by adopting the database value', async() => {
+    const { stores, generator, provider } = build();
+
+    stores.filePermanentFailure = corruptFileError();
+    stores.database.set(PROPERTY, REAL);
+
+    expect(await provider.get()).toBe(REAL);
+    expect(generator.calls).toBe(0);
+  });
+
+  // risk: irreversible side effect (B3) — corrupt + nothing in the database on an installed system: fail, never generate
+  it('throws on a corrupt file with no recoverable secret and none in the database', async() => {
+    const { stores, generator, provider } = build();
 
     stores.filePermanentFailure = corruptFileError();
 
-    const secret = await provider.get();
-
+    await expect(provider.get()).rejects.toBeInstanceOf(ServiceSecretUnavailableError);
     expect(stores.quarantined).toBe(1);
-    expect(secret).toBe('generated-secret-1');
-    expect(stores.file?.[PROPERTY]).toBe(secret);
+    expect(generator.calls).toBe(0);
+  });
+
+  // risk: data accuracy — mid-session reads never touch a store that may be mid-write or offline
+  it('after resolving once, returns the same value while every store is unreadable', async() => {
+    const { stores, provider } = build();
+
+    stores.file = { [PROPERTY]: REAL };
+    expect(await provider.get()).toBe(REAL);
+
+    stores.filePermanentFailure = corruptFileError();
+    stores.databaseFailures = Array.from({ length: 5 }, () => new Error('ECONNREFUSED'));
+
+    expect(await provider.get()).toBe(REAL);
+    expect(stores.quarantined).toBe(0);
   });
 });
 
