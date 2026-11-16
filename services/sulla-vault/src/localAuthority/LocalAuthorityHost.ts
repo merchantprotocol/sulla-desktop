@@ -13,18 +13,25 @@ import type { DomainVaultSyncCodecProvider } from '../browserEnvelope/DomainVaul
 import type { SyncBundle, SyncHead } from '../browserEnvelope/envelope.js';
 import type { StoredKeyEnvelopeReaderProvider } from '../browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultConfig } from '../config.js';
-import type { BrokerIntegrationMetadataResponse, LocalVaultState } from '../contracts.js';
+import type {
+  BrokerCredentialRef, BrokerExecuteRequest, BrokerExecuteResponse, BrokerIntegrationMetadataResponse, LocalVaultState,
+} from '../contracts.js';
 import type { Database, Queryable } from '../db.js';
 import type { LocalVaultCryptoProvider } from '../localCrypto/LocalVaultCryptoProvider.js';
+import type { PinnedAddress } from '../pinnedLookup.js';
+import type { VaultRelayManager } from '../relays.js';
 import type { PostgresLocalAuthorityRepository } from '../repositories/PostgresLocalAuthorityRepository.js';
 import type { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
 import type {
   PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository,
   PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository,
 } from '../repositories/PostgresVaultAuthorityRepositories.js';
+import type { PostgresSullaCloudRevocationRepository } from '../repositories/PostgresSullaCloudRevocationRepository.js';
 import type { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from '../repositories/PostgresVaultItemRepositories.js';
+import type { AgentMailboxCloudLane } from '../sullaCloudSession/AgentMailboxCloudLane.js';
+import type { SullaCloudSessionManager } from '../sullaCloudSession/SullaCloudSessionManager.js';
 import type { LocalAuthorityCollaborators } from './LocalAuthorityCollaborators.js';
-import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
+import type { Challenge, HumanSession, ItemRow, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
 
 /**
  * What LocalVaultAuthority's collaborators may read and change on it (E9). The authority keeps
@@ -42,6 +49,11 @@ export interface LocalAuthorityHost {
   readonly cacheChallenges: Map<string, Challenge>;
   readonly challengeRate:   Map<string, { count: number; resetAt: number }>;
   readonly humanSessions:   Map<string, HumanSession>;
+  sullaCloudSessionManager: SullaCloudSessionManager | null;
+  agentMailboxCloudLane:    AgentMailboxCloudLane | null;
+  readonly pendingApprovals: Map<string, number>;
+  readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
+  readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
   readonly pendingVaultEnrollments: Map<string, {
     expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
   }>;
@@ -61,6 +73,8 @@ export interface LocalAuthorityHost {
   readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider;
   readonly filesTransport:      FilesTransportEnvelopeService;
   readonly codecProvider:       DomainVaultSyncCodecProvider;
+  readonly relayManager:        VaultRelayManager;
+  readonly revocationRepository: PostgresSullaCloudRevocationRepository;
   readonly localCryptoProvider: LocalVaultCryptoProvider;
   readonly bitwardenImporter:   BitwardenExportImporter;
   readonly localStore:          PostgresLocalAuthorityRepository;
@@ -84,6 +98,15 @@ export interface LocalAuthorityHost {
   requireApprovalIdentity(callerId: string, token: string | undefined): void;
   requireDesktopIdentity(callerId: string, token: string | undefined): void;
   requireBrokerIdentity(callerId: string, token: string | undefined): void;
+  validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }>;
+  loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy?: boolean): Promise<ItemRow>;
+  send(
+    url: URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] }, methodInput: string, headersInput: Record<string, string>,
+    bodyInput: unknown, responseType: 'json' | 'text' | 'base64', secrets: string[], generation: number, redactResponseBody?: boolean,
+    maxRequestBytes?: number, maxResponseBytes?: number, operation?: string, integrationId?: string,
+  ): Promise<BrokerExecuteResponse>;
+  audit(input: BrokerExecuteRequest, item: ItemRow, blocked: boolean, reason: string | null, db?: Queryable): Promise<void>;
+  withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T>;
   integrationMetadata(callerId: string, token: string | undefined, integrationId: string, accountFilter?: string): Promise<BrokerIntegrationMetadataResponse>;
   isSetupRequired(): Promise<boolean>;
   validateHumanSession(sessionId: string | undefined, csrf?: string): HumanSession;

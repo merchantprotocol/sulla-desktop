@@ -10,7 +10,7 @@ import https from 'node:https';
 import { join } from 'node:path';
 
 import pg from 'pg';
-import { IdentityError, type LocalEncryptedItem, type LocalItemContext } from '@sulla/domain';
+import type { LocalEncryptedItem, LocalItemContext } from '@sulla/domain';
 
 import {
   agentPolicyAllows,
@@ -22,7 +22,7 @@ import {
 
 import { BitwardenExportImporter } from './bitwarden/BitwardenExportImporter.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
-import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
+import { validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
 import { validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedAddressesLookup, pinnedLookup, type PinnedAddress } from './pinnedLookup.js';
@@ -32,8 +32,7 @@ import {
   UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS, UPSTREAM_RETRY_DELAYS_MS,
   upstreamFailurePhase, upstreamFailureReason,
 } from './upstreamEgress.js';
-import { createRelayId, DefaultVaultRelayManager } from './relays.js';
-import { SULLA_CLOUD_HOST, SULLA_CLOUD_INTEGRATION_ID, sullaCloudRelayUrl, validateSullaCloudRelayParams } from './sullaCloudRelay.js';
+import { DefaultVaultRelayManager } from './relays.js';
 import { buildTranscriptionProviderRequest } from './transcriptionPolicy.js';
 
 import type { VaultConfig } from './config.js';
@@ -43,26 +42,19 @@ import type {
   BrokerItemListResponse,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
-  BrokerRelayCreateRequest,
-  BrokerRelayCreateResponse,
-  BrokerRelaySendRequest,
   LocalVaultState,
-  SullaCloudSessionAdoptRequest,
-  SullaCloudDesktopRequest,
-  SullaCloudSessionResponse,
 } from './contracts.js';
 import { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
 import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
-import type { VaultRelayEvent, VaultRelayManager } from './relays.js';
+import type { VaultRelayManager } from './relays.js';
 import type { Database, Queryable } from './db.js';
 import { PostgresLocalAuthorityRepository } from './repositories/PostgresLocalAuthorityRepository.js';
 import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
 import { PostgresSullaCloudRevocationRepository } from './repositories/PostgresSullaCloudRevocationRepository.js';
 import { AgentMailboxCloudLane } from './sullaCloudSession/AgentMailboxCloudLane.js';
 import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionManager.js';
-import { SullaCloudSessionManagerFactory } from './sullaCloudSession/SullaCloudSessionManagerFactory.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
 import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { AuditFileSink } from './auditFileSink.js';
@@ -80,6 +72,8 @@ import type { VaultEnrollmentService } from './localAuthority/VaultEnrollmentSer
 import type { AgentItemWriter } from './localAuthority/AgentItemWriter.js';
 import type { IntegrationAccountService } from './localAuthority/IntegrationAccountService.js';
 import type { LegacyMigrationService } from './localAuthority/LegacyMigrationService.js';
+import type { SullaCloudService } from './localAuthority/SullaCloudService.js';
+import type { BrokerRelayService } from './localAuthority/BrokerRelayService.js';
 import { LocalAuthorityCollaborators } from './localAuthority/LocalAuthorityCollaborators.js';
 import type { LocalAuthorityHost } from './localAuthority/LocalAuthorityHost.js';
 import type { VaultKeyActivation } from './localAuthority/VaultKeyActivation.js';
@@ -92,7 +86,6 @@ import {
   BROKER_IDENTIFIER_PATTERN,
   CACHE_UPDATE_TTL_MS,
   MAX_CREDENTIAL_BYTES,
-  MAX_FILES_SYNC_UPLOAD_BYTES,
   MAX_GIT_STREAM_BYTES,
   MAX_RESPONSE_BYTES,
   MAX_STREAM_BYTES,
@@ -290,6 +283,14 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   ensureOAuthAccount(...args: Parameters<IntegrationAccountService['ensureOAuthAccount']>) { return this.parts.integrations.ensureOAuthAccount(...args) }
   importDesktopIntegrationAccount(...args: Parameters<IntegrationAccountService['importDesktopIntegrationAccount']>) { return this.parts.integrations.importDesktopIntegrationAccount(...args) }
   migrateLegacy(...args: Parameters<LegacyMigrationService['migrateLegacy']>) { return this.parts.legacyMigration.migrateLegacy(...args) }
+  adoptSullaCloudSession(...args: Parameters<SullaCloudService['adoptSullaCloudSession']>) { return this.parts.sullaCloud.adoptSullaCloudSession(...args) }
+  clearSullaCloudSession(...args: Parameters<SullaCloudService['clearSullaCloudSession']>) { return this.parts.sullaCloud.clearSullaCloudSession(...args) }
+  executeDesktopSullaCloudRequest(...args: Parameters<SullaCloudService['executeDesktopSullaCloudRequest']>) { return this.parts.sullaCloud.executeDesktopSullaCloudRequest(...args) }
+  retryPendingSullaCloudRevocations(...args: Parameters<SullaCloudService['retryPendingSullaCloudRevocations']>) { return this.parts.sullaCloud.retryPendingSullaCloudRevocations(...args) }
+  createRelay(...args: Parameters<BrokerRelayService['createRelay']>) { return this.parts.relays.createRelay(...args) }
+  relayEvents(...args: Parameters<BrokerRelayService['relayEvents']>) { return this.parts.relays.relayEvents(...args) }
+  sendRelay(...args: Parameters<BrokerRelayService['sendRelay']>) { return this.parts.relays.sendRelay(...args) }
+  closeRelay(...args: Parameters<BrokerRelayService['closeRelay']>) { return this.parts.relays.closeRelay(...args) }
 
   /**
    * Lend a bounded copy of the unlocked user X25519 identity to another
@@ -394,136 +395,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return { state, unlocked, principalId };
   }
 
-  /**
-   * Adopt tokens returned by Desktop's fixed-host Sulla Cloud authentication
-   * flow. This deliberately uses the Desktop approval identity rather than
-   * the general tools broker identity, and never returns secret material.
-   */
-  async adoptSullaCloudSession(
-    callerId: string, token: string | undefined, input: SullaCloudSessionAdoptRequest,
-  ): Promise<SullaCloudSessionResponse> {
-    this.requireDesktopIdentity(callerId, token);
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const identifier = /^[A-Za-z0-9._:@-]{1,200}$/;
-    if (!input || !identifier.test(input.userId) || !identifier.test(input.activeContractorId) ||
-        typeof input.accessToken !== 'string' || !input.accessToken || Buffer.byteLength(input.accessToken) > MAX_CREDENTIAL_BYTES ||
-        typeof input.refreshToken !== 'string' || !input.refreshToken || Buffer.byteLength(input.refreshToken) > MAX_CREDENTIAL_BYTES ||
-        !Array.isArray(input.contractors) || input.contractors.length > 100) {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud session is invalid');
-    }
-    // The token is received only from the hard-coded Sulla Cloud HTTPS origin.
-    // Bind the handoff to that authenticated identity and reject opaque,
-    // expired, unsigned, or differently-subjected JWTs.
-    let claims: Record<string, unknown>;
-    try {
-      const parts = input.accessToken.split('.');
-      if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) throw new Error('malformed');
-      const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')) as Record<string, unknown>;
-      claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
-      if (header.alg === 'none' || typeof header.alg !== 'string') throw new Error('unsigned');
-    } catch {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud access token is invalid');
-    }
-    const subjects = [claims.sub, claims.userId, claims.user_id, claims.contractorId, claims.contractor_id]
-      .filter((value): value is string => typeof value === 'string');
-    if (!subjects.includes(input.userId) && !subjects.includes(input.activeContractorId)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud token subject does not match the session');
-    }
-    if (typeof claims.exp !== 'number' || claims.exp <= Math.floor(Date.now() / 1000)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud access token is expired');
-    }
-    const contractorIds = input.contractors.map(contractor => contractor?.id);
-    if (contractorIds.some(id => typeof id !== 'string' || !identifier.test(id)) ||
-        (contractorIds.length > 0 && !contractorIds.includes(input.activeContractorId))) {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud contractor identity is invalid');
-    }
-    const policy = {
-      mode: 'only_me' as const, level: 'metadata' as const, agents: [], sites: [], expiresAt: null,
-      askFirst: false, allowServerAgents: false,
-    };
-    const itemId = randomUUID();
-    const plaintext: VaultItemPlaintext = {
-      type: 'apiKey', name: 'Sulla Cloud', agentPolicy: policy,
-      integration: {
-        integrationId: SULLA_CLOUD_INTEGRATION_ID,
-        accountId: input.userId,
-        properties: {
-          access_token: input.accessToken, refresh_token: input.refreshToken,
-          user_id: input.userId, active_contractor_id: input.activeContractorId,
-          contractors_json: JSON.stringify(input.contractors), connection_status: 'connected',
-        },
-      },
-    };
-    const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-    await this.runSecurityOperation(() => this.runTransaction(async client => {
-      this.requireGeneration(generation);
-      await this.itemRepository.softDeleteIntegrationAccounts([keys.userId, SULLA_CLOUD_INTEGRATION_ID], client);
-      await this.itemRepository.insertSullaCloudAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy,
-          `${ SULLA_CLOUD_INTEGRATION_ID }/${ input.userId }`], client);
-      await this.integrationStateRepository.upsertCloud(keys.userId, SULLA_CLOUD_INTEGRATION_ID, input.userId, client);
-      await this.auditHumanAction(client, keys.userId, 'sulla_cloud_session_adopted', itemId);
-      this.requireGeneration(generation);
-    }));
-    this.sullaCloudSessions().sessionAdopted();
-    this.retryPendingSullaCloudRevocations();
-    return { userId: input.userId, activeContractorId: input.activeContractorId };
-  }
-
-  /**
-   * Sign out: revoke the refresh token on Sulla Cloud with the copy the vault holds (queued durably when offline),
-   * then destroy the stored token ciphertext. The token never crosses into Electron.
-   */
-  async clearSullaCloudSession(callerId: string, token: string | undefined): Promise<{ cleared: number; remoteRevoked: boolean; queued: boolean }> {
-    this.requireDesktopIdentity(callerId, token);
-    this.requireKeys();
-    const result = await this.sullaCloudSessions().signOut();
-    return { cleared: 1, remoteRevoked: result.remoteRevoked, queued: result.queued };
-  }
-
-  async executeDesktopSullaCloudRequest(
-    callerId: string, token: string | undefined, input: SullaCloudDesktopRequest,
-  ): Promise<BrokerExecuteResponse> {
-    this.requireDesktopIdentity(callerId, token);
-    const keys = this.requireKeys();
-    const method = String(input?.method ?? '').toUpperCase();
-    let target: URL;
-    try { target = new URL(input.path, `https://${ SULLA_CLOUD_HOST }`); } catch {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud request path is invalid');
-    }
-    if (target.origin !== `https://${ SULLA_CLOUD_HOST }` || input.path !== `${ target.pathname }${ target.search }`) {
-      throw new LocalVaultError('destination_denied', 403, 'Sulla Cloud request must use an allowlisted relative path');
-    }
-    if (!allowsSullaCloudDesktopRequest(method, target.pathname)) {
-      throw new LocalVaultError('policy_denied', 403, 'Sulla Cloud request path or method is not allowlisted');
-    }
-    const state = await this.integrationStateRepository.findActive<{ active_account_id: string }>(keys.userId, SULLA_CLOUD_INTEGRATION_ID);
-    const accountId = state.rows[0]?.active_account_id;
-    if (!accountId) throw new LocalVaultError('credential_field_missing', 404, 'Sulla Cloud session is unavailable; sign in again');
-    const request: BrokerExecuteRequest = {
-      claims: {
-        sub: keys.userId, agent_id: 'sulla-desktop-main', pod_id: 'desktop-main',
-        credential_scope: { integration_id: SULLA_CLOUD_INTEGRATION_ID, account_id: accountId },
-      },
-      operation: 'sulla-cloud.desktop', ref: { integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId },
-      url: target.toString(), method, headers: {}, body: input.body, bodyEncoding: input.bodyEncoding,
-      injections: [], responseType: input.responseType ?? 'json',
-    };
-    const { credential, item } = await this.freshSullaCloudAccessToken(request, true);
-    const allowedHeaders = new Set(['accept', 'content-type', 'x-sulla-timestamp', 'x-sulla-device-signature', 'x-sulla-support-token']);
-    const headers = Object.fromEntries(Object.entries(input.headers ?? {})
-      .filter(([name, value]) => allowedHeaders.has(name.toLowerCase()) && typeof value === 'string'));
-    headers.authorization = `Bearer ${ credential }`;
-    const body = input.bodyEncoding === 'base64' && typeof input.body === 'string' ? Buffer.from(input.body, 'base64') : input.body;
-    const pinned = await this.validateTarget(target.toString());
-    const result = await this.send(
-      pinned, method, headers, body, input.responseType ?? 'json', [credential], this.generation, true,
-      target.pathname.endsWith('/bundle') ? MAX_STREAM_BYTES : /^\/files-sync\/v1\/uploads\//.test(target.pathname) ? MAX_FILES_SYNC_UPLOAD_BYTES : MAX_RESPONSE_BYTES,
-    );
-    await this.audit(request, item, false, null);
-    return result;
-  }
-
   requireDesktopIdentity(callerId: string, token: string | undefined): void {
     if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
@@ -595,7 +466,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
       if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
         return await this.executeOAuthMutation(input, serviceId, token);
       }
-      if (AgentMailboxCloudLane.handles(input.operation)) return await this.agentMailboxes().execute(input);
+      if (AgentMailboxCloudLane.handles(input.operation)) return await this.parts.sullaCloud.agentMailboxes().execute(input);
       const prepared = await this.prepareBrokerRequest(input, serviceId, token);
       const result = await this.send(
         prepared.target, input.method, prepared.headers, prepared.body,
@@ -645,163 +516,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return { items };
   }
 
-  async createRelay(
-    input: BrokerRelayCreateRequest,
-    serviceId: string,
-    token: string | undefined,
-  ): Promise<BrokerRelayCreateResponse> {
-    this.requireBrokerIdentity(serviceId, token);
-    if (input.operation === 'sulla-cloud.relay') return this.createSullaCloudRelay(input);
-    const expected = input.operation === 'slack.socket-mode'
-      ? { integrationId: 'slack', host: 'slack.com', fields: ['app_token', 'app_level_token'], gatewayField: undefined }
-      : input.operation === 'discord.gateway'
-        ? { integrationId: 'discord', host: 'discord.com', fields: ['bot_token', 'token'], gatewayField: undefined }
-        : input.operation === 'enterprise.gateway'
-          ? { integrationId: 'enterprise_gateway', host: null, fields: ['api_key'], gatewayField: 'gateway_url' }
-          : null;
-    if (!expected || input.ref.integrationId !== expected.integrationId) {
-      throw new LocalVaultError('policy_denied', 403, 'Relay operation is not registered for this integration');
-    }
-    const request: BrokerExecuteRequest = {
-      claims: input.claims,
-      operation: input.operation,
-      ref: input.ref,
-      url: expected.host ? `https://${ expected.host }/vault-relay` : 'https://enterprise.invalid/vault-relay',
-      method: 'POST',
-      headers: {},
-      body: null,
-      injections: [],
-      approvalId: input.approvalId,
-      responseType: 'json',
-    };
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const item = await this.loadBrokerItem(request, expected.host);
-    const plaintext = JSON.parse(await this.openItemText(
-      { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
-      keys.userKey,
-      { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
-    )) as VaultItemPlaintext;
-    let gatewayUrl: string | undefined;
-    let gatewayAddress: { address: string; family: 4 | 6 } | undefined;
-    if (input.operation === 'enterprise.gateway') {
-      const rawGatewayUrl = expected.gatewayField ? credentialField(plaintext, expected.gatewayField) : undefined;
-      if (!rawGatewayUrl) throw new LocalVaultError('credential_field_missing', 404, 'Enterprise gateway URL is unavailable');
-      try {
-        const gateway = enterpriseGatewayOrigin(rawGatewayUrl);
-        gatewayUrl = gateway.origin;
-        const pinned = await this.validateTarget(gateway.origin);
-        gatewayAddress = { address: pinned.pinnedAddress, family: pinned.pinnedFamily };
-        request.url = `${ gateway.origin }/vault-relay`;
-        const siteDecision = agentPolicyAllows(item.agent_policy ?? plaintext.agentPolicy, {
-          agentId: input.claims.agent_id, level: 'autofill', host: gateway.hostname, onServer: false,
-        });
-        if (!siteDecision.allowed) throw new Error('policy_denied');
-      } catch {
-        throw new LocalVaultError('destination_denied', 403, 'Enterprise gateway relay destination is denied');
-      }
-    }
-    const digest = operationDigest(request);
-    if ((item.agent_policy ?? plaintext.agentPolicy).askFirst) {
-      const approval = input.approvalId ? this.approvals.get(input.approvalId) : undefined;
-      if (!approval || approval.expiresAt <= Date.now() || approval.digest !== digest) {
-        if (input.approvalId) this.approvals.delete(input.approvalId);
-        this.pendingApprovals.set(digest, Date.now() + APPROVAL_TTL_MS);
-        throw new LocalVaultError('approval_required', 428, digest);
-      }
-      this.approvals.delete(input.approvalId!);
-    }
-    const credential = expected.fields.map(field => credentialField(plaintext, field)).find(Boolean);
-    if (!credential) throw new LocalVaultError('credential_field_missing', 404, 'Relay credential is unavailable');
-    const relayId = createRelayId();
-    const controller = new AbortController();
-    this.relaySessions.set(relayId, { generation, controller });
-    try {
-      const handle = await this.relayManager.open({
-        relayId, operation: input.operation, credential, gatewayUrl, gatewayAddress, abortSignal: controller.signal,
-      });
-      this.requireGeneration(generation);
-      await this.audit(request, item, false, null);
-      return handle;
-    } catch (error) {
-      controller.abort(error);
-      this.relaySessions.delete(relayId);
-      this.relayManager.close(relayId, 'open_failed');
-      throw error;
-    }
-  }
-
-  relayEvents(relayId: string, serviceId: string, token: string | undefined, signal: AbortSignal): AsyncIterable<VaultRelayEvent> {
-    this.requireBrokerIdentity(serviceId, token);
-    this.requireRelay(relayId);
-    return this.relayManager.events(relayId, signal);
-  }
-
-  async sendRelay(
-    relayId: string,
-    command: BrokerRelaySendRequest,
-    serviceId: string,
-    token: string | undefined,
-  ): Promise<void> {
-    this.requireBrokerIdentity(serviceId, token);
-    this.requireRelay(relayId);
-    await this.relayManager.send(relayId, command);
-    this.requireRelay(relayId);
-  }
-
-  closeRelay(relayId: string, serviceId: string, token: string | undefined): void {
-    this.requireBrokerIdentity(serviceId, token);
-    const relay = this.relaySessions.get(relayId);
-    if (!relay) return;
-    relay.controller.abort(new Error('relay_closed'));
-    this.relaySessions.delete(relayId);
-    this.relayManager.close(relayId, 'caller_closed');
-  }
-
-  /** Agent mail on the owner's Cloud session: path-pinned, vault-refreshed, Bearer injected here only. */
-  private agentMailboxes(): AgentMailboxCloudLane {
-    this.agentMailboxCloudLane ??= new AgentMailboxCloudLane(SULLA_CLOUD_HOST, {
-      activeAccountId: async() => {
-        const keys = this.requireKeys();
-        const state = await this.integrationStateRepository.findActive<{ active_account_id: string }>(keys.userId, SULLA_CLOUD_INTEGRATION_ID);
-        return state.rows[0]?.active_account_id ?? null;
-      },
-      accessToken: request => this.freshSullaCloudAccessToken(request, true),
-    }, {
-      send: async(request, target, headers, secrets) => this.send(
-        await this.validateTarget(target.toString()), request.method, headers, request.body, 'json', secrets, this.generation, true,
-        MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, request.operation, SULLA_CLOUD_INTEGRATION_ID,
-      ),
-      audit: (request, item) => this.audit(request, item as ItemRow, false, null),
-    }, (code, status, message) => new LocalVaultError(code, status, message));
-    return this.agentMailboxCloudLane;
-  }
-
-  private sullaCloudSessions(): SullaCloudSessionManager {
-    this.sullaCloudSessionManager ??= new SullaCloudSessionManagerFactory({
-      userKey: () => { const keys = this.requireKeys(); return { userId: keys.userId, userKey: keys.userKey }; },
-      generation: () => this.generation,
-      requireGeneration: generation => this.requireGeneration(generation),
-      transaction: work => this.runSecurityOperation(() => this.runTransaction(work)),
-      auditHumanAction: (client, userId, action, itemId) => this.auditHumanAction(client, userId, action, itemId ?? null),
-    }, {
-      items: this.itemRepository, state: this.integrationStateRepository, revocations: this.revocationRepository,
-      serialize: (name, work) => this.withCredentialQueue({ integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId: name }, work),
-      postJson: async(url, body) => {
-        const result = await this.send(await this.validateTarget(url), 'POST', { 'content-type': 'application/json' }, body, 'json', [body.refreshToken], this.generation, false);
-        return { status: result.status, body: result.body };
-      },
-    }).create();
-    return this.sullaCloudSessionManager;
-  }
-
-  /** Offline sign-outs queue their revoke; it is retried after unlock and after the next sign-in. Never blocks or throws. */
-  retryPendingSullaCloudRevocations(): void {
-    this.sullaCloudSessions().retryPendingRevocations().catch(() => undefined);
-  }
-
   /** Serialize token mutations per integration account (refresh tokens rotate). */
-  private async withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T> {
+  async withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T> {
     const queueKey = `${ ref.integrationId ?? '' }/${ ref.accountId ?? '' }`;
     const previous = this.oauthRefreshQueues.get(queueKey) ?? Promise.resolve();
     let release!: () => void;
@@ -851,98 +567,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
         return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
       }));
     });
-  }
-
-  private async createSullaCloudRelay(input: BrokerRelayCreateRequest): Promise<BrokerRelayCreateResponse> {
-    let params: ReturnType<typeof validateSullaCloudRelayParams>;
-    try {
-      params = validateSullaCloudRelayParams(input.params);
-    } catch {
-      throw new LocalVaultError('invalid_operation', 400, 'Sulla Cloud relay parameters are invalid');
-    }
-    if (input.ref?.integrationId !== SULLA_CLOUD_INTEGRATION_ID) {
-      throw new LocalVaultError('policy_denied', 403, 'Relay operation is not registered for this integration');
-    }
-    const request: BrokerExecuteRequest = {
-      claims: input.claims,
-      operation: input.operation,
-      ref: input.ref,
-      url: `https://${ SULLA_CLOUD_HOST }/vault-relay`,
-      method: 'GET',
-      headers: {},
-      body: null,
-      injections: [],
-      approvalId: input.approvalId,
-      responseType: 'json',
-    };
-    const generation = this.generation;
-    const trustedDesktopRelay = input.claims.agent_id === 'sulla' && input.claims.pod_id === 'desktop-relay';
-    const { credential, item } = await this.freshSullaCloudAccessToken(request, trustedDesktopRelay);
-    let targetUrl: string;
-    try {
-      targetUrl = sullaCloudRelayUrl(params, credential).toString();
-    } catch {
-      throw new LocalVaultError('policy_denied', 403, 'Relay room does not match the signed-in Sulla Cloud account');
-    }
-    const relayId = createRelayId();
-    const controller = new AbortController();
-    this.relaySessions.set(relayId, { generation, controller });
-    try {
-      const handle = await this.relayManager.open({
-        relayId, operation: input.operation, credential, targetUrl, abortSignal: controller.signal,
-      });
-      this.requireGeneration(generation);
-      await this.audit(request, item, false, null);
-      return handle;
-    } catch (error) {
-      controller.abort(error);
-      this.relaySessions.delete(relayId);
-      this.relayManager.close(relayId, 'open_failed');
-      if (error instanceof LocalVaultError) throw error;
-      const reason = error instanceof Error ? error.message : '';
-      if (reason === 'relay_unauthorized') {
-        throw new LocalVaultError('upstream_failed', 401, 'Sulla Cloud rejected the relay session; sign in again');
-      }
-      throw new LocalVaultError('upstream_failed', 502, 'Sulla Cloud relay is unreachable');
-    }
-  }
-
-  /** Returns a usable access token, refreshing (and persisting the rotation) inside the vault. */
-  private async freshSullaCloudAccessToken(request: BrokerExecuteRequest, trustedDesktopPath = false): Promise<{ credential: string; item: ItemRow }> {
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    if (request.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    const item = await this.loadBrokerItem(request, SULLA_CLOUD_HOST, trustedDesktopPath);
-    const plaintext = JSON.parse(await this.openItemText(
-      { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
-      keys.userKey,
-      { itemId: item.id, ownerId: item.owner_user_id ?? keys.userId },
-    )) as VaultItemPlaintext;
-    const policy = item.agent_policy ?? plaintext.agentPolicy;
-    if (policy.askFirst) {
-      const digest = operationDigest(request);
-      const approval = request.approvalId ? this.approvals.get(request.approvalId) : undefined;
-      if (!approval || approval.expiresAt <= Date.now() || approval.digest !== digest) {
-        if (request.approvalId) this.approvals.delete(request.approvalId);
-        this.pendingApprovals.set(digest, Date.now() + APPROVAL_TTL_MS);
-        throw new LocalVaultError('approval_required', 428, digest);
-      }
-      this.approvals.delete(request.approvalId!);
-    }
-    // Refresh-ahead, single-flight and compare-and-set live in ClientSessionService over the vault item.
-    let credential: string | null;
-    try {
-      credential = await this.sullaCloudSessions().accessToken();
-    } catch (error) {
-      if (error instanceof LocalVaultError) throw error;
-      if (error instanceof IdentityError && error.identityCode === 'refresh_transient') {
-        throw new LocalVaultError('upstream_failed', 502, 'Sulla Cloud token refresh failed');
-      }
-      throw new LocalVaultError('invalid_upstream_response', 502, 'Sulla Cloud token refresh response is invalid');
-    }
-    this.requireGeneration(generation);
-    if (!credential) throw new LocalVaultError('upstream_failed', 401, 'Sulla Cloud session expired; sign in again');
-    return { credential, item };
   }
 
   async executeStream(
@@ -1200,15 +824,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return this.config.bootstrapServiceToken;
   }
 
-  private requireRelay(relayId: string): { generation: number; controller: AbortController } {
-    const relay = this.relaySessions.get(relayId);
-    if (!relay || relay.controller.signal.aborted) {
-      throw new LocalVaultError('invalid_operation', 404, 'Relay session is unavailable');
-    }
-    this.requireGeneration(relay.generation);
-    return relay;
-  }
-
   requireKeys(): UnlockedKeys {
     if (!this.keys) throw new LocalVaultError('vault_locked', 423, 'Vault is locked');
     return this.keys;
@@ -1249,7 +864,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return this.localStore.transaction(operation);
   }
 
-  private async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
+  async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
     let url: URL;
     try { url = new URL(raw); } catch { throw new LocalVaultError('invalid_destination', 400, 'Destination URL is invalid'); }
     if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
@@ -1404,7 +1019,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     start(target.pinnedAddresses?.length ? [...target.pinnedAddresses] : [], 1);
   }
 
-  private async loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy = false): Promise<ItemRow> {
+  async loadBrokerItem(input: BrokerExecuteRequest, host: string | null, bypassAgentPolicy = false): Promise<ItemRow> {
     const ref = input.ref ?? {};
     const scope = input.claims.credential_scope;
     if (input.operation === 'item.http') {
@@ -1596,7 +1211,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     });
   }
 
-  private async send(
+  async send(
     url: URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses?: PinnedAddress[] },
     methodInput: string,
     headersInput: Record<string, string>,
@@ -1828,7 +1443,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   }
 
   /** Agent credential use goes to the rotating file sink, never Postgres or the Files per-secret audit, and never as a reveal. */
-  private async audit(
+  async audit(
     input: BrokerExecuteRequest,
     item: ItemRow,
     blocked: boolean,

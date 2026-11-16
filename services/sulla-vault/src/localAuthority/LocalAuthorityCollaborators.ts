@@ -13,6 +13,8 @@ import { VaultEnrollmentService } from './VaultEnrollmentService.js';
 import { AgentItemWriter } from './AgentItemWriter.js';
 import { IntegrationAccountService } from './IntegrationAccountService.js';
 import { LegacyMigrationService } from './LegacyMigrationService.js';
+import { SullaCloudService } from './SullaCloudService.js';
+import { BrokerRelayService } from './BrokerRelayService.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { VaultKeyActivation } from './VaultKeyActivation.js';
 
@@ -32,6 +34,8 @@ export class LocalAuthorityCollaborators {
   readonly agentItems: AgentItemWriter;
   readonly integrations: IntegrationAccountService;
   readonly legacyMigration: LegacyMigrationService;
+  readonly sullaCloud: SullaCloudService;
+  readonly relays: BrokerRelayService;
 
   constructor(host: LocalAuthorityHost) {
     this.bootstrap = new BootstrapUnlockService(host);
@@ -45,5 +49,7 @@ export class LocalAuthorityCollaborators {
     this.agentItems = new AgentItemWriter(host);
     this.integrations = new IntegrationAccountService(host);
     this.legacyMigration = new LegacyMigrationService(host);
+    this.sullaCloud = new SullaCloudService(host);
+    this.relays = new BrokerRelayService(host);
   }
 }
