@@ -9,19 +9,10 @@ import { inflateRawSync } from 'node:zlib';
 import type pg from 'pg';
 
 import type { CloudChunkSource } from '../chunkCache/types.js';
-import type { Envelope } from '../crypto.js';
+import { PgCloudChunkMapRepository } from '../Repositories/CloudChunkMapRepository.js';
 import { CloudBusyError, CloudOfflineError, type FilesSyncCloudApi } from './cloudApi.js';
 import { CHUNK_PLAIN_BYTES, chunkId, FLAG_DEFLATE_RAW, openChunk } from './envelope.js';
 import type { CloudRootKeyStore } from './keyStore.js';
-
-interface MappedChunk {
-  cloudChunkId:string;
-  cipherSha256:string;
-  cipherBytes:number;
-  keyVersion:number;
-  wrappedRoot:Envelope;
-  plainBytes:number | null;
-}
 
 function integrityError(message:string):Error {
   return Object.assign(new Error(message), { code: 'FILE_INTEGRITY' });
@@ -58,35 +49,28 @@ export async function openCloudChunk(
  */
 export class FilesCloudChunkSource implements CloudChunkSource {
   constructor(
-    private readonly db:Pick<pg.Pool, 'query'>,
+    db:Pick<pg.Pool, 'query'>,
     private readonly api:Pick<FilesSyncCloudApi, 'getChunk'>,
     private readonly roots:Pick<CloudRootKeyStore, 'unwrap'>,
+    private readonly copies:Pick<PgCloudChunkMapRepository, 'verifiedCopy' | 'refreshVerified' | 'clearVerified' | 'mappedCopy'> = new PgCloudChunkMapRepository(db),
   ) {}
 
-  async verifiedCopy(collectionId:string, localChunkId:string) {
-    const row = (await this.db.query(`SELECT cloud_chunk_id,cipher_sha256,cipher_bytes,verified_at
-      FROM files_cloud_chunk_map WHERE collection_id=$1 AND local_chunk_id=$2 AND verified_at IS NOT NULL`, [collectionId, localChunkId])).rows[0];
-    if (!row) return null;
-    return {
-      cloudChunkId: String(row.cloud_chunk_id),
-      cipherSha256: String(row.cipher_sha256),
-      cipherBytes: Number(row.cipher_bytes),
-      verifiedAt: new Date(row.verified_at),
-    };
+  verifiedCopy(collectionId:string, localChunkId:string) {
+    return this.copies.verifiedCopy(collectionId, localChunkId);
   }
 
   /** GETs the cloud object and compares byte length and sha256 with the map. Any failure is "not verified". */
   async reverify(collectionId:string, localChunkId:string):Promise<boolean> {
     try {
-      const mapped = await this.mapped(collectionId, localChunkId);
+      const mapped = await this.copies.mappedCopy(collectionId, localChunkId);
       if (!mapped) return false;
       const wire = await this.api.getChunk(collectionId, mapped.cloudChunkId);
       const matches = wire.length === mapped.cipherBytes && createHash('sha256').update(wire).digest('hex') === mapped.cipherSha256;
       if (matches) {
         // Only refresh rows that are still trusted; a cleared row (cloud copy being deleted) stays cleared.
-        await this.db.query('UPDATE files_cloud_chunk_map SET verified_at=NOW() WHERE collection_id=$1 AND local_chunk_id=$2 AND verified_at IS NOT NULL', [collectionId, localChunkId]);
+        await this.copies.refreshVerified(collectionId, localChunkId);
       } else {
-        await this.db.query('UPDATE files_cloud_chunk_map SET verified_at=NULL WHERE collection_id=$1 AND local_chunk_id=$2', [collectionId, localChunkId]);
+        await this.copies.clearVerified(collectionId, localChunkId);
       }
       return matches;
     } catch {
@@ -95,7 +79,7 @@ export class FilesCloudChunkSource implements CloudChunkSource {
   }
 
   async fetchPlain(collectionId:string, localChunkId:string):Promise<Buffer> {
-    const mapped = await this.mapped(collectionId, localChunkId);
+    const mapped = await this.copies.mappedCopy(collectionId, localChunkId);
     if (!mapped) throw new CloudOfflineError('No cloud copy of this chunk is recorded');
     let wire:Buffer;
     try {
@@ -114,22 +98,5 @@ export class FilesCloudChunkSource implements CloudChunkSource {
     } finally {
       root.fill(0);
     }
-  }
-
-  private async mapped(collectionId:string, localChunkId:string):Promise<MappedChunk | null> {
-    const row = (await this.db.query(`SELECT m.cloud_chunk_id,m.cipher_sha256,m.cipher_bytes,s.key_version,s.wrapped_root,c.size
-      FROM files_cloud_chunk_map m
-      JOIN files_cloud_sync s ON s.collection_id=m.collection_id
-      LEFT JOIN chunks c ON c.collection_id=m.collection_id AND c.id=m.local_chunk_id
-      WHERE m.collection_id=$1 AND m.local_chunk_id=$2 AND s.wrapped_root IS NOT NULL`, [collectionId, localChunkId])).rows[0];
-    if (!row) return null;
-    return {
-      cloudChunkId: String(row.cloud_chunk_id),
-      cipherSha256: String(row.cipher_sha256),
-      cipherBytes: Number(row.cipher_bytes),
-      keyVersion: Number(row.key_version),
-      wrappedRoot: row.wrapped_root,
-      plainBytes: row.size === null || row.size === undefined ? null : Number(row.size),
-    };
   }
 }

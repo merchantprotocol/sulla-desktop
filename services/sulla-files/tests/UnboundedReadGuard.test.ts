@@ -20,21 +20,30 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'
  * folder batches and migrations (bounded per operation subtree, follow-up).
  */
 const ALLOWED:Record<string, number> = {
+  // Finder badges: one row per live file of the one requested collection (moved from cloudSync/repository.ts).
+  'Repositories/CloudCollectionCatalogRepository.ts': 1,
   'Repositories/CloudFolderCoverageRepository.ts': 1,
   // Legacy server sync push queue (moved from localManager.ts): one device's unpushed journal per pass.
   'Repositories/LegacySyncRepository.ts': 1,
   // Folder move/copy plan lock (moved from localManager.ts): one user-selected folder subtree.
   'Repositories/PathOperationPublishRepository.ts': 1,
+  // Shared-folder listing for a public folder link (moved from shares.ts, same read).
+  'Repositories/ShareLinkRepository.ts': 1,
+  // Child-folder totals: one GROUP BY row per direct child folder of the open folder, never a row per file.
+  'Repositories/CollectionFilesFeedRepository.ts': 1,
+  // Folder batch subtree reads (move/Trash/restore/purge/undo), bounded per operation subtree.
+  'Repositories/FolderSubtreeRepository.ts': 7,
+  // Legacy stored folder move: the moved folder's own subtree, locked for update.
+  'Repositories/StoredFileOperationRepository.ts': 1,
+  // Bounded by the caller's path array: the ancestors of one path being created (moved from storedNamespace.ts).
+  'Repositories/StoredNamespaceRepository.ts': 1,
+  // One-time Sulla-collection merge and stray-Docs cleanup, moved row by row (moved from sullaCollectionMigration.ts).
+  'Repositories/SullaCollectionMigrationRepository.ts': 4,
   // Maintenance-only repair scan; returns only versions whose chunk rows are missing (indexed by 066).
-  'ChunkMetadataReconciler.ts': 1,
+  'Repositories/ChunkMetadataRepairRepository.ts': 1,
   'app.ts': 9,
-  'cloudSync/repository.ts': 1,
-  'fileOperations.ts': 1,
-  'folderOperationBatches.ts': 12,
   'legacyImport.ts': 3,
   'localManager.ts': 1,
-  'shares.ts': 1,
-  'sullaCollectionMigration.ts': 4,
 };
 
 function sources(directory:string):string[] {

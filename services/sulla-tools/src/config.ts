@@ -10,7 +10,8 @@ const installationSecret = process.env.SULLA_API_TOKEN ?? '';
 
 export const config = {
   port:                 Number(process.env.PORT ?? 3000),
-  databaseUrl:          process.env.SULLA_DATABASE_URL ?? 'postgresql://sulla:sulla_dev_password@postgres:5432/sulla',
+  // No default: Desktop always sets it; a missing value fails validateConfig() at startup.
+  databaseUrl:          process.env.SULLA_DATABASE_URL?.trim() ?? '',
   redisUrl:             process.env.SULLA_REDIS_URL ?? 'redis://redis:6379',
   signingKey:           configuredKey || (installationSecret ? deriveCapabilitySigningKey(installationSecret) : ''),
   desktopExecutorUrl:   process.env.SULLA_DESKTOP_EXECUTOR_URL ?? '',
@@ -22,6 +23,7 @@ export const config = {
 };
 
 export function validateConfig(): void {
+  if (!config.databaseUrl) throw new Error('SULLA_DATABASE_URL is required');
   if (Buffer.byteLength(config.signingKey) < 32) throw new Error('SULLA_CAPABILITY_SIGNING_KEY or SULLA_API_TOKEN is required');
   if (Boolean(config.relayUrl) !== Boolean(config.relayToken)) throw new Error('SULLA_RELAY_URL and SULLA_RELAY_TOKEN must be configured together');
   if (Boolean(config.desktopExecutorUrl) !== Boolean(config.desktopExecutorToken)) throw new Error('SULLA_DESKTOP_EXECUTOR_URL and SULLA_DESKTOP_EXECUTOR_TOKEN must be configured together');
