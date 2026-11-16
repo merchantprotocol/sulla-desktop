@@ -22,10 +22,10 @@ import { agentPolicyAllows, agentPolicyFromLegacyLlmAccess } from '../../../../p
 export type LlmAccessLevel = 'none' | 'metadata' | 'autofill' | 'full';
 
 /** Properties only the human (UI) may write; agent tools must refuse them. */
-export const AGENT_PROTECTED_PROPERTIES = new Set(['llm_access']);
+export const AGENT_PROTECTED_PROPERTIES: readonly string[] = Object.freeze(['llm_access']);
 
 /** Integrations that hold human login passwords rather than service API keys. */
-const HUMAN_LOGIN_INTEGRATIONS = new Set(['website']);
+const HUMAN_LOGIN_INTEGRATIONS: readonly string[] = Object.freeze(['website']);
 
 export function resolveLlmAccess(stored: string | null | undefined): LlmAccessLevel {
   return stored === 'none' || stored === 'metadata' || stored === 'full' ? stored : 'autofill';
@@ -43,7 +43,7 @@ export function resolveLlmAccess(stored: string | null | undefined): LlmAccessLe
  */
 export function mayInjectSecretIntoAgentCode(integrationId: string, level: LlmAccessLevel): boolean {
   if (level === 'none' || level === 'metadata') return false;
-  if (HUMAN_LOGIN_INTEGRATIONS.has(integrationId)) return level === 'full';
+  if (HUMAN_LOGIN_INTEGRATIONS.includes(integrationId)) return level === 'full';
 
   return true;
 }

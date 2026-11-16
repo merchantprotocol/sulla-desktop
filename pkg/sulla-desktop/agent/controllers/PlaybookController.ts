@@ -2976,7 +2976,7 @@ export class PlaybookController<TState = any> {
     }
 
     const options: Record<string, any> = { accountId };
-    const { issueLocalBrokerContext, usesContainerVaultAuthority } = await import('../../vault-broker');
+    const { usesContainerVaultAuthority, configuredVaultBrokerProvider } = await import('../../vault-broker');
     const endpoint = client.getEndpoint(endpointName);
     const requiresVaultScope = endpoint?.endpoint.auth !== 'none';
     if (usesContainerVaultAuthority()) {
@@ -2985,7 +2985,7 @@ export class PlaybookController<TState = any> {
         const agentIdentity = String(metadata.agentId ?? metadata.wsChannel ?? '').trim();
         const threadId = String(metadata.threadId ?? '').trim();
         if (!agentIdentity || !threadId) throw new Error('Integration call requires trusted graph identity');
-        options.executionContext = await issueLocalBrokerContext({
+        options.executionContext = await configuredVaultBrokerProvider.issueLocalBrokerContext({
           agentId: agentIdentity,
           podId:   String(metadata.podId ?? `desktop:${ threadId }`),
           credentialScope: { integration_id: integrationSlug, account_id: accountId },

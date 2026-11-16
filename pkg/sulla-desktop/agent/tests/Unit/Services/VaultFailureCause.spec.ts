@@ -13,8 +13,6 @@ import { classifyLLMFailure } from '../../../languagemodels/providerRecovery';
 
 import type { VaultGate } from '../../../languagemodels/vaultGate';
 
-vi.mock('../../../../vault-broker/index', () => ({ requireConfiguredCredentialBroker: vi.fn() }));
-
 const exitFault = () => new CliFaultError('process_exit', 'Claude Code: claude exited with code 1');
 
 /** A gate whose vault failed during the run and comes back (or not) when waited on. */
