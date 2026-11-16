@@ -26,12 +26,19 @@ export class VaultEnrollmentService {
     this.host.requireApprovalIdentity(serviceId, token);
     if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault enrollment was not approved');
     const keys=this.host.requireKeys();
+    const generation=this.host.generation;
     const env=await this.host.codecProvider.get();
+    // A lock while the codec loaded zeroes keys.userKey in place: never wrap it after that.
+    this.host.requireGeneration(generation);
     const bundle=input.bundle as SyncBundle, head=input.head as SyncHead;
     env.verifyBundle(bundle,keys.userKey);
     if(head?.vaultId!==input.vaultId||head.scope!=='personal')throw new LocalVaultError('invalid_operation',409,'Cloud head does not match this vault');
     const payload=Buffer.from(JSON.stringify({userKey:Buffer.from(keys.userKey).toString('base64url'),bundle,head,...(input.records===undefined?{}:{records:input.records})}));
-    try{return{wrappedUserKey:await this.host.filesTransport.wrap(payload,input.publicKey,input.requestId,input.vaultId,input.vaultEpoch)}}finally{payload.fill(0)}
+    try{
+      const wrappedUserKey=await this.host.filesTransport.wrap(payload,input.publicKey,input.requestId,input.vaultId,input.vaultEpoch);
+      this.host.requireGeneration(generation);
+      return{wrappedUserKey};
+    }finally{payload.fill(0)}
   }
 
   async adoptVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}> {
@@ -50,6 +57,8 @@ export class VaultEnrollmentService {
       if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
       const wrapped=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
       privateKey=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
+      this.discardPendingEnrollment(input.requestId);
+      this.discardExpiredEnrollments();
       this.host.pendingVaultEnrollments.set(input.requestId,{expiresAt:Date.now()+60_000,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
       return{bundleMac:payload.bundle.mac,headMac:payload.head.mac};
     }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0)}
@@ -57,7 +66,10 @@ export class VaultEnrollmentService {
 
   async commitVaultEnrollment(serviceId:string,token:string|undefined,requestId:string):Promise<{adopted:true}>{
     this.host.requireApprovalIdentity(serviceId,token); const staged=this.host.pendingVaultEnrollments.get(requestId); this.host.pendingVaultEnrollments.delete(requestId);
-    if(!staged||staged.expiresAt<Date.now())throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
+    if(!staged||staged.expiresAt<Date.now()){
+      if(staged)VaultEnrollmentService.erase(staged);
+      throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
+    }
     try{ if(!await this.host.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists'); const b=staged.bundle;
       const verifier=makeLoginVerifier(await deriveLoginHash(staged.masterKey));
       await this.host.runTransaction(async client => {
@@ -79,7 +91,7 @@ export class VaultEnrollmentService {
         ], client);
       });
       this.host.lockNow();this.host.keys={userId:b.vaultUserId,publicKey:b.publicKey,userKey:Uint8Array.from(staged.userKey),privateKey:Uint8Array.from(staged.privateKey)};this.host.generation+=1;this.host.migrationState='unlocked';this.host.stageCacheUpdate(staged.masterKey);return{adopted:true};
-    }finally{staged.userKey.fill(0);staged.privateKey.fill(0);staged.masterKey.fill(0)}
+    }finally{VaultEnrollmentService.erase(staged)}
   }
 
   /** Build a reset relay envelope only after the native approval prompt returned an explicit tap. */
@@ -89,11 +101,50 @@ export class VaultEnrollmentService {
     this.host.requireApprovalIdentity(serviceId, token);
     if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault access was not approved');
     const keys = this.host.requireKeys();
+    const generation = this.host.generation;
     const state = await this.host.syncStateRepository.find<{ vault_id: string; epoch: number | string }>(keys.userId);
+    // A lock while the lookup was awaiting zeroes keys.userKey in place: refuse instead of wrapping it.
+    this.host.requireGeneration(generation);
     const row = state.rows[0];
     if (!row || row.vault_id !== input.vaultId || Number(row.epoch) !== input.vaultEpoch) {
       throw new LocalVaultError('invalid_operation', 409, 'Approval request does not match this vault');
     }
-    return { wrappedUserKey: await transportWrap(keys.userKey, input.publicKey, input.requestId, input.vaultId, input.vaultEpoch) };
+    const userKey = Uint8Array.from(keys.userKey);
+    try {
+      const wrappedUserKey = await transportWrap(userKey, input.publicKey, input.requestId, input.vaultId, input.vaultEpoch);
+      this.host.requireGeneration(generation);
+      return { wrappedUserKey };
+    } finally {
+      userKey.fill(0);
+    }
+  }
+
+  /** Zeroes and forgets every staged enrollment (called on lock) so no key outlives the vault session. */
+  discardAllPendingEnrollments(): void {
+    for (const staged of this.host.pendingVaultEnrollments.values()) VaultEnrollmentService.erase(staged);
+    this.host.pendingVaultEnrollments.clear();
+  }
+
+  private discardPendingEnrollment(requestId: string): void {
+    const staged = this.host.pendingVaultEnrollments.get(requestId);
+    if (!staged) return;
+    VaultEnrollmentService.erase(staged);
+    this.host.pendingVaultEnrollments.delete(requestId);
+  }
+
+  private discardExpiredEnrollments(): void {
+    const now = Date.now();
+    for (const [requestId, staged] of this.host.pendingVaultEnrollments) {
+      if (staged.expiresAt < now) {
+        VaultEnrollmentService.erase(staged);
+        this.host.pendingVaultEnrollments.delete(requestId);
+      }
+    }
+  }
+
+  private static erase(staged: { userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array }): void {
+    staged.userKey.fill(0);
+    staged.privateKey.fill(0);
+    staged.masterKey.fill(0);
   }
 }

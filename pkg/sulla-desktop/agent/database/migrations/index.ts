@@ -25,6 +25,7 @@ import { up as up_0160, down as down_0160 } from './0160_correct_database_retent
 import { up as up_0161, down as down_0161 } from './0161_add_org_agent_inbox_kind';
 import { up as up_0162, down as down_0162 } from './0162_create_org_messaging_state';
 import { up as up_0163, down as down_0163 } from './0163_org_messaging_failures_and_contact_prompts';
+import { up as up_0164, down as down_0164 } from './0164_org_scoped_messaging_outbox';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
 import { up as up_0108, down as down_0108 } from './0108_create_agent_job_messages_and_checkins';
@@ -302,4 +303,5 @@ export const migrationsRegistry = [
   { name: '0161_add_org_agent_inbox_kind', up: up_0161, down: down_0161 },
   { name: '0162_create_org_messaging_state', up: up_0162, down: down_0162 },
   { name: '0163_org_messaging_failures_and_contact_prompts', up: up_0163, down: down_0163 },
+  { name: '0164_org_scoped_messaging_outbox', up: up_0164, down: down_0164 },
 ] as const;

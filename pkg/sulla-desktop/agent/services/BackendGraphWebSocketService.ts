@@ -46,8 +46,10 @@ import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
 import { AgentTurnStopper } from './AgentTurnStopper';
-import { CloudOrgMessagingTransport, DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
-import { OrgMessenger } from './OrgMessenger';
+import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
+import { DesktopOrgMessengerFactory } from './DesktopOrgMessengerFactory';
+import { OrgMembershipDirectory, type OrgMembership } from './OrgMembershipDirectory';
+import { OrgMessengerFleet } from './OrgMessengerFleet';
 import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 
@@ -100,7 +102,7 @@ export class BackendGraphWebSocketService {
   private readonly agentInbox: AgentInbox;
   private readonly inboxReceiverResolver: AgentInboxReceiverResolver;
   private readonly inboxRunGuard: ReceiverRunGuard;
-  private readonly orgMessenger: OrgMessenger;
+  private readonly orgMessengerFleet: OrgMessengerFleet;
   private orgMessagingAbort?: AbortController;
 
   /** The fallback supports prototype-only characterization harnesses that intentionally skip constructor side effects. */
@@ -235,14 +237,17 @@ export class BackendGraphWebSocketService {
       isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
     }, this.inboxRunGuard);
-    this.orgMessenger = new OrgMessenger(
-      new CloudOrgMessagingTransport(),
-      new DesktopOrgCloudSession(),
-      new PostgresOrgMessagingStateRepository(new DesktopPostgresConnection(postgresClient)),
-      this.agentInbox,
-      { target: async envelope => ({ channel: SULLA_DESKTOP_CHANNEL_ID, threadId: envelope.data.conversationId }) },
-      new OrgContactRequestDecisionPrompter(),
-      { halt: async target => { if (target.threadId) await new AgentTurnStopper(this.wsService).stop(target.channel, target.threadId); } },
+    const orgSession = new DesktopOrgCloudSession();
+    this.orgMessengerFleet = new OrgMessengerFleet(
+      new OrgMembershipDirectory(),
+      new DesktopOrgMessengerFactory(
+        new PostgresOrgMessagingStateRepository(new DesktopPostgresConnection(postgresClient)),
+        this.agentInbox,
+        { target: async envelope => ({ channel: SULLA_DESKTOP_CHANNEL_ID, threadId: envelope.data.conversationId }) },
+        new OrgContactRequestDecisionPrompter(),
+        { halt: async target => { if (target.threadId) await new AgentTurnStopper(this.wsService).stop(target.channel, target.threadId); } },
+      ),
+      { userId: () => orgSession.userId(), activeOrgId: () => orgSession.orgId() },
     );
     registerCompletionIdleDispatcher((channelId, threadId) => this.handleCompletionWake(channelId, threadId));
     this.initialize();
@@ -264,8 +269,19 @@ export class BackendGraphWebSocketService {
     );
   }
 
-  sendOrgMessage(envelope: import('@sulla/domain').MessageEnvelope): Promise<void> {
-    return this.orgMessenger.send(envelope);
+  /** Sends through the target org's own outbox; `org` (id, slug or name) defaults to the active org. */
+  sendOrgMessage(envelope: import('@sulla/domain').MessageEnvelope, org?: string): Promise<void> {
+    return this.orgMessengerFleet.send(envelope, org);
+  }
+
+  /** Resolves an org the human belongs to (default: active org); refuses non-member orgs. */
+  resolveMessagingOrg(org?: string): Promise<OrgMembership> {
+    return this.orgMessengerFleet.resolveOrg(org);
+  }
+
+  /** LiveEvents wake hook for org messaging; polling every 60 s remains the fallback. */
+  onOrgLiveEvent(topic: string, orgId?: string): void {
+    this.orgMessengerFleet.onLiveEvent(topic, orgId);
   }
 
   private inboxThread(target: AgentInboxTarget): string | undefined {
@@ -538,7 +554,7 @@ export class BackendGraphWebSocketService {
     if ((process as any).type === 'browser') {
       this.orgMessagingAbort?.abort();
       this.orgMessagingAbort = new AbortController();
-      this.orgMessenger.run(this.orgMessagingAbort.signal).catch(error => console.warn('[BackendGraphWS] Org messaging stopped unexpectedly:', error));
+      this.orgMessengerFleet.run(this.orgMessagingAbort.signal).catch(error => console.warn('[BackendGraphWS] Org messaging stopped unexpectedly:', error));
     }
   }
 

@@ -50,12 +50,14 @@ export class SetWorkflowStatusWorker extends BaseTool {
     }
 
     const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+    const { WorkflowLookupRepository } = await import('@pkg/agent/app/Repositories/WorkflowLookupRepository');
+    const workflows = new WorkflowLookupRepository(postgresClient);
 
     let rows: any[];
     try {
       rows = id
-        ? await postgresClient.queryAll(`SELECT id, name, status, enabled, system FROM workflows WHERE id = $1`, [id])
-        : await postgresClient.queryAll(`SELECT id, name, status, enabled, system FROM workflows WHERE LOWER(name) = LOWER($1)`, [name]);
+        ? await workflows.findById(id)
+        : await workflows.findByName(name);
     } catch (err) {
       return { successBoolean: false, responseString: `Workflow lookup failed: ${ (err as Error).message }` };
     }

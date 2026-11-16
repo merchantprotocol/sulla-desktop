@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AppleScriptAuditRepository } from '../../app/Repositories/AppleScriptAuditRepository';
 import { postgresClient } from '../../database/PostgresClient';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -14,46 +15,27 @@ export class ApplescriptAuditLogWorker extends BaseTool {
   name = '';
   description = '';
 
+  protected repository(): AppleScriptAuditRepository {
+    return new AppleScriptAuditRepository(postgresClient);
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const limit     = typeof input.limit === 'number' && input.limit > 0 ? Math.min(200, input.limit) : 50;
     const targetApp = typeof input.target_app === 'string' ? input.target_app.trim() : '';
     const onlyFails = input.only_failures === true;
     const sinceRaw  = typeof input.since === 'string' ? input.since.trim() : '';
 
-    const where: string[] = [];
-    const params: unknown[] = [];
-
-    if (targetApp) {
-      params.push(targetApp);
-      where.push(`target_app = $${ params.length }`);
-    }
-    if (onlyFails) {
-      where.push('success = false');
-    }
+    let sinceIso: string | undefined;
     if (sinceRaw) {
       const since = new Date(sinceRaw);
       if (Number.isNaN(since.getTime())) {
         return { successBoolean: false, responseString: `"since" is not a valid ISO timestamp: "${ sinceRaw }".` };
       }
-      params.push(since.toISOString());
-      where.push(`executed_at >= $${ params.length }`);
+      sinceIso = since.toISOString();
     }
 
-    const whereClause = where.length > 0 ? `WHERE ${ where.join(' AND ') }` : '';
-    params.push(limit);
-    const limitParamIdx = params.length;
-
-    const sql = `
-      SELECT id, target_app, action_type, script, success, duration_ms,
-             response_chars, error, executed_at
-      FROM applescript_audit
-      ${ whereClause }
-      ORDER BY executed_at DESC
-      LIMIT $${ limitParamIdx }
-    `;
-
     try {
-      const rows = await postgresClient.query<any>(sql, params);
+      const rows = await this.repository().recent({ targetApp: targetApp || undefined, onlyFailures: onlyFails, sinceIso, limit });
 
       if (rows.length === 0) {
         return { successBoolean: true, responseString: 'No AppleScript executions matched the filter.' };

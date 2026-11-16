@@ -330,25 +330,9 @@ export async function runFunctionStructured(input: { slug: string; inputs?: Reco
 async function writeRunHistory(record: RunRecord): Promise<void> {
   try {
     const { postgresClient } = await import('../../database/PostgresClient');
+    const { FunctionRunRepository } = await import('../../app/Repositories/FunctionRunRepository');
     const completedAt = new Date();
-    await postgresClient.query(
-      `INSERT INTO function_runs
-         (slug, version, runtime, inputs, outputs, success, error_stage, error, duration_ms, started_at, completed_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, $11)`,
-      [
-        record.slug,
-        record.version,
-        record.runtime ?? null,
-        JSON.stringify(record.inputs ?? {}),
-        JSON.stringify(record.outputs ?? null),
-        record.success,
-        record.errorStage ?? null,
-        record.error ?? null,
-        record.durationMs ?? null,
-        record.startedAt.toISOString(),
-        completedAt.toISOString(),
-      ],
-    );
+    await new FunctionRunRepository(postgresClient).insert(record, completedAt);
   } catch (err) {
     console.warn('[function_run history] insert failed:', err);
   }

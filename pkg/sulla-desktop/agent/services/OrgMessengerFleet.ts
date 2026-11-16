@@ -1,0 +1,184 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import type { MessageEnvelope } from '@sulla/domain';
+import { OrgMembershipRequiredError, type OrgMembership, type OrgMembershipDirectory } from './OrgMembershipDirectory';
+import type { OrgMessenger, OrgMessagingSession } from './OrgMessenger';
+
+/** Who is signed in, and which org the human has selected as active in Desktop. */
+export interface OrgFleetIdentity {
+  userId(): Promise<string>;
+  activeOrgId(): Promise<string>;
+}
+
+/** Builds the OrgMessenger (with its own transport, cursor, outbox and host lease) for one org. */
+export interface OrgMessengerFactory {
+  create(membership: OrgMembership, session: OrgMessagingSession): OrgMessenger;
+}
+
+/** Session pinned to one member org; the org name follows the membership directory. */
+export class MemberOrgMessagingSession implements OrgMessagingSession {
+  constructor(
+    private readonly membership: OrgMembership,
+    private readonly identity: OrgFleetIdentity,
+    private readonly directory: OrgMembershipDirectory,
+  ) {}
+
+  async orgId(): Promise<string> { return this.membership.orgId; }
+  async userId(): Promise<string> { return this.identity.userId(); }
+  async orgName(): Promise<string> {
+    return this.directory.list().find(org => org.orgId === this.membership.orgId)?.name ?? this.membership.name;
+  }
+}
+
+/**
+ * Runs one OrgMessenger per organization the signed-in human belongs to. Each org
+ * keeps its own cursor, outbox, host lease and contact-prompt throttle (all keyed by
+ * orgId in state). Orgs with no other member are not polled; leaving an org or
+ * signing out stops that org's loop.
+ */
+export class OrgMessengerFleet {
+  private readonly messengers = new Map<string, OrgMessenger>();
+  private readonly loops = new Map<string, AbortController>();
+  private signedInUserId = '';
+  private fleetWake?: () => void;
+
+  constructor(
+    private readonly directory: OrgMembershipDirectory,
+    private readonly factory: OrgMessengerFactory,
+    private readonly identity: OrgFleetIdentity,
+    private readonly refreshMs = 60_000,
+  ) {}
+
+  /** Org ids whose sync loop is currently running. */
+  syncingOrgIds(): string[] { return [...this.loops.keys()]; }
+
+  /** Brings running loops in line with the human's current Cloud memberships. */
+  async reconcile(): Promise<void> {
+    const userId = await this.identity.userId();
+    if (!userId) {
+      this.stopAll();
+      this.directory.clear();
+      this.signedInUserId = '';
+      return;
+    }
+    if (userId !== this.signedInUserId) {
+      this.stopAll();
+      this.signedInUserId = userId;
+    }
+    // A transport failure throws here and leaves the current loops untouched.
+    const memberships = await this.directory.refresh();
+    const current = new Set(memberships.map(org => org.orgId));
+    for (const orgId of [...this.messengers.keys()]) {
+      if (!current.has(orgId)) this.forget(orgId);
+    }
+    for (const membership of memberships) {
+      if (membership.memberCount > 1) this.start(membership);
+      else this.stopLoop(membership.orgId);
+    }
+  }
+
+  async run(signal: AbortSignal): Promise<void> {
+    try {
+      while (!signal.aborted) {
+        try {
+          await this.reconcile();
+        } catch (error) {
+          console.warn('[OrgMessengerFleet] Could not refresh organization memberships:', error instanceof Error ? error.message : error);
+        }
+        await this.wait(signal, this.refreshMs);
+      }
+    } finally {
+      this.stopAll();
+    }
+  }
+
+  /**
+   * Resolves the org a send targets: the requested org (id, slug or name) or the
+   * active org. Refuses orgs the human does not belong to.
+   */
+  async resolveOrg(requested?: string): Promise<OrgMembership> {
+    if (requested?.trim()) return this.directory.require(requested);
+    const activeOrgId = await this.identity.activeOrgId();
+    if (!activeOrgId) throw new Error('Organization messaging requires an active organization session');
+    try {
+      return await this.directory.require(activeOrgId);
+    } catch (error) {
+      if (error instanceof OrgMembershipRequiredError) throw error;
+      // Cloud membership list unreachable: the active org is still the human's own selection.
+      return { orgId: activeOrgId, name: activeOrgId, memberCount: 0 };
+    }
+  }
+
+  /** Sends through the target org's own messenger and outbox. The envelope must be authored for that org. */
+  async send(envelope: MessageEnvelope, requestedOrg?: string): Promise<void> {
+    const membership = await this.resolveOrg(requestedOrg);
+    if (envelope.data.orgId !== membership.orgId) {
+      throw new Error('Message organization does not match the organization it is being sent to');
+    }
+    await this.messengerFor(membership).send(envelope);
+  }
+
+  /** LiveEvents hook: wakes one org (or all) on new conversation activity, and the fleet on membership changes. */
+  onLiveEvent(topic: string, orgId?: string): void {
+    if (topic === 'organizations') {
+      this.fleetWake?.();
+      return;
+    }
+    if (orgId) {
+      this.messengers.get(orgId)?.onLiveEvent(topic);
+      return;
+    }
+    for (const messenger of this.messengers.values()) messenger.onLiveEvent(topic);
+  }
+
+  /** Stops every org loop (sign-out or shutdown). */
+  stopAll(): void {
+    for (const orgId of [...this.messengers.keys()]) this.forget(orgId);
+    for (const orgId of [...this.loops.keys()]) this.stopLoop(orgId);
+  }
+
+  private messengerFor(membership: OrgMembership): OrgMessenger {
+    let messenger = this.messengers.get(membership.orgId);
+    if (!messenger) {
+      messenger = this.factory.create(membership, new MemberOrgMessagingSession(membership, this.identity, this.directory));
+      this.messengers.set(membership.orgId, messenger);
+    }
+    return messenger;
+  }
+
+  private start(membership: OrgMembership): void {
+    if (this.loops.has(membership.orgId)) return;
+    const messenger = this.messengerFor(membership);
+    const controller = new AbortController();
+    this.loops.set(membership.orgId, controller);
+    messenger.run(controller.signal)
+      .catch(error => console.warn(`[OrgMessengerFleet] Sync for organization ${membership.orgId} stopped unexpectedly:`, error))
+      .finally(() => { if (this.loops.get(membership.orgId) === controller) this.loops.delete(membership.orgId); });
+  }
+
+  private stopLoop(orgId: string): void {
+    const controller = this.loops.get(orgId);
+    if (!controller) return;
+    this.loops.delete(orgId);
+    controller.abort();
+  }
+
+  private forget(orgId: string): void {
+    this.stopLoop(orgId);
+    this.messengers.delete(orgId);
+  }
+
+  private wait(signal: AbortSignal, milliseconds: number): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise(resolve => {
+      let timer: ReturnType<typeof setTimeout>;
+      const onAbort = () => done();
+      const done = () => { clearTimeout(timer); signal.removeEventListener('abort', onAbort); if (this.fleetWake === done) this.fleetWake = undefined; resolve(); };
+      this.fleetWake = done;
+      timer = setTimeout(done, milliseconds);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+}
