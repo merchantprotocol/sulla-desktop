@@ -28,7 +28,7 @@ export interface ConsumerDatabaseUrl {
 }
 
 export interface PostgresAuthConsumerTimings {
-  /** How long each consumer may take to log in over a fresh connection. */
+  /** How long each consumer may take to log in over a fresh connection (5 consumers x 20 s stays inside the hardening 120 s bound). */
   perServiceMs: number;
   /** Pause between two login attempts of a consumer that is not logging in yet. */
   pollMs: number;
@@ -69,7 +69,7 @@ export class ComposePostgresAuthConsumers implements PostgresAuthConsumers {
   static readonly ACCOUNTS: ComposeServiceTarget = { service: 'sulla_accounts', container: 'sulla_accounts' };
   /** The entrypoint's private copy of the password file, taken when the container started. */
   static readonly ACCOUNTS_STARTED_PASSWORD = '/run/sulla-accounts-private/database.password';
-  static readonly DEFAULT_TIMINGS: PostgresAuthConsumerTimings = { perServiceMs: 45_000, pollMs: 2_000, accountsRestartSec: 120 };
+  static readonly DEFAULT_TIMINGS: PostgresAuthConsumerTimings = { perServiceMs: 20_000, pollMs: 2_000, accountsRestartSec: 120 };
 
   /** Every consumer's own database URL, in the order they are checked. */
   static readonly DATABASE_URLS: readonly ConsumerDatabaseUrl[] = [
