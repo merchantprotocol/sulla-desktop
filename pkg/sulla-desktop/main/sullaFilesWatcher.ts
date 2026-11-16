@@ -12,6 +12,8 @@ import path from 'node:path';
 import { app, shell } from 'electron';
 
 import { SullaFilesBootstrapFacade } from './sullaFilesBootstrapFacade';
+import { NativeSourceRevalidator } from './NativeSourceRevalidator';
+import { VaultFilesStartup, type VaultFilesStartupSnapshot } from './VaultFilesStartup';
 import { readBoundedResponse } from './sullaFilesBoundedResponse';
 import { FilesListingPager } from './FilesListingPager';
 import { getSullaFilesMountManager } from './sullaFilesMountManager';
@@ -153,6 +155,9 @@ class SullaFilesWatcher {
   private badgeTimer?: NodeJS.Timeout;
   private resumeTimer?: NodeJS.Timeout;
   private nativeTimer?: NodeJS.Timeout;
+  private nativeRevalidationTimer?: NodeJS.Timeout;
+  private nativeRevalidationFailures = 0;
+  private nativeRevalidationRun?: Promise<void>;
   private nativePolling = false;
   private unlocking = 0;
   private nativePollRunning = false;
@@ -168,6 +173,12 @@ class SullaFilesWatcher {
   private unlockPermitted = false;
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
+  private readonly startup = new VaultFilesStartup();
+  private readonly nativeSourceRevalidator = new NativeSourceRevalidator({
+    post: (handles, replaceExisting) => this.rawLocalRequest('/v1/local/native-sources/revalidate', {
+      method: 'POST', body: JSON.stringify({ handles, replaceExisting }),
+    }),
+  });
   private readonly nativeBroker = new SullaFilesNativeBroker({
     actions: async() => {
       const response = await this.rawLocalRequest('/v1/local/native-sources/actions');
@@ -201,9 +212,12 @@ class SullaFilesWatcher {
   async lockService(): Promise<void> {
     if (this.lockPromise) return this.lockPromise;
     this.unlockRetryEpoch++;
+    if (this.nativeRevalidationTimer) clearTimeout(this.nativeRevalidationTimer);
+    this.nativeRevalidationTimer = undefined;
     this.useCases.stop();
     this.lockGeneration++;
     this.unlockPermitted = false;
+    this.startup.vaultLocked();
     this.nativePolling = false;
     const lock = (async() => {
       // Stop guest admission first so dirty FUSE handles can flush through the
@@ -225,6 +239,7 @@ class SullaFilesWatcher {
 
   async unlockService():Promise<void> {
     if (this.lockPromise) await this.lockPromise;
+    this.startup.vaultUnlocking();
     this.lockGeneration++;
     this.unlockPermitted = true;
     this.unlocking++;
@@ -259,7 +274,9 @@ class SullaFilesWatcher {
         const reason = error instanceof Error ? error.message : String(error);
         const delay = UNLOCK_RETRY_DELAYS_MS[Math.min(failures, UNLOCK_RETRY_DELAYS_MS.length - 1)];
 
-        if (reason !== lastReason) console.warn(`[SullaFiles] Files unlock failed; retrying in ${ delay / 1000 }s:`, error);
+        if (reason !== lastReason || (failures + 1) % 5 === 0) {
+          console.warn(`[SullaFiles] Files unlock attempt ${ failures + 1 } failed; retrying in ${ delay / 1000 }s:`, error);
+        }
         lastReason = reason;
         await new Promise(resolve => setTimeout(resolve, delay).unref());
         if (epoch !== this.unlockRetryEpoch || this.stopped) return;
@@ -272,6 +289,7 @@ class SullaFilesWatcher {
 
     this.assertUnlockGeneration(generation);
     await this.requireAppUnlocked();
+    this.startup.filesUnlocking();
     this.assertUnlockGeneration(generation);
     const response = await traceAsync('files /healthz', () => this.rawLocalRequest('/healthz'));
 
@@ -291,17 +309,12 @@ class SullaFilesWatcher {
     }
     await this.requireAppUnlocked();
     this.assertUnlockGeneration(generation);
+    this.startup.filesUnlocked();
     unlockSullaFilesSourceGateway();
     if (this.nativeEnabled) {
-      const handles = getSullaFilesSourceGateway().activeHandles();
-      const revalidated = await traceAsync('files native-sources revalidate', () => this.rawLocalRequest('/v1/local/native-sources/revalidate', { method: 'POST', body: JSON.stringify({ handles }) }));
-
-      this.assertUnlockGeneration(generation);
-      if (!revalidated.ok) throw new Error('Native source sessions could not be revalidated');
-      if (!this.nativePolling) {
-        this.nativeBroker.resume();
-        this.nativePolling = true;
-      }
+      // Revalidation is optional native-source capability, not a prerequisite
+      // for Files itself. Retry it independently if Files is still starting.
+      void this.revalidateNativeSources(generation);
       // The Files service remains usable when the optional guest FUSE adapter
       // cannot start (for example, an older VM kernel lacks /dev/fuse). The
       // mount reports its own error state and can be retried on the next
@@ -309,10 +322,51 @@ class SullaFilesWatcher {
       // Not awaited: the mount manager retries on its own schedule, and the
       // guest mount must never hold up unlock or startup.
       traceEvent('ensureUnlocked: handing off to mount manager (not awaited)');
-      traceAsync('mount manager start', () => getSullaFilesMountManager().start(() => this.fuseMountCredentials())).catch(error => {
+      traceAsync('mount manager start', () => getSullaFilesMountManager().start(
+        () => this.fuseMountCredentials(),
+        () => this.startup.mountTokenWritten(),
+        () => this.startup.mounted(),
+      )).catch(error => {
         console.warn('[SullaFiles] guest FUSE mount unavailable; continuing without the mount:', error);
       });
+    } else {
+      // Native mounting is off by design here, so Files is ready without a token.
+      this.startup.mountNotRequired();
     }
+  }
+
+  private revalidateNativeSources(generation:number):Promise<void> {
+    if (this.nativeRevalidationRun) return this.nativeRevalidationRun;
+    if (this.nativeRevalidationTimer) clearTimeout(this.nativeRevalidationTimer);
+    this.nativeRevalidationTimer = undefined;
+    const run = traceAsync('files native-sources revalidate', async() => {
+      await this.nativeSourceRevalidator.revalidate(getSullaFilesSourceGateway().activeHandles());
+      this.assertUnlockGeneration(generation);
+      this.nativeRevalidationFailures = 0;
+      this.startup.filesUnlocked();
+      if (!this.nativePolling) {
+        this.nativeBroker.resume();
+        this.nativePolling = true;
+      }
+    }).catch(error => {
+      if (!this.unlockPermitted || generation !== this.lockGeneration || this.stopped) return;
+      const failures = ++this.nativeRevalidationFailures;
+      if (failures === 1 || failures % 5 === 0) {
+        console.warn(`[SullaFiles] native source features degraded; revalidation attempt ${ failures } failed:`, error);
+      }
+      this.startup.degrade(`Native source revalidation failed: ${ error instanceof Error ? error.message : String(error) }`);
+      const delay = UNLOCK_RETRY_DELAYS_MS[Math.min(failures - 1, UNLOCK_RETRY_DELAYS_MS.length - 1)];
+
+      if (this.nativeRevalidationTimer) clearTimeout(this.nativeRevalidationTimer);
+      this.nativeRevalidationTimer = setTimeout(() => {
+        this.nativeRevalidationTimer = undefined;
+        void this.revalidateNativeSources(generation);
+      }, delay);
+      this.nativeRevalidationTimer.unref();
+    }).finally(() => { if (this.nativeRevalidationRun === run) this.nativeRevalidationRun = undefined });
+
+    this.nativeRevalidationRun = run;
+    return run;
   }
 
   private assertUnlockGeneration(generation:number):void {
@@ -370,6 +424,8 @@ class SullaFilesWatcher {
 
   /** Files sync must wait until initialization and the current unlock both settle. */
   isReadyForSync():boolean { return this.started && !this.stopped && this.unlockPermitted && this.unlocking === 0 }
+
+  startupStatus():VaultFilesStartupSnapshot { return this.startup.snapshot() }
 
   private watchRoot(id:string,rootPath:string):void {
     this.watchers.get(id)?.close();

@@ -608,7 +608,7 @@ export class LocalFilesManager {
     return queryNativeSourcePage(this.db, page);
   }
 
-  async revalidateNativeSessions(handles:string[]):Promise<void> {
+  async revalidateNativeSessions(handles:string[], replaceExisting = true):Promise<void> {
     await this.db.query(`UPDATE files_native_sources SET state=CASE WHEN source_handle=ANY($1::text[]) THEN 'active' ELSE 'reselect-required' END,
       last_error=CASE WHEN source_handle=ANY($1::text[]) THEN NULL ELSE 'Native access must be reselected after the Electron session changed' END,
       recovery=CASE WHEN recovery ? 'publicationOperationId' THEN recovery || jsonb_build_object(
@@ -616,7 +616,7 @@ export class LocalFilesManager {
           'previousHandle',source_handle)
         WHEN source_handle=ANY($1::text[]) THEN '{}'::jsonb
         ELSE jsonb_build_object('action','reselect-native-source') END,updated_at=NOW()
-      WHERE state<>'revoked'`, [handles]);
+      WHERE state<>'revoked' AND ($2::boolean OR source_handle=ANY($1::text[]))`, [handles, replaceExisting]);
   }
 
   async fuseWriteNative(

@@ -28,6 +28,8 @@ const RETRY_STEADY_MS = 5 * 60_000;
 const ADAPTER_STATUS_FILE = '/tmp/sulla-files-fuse-status.json';
 /** Upper bound while the adapter keeps reporting progress (token wait, tree load). */
 const ADAPTER_WAIT_MS = 120_000;
+const ADAPTER_TOKEN_REPAIR_AFTER_MS = 30_000;
+const ADAPTER_TOKEN_REPAIR_INTERVAL_MS = 5_000;
 /** The adapter refreshes updatedAt every ~5s; this much silence means it is wedged. */
 const ADAPTER_STATUS_STALE_MS = 20_000;
 /** How long a container may run without any status (starting, or an image that predates status). */
@@ -56,6 +58,8 @@ export interface SullaFilesMountCredentials {
 export class SullaFilesMountManager extends EventEmitter {
   private executor?: VMExecutor;
   private credentialProvider?: () => Promise<SullaFilesMountCredentials>;
+  private onTokenWritten?:() => void;
+  private onMounted?:() => void;
   private refreshTimer?: NodeJS.Timeout;
   private healthTimer?: NodeJS.Timeout;
   private retryTimer?: NodeJS.Timeout;
@@ -119,7 +123,7 @@ export class SullaFilesMountManager extends EventEmitter {
     return this.guestAnchorConfirmed && !this.guestPreparationFailure;
   }
 
-  async start(provider:() => Promise<SullaFilesMountCredentials>):Promise<void> {
+  async start(provider:() => Promise<SullaFilesMountCredentials>, onTokenWritten?:() => void, onMounted?:() => void):Promise<void> {
     if (!sullaFilesNativeSourceRolloutRequested()) {
       this.publish('disabled', DISABLED_REASON);
       return;
@@ -127,6 +131,8 @@ export class SullaFilesMountManager extends EventEmitter {
     // Unlock (re)starts the schedule from the first, shortest delay.
     this.wanted = true;
     this.credentialProvider = provider;
+    this.onTokenWritten = onTokenWritten;
+    this.onMounted = onMounted;
     this.retryFailures = 0;
     this.cancelRetry();
     const lifecycle = this.lifecycle;
@@ -208,11 +214,12 @@ export class SullaFilesMountManager extends EventEmitter {
       await traceAsync('mount: stop stale guest', () => this.stopGuest());
       if (await traceAsync('mount: classify anchor', () => this.mountState(executor)) !== 'anchor') throw new Error('The Files propagation anchor is unavailable');
       await traceAsync('mount: refresh credentials', () => this.refreshCredentials(credentialGeneration));
+      this.onTokenWritten?.();
       await traceAsync('mount: compose up adapter', () => executor.execCommand(
         { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
         'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
       ));
-      await traceAsync('mount: wait for adapter', () => this.waitForAdapter(executor));
+      await traceAsync('mount: wait for adapter', () => this.waitForAdapter(executor, credentialGeneration));
       // Prove adapter health with a real Files-backed directory read.
       // This does not authorize an agent; that admission remains disabled
       // until Files can enforce a grant-scoped per-agent/job view.
@@ -226,6 +233,7 @@ export class SullaFilesMountManager extends EventEmitter {
         console.warn(`[SullaFiles] Could not reattach every running agent mount: ${ error instanceof Error ? error.message : String(error) }`);
       });
       this.publish('ready', undefined, MOUNT_PATH);
+      this.onMounted?.();
       this.armRefresh(credentialGeneration);
     } catch (error) {
       await this.stopGuest().catch(() => undefined);
@@ -254,6 +262,8 @@ export class SullaFilesMountManager extends EventEmitter {
       await this.credentialWrite?.catch(() => undefined);
       await this.stopGuest();
       this.credentialProvider = undefined;
+      this.onTokenWritten = undefined;
+      this.onMounted = undefined;
       this.publish(sullaFilesNativeSourceRolloutRequested() ? 'starting' : 'disabled',
         sullaFilesNativeSourceRolloutRequested() ? 'Files is locked; the guest mount is unavailable.' : DISABLED_REASON);
     } catch (error) {
@@ -409,10 +419,12 @@ export class SullaFilesMountManager extends EventEmitter {
    * while a failed or wedged one stops at once with its own reason, instead of
    * being killed on a fixed timer.
    */
-  private async waitForAdapter(executor:VMExecutor):Promise<void> {
+  private async waitForAdapter(executor:VMExecutor, credentialGeneration:number):Promise<void> {
     const started = Date.now();
     let lastPhase:string | undefined;
     let mountedSince:number | undefined;
+    let waitingTokenSince:number | undefined;
+    let lastTokenRepairAt = 0;
 
     for (;;) {
       if (await this.isAdapterMounted(executor)) return;
@@ -424,6 +436,23 @@ export class SullaFilesMountManager extends EventEmitter {
         traceEvent(`mount: adapter phase ${ phase ?? 'unreported' }`);
         if (phase) console.log(`[SullaFiles] Files adapter ${ phase }${ status?.reason ? `: ${ status.reason }` : '' }`);
         lastPhase = phase;
+      }
+      if (phase === 'waiting-token') {
+        waitingTokenSince ??= now;
+        if (now - waitingTokenSince >= ADAPTER_TOKEN_REPAIR_AFTER_MS &&
+            now - lastTokenRepairAt >= ADAPTER_TOKEN_REPAIR_INTERVAL_MS) {
+          lastTokenRepairAt = now;
+          const tokenPresent = await executor.execCommand(
+            { root: true, capture: true, expectFailure: true },
+            'docker', 'exec', 'sulla_files_fuse', 'sh', '-c', 'test -s "$1" && echo present', 'sh', '/run/sulla-files-fuse/token',
+          ).then(output => output.trim() === 'present', () => false);
+          if (!tokenPresent) {
+            traceEvent('mount: adapter waiting-token watchdog is rewriting missing token');
+            await this.refreshCredentials(credentialGeneration);
+          }
+        }
+      } else {
+        waitingTokenSince = undefined;
       }
       if (phase === 'failed') {
         throw new Error(`The Files adapter failed: ${ status?.reason ?? 'unknown' }${ status?.error ? ` (${ status.error })` : '' }`);
