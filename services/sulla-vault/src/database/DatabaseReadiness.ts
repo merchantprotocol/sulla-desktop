@@ -10,7 +10,7 @@ export class DatabaseReadiness {
   constructor(
     private readonly errors: VaultDatabaseErrorClassifier,
     private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise<void>((done) => setTimeout(done, ms)),
-    private readonly logger: Pick<Console, 'warn'> = console,
+    private readonly logger: Pick<typeof console, 'warn'> = console,
   ) {}
 
   async untilReady<T>(label: string, operation: () => Promise<T>): Promise<T> {

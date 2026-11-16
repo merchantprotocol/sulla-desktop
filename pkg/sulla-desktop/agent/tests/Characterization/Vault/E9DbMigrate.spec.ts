@@ -8,7 +8,7 @@
 // the same schema behind on PGlite, idempotently.
 
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
 import * as current from '../../../../../../services/sulla-vault/src/db';
@@ -56,10 +56,19 @@ class SchemaSnapshot {
   }
 }
 
+/** Migrates a shared PGlite twice from an empty public schema. */
 class MigrationRun {
-  readonly pglite = new PGlite();
+  constructor(readonly pglite: PGlite) {}
+
+  /** Drop everything the migrations created so the next run starts from an empty database. */
+  async reset(): Promise<void> {
+    await this.pglite.exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+    const left = await this.pglite.query<{ n: number }>("SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'public'");
+    if (left.rows[0].n !== 0) throw new Error('MigrationRun.reset left tables behind');
+  }
 
   async twice(migrate: Migrate) {
+    await this.reset();
     const first = new RecordingPgliteClient(this.pglite);
     await migrate(first.asDatabase());
     const afterFirst = await SchemaSnapshot.of(this.pglite);
@@ -93,16 +102,16 @@ class FailingClient {
   }
 }
 
-const runs: MigrationRun[] = [];
-afterAll(async() => { for (const run of runs) await run.pglite.close(); });
-
 describe('E9 db.ts migrate matches the pre-refactor implementation', () => {
+  // One PGlite for the file (each instance holds hundreds of MB); always closed.
+  let pglite: PGlite | undefined;
+  beforeAll(() => { pglite = new PGlite(); });
+  afterAll(async() => { await pglite?.close(); pglite = undefined; });
+
   it('applies every migration once, in order, in one locked transaction, and is idempotent', async() => { // risk: schema drift / double-applied migrations
-    const legacyRun = new MigrationRun();
-    const currentRun = new MigrationRun();
-    runs.push(legacyRun, currentRun);
-    const expected = await legacyRun.twice(legacy.migrate);
-    const actual = await currentRun.twice(current.migrate);
+    const run = new MigrationRun(pglite as PGlite);
+    const expected = await run.twice(legacy.migrate);
+    const actual = await run.twice(current.migrate);
     expect(actual).toEqual(expected);
 
     expect(actual.first[0]).toBe('BEGIN');

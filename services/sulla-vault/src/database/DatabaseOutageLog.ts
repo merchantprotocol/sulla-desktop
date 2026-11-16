@@ -12,7 +12,7 @@ export class DatabaseOutageLog {
   constructor(
     private readonly errors: VaultDatabaseErrorClassifier,
     private readonly clock: () => number = () => Date.now(),
-    private readonly logger: Pick<Console, 'warn'> = console,
+    private readonly logger: Pick<typeof console, 'warn'> = console,
   ) {}
 
   warn(error: unknown): void {

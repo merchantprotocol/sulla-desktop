@@ -10,7 +10,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import * as current from '../../../../../../services/sulla-vault/src/auth';
 import type { VaultConfig } from '../../../../../../services/sulla-vault/src/config';
@@ -113,15 +113,35 @@ class EmbeddedQueryable {
   }
 }
 
+/** One migrated PGlite per file: created once, emptied between runs, always closed. */
 class VaultSchema {
-  readonly pglite = new PGlite();
+  private instance: PGlite | undefined;
 
-  async ready(): Promise<this> {
+  get pglite(): PGlite {
+    if (!this.instance) throw new Error('VaultSchema.open() was not awaited');
+    return this.instance;
+  }
+
+  async open(): Promise<this> {
+    this.instance = new PGlite();
     const dir = resolve(process.cwd(), 'services/sulla-vault/migrations');
     for (const file of (await readdir(dir)).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort()) {
-      await this.pglite.exec((await readFile(resolve(dir, file), 'utf8')).replace('CREATE EXTENSION IF NOT EXISTS pgcrypto;', ''));
+      await this.instance.exec((await readFile(resolve(dir, file), 'utf8')).replace('CREATE EXTENSION IF NOT EXISTS pgcrypto;', ''));
     }
     return this;
+  }
+
+  /** Back to the freshly-migrated state for users (and every row that hangs off a user). */
+  async reset(): Promise<void> {
+    await this.pglite.exec('TRUNCATE users CASCADE');
+    const remaining = await this.pglite.query<{ n: number }>('SELECT count(*)::int AS n FROM users');
+    if (remaining.rows[0].n !== 0) throw new Error('VaultSchema.reset left users behind');
+  }
+
+  async close(): Promise<void> {
+    const instance = this.instance;
+    this.instance = undefined;
+    await instance?.close();
   }
 
   async users() {
@@ -134,9 +154,6 @@ class VaultSchema {
 
 type Ensure = (db: Queryable, config: VaultConfig) => Promise<void>;
 
-const schemas: VaultSchema[] = [];
-afterAll(async() => { for (const schema of schemas) await schema.pglite.close(); });
-
 class BootstrapScenario {
   static readonly complete: Partial<VaultConfig> = {
     desktopLoginHash:           'bG9naW4taGFzaA',
@@ -146,11 +163,11 @@ class BootstrapScenario {
     desktopKdf:                 { alg: 'argon2id', iterations: 3, memory: 65536, parallelism: 4 },
   };
 
-  constructor(private readonly config: Partial<VaultConfig>, private readonly seedExisting = false) {}
+  constructor(private readonly schema: VaultSchema, private readonly config: Partial<VaultConfig>, private readonly seedExisting = false) {}
 
   async run(ensure: Ensure) {
-    const schema = await new VaultSchema().ready();
-    schemas.push(schema);
+    const schema = this.schema;
+    await schema.reset();
     if (this.seedExisting) {
       await schema.pglite.query(
         "INSERT INTO users(email, login_hash_salt, login_hash_verifier, public_key, encrypted_private_key, encrypted_user_key, kdf) VALUES ('existing@example.test', '\\x00'::bytea, '\\x00'::bytea, 'pk', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
@@ -175,14 +192,18 @@ class BootstrapScenario {
 }
 
 describe('E9 auth.ts ensureDesktopAccount matches the pre-refactor implementation', () => {
+  const schema = new VaultSchema();
+  beforeAll(async() => { await schema.open(); });
+  afterAll(async() => { await schema.close(); });
+
   it('does nothing without a desktop login hash', async() => { // risk: unintended account creation
-    const result = await new BootstrapScenario({ ...BootstrapScenario.complete, desktopLoginHash: undefined }).compare();
+    const result = await new BootstrapScenario(schema, { ...BootstrapScenario.complete, desktopLoginHash: undefined }).compare();
     expect(result).toEqual({ first: null, second: null, statements: [], users: [] });
   });
 
   for (const missing of ['desktopPublicKey', 'desktopEncryptedPrivateKey', 'desktopEncryptedUserKey', 'desktopKdf'] as const) {
     it(`throws the same error when ${ missing } is missing, before touching the database`, async() => { // risk: half-bootstrapped account
-      const result = await new BootstrapScenario({ ...BootstrapScenario.complete, [missing]: undefined }).compare();
+      const result = await new BootstrapScenario(schema, { ...BootstrapScenario.complete, [missing]: undefined }).compare();
       expect(result.first).toEqual({ error: 'Error', message: 'Desktop bootstrap requires public key, wrapped private key, wrapped user key, and KDF settings' });
       expect(result.statements).toEqual([]);
       expect(result.users).toEqual([]);
@@ -190,12 +211,12 @@ describe('E9 auth.ts ensureDesktopAccount matches the pre-refactor implementatio
   }
 
   it('treats an empty public key as missing, like legacy', async() => { // risk: half-bootstrapped account
-    const result = await new BootstrapScenario({ ...BootstrapScenario.complete, desktopPublicKey: '' }).compare();
+    const result = await new BootstrapScenario(schema, { ...BootstrapScenario.complete, desktopPublicKey: '' }).compare();
     expect(result.first).not.toBeNull();
   });
 
   it('creates exactly one desktop account with a verifier for the login hash, then is idempotent', async() => { // risk: sign-in
-    const result = await new BootstrapScenario(BootstrapScenario.complete).compare();
+    const result = await new BootstrapScenario(schema, BootstrapScenario.complete).compare();
     expect(result.first).toBeNull();
     expect(result.second).toBeNull();
     expect(result.statements).toEqual([
@@ -220,7 +241,7 @@ describe('E9 auth.ts ensureDesktopAccount matches the pre-refactor implementatio
   });
 
   it('never adds a desktop account when any user already exists', async() => { // risk: second owner on the vault
-    const result = await new BootstrapScenario(BootstrapScenario.complete, true).compare();
+    const result = await new BootstrapScenario(schema, BootstrapScenario.complete, true).compare();
     expect(result.statements).toEqual(['SELECT id FROM users LIMIT 1', 'SELECT id FROM users LIMIT 1']);
     expect(result.users.map((user) => user.email)).toEqual(['existing@example.test']);
   });
