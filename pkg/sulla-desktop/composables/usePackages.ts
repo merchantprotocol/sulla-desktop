@@ -24,6 +24,7 @@ import { computed, ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import { PackageRowMapper } from './PackageRowMapper';
 import { PackageUpdater } from './PackageUpdater';
 
 export type PackageApp = 'none' | 'dashboard' | 'app';
@@ -147,91 +148,14 @@ export const packagesIpc = {
   },
 };
 
-// ── Row normalization ────────────────────────────────────────────────
+// ── Row normalization (see PackageRowMapper) ────────────────────────
 
-function str(...values: unknown[]): string {
-  for (const v of values) {
-    if (typeof v === 'string' && v.trim()) return v.trim();
-  }
+/** @deprecated use PackageRowMapper.toPackageRow */
+export const toPackageRow = (raw: Record<string, any>, manifestIn?: Record<string, unknown>): PackageRow =>
+  PackageRowMapper.toPackageRow(raw, manifestIn);
 
-  return '';
-}
-
-function obj(value: unknown): Record<string, any> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
-}
-
-function recipeWebPort(manifest: Record<string, any>): number | undefined {
-  const contents = Array.isArray(manifest.contents) ? manifest.contents : [];
-  for (const entry of contents) {
-    if (entry?.kind !== 'recipe') continue;
-    const recipe = obj(entry.manifest);
-    const candidates = [recipe.web?.port, recipe.ui?.port, recipe.dashboard?.port, recipe.port, obj(recipe.spec).web?.port];
-    const port = candidates.map(Number).find(value => Number.isInteger(value) && value > 0 && value <= 65535);
-    if (port) return port;
-  }
-  return undefined;
-}
-
-export function toPackageRow(raw: Record<string, any>, manifestIn?: Record<string, unknown>): PackageRow {
-  const summary = obj(raw.summary);
-  const manifest = obj(manifestIn ?? raw.manifest);
-  const pick = (key: string) => raw[key] ?? summary[key] ?? manifest[key];
-  const app = str(pick('app'));
-  const contentSource = Object.keys(manifest).length ? manifest : summary;
-  const dashboardPort = recipeWebPort(contentSource);
-  const contents = toContents(contentSource);
-  const keywords = pick('keywords') ?? raw.tags;
-
-  return {
-    id:       str(raw.id),
-    slug:     str(raw.slug, manifest.slug),
-    name:     str(raw.name, manifest.name, raw.slug),
-    title:    str(pick('title'), raw.tagline, raw.name),
-    line:     str(pick('line'), raw.description, manifest.description),
-    topic:    str(pick('topic'), raw.category),
-    icon:     str(pick('icon')) || '📦',
-    app:      dashboardPort ? 'dashboard' : app === 'app' ? 'app' : 'none',
-    where:    contents.some(item => item.kind === 'recipe') || str(pick('where')) === 'desktop' ? 'desktop' : 'both',
-    keywords: Array.isArray(keywords) ? keywords.filter((k): k is string => typeof k === 'string') : [],
-    version:  str(raw.version, manifest.version),
-    publisher: str(raw.author_display, raw.publisher, manifest.publisher) || 'Sulla',
-    bundleSize: Number(raw.bundle_size) || 0,
-    updatedAt: str(raw.updated_at),
-    contents,
-    dashboardPort,
-  };
-}
-
-function toContents(manifest: Record<string, any>): PackageContentItem[] {
-  const list = Array.isArray(manifest.contents) ? manifest.contents : [];
-
-  return list.map((entry: unknown) => {
-    const item = obj(entry);
-    const inner = obj(item.manifest);
-    const innerMeta = obj(inner.metadata);
-
-    return {
-      kind:    str(item.kind),
-      slug:    str(item.slug, inner.slug),
-      name:    str(inner.name, innerMeta.name, item.name, item.slug),
-      version: str(item.version, inner.version),
-      description: str(inner.description, inner.summary, item.description),
-      required: item.required === true || inner.required === true,
-      containers: Array.isArray(inner.containers)
-        ? inner.containers.map((container: unknown) => typeof container === 'string' ? container : str(obj(container).name, obj(container).service)).filter(Boolean)
-        : [],
-      dataVolume: str(inner.data_volume, inner.dataVolume, obj(inner.storage).volume),
-    };
-  }).filter((item: PackageContentItem) => item.kind && item.slug);
-}
-
-export function packageMatches(row: PackageRow, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-
-  return [row.title, row.line, row.name, row.slug, ...row.keywords].join(' ').toLowerCase().includes(q);
-}
+/** @deprecated use PackageRowMapper.matches */
+export const packageMatches = (row: PackageRow, query: string): boolean => PackageRowMapper.matches(row, query);
 
 // ── Composable ───────────────────────────────────────────────────────
 
@@ -299,14 +223,14 @@ export function usePackages() {
 
         return;
       }
-      const { manifest: rawManifest, ...rawRow } = obj(res.template);
-      const manifest = obj(rawManifest);
+      const { manifest: rawManifest, ...rawRow } = PackageRowMapper.obj(res.template);
+      const manifest = PackageRowMapper.obj(rawManifest);
 
       detail.value = {
         row:           toPackageRow(rawRow, manifest),
-        descriptionMd: str(manifest.description_md, obj(manifest.spec).description_md),
-        contents:      toContents(manifest),
-        templateKind:  str(rawRow.kind),
+        descriptionMd: PackageRowMapper.str(manifest.description_md, PackageRowMapper.obj(manifest.spec).description_md),
+        contents:      PackageRowMapper.toContents(manifest),
+        templateKind:  PackageRowMapper.str(rawRow.kind),
         raw:           rawRow,
         manifest,
       };
