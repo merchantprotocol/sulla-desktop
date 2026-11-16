@@ -76,6 +76,9 @@ export class VersionWriter {
     const chunkIds = [...staged.chunkIds]; const chunks = staged.chunks; const manifestHash = staged.manifestHash;
     await this.versions.recordManifest(client, manifestHash, chunkIds, input.bytes.length);
     for (const chunk of chunks) await this.versions.recordChunk(client, input.collectionId, chunk);
+    // Residency is derived from the durable chunk/version record and staged blob; couple its
+    // bookkeeping to this version commit instead of issuing one autocommit per chunk.
+    for (const chunk of chunks) await this.store.recordResident(client, input.collectionId, chunk.id, chunk.storedSize);
     await this.chunkRegistry.assertRegistered(client, input.collectionId, chunkIds);
     let file:any;
     if (input.fileId) {

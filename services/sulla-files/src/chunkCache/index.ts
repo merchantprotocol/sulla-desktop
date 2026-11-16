@@ -70,6 +70,10 @@ export class CachingStore extends Store {
     }
     return created;
   }
+  override async recordResident(client:pg.PoolClient, collectionId:string, id:string, storedBytes:number):Promise<void> {
+    await this.cache.upsertResidentIn(client, collectionId, id, storedBytes);
+  }
+  override async putStaged(collectionId:string, id:string, bytes:Uint8Array):Promise<boolean> { return super.put(collectionId, id, bytes) }
   async stop():Promise<void> { if (this.timer) clearInterval(this.timer); await this.access.stop() }
 }
 

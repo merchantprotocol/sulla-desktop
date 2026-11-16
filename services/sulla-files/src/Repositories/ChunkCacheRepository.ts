@@ -86,6 +86,12 @@ export class ChunkCacheRepository {
       SET state='resident',stored_bytes=EXCLUDED.stored_bytes,evicted_at=NULL,updated_at=NOW()`, [collectionId, chunkId, storedBytes]);
   }
 
+  async upsertResidentIn(client:pg.PoolClient, collectionId:string, chunkId:string, storedBytes:number):Promise<void> {
+    await client.query(`INSERT INTO files_chunk_cache(collection_id,chunk_id,state,stored_bytes,last_read_at)
+      VALUES($1,$2,'resident',$3,NOW()) ON CONFLICT(collection_id,chunk_id) DO UPDATE
+      SET state='resident',stored_bytes=EXCLUDED.stored_bytes,evicted_at=NULL,updated_at=NOW()`, [collectionId, chunkId, storedBytes]);
+  }
+
   /** Rows left mid-eviction by a crash. */
   async interruptedEvictions():Promise<{ collection_id:string; chunk_id:string }[]> {
     return (await this.db.query("SELECT collection_id::text,chunk_id FROM files_chunk_cache WHERE state='evicting'")).rows;

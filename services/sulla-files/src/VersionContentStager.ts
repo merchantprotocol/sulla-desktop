@@ -25,6 +25,7 @@ export interface StagerKeyring { keys(collectionId:string):Promise<{ data:Uint8A
 export interface StagerChunkStore {
   storedSize(collectionId:string, id:string):Promise<number | undefined>;
   put(collectionId:string, id:string, bytes:Uint8Array):Promise<unknown>;
+  putStaged?(collectionId:string, id:string, bytes:Uint8Array):Promise<unknown>;
 }
 export interface StagerCrypto {
   chunkId(plain:Uint8Array, dedupKey:Uint8Array):string;
@@ -50,7 +51,7 @@ export class VersionContentStager {
       const existing = await this.store.storedSize(collectionId, id);
       if (existing !== undefined) { chunks.set(id, { id, size: plain.length, storedSize: existing }); continue }
       const encrypted = await this.crypto.encryptChunk(plain, data, id);
-      await this.store.put(collectionId, id, encrypted);
+      await (this.store.putStaged ?? this.store.put).call(this.store, collectionId, id, encrypted);
       chunks.set(id, { id, size: plain.length, storedSize: encrypted.length });
     }
     return {
