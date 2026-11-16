@@ -15,13 +15,11 @@ import { auditContext } from './auditContext.js';
 import { editTextDocument, loadTextDocument, newTextDocument, saveTextDocument, textDocumentHeads, utf8Text, versionCheckedTextSave, type TextDocument } from './automergeText.js';
 import { FileAuditWriter, validateAuditEvent } from './fileAudit.js';
 
-import { FilesPathResolver } from './filesPathResolver.js';
 import { healthPayload } from './health.js';
 import { verifyFilesIdentity, type FilesIdentity } from './auth.js';
 import { chunkId, encryptChunk } from './crypto.js';
-import { applyDatabaseFileOperations, type FileOperationItem } from './fileOperations.js';
 import { trashFileWithoutReceipt } from './databaseOperations.js';
-import { controlDatabaseBatch, databaseOperationCapabilities, getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
+import { getDatabaseBatch, parseDatabaseBatch, runDatabaseBatch, submitDatabaseBatch } from './databaseOperationBatches.js';
 import { folderOperationState } from './folderOperationBatches.js';
 import { sendFileStream, streamFileContent } from './fileStream.js';
 import { ContentReadFailureLog } from './ContentReadFailureLog.js';
@@ -97,6 +95,9 @@ import { VersionSyncRoutes } from './routes/VersionSyncRoutes.js';
 import { RemoteVersionSync } from './Services/RemoteVersionSync.js';
 import { RemoteVersionRepository } from './Repositories/RemoteVersionRepository.js';
 import { RemoteVersionBundleValidator } from './Services/RemoteVersionBundleValidator.js';
+import { FileResolveRoutes } from './routes/FileResolveRoutes.js';
+import { FileOperationRoutes } from './routes/FileOperationRoutes.js';
+import { FileLocatorRepository } from './Repositories/FileLocatorRepository.js';
 import { ScratchMaintenanceRepository } from './Repositories/ScratchMaintenanceRepository.js';
 import { SearchScopeRepository } from './Repositories/SearchScopeRepository.js';
 import { StarRepository } from './Repositories/StarRepository.js';
@@ -1044,22 +1045,8 @@ function composeFilesApp(
     const files:Record<string,Record<string,unknown>>={}; for(const row of rows) files[row.path.slice(prefix.length)]=row.metadata;
     response.json({folder:metadataValue(target.row,true),files,revision:Math.max(Number(target.row.metadata_revision),...rows.map(row=>Number(row.metadata_revision)))});
   }catch(error){next(error)}});
-  app.get('/v1/files/resolve',async(request:RequestWithIdentity,response,next)=>{try{
-    identity(request); const absolute=String(request.query.path??''); const prefix='/mnt/sulla-files/';
-    if(!absolute.startsWith(prefix)) throw new HttpError(400,'path must be under /mnt/sulla-files');
-    const relative=cleanPath(absolute.slice(prefix.length),false);
-    const collections=(await db.query(`SELECT id,name,explorer_path,is_default FROM collections WHERE published=TRUE AND legacy_source=FALSE ORDER BY is_default DESC`)).rows;
-    const resolver = new FilesPathResolver();
-    for (const candidate of resolver.candidates(collections,relative)) {
-      const file=candidate.path?(await db.query('SELECT id FROM files WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rows[0]:undefined;
-      const folderExists=!candidate.path||((await db.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2 AND deleted_at IS NULL',[candidate.collectionId,candidate.path])).rowCount??0)>0;
-      if (!file && !folderExists) continue;
-      try { await requirePath(request,candidate.collectionId,candidate.path,'view'); } catch (error) { if (error instanceof HttpError && (error.status===403 || error.status===404)) continue; throw error; } // skip collections the caller cannot view; never reveal them
-      if(file) return response.json({collectionId:candidate.collectionId,fileId:file.id,folderPath:candidate.path.includes('/')?candidate.path.slice(0,candidate.path.lastIndexOf('/')):'',kind:'file'});
-      return response.json({collectionId:candidate.collectionId,folderPath:candidate.path,kind:'folder'});
-    }
-    throw new HttpError(404,'Files path not found');
-  }catch(error){next(error)}});
+  const fileLocator = new FileLocatorRepository(db);
+  new FileResolveRoutes(accessGate, fileLocator).register(app);
   new LocalRootRoutes(manager).register(app);
   new LocalMaintenanceRoutes(db, config, store, transactions, new ScratchMaintenanceRepository(), manager).register(app);
 
@@ -1071,52 +1058,7 @@ function composeFilesApp(
     file: (client:pg.PoolClient,id:string) => requireFile(request,id,'edit',client),
     path: async(client:pg.PoolClient,collectionId:string,path:string) => { await requirePath(request,collectionId,path,'edit',client) },
   });
-  app.post('/v1/database-file-operations', async(request:RequestWithIdentity, response, next) => { try {
-    const result = await submitDatabaseBatch(db, parseDatabaseBatch(request.body), identity(request), operationAccess(request));
-    response.status(202).json(result);
-    void runDatabaseBatch(db, result.operationId, identity(request), operationAccess(request)).catch(() => undefined);
-  } catch (error) { next(error) } });
-  app.get('/v1/database-file-operations/capabilities', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId = String(request.query.collectionId ?? '');
-    await requireCollection(request, collectionId, 'edit', true, true);
-    response.json(await databaseOperationCapabilities(db, collectionId, operationAccess(request)));
-  } catch (error) { next(error) } });
-  app.get('/v1/database-file-operations/folder-state', async(request:RequestWithIdentity, response, next) => { try {
-    const collectionId=String(request.query.collectionId??''); const path=cleanPath(request.query.path,false);
-    await requirePath(request,collectionId,path,'edit');
-    response.json(await folderOperationState(db,collectionId,path,operationAccess(request)));
-  } catch (error) { next(error) } });
-  app.get('/v1/database-file-operations/:id', async(request:RequestWithIdentity, response, next) => { try {
-    response.json(await getDatabaseBatch(db, request.params.id, identity(request), operationAccess(request)));
-  } catch (error) { next(error) } });
-  for (const action of ['cancel', 'retry', 'undo'] as const) app.post('/v1/database-file-operations/:id/' + action, async(request:RequestWithIdentity, response, next) => { try {
-    const result = await controlDatabaseBatch(db, request.params.id, action, request.body, identity(request), operationAccess(request));
-    response.json(result);
-    if (action === 'retry') void runDatabaseBatch(db, result.operationId, identity(request), operationAccess(request)).catch(() => undefined);
-  } catch (error) { next(error) } });
-  app.post('/v1/file-operations', async(request:RequestWithIdentity, response, next) => { try {
-    const action = request.body.action; const collectionId = String(request.body.collectionId ?? ''); const items = request.body.items as FileOperationItem[];
-    if (!['move', 'copy'].includes(action) || !Array.isArray(items) || !items.length || items.length > 250) throw new HttpError(400, 'action and 1-250 items are required');
-    const expanded:{ file:any; targetPath:string }[] = []; const localItems:{ sourcePath:string; targetPath:string; folder:boolean; fileSnapshots:{ id:string; path:string; currentVersionId:string }[] }[] = []; const folderMoves:{ collectionId:string; sourcePath:string; targetPath:string }[] = [];
-    for (const raw of items) {
-      const targetPath = cleanPath(raw.targetPath, false);
-      if (raw.fileId) { const file = await requireFile(request, String(raw.fileId), action === 'copy' ? 'view' : 'edit'); if (file.collection_id !== collectionId) throw new HttpError(400, 'selected file belongs to another collection'); await requirePath(request, collectionId, targetPath, 'edit'); const copyVersionId = action === 'copy' ? await visibleVersion(request, file) : undefined; expanded.push({ file: { ...file, copy_version_id: copyVersionId }, targetPath }); localItems.push({ sourcePath: file.path, targetPath, folder: false, fileSnapshots: [{ id: file.id, path: file.path, currentVersionId: file.current_version_id }] }); }
-      else if (raw.folderPath) {
-        const folderPath = cleanPath(raw.folderPath, false); if (targetPath === folderPath || targetPath.startsWith(`${ folderPath }/`)) throw new HttpError(400, 'a folder cannot be moved or copied into itself'); await requirePath(request, collectionId, folderPath, action === 'copy' ? 'view' : 'edit'); await requirePath(request, collectionId, targetPath, 'edit');
-        const rows = await db.query(`SELECT * FROM files WHERE collection_id=$1 AND deleted_at IS NULL AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY path`, [collectionId, folderPath]);
-        const fileSnapshots = [];
-        for (const candidate of rows.rows) { const file = await requireFile(request, candidate.id, action === 'copy' ? 'view' : 'edit'); const copyVersionId = action === 'copy' ? await visibleVersion(request, file) : undefined; expanded.push({ file: { ...file, copy_version_id: copyVersionId }, targetPath: `${ targetPath }${ file.path.slice(folderPath.length) }` }); fileSnapshots.push({ id: file.id, path: file.path, currentVersionId: file.current_version_id }); }
-        localItems.push({ sourcePath: folderPath, targetPath, folder: true, fileSnapshots });
-        folderMoves.push({ collectionId, sourcePath: folderPath, targetPath });
-      } else throw new HttpError(400, 'each item requires fileId or folderPath');
-    }
-    if (!expanded.length && !folderMoves.length) throw new HttpError(404, 'folder not found');
-    const watched = manager ? await manager.watchedPathCoverage(collectionId, localItems) : 0;
-    if (manager && expanded.length > 0 && watched === expanded.length) await manager.applyPathOperations(action, localItems, identity(request));
-    else if (watched === 0) await applyDatabaseFileOperations(db, action, expanded, identity(request), folderMoves);
-    else throw new HttpError(409, 'The selection mixes watched and stored-only Files. Move or copy them in separate operations.');
-    response.json({ ok: true, count: expanded.length + folderMoves.length, undoSupported: false, undoUnsupportedReason: 'Legacy path operations do not issue database receipts; native undo requires custody-coordinated publication.' });
-  } catch (error) { next(error) } });
+  new FileOperationRoutes(db, accessGate, fileLocator, operationAccess, manager).register(app);
   new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 
   const collectionSync = new CollectionSyncRoutes(db, accessGate, new CollectionSyncRepository(db, FILE_ROW_JSON_SQL));
