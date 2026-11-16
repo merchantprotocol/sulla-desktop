@@ -260,4 +260,12 @@ export class LinuxDockerBackend extends events.EventEmitter implements VMBackend
   eventNames(): (keyof BackendEvents)[] {
     return super.eventNames() as (keyof BackendEvents)[];
   }
+
+  listeners<eventName extends keyof BackendEvents>(event: eventName): BackendEvents[eventName][] {
+    return super.listeners(event) as BackendEvents[eventName][];
+  }
+
+  rawListeners<eventName extends keyof BackendEvents>(event: eventName): BackendEvents[eventName][] {
+    return super.rawListeners(event) as BackendEvents[eventName][];
+  }
 }
