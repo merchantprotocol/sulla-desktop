@@ -36,13 +36,7 @@ import { RunActivity } from './RunActivity';
 import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
-import {
-  createProviderCliBridge,
-  getLocalVaultPrincipalId,
-  usesContainerVaultAuthority,
-  type ProviderCliAuthMode,
-  type ProviderCliBridgeLease,
-} from '../../vault-broker';
+import { ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
 import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
@@ -1251,7 +1245,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         if (!await waitForVaultUnlock(VAULT_UNLOCK_TIMEOUT_MS, signal) && !signal?.aborted) {
           throw new VaultLocked('claude-code', { cause: 'Vault not ready after the startup grace period' });
         }
-        return await getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
+        return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal).catch(error => { throw new VaultLocked('claude-code', { cause: error }) });
       }
 
       // Other providers retain the startup grace period until their resolvers
@@ -1260,7 +1254,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         throw await lockedVaultError();
       }
 
-      return await getLocalVaultPrincipalId(signal);
+      return await configuredVaultBrokerProvider.getLocalVaultPrincipalId(signal);
     });
     const toolsServiceTask = phase('toolsService', () => waitForToolsService());
     const [{ identity, deviceId }, subject, toolsReady] = await Promise.all([
@@ -1498,7 +1492,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             request_id:       crypto.randomUUID(),
           };
         };
-        const bridge = await createProviderCliBridge({
+        const bridge = await new ProviderCliBridgeService().create({
           context:        bridgeContext(),
           provider,
           accountId,
@@ -1674,7 +1668,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const metadata = run.state.metadata as { userId?: string; orgId?: string; agentId?: string; threadId?: string; deviceId?: string; allowedToolNames?: string[] };
     const deviceId = metadata.deviceId ?? await getDesktopDeviceId();
     const subject = usesContainerVaultAuthority()
-      ? await getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
+      ? await configuredVaultBrokerProvider.getLocalVaultPrincipalId(run.state.metadata.options?.abort?.signal)
       : metadata.userId;
     if (!subject) throw new Error('Agent capability requires an authenticated user identity');
     const allowed = metadata.allowedToolNames;
