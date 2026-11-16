@@ -47,8 +47,9 @@ export class FilesRoutesFixture {
       capabilitySigningKey: this.signingKey, mode: 'desktop', deviceId: 'local-device', userId: this.userId, localToken: 'test-local', cloudUrl: '', paused: true, modelDir: this.root,
       fuseExperiment: true, keyring, fileRoots: [{ id: 'default', name: 'Files', path: filesRoot, syncMode: 'local', paused: true, exclusions: [], primary: true }] };
     for (const [id, published] of [[this.collectionId, true], [this.unpublishedCollectionId, false]] as const) {
-      await this.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source)
-        VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',$3,FALSE)`, [id, this.userId, published]);
+      // Each collection of one owner needs its own explorer_path (unique per owner/org).
+      await this.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
+        VALUES($1,$2,'Files','knowledge','desktop-only','{}','{}','{}',$3,FALSE,$4)`, [id, this.userId, published, `spec-${ id }`]);
     }
     const manager = new LocalFilesManager(this.pool, config);
     manager.rootCollections.set('default', this.collectionId);
