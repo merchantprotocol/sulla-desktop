@@ -139,6 +139,15 @@ export class PostgresAuthHardening {
 
   /** Restores the pre-switch hba file (or a trust file when there is no usable backup) and reloads. True on success. */
   async rollback(reason: string): Promise<boolean> {
+    return this.restore(reason, true);
+  }
+
+  /**
+   * Puts the pre-switch hba file back. `reload` is false when the managed file
+   * was never loaded (rule errors, failed write): the running rules are still
+   * the old ones, so restoring the file is enough and nothing unchecked is loaded.
+   */
+  private async restore(reason: string, reload: boolean): Promise<boolean> {
     try {
       const path = await this.repository.hbaPath();
       const restore = await this.restoreContent(path);
@@ -146,7 +155,9 @@ export class PostgresAuthHardening {
       if (restore !== null) {
         await this.repository.writeHbaFile(path, restore);
       }
-      await this.repository.reload();
+      if (reload) {
+        await this.repository.reload();
+      }
       this.logger.warn(`[PostgresAuth] rolled back: ${ reason }`);
 
       return true;
@@ -230,7 +241,7 @@ export class PostgresAuthHardening {
       await this.repository.writeHbaFile(path, PostgresAuthHardening.MANAGED_HBA);
     } catch (error) {
       // The write is atomic (temp file + rename); put trust back in case it landed anyway.
-      await this.rollback('the managed hba file could not be written');
+      await this.restore('the managed hba file could not be written', false);
 
       return { kind: 'trust', reason: 'switch-failed', detail: this.describe(error, secret) };
     }
@@ -238,7 +249,7 @@ export class PostgresAuthHardening {
     const errors = await this.ruleErrors();
 
     if (errors.length > 0) {
-      await this.rollback('the managed hba file has rule errors');
+      await this.restore('the managed hba file has rule errors', false);
 
       return { kind: 'trust', reason: 'hba-rule-errors', detail: errors.join('; ') };
     }
