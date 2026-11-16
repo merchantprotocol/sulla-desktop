@@ -28,15 +28,27 @@ class MemoryState implements OrgMessagingStateRepository {
   async recordContactPrompt(orgId: string, userId: string, senderUserId: string, at: number) { this.askedAt.set(`${orgId}:${userId}:${senderUserId}`, at); }
 }
 
-/** Mirrors the agent_inbox_messages primary key: one row per local message id across every org. */
+/**
+ * Mirrors PostgresAgentInboxRepository: one row per local message id across every org,
+ * and claim() leases only unleased rows for the target's channel and thread
+ * (FOR UPDATE SKIP LOCKED), so concurrent flushes never hand out the same row twice.
+ */
 class MemoryInboxRepository implements AgentInboxRepository {
-  private readonly entries = new Map<string, AgentInboxEntry>();
-  async enqueue(entry: AgentInboxEntry) { const id = entry.envelope.ids.messageId; if (this.entries.has(id)) return false; this.entries.set(id, entry); return true; }
-  async claim(target: AgentInboxTarget, owner: string) { return { owner, target, entries: [...this.entries.values()].filter(entry => entry.target.channel === target.channel) }; }
+  private readonly entries = new Map<string, { entry: AgentInboxEntry; owner?: string }>();
+  async enqueue(entry: AgentInboxEntry) { const id = entry.envelope.ids.messageId; if (this.entries.has(id)) return false; this.entries.set(id, { entry }); return true; }
+  async claim(target: AgentInboxTarget, owner: string) {
+    const rows = [...this.entries.values()].filter(row => !row.owner && row.entry.target.channel === target.channel
+      && (!target.threadId || !row.entry.target.threadId || row.entry.target.threadId === target.threadId));
+    for (const row of rows) row.owner = owner;
+    return { owner, target, entries: rows.map(row => row.entry) };
+  }
   async renew() {}
-  async acknowledge(claim: { entries: AgentInboxEntry[] }) { for (const entry of claim.entries) this.entries.delete(entry.envelope.ids.messageId); }
-  async release() {}
+  async acknowledge(claim: { owner: string; entries: AgentInboxEntry[] }) { this.forOwned(claim, id => this.entries.delete(id)); }
+  async release(claim: { owner: string; entries: AgentInboxEntry[] }) { this.forOwned(claim, id => { const row = this.entries.get(id); if (row) delete row.owner; }); }
   async pendingTargets() { return []; }
+  private forOwned(claim: { owner: string; entries: AgentInboxEntry[] }, apply: (id: string) => void) {
+    for (const entry of claim.entries) { const id = entry.envelope.ids.messageId; if (this.entries.get(id)?.owner === claim.owner) apply(id); }
+  }
 }
 
 class MemoryMembershipSource implements OrgMembershipSource {
