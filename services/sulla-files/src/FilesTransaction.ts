@@ -6,6 +6,7 @@
 import type pg from 'pg';
 
 import { TransactionScope } from './TransactionScope.js';
+import { TransactionControlRepository } from './Repositories/TransactionControlRepository.js';
 
 /**
  * A request failed because its database connection was lost (Postgres terminated it, the
@@ -71,6 +72,7 @@ export class TransactionRunner {
     private readonly classifier = new DatabaseFailureClassifier(),
     private readonly observer:TransactionObserver = { slowTransaction: (name, ms) => console.warn(`[SullaFiles] slow transaction ${ name } held ${ ms }ms`) },
     private readonly slowMs = 1_000,
+    private readonly control = new TransactionControlRepository(),
   ) {}
 
   async run<T>(name:string, work:(client:pg.PoolClient) => Promise<T>):Promise<T> {
@@ -79,11 +81,11 @@ export class TransactionRunner {
     try { client = await this.db.connect() } catch (error) { throw this.translate(error, false) }
     let began = 0; let committing = false;
     try {
-      await client.query('BEGIN'); began = Date.now();
+      await this.control.begin(client); began = Date.now();
       // While `work` runs, a pool acquire or chunk staging anywhere below it is a scope violation.
       const result = await TransactionScope.within(name, () => work(client));
       committing = true;
-      await client.query('COMMIT');
+      await this.control.commit(client);
       client.release();
       return result;
     } catch (error) {
@@ -91,7 +93,7 @@ export class TransactionRunner {
       let releaseError:Error | undefined = lost ? error as Error : undefined;
       if (!lost && began) {
         // ROLLBACK on a dead client throws too; that must not replace the real error or leak the client.
-        await client.query('ROLLBACK').catch(rollbackError => { releaseError = rollbackError as Error });
+        await this.control.rollback(client).catch(rollbackError => { releaseError = rollbackError as Error });
       }
       client.release(releaseError ?? undefined);
       throw lost ? this.translate(error, committing) : error;
