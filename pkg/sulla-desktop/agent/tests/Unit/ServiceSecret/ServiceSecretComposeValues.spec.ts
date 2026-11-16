@@ -126,6 +126,34 @@ describe('compose generation with the service secret', () => {
     expect(() => new ComposeSecretGuard(secret).assert(compose, yaml.stringify(compose))).toThrow(/tools SULLA_DATABASE_URL/);
   });
 
+  // risk: security / permissions — under trust any agent container on sulla_default logs in as superuser without a password
+  it('the shipped postgres service does not ask for trust auth', () => {
+    const compose = yaml.parse(readFileSync(COMPOSE_ASSET, 'utf8'));
+    const environment: string[] = compose.services.postgres.environment;
+
+    expect(environment.filter(entry => entry.startsWith('POSTGRES_HOST_AUTH_METHOD='))).toEqual([]);
+  });
+
+  // risk: security / permissions — a regenerated compose file can never reintroduce passwordless network logins
+  it('the guard refuses POSTGRES_HOST_AUTH_METHOD=trust in list or map form', () => {
+    const secret = new ServiceSecretComposeValues(REAL);
+    const asList: any = { services: { postgres: { environment: ['POSTGRES_HOST_AUTH_METHOD=trust', `POSTGRES_PASSWORD=${ REAL }`] } } };
+    const asMap: any = { services: { postgres: { environment: { POSTGRES_HOST_AUTH_METHOD: 'TRUST', POSTGRES_PASSWORD: REAL } } } };
+
+    for (const compose of [asList, asMap]) {
+      expect(() => new ComposeSecretGuard(secret).assert(compose, yaml.stringify(compose))).toThrow(/postgres POSTGRES_HOST_AUTH_METHOD allows passwordless/);
+    }
+  });
+
+  // risk: sign-in — scram (the image default) and an absent setting stay accepted, so boot is not blocked
+  it('the guard accepts scram-sha-256 and a missing auth method', () => {
+    const secret = new ServiceSecretComposeValues(REAL);
+    const scram: any = { services: { postgres: { environment: ['POSTGRES_HOST_AUTH_METHOD=scram-sha-256', `POSTGRES_PASSWORD=${ REAL }`] } } };
+
+    expect(() => new ComposeSecretGuard(secret).assert(scram, yaml.stringify(scram))).not.toThrow();
+    expect(() => generateCompose(secret)).not.toThrow();
+  });
+
   // risk: data accuracy (B4) — an install whose stored secret IS the dev password keeps working
   it('allows the dev password only when it is the install\'s stored secret', () => {
     const secret = new ServiceSecretComposeValues(DEV_PASSWORD);
