@@ -5,6 +5,9 @@
 
 import type pg from 'pg';
 
+import { TransactionScope } from './TransactionScope.js';
+import { TransactionControlRepository } from './Repositories/TransactionControlRepository.js';
+
 /**
  * A request failed because its database connection was lost (Postgres terminated it, the
  * idle-in-transaction timeout fired, the server restarted). Nothing was committed unless
@@ -58,6 +61,10 @@ export interface TransactionObserver {
  * A lost connection never leaves a half-written version: Postgres rolls the transaction
  * back, the broken client is evicted from the pool, and the caller gets a
  * RetryableDatabaseError (HTTP 503) instead of a hang or an opaque 500.
+ *
+ * `work` runs inside a TransactionScope: reaching the pool again (requireFile/requirePath
+ * without the client, loadFileContent, a nested run) or staging chunks from inside it fails in
+ * tests and is logged in production. Pass `client` to every lookup made inside `work`.
  */
 export class TransactionRunner {
   constructor(
@@ -65,17 +72,20 @@ export class TransactionRunner {
     private readonly classifier = new DatabaseFailureClassifier(),
     private readonly observer:TransactionObserver = { slowTransaction: (name, ms) => console.warn(`[SullaFiles] slow transaction ${ name } held ${ ms }ms`) },
     private readonly slowMs = 1_000,
+    private readonly control = new TransactionControlRepository(),
   ) {}
 
   async run<T>(name:string, work:(client:pg.PoolClient) => Promise<T>):Promise<T> {
+    TransactionScope.assertOutside('starting a nested transaction');
     let client:pg.PoolClient;
     try { client = await this.db.connect() } catch (error) { throw this.translate(error, false) }
     let began = 0; let committing = false;
     try {
-      await client.query('BEGIN'); began = Date.now();
-      const result = await work(client);
+      await this.control.begin(client); began = Date.now();
+      // While `work` runs, a pool acquire or chunk staging anywhere below it is a scope violation.
+      const result = await TransactionScope.within(name, () => work(client));
       committing = true;
-      await client.query('COMMIT');
+      await this.control.commit(client);
       client.release();
       return result;
     } catch (error) {
@@ -83,7 +93,7 @@ export class TransactionRunner {
       let releaseError:Error | undefined = lost ? error as Error : undefined;
       if (!lost && began) {
         // ROLLBACK on a dead client throws too; that must not replace the real error or leak the client.
-        await client.query('ROLLBACK').catch(rollbackError => { releaseError = rollbackError as Error });
+        await this.control.rollback(client).catch(rollbackError => { releaseError = rollbackError as Error });
       }
       client.release(releaseError ?? undefined);
       throw lost ? this.translate(error, committing) : error;

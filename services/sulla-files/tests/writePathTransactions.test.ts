@@ -11,6 +11,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { RetryableDatabaseError, TransactionRunner } from '../src/FilesTransaction.js';
 import { VersionContentStager } from '../src/VersionContentStager.js';
+import { connect } from '../src/db.js';
+import { TransactionScope, TransactionScopeViolation } from '../src/TransactionScope.js';
 import { FileAuditWriter } from '../src/fileAudit.js';
 
 const databaseUrl = process.env.SULLA_FILES_TEST_DATABASE_URL;
@@ -71,6 +73,23 @@ describe.skipIf(!databaseUrl)('Files write path transactions (real Postgres)', (
     pool.on('error', () => undefined);
     pool.on('connect', client => client.on('error', () => undefined));
     await admin.query(`TRUNCATE ${ schema }.file_versions, ${ schema }.files, ${ schema }.files_audit_spool, ${ schema }.collections`);
+  });
+
+  it('sets a deliberate backend session budget on real connections',async()=>{
+    const configured=await connect(databaseUrl!,1);
+    try{
+      expect((await configured.query('SHOW idle_in_transaction_session_timeout')).rows[0].idle_in_transaction_session_timeout).toBe('15s');
+      expect((await configured.query('SHOW statement_timeout')).rows[0].statement_timeout).toBe('30s');
+    }finally{await configured.end()}
+  });
+
+  it('rejects an indirect nested acquire against real Postgres instead of waiting for the pool',async()=>{
+    TransactionScope.guardPool(pool,'throw');
+    const runner=new TransactionRunner(pool);
+    await expect(runner.run('reintroduced-regression',async()=>{
+      await Promise.resolve();await pool.query('SELECT 1');
+    })).rejects.toBeInstanceOf(TransactionScopeViolation);
+    expect((await pool.query('SELECT 1 AS ok')).rows[0].ok).toBe(1);
   });
 
   // risk: data loss under load — a create held BEGIN while its chunk write fsync'd, sat idle in

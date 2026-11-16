@@ -22,7 +22,7 @@ export async function runSearchCleanup(db:pg.Pool, log:(message:string)=>void = 
       `DELETE FROM file_index_jobs j USING (SELECT j2.version_id FROM file_index_jobs j2 JOIN files f ON f.id=j2.file_id JOIN collections c ON c.id=f.collection_id WHERE c.system_area = 'logs' OR j2.version_id IS DISTINCT FROM f.current_version_id LIMIT ${ BATCH_SIZE }) batch WHERE j.version_id=batch.version_id`,
     ];
     for (const sql of deletes) for (;;) {
-      const result = await db.query(sql); if (!result.rowCount) break;
+      const result = await lock.query(sql); if (!result.rowCount) break;
       total += result.rowCount; await sleep(PAUSE_MS);
     }
     log(`[FilesSearchCleanup] complete (${ total } derived rows removed)`);

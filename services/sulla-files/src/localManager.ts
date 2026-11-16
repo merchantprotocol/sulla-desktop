@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { TransactionRunner } from './FilesTransaction.js';
+
 import { isLegacyInternalPath } from './legacyPreflight.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -418,9 +420,8 @@ export class LocalFilesManager {
       if (operation.state !== 'planned') {
         throw Object.assign(new Error('Native source ingestion requires reconciliation before it can be retried'), { status: 409 });
       }
-      const client = await this.db.connect();
       try {
-        await client.query('BEGIN');
+        return await new TransactionRunner(this.db).run('native-source-ingest',async client=>{
         if (!input.collectionId) throw Object.assign(new Error('Native source collection is required'), { status: 400 });
         await lockStoredNamespace(client, input.collectionId);
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`native-source:${ input.handle }`]);
@@ -440,13 +441,11 @@ export class LocalFilesManager {
         const completed = await client.query(`UPDATE files_native_source_operations SET state='completed',file_id=$2,files_version_id=$3,last_error=NULL,updated_at=NOW()
           WHERE operation_id=$1 AND state='planned'`, [input.operationId, result.id, result.current_version_id]);
         if (completed.rowCount !== 1) throw Object.assign(new Error('Native source ingestion operation changed while it was committing'), { status: 409 });
-        await client.query('COMMIT');
-        return result;
+        return result; });
       } catch (error) {
-        await client.query('ROLLBACK');
         await this.db.query('UPDATE files_native_source_operations SET last_error=$2,updated_at=NOW() WHERE operation_id=$1', [input.operationId, (error instanceof Error ? error.message : String(error)).slice(0, 2000)]).catch(() => undefined);
         throw error;
-      } finally { client.release() }
+      }
     });
   }
 
@@ -960,9 +959,10 @@ export class LocalFilesManager {
     const operationId = randomUUID();
     const completed:{ publication:PublicationReceipt; eviction?:EvictionReceipt }[] = [];
     let durablePlan:PathOperationPlanEntry[] = [];
-    const client = await this.db.connect(); let transaction = false; let intentCreated = false; let commitAttempted = false; let clientReleased = false;
+    let intentCreated = false; let commitAttempted = false;
+    const runner=new TransactionRunner(this.db);
     try {
-      await client.query('BEGIN'); transaction = true;
+      const {lockedRows,storedFolders,plan}=await runner.run('path-operation-plan',async client=>{
       await lockStoredNamespace(client, collectionId);
       const lockedRows:any[][] = [];
       const storedFolders:{ sourcePath:string; targetPath:string }[] = [];
@@ -1001,12 +1001,12 @@ export class LocalFilesManager {
           });
         }
       }
-      durablePlan = plan;
-      await this.db.query(
+      await client.query(
         `INSERT INTO files_path_operations(operation_id,action,state,plan) VALUES($1,$2,'planned',$3::jsonb)`,
         [operationId, action, JSON.stringify(plan)],
       );
-      intentCreated = true;
+      return {lockedRows,storedFolders,plan}; });
+      durablePlan=plan; intentCreated = true;
       await this.db.query("UPDATE files_path_operations SET state='publishing',updated_at=NOW() WHERE operation_id=$1", [operationId]);
       let planIndex = 0;
       for (const [index, item] of items.entries()) {
@@ -1046,6 +1046,27 @@ export class LocalFilesManager {
           );
         }
       }
+      await runner.run('path-operation-commit',async client=>{
+      await lockStoredNamespace(client,collectionId);
+      // Locks were intentionally released while filesystem copying/fsync ran. Revalidate
+      // every source and destination before attaching the durable publications to metadata.
+      for(const [index,item] of items.entries()){
+        const expected=lockedRows[index];
+        const current=(await client.query(`SELECT f.id,f.path,f.current_version_id,w.content_hash FROM files f
+          JOIN watched_folder_state w ON w.file_id=f.id AND w.collection_id=f.collection_id
+          WHERE f.id=ANY($1::uuid[]) AND f.collection_id=$2 AND f.deleted_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM files_protected_files p WHERE p.file_id=f.id) FOR UPDATE OF f,w`,[expected.map(row=>row.id),collectionId])).rows;
+        if(current.length!==expected.length||expected.some(row=>!current.some(now=>now.id===row.id&&now.path===row.path&&now.current_version_id===row.current_version_id&&now.content_hash===row.content_hash)))
+          throw Object.assign(new Error('Source changed while preparing filesystem publication; preserved copies will be reconciled'),{status:409});
+        for(const row of expected)await assertStoredFilePath(client,collectionId,`${item.targetPath}${row.watched_path.slice(item.sourcePath.length)}`);
+        if(item.folder){
+          const folders=(await client.query(`SELECT path FROM file_folders WHERE collection_id=$1 AND (path=$2 OR starts_with(path,$2||'/')) ORDER BY path FOR UPDATE`,[collectionId,item.sourcePath])).rows;
+          const original=storedFolders.filter(folder=>folder.sourcePath===item.sourcePath||folder.sourcePath.startsWith(`${item.sourcePath}/`));
+          if(folders.length!==original.length||folders.some(folder=>!original.some(old=>old.sourcePath===folder.path)))throw Object.assign(new Error('Folder changed during publication'),{status:409});
+          await assertStoredFolderPath(client,collectionId,item.targetPath);
+          if((await client.query('SELECT 1 FROM file_folders WHERE collection_id=$1 AND path=$2',[collectionId,item.targetPath])).rowCount)throw Object.assign(new Error('Destination folder appeared during publication'),{status:409});
+        }
+      }
       let receiptIndex = 0;
       for (const [index, item] of items.entries()) {
         for (const row of lockedRows[index]) {
@@ -1083,16 +1104,12 @@ export class LocalFilesManager {
       }
       await client.query("UPDATE files_path_operations SET state='db-committed',updated_at=NOW() WHERE operation_id=$1", [operationId]);
       commitAttempted = true;
-      await client.query('COMMIT'); transaction = false;
+      });
     } catch (error) {
       if (commitAttempted) {
-        client.release(true); clientReleased = true;
         throw Object.assign(new Error(`The database commit outcome is being reconciled; published files were preserved: ${ error instanceof Error ? error.message : String(error) }`), { status: 503 });
       }
       const preservationErrors:string[] = [];
-      if (transaction) {
-        try { await client.query('ROLLBACK') } catch (rollbackError) { preservationErrors.push(`database rollback failed: ${ rollbackError instanceof Error ? rollbackError.message : String(rollbackError) }`) }
-      }
       for (const item of completed.reverse()) {
         const planned = durablePlan.find(entry => entry.targetPath === item.publication.target);
         const verify = async(pinned:PinnedRegularFile) => planned ? this.verifyOperationPinned(pinned, planned.contentHash) : pinned.assertUnchanged();
@@ -1111,7 +1128,7 @@ export class LocalFilesManager {
       }
       const reason = error instanceof Error ? error.message : String(error);
       throw Object.assign(new Error(`${ reason }${ preservationErrors.length ? ` Recovery artifacts were preserved: ${ preservationErrors.join('; ') }` : '' }`), { status: (error as any)?.status ?? 500 });
-    } finally { if (!clientReleased) client.release(); }
+    }
     const cleanupErrors:string[] = [];
     for (const item of completed) await mutations.finalizePublication(item.publication).catch(error => cleanupErrors.push(`${ item.publication.staged }: ${ error instanceof Error ? error.message : String(error) }`));
     await this.db.query(
@@ -1537,8 +1554,9 @@ export class LocalFilesManager {
           throw new Error('Remote purge source identity changed before eviction; bytes were restored');
         }
       } else if (existing?.path) throw new Error('Remote purge cannot prove ownership of local bytes; they were preserved');
-      const client = await this.db.connect(); await client.query('BEGIN');
+      let committedReceipt:any;
       try {
+        await new TransactionRunner(this.db).run('remote-purge', async client => {
         await client.query("SET LOCAL sulla.trusted_replication='on'");
         if (existing && !(await client.query('SELECT 1 FROM files WHERE id=$1 AND collection_id=$2 AND path=$3 AND current_version_id=$4 AND operation_revision=$5 FOR UPDATE',[entry.file.id,collectionId,existing.path,existing.current_version_id,existing.operation_revision])).rowCount) throw new Error('Remote purge target changed; retained bytes were preserved');
         if (remoteOperationId && !(await client.query("SELECT 1 FROM files_path_operations WHERE operation_id=$1 AND state='publishing' AND plan->>'fileId'=$2 AND plan->>'versionId'=$3 AND plan->>'revision'=$4 FOR UPDATE",[remoteOperationId,entry.file.id,existing.current_version_id,String(existing.operation_revision)])).rowCount) throw new Error('Remote purge journal changed; retained bytes were preserved');
@@ -1563,14 +1581,14 @@ export class LocalFilesManager {
         await client.query('DELETE FROM files WHERE id=$1 AND collection_id=$2', [entry.file.id, collectionId]);
         await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND file_id=$2', [collectionId, entry.file.id]);
         if (remoteOperationId && (await client.query("UPDATE files_path_operations SET state='db-committed',last_error=NULL,updated_at=NOW() WHERE operation_id=$1 AND state='publishing'",[remoteOperationId])).rowCount!==1) throw new Error('Remote purge journal commit proof could not be recorded');
-        await client.query('COMMIT');
+        committedReceipt = receipt;
+        });
         if (remoteOperationId && remotePlan) await this.recoverRemotePurgeOperation({operation_id:remoteOperationId,state:'db-committed',plan:remotePlan,receipts:[]});
-        if (receipt?.state==='completed') {
-          const disposed=await this.nativeJournal.dispose(receipt.id);
+        if (committedReceipt?.state==='completed') {
+          const disposed=await this.nativeJournal.dispose(committedReceipt.id);
           if (disposed.state==='recovery-required') throw new Error(disposed.error??'Remote purge retained artifacts require recovery');
         }
       } catch (error) {
-        await client.query('ROLLBACK').catch(()=>undefined);
         if (remoteOperationId) {
           const durable=(await this.db.query('SELECT operation_id,state,plan,receipts FROM files_path_operations WHERE operation_id=$1',[remoteOperationId])).rows[0];
           if (durable && ['planned','publishing','db-committed'].includes(durable.state)) await this.recoverRemotePurgeOperation(durable).catch(async recoveryError=>{
@@ -1579,7 +1597,7 @@ export class LocalFilesManager {
           });
         }
         throw error;
-      } finally { client.release() }
+      }
       return;
     }
     if (entry.op === 'lifecycle') {

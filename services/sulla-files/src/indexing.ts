@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { TransactionRunner } from './FilesTransaction.js';
 import { vectorSearchReady, vectorTableExists } from './vectorState.js';
 import { extractIndexText } from './extractor.js';
 import { UNINDEXED_SYSTEM_AREAS } from './systemAreaIngest.js';
@@ -184,32 +185,33 @@ export class IndexingQueue {
       await this.db.query("UPDATE files SET extraction_status='indexing',extraction_reason_code='indexing',extraction_reason='Local extraction is in progress.' WHERE id=$1 AND current_version_id=$2", [job.file_id, job.version_id]);
       source = await this.source(file);
       const extracted = await extractIndexText(source.path, file.mime);
-      const client = await this.db.connect();
-      try {
-        await client.query('BEGIN');
+      // Capability lookups acquire through the pool; embeddings can be CPU-heavy. Stage
+      // both before checkout, then revalidate version/eligibility under the row locks.
+      const vectorTable=await vectorTableExists(this.db);
+      const vectorReady=vectorTable&&await vectorSearchReady(this.db);
+      const staged=extracted.status==='indexed'&&extracted.text
+        ? [...chunks(extracted.text)].map(content=>({content,embedding:this.embedder.embed(content)})) : [];
+      await new TransactionRunner(this.db).run('index-content-commit',async client=>{
         const current = await lockIndexingEligibility(client, file.id);
         if (!current || current.deleted_at || UNINDEXED_SYSTEM_AREAS.has(current.system_area) || current.protected) {
           await client.query('DELETE FROM file_search_text WHERE file_id=$1', [job.file_id]);
           await client.query('DELETE FROM file_search_chunks WHERE file_id=$1', [job.file_id]);
           await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          await client.query('COMMIT'); return true;
+          return true;
         }
         if (current.current_version_id !== job.version_id) {
           await client.query('DELETE FROM file_search_chunks WHERE file_id=$1 AND version_id=$2', [job.file_id, job.version_id]);
           await client.query('DELETE FROM file_index_jobs WHERE version_id=$1', [job.version_id]);
-          await client.query('COMMIT'); return true;
+          return true;
         }
         const activeJob = (await client.query('SELECT status,attempts FROM file_index_jobs WHERE version_id=$1 FOR UPDATE', [job.version_id])).rows[0];
         if (activeJob?.status !== 'indexing' || Number(activeJob.attempts) !== Number(job.attempts)) {
-          await client.query('COMMIT'); return true;
+          return true;
         }
         await client.query('DELETE FROM file_search_chunks WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)', [file.id]);
         if (extracted.status === 'indexed' && extracted.text) {
           let ordinal = 0;
-          for (const content of chunks(extracted.text)) {
-            const embedding = this.embedder.embed(content);
-            const vectorTable = await vectorTableExists(this.db);
-            const vectorReady = vectorTable && await vectorSearchReady(this.db);
+          for (const {content,embedding} of staged) {
             const inserted = await client.query(`INSERT INTO file_search_chunks(file_id,version_id,ordinal,content,embedding_json)
               VALUES($1,$2,$3,$4,$5) RETURNING id`, [file.id, job.version_id, ordinal, content, vectorReady ? null : JSON.stringify(Array.from(embedding))]);
             if (vectorTable) await client.query('INSERT INTO file_search_vectors(chunk_id,embedding) VALUES($1,$2::halfvec)', [inserted.rows[0].id, vectorLiteral(embedding)]);
@@ -219,8 +221,7 @@ export class IndexingQueue {
         await client.query('INSERT INTO file_search_text(file_id,path,search_text) VALUES($1,$2,$3) ON CONFLICT(file_id) DO UPDATE SET path=EXCLUDED.path,search_text=EXCLUDED.search_text', [file.id, file.path, extracted.text]);
         await client.query('UPDATE files SET extracted_at=NOW(),extraction_status=$2,extraction_reason_code=$3,extraction_reason=$4 WHERE id=$1', [file.id, extracted.status, extracted.reasonCode, extracted.reason]);
         await client.query('UPDATE file_index_jobs SET status=$2,finished_at=NOW(),reason_code=$3,reason=$4,last_error=NULL WHERE version_id=$1', [job.version_id, extracted.status, extracted.reasonCode, extracted.reason]);
-        await client.query('COMMIT');
-      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      });
     } catch (error) {
       const terminal = job.attempts >= 3;
       const status = terminal ? 'failed' : 'pending';
