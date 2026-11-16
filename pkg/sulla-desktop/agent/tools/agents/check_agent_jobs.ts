@@ -29,11 +29,8 @@ export class CheckAgentJobsWorker extends BaseTool {
           responseString: `Job "${ jobId }" not found. It may not exist or may have been explicitly pruned after the retention period.`,
         };
       }
-      const results = Array.isArray(job.results) ? job.results as Array<{ status?: string }> : [];
-      return {
-        successBoolean: ['running', 'parked'].includes(String(job.status)) || (job.status === 'completed' && results.every(result => result.status === 'completed')),
-        responseString: JSON.stringify(job, null, 2),
-      };
+      // The read succeeded: a failed/stopped job status is data in the payload, not a tool failure.
+      return { successBoolean: true, responseString: JSON.stringify(job, null, 2) };
     }
 
     const scope = input.scope === 'all' ? 'all' : 'mine';
