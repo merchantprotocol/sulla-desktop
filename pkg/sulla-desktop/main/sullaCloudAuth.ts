@@ -52,7 +52,7 @@ import { LegacyCloudSessionRefresher } from './cloud/session/DesktopCloudSession
 import { CloudSessionStartupRestorer, VaultNotReadyError } from './cloud/session/CloudSessionStartupRestorer';
 import { cloudSessionStartupRestoreProvider } from './cloud/session/CloudSessionStartupRestoreCoordinator';
 import { cloudSessionKeyProvider } from './cloud/session/CloudSessionKeyServiceProvider';
-import { cloudRecoveryKeyProvider } from './cloud/session/CloudRecoveryKeyNoticeStore';
+import { cloudRecoveryKeyProvider } from './cloud/session/CloudRecoveryKeyServiceProvider';
 import { DesktopCloudSignOut } from './cloud/session/DesktopCloudSignOut';
 import { LegacyCloudSessionAdopter, type LegacyAdoptionOutcome } from './cloud/session/LegacyCloudSessionAdopter';
 import { getDesktopRelayClient } from './desktopRelay';

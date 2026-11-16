@@ -593,10 +593,7 @@ export class DesktopRelayClient {
       cancel: message => this.handleCancel(message as IncomingMessage),
       inject: message => this.handleInject(message as IncomingMessage),
       clearSecureRoute: conversationId => this.secureRoutes.delete(conversationId),
-      log: {
-        info: message => console.info(message), warn: (message, error) => console.warn(message, error),
-        error: message => console.error(message), log: message => console.log(message),
-      },
+      log: console,
     });
     await router.route(raw, sourceSocket ?? undefined, sourceGeneration);
   }
