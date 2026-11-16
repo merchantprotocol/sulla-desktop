@@ -34,6 +34,7 @@ test('the guest-disk characterization spec and its production dependencies reque
   assert.equal(classifier.classify(['pkg/sulla-desktop/agent/tests/Characterization/DesktopRuntime/desktopRuntime.spec.ts']).needsBusyBox, true);
   assert.equal(classifier.classify(['src/runtime-agent/datadisk.go']).needsBusyBox, true);
   assert.equal(classifier.classify(['services/sulla-tools/Dockerfile']).needsBusyBox, true);
+  assert.equal(classifier.classify(['services/sulla-tools/src/index.ts']).needsBusyBox, false);
 });
 
 test('a shared module imported by agent code, outside the agent root, still runs the agent job', () => { // risk: coverage gap — allowlist skipped agent specs when shared code changed

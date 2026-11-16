@@ -15,7 +15,7 @@ export class SlackThreadWorker extends BaseTool {
   name = '';
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { channel, ts } = input;
+    const { channel, ts, account } = input;
 
     try {
       const slack = await registry.get<SlackClient>('slack');
@@ -25,7 +25,7 @@ export class SlackThreadWorker extends BaseTool {
           responseString: `Slack integration is not initialized for command ${ this.name }`,
         };
       }
-      const replies = await slack.getThreadReplies(channel, ts, this.executionContext);
+      const replies = await slack.getThreadReplies(channel, ts, this.executionContext, account);
       if (!replies || replies.length === 0) {
         return {
           successBoolean: false,

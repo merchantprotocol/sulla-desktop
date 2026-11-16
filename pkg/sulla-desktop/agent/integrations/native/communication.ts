@@ -38,8 +38,9 @@ export const nativeSlackIntegration: Record<string, Integration> = {
 2. Toggle "Enable Socket Mode" to ON
 3. Click "Generate" to create a new App-Level Token
 4. No special scopes needed for this token
-5. Copy the generated token (starts with xapp-)
-6. Save this token as your "Scopes Token" in Sulla`,
+5. Enable Events API and subscribe to app_mentions:read and message.im (message.im requires im:history)
+6. Copy the generated token (starts with xapp-)
+7. Save this token as your "Scopes Token" in Sulla`,
         },
         {
           title:   'Configure Bot Permissions',
@@ -49,9 +50,14 @@ export const nativeSlackIntegration: Record<string, Integration> = {
    • chat:write
    • files:write
    • channels:read
+   • channels:history
    • groups:read
+   • groups:history
    • im:read
+   • im:history
    • mpim:read
+   • mpim:history
+   • reactions:write
    • users:read
    • users:read.email
 4. Click "Save Changes"`,
