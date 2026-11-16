@@ -58,9 +58,10 @@ export class VaultEnrollmentService {
     this.discardPendingEnrollment(input.requestId);
     if(!await this.host.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists');
     const masterKey=Buffer.from(input.masterKey||'','base64url');
-    if(masterKey.byteLength!==32)throw new LocalVaultError('invalid_unlock_material',400,'Account master key is invalid');
-    let userKey:Uint8Array|undefined, privateKey:Uint8Array|undefined, plain:Uint8Array|undefined;
+    let userKey:Uint8Array|undefined, privateKey:Uint8Array|undefined, plain:Uint8Array|undefined, wrapped:Uint8Array|undefined;
     try{
+      // Inside the try so a wrong-length key is still zeroed by the finally below.
+      if(masterKey.byteLength!==32)throw new LocalVaultError('invalid_unlock_material',400,'Account master key is invalid');
       const e=input.wrappedUserKey as TransportEnvelope;
       const recipient=await globalThis.crypto.subtle.importKey('jwk',input.privateKeyJwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
       plain=await this.host.filesTransport.unwrap(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
@@ -68,24 +69,30 @@ export class VaultEnrollmentService {
       userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
       const env=await this.host.codecProvider.get(); env.verifyBundle(payload.bundle,userKey);
       if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
-      const wrapped=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); const keysMatch=timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)); wrapped.fill(0); if(!keysMatch)throw new Error('bundle key mismatch');
+      wrapped=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey);
+      // Compare the views in place: Buffer.from copies would land in the shared pool and never be zeroed.
+      if(wrapped.byteLength!==userKey.byteLength||!timingSafeEqual(wrapped,userKey))throw new Error('bundle key mismatch');
       privateKey=(await this.host.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
       this.host.requireStableGeneration(generation);
       this.discardPendingEnrollment(input.requestId);
       this.discardExpiredEnrollments();
       this.stage(input.requestId,{expiresAt:Date.now()+VaultEnrollmentService.STAGED_TTL_MS,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
       return{bundleMac:payload.bundle.mac,headMac:payload.head.mac};
-    }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0)}
+    }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0);wrapped?.fill(0)}
   }
 
   async commitVaultEnrollment(serviceId:string,token:string|undefined,requestId:string):Promise<{adopted:true}>{
-    this.host.requireApprovalIdentity(serviceId,token); this.discardExpiredEnrollments(); const staged=this.take(requestId);
+    this.host.requireApprovalIdentity(serviceId,token);
+    // A lock while any await below is pending must leave the vault locked: never install keys after that.
+    const generation=this.host.generation;
+    this.discardExpiredEnrollments(); const staged=this.take(requestId);
     if(!staged||staged.expiresAt<Date.now()){
       if(staged)VaultEnrollmentService.erase(staged);
       throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
     }
     try{ if(!await this.host.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists'); const b=staged.bundle;
       const verifier=makeLoginVerifier(await deriveLoginHash(staged.masterKey));
+      this.host.requireStableGeneration(generation);
       await this.host.runTransaction(async client => {
         await this.host.userRepository.createWithId([
           b.vaultUserId,
@@ -104,6 +111,8 @@ export class VaultEnrollmentService {
           createHash('sha256').update(JSON.stringify(b)).digest('hex'),
         ], client);
       });
+      // Locked while the rows were written: they stay (the user unlocks with the password), the keys never load.
+      this.host.requireStableGeneration(generation);
       this.host.lockNow();this.host.keys={userId:b.vaultUserId,publicKey:b.publicKey,userKey:Uint8Array.from(staged.userKey),privateKey:Uint8Array.from(staged.privateKey)};this.host.generation+=1;this.host.migrationState='unlocked';this.host.stageCacheUpdate(staged.masterKey);return{adopted:true};
     }finally{VaultEnrollmentService.erase(staged)}
   }

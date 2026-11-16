@@ -3,14 +3,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-// E10 (S4a follow-up): staged device-enrollment keys never outlive a lock or their 60 s TTL, and a
-// Files key-bundle transaction whose ROLLBACK fails keeps the real error and never returns the
-// broken connection to the pool. Real LocalVaultAuthority + real transport envelope crypto; the
-// database is a synthetic "no vault yet" double, the bundle codec and stored-key reader are doubles.
+// E10 (S4a follow-up): staged device-enrollment keys never outlive a lock or their 60 s TTL, a
+// commit never unlocks a vault the user locked meanwhile, and every unwrapped key copy is zeroed.
+// Real LocalVaultAuthority + real transport envelope crypto; the database is a synthetic "no vault
+// yet" double, the bundle codec, stored-key reader and commit transaction are doubles.
+// (The ROLLBACK-failure transaction specs live in PgTransactionRunner.spec.ts.)
 //
-// Fail on main (before this change): lock mid-adopt, TTL purge, repeat-adopt TTL restart, commit
-// purge, failed repeat adopt, and the ROLLBACK-failure test. The "no lock" and "clean rollback"
-// tests are guards that pass on main and keep the fix from over-reaching.
+// Fail on main (before this change): lock mid-adopt, TTL purge, commit purge, failed repeat adopt,
+// both commit-lock races, the three unwrapped-user-key cases (no pooled copy; wrong length is not
+// zeroed) and the wrong-length master key. Guards that pass on main and keep the fix from
+// over-reaching: "no lock" adopt, repeat-adopt TTL restart and the unlocked commit.
 
 import { webcrypto } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
@@ -22,7 +24,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Database } from '../../../../../../services/sulla-vault/src/db';
 import { LocalVaultAuthority } from '../../../../../../services/sulla-vault/src/localAuthority';
-import { PostgresFilesKeyBundleRepository } from '../../../../../../services/sulla-vault/src/repositories/PostgresFilesKeyBundleRepository';
 
 const TOKENS = { bootstrap: 'b'.repeat(40), control: 'c'.repeat(40), approval: 'a'.repeat(40), broker: 'r'.repeat(40), files: 'f'.repeat(40) };
 const USER_ID = 'e10a0000-0000-4000-8000-000000000011';
@@ -39,6 +40,11 @@ type Staged = { expiresAt: number; userKey: Uint8Array; privateKey: Uint8Array; 
 interface AuthorityState {
   pendingVaultEnrollments: Map<string, Staged>;
   codecProvider: { get(): Promise<{ verifyBundle(bundle: unknown, userKey: Uint8Array): void }> };
+  keys: { userKey: Uint8Array } | null;
+  migrationState: string;
+  stagedCacheUpdate: { masterKey: Uint8Array } | null;
+  isSetupRequired(): Promise<boolean>;
+  runTransaction(operation: unknown): Promise<unknown>;
 }
 
 const zeroed = (bytes: Uint8Array) => bytes.every(byte => byte === 0);
@@ -56,11 +62,14 @@ class Deferred {
  */
 class KeyReader {
   readonly privateKeysHandedOut: Uint8Array[] = [];
+  readonly userKeysHandedOut: Uint8Array[] = [];
+  /** What the stored bundle decrypts to; defaults to the enrollment's own user key. */
+  bundleUserKey: Uint8Array;
   readonly requested = new Deferred();
   gate: Deferred | undefined;
   private calls = 0;
 
-  constructor(private readonly userKey: Uint8Array, private readonly privateKey: Uint8Array) {}
+  constructor(userKey: Uint8Array, private readonly privateKey: Uint8Array) { this.bundleUserKey = userKey }
 
   async get() {
     this.calls += 1;
@@ -69,7 +78,11 @@ class KeyReader {
       await this.gate.promise;
     }
     return {
-      unwrapUserKey: () => Uint8Array.from(this.userKey),
+      unwrapUserKey: () => {
+        const copy = Uint8Array.from(this.bundleUserKey);
+        this.userKeysHandedOut.push(copy);
+        return copy;
+      },
       unwrapUserPrivateKey: () => {
         const copy = Uint8Array.from(this.privateKey);
         this.privateKeysHandedOut.push(copy);
@@ -117,12 +130,12 @@ class AdoptFixture {
   }
 
   /** `wrappedFor` lets a spec send an envelope bound to another request, which must fail verification. */
-  async adopt(requestId = REQUEST_ID, wrappedFor = requestId): Promise<{ bundleMac: string; headMac: string }> {
+  async adopt(requestId = REQUEST_ID, wrappedFor = requestId, masterKey = Buffer.alloc(32, 0x73).toString('base64url')): Promise<{ bundleMac: string; headMac: string }> {
     const payload = new TextEncoder().encode(JSON.stringify({ userKey: Buffer.from(this.userKey).toString('base64url'), bundle: this.bundle, head: this.head }));
     const wrappedUserKey = await this.transport.wrap(payload, this.publicKey, wrappedFor, VAULT_ID, 1);
     return this.authority.adoptVaultEnrollment('approval', TOKENS.approval, {
       requestId, vaultId: VAULT_ID, vaultEpoch: 1, privateKeyJwk: this.privateKeyJwk, wrappedUserKey,
-      masterKey: Buffer.alloc(32, 0x73).toString('base64url'), cloudUserId: 'cloud-user-e10',
+      masterKey, cloudUserId: 'cloud-user-e10',
     } as never);
   }
 
@@ -140,7 +153,7 @@ class AdoptFixture {
   }
 }
 
-afterEach(() => { vi.useRealTimers() });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() });
 
 describe('Adopting a device enrollment never stages keys after a lock', () => {
   it('a lock while adopt awaits the key reader fails with 423, stages nothing and zeroes the unwrapped key', async() => { // risk: staged enrollment keys survive a lock (TOCTOU)
@@ -232,39 +245,116 @@ describe('Staged enrollment keys are purged at their TTL', () => {
   });
 });
 
-/** Pool client double: records statements and how it was released; can fail chosen statements. */
-class FlakyClient {
-  readonly log: string[] = [];
-  readonly releasedWith: unknown[][] = [];
-  constructor(private readonly failing: Record<string, Error>) {}
-  async query(sql: string) {
-    this.log.push(sql.split(' ')[0]);
-    const failure = Object.entries(this.failing).find(([statement]) => sql.startsWith(statement));
-    if (failure) throw failure[1];
-    return { rows: [], rowCount: 0 };
+/** Holds one overridden authority step open until released, and says when it was reached. */
+class GatedStep {
+  readonly reached = new Deferred();
+  readonly gate = new Deferred();
+  calls = 0;
+
+  async run<T>(result: T): Promise<T> {
+    this.calls += 1;
+    this.reached.release();
+    await this.gate.promise;
+    return result;
   }
-  release(...args: unknown[]): void { this.releasedWith.push(args) }
 }
 
-describe('Files key-bundle transaction when ROLLBACK itself fails', () => {
-  it('rethrows the original work error and releases the client with the rollback error so the pool destroys it', async() => { // risk: custody error masked; poisoned connection (open txn + advisory lock) reused
-    const rollbackError = new Error('connection terminated');
-    const client = new FlakyClient({ ROLLBACK: rollbackError });
-    const repository = new PostgresFilesKeyBundleRepository({ connect: async() => client } as unknown as Database);
+/** Waits until `step` is reached; if `pending` settles first, fails instead of hanging. */
+async function parkedAt(step: GatedStep, pending: Promise<unknown>): Promise<string> {
+  return Promise.race([
+    step.reached.promise.then(() => 'parked'),
+    pending.then(() => 'resolved', () => 'rejected'),
+  ]);
+}
 
-    await expect(repository.withCollectionLock('p', 'c', async() => { throw new Error('custody conflict') })).rejects.toThrow('custody conflict');
+describe('Committing an enrollment never unlocks a vault the user locked meanwhile', () => {
+  it('a lock while the commit transaction is pending fails with 423, keeps the vault locked and zeroes the staged keys', async() => { // risk: vault left unlocked after the user locked it
+    const fx = await new AdoptFixture().setup();
+    await fx.adopt();
+    const staged = fx.state.pendingVaultEnrollments.get(REQUEST_ID)!;
+    const transaction = new GatedStep();
+    fx.state.runTransaction = () => transaction.run(undefined);
 
-    expect(client.log).toEqual(['BEGIN', 'SELECT', 'ROLLBACK']);
-    expect(client.releasedWith).toEqual([[rollbackError]]);
+    const pending = fx.commit();
+    expect(await parkedAt(transaction, pending)).toBe('parked');
+    fx.authority.lockNow();
+    transaction.gate.release();
+
+    await expect(pending).rejects.toMatchObject({ code: 'vault_locked', status: 423 });
+    expect(transaction.calls).toBe(1); // the rows were written; the user unlocks them with the password
+    expect(fx.state.keys).toBeNull();
+    expect(fx.state.migrationState).toBe('locked');
+    expect(fx.state.stagedCacheUpdate).toBeNull();
+    expect(erased(staged)).toBe(true);
   });
 
-  it('returns a healthy client to the pool after a clean rollback', async() => { // risk: every failed custody write destroys a pool connection
-    const client = new FlakyClient({});
-    const repository = new PostgresFilesKeyBundleRepository({ connect: async() => client } as unknown as Database);
+  it('a lock before the transaction starts writes no rows and fails with 423', async() => { // risk: vault rows written and unlocked after a lock
+    const fx = await new AdoptFixture().setup();
+    await fx.adopt();
+    const staged = fx.state.pendingVaultEnrollments.get(REQUEST_ID)!;
+    const setupCheck = new GatedStep();
+    fx.state.isSetupRequired = () => setupCheck.run(true);
+    let transactions = 0;
+    fx.state.runTransaction = async() => { transactions += 1 };
 
-    await expect(repository.withCollectionLock('p', 'c', async() => { throw new Error('custody conflict') })).rejects.toThrow('custody conflict');
+    const pending = fx.commit();
+    expect(await parkedAt(setupCheck, pending)).toBe('parked');
+    fx.authority.lockNow();
+    setupCheck.gate.release();
 
-    expect(client.releasedWith).toHaveLength(1);
-    expect(client.releasedWith[0][0]).toBeUndefined();
+    await expect(pending).rejects.toMatchObject({ code: 'vault_locked', status: 423 });
+    expect(transactions).toBe(0);
+    expect(fx.state.keys).toBeNull();
+    expect(erased(staged)).toBe(true);
+  });
+
+  it('still unlocks the adopted vault when no lock happens', async() => { // risk: the lock guard refuses every enrollment commit
+    const fx = await new AdoptFixture().setup();
+    await fx.adopt();
+    const staged = fx.state.pendingVaultEnrollments.get(REQUEST_ID)!;
+    fx.state.runTransaction = async() => undefined;
+
+    await expect(fx.commit()).resolves.toEqual({ adopted: true });
+    expect(fx.state.migrationState).toBe('unlocked');
+    expect(fx.state.keys?.userKey.every(byte => byte === 0x71)).toBe(true);
+    expect(erased(staged)).toBe(true);
+  });
+});
+
+describe('Adopt zeroes every unwrapped key copy', () => {
+  const cases = [
+    { name: 'matches', bundleUserKey: new Uint8Array(32).fill(0x71), outcome: 'resolves' },
+    { name: 'does not match', bundleUserKey: new Uint8Array(32).fill(0x55), outcome: 'invalid_proof' },
+    { name: 'has the wrong length', bundleUserKey: new Uint8Array(16).fill(0x71), outcome: 'invalid_proof' },
+  ] as const;
+
+  it.each(cases)('the bundle user key is zeroed and never copied into the Buffer pool when it $name', async({ bundleUserKey, outcome }) => { // risk: user key left readable in process memory
+    const fx = await new AdoptFixture().setup();
+    fx.reader.bundleUserKey = bundleUserKey;
+    const from = vi.spyOn(Buffer, 'from');
+
+    const adopted = fx.adopt();
+    if (outcome === 'resolves') await expect(adopted).resolves.toEqual({ bundleMac: 'bundle-mac', headMac: 'head-mac' });
+    else await expect(adopted).rejects.toMatchObject({ code: 'invalid_proof', status: 403 });
+
+    expect(fx.reader.userKeysHandedOut).toHaveLength(1);
+    const handedOut = fx.reader.userKeysHandedOut[0];
+    expect(zeroed(handedOut)).toBe(true);
+    expect(from.mock.calls.some(([source]) => source === handedOut)).toBe(false);
+  });
+
+  it('a wrong-length master key is rejected with 400 and zeroed', async() => { // risk: account master key bytes left in memory
+    const fx = await new AdoptFixture().setup();
+    const shortKey = Buffer.alloc(31, 0x73).toString('base64url');
+    const from = vi.spyOn(Buffer, 'from');
+
+    await expect(fx.adopt(REQUEST_ID, REQUEST_ID, shortKey)).rejects.toMatchObject({ code: 'invalid_unlock_material', status: 400 });
+
+    const index = from.mock.calls.findIndex(([source, encoding]) => source === shortKey && encoding === 'base64url');
+    expect(index).toBeGreaterThanOrEqual(0);
+    const decoded = from.mock.results[index].value as Buffer;
+    expect(decoded.byteLength).toBe(31);
+    expect(zeroed(decoded)).toBe(true);
+    expect(fx.state.pendingVaultEnrollments.size).toBe(0);
   });
 });
