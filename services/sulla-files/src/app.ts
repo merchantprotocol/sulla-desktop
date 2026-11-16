@@ -1387,7 +1387,7 @@ export function createApp(
       }
       response.end();
     } catch (error) {
-      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: download ? 'download' : 'preview', fileId: request.params.id, versionId: readVersionId });
+      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: 'share-content', shareId: request.params.id });
       if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.setHeader('Content-Length', '0'); response.end(); return }
       if (!controller.signal.aborted && !response.headersSent) next(error); else if (!controller.signal.aborted) response.destroy(error as Error);
     } finally { request.off('aborted', abort); response.off('close', abort) }
@@ -2008,6 +2008,7 @@ export function createApp(
       const disposition = `attachment; filename="${ fallbackName }"; filename*=UTF-8''${ encodeURIComponent(originalName) }`;
       await sendFileStream(request, response, content, download ? disposition : undefined);
     } catch (error) {
+      if (!controller.signal.aborted && ContentReadFailureLog.isServerFailure(error)) contentReadFailures.report(error, { route: download ? 'download' : 'preview', fileId: request.params.id, versionId: readVersionId });
       if (error instanceof RangeNotSatisfiableError && !response.headersSent) { response.status(416).setHeader('Accept-Ranges', 'bytes'); response.setHeader('Cache-Control', 'private, no-store'); response.setHeader('Content-Range', `bytes */${ error.size }`); response.end(); return }
       if (!controller.signal.aborted && !response.headersSent) next(error);
       else if (!controller.signal.aborted) response.destroy(error as Error);
