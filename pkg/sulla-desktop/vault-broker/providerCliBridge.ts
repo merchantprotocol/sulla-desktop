@@ -8,6 +8,7 @@ import http from 'node:http';
 
 import { ProviderModelPin } from './ProviderModelPin';
 import type { BrokerInjection, ToolExecutionContext } from './index';
+import type { LocalVaultBrokerClient } from './index';
 
 // This module is also loaded by the minimal sulla-tools image, which deliberately
 // does not ship Desktop's Electron-backed logging stack. Keep bridge diagnostics on

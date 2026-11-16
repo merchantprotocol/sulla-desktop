@@ -1,5 +1,9 @@
 {
   "maxLines": 400,
+  "extra_ignore": ["^services/sulla-files/scale/"],
+  "extra_ignore_reasons": {
+    "^services/sulla-files/scale/": "Files scale/load-test harness (own package.json, run by hand against a scratch database); not shipped in the sulla-files image and not production code."
+  },
   "frozen": {
     "services/sulla-vault/src/browserEnvelope/syncRunner.ts": {
       "reason": "Today's v3 Cloud vault sync runner (SR). It stays in service until Replica replaces it (M3 desktop vault OOP); bug fixes only. New sync code goes in browserEnvelope/sync/ or the Replica, not here.",

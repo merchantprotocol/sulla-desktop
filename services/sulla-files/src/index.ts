@@ -24,6 +24,7 @@ import { IndexingQueue } from './indexing.js';
 import { FilesKeyBundleRecovery } from './keyBundleRecovery.js';
 import { SecureCollectionKeyExchange } from './keyExchange.js';
 import { FilesKeyring } from './keyring.js';
+import { LegacySigningKeySelector } from './Services/LegacySigningKeySelector.js';
 import { runLegacyPreflight } from './legacyPreflight.js';
 import { FilesLifecycle } from './lifecycle.js';
 import { LocalFilesManager } from './localManager.js';
@@ -80,7 +81,7 @@ if (config.mode === 'desktop' && config.filesRoot) {
     throw error;
   }
 }
-config.keyring = new FilesKeyring(db);
+config.keyring = new FilesKeyring(db, undefined, undefined, undefined, new LegacySigningKeySelector(new Store(config.chunkRoot)));
 // Cloud sync and its chunk source exist only when the vault broker identity is configured.
 const cloudBroker = config.mode === 'desktop' && config.vaultBrokerServiceToken ? new FilesCloudBroker(config) : undefined;
 const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
