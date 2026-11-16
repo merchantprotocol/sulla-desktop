@@ -6,15 +6,21 @@
 import type pg from 'pg';
 import type { LocalEncryptedItem, LocalItemContext } from '@sulla/domain';
 
+import type { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
+
 import type { BitwardenExportImporter } from '../bitwarden/BitwardenExportImporter.js';
+import type { DomainVaultSyncCodecProvider } from '../browserEnvelope/DomainVaultSyncCodecProvider.js';
+import type { SyncBundle, SyncHead } from '../browserEnvelope/envelope.js';
+import type { StoredKeyEnvelopeReaderProvider } from '../browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultConfig } from '../config.js';
-import type { LocalVaultState } from '../contracts.js';
+import type { BrokerIntegrationMetadataResponse, LocalVaultState } from '../contracts.js';
 import type { Database, Queryable } from '../db.js';
 import type { LocalVaultCryptoProvider } from '../localCrypto/LocalVaultCryptoProvider.js';
 import type { PostgresLocalAuthorityRepository } from '../repositories/PostgresLocalAuthorityRepository.js';
 import type { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
 import type {
-  PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultUserRepository,
+  PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository,
+  PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository,
 } from '../repositories/PostgresVaultAuthorityRepositories.js';
 import type { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from '../repositories/PostgresVaultItemRepositories.js';
 import type { LocalAuthorityCollaborators } from './LocalAuthorityCollaborators.js';
@@ -36,6 +42,9 @@ export interface LocalAuthorityHost {
   readonly cacheChallenges: Map<string, Challenge>;
   readonly challengeRate:   Map<string, { count: number; resetAt: number }>;
   readonly humanSessions:   Map<string, HumanSession>;
+  readonly pendingVaultEnrollments: Map<string, {
+    expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
+  }>;
 
   // Dependencies.
   readonly db:                  Database;
@@ -46,6 +55,12 @@ export interface LocalAuthorityHost {
   readonly itemRepository:      PostgresVaultItemRepository;
   readonly auditLogRepository:  PostgresVaultAuditLogRepository;
   readonly rewrapHistory:       PostgresRewrapHistoryRepository;
+  readonly syncStateRepository: PostgresVaultSyncStateRepository;
+  readonly integrationStateRepository: PostgresIntegrationStateRepository;
+  readonly legacyCredentialRepository: PostgresLegacyCredentialRepository;
+  readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider;
+  readonly filesTransport:      FilesTransportEnvelopeService;
+  readonly codecProvider:       DomainVaultSyncCodecProvider;
   readonly localCryptoProvider: LocalVaultCryptoProvider;
   readonly bitwardenImporter:   BitwardenExportImporter;
   readonly localStore:          PostgresLocalAuthorityRepository;
@@ -67,6 +82,9 @@ export interface LocalAuthorityHost {
   retryPendingSullaCloudRevocations(): void;
   requireControlIdentity(callerId: string, token: string | undefined): void;
   requireApprovalIdentity(callerId: string, token: string | undefined): void;
+  requireDesktopIdentity(callerId: string, token: string | undefined): void;
+  requireBrokerIdentity(callerId: string, token: string | undefined): void;
+  integrationMetadata(callerId: string, token: string | undefined, integrationId: string, accountFilter?: string): Promise<BrokerIntegrationMetadataResponse>;
   isSetupRequired(): Promise<boolean>;
   validateHumanSession(sessionId: string | undefined, csrf?: string): HumanSession;
   unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }>;

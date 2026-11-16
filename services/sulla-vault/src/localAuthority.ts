@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { promises as dns } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
@@ -14,20 +14,17 @@ import { IdentityError, type LocalEncryptedItem, type LocalItemContext } from '@
 
 import {
   agentPolicyAllows,
-  agentPolicyFromLegacyLlmAccess,
-  deriveLoginHash,
   type AgentAccessLevel,
   type AgentPolicy,
   validateVaultItemProxy,
   type VaultItemPlaintext,
 } from '@sulla/vault-crypto';
 
-import { makeLoginVerifier } from './auth.js';
 import { BitwardenExportImporter } from './bitwarden/BitwardenExportImporter.js';
 import { validateCatalogRequest } from './catalogPolicy.js';
 import { enterpriseGatewayOrigin, validateEnterpriseGatewayHttp } from './gatewayPolicy.js';
-import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, trustedOriginsForIntegration, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
-import { isNativeOAuthIntegration, validateOAuthDestination } from './oauthPolicy.js';
+import { brokerTransferLimits, FILES_SYNC_OPERATION, isTrustedFilesCloudCall, validateItemHttpOperation, validateOperation } from './operationPolicy.js';
+import { validateOAuthDestination } from './oauthPolicy.js';
 import { pinnedAddressesLookup, pinnedLookup, type PinnedAddress } from './pinnedLookup.js';
 import {
   describeUpstreamError, familySummary, formatUpstreamFailureLog, isReconnectableUpstreamError, retryAddressOrder,
@@ -44,29 +41,17 @@ import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from
 import type {
   BrokerCredentialRef,
   BrokerItemListResponse,
-  BrokerOAuthAccountRequest,
-  BrokerClaims,
-  BrokerVaultItemWriteRequest,
-  BrokerVaultItemUpdateRequest,
-  BrokerVaultItemWriteResponse,
-  BrokerIntegrationAccountImportRequest,
-  BrokerIntegrationCredentialWriteRequest,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
   BrokerRelayCreateRequest,
   BrokerRelayCreateResponse,
   BrokerRelaySendRequest,
-  LegacyMigrationResponse,
   LocalVaultState,
   SullaCloudSessionAdoptRequest,
   SullaCloudDesktopRequest,
   SullaCloudSessionResponse,
-  VaultDeviceApprovalWrapRequest,
-  VaultEnrollmentWrapRequest,
-  VaultEnrollmentAdoptRequest,
 } from './contracts.js';
-import { transportWrap } from './filesCloudEscrow.js';
-import { FilesTransportEnvelopeService, type FilesTransportEnvelope as TransportEnvelope } from '@sulla/vault-crypto';
+import { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
 import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
 import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
@@ -91,6 +76,10 @@ import type { HumanItemService } from './localAuthority/HumanItemService.js';
 import type { BitwardenImportService } from './localAuthority/BitwardenImportService.js';
 import type { AccountPasswordService } from './localAuthority/AccountPasswordService.js';
 import type { HumanRecoveryService } from './localAuthority/HumanRecoveryService.js';
+import type { VaultEnrollmentService } from './localAuthority/VaultEnrollmentService.js';
+import type { AgentItemWriter } from './localAuthority/AgentItemWriter.js';
+import type { IntegrationAccountService } from './localAuthority/IntegrationAccountService.js';
+import type { LegacyMigrationService } from './localAuthority/LegacyMigrationService.js';
 import { LocalAuthorityCollaborators } from './localAuthority/LocalAuthorityCollaborators.js';
 import type { LocalAuthorityHost } from './localAuthority/LocalAuthorityHost.js';
 import type { VaultKeyActivation } from './localAuthority/VaultKeyActivation.js';
@@ -102,7 +91,6 @@ import {
   APPROVAL_TTL_MS,
   BROKER_IDENTIFIER_PATTERN,
   CACHE_UPDATE_TTL_MS,
-  CREDENTIAL_PROPERTY_PATTERN,
   MAX_CREDENTIAL_BYTES,
   MAX_FILES_SYNC_UPLOAD_BYTES,
   MAX_GIT_STREAM_BYTES,
@@ -111,13 +99,17 @@ import {
   UUID_PATTERN,
 } from './localAuthority/LocalAuthorityLimits.js';
 import type {
-  BrokerStreamSink, Challenge, HumanSession, ItemRow, LegacyIntegrationRow, PreparedBrokerRequest, StagedCacheUpdate, UnlockedKeys,
+  BrokerStreamSink,
+  Challenge,
+  HumanSession,
+  ItemRow,
+  PreparedBrokerRequest,
+  StagedCacheUpdate,
+  UnlockedKeys,
 } from './localAuthority/LocalAuthorityTypes.js';
 import { LocalVaultError } from './localAuthority/LocalVaultError.js';
 import { StreamingRedactor } from './localAuthority/StreamingRedactor.js';
 import { SullaCloudDesktopRoutePolicy } from './localAuthority/SullaCloudDesktopRoutePolicy.js';
-
-const { Pool } = pg;
 
 export { LocalVaultError } from './localAuthority/LocalVaultError.js';
 export type { BrokerStreamSink } from './localAuthority/LocalAuthorityTypes.js';
@@ -128,19 +120,14 @@ export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | u
 }
 
 // Local names for the moved helpers so the method bodies below stay verbatim (E9).
-const sealCacheUpdate = LocalAuthorityCrypto.sealCacheUpdate;
 const constantEqual = LocalAuthorityCrypto.constantEqual;
-const hmac = LocalAuthorityCrypto.hmac;
 const operationDigest = LocalAuthorityCrypto.operationDigest;
-const decryptLegacyValue = LocalAuthorityCrypto.decryptLegacyValue;
-const stableLegacyFingerprint = LocalAuthorityCrypto.stableLegacyFingerprint;
 const serializeBrokerBody = BrokerHttpBody.serializeBrokerBody;
 const headerValue = BrokerHttpBody.headerValue;
 const setContentType = BrokerHttpBody.setContentType;
 const formFromObject = BrokerHttpBody.formFromObject;
 const applyJsonPath = BrokerHttpBody.applyJsonPath;
 const streamResponseIsBodyless = BrokerHttpBody.streamResponseIsBodyless;
-const safeIntegrationMetadata = BrokerCredentialFields.safeIntegrationMetadata;
 const credentialField = BrokerCredentialFields.credentialField;
 const proxySource = BrokerCredentialFields.proxySource;
 const proxyHostMatches = BrokerCredentialFields.proxyHostMatches;
@@ -290,6 +277,19 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   recoverHumanSession(...args: Parameters<HumanRecoveryService['recoverHumanSession']>) { return this.parts.recovery.recoverHumanSession(...args) }
   exportHumanBackup(...args: Parameters<HumanRecoveryService['exportHumanBackup']>) { return this.parts.recovery.exportHumanBackup(...args) }
   importHumanBackup(...args: Parameters<HumanRecoveryService['importHumanBackup']>) { return this.parts.recovery.importHumanBackup(...args) }
+  wrapVaultEnrollment(...args: Parameters<VaultEnrollmentService['wrapVaultEnrollment']>) { return this.parts.enrollment.wrapVaultEnrollment(...args) }
+  adoptVaultEnrollment(...args: Parameters<VaultEnrollmentService['adoptVaultEnrollment']>) { return this.parts.enrollment.adoptVaultEnrollment(...args) }
+  commitVaultEnrollment(...args: Parameters<VaultEnrollmentService['commitVaultEnrollment']>) { return this.parts.enrollment.commitVaultEnrollment(...args) }
+  wrapUserKeyForApprovedDevice(...args: Parameters<VaultEnrollmentService['wrapUserKeyForApprovedDevice']>) { return this.parts.enrollment.wrapUserKeyForApprovedDevice(...args) }
+  createAgentVaultItem(...args: Parameters<AgentItemWriter['createAgentVaultItem']>) { return this.parts.agentItems.createAgentVaultItem(...args) }
+  updateAgentVaultItem(...args: Parameters<AgentItemWriter['updateAgentVaultItem']>) { return this.parts.agentItems.updateAgentVaultItem(...args) }
+  setAgentIntegrationCredential(...args: Parameters<AgentItemWriter['setAgentIntegrationCredential']>) { return this.parts.agentItems.setAgentIntegrationCredential(...args) }
+  backupCredentials(...args: Parameters<IntegrationAccountService['backupCredentials']>) { return this.parts.integrations.backupCredentials(...args) }
+  integrationMetadata(...args: Parameters<IntegrationAccountService['integrationMetadata']>) { return this.parts.integrations.integrationMetadata(...args) }
+  setActiveIntegrationAccount(...args: Parameters<IntegrationAccountService['setActiveIntegrationAccount']>) { return this.parts.integrations.setActiveIntegrationAccount(...args) }
+  ensureOAuthAccount(...args: Parameters<IntegrationAccountService['ensureOAuthAccount']>) { return this.parts.integrations.ensureOAuthAccount(...args) }
+  importDesktopIntegrationAccount(...args: Parameters<IntegrationAccountService['importDesktopIntegrationAccount']>) { return this.parts.integrations.importDesktopIntegrationAccount(...args) }
+  migrateLegacy(...args: Parameters<LegacyMigrationService['migrateLegacy']>) { return this.parts.legacyMigration.migrateLegacy(...args) }
 
   /**
    * Lend a bounded copy of the unlocked user X25519 identity to another
@@ -344,24 +344,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.requireDesktopIdentity(callerId, token);
   }
 
-  /** Narrow backup-only egress: personal items, fixed field allowlist, and a bound destination. */
-  async backupCredentials(itemId:string,kind:'s3'|'nas',target:string):Promise<Record<string,string>> {
-    const keys=this.requireKeys(); const generation=this.generation;
-    if (!/^[0-9a-f-]{36}$/i.test(itemId)) throw new LocalVaultError('invalid_operation',400,'Backup credential ID is invalid');
-    const item=(await this.itemRepository.findOwnedPersonalActive<ItemRow>([itemId,keys.userId])).rows[0];
-    if (!item) throw new LocalVaultError('policy_denied',403,'Backup credential is unavailable');
-    const plaintext=JSON.parse(await this.openItemText({version:1,ciphertext:item.ciphertext,encryptedItemKey:item.encrypted_item_key},keys.userKey,{itemId:item.id,ownerId:keys.userId})) as VaultItemPlaintext;
-    const bound=credentialField(plaintext,'backup_target');
-    if (credentialField(plaintext,'backup_kind')!==kind || bound!==target) throw new LocalVaultError('policy_denied',403,'Vault item must bind backup_kind and backup_target to this destination');
-    const fields=kind==='s3'?['accessKeyId','secretAccessKey','sessionToken']:['username','password','domain'];
-    const result:Record<string,string>={};
-    for(const field of fields) { const value=credentialField(plaintext,field); if(value) result[field]=value }
-    if(kind==='s3' && (!result.accessKeyId || !result.secretAccessKey)) throw new LocalVaultError('credential_field_missing',400,'S3 backup credentials are incomplete');
-    if(kind==='nas' && (!result.username || !result.password)) throw new LocalVaultError('credential_field_missing',400,'SMB backup credentials are incomplete');
-    this.requireGeneration(generation);
-    return result;
-  }
-
   async lock(): Promise<void> {
     await this.runSecurityOperation(async() => this.lockNow());
   }
@@ -398,81 +380,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return !existing.rowCount;
   }
 
-  async wrapVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:TransportEnvelope}> {
-    this.requireApprovalIdentity(serviceId, token);
-    if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault enrollment was not approved');
-    const keys=this.requireKeys();
-    const env=await this.codecProvider.get();
-    const bundle=input.bundle as SyncBundle, head=input.head as SyncHead;
-    env.verifyBundle(bundle,keys.userKey);
-    if(head?.vaultId!==input.vaultId||head.scope!=='personal')throw new LocalVaultError('invalid_operation',409,'Cloud head does not match this vault');
-    const payload=Buffer.from(JSON.stringify({userKey:Buffer.from(keys.userKey).toString('base64url'),bundle,head,...(input.records===undefined?{}:{records:input.records})}));
-    try{return{wrappedUserKey:await this.filesTransport.wrap(payload,input.publicKey,input.requestId,input.vaultId,input.vaultEpoch)}}finally{payload.fill(0)}
-  }
-
-  async adoptVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentAdoptRequest):Promise<{bundleMac:string;headMac:string}> {
-    this.requireApprovalIdentity(serviceId,token);
-    if(!await this.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists');
-    const masterKey=Buffer.from(input.masterKey||'','base64url');
-    if(masterKey.byteLength!==32)throw new LocalVaultError('invalid_unlock_material',400,'Account master key is invalid');
-    let userKey:Uint8Array|undefined, privateKey:Uint8Array|undefined, plain:Uint8Array|undefined;
-    try{
-      const e=input.wrappedUserKey as TransportEnvelope;
-      const recipient=await globalThis.crypto.subtle.importKey('jwk',input.privateKeyJwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
-      plain=await this.filesTransport.unwrap(e,recipient,input.requestId,input.vaultId,input.vaultEpoch);
-      const payload=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain)) as {userKey:string;bundle:SyncBundle;head:SyncHead};
-      userKey=Buffer.from(payload.userKey,'base64url'); if(userKey.byteLength!==32)throw new Error('bad user key');
-      const env=await this.codecProvider.get(); env.verifyBundle(payload.bundle,userKey);
-      if(payload.head?.vaultId!==input.vaultId||payload.head.scope!=='personal')throw new Error('bad head');
-      const wrapped=(await this.keyEnvelopeReaderProvider.get()).unwrapUserKey(payload.bundle.encryptedUserKey,masterKey); if(!timingSafeEqual(Buffer.from(wrapped),Buffer.from(userKey)))throw new Error('bundle key mismatch'); wrapped.fill(0);
-      privateKey=(await this.keyEnvelopeReaderProvider.get()).unwrapUserPrivateKey(payload.bundle.encryptedPrivateKey,userKey);
-      this.pendingVaultEnrollments.set(input.requestId,{expiresAt:Date.now()+60_000,bundle:payload.bundle,head:payload.head,userKey:Uint8Array.from(userKey),privateKey:Uint8Array.from(privateKey),masterKey:Uint8Array.from(masterKey),cloudUserId:input.cloudUserId});
-      return{bundleMac:payload.bundle.mac,headMac:payload.head.mac};
-    }catch(error){throw error instanceof LocalVaultError?error:new LocalVaultError('invalid_proof',403,'Vault enrollment could not be verified')}finally{masterKey.fill(0);userKey?.fill(0);privateKey?.fill(0);plain?.fill(0)}
-  }
-
-  async commitVaultEnrollment(serviceId:string,token:string|undefined,requestId:string):Promise<{adopted:true}>{
-    this.requireApprovalIdentity(serviceId,token); const staged=this.pendingVaultEnrollments.get(requestId); this.pendingVaultEnrollments.delete(requestId);
-    if(!staged||staged.expiresAt<Date.now())throw new LocalVaultError('invalid_operation',409,'Vault enrollment expired');
-    try{ if(!await this.isSetupRequired())throw new LocalVaultError('vault_exists',409,'A local vault already exists'); const b=staged.bundle;
-      const verifier=makeLoginVerifier(await deriveLoginHash(staged.masterKey));
-      await this.runTransaction(async client => {
-        await this.userRepository.createWithId([
-          b.vaultUserId,
-          verifier.salt,
-          verifier.verifier,
-          b.publicKey,
-          b.encryptedPrivateKey,
-          b.encryptedUserKey,
-          { authority: 'container', version: 1, cloudUserId: staged.cloudUserId, password: { salt: b.kdf.salt, parameters: { memoryBytes: b.kdf.memoryBytes, operations: b.kdf.ops } } },
-        ], client);
-        await this.syncStateRepository.create([
-          b.vaultUserId,
-          b.vaultId,
-          b.epoch,
-          b.bundleGeneration,
-          createHash('sha256').update(JSON.stringify(b)).digest('hex'),
-        ], client);
-      });
-      this.lockNow();this.keys={userId:b.vaultUserId,publicKey:b.publicKey,userKey:Uint8Array.from(staged.userKey),privateKey:Uint8Array.from(staged.privateKey)};this.generation+=1;this.migrationState='unlocked';this.stageCacheUpdate(staged.masterKey);return{adopted:true};
-    }finally{staged.userKey.fill(0);staged.privateKey.fill(0);staged.masterKey.fill(0)}
-  }
-
-  /** Build a reset relay envelope only after the native approval prompt returned an explicit tap. */
-  async wrapUserKeyForApprovedDevice(
-    serviceId: string, token: string | undefined, input: VaultDeviceApprovalWrapRequest,
-  ): Promise<{ wrappedUserKey: Awaited<ReturnType<typeof transportWrap>> }> {
-    this.requireApprovalIdentity(serviceId, token);
-    if (input?.approved !== true) throw new LocalVaultError('approval_required', 428, 'Vault access was not approved');
-    const keys = this.requireKeys();
-    const state = await this.syncStateRepository.find<{ vault_id: string; epoch: number | string }>(keys.userId);
-    const row = state.rows[0];
-    if (!row || row.vault_id !== input.vaultId || Number(row.epoch) !== input.vaultEpoch) {
-      throw new LocalVaultError('invalid_operation', 409, 'Approval request does not match this vault');
-    }
-    return { wrappedUserKey: await transportWrap(keys.userKey, input.publicKey, input.requestId, input.vaultId, input.vaultEpoch) };
-  }
-
   requireControlIdentity(callerId: string, token: string | undefined): void {
     if (callerId !== this.config.controlServiceId || !constantEqual(token, this.config.controlServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Desktop control identity is invalid');
@@ -485,333 +392,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.requireBrokerIdentity(callerId, token);
     const { state, unlocked, principalId } = this.status();
     return { state, unlocked, principalId };
-  }
-
-  private validateAgentWriteClaims(claims: BrokerClaims, callerId: string, token: string | undefined): UnlockedKeys {
-    this.requireBrokerIdentity(callerId, token);
-    const validIdentifier = (value: unknown) => typeof value === 'string' && BROKER_IDENTIFIER_PATTERN.test(value);
-    if (!claims || !UUID_PATTERN.test(claims.sub) || !validIdentifier(claims.agent_id) || !validIdentifier(claims.pod_id)) {
-      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
-    }
-    const keys = this.requireKeys();
-    if (claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    return keys;
-  }
-
-  private generatedPassword(): string {
-    // 192 random bits, encoded without ambiguous punctuation; generation stays inside Vault.
-    return randomBytes(24).toString('base64url');
-  }
-
-  async createAgentVaultItem(
-    callerId: string, token: string | undefined, input: BrokerVaultItemWriteRequest,
-  ): Promise<BrokerVaultItemWriteResponse> {
-    return this.runSecurityOperation(async() => {
-      const keys = this.validateAgentWriteClaims(input?.claims, callerId, token);
-      const title = typeof input.title === 'string' ? input.title.trim() : '';
-      if (!title || title.length > 200) throw new LocalVaultError('invalid_operation', 400, 'Item title is invalid');
-      if ((input.password === undefined) === (input.generate !== true)) {
-        throw new LocalVaultError('invalid_operation', 400, 'Provide exactly one of password or generate:true');
-      }
-      const password = input.generate === true ? this.generatedPassword() : String(input.password);
-      if (!password || Buffer.byteLength(password) > MAX_CREDENTIAL_BYTES) throw new LocalVaultError('invalid_operation', 400, 'Password is invalid');
-      const id = randomUUID();
-      const sites = input.url ? [new URL(input.url).hostname] : [];
-      const item: VaultItemPlaintext = {
-        type: 'login', name: title, username: input.username, password,
-        uris: input.url ? [{ uri: input.url }] : undefined, notes: input.notes, folder: input.folder,
-        tags: Array.isArray(input.tags) ? input.tags.map(String).filter(Boolean).slice(0, 50) : undefined,
-        agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites, expiresAt: null, askFirst: false, allowServerAgents: false },
-      };
-      const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
-      const generation = this.generation;
-      const result = await this.runTransaction(async client => {
-        const created = await this.itemRepository.insertAgentItem<{ revision: number }>([id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy], client);
-        this.requireGeneration(generation);
-        await this.auditLogRepository.recordAgentCreated([keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
-        return Number(created.rows[0].revision);
-      });
-      return { itemId: id, revision: result, generated: input.generate === true };
-    });
-  }
-
-  async updateAgentVaultItem(
-    callerId: string, token: string | undefined, input: BrokerVaultItemUpdateRequest,
-  ): Promise<BrokerVaultItemWriteResponse> {
-    return this.runSecurityOperation(async() => {
-      const keys = this.validateAgentWriteClaims(input?.claims, callerId, token);
-      if (!UUID_PATTERN.test(input.itemId)) throw new LocalVaultError('invalid_operation', 400, 'Item reference is invalid');
-      const owned = await this.auditLogRepository.wasCreatedByAgentForUpdate([input.itemId, input.claims.agent_id]);
-      if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only vault items they created');
-      const rows = await this.itemRepository.findOwnedActiveForAgentUpdate<ItemRow>([input.itemId, keys.userId]);
-      const row = rows.rows[0];
-      if (!row) throw new LocalVaultError('policy_denied', 404, 'Vault item was not found');
-      const item = JSON.parse(await this.openItemText(
-        { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
-        { itemId: row.id, ownerId: keys.userId },
-      )) as VaultItemPlaintext;
-      if (input.password !== undefined && input.generate === true) throw new LocalVaultError('invalid_operation', 400, 'Provide password or generate:true, not both');
-      if (input.password !== undefined) item.password = String(input.password);
-      if (input.generate === true) item.password = this.generatedPassword();
-      if (input.title !== undefined) item.name = String(input.title).trim();
-      if (input.username !== undefined) item.username = String(input.username);
-      if (input.url !== undefined) item.uris = [{ uri: String(input.url) }];
-      if (input.notes !== undefined) item.notes = String(input.notes);
-      if (input.folder !== undefined) item.folder = String(input.folder);
-      if (input.tags !== undefined) item.tags = input.tags.map(String).filter(Boolean).slice(0, 50);
-      const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
-      const generation = this.generation;
-      const revision = await this.runTransaction(async client => {
-        const updated = await this.itemRepository.updateOwnedCiphertextIfRevision<{ revision: number }>([encrypted.ciphertext, encrypted.encryptedItemKey, row.id, keys.userId, row.revision], client);
-        if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
-        this.requireGeneration(generation);
-        await this.auditLogRepository.recordAgentUpdated([keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
-        return Number(updated.rows[0].revision);
-      });
-      return { itemId: row.id, revision, generated: input.generate === true };
-    });
-  }
-
-  async setAgentIntegrationCredential(
-    callerId: string, token: string | undefined, input: BrokerIntegrationCredentialWriteRequest,
-  ): Promise<BrokerVaultItemWriteResponse> {
-    return this.runSecurityOperation(async() => {
-      const integrationId = String(input.integrationId ?? '').trim();
-      const accountId = String(input.accountId ?? 'default').trim();
-      const property = String(input.property ?? '').trim();
-      if (![integrationId, accountId, property].every(value => /^[A-Za-z0-9._-]{1,128}$/.test(value))) {
-        throw new LocalVaultError('invalid_operation', 400, 'Credential reference is invalid');
-      }
-      const keys = this.validateAgentWriteClaims(input.claims, callerId, token);
-      const existing = await this.itemRepository.findOwnedIntegrationCredential<ItemRow>([keys.userId, `${ integrationId }/${ accountId }`]);
-      if (!existing.rowCount) {
-        const result = await this.createAgentIntegrationItem(keys, input, integrationId, accountId, property);
-        return result;
-      }
-      const row = existing.rows[0];
-      const owned = await this.auditLogRepository.wasCreatedByAgentForIntegration([row.id, input.claims.agent_id]);
-      if (!owned.rowCount) throw new LocalVaultError('policy_denied', 403, 'Agents may update only credentials they created');
-      const item = JSON.parse(await this.openItemText({ version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey, { itemId: row.id, ownerId: keys.userId })) as VaultItemPlaintext;
-      item.integration ??= { integrationId, accountId, properties: {} };
-      item.integration.properties[property] = String(input.value);
-      const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: row.id, ownerId: keys.userId });
-      const updated = await this.runTransaction(async client => {
-        const result = await this.itemRepository.updateCiphertextIfRevision<{ revision: number }>([encrypted.ciphertext, encrypted.encryptedItemKey, row.id, row.revision], client);
-        if (!result.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
-        await this.auditLogRepository.recordIntegrationAgentUpdated([keys.userId, row.id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
-        return Number(result.rows[0].revision);
-      });
-      return { itemId: row.id, revision: updated, generated: false };
-    });
-  }
-
-  private async createAgentIntegrationItem(keys: UnlockedKeys, input: BrokerIntegrationCredentialWriteRequest, integrationId: string, accountId: string, property: string): Promise<BrokerVaultItemWriteResponse> {
-    const id = randomUUID();
-    const item: VaultItemPlaintext = { type: 'login', name: `${ integrationId } (${ accountId })`, integration: { integrationId, accountId, properties: { [property]: String(input.value) } }, agentPolicy: { mode: 'agents', level: 'metadata', agents: [input.claims.agent_id], sites: [], expiresAt: null, askFirst: false, allowServerAgents: false } };
-    const encrypted = await this.sealItem(JSON.stringify(item), keys.userKey, { itemId: id, ownerId: keys.userId });
-    const revision = await this.runTransaction(async client => {
-      const created = await this.itemRepository.insertAgentIntegrationItem<{ revision: number }>([id, keys.userId, item.type, encrypted.ciphertext, encrypted.encryptedItemKey, item.agentPolicy, `${ integrationId }/${ accountId }`], client);
-      await this.auditLogRepository.recordIntegrationAgentCreated([keys.userId, id, input.claims.pod_id, { agentId: input.claims.agent_id }], client);
-      return Number(created.rows[0].revision);
-    });
-    return { itemId: id, revision, generated: false };
-  }
-
-  async integrationMetadata(
-    callerId: string, token: string | undefined, integrationId: string, accountFilter?: string,
-  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
-    this.requireBrokerIdentity(callerId, token);
-    return this.readIntegrationMetadata(integrationId, accountFilter);
-  }
-
-  private async readIntegrationMetadata(
-    integrationId: string, accountFilter?: string,
-  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Integration identifier is invalid');
-    }
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const result = await this.itemRepository.listIntegrationMetadata<ItemRow & { integration_ref: string }>([keys.userId, integrationId, accountFilter ?? null]);
-    this.requireGeneration(generation);
-    const active = await this.localStore.findActiveAccount<{ active_account_id: string | null }>(keys.userId, integrationId);
-    this.requireGeneration(generation);
-    const availableIds = result.rows.map(item => item.integration_ref.slice(integrationId.length + 1));
-    const configuredActive = active.rows[0]?.active_account_id;
-    const activeAccountId = configuredActive && availableIds.includes(configuredActive)
-      ? configuredActive
-      : availableIds[0];
-    const accounts = await Promise.all(result.rows.map(async item => {
-      const plaintext = JSON.parse(await this.openItemText(
-        { version: 1, ciphertext: item.ciphertext, encryptedItemKey: item.encrypted_item_key },
-        keys.userKey,
-        { itemId: item.id, ownerId: keys.userId },
-      )) as VaultItemPlaintext;
-      this.requireGeneration(generation);
-      const sourceProperties = plaintext.integration?.properties ?? {};
-      const properties = safeIntegrationMetadata(sourceProperties, integrationId);
-      const accountId = item.integration_ref.slice(integrationId.length + 1);
-      const explicitStatus = properties.connection_status?.toLowerCase();
-      const hasCredential = Object.entries(sourceProperties)
-        .some(([name, value]) => CREDENTIAL_PROPERTY_PATTERN.test(name) && typeof value === 'string' && value.length > 0);
-      const credentialRequired = Object.keys(sourceProperties).some(name => CREDENTIAL_PROPERTY_PATTERN.test(name));
-      return {
-        accountId,
-        label: properties.account_label || accountId,
-        connected: explicitStatus ? ['connected', 'true'].includes(explicitStatus) : hasCredential,
-        credentialRequired,
-        active: accountId === activeAccountId,
-        revision: item.revision,
-        properties,
-      };
-    }));
-    this.requireGeneration(generation);
-    return { integrationId, activeAccountId, accounts };
-  }
-
-  async setActiveIntegrationAccount(
-    callerId: string, token: string | undefined, integrationId: string, accountId: string,
-  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
-    this.requireBrokerIdentity(callerId, token);
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
-    }
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const exists = await this.itemRepository.existsByIntegrationRefForActivation([keys.userId, `${ integrationId }/${ accountId }`]);
-    this.requireGeneration(generation);
-    if (!exists.rowCount) throw new LocalVaultError('invalid_operation', 404, 'Integration account is unavailable');
-    await this.integrationStateRepository.upsert(keys.userId, integrationId, accountId);
-    this.requireGeneration(generation);
-    return this.integrationMetadata(callerId, token, integrationId);
-  }
-
-  /**
-   * Create the empty account a first OAuth sign-in writes its tokens into.
-   * oauth.exchange only updates an existing item, so without this a new
-   * Codex/Grok sign-in had nowhere to land. Desktop identity only, built-in
-   * OAuth integrations only, metadata only: no secret crosses this call.
-   */
-  async ensureOAuthAccount(
-    callerId: string, token: string | undefined, integrationId: string, input: BrokerOAuthAccountRequest,
-  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
-    this.requireDesktopIdentity(callerId, token);
-    const accountId = input?.accountId;
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || typeof accountId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
-    }
-    if (!isNativeOAuthIntegration(integrationId)) {
-      throw new LocalVaultError('policy_denied', 403, 'Integration has no built-in OAuth sign-in');
-    }
-    const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 120) : accountId;
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const integrationRef = `${ integrationId }/${ accountId }`;
-    const exists = await this.itemRepository.existsByIntegrationRefForOAuth([keys.userId, integrationRef]);
-    this.requireGeneration(generation);
-    if (!exists.rowCount) {
-      // Same default as the vault's guided Connect screen with "agents can use this" on.
-      const policy = {
-        mode: 'agents' as const, level: 'autofill' as const, agents: [], sites: [], expiresAt: null,
-        askFirst: false, allowServerAgents: false,
-      };
-      const itemId = randomUUID();
-      const plaintext: VaultItemPlaintext = {
-        type: 'apiKey', name: label, agentPolicy: policy,
-        integration: { integrationId, accountId, properties: { account_label: label } },
-      };
-      const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-      await this.runSecurityOperation(() => this.runTransaction(async client => {
-        this.requireGeneration(generation);
-        await this.itemRepository.insertOAuthAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, integrationRef], client);
-        await this.auditHumanAction(client, keys.userId, 'oauth_account_created', itemId, label);
-        this.requireGeneration(generation);
-      }));
-    }
-    return this.readIntegrationMetadata(integrationId, accountId);
-  }
-
-  /** Trusted Desktop handoff for credentials collected by first-run and Connect UI. */
-  async importDesktopIntegrationAccount(
-    callerId: string, token: string | undefined, integrationId: string, input: BrokerIntegrationAccountImportRequest,
-  ): Promise<import('./contracts.js').BrokerIntegrationMetadataResponse> {
-    this.requireDesktopIdentity(callerId, token);
-    const accountId = String(input?.accountId ?? '').trim();
-    if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
-    }
-    if (!input.values || typeof input.values !== 'object' || Array.isArray(input.values)) {
-      throw new LocalVaultError('invalid_operation', 400, 'Integration account values are invalid');
-    }
-    const values: Record<string, string> = Object.create(null) as Record<string, string>;
-    for (const [property, value] of Object.entries(input.values)) {
-      if (!/^[A-Za-z0-9._-]{1,128}$/.test(property) || typeof value !== 'string') {
-        throw new LocalVaultError('invalid_operation', 400, 'Integration account value is invalid');
-      }
-      values[property] = value;
-    }
-    const label = typeof input.label === 'string' && input.label.trim()
-      ? input.label.trim().slice(0, 120)
-      : (values.account_label || accountId);
-    values.account_label = label;
-    if (input.connected !== undefined) values.connection_status = input.connected ? 'connected' : 'disconnected';
-
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const integrationRef = `${ integrationId }/${ accountId }`;
-    const existing = await this.itemRepository.findOwnedIntegrationAccount<ItemRow>([keys.userId, integrationRef]);
-    this.requireGeneration(generation);
-    const itemId = existing.rows[0]?.id ?? randomUUID();
-    let plaintext: VaultItemPlaintext;
-    if (existing.rowCount) {
-      const row = existing.rows[0];
-      plaintext = JSON.parse(await this.openItemText(
-        { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key },
-        keys.userKey, { itemId, ownerId: keys.userId },
-      )) as VaultItemPlaintext;
-      plaintext.integration ??= { integrationId, accountId, properties: {} };
-      plaintext.integration.properties = { ...plaintext.integration.properties, ...values };
-      plaintext.name = label;
-    } else {
-      const sites = trustedOriginsForIntegration(integrationId);
-      if (['custom', 'azure-openai'].includes(integrationId) && (values.base_url || values.resource_url)) {
-        try {
-          const baseUrl = new URL(values.base_url || values.resource_url);
-          const hostname = baseUrl.hostname.toLowerCase();
-          const azureHost = integrationId !== 'azure-openai' || ['.openai.azure.com', '.services.ai.azure.com', '.cognitiveservices.azure.com'].some(suffix => hostname.endsWith(suffix));
-          if (baseUrl.protocol === 'https:' && hostname && azureHost) sites.push(hostname);
-        } catch { /* invalid base URLs are rejected when used; never grant a site here */ }
-      }
-      if (integrationId === 'vertex-ai' && values.region) {
-        const region = values.region.toLowerCase();
-        if (/^[a-z]+-[a-z]+\d$/.test(region)) sites.push(`${ region }-aiplatform.googleapis.com`);
-      }
-      const policy = {
-        mode: 'agents' as const, level: 'autofill' as const, agents: [], sites: [...new Set(sites)],
-        expiresAt: null, askFirst: false, allowServerAgents: false,
-      };
-      plaintext = {
-        type: 'apiKey', name: label, agentPolicy: policy,
-        integration: { integrationId, accountId, properties: values },
-      };
-    }
-    const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-    await this.runSecurityOperation(() => this.runTransaction(async client => {
-      this.requireGeneration(generation);
-      if (existing.rowCount) {
-        const row = existing.rows[0];
-        const updated = await this.itemRepository.updateIntegrationCiphertextIfRevision([encrypted.ciphertext, encrypted.encryptedItemKey, itemId, row.revision], client);
-        if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
-      } else {
-        await this.itemRepository.insertIntegrationAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef], client);
-      }
-      if (input.active !== false) {
-        await this.integrationStateRepository.upsertImported(keys.userId, integrationId, accountId, client);
-      }
-      await this.auditHumanAction(client, keys.userId, existing.rowCount ? 'integration_account_updated' : 'integration_account_created', itemId, label);
-    }));
-    this.requireGeneration(generation);
-    return this.readIntegrationMetadata(integrationId, accountId);
   }
 
   /**
@@ -944,13 +524,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return result;
   }
 
-  private requireDesktopIdentity(callerId: string, token: string | undefined): void {
+  requireDesktopIdentity(callerId: string, token: string | undefined): void {
     if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
     }
   }
 
-  private requireBrokerIdentity(callerId: string, token: string | undefined): void {
+  requireBrokerIdentity(callerId: string, token: string | undefined): void {
     if (callerId !== this.config.brokerServiceId || !constantEqual(token, this.config.brokerServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Broker service identity is invalid');
     }
@@ -987,126 +567,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
         (ref.accountId !== undefined && !validIdentifier(ref.accountId)) ||
         (ref.itemId !== undefined && !UUID_PATTERN.test(ref.itemId)) || !Array.isArray(input.injections)) {
       throw new LocalVaultError('invalid_operation', 400, 'Broker credential reference is invalid');
-    }
-  }
-
-  async migrateLegacy(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
-    return this.runSecurityOperation(() => this.migrateLegacyInternal(callerId, token));
-  }
-
-  private async migrateLegacyInternal(callerId: string, token: string | undefined): Promise<LegacyMigrationResponse> {
-    this.requireControlIdentity(callerId, token);
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    if (!this.config.legacyDatabaseUrl) {
-      this.migrationState = 'unlocked';
-      return { batchId: 'not-required', imported: 0, skipped: 0, state: 'unlocked' };
-    }
-
-    const legacy = new Pool({ connectionString: this.config.legacyDatabaseUrl, max: 1 });
-    legacy.on('error', () => { /* idle client dropped; this one-shot pool is ended below */ });
-    let rows: LegacyIntegrationRow[] = [];
-    try {
-      const client = await legacy.connect();
-      try {
-        await this.localStore.beginReadOnly(client);
-        const result = await this.legacyCredentialRepository.list(client);
-        rows = result.rows;
-        await this.localStore.commit(client);
-      } catch (error) {
-        await this.localStore.rollback(client);
-        throw error;
-      } finally {
-        client.release();
-      }
-    } catch {
-      this.migrationState = 'migration_failed';
-      throw new LocalVaultError('migration_failed', 409, 'Legacy credential source could not be read');
-    } finally {
-      await legacy.end().catch(() => undefined);
-    }
-
-    const sourceFingerprint = stableLegacyFingerprint(rows);
-    const already = await this.migrationRepository.findCommitted<{ id: string; imported_count: number; skipped_count: number }>(sourceFingerprint);
-    if (already.rowCount) {
-      this.requireGeneration(generation);
-      this.migrationState = 'unlocked';
-      return { batchId: already.rows[0].id, imported: 0, skipped: rows.length, state: 'unlocked' };
-    }
-
-    const groups = new Map<string, LegacyIntegrationRow[]>();
-    for (const row of rows) {
-      const key = `${ row.integration_id }\0${ row.account_id }`;
-      const group = groups.get(key) ?? [];
-      group.push(row);
-      groups.set(key, group);
-    }
-
-    const client = await this.db.connect();
-    let batchId = '';
-    try {
-      await this.localStore.begin(client);
-      await this.localStore.lockLegacyImport(client);
-      const batch = await this.migrationRepository.start<{ id: string }>(sourceFingerprint, client);
-      batchId = batch.rows[0].id;
-      let imported = 0;
-      let skipped = 0;
-      for (const groupRows of groups.values()) {
-        this.requireGeneration(generation);
-        const { integration_id: integrationId, account_id: accountId } = groupRows[0];
-        const existing = await this.itemRepository.findLegacyIntegrationItem([`${ integrationId }/${ accountId }`, keys.userId], client);
-        if (existing.rowCount) {
-          skipped += groupRows.length;
-          continue;
-        }
-        const properties: Record<string, string> = {};
-        for (const row of groupRows) properties[row.property] = decryptLegacyValue(row.value, keys.legacyVmk);
-        const policy = agentPolicyFromLegacyLlmAccess(properties.llm_access);
-        const sites = new Set(trustedOriginsForIntegration(integrationId));
-        for (const property of ['base_url', 'server_url', 'gateway_url', 'url', 'endpoint']) {
-          const raw = properties[property];
-          if (!raw) continue;
-          try {
-            const url = new URL(raw);
-            if (url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash) sites.add(url.hostname.toLowerCase());
-          } catch { /* An invalid legacy URL is not promoted into broker policy. */ }
-        }
-        policy.sites = [...sites];
-        const itemId = randomUUID();
-        const plaintext: VaultItemPlaintext = {
-          type: 'apiKey',
-          name: `${ integrationId } (${ accountId })`,
-          integration: { integrationId, accountId, properties },
-          agentPolicy: policy,
-        };
-        const encrypted = await this.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-        const reopened = await this.openItemText(encrypted, keys.userKey, { itemId, ownerId: keys.userId });
-        if (reopened !== JSON.stringify(plaintext)) {
-          throw new LocalVaultError('migration_failed', 409, 'Migrated item failed reopen verification');
-        }
-        await this.itemRepository.insertMigratedLegacyItem([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, policy, `${ integrationId }/${ accountId }`], client);
-        for (const row of groupRows) {
-          await this.migrationRepository.addRow([row.source_kind, row.value_id, sourceFingerprint, itemId], client);
-        }
-        imported += groupRows.length;
-      }
-      this.requireGeneration(generation);
-      await this.migrationRepository.commit(batchId, imported, skipped, client);
-      await this.localStore.commit(client);
-      keys.legacyVmk?.fill(0);
-      keys.legacyVmk = undefined;
-      this.migrationState = 'unlocked';
-      return { batchId, imported, skipped, state: 'unlocked' };
-    } catch (error) {
-      await this.localStore.rollback(client);
-      this.migrationState = 'migration_failed';
-      if (batchId) {
-        await this.migrationRepository.fail(batchId).catch(() => undefined);
-      }
-      if (error instanceof LocalVaultError) throw error;
-      throw new LocalVaultError('migration_failed', 409, 'Legacy migration rolled back');
-    } finally {
-      client.release();
     }
   }
 
