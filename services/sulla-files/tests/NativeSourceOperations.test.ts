@@ -33,8 +33,9 @@ describe.skipIf(!databaseUrl)('native source operations (real Postgres)', () => 
   beforeEach(async() => {
     collectionId = randomUUID();
     // Unique explorer_path per collection: collections_explorer_path_owner_org is unique per owner.
+    // Separate params: one $n bound to both a uuid and a text column fails with "inconsistent types deduced".
     await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
-      VALUES($1,'u1','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$1)`, [collectionId]);
+      VALUES($1,'u1','Files','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$2)`, [collectionId, `native-${ collectionId }`]);
     service = new NativeSourceOperations(pool, host, new NativeSourceOperationRepository(pool), undefined, 200);
   });
 
