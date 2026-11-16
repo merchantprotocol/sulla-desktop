@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from '../src/db.js';
+import { collectionIdFor } from '../src/systemAreas.js';
 import { TransactionScope } from '../src/TransactionScope.js';
 import { TrackedRootCatalog } from '../src/TrackedRootCatalog.js';
 
@@ -45,18 +46,31 @@ describe.skipIf(!databaseUrl)('tracked root catalog (real Postgres)', () => {
     } };
     catalog = new TrackedRootCatalog(pool, { userId, keyring } as any, roots, rootCollections);
   });
+  /**
+   * Home collections are published with explorer_path '' and collections_explorer_path_owner_org is
+   * unique per owner, so only one root per owner can be created with the default path. Seed the
+   * secondary root's home collection with its own explorer_path; the catalog must reuse it.
+   */
+  async function seedWorkCollection():Promise<string> {
+    const id = collectionIdFor(userId, roots[1].id);
+    await pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
+      VALUES($1,$2,'Work','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$1)`, [id, userId]);
+    return id;
+  }
   const rows = async() => (await pool.query("SELECT id,enabled,state,paused,exclusions FROM file_roots WHERE id=ANY($1::text[]) ORDER BY id", [[...roots.map(root => root.id), 'gone-' + userId]])).rows;
 
   // risk: data accuracy — each root gets exactly one home collection with keys, reused on every restart.
   it('creates each home collection once, with keys, and reuses it', async() => {
+    const work = await seedWorkCollection();
     const primary = await catalog.registerConfigured();
     expect(primary).toBe(rootCollections.get('default'));
-    expect(keysCreated).toBe(2);
+    expect(rootCollections.get(roots[1].id)).toBe(work);
+    expect(keysCreated).toBe(1);
     const collections = (await pool.query('SELECT id,name,home,encrypted_data_key FROM collections WHERE owner_user_id=$1 ORDER BY name', [userId])).rows;
     expect(collections.map(row => row.name)).toEqual(['Files', 'Work']);
-    expect(collections.every(row => row.home === 'desktop-only' && row.encrypted_data_key.k === 'd')).toBe(true);
+    expect(collections.find(row => row.name === 'Files')).toMatchObject({ home: 'desktop-only', encrypted_data_key: { k: 'd' } });
     await catalog.registerConfigured();
-    expect(keysCreated).toBe(2);
+    expect(keysCreated).toBe(1);
     expect(await rows()).toEqual([
       expect.objectContaining({ id: 'default', enabled: true, state: 'idle' }),
       expect.objectContaining({ id: roots[1].id, enabled: true, state: 'paused', exclusions: ['*.log'] }),
@@ -65,6 +79,7 @@ describe.skipIf(!databaseUrl)('tracked root catalog (real Postgres)', () => {
 
   // risk: data loss — detaching forgets scan custody but never deletes files; the default root can't be detached.
   it('detaches a root, forgets its watched state and keeps its files', async() => {
+    await seedWorkCollection();
     await catalog.registerConfigured();
     const work = roots[1].id; const collectionId = rootCollections.get(work)!;
     const file = (await pool.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id) VALUES($1,'a.txt','user',$2) RETURNING id", [collectionId, userId])).rows[0].id;
@@ -81,6 +96,7 @@ describe.skipIf(!databaseUrl)('tracked root catalog (real Postgres)', () => {
 
   // risk: settings — configuring a root persists it, updates the live config, and rescans only when unpaused.
   it('configures settings and rescans when a root is resumed', async() => {
+    await seedWorkCollection();
     await catalog.registerConfigured();
     const work = roots[1].id;
     const paused = await catalog.configure(work, { exclusions: ['*.tmp'] }, async() => { rescans++ });
