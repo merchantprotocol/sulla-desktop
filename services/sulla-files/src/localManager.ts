@@ -5,17 +5,15 @@
 
 import { TransactionRunner } from './FilesTransaction.js';
 
-import { isLegacyInternalPath } from './legacyPreflight.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, readdir, realpath, rename, stat } from 'node:fs/promises';
-import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import { mkdir, realpath, rename, stat } from 'node:fs/promises';
+import { basename, dirname, extname, sep } from 'node:path';
 
 import { issueCapabilityToken } from './auth.js';
-import { chunkId, decryptChunk, encryptChunk } from './crypto.js';
+import { decryptChunk } from './crypto.js';
 import { CloudRenameSuccessor } from './Repositories/CloudRenameSuccessor.js';
 import { copyLockedFile } from './fileOperations.js';
-import { mimeForPath as mime } from './mimeTypes.js';
 import { isProtectedPath } from './protectedFiles.js';
 import { PublicationLifecyclePolicy } from './publicationLifecyclePolicy.js';
 import { CollectionPolicyRepository } from './Repositories/CollectionPolicyRepository.js';
@@ -34,12 +32,13 @@ import type { IndexingQueue } from './indexing.js';
 import type { OriginalRevealTarget } from './originalReveal.js';
 import type { EvictionReceipt, FileFingerprint, PinnedRegularFile, PublicationReceipt, ReplacementReceipt } from './safeFilesystem.js';
 import type pg from 'pg';
-import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
+import { NativeRootScanner } from './NativeRootScanner.js';
+import { WatchedFolderRepository, type WatchedRow } from './Repositories/WatchedFolderRepository.js';
+import { ScanProgress } from './ScanProgress.js';
+import { TrackedPathFilter } from './TrackedPathFilter.js';
+import { WatchedFileIngestor } from './WatchedFileIngestor.js';
 import { NativeSourceOperations } from './NativeSourceOperations.js';
 import type { FuseTrackedFile, NativePublicationAction, NativePublicationCompletionProof, NativeSourceIngestResult, NativeSourceOperationInput } from './NativeSourceOperations.js';
-
-const CHUNK_BYTES = 4 * 1024 * 1024;
-const DEFAULT_IGNORES = ['.DS_Store', '._*', '*.tmp', '~$*', '.git/', 'node_modules/', '*.sulla-conflict-*', '.sulla-trash/', '.sulla-operation-recovery/', 'master.key'];
 
 interface RuntimeState {
   state: 'synced' | 'syncing' | 'paused' | 'error'; pendingFiles: number; pendingBytes: number;
@@ -47,7 +46,6 @@ interface RuntimeState {
   lastScanAt?: string; lastSyncAt?: string; serverConfigured: boolean;
   legacyImport?: Config['legacyPreflight'];
 }
-interface WatchedRow { collection_id: string; root_id: string; path: string; file_id: string; content_hash: string; size: string; mtime_ms: string; role?: string }
 export interface FileRootStatus {
   id: string; name: string; collectionId: string; syncMode: 'local' | 'server'; paused: boolean;
   exclusions: string[]; state: 'idle' | 'scanning' | 'syncing' | 'paused' | 'offline' | 'error' | 'detached';
@@ -62,7 +60,6 @@ interface PathOperationPlanEntry {
   contentHash: string;
   kind: 'move' | 'copy';
 }
-interface DiskScan { paths: string[]; complete: boolean; errors: string[] }
 interface PathOperationRow {
   operation_id: string;
   state: 'planned' | 'publishing' | 'db-committed';
@@ -85,22 +82,6 @@ interface PathOperationReceipt {
 
 export type { FuseTrackedFile, NativePublicationAction, NativePublicationCompletionProof, NativeSourceIngestResult, NativeSourceOperationInput } from './NativeSourceOperations.js';
 
-function matchIgnore(path:string, patterns:string[]):boolean {
-  const parts = path.split('/');
-  return patterns.some(raw => {
-    const pattern = raw.trim().replace(/^\//, '');
-    if (!pattern || pattern.startsWith('#')) return false;
-    if (pattern.endsWith('/')) return parts.slice(0, -1).includes(pattern.slice(0, -1));
-    const expression = new RegExp(`^${ pattern.split('*').map(value => value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('.*') }$`);
-    return expression.test(path) || parts.some(part => expression.test(part));
-  });
-}
-function isSensitiveTrackedPath(relativePath:string):boolean {
-  return relativePath.replaceAll('\\', '/').split('/').some(part => {
-    const value = part.toLowerCase();
-    return value.includes('wallet') || value === 'vault' || value === 'vaults';
-  });
-}
 function conflictPath(path:string, device:string):string {
   const extension = extname(path); const stem = extension ? path.slice(0, -extension.length) : path;
   const date = new Date().toISOString().replace(/T.*/, '');
@@ -136,7 +117,6 @@ export async function assertSeparateStorageRoots(filesRoot:string, dataRoot:stri
 
 export class LocalFilesManager {
   private readonly store: Store;
-  private readonly chunkRegistry = new ManifestChunkRegistry();
   private readonly publicationLifecyclePolicy: PublicationLifecyclePolicy;
   private readonly collectionPolicyRepository: CollectionPolicyRepository;
   private collectionId?:  string;
@@ -144,19 +124,15 @@ export class LocalFilesManager {
   private running?:       Promise<unknown>;
   private paused:         boolean;
   private lastError?:     string;
-  private lastScanAt?:    string;
-  private lastSyncAt?:    string;
   private syncTimer?:     NodeJS.Timeout;
-  private pendingFiles = 0;
-  private pendingBytes = 0;
-  private processedBytes = 0;
-  private totalBytes = 0;
-  private progressStartedAt = 0;
   readonly mutations: FilesMutationCoordinator;
   private readonly rootCollections = new Map<string, string>();
   private readonly rootMutations = new Map<string, FilesMutationCoordinator>();
   private readonly roots:FileRootConfig[];
   private readonly nativeSources:NativeSourceOperations;
+  private readonly progress = new ScanProgress();
+  private readonly ingestor:WatchedFileIngestor;
+  private readonly scanner:NativeRootScanner;
   private nativeJournalInstance?:NativeOperationJournal;
   private get nativeJournal():NativeOperationJournal { return this.nativeJournalInstance ??= new NativeOperationJournal(this.db,async(collectionId) => {
     const row=(await this.db.query('SELECT * FROM file_roots WHERE collection_id=$1',[collectionId])).rows[0];
@@ -298,9 +274,11 @@ export class LocalFilesManager {
     this.publicationLifecyclePolicy = publicationLifecyclePolicy ?? new PublicationLifecyclePolicy();
     this.collectionPolicyRepository = collectionPolicyRepository ?? new CollectionPolicyRepository(); this.paused = config.paused;
     this.roots = (config.fileRoots ?? (config.filesRoot ? [{ id: 'default', name: 'Sulla Files', path: config.filesRoot, syncMode: config.serverUrl ? 'server' : 'local', paused: config.paused, exclusions: [], primary: true }] : []))
-      .filter(root => !isSensitiveTrackedPath(root.path));
+      .filter(root => !TrackedPathFilter.isSensitive(root.path));
     this.mutations = mutations ?? new FilesMutationCoordinator(config.filesRoot ?? config.dataRoot);
     for (const root of this.roots) this.rootMutations.set(root.id, root.primary ? this.mutations : new FilesMutationCoordinator(root.path));
+    this.ingestor = new WatchedFileIngestor(db, config, this.store, indexer);
+    this.scanner = new NativeRootScanner(config, this.roots, this.rootCollections, new WatchedFolderRepository(db), this.ingestor, this.progress);
     this.nativeSources = new NativeSourceOperations(db, { serial: operation => this.serial(operation), fuseRow: fileId => this.fuseRow(fileId) });
   }
 
@@ -334,7 +312,7 @@ export class LocalFilesManager {
     await this.reconcileNativeSourceOperations();
     await beforeScan?.();
     const saved = await this.db.query('SELECT paused,last_error,last_scan_at,last_sync_at FROM files_runtime_state WHERE id=TRUE');
-    if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
+    if (saved.rows[0]) { this.paused ||= saved.rows[0].paused; this.lastError = saved.rows[0].last_error; this.progress.lastScanAt = saved.rows[0].last_scan_at?.toISOString?.(); this.progress.lastSyncAt = saved.rows[0].last_sync_at?.toISOString?.() }
     await this.rescan();
     this.syncTimer = setInterval(() => this.sync().catch(error => this.fail(error)), 15_000);
     this.syncTimer.unref();
@@ -347,8 +325,8 @@ export class LocalFilesManager {
   }
 
   status():RuntimeState {
-    const elapsed = Math.max(0.001, (Date.now() - this.progressStartedAt) / 1_000); const rate = this.processedBytes / elapsed;
-    return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: this.pendingFiles, pendingBytes: this.pendingBytes, processedBytes: this.processedBytes, totalBytes: this.totalBytes, estimatedSeconds: this.running && rate > 0 ? Math.max(1, Math.ceil(this.pendingBytes / rate)) : undefined, lastError: this.lastError, lastScanAt: this.lastScanAt, lastSyncAt: this.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
+    const progress = this.progress;
+    return { state: this.paused ? 'paused' : this.lastError ? 'error' : this.running ? 'syncing' : 'synced', pendingFiles: progress.pendingFiles, pendingBytes: progress.pendingBytes, processedBytes: progress.processedBytes, totalBytes: progress.totalBytes, estimatedSeconds: progress.estimatedSeconds(Boolean(this.running)), lastError: this.lastError, lastScanAt: progress.lastScanAt, lastSyncAt: progress.lastSyncAt, serverConfigured: Boolean(this.config.serverUrl), legacyImport: this.config.legacyPreflight };
   }
 
   async nativeCollectionId():Promise<string> {
@@ -1001,139 +979,17 @@ export class LocalFilesManager {
     } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
   }
 
-  private async ignores(root:FileRootConfig):Promise<string[]> { try { return [...DEFAULT_IGNORES, ...root.exclusions, ...(await readFile(join(root.path, '.sullaignore'), 'utf8')).split(/\r?\n/)] } catch { return [...DEFAULT_IGNORES, ...root.exclusions] } }
-  private safe(relativePath:string, root = this.roots.find(item => item.primary)!):string { const absolute = resolve(root.path, relativePath); if (absolute !== root.path && !absolute.startsWith(`${ root.path }${ sep }`)) throw new Error('path escapes Files folder'); return absolute }
+  private safe(relativePath:string, root = this.roots.find(item => item.primary)!):string { return TrackedPathFilter.inside(root, relativePath) }
   private rootForCollection(collectionId:string):FileRootConfig {
     const root = this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId);
     if (!root) throw Object.assign(new Error('Collection is not mapped to a configured Files root'), { status: 404 });
     return root;
   }
 
-  private async diskFiles(configuredRoot:FileRootConfig, current = configuredRoot.path, prefix = '', patterns?:string[]):Promise<DiskScan> {
-    const ignores = patterns ?? await this.ignores(configuredRoot); const output:DiskScan = { paths: [], complete: true, errors: [] };
-    let entries;
-    try { entries = await readdir(current, { withFileTypes: true }) } catch (error:any) {
-      return { paths: [], complete: false, errors: [`Could not read ${ prefix || 'the tracked folder' }: ${ error?.code ?? 'filesystem error' }`] };
-    }
-    for (const entry of entries) {
-      const rel = prefix ? `${ prefix }/${ entry.name }` : entry.name;
-      if (isProtectedPath(rel) || isSensitiveTrackedPath(rel) || (configuredRoot.primary && isLegacyInternalPath(rel, this.config.legacyPreflight)) || matchIgnore(rel, ignores)) continue;
-      if (entry.isDirectory()) {
-        const nested = await this.diskFiles(configuredRoot, join(current, entry.name), rel, ignores);
-        output.paths.push(...nested.paths); output.complete &&= nested.complete; output.errors.push(...nested.errors);
-      } else if (entry.isFile() && rel !== '.sullaignore') output.paths.push(rel);
-    }
-    return output;
-  }
-
-  private async scanFolder():Promise<void> {
-    const pendingOperation = await this.db.query("SELECT operation_id FROM files_path_operations WHERE state IN('planned','publishing','db-committed','undo-planned','undo-publishing','undo-db-committed') LIMIT 1");
-    if (pendingOperation.rowCount) throw new Error(`Files path operation ${ pendingOperation.rows[0].operation_id } must be reconciled before watcher scanning`);
-    for (const root of this.roots) {
-      if (root.paused) continue;
-      try { await this.scanRoot(root) } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await this.db.query("UPDATE file_roots SET state='error',last_error=$2,pending_files=0,updated_at=NOW() WHERE id=$1", [root.id, message]);
-        console.error(`[SullaFiles] root ${ root.id } scan failed`, error);
-      }
-    }
-  }
-
-  private async scanRoot(root:FileRootConfig):Promise<void> {
-    const collectionId = this.rootCollections.get(root.id)!;
-    await this.db.query("UPDATE file_roots SET state='scanning',pending_files=0,last_error=NULL,updated_at=NOW() WHERE id=$1", [root.id]);
-    const patterns = await this.ignores(root); const scanned = await this.diskFiles(root, root.path, '', patterns); const diskSet = new Set(scanned.paths); const states = (await this.db.query<WatchedRow>(`SELECT w.* FROM watched_folder_state w LEFT JOIN file_residency r ON r.file_id=w.file_id WHERE w.root_id=$1 AND COALESCE(r.state,'local')<>'online-only'`, [root.id])).rows.filter(row => !root.primary || !isLegacyInternalPath(row.path, this.config.legacyPreflight));
-    const reconciledStates = states.filter(row => !isProtectedPath(row.path) && !isSensitiveTrackedPath(row.path) && !matchIgnore(row.path, patterns));
-    const missingRows = reconciledStates.filter(row => !diskSet.has(row.path));
-    if (scanned.complete && reconciledStates.length > 0 && (scanned.paths.length === 0 || (missingRows.length >= 100 && missingRows.length / reconciledStates.length >= 0.8))) {
-      throw new Error('Folder availability changed unexpectedly; deletion reconciliation was suspended to protect indexed files');
-    }
-    const missing = new Map(missingRows.map(row => [row.content_hash, row]));
-    const diskInfo = new Map<string, { size:number; mtimeMs:number }>();
-    for (const filePath of scanned.paths) {
-      try { const info = await stat(this.safe(filePath, root)); if (info.isFile()) diskInfo.set(filePath, { size: info.size, mtimeMs: info.mtimeMs }) } catch (error:any) { scanned.complete = false; scanned.errors.push(`Could not inspect ${ filePath }: ${ error?.code ?? 'filesystem error' }`) }
-    }
-    const disk = [...diskInfo.keys()];
-    const changedPaths = disk.filter(filePath => { const current = states.find(row => row.path === filePath); const info = diskInfo.get(filePath)!; return (!current || Number(current.size) !== info.size || Number(current.mtime_ms) !== Math.trunc(info.mtimeMs)) });
-    this.pendingFiles = changedPaths.length + missing.size; this.totalBytes = changedPaths.reduce((sum, filePath) => sum + diskInfo.get(filePath)!.size, 0); this.pendingBytes = this.totalBytes; this.processedBytes = 0; this.progressStartedAt = Date.now();
-    await this.db.query("UPDATE files_runtime_state SET state='syncing',pending_files=$1,updated_at=NOW() WHERE id=TRUE", [this.pendingFiles]);
-    await this.db.query("UPDATE file_roots SET state='scanning',pending_files=$2,updated_at=NOW() WHERE id=$1", [root.id, this.pendingFiles]);
-    let changed = 0;
-    for (const filePath of disk) {
-      const info = diskInfo.get(filePath)!; const old = states.find(row => row.path === filePath);
-      if (old && Number(old.size) === info.size && Number(old.mtime_ms) === Math.trunc(info.mtimeMs)) continue;
-      try { if (await this.ingest(root, collectionId, filePath, info.mtimeMs, old, missing)) changed++ } catch (error:any) { scanned.errors.push(`Could not import ${ filePath }: ${ error?.code ?? error?.message ?? 'filesystem error' }`) }
-      this.processedBytes += info.size; this.pendingBytes = Math.max(0, this.totalBytes - this.processedBytes); this.pendingFiles = Math.max(0, this.pendingFiles - 1);
-    }
-    const currentStates = (await this.db.query<WatchedRow>('SELECT * FROM watched_folder_state WHERE root_id=$1', [root.id])).rows;
-    if (scanned.complete) for (const row of reconciledStates) if (!diskSet.has(row.path) && !currentStates.some(current => current.file_id === row.file_id && current.path !== row.path)) { await this.softDelete(row); changed++ }
-    this.pendingFiles = 0; this.pendingBytes = 0; this.processedBytes = this.totalBytes; this.lastScanAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_scan_at=NOW(),updated_at=NOW() WHERE id=TRUE");
-    const scanError = scanned.errors.length ? scanned.errors.slice(0, 5).join('; ').slice(0, 2000) : null;
-    await this.db.query("UPDATE file_roots SET state=$2,pending_files=0,last_error=$3,last_scan_at=NOW(),updated_at=NOW() WHERE id=$1", [root.id, scanError
-      ? 'error'
-      : 'idle', scanError]);
-    if (changed) console.log(`[SullaFiles] recorded ${ changed } watched folder change(s) for root ${ root.id }`);
-  }
-
-  /**
-   * Every chunk of an ingested version is recorded for the commit, including one whose blob is
-   * already on disk: a blob left by an earlier attempt that rolled back has no `chunks` row, and
-   * skipping it here would commit a version that can never be read.
-   */
-  private async stageIngestChunk(collectionId:string, id:string, plain:Buffer, dataKey:Uint8Array):Promise<{ id:string; size:number; storedSize:number }> {
-    const existing = await this.store.storedSize(collectionId, id);
-    if (existing !== undefined) return { id, size: plain.length, storedSize: existing };
-    const encrypted = await encryptChunk(plain, dataKey, id);
-    await this.store.put(collectionId, id, encrypted);
-    return { id, size: plain.length, storedSize: encrypted.length };
-  }
-
-  private async ingest(root:FileRootConfig, collectionId:string, filePath:string, mtimeMs:number, old:WatchedRow | undefined, missing:Map<string, WatchedRow>):Promise<boolean> {
-    const keys = await this.config.keyring!.keys(collectionId); const whole = createHash('sha256'); const ids:string[] = []; const chunks:any[] = []; let total = 0;
-    for await (const part of createReadStream(this.safe(filePath, root), { highWaterMark: CHUNK_BYTES })) { const plain = Buffer.from(part); total += plain.length; whole.update(plain); const id = chunkId(plain, keys.dedup); ids.push(id); chunks.push(await this.stageIngestChunk(collectionId, id, plain, keys.data)) }
-    if (total === 0) { const empty = Buffer.alloc(0); const id = chunkId(empty, keys.dedup); ids.push(id); chunks.push(await this.stageIngestChunk(collectionId, id, empty, keys.data)) }
-    const contentHash = whole.digest('hex'); if (old?.content_hash === contentHash) { await this.db.query('UPDATE watched_folder_state SET size=$3,mtime_ms=$4 WHERE collection_id=$1 AND path=$2', [collectionId, filePath, total, Math.trunc(mtimeMs)]); return false }
-    const renameFrom = !old ? missing.get(contentHash) : undefined; const manifestHash = createHash('sha256').update(JSON.stringify({ ids, size: total })).digest('hex');
-    const existing = !old && !renameFrom ? (await this.db.query(`SELECT f.id,f.deleted_at,v.manifest_hash FROM files f LEFT JOIN file_versions v ON v.id=f.current_version_id
-      WHERE f.collection_id=$1 AND f.path=$2`, [collectionId, filePath])).rows[0] : undefined;
-    if (existing && !existing.deleted_at && existing.manifest_hash === manifestHash) {
-      await this.db.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, filePath, existing.id, contentHash, total, Math.trunc(mtimeMs), root.id]);
-      return false;
-    }
-    const client = await this.db.connect(); await client.query('BEGIN');
-    try {
-      await lockStoredNamespace(client, collectionId);
-      await client.query('INSERT INTO manifests(hash,chunk_ids,total_size) VALUES($1,$2,$3) ON CONFLICT DO NOTHING', [manifestHash, JSON.stringify(ids), total]);
-      for (const chunk of chunks) await client.query('INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING', [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
-      await this.chunkRegistry.assertRegistered(client, collectionId, ids);
-      let fileId = old?.file_id ?? renameFrom?.file_id ?? existing?.id; let parent:string | null = null;
-      await assertStoredFilePath(client, collectionId, filePath, fileId);
-      if (fileId) { const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [fileId])).rows[0]; parent = file.current_version_id; await client.query("UPDATE files SET path=$2,mime=$3,size=$4,extracted_at=NULL,extraction_status='pending',deleted_at=NULL,updated_at=NOW() WHERE id=$1", [fileId, filePath, mime(filePath), total]); await client.query('UPDATE file_search_text SET search_text=NULL WHERE file_id=$1', [fileId]) } else { fileId = (await client.query("INSERT INTO files(collection_id,path,created_by_type,created_by_id,mime,size,extraction_status) VALUES($1,$2,'user',$3,$4,$5,'pending') RETURNING id", [collectionId, filePath, this.config.userId, mime(filePath), total])).rows[0].id }
-      await ensureStoredFileParents(client, collectionId, filePath, { userId: this.config.userId, deviceId: this.config.deviceId, kind: 'capability' });
-      const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,created_by_type,created_by_id,message,device_id,base_server_version_id)
-        VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$3) RETURNING id`, [fileId, collectionId, parent, manifestHash, total, this.config.userId, renameFrom ? `Renamed ${ renameFrom.path } to ${ filePath }` : 'Watched folder change', this.config.deviceId])).rows[0];
-      await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, version.id]); await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, ids]);
-      await client.query('INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,$4)', [collectionId, fileId, version.id, renameFrom ? 'rename' : 'put']);
-      if (renameFrom) await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [collectionId, renameFrom.path]);
-      await client.query(`INSERT INTO watched_folder_state(collection_id,path,file_id,content_hash,size,mtime_ms,root_id) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT(collection_id,path) DO UPDATE SET file_id=EXCLUDED.file_id,content_hash=EXCLUDED.content_hash,size=EXCLUDED.size,mtime_ms=EXCLUDED.mtime_ms,root_id=EXCLUDED.root_id`, [collectionId, filePath, fileId, contentHash, total, Math.trunc(mtimeMs), root.id]);
-      await client.query('COMMIT'); this.indexer?.wake(); if (renameFrom) missing.delete(contentHash);
-      if (root.primary && filePath.startsWith('Recordings/') && mime(filePath).startsWith('video/') && !/-(?:camera|mic|system-audio)\.[^/]+$/i.test(filePath)) {
-        await this.db.query(`INSERT INTO recording_enrichment_jobs(file_id,version_id,status) VALUES($1,$2,'pending') ON CONFLICT(version_id) DO NOTHING`, [fileId, version.id]).catch(error => console.warn('[SullaFiles] recording enrichment hook unavailable:', error));
-      }
-      return true;
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
-  }
-
-  private async softDelete(row:WatchedRow):Promise<void> {
-    const client = await this.db.connect(); await client.query('BEGIN');
-    try {
-      const file = (await client.query('SELECT current_version_id FROM files WHERE id=$1 FOR UPDATE', [row.file_id])).rows[0]; if (!file) { await client.query('ROLLBACK'); return }
-      const version = (await client.query(`INSERT INTO file_versions(file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id,base_server_version_id)
-        VALUES($1,$2,$3,NULL,0,TRUE,'user',$4,'Moved to Trash',$5,$3) RETURNING id`, [row.file_id, row.collection_id, file.current_version_id, this.config.userId, this.config.deviceId])).rows[0];
-      await client.query('UPDATE files SET current_version_id=$2,deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [row.file_id, version.id]); await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [row.collection_id, row.file_id, version.id]); await client.query('DELETE FROM watched_folder_state WHERE collection_id=$1 AND path=$2', [row.collection_id, row.path]); await client.query('COMMIT');
-    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+  private scanFolder():Promise<void> { return this.scanner.scanAll() }
+  private scanRoot(root:FileRootConfig):Promise<void> { return this.scanner.scanRoot(root) }
+  private ingest(root:FileRootConfig, collectionId:string, filePath:string, mtimeMs:number, old:WatchedRow | undefined, missing:Map<string, WatchedRow>):Promise<boolean> {
+    return this.ingestor.ingest(root, collectionId, filePath, mtimeMs, old, missing);
   }
 
   private headers(extra:Record<string, string> = {}):Record<string, string> { return { authorization: `Bearer ${ issueCapabilityToken({ sub: this.config.userId, device_id: this.config.deviceId, scopes: ['files/*'] }, this.config.capabilitySigningKey) }`, ...extra } }
@@ -1161,7 +1017,7 @@ export class LocalFilesManager {
       const localRoot = syncRoots.find(root => this.rootCollections.get(root.id) === remote.id);
       await this.syncCollection(remote.id, true);
     }
-    this.pendingFiles = 0; this.lastSyncAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=TRUE");
+    this.progress.pendingFiles = 0; this.progress.lastSyncAt = new Date().toISOString(); await this.db.query("UPDATE files_runtime_state SET state='synced',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=TRUE");
     await this.db.query("UPDATE file_roots SET state='idle',pending_files=0,last_error=NULL,last_sync_at=NOW(),updated_at=NOW() WHERE id=ANY($1::text[])", [syncRoots.map(root => root.id)]);
   }
 
@@ -1179,7 +1035,7 @@ export class LocalFilesManager {
     cursor = (await this.db.query('SELECT * FROM file_sync_cursors WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId])).rows[0];
     if (canPush) {
       const pending = (await this.db.query(`SELECT j.seq,j.op,row_to_json((SELECT x FROM (SELECT f.id,f.collection_id,f.path,f.current_version_id,f.deleted_at,f.expires_at,f.created_by_type,f.created_by_id,f.mime,f.size,f.created_at,f.updated_at,f.extraction_status,f.draft_version_id,f.published_version_id,f.versioning_enabled,f.lifecycle_generation,f.operation_revision) x)) file,row_to_json(v.*) version,row_to_json(m.*) manifest FROM journal j JOIN files f ON f.id=j.file_id JOIN file_versions v ON v.id=j.version_id LEFT JOIN manifests m ON m.hash=v.manifest_hash WHERE j.collection_id=$1 AND j.seq>$2 AND v.device_id=$3 ORDER BY j.seq`, [collectionId, cursor.last_push_seq, this.config.deviceId])).rows;
-      this.pendingFiles += pending.length;
+      this.progress.pendingFiles += pending.length;
       for (const item of pending) { await this.push(item, collectionId); await this.db.query('UPDATE file_sync_cursors SET last_push_seq=$3 WHERE collection_id=$1 AND device_id=$2', [collectionId, this.config.deviceId, item.seq]) }
     }
   }
