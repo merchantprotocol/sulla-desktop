@@ -5,12 +5,15 @@
 
 import type express from 'express';
 
-import { validateAuditEvent, type FileAuditWriter } from '../fileAudit.js';
+import { validateAuditEvent } from '../fileAudit.js';
 import type { AuditSpoolRepository } from '../Repositories/AuditSpoolRepository.js';
+
+/** What the route needs from FileAuditWriter (any staged-content type): background delivery of the spool. */
+export interface AuditSpoolDelivery { drain():Promise<void> }
 
 /** POST /v1/system/audit-events: spool a service audit event, answer 202, then deliver in the background (moved from app.ts). */
 export class AuditEventRoutes {
-  constructor(private readonly spool:AuditSpoolRepository, private readonly writer:FileAuditWriter) {}
+  constructor(private readonly spool:AuditSpoolRepository, private readonly writer:AuditSpoolDelivery) {}
 
   register(app:express.Express):void {
     app.post('/v1/system/audit-events',async(request,response,next)=>{try {
