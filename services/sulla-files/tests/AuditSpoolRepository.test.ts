@@ -93,9 +93,11 @@ describe.skipIf(!databaseUrl)('audit spool delivery (real Postgres)', () => {
   it('appends more than one batch in order with one log version per batch', async() => {
     const actions=Array.from({length:205},(_value,index)=>`event-${index}`);
     await spool(...actions.map(action=>event(action,'multi-batch')));
+    const spoolInsertCount=(await pool.query('SELECT count(*)::int n FROM files_audit_spool')).rows[0].n;
     const {audit,lines,writes}=writer();
     await audit.drain();
     const chain=await lines('audit/files/multi-batch.jsonl');
+    expect(chain).toHaveLength(spoolInsertCount);
     expect(chain.map(line=>line.action)).toEqual(actions);
     expectValidChain(chain);
     expect(writes()).toBe(3);
