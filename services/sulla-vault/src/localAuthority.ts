@@ -3,34 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { randomBytes } from 'node:crypto';
-import https from 'node:https';
+import type https from 'node:https';
 import { join } from 'node:path';
 
-import pg from 'pg';
+import type pg from 'pg';
 import type { LocalEncryptedItem, LocalItemContext } from '@sulla/domain';
 
-import {
-  agentPolicyAllows,
-  type AgentAccessLevel,
-  type AgentPolicy,
-  validateVaultItemProxy,
-  type VaultItemPlaintext,
-} from '@sulla/vault-crypto';
-
 import { BitwardenExportImporter } from './bitwarden/BitwardenExportImporter.js';
-import { brokerTransferLimits, FILES_SYNC_OPERATION } from './operationPolicy.js';
 import { DefaultVaultRelayManager } from './relays.js';
 
 import type { VaultConfig } from './config.js';
 import type { FilesAuthorityIdentityLease, UnlockedFilesAuthorityIdentity } from './filesKeyBundleAuthority.js';
-import type {
-  BrokerCredentialRef,
-  BrokerItemListResponse,
-  BrokerExecuteRequest,
-  BrokerExecuteResponse,
-  LocalVaultState,
-} from './contracts.js';
+import type { LocalVaultState } from './contracts.js';
 import { FilesTransportEnvelopeService } from '@sulla/vault-crypto';
 import { type SyncBundle, type SyncHead } from './browserEnvelope/envelope.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
@@ -61,6 +45,9 @@ import type { IntegrationAccountService } from './localAuthority/IntegrationAcco
 import type { LegacyMigrationService } from './localAuthority/LegacyMigrationService.js';
 import type { SullaCloudService } from './localAuthority/SullaCloudService.js';
 import type { BrokerRelayService } from './localAuthority/BrokerRelayService.js';
+import type { BrokerExecutionService } from './localAuthority/BrokerExecutionService.js';
+import type { ServiceIdentityGuard } from './localAuthority/ServiceIdentityGuard.js';
+import type { CacheUpdateStager } from './localAuthority/CacheUpdateStager.js';
 import { LocalAuthorityCollaborators } from './localAuthority/LocalAuthorityCollaborators.js';
 import type { LocalAuthorityHost } from './localAuthority/LocalAuthorityHost.js';
 import type { VaultKeyActivation } from './localAuthority/VaultKeyActivation.js';
@@ -68,22 +55,7 @@ import { BrokerAddressPolicy } from './localAuthority/BrokerAddressPolicy.js';
 import { BrokerCredentialFields } from './localAuthority/BrokerCredentialFields.js';
 import { BrokerHttpBody } from './localAuthority/BrokerHttpBody.js';
 import { LocalAuthorityCrypto } from './localAuthority/LocalAuthorityCrypto.js';
-import {
-  APPROVAL_TTL_MS,
-  BROKER_IDENTIFIER_PATTERN,
-  CACHE_UPDATE_TTL_MS,
-  MAX_CREDENTIAL_BYTES,
-  UUID_PATTERN,
-} from './localAuthority/LocalAuthorityLimits.js';
-import type {
-  BrokerStreamSink,
-  Challenge,
-  HumanSession,
-  ItemRow,
-  PreparedBrokerRequest,
-  StagedCacheUpdate,
-  UnlockedKeys,
-} from './localAuthority/LocalAuthorityTypes.js';
+import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './localAuthority/LocalAuthorityTypes.js';
 import { LocalVaultError } from './localAuthority/LocalVaultError.js';
 import { StreamingRedactor } from './localAuthority/StreamingRedactor.js';
 import { SullaCloudDesktopRoutePolicy } from './localAuthority/SullaCloudDesktopRoutePolicy.js';
@@ -96,23 +68,15 @@ export function extractBoundedChatgptAccountId(...tokens: unknown[]): string | u
   return BrokerCredentialFields.extractBoundedChatgptAccountId(...tokens);
 }
 
-// Local names for the moved helpers so the method bodies below stay verbatim (E9).
-const constantEqual = LocalAuthorityCrypto.constantEqual;
-const operationDigest = LocalAuthorityCrypto.operationDigest;
-const streamResponseIsBodyless = BrokerHttpBody.streamResponseIsBodyless;
-const credentialField = BrokerCredentialFields.credentialField;
-const deriveChatgptAccountRoutingForRequest = BrokerCredentialFields.deriveChatgptAccountRoutingForRequest;
-const privateAddress = BrokerAddressPolicy.privateAddress;
-const allowsSullaCloudDesktopRequest = SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest;
-
+/** Pure helpers exposed for specs (same functions as before E9, now static methods that never use `this`). */
 export const localAuthorityTestHooks = {
-  allowsByoUsageCloudRequest: SullaCloudDesktopRoutePolicy.allowsByoUsageCloudRequest,
-  allowsSullaCloudDesktopRequest,
-  credentialField,
-  operationDigest,
-  privateAddress,
-  streamResponseIsBodyless,
-  deriveChatgptAccountRoutingForRequest,
+  allowsByoUsageCloudRequest:             SullaCloudDesktopRoutePolicy.allowsByoUsageCloudRequest,
+  allowsSullaCloudDesktopRequest:         SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest,
+  credentialField:                        BrokerCredentialFields.credentialField,
+  operationDigest:                        LocalAuthorityCrypto.operationDigest,
+  privateAddress:                         BrokerAddressPolicy.privateAddress,
+  streamResponseIsBodyless:               BrokerHttpBody.streamResponseIsBodyless,
+  deriveChatgptAccountRoutingForRequest:  BrokerCredentialFields.deriveChatgptAccountRoutingForRequest,
   StreamingRedactor,
 };
 
@@ -267,60 +231,21 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   relayEvents(...args: Parameters<BrokerRelayService['relayEvents']>) { return this.parts.relays.relayEvents(...args) }
   sendRelay(...args: Parameters<BrokerRelayService['sendRelay']>) { return this.parts.relays.sendRelay(...args) }
   closeRelay(...args: Parameters<BrokerRelayService['closeRelay']>) { return this.parts.relays.closeRelay(...args) }
-
-
-  /**
-   * Lend a bounded copy of the unlocked user X25519 identity to another
-   * Vault-owned component. Lock remains responsive while the operation is in
-   * flight; generation checks prevent any result from escaping after a lock or
-   * re-unlock, and the private-key copy is always erased.
-   */
-  async withUnlockedIdentity<T>(
-    operation:(identity:UnlockedFilesAuthorityIdentity) => Promise<T>,
-  ):Promise<T> {
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const privateKey = Uint8Array.from(keys.privateKey);
-    try {
-      const result = await operation({
-        principalId: keys.userId,
-        publicKey: keys.publicKey,
-        privateKey,
-        generation,
-        assertCurrent: () => this.requireGeneration(generation),
-      });
-      this.requireGeneration(generation);
-      return result;
-    } finally {
-      privateKey.fill(0);
-    }
+  withUnlockedIdentity<T>(operation: (identity: UnlockedFilesAuthorityIdentity) => Promise<T>): Promise<T> { return this.parts.keyLender.withUnlockedIdentity(operation) }
+  withUnlockedUserKey<T>(operation: (keys: { userId: string; userKey: Uint8Array; assertCurrent: () => void }) => Promise<T>): Promise<T> {
+    return this.parts.keyLender.withUnlockedUserKey(operation);
   }
-
-  /**
-   * Lend the unlocked user key to the Passwords sync v3 runner
-   * (browserEnvelope/syncRunner.ts) for one operation. Same generation guard
-   * as withUnlockedIdentity: a lock during the operation fails it, and the
-   * copy is erased afterwards.
-   */
-  async withUnlockedUserKey<T>(
-    operation: (keys: { userId: string; userKey: Uint8Array; assertCurrent: () => void }) => Promise<T>,
-  ): Promise<T> {
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    const userKey = Uint8Array.from(keys.userKey);
-    try {
-      const result = await operation({ userId: keys.userId, userKey, assertCurrent: () => this.requireGeneration(generation) });
-      this.requireGeneration(generation);
-      return result;
-    } finally {
-      userKey.fill(0);
-    }
-  }
-
-  /** The Electron main approval identity (also used for Sulla Cloud relay). */
-  requireApprovalIdentity(callerId: string, token: string | undefined): void {
-    this.requireDesktopIdentity(callerId, token);
-  }
+  approve(...args: Parameters<BrokerExecutionService['approve']>) { return this.parts.brokerExecution.approve(...args) }
+  execute(...args: Parameters<BrokerExecutionService['execute']>) { return this.parts.brokerExecution.execute(...args) }
+  listBrokerItems(...args: Parameters<BrokerExecutionService['listBrokerItems']>) { return this.parts.brokerExecution.listBrokerItems(...args) }
+  executeStream(...args: Parameters<BrokerExecutionService['executeStream']>) { return this.parts.brokerExecution.executeStream(...args) }
+  requireControlIdentity(...args: Parameters<ServiceIdentityGuard['requireControlIdentity']>) { return this.parts.identities.requireControlIdentity(...args) }
+  requireApprovalIdentity(...args: Parameters<ServiceIdentityGuard['requireApprovalIdentity']>) { return this.parts.identities.requireApprovalIdentity(...args) }
+  requireDesktopIdentity(...args: Parameters<ServiceIdentityGuard['requireDesktopIdentity']>) { return this.parts.identities.requireDesktopIdentity(...args) }
+  requireBrokerIdentity(...args: Parameters<ServiceIdentityGuard['requireBrokerIdentity']>) { return this.parts.identities.requireBrokerIdentity(...args) }
+  bootstrapToken(...args: Parameters<ServiceIdentityGuard['bootstrapToken']>) { return this.parts.identities.bootstrapToken(...args) }
+  stageCacheUpdate(...args: Parameters<CacheUpdateStager['stageCacheUpdate']>) { return this.parts.cacheStager.stageCacheUpdate(...args) }
+  expireStagedCacheUpdate(...args: Parameters<CacheUpdateStager['expireStagedCacheUpdate']>) { return this.parts.cacheStager.expireStagedCacheUpdate(...args) }
 
   async lock(): Promise<void> {
     await this.runSecurityOperation(async() => this.lockNow());
@@ -358,192 +283,12 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return !existing.rowCount;
   }
 
-  requireControlIdentity(callerId: string, token: string | undefined): void {
-    if (callerId !== this.config.controlServiceId || !constantEqual(token, this.config.controlServiceToken)) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Desktop control identity is invalid');
-    }
-  }
-
   brokerStatus(callerId: string, token: string | undefined): {
     state: LocalVaultState; unlocked: boolean; principalId?: string;
   } {
     this.requireBrokerIdentity(callerId, token);
     const { state, unlocked, principalId } = this.status();
     return { state, unlocked, principalId };
-  }
-
-  requireDesktopIdentity(callerId: string, token: string | undefined): void {
-    if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Desktop service identity is invalid');
-    }
-  }
-
-  requireBrokerIdentity(callerId: string, token: string | undefined): void {
-    if (callerId !== this.config.brokerServiceId || !constantEqual(token, this.config.brokerServiceToken)) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Broker service identity is invalid');
-    }
-  }
-
-  approve(callerId: string, token: string | undefined, operationId: string): { approvalId: string; expiresAt: number } {
-    if (callerId !== this.config.approvalServiceId || !constantEqual(token, this.config.approvalServiceToken)) {
-      throw new LocalVaultError('invalid_service_identity', 401, 'Approval service identity is invalid');
-    }
-    const pendingExpiry = this.pendingApprovals.get(operationId);
-    this.pendingApprovals.delete(operationId);
-    if (!pendingExpiry || pendingExpiry <= Date.now()) throw new LocalVaultError('approval_not_pending', 404, 'Approval request is not pending');
-    const approvalId = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + APPROVAL_TTL_MS;
-    this.approvals.set(approvalId, { digest: operationId, expiresAt });
-    return { approvalId, expiresAt };
-  }
-
-  async execute(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
-    this.parts.brokerRequests.validateBrokerRequestIdentity(input, serviceId, token);
-    try {
-      if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
-        throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
-      }
-      if (input.responseType === 'base64' && input.operation !== FILES_SYNC_OPERATION && input.operation !== 'provider.audio') {
-        throw new LocalVaultError('invalid_operation', 400, 'Binary responses are limited to Files sync');
-      }
-      if (['oauth.exchange', 'oauth.adopt', 'oauth.refresh', 'oauth.revoke', 'oauth.register'].includes(input.operation)) {
-        return await this.executeOAuthMutation(input, serviceId, token);
-      }
-      if (AgentMailboxCloudLane.handles(input.operation)) return await this.parts.sullaCloud.agentMailboxes().execute(input);
-      const prepared = await this.parts.brokerRequests.prepareBrokerRequest(input, serviceId, token);
-      const result = await this.parts.upstream.send(
-        prepared.target, input.method, prepared.headers, prepared.body,
-        input.responseType ?? 'json', prepared.secrets, prepared.generation, true, prepared.maxRequestBytes,
-        brokerTransferLimits(input.operation).response, input.operation, input.ref.integrationId,
-      );
-      if (prepared.item) await this.audit(input, prepared.item, false, null);
-      return result;
-    } catch (error) {
-      if (error instanceof LocalVaultError) await this.auditBrokerDenial(input, error.code === 'invalid_upstream_response' ? `${ error.code }: ${ error.message }` : error.code);
-      throw error;
-    }
-  }
-
-  async listBrokerItems(
-    claims: BrokerExecuteRequest['claims'], serviceId: string, token: string | undefined,
-  ): Promise<BrokerItemListResponse> {
-    this.requireBrokerIdentity(serviceId, token);
-    const validIdentifier = (value: unknown) => typeof value === 'string' && BROKER_IDENTIFIER_PATTERN.test(value);
-    if (!claims || !UUID_PATTERN.test(claims.sub) || !validIdentifier(claims.agent_id) || !validIdentifier(claims.pod_id)) {
-      throw new LocalVaultError('invalid_caller_identity', 400, 'Broker caller identity is invalid');
-    }
-    const keys = this.requireKeys();
-    const generation = this.generation;
-    if (claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
-    const result = await this.itemRepository.listAgentAccessiblePersonal<ItemRow>([keys.userId]);
-    const items: BrokerItemListResponse['items'] = [];
-    for (const row of result.rows) {
-      const plaintext = JSON.parse(await this.openItemText(
-        { version: 1, ciphertext: row.ciphertext, encryptedItemKey: row.encrypted_item_key }, keys.userKey,
-        { itemId: row.id, ownerId: keys.userId },
-      )) as VaultItemPlaintext;
-      const checked = validateVaultItemProxy(plaintext);
-      if (!checked.ok) continue;
-      const policy = row.agent_policy ?? plaintext.agentPolicy;
-      if (!Array.isArray(policy?.sites)) continue;
-      const usable = agentPolicyAllows({ ...policy, sites: [] }, {
-        agentId: claims.agent_id, level: 'autofill', onServer: false,
-      }).allowed;
-      if (!usable) continue;
-      items.push({
-        id: row.id, name: plaintext.name, type: plaintext.type, hosts: checked.proxy.hosts,
-        rules: checked.proxy.rules.map(({ target, name, scheme }) => ({ target, name, scheme })),
-      });
-    }
-    this.requireGeneration(generation);
-    return { items };
-  }
-
-  /** Serialize token mutations per integration account (refresh tokens rotate). */
-  async withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T> {
-    const queueKey = `${ ref.integrationId ?? '' }/${ ref.accountId ?? '' }`;
-    const previous = this.oauthRefreshQueues.get(queueKey) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>(resolve => { release = resolve; });
-    const queued = previous.then(() => current);
-    this.oauthRefreshQueues.set(queueKey, queued);
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-      if (this.oauthRefreshQueues.get(queueKey) === queued) this.oauthRefreshQueues.delete(queueKey);
-    }
-  }
-
-  private async executeOAuthMutation(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
-    return this.withCredentialQueue(input.ref, async() => {
-      const prepared = await this.parts.brokerRequests.prepareBrokerRequest(input, serviceId, token);
-      const result = await this.parts.upstream.send(
-        prepared.target, input.method, prepared.headers, prepared.body,
-        input.responseType === 'text' ? 'text' : 'json', prepared.secrets, prepared.generation, false,
-        prepared.maxRequestBytes,
-      );
-      if (result.status < 200 || result.status >= 300) {
-        // Status and the standard OAuth error code (e.g. invalid_grant) only, so the audit says why without copying response text.
-        const oauthError = (result.body as { error?: unknown } | null)?.error;
-        const code = typeof oauthError === 'string' && /^[a-z_]{1,64}$/.test(oauthError) ? ` ${ oauthError }` : '';
-        throw new LocalVaultError('invalid_upstream_response', 502, `OAuth upstream rejected the request (HTTP ${ result.status }${ code })`);
-      }
-      return await this.runSecurityOperation(() => this.runTransaction(async(client) => {
-        this.requireGeneration(prepared.generation);
-        if (input.operation === 'oauth.revoke') {
-          await this.clearOAuthTokens(prepared, client);
-          await this.audit(input, prepared.item!, false, null, client);
-          this.requireGeneration(prepared.generation);
-          return { ...result, body: { revoked: true } };
-        }
-        if (input.operation === 'oauth.register') {
-          const clientId = await this.storeOAuthRegistration(prepared, result.body, client);
-          await this.audit(input, prepared.item!, false, null, client);
-          this.requireGeneration(prepared.generation);
-          return { ...result, body: { updated: true, operation: 'oauth.register', client_id: clientId } };
-        }
-        await this.storeOAuthTokens(prepared, result.body, client);
-        await this.audit(input, prepared.item!, false, null, client);
-        this.requireGeneration(prepared.generation);
-        return { ...result, body: this.sanitizeOAuthResult(input.operation, result.body) };
-      }));
-    });
-  }
-
-  async executeStream(
-    input: BrokerExecuteRequest,
-    serviceId: string,
-    token: string | undefined,
-    sink: BrokerStreamSink,
-  ): Promise<void> {
-    this.parts.brokerRequests.validateBrokerRequestIdentity(input, serviceId, token);
-    const streamInput = {
-      ...input,
-      responseType: input.responseType === 'binary-stream' ? 'binary-stream' as const : 'stream' as const,
-    };
-    try {
-      const prepared = await this.parts.brokerRequests.prepareBrokerRequest(streamInput, serviceId, token);
-      await this.parts.streams.sendStream(prepared, streamInput, sink);
-      if (prepared.item) await this.audit(streamInput, prepared.item, false, null);
-    } catch (error) {
-      if (error instanceof LocalVaultError) {
-        // invalid_upstream_response covers two distinct sendStream checks (compressed
-        // encoding, non-textual content-type); fold in the observed header values so
-        // audit_log says which one actually fired instead of just the shared code.
-        const reason = error.code === 'invalid_upstream_response' ? `${ error.code }: ${ error.message }` : error.code;
-        await this.auditBrokerDenial(streamInput, reason);
-      }
-      throw error;
-    }
-  }
-
-  bootstrapToken(): string {
-    if (!this.config.bootstrapServiceToken || Buffer.byteLength(this.config.bootstrapServiceToken) < 32) {
-      throw new LocalVaultError('vault_unavailable', 503, 'Bootstrap identity is not configured');
-    }
-    return this.config.bootstrapServiceToken;
   }
 
   requireKeys(): UnlockedKeys {
@@ -585,148 +330,5 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   async runTransaction<T>(operation: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     return this.localStore.transaction(operation);
   }
-
-  private async storeOAuthTokens(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<void> {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth token response is invalid');
-    }
-    const response = body as Record<string, unknown>;
-    if (typeof response.access_token !== 'string' || !response.access_token) {
-      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth response did not contain an access token');
-    }
-    const keys = this.requireKeys();
-    this.requireGeneration(prepared.generation);
-    if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
-    const integration = prepared.plaintext.integration;
-    if (!integration) throw new LocalVaultError('migration_failed', 409, 'OAuth item is missing its integration reference');
-    integration.properties.access_token = response.access_token;
-    if (typeof response.refresh_token === 'string' && response.refresh_token) integration.properties.refresh_token = response.refresh_token;
-    if (typeof response.expires_in === 'number') integration.properties.expires_in = String(response.expires_in);
-    if (typeof response.expires_in === 'number') integration.properties.expires_at = String(Date.now() + Math.max(0, response.expires_in) * 1000);
-    if (typeof response.scope === 'string') integration.properties.scope = response.scope;
-    if (typeof response.token_type === 'string') integration.properties.token_type = response.token_type;
-    if (typeof response.id_token === 'string' && response.id_token) integration.properties.id_token = response.id_token;
-    const chatgptAccountId = extractBoundedChatgptAccountId(response.id_token, response.access_token);
-    if (chatgptAccountId) integration.properties.chatgpt_account_id = chatgptAccountId;
-    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
-  }
-
-  private async storeOAuthRegistration(prepared: PreparedBrokerRequest, body: unknown, db: Queryable): Promise<string> {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response is invalid');
-    }
-    const response = body as Record<string, unknown>;
-    if (typeof response.client_id !== 'string' || response.client_id.length < 1 || response.client_id.length > 4096) {
-      throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response did not contain a valid client identity');
-    }
-    const keys = this.requireKeys();
-    this.requireGeneration(prepared.generation);
-    if (!prepared.item || !prepared.plaintext?.integration) {
-      throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
-    }
-    prepared.plaintext.integration.properties.oauth_client_id = response.client_id;
-    for (const field of ['client_secret', 'registration_access_token'] as const) {
-      const value = response[field];
-      if (value !== undefined && (typeof value !== 'string' || !value || Buffer.byteLength(value) > MAX_CREDENTIAL_BYTES)) {
-        throw new LocalVaultError('invalid_upstream_response', 502, 'OAuth registration response contained invalid secret material');
-      }
-      if (typeof value === 'string') prepared.plaintext.integration.properties[field] = value;
-    }
-    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
-    return response.client_id;
-  }
-
-  private async clearOAuthTokens(prepared: PreparedBrokerRequest, db: Queryable): Promise<void> {
-    const keys = this.requireKeys();
-    this.requireGeneration(prepared.generation);
-    if (!prepared.item || !prepared.plaintext?.integration) {
-      throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
-    }
-    for (const field of ['access_token', 'refresh_token', 'id_token', 'chatgpt_account_id', 'expires_in', 'expires_at', 'scope', 'token_type']) {
-      delete prepared.plaintext.integration.properties[field];
-    }
-    prepared.item.revision = await this.persistOAuthItem(prepared, keys, db);
-  }
-
-  private async persistOAuthItem(
-    prepared: Pick<PreparedBrokerRequest, 'item' | 'plaintext' | 'generation'>, keys: UnlockedKeys,
-    db: Queryable,
-  ): Promise<number> {
-    if (!prepared.item || !prepared.plaintext) throw new LocalVaultError('migration_failed', 409, 'OAuth credential item is unavailable');
-    const ownerId = prepared.item.collection_id ?? prepared.item.owner_user_id ?? keys.userId;
-    const encrypted = await this.sealItem(JSON.stringify(prepared.plaintext), keys.userKey, {
-      itemId: prepared.item.id,
-      ownerId,
-    });
-    this.requireGeneration(prepared.generation);
-    const updated = await this.itemRepository.updateOAuthCiphertextIfRevision([encrypted.ciphertext, encrypted.encryptedItemKey, prepared.item.id, prepared.item.revision], db);
-    if (!updated.rowCount) throw new LocalVaultError('migration_failed', 409, 'OAuth item changed during token update');
-    this.requireGeneration(prepared.generation);
-    return Number(updated.rows[0].revision);
-  }
-
-  private sanitizeOAuthResult(operation: string, body: unknown): Record<string, unknown> {
-    const response = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
-    return {
-      updated:    true,
-      operation,
-      expires_in: typeof response.expires_in === 'number' ? response.expires_in : undefined,
-      expires_at: typeof response.expires_in === 'number' ? Date.now() + Math.max(0, response.expires_in) * 1000 : undefined,
-      scope:      typeof response.scope === 'string' ? response.scope : undefined,
-      token_type: typeof response.token_type === 'string' ? response.token_type : undefined,
-    };
-  }
-
-  stageCacheUpdate(masterKey: Uint8Array): void {
-    this.stagedCacheUpdate?.masterKey.fill(0);
-    this.cacheChallenges.clear();
-    this.stagedCacheUpdate = {
-      masterKey: Buffer.from(masterKey),
-      expiresAt: Date.now() + CACHE_UPDATE_TTL_MS,
-      generation: this.generation,
-    };
-  }
-
-  expireStagedCacheUpdate(): void {
-    if (this.stagedCacheUpdate &&
-        (this.stagedCacheUpdate.expiresAt <= Date.now() || this.stagedCacheUpdate.generation !== this.generation)) {
-      this.stagedCacheUpdate.masterKey.fill(0);
-      this.stagedCacheUpdate = null;
-      this.cacheChallenges.clear();
-    }
-  }
-
-  /** Agent credential use goes to the rotating file sink, never Postgres or the Files per-secret audit, and never as a reveal. */
-  async audit(
-    input: BrokerExecuteRequest,
-    item: ItemRow,
-    blocked: boolean,
-    reason: string | null,
-    _db?: Queryable,
-  ): Promise<void> {
-    this.outboundAudit.record({
-      actorUserId: input.claims.sub, orgId: item.org_id ?? null, collectionId: item.collection_id, itemId: item.id,
-      podId: input.claims.pod_id, agentId: input.claims.agent_id, operation: input.operation,
-      destination: input.operation === 'item.http' ? new URL(input.url).hostname : new URL(input.url).origin,
-      blocked, reason,
-    });
-  }
-
-  private async auditBrokerDenial(input: BrokerExecuteRequest, reason: string): Promise<void> {
-    let destination: string | undefined;
-    try {
-      const parsed = new URL(input.url);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') destination = input.operation === 'item.http' ? parsed.hostname : parsed.origin;
-    } catch {
-      // Invalid destinations are represented by the denial reason, never copied into audit metadata.
-    }
-    this.outboundAudit.record({
-      actorUserId: input.claims.sub, podId: input.claims.pod_id, agentId: input.claims.agent_id, operation: input.operation,
-      ...(input.operation === 'item.http' && UUID_PATTERN.test(input.ref?.itemId ?? '') ? { itemId: input.ref.itemId } : {}),
-      ...(destination ? { destination } : {}),
-      blocked: true, reason,
-    });
-  }
 }
-
 

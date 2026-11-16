@@ -17,10 +17,12 @@ import type { SyncBundle, SyncHead } from '../browserEnvelope/envelope.js';
 import type { StoredKeyEnvelopeReaderProvider } from '../browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultConfig } from '../config.js';
 import type {
-  BrokerCredentialRef, BrokerExecuteRequest, BrokerIntegrationMetadataResponse, LocalVaultState,
+  BrokerIntegrationMetadataResponse,
+  LocalVaultState,
 } from '../contracts.js';
 import type { Database, Queryable } from '../db.js';
 import type { LocalVaultCryptoProvider } from '../localCrypto/LocalVaultCryptoProvider.js';
+import type { OutboundAuditRecorder } from '../outboundAudit.js';
 import type { VaultRelayManager } from '../relays.js';
 import type { PostgresLocalAuthorityRepository } from '../repositories/PostgresLocalAuthorityRepository.js';
 import type { PostgresRewrapHistoryRepository } from '../repositories/PostgresRewrapHistoryRepository.js';
@@ -33,7 +35,7 @@ import type { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } fro
 import type { AgentMailboxCloudLane } from '../sullaCloudSession/AgentMailboxCloudLane.js';
 import type { SullaCloudSessionManager } from '../sullaCloudSession/SullaCloudSessionManager.js';
 import type { LocalAuthorityCollaborators } from './LocalAuthorityCollaborators.js';
-import type { Challenge, HumanSession, ItemRow, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
+import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
 
 /**
  * What LocalVaultAuthority's collaborators may read and change on it (E9). The authority keeps
@@ -56,6 +58,7 @@ export interface LocalAuthorityHost {
   readonly pendingApprovals: Map<string, number>;
   readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
   readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
+  readonly oauthRefreshQueues: Map<string, Promise<void>>;
   readonly inFlight:         Set<ClientRequest>;
   readonly pendingVaultEnrollments: Map<string, {
     expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
@@ -79,6 +82,7 @@ export interface LocalAuthorityHost {
   readonly relayManager:        VaultRelayManager;
   readonly revocationRepository: PostgresSullaCloudRevocationRepository;
   readonly brokerRedirectPolicy: BrokerRedirectPolicy;
+  readonly outboundAudit:       OutboundAuditRecorder;
   readonly localCryptoProvider: LocalVaultCryptoProvider;
   readonly bitwardenImporter:   BitwardenExportImporter;
   readonly localStore:          PostgresLocalAuthorityRepository;
@@ -102,8 +106,6 @@ export interface LocalAuthorityHost {
   requireApprovalIdentity(callerId: string, token: string | undefined): void;
   requireDesktopIdentity(callerId: string, token: string | undefined): void;
   requireBrokerIdentity(callerId: string, token: string | undefined): void;
-  audit(input: BrokerExecuteRequest, item: ItemRow, blocked: boolean, reason: string | null, db?: Queryable): Promise<void>;
-  withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T>;
   integrationMetadata(callerId: string, token: string | undefined, integrationId: string, accountFilter?: string): Promise<BrokerIntegrationMetadataResponse>;
   isSetupRequired(): Promise<boolean>;
   validateHumanSession(sessionId: string | undefined, csrf?: string): HumanSession;

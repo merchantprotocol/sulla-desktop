@@ -18,6 +18,12 @@ import { BrokerRelayService } from './BrokerRelayService.js';
 import { UpstreamHttpClient } from './UpstreamHttpClient.js';
 import { BrokerStreamSender } from './BrokerStreamSender.js';
 import { BrokerRequestPreparer } from './BrokerRequestPreparer.js';
+import { BrokerExecutionService } from './BrokerExecutionService.js';
+import { OAuthTokenStore } from './OAuthTokenStore.js';
+import { BrokerAuditRecorder } from './BrokerAuditRecorder.js';
+import { ServiceIdentityGuard } from './ServiceIdentityGuard.js';
+import { UnlockedKeyLender } from './UnlockedKeyLender.js';
+import { CacheUpdateStager } from './CacheUpdateStager.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { VaultKeyActivation } from './VaultKeyActivation.js';
 
@@ -42,6 +48,12 @@ export class LocalAuthorityCollaborators {
   readonly upstream: UpstreamHttpClient;
   readonly streams: BrokerStreamSender;
   readonly brokerRequests: BrokerRequestPreparer;
+  readonly brokerExecution: BrokerExecutionService;
+  readonly oauthTokens: OAuthTokenStore;
+  readonly brokerAudit: BrokerAuditRecorder;
+  readonly identities: ServiceIdentityGuard;
+  readonly keyLender: UnlockedKeyLender;
+  readonly cacheStager: CacheUpdateStager;
 
   constructor(host: LocalAuthorityHost) {
     this.bootstrap = new BootstrapUnlockService(host);
@@ -60,5 +72,11 @@ export class LocalAuthorityCollaborators {
     this.upstream = new UpstreamHttpClient(host);
     this.streams = new BrokerStreamSender(host);
     this.brokerRequests = new BrokerRequestPreparer(host);
+    this.brokerExecution = new BrokerExecutionService(host);
+    this.oauthTokens = new OAuthTokenStore(host);
+    this.brokerAudit = new BrokerAuditRecorder(host);
+    this.identities = new ServiceIdentityGuard(host);
+    this.keyLender = new UnlockedKeyLender(host);
+    this.cacheStager = new CacheUpdateStager(host);
   }
 }

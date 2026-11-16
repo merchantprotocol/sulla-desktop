@@ -163,7 +163,7 @@ export class SullaCloudService {
       pinned, method, headers, body, input.responseType ?? 'json', [credential], this.host.generation, true,
       target.pathname.endsWith('/bundle') ? MAX_STREAM_BYTES : /^\/files-sync\/v1\/uploads\//.test(target.pathname) ? MAX_FILES_SYNC_UPLOAD_BYTES : MAX_RESPONSE_BYTES,
     );
-    await this.host.audit(request, item, false, null);
+    await this.host.parts.brokerAudit.audit(request, item, false, null);
     return result;
   }
 
@@ -181,7 +181,7 @@ export class SullaCloudService {
         await this.host.parts.upstream.validateTarget(target.toString()), request.method, headers, request.body, 'json', secrets, this.host.generation, true,
         MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, request.operation, SULLA_CLOUD_INTEGRATION_ID,
       ),
-      audit: (request, item) => this.host.audit(request, item as ItemRow, false, null),
+      audit: (request, item) => this.host.parts.brokerAudit.audit(request, item as ItemRow, false, null),
     }, (code, status, message) => new LocalVaultError(code, status, message));
     return this.host.agentMailboxCloudLane;
   }
@@ -195,7 +195,7 @@ export class SullaCloudService {
       auditHumanAction: (client, userId, action, itemId) => this.host.auditHumanAction(client, userId, action, itemId ?? null),
     }, {
       items: this.host.itemRepository, state: this.host.integrationStateRepository, revocations: this.host.revocationRepository,
-      serialize: (name, work) => this.host.withCredentialQueue({ integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId: name }, work),
+      serialize: (name, work) => this.host.parts.brokerExecution.withCredentialQueue({ integrationId: SULLA_CLOUD_INTEGRATION_ID, accountId: name }, work),
       postJson: async(url, body) => {
         const result = await this.host.parts.upstream.send(await this.host.parts.upstream.validateTarget(url), 'POST', { 'content-type': 'application/json' }, body, 'json', [body.refreshToken], this.host.generation, false);
         return { status: result.status, body: result.body };
@@ -248,7 +248,7 @@ export class SullaCloudService {
         relayId, operation: input.operation, credential, targetUrl, abortSignal: controller.signal,
       });
       this.host.requireGeneration(generation);
-      await this.host.audit(request, item, false, null);
+      await this.host.parts.brokerAudit.audit(request, item, false, null);
       return handle;
     } catch (error) {
       controller.abort(error);

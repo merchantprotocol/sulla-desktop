@@ -98,7 +98,7 @@ export class BrokerRelayService {
         relayId, operation: input.operation, credential, gatewayUrl, gatewayAddress, abortSignal: controller.signal,
       });
       this.host.requireGeneration(generation);
-      await this.host.audit(request, item, false, null);
+      await this.host.parts.brokerAudit.audit(request, item, false, null);
       return handle;
     } catch (error) {
       controller.abort(error);
