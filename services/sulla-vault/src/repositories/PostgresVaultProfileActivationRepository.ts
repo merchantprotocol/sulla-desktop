@@ -47,6 +47,7 @@ export class PostgresVaultProfileActivationRepository {
   async setActiveDatabase(dbIdentifier: string): Promise<void> {
     // Legacy identifiers are also validated SQL identifiers; profile DBs use ProfileBoundary above.
     if (!/^[_a-zA-Z][a-zA-Z0-9_]{0,62}$/.test(dbIdentifier)) throw new Error('Invalid database identifier');
-    await this.pool.query('UPDATE vault_profile_active SET db_identifier=$1,profile_id=NULL,updated_at=now() WHERE singleton=true', [dbIdentifier]);
+    const result = await this.pool.query('UPDATE vault_profile_active SET db_identifier=$1,profile_id=NULL,updated_at=now() WHERE singleton=true', [dbIdentifier]);
+    if (result.rowCount !== 1) throw new Error('No active vault profile row exists');
   }
 }
