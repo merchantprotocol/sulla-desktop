@@ -414,7 +414,13 @@ export class ChatCompletionsServer {
       const remote = req.socket.remoteAddress ?? '';
       const privateSource = /^(::1|::ffff:127\.|127\.|::ffff:10\.|10\.|::ffff:172\.(?:1[6-9]|2\d|3[01])\.|172\.(?:1[6-9]|2\d|3[01])\.|::ffff:192\.168\.|192\.168\.)/.test(remote);
       const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-      if (!privateSource || !this.apiToken || bearer !== this.apiToken) {
+      // Constant-time compare; length is checked first because timingSafeEqual throws on mismatched lengths.
+      const expectedToken = Buffer.from(this.apiToken ?? '');
+      const presentedToken = Buffer.from(bearer ?? '');
+      const bearerMatches = expectedToken.length > 0
+        && presentedToken.length === expectedToken.length
+        && crypto.timingSafeEqual(presentedToken, expectedToken);
+      if (!privateSource || !bearerMatches) {
         return res.status(403).json({ success: false, error: { code: 'desktop_executor_forbidden', message: 'Desktop executor is private' } });
       }
       const category = String(req.params.category);

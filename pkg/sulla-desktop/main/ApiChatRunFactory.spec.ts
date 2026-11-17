@@ -54,4 +54,48 @@ describe('ApiChatRunFactory', () => {
     await expect(new ApiChatRunFactory(async () => 'local-owner', () => ({ revoke })).run(state(), true, run)).rejects.toBe(failure);
     expect(revoke).toHaveBeenCalledOnce();
   });
+
+  it('restores prior metadata after an opt-in run, deleting keys that were absent', async () => {
+    // risk: preventing a persistent graph from keeping owner trust for a later untrusted request on the same thread_id
+    const graph = state();
+    Object.assign(graph.metadata, { isTrustedUser: 'untrusted' });
+    const factory = new ApiChatRunFactory(async () => 'local-owner', () => ({ revoke: vi.fn() }));
+
+    await factory.run(graph, true, async () => 'done');
+
+    expect(graph.metadata.isTrustedUser).toBe('untrusted');
+    expect('userId' in graph.metadata).toBe(false);
+    expect('ownerUserId' in graph.metadata).toBe(false);
+    expect(graph.metadata).toMatchObject({ threadId: 'thread', wsChannel: 'api' });
+  });
+
+  it('restores prior metadata when execution throws', async () => {
+    // risk: preventing owner trust from leaking onto a persistent graph after a failed run
+    const graph = state();
+    Object.assign(graph.metadata, { isTrustedUser: 'untrusted', userId: 'prior-user' });
+    const failure = new Error('execution failed');
+    const factory = new ApiChatRunFactory(async () => 'local-owner', () => ({ revoke: vi.fn() }));
+
+    await expect(factory.run(graph, true, async () => { throw failure; })).rejects.toBe(failure);
+
+    expect(graph.metadata.isTrustedUser).toBe('untrusted');
+    expect(graph.metadata.userId).toBe('prior-user');
+    expect('ownerUserId' in graph.metadata).toBe(false);
+  });
+
+  it('leaves metadata unchanged and skips the operation when registerSession throws', async () => {
+    // risk: preventing a half-bound graph from running owner work without a revocable session
+    const graph = state();
+    Object.assign(graph.metadata, { isTrustedUser: 'untrusted' });
+    const before = { ...graph.metadata };
+    const failure = new Error('session registration failed');
+    const run = vi.fn(async () => 'should not run');
+    const factory = new ApiChatRunFactory(async () => 'local-owner', () => { throw failure; });
+
+    await expect(factory.run(graph, true, run)).rejects.toBe(failure);
+
+    expect(graph.metadata).toEqual(before);
+    expect('userId' in graph.metadata).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+  });
 });
