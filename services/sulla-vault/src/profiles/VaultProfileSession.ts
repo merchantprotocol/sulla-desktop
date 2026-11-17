@@ -43,11 +43,13 @@ export class VaultProfileSession {
 
   private guardPool(pool: Database): Database {
     const session = this;
-    const stale = (args: unknown[]): Promise<never> => {
+    const stale = (args: unknown[]): Promise<never> | undefined => {
       const error = new Error('Stale vault profile');
       const callback = args.at(-1);
       if (typeof callback === 'function') {
+        // Callback-style callers ignore the return value; returning a rejected promise here would be unhandled.
         queueMicrotask(() => (callback as (error: Error) => void)(error));
+        return undefined;
       }
       return Promise.reject(error);
     };

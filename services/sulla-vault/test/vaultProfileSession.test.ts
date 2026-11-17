@@ -45,12 +45,20 @@ describe('vault profile session query fence', () => {
     const query = vi.fn();
     const session = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { query } as never);
     session.invalidate();
-    let returned: Promise<unknown> | undefined;
+    let returned: unknown;
     expect(() => { returned = session.database.query('SELECT key', (error: unknown) => { callbackError = error; }); }).not.toThrow();
-    await expect(returned).rejects.toThrow(/stale/i);
     expect(callbackError).toBeUndefined();
+    expect(returned).toBeUndefined();
     await new Promise(resolve => queueMicrotask(resolve));
     expect(callbackError).toBeInstanceOf(Error);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('rejects promise-style stale queries with a stale error', async () => {
+    const query = vi.fn();
+    const session = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { query } as never);
+    session.invalidate();
+    await expect(session.database.query('SELECT key')).rejects.toThrow(/stale/i);
     expect(query).not.toHaveBeenCalled();
   });
 });
