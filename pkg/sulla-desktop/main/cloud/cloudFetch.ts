@@ -8,7 +8,7 @@ import { usesContainerVaultAuthority, VaultBrokerError, configuredVaultBrokerPro
 import { getPendingCredential } from '../firstRun/pendingCredentials';
 import { getCurrentAccessToken, isCloudSignedIn } from '../sullaCloudAuth';
 
-const CLOUD_ORIGIN = 'https://sulla-workers.merchantprotocol.workers.dev';
+import { CLOUD_API_BASE as CLOUD_ORIGIN } from './cloudEndpoints';
 
 export { isCloudSignedIn };
 

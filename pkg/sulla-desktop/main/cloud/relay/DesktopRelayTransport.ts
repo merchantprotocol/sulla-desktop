@@ -5,6 +5,8 @@
 
 import type { RelayFailureKind, RelaySocketLike } from '@pkg/main/cloudRelayTransport';
 
+import { CLOUD_RELAY_BASE as RELAY_URL } from '../cloudEndpoints';
+
 import { DesktopRelayHeartbeat } from './DesktopRelayHeartbeat';
 import {
   DURABLE_RELAY_FRAME_TYPES, RELAY_SOCKET_CONNECTING, RELAY_SOCKET_OPEN,
@@ -12,7 +14,6 @@ import {
   type DesktopRelayTimers, type RelayFrame, type RelayTimeout,
 } from './DesktopRelayPorts';
 
-const RELAY_URL = 'wss://sulla-workers.merchantprotocol.workers.dev';
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 5 * 60_000;
 // While the vault is locked, re-check this often (a cheap local status call)
