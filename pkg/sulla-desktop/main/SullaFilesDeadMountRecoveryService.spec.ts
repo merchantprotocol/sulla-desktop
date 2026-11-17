@@ -10,7 +10,7 @@ class FakeExecutor {
   constructor(stats:string[]) { this.stats = [...stats] }
 
   async execCommand(options:{ capture?: boolean }, ...command:string[]):Promise<string | void> {
-    if (command[0] === 'python3') {
+    if (command[0] === 'timeout') {
       this.events.push('stat');
       return this.stats.shift() ?? 'ok';
     }
@@ -25,6 +25,16 @@ describe('SullaFilesDeadMountRecoveryService', () => {
   it('clears ENOTCONN before container recreate and agent re-attach', async() => {
     // risk: availability — Docker must not inspect a dead bind mount and leave Files unavailable for minutes.
     const executor = new FakeExecutor(['ENOTCONN', 'ok', 'ok']);
+    const recovery = new SullaFilesDeadMountRecoveryService(executor.asVm());
+
+    await recovery.recreateAndReattach(async() => { executor.events.push('recreate') }, async() => { executor.events.push('reattach') });
+
+    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'stat', 'recreate', 'reattach']);
+  });
+
+  it('lazy-unmounts a stat that times out on a stuck FUSE mount before recreate', async() => {
+    // risk: availability — a live-but-stuck FUSE daemon hangs stat; Docker must not inspect that bind.
+    const executor = new FakeExecutor(['TIMEOUT', 'ok', 'ok']);
     const recovery = new SullaFilesDeadMountRecoveryService(executor.asVm());
 
     await recovery.recreateAndReattach(async() => { executor.events.push('recreate') }, async() => { executor.events.push('reattach') });
