@@ -52,7 +52,7 @@ export class FolderUndoService {
     // the complete folder inverse before this transaction can commit.
     const metadata = FolderSubtreeInspector.metadataAccess(access);
     for (const child of [...plan.children].reverse()) await this.fileUndo.undo(child.operationId,actor,metadata,undefined,client,
-      ownedGrantMigration?{permissionSignatureVerified:true}:undefined);
+      { ...(ownedGrantMigration?{permissionSignatureVerified:true as const}:{}), ...(row.action==='move'||row.action==='rename'?{parentFollows:true as const}:{}) });
     for (const folder of [...plan.folders].reverse()) {
       await access.path(client,folder.after.collectionId??targetCollection,folder.after.path);
       await access.path(client,folder.before.collectionId??sourceCollection,folder.before.path);
@@ -62,7 +62,7 @@ export class FolderUndoService {
     if (plan.displaced) {
       const displacedCollection = plan.displaced.collectionId??targetCollection;
       for (const child of [...plan.displaced.children].reverse()) await this.fileUndo.undo(child.operationId,actor,metadata,undefined,client,
-        {folderGrantMigration:true,...(ownedGrantMigration?{permissionSignatureVerified:true as const}:{})});
+        {folderGrantMigration:true,parentFollows:true,...(ownedGrantMigration?{permissionSignatureVerified:true as const}:{})});
       for (const folder of [...plan.displaced.folders].reverse()) {
         await access.path(client,displacedCollection,folder.after.path);
         await access.path(client,displacedCollection,folder.before.path);

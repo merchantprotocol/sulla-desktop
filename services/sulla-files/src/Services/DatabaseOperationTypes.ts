@@ -19,7 +19,7 @@ export interface DatabaseOperationRequest {
 }
 /** In-process authority only: Symbol keys cannot arrive over JSON or persist in receipt JSONB. */
 export const folderGrantMigration = Symbol('folderGrantMigration');
-export type InternalDatabaseOperationRequest = DatabaseOperationRequest & { [folderGrantMigration]?:true };
+export type InternalDatabaseOperationRequest = DatabaseOperationRequest & { [folderGrantMigration]?:true; parentFollows?:boolean };
 export interface DatabaseOperationState {
   collectionId?:string;
   fileId:string;
@@ -68,6 +68,7 @@ export type OperationGuard = (client:pg.PoolClient)=>Promise<void>;
 /** Internal undo authority granted by a containing folder receipt. */
 export interface UndoAuthority {
   folderGrantMigration?:true;
+  parentFollows?:true;
   /** A containing folder receipt verified this signature before relocating only its recorded grants. */
   permissionSignatureVerified?:true;
 }

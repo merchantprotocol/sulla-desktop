@@ -5,6 +5,7 @@
 
 import type pg from 'pg';
 import type { FilesIdentity } from '../auth.js';
+import { CloudRenameSuccessor } from '../Repositories/CloudRenameSuccessor.js';
 import { isProtectedPath, protectedPathError } from '../protectedFiles.js';
 import type { DatabaseOperationContext } from './DatabaseOperationContext.js';
 import { folderGrantMigration, OperationRecords, type DatabaseOperationAccess, type DatabaseOperationReceipt,
@@ -23,7 +24,7 @@ export class DatabaseOperationService {
    * operation executes its children within the folder's transaction.
    */
   async execute(input:InternalDatabaseOperationRequest, actor:FilesIdentity, access:DatabaseOperationAccess, guard?:OperationGuard, existingClient?:pg.PoolClient):Promise<DatabaseOperationReceipt> {
-    const persistedRequest = { ...input }; delete persistedRequest[folderGrantMigration];
+    const persistedRequest = { ...input }; delete persistedRequest[folderGrantMigration]; delete persistedRequest.parentFollows;
     if (!existingClient) await access.prepare?.(input.collectionId);
     const destinationCollection = input.targetCollectionId??input.collectionId;
     if (!existingClient && destinationCollection!==input.collectionId) await access.prepare?.(destinationCollection);
@@ -62,6 +63,20 @@ export class DatabaseOperationService {
       const placed = await this.place(client, input, file, row, destinationCollection, actor, access);
       skipped = placed.skipped;
       if (placed.updated) updated = placed.updated;
+      // Receipt-backed moves are the primary Files-mount route. If Cloud already
+      // has this version, journaling its id again is ignored by the uploader; make
+      // a same-content successor so Cloud observes the new path/parent identity.
+      // Folder children only follow their moved Cloud folder, so retain their version.
+      if (!skipped && (input.action === 'rename' || input.action === 'move')) {
+        const successor = new CloudRenameSuccessor(actor);
+        const versionId = await successor.versionFor(client, {
+          fileId: file.id,
+          currentVersionId: file.current_version_id,
+          parentFollows: input.parentFollows === true,
+        });
+        if (successor.updatedFile) updated = successor.updatedFile;
+        else if (versionId !== file.current_version_id) updated = { ...updated, current_version_id: versionId };
+      }
     }
     if (!skipped) await audit.recordFileOperation(client, actor, updated, input.action === 'trash' ? 'delete' : input.action === 'copy' ? 'put' : 'rename', row.id);
     const receiptPlan = input.action==='trash' && !skipped

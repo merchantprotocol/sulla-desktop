@@ -50,12 +50,47 @@ describe.skipIf(!databaseUrl)('database operation batches (real Postgres)', () =
     await pool.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [file.id, version.id]);
     return { id: file.id, versionId: version.id };
   }
+  async function markCloudUploaded(file:{ id:string; versionId:string }):Promise<void> {
+    await pool.query('INSERT INTO files_cloud_versions(version_id,collection_id,file_id,pushed_seq) VALUES($1,$2,$3,1)', [file.versionId, collectionId, file.id]);
+  }
   const filesIn = async(collection = collectionId) => (await pool.query('SELECT id,path,deleted_at IS NOT NULL AS deleted FROM files WHERE collection_id=$1 ORDER BY path', [collection])).rows;
   const foldersIn = async() => (await pool.query('SELECT id,path,deleted_at IS NOT NULL AS deleted FROM file_folders WHERE collection_id=$1 ORDER BY path', [collectionId])).rows;
   async function folderBatch(item:Record<string, unknown>) {
     const input = parseDatabaseBatch({ idempotencyKey: randomUUID(), collectionId, items: [{ itemId: randomUUID(), kind: 'folder', ...item }] });
     return submitDatabaseBatch(pool, input, actor, access);
   }
+
+  // risk: data accuracy — an uploaded file rename must create a new Cloud-visible version, not replay the uploaded id.
+  it('publishes an uploaded file rename as a same-content Cloud successor', async() => {
+    const seeded = await seedFile('before.bin'); await markCloudUploaded(seeded);
+    const source = (await pool.query('SELECT operation_revision FROM files WHERE id=$1', [seeded.id])).rows[0];
+    const input = parseDatabaseBatch({ idempotencyKey: randomUUID(), collectionId, items: [{ itemId: randomUUID(), action: 'rename', fileId: seeded.id, expectedVersionId: seeded.versionId, expectedRevision: String(source.operation_revision), targetPath: 'after.bin' }] });
+    const submitted = await submitDatabaseBatch(pool, input, actor, access);
+    await runDatabaseBatch(pool, submitted.operationId, actor, access);
+    const current = (await pool.query('SELECT current_version_id,path FROM files WHERE id=$1', [seeded.id])).rows[0];
+    expect(current.path).toBe('after.bin');
+    expect(current.current_version_id).not.toBe(seeded.versionId);
+    const successor = (await pool.query('SELECT parent_version_id,manifest_hash FROM file_versions WHERE id=$1', [current.current_version_id])).rows[0];
+    expect(successor).toEqual({ parent_version_id: seeded.versionId, manifest_hash: expect.any(String) });
+    expect((await pool.query("SELECT version_id FROM journal WHERE file_id=$1 AND op='rename' ORDER BY seq DESC LIMIT 1", [seeded.id])).rows[0].version_id).toBe(current.current_version_id);
+    // A second move after the first successor has landed in Cloud must produce a second successor.
+    await markCloudUploaded({ id:seeded.id, versionId:current.current_version_id });
+    const movedRow = (await pool.query('SELECT current_version_id,operation_revision FROM files WHERE id=$1', [seeded.id])).rows[0];
+    const move = parseDatabaseBatch({ idempotencyKey:randomUUID(), collectionId, items:[{ itemId:randomUUID(), action:'move', fileId:seeded.id,
+      expectedVersionId:movedRow.current_version_id, expectedRevision:String(movedRow.operation_revision), targetPath:'after-again.bin' }] });
+    const second = await submitDatabaseBatch(pool, move, actor, access); await runDatabaseBatch(pool, second.operationId, actor, access);
+    const final = (await pool.query('SELECT current_version_id,path FROM files WHERE id=$1', [seeded.id])).rows[0];
+    expect(final.path).toBe('after-again.bin'); expect(final.current_version_id).not.toBe(current.current_version_id);
+  });
+
+  // risk: data accuracy — descendants moved by their folder keep Cloud parent-folder identity and must not get redundant file successors.
+  it('does not create file successors for Cloud descendants that only follow a moved folder', async() => {
+    const seeded = await seedFile('old/nested.bin'); await markCloudUploaded(seeded);
+    const submitted = await folderBatch({ action: 'move', folderPath: 'old', targetPath: 'new' });
+    await runDatabaseBatch(pool, submitted.operationId, actor, access);
+    const moved = (await pool.query('SELECT current_version_id,path FROM files WHERE id=$1', [seeded.id])).rows[0];
+    expect(moved).toEqual({ current_version_id: seeded.versionId, path: 'new/nested.bin' });
+  });
 
   // risk: data loss — a folder move must carry every nested file and folder, and Undo must put them back.
   it('moves a whole folder subtree and undoes it exactly', async() => {
