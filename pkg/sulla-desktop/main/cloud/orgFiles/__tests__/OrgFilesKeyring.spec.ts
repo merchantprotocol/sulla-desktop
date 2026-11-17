@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto';
+import { ProfileCatalogEntry } from '../../../../../../packages/vault-profiles/src/index.js';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ default: { app: { getPath: () => '/ud', getVersion: () => '0.0.0' }, net: { fetch: vi.fn() }, safeStorage: { isEncryptionAvailable: () => false } } }));
@@ -8,7 +9,7 @@ vi.mock('../../deviceKey', () => ({ signDeviceMessageExact: vi.fn(async () => 'd
 vi.mock('../../cloudFetch', () => ({ cloudRequest: vi.fn(), isCloudSignedIn: vi.fn(async () => false) }));
 
 import { OrgFilesKeyCipher, OrgFilesRecipientKeyPayload, type OrgFilesKeyWrap, type OrgFilesRecipientKey } from '@sulla/domain';
-import { OrgFilesKeyring } from '../OrgFilesKeyring';
+import { OrgFilesKeyring, OrgFilesProfileIdentity } from '../OrgFilesKeyring';
 import { OrgFilesRecipientKeyStore, type OrgFilesVaultKeyStore } from '../OrgFilesRecipientKeyStore';
 
 class MemoryVault implements OrgFilesVaultKeyStore {
@@ -88,8 +89,35 @@ describe('OrgFilesKeyring', () => {
     const keyring = new OrgFilesKeyring(cloud as never, store, cipher, undefined,
       { userId: async () => 'member-1' });
     await keyring.createOrgKeyIfMissing('org-1');
-    keyring.onLock();
+    await keyring.onLock();
     cloud.wraps = [];
     await expect(keyring.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
+  });
+
+  it('isolates cached org keys by Cloud profile and zeroizes only the invalidated profile', async () => {
+    // risk: tenant isolation — one Cloud account must never receive another account's cached org key.
+    // risk: key lifecycle — invalidation must erase plaintext bytes without evicting another profile.
+    const vault = new MemoryVault(); const cloud = new FakeOrgFilesCloud(); const cipher = makeCipher();
+    const storeA = new OrgFilesRecipientKeyStore(vault, cloud, webcrypto, async () => ({ userId: 'member-1', deviceId: 'device-1' }), async () => 'proof');
+    const storeB = new OrgFilesRecipientKeyStore(new MemoryVault(), cloud, webcrypto, async () => ({ userId: 'member-2', deviceId: 'device-2' }), async () => 'proof');
+    const profileA = 'cloud-account-a'; const profileB = 'cloud-account-b';
+    const keyringA = new OrgFilesKeyring(cloud as never, storeA, cipher, undefined, { userId: async () => profileA });
+    const keyringB = new OrgFilesKeyring(cloud as never, storeB, cipher, undefined, { userId: async () => profileB });
+    await storeA.ensure('org-1'); await storeB.ensure('org-1');
+    const keyA = await keyringA.createOrgKeyIfMissing('org-1');
+    const keyB = await keyringB.createOrgKeyIfMissing('org-1');
+    expect(Buffer.from(keyA)).not.toEqual(Buffer.from(keyB));
+    const profileIdA = OrgFilesProfileIdentity.fromCloudUserId(profileA);
+    expect(profileIdA).toBe(new ProfileCatalogEntry({ cloudUserId: profileA, displayLabel: 'A' }).profileId.value);
+    const cacheA = keyringA as unknown as { keys: Map<string, Uint8Array> };
+    const cachedA = cacheA.keys.get(`${profileIdA}:org-1:1`)!;
+    keyringA.invalidateProfile(profileIdA);
+    expect(cachedA.every(byte => byte === 0)).toBe(true);
+    expect(Buffer.from(await keyringB.getOrgKey('org-1', 1))).toEqual(Buffer.from(keyB));
+    await keyringA.onSignOut();
+    await keyringB.onLock();
+    cloud.wraps = [];
+    await expect(keyringA.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
+    await expect(keyringB.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
   });
 });

@@ -39,9 +39,9 @@ export class OrgFilesDesktopRuntime {
   static currentOrNull(): OrgFilesDesktopRuntime | null { return this.shared; }
   start(): void { this.driver.start(); }
   wake(): void { this.driver.wake(); }
-  stop(): void { this.driver.stop(); this.keyring.onSignOut(); }
+  stop(): void { this.driver.stop(); void this.keyring.onSignOut(); }
   onVaultUnlocked(): void { this.driver.wake(); }
-  onVaultLocked(): void { this.keyring.onLock(); }
+  onVaultLocked(): void { void this.keyring.onLock(); }
 
   async createCollection(input: { orgId?: string; orgName?: string; name: string }) {
     const requested = input.orgId?.trim() || input.orgName?.trim();
