@@ -19,8 +19,10 @@ export class FilesShareToOrgWorker extends FilesTool {
     const level = collection.level ?? collection.access_role;
     if (level === 'view') throw new Error(`You can view ${collection.name} but not add files to it; ask an org admin for edit`);
     if (!['edit', 'manage', 'owner', 'admin'].includes(level)) throw new Error(`You do not have edit access to ${collection.name}`);
-    const resolved = input.file_id ? undefined : await this.resolvePath({ path: input.source });
-    const fileId = input.file_id ?? resolved?.fileId;
+    const source = input.source;
+    const sourceIsId = typeof source === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(source);
+    const resolved = input.file_id || sourceIsId ? undefined : await this.resolvePath({ path: source });
+    const fileId = input.file_id ?? (sourceIsId ? source : resolved?.fileId);
     if (!fileId) throw new Error('source must resolve to a Files file or file_id');
     const detail = await this.containerJson<any>(`/v1/files/${encodeURIComponent(fileId)}`, input);
     const response = await this.containerRequest(`/v1/files/${encodeURIComponent(fileId)}/download`, input);
