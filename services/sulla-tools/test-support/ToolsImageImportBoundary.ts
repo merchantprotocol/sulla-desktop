@@ -24,8 +24,14 @@ import { ModuleFiles } from './ModuleFiles';
  * can be reported even though the image never loads it at runtime. Narrowing the walk to the tool and
  * file loaders keeps the scan on the paths that have actually regressed.
  *
- * Also ignored: `import type` / `export type`, dynamic `import()` (run inside function bodies), and
- * comments (a word "import" in a doc comment followed later by a quoted path is not an edge).
+ * 4. Dynamic `import('x')` with a string-literal specifier IS an edge. It runs inside a function body,
+ *    but the Tools container still executes that body, so the target must be copied. Template literals
+ *    and computed specifiers are not resolved (the scan reports only what it can name). Manifest
+ *    `loader:` imports are the exception: they are roots (rule 1), selected by execution target.
+ *
+ * Ignored: `import type` / `export type`, `typeof import('x')` and `type X = import('x')` (type positions
+ * that esbuild erases), and anything inside comments or string literals (a word "import" in prose or a
+ * quoted `"import('@pkg/main/x')"` is not an edge). Comment and string detection uses CodeView below.
  */
 
 export interface ToolsImageImportBoundaryOptions {
@@ -39,9 +45,17 @@ export interface ToolsImageImportBoundaryOptions {
 
 interface RuntimeImport { specifier: string; typeOnly: boolean }
 
-// Static edges only: `import x from`, `import {..} from`, `import * as`, `import 'x'`, and `export ... from`.
+// Static edges: `import x from`, `import {..} from`, `import * as`, `import 'x'`, and `export ... from`.
+// Matched on CodeView text, where string contents are blanked; the specifier is read back from source.
 // Manifest `loader: () => import('./x')` targets are discovered as ROOTS by ToolManifestEntrypoints instead.
-const STATIC_IMPORT = /\b(import|export)\s+(type\s+)?(?:[^'";]*?\s+from\s+)?(['"])([^'"\n]+)\3/g;
+const STATIC_IMPORT = /\b(import|export)\s+(type\s+)?(?:([^'";]*?)\s+from\s+)?(['"])/g;
+// Dynamic `import('x')` edges. A lookbehind keeps `foo.import(` and `myimport(` out.
+const DYNAMIC_IMPORT = /(?<![\w$.])import\s*\(\s*(['"])/g;
+const TYPE_POSITION_PREFIX = /(?:\btypeof\s+|\btype\s+[\w$]+(?:<[^>]*>)?\s*=[^;]*)$/;
+// Manifest files hold loader functions (`loader: () => import('./x')`, `loader: async() => ...`,
+// `const load = () => import(...)`). The registry runs a loader only for catalog-target entries, and
+// ToolManifestEntrypoints roots exactly those, so dynamic imports inside manifests are not walked.
+const MANIFEST_FILE = /(?:^|\/)manifests\.ts$/;
 const FOLLOWED_PREFIXES = [
   'pkg/sulla-desktop/agent/tools/',
   'pkg/sulla-desktop/agent/files/',
@@ -125,16 +139,109 @@ export class ToolsImageImportBoundary {
 
   private runtimeImports(file: string): RuntimeImport[] {
     const sourceFile = this.overrideSources.get(path.posix.normalize(file)) ?? file;
-    const code = stripComments(readFileSync(path.join(this.root, sourceFile), 'utf8'));
+    const source = readFileSync(path.join(this.root, sourceFile), 'utf8');
+    const code = new CodeView(source);
     const imports: RuntimeImport[] = [];
-    for (const match of code.matchAll(STATIC_IMPORT)) imports.push({ specifier: match[4], typeOnly: Boolean(match[2]) });
+    for (const match of code.text.matchAll(STATIC_IMPORT)) {
+      const quoteAt = match.index + match[0].length - 1;
+      imports.push({ specifier: code.literalAt(quoteAt), typeOnly: Boolean(match[2]) || isTypeOnlyClause(match[3]) });
+    }
+    if (MANIFEST_FILE.test(file)) return imports;
+    for (const match of code.text.matchAll(DYNAMIC_IMPORT)) {
+      const quoteAt = match.index + match[0].length - 1;
+      const before = code.lineBefore(match.index);
+      imports.push({ specifier: code.literalAt(quoteAt), typeOnly: TYPE_POSITION_PREFIX.test(before) });
+    }
     return imports;
   }
 }
 
-/** Blanks block comments and line comments so their prose cannot look like an import statement. */
-function stripComments(source: string): string {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, block => block.replace(/[^\n]/g, ' '))
-    .replace(/(^|[^:'"`\\])\/\/[^\n]*/gm, (_match, lead: string) => lead);
+/**
+ * True when every binding in an import clause is a type (`{ type A, type B }`). esbuild drops such an
+ * import entirely, so it never loads the module. A default or namespace binding is a value.
+ */
+function isTypeOnlyClause(clause: string | undefined): boolean {
+  if (!clause) return false;
+  const trimmed = clause.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
+  const specifiers = trimmed.slice(1, -1).split(',').map(item => item.trim()).filter(Boolean);
+  return specifiers.length > 0 && specifiers.every(item => /^type\s+/.test(item));
+}
+
+/**
+ * Source text with comments and string-literal contents blanked to spaces (newlines kept), so regexes
+ * only see code. Length and offsets match the original, so `literalAt` can read the real specifier back.
+ */
+class CodeView {
+  readonly text: string;
+
+  constructor(private readonly source: string) {
+    this.text = blankNonCode(source);
+  }
+
+  /** Specifier of the string literal whose opening quote sits at `quoteAt`. */
+  literalAt(quoteAt: number): string {
+    const quote = this.source[quoteAt];
+    const close = this.text.indexOf(quote, quoteAt + 1);
+    return close === -1 ? '' : this.source.slice(quoteAt + 1, close);
+  }
+
+  /** Code on the same line, before `index`. */
+  lineBefore(index: number): string {
+    const lineStart = this.text.lastIndexOf('\n', index - 1) + 1;
+    return this.text.slice(lineStart, index);
+  }
+}
+
+/** Single pass over the source: blanks comments and string/template contents; keeps quote delimiters. */
+function blankNonCode(source: string): string {
+  const out = source.split('');
+  const blank = (index: number): void => { if (out[index] !== '\n') out[index] = ' '; };
+  // Brace depth of the code we are in; a stack of enclosing depths for each open `${ ... }` substitution.
+  const substitutions: number[] = [];
+  let depth = 0;
+  let mode: 'code' | 'line' | 'block' | 'string' | 'template' = 'code';
+  let quote = '';
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    const next = source[i + 1];
+    if (mode === 'line') {
+      if (char === '\n') mode = 'code';
+      else blank(i);
+      continue;
+    }
+    if (mode === 'block') {
+      if (char === '*' && next === '/') { blank(i); blank(i + 1); i++; mode = 'code'; }
+      else blank(i);
+      continue;
+    }
+    if (mode === 'string' || mode === 'template') {
+      if (char === '\\') { blank(i); blank(i + 1); i++; continue; }
+      if (mode === 'string' && (char === quote || char === '\n')) { mode = 'code'; continue; }
+      if (mode === 'template' && char === '`') { mode = 'code'; continue; }
+      if (mode === 'template' && char === '$' && next === '{') {
+        substitutions.push(depth);
+        depth = 0;
+        mode = 'code';
+        i++;
+        continue;
+      }
+      blank(i);
+      continue;
+    }
+    if (char === '/' && next === '/') { mode = 'line'; blank(i); blank(i + 1); i++; continue; }
+    if (char === '/' && next === '*') { mode = 'block'; blank(i); blank(i + 1); i++; continue; }
+    if (char === '\'' || char === '"') { mode = 'string'; quote = char; continue; }
+    if (char === '`') { mode = 'template'; continue; }
+    if (char === '{') depth++;
+    if (char === '}') {
+      if (depth === 0 && substitutions.length > 0) {
+        depth = substitutions.pop() as number;
+        mode = 'template';
+        continue;
+      }
+      depth--;
+    }
+  }
+  return out.join('');
 }
