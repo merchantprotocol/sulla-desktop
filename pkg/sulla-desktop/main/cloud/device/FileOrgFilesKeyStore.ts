@@ -34,13 +34,22 @@ export class FileOrgFilesKeyStore implements OrgFilesVaultKeyStore {
     let legacy: Buffer;
     try { legacy = await this.filesystem.promises.readFile(legacyPath); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+    try { this.requireStorage(); }
+    catch (error) {
+      await this.filesystem.promises.writeFile(legacyPath, Buffer.alloc(legacy.byteLength));
+      await this.filesystem.promises.unlink(legacyPath);
+      legacy.fill(0);
+      throw error;
+    }
     const stored = JSON.parse(legacy.toString('utf8')) as { v?: number; privateJwk?: JsonWebKey };
     if (stored?.v !== 1 || !this.isPrivateP256Jwk(stored.privateJwk)) throw new Error('Legacy Org Files recipient key is invalid');
     await this.write(itemKey, stored.privateJwk);
+    const migrated = await this.read(itemKey);
+    if (!migrated) throw new Error('Org Files recipient key migration did not persist');
     await this.filesystem.promises.writeFile(legacyPath, Buffer.alloc(legacy.byteLength));
     await this.filesystem.promises.unlink(legacyPath);
     legacy.fill(0);
-    return stored.privateJwk;
+    return migrated;
   }
 
   async write(itemKey: string, value: JsonWebKey): Promise<void> {
@@ -88,7 +97,13 @@ export class FileOrgFilesKeyStore implements OrgFilesVaultKeyStore {
     const file = await this.filesystem.promises.open(temporary, 'wx', 0o600);
     try { await file.writeFile(value); await file.sync(); }
     finally { await file.close(); }
-    try { await this.filesystem.promises.rename(temporary, target); await this.filesystem.promises.chmod(target, 0o600); }
+    try {
+      // Link is atomic and create-if-absent: simultaneous first-run writers cannot
+      // replace the recipient key whose public half may already be in Cloud.
+      await this.filesystem.promises.link(temporary, target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
     finally { await this.filesystem.promises.unlink(temporary).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }); }
   }
 
