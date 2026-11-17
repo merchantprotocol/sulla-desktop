@@ -16,6 +16,7 @@ import { SessionBindSigner } from '@pkg/main/cloud/device/SessionBindSigner';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 import { promoteMemoryCredentialToVault } from '@pkg/agent/services/oauth/custody/promote';
 import {
+  deleteAllFirstRunCredentials,
   deleteFirstRunCredential,
   deleteFirstRunCredentialsForIntegration,
   loadFirstRunCredentials,
@@ -27,6 +28,8 @@ export interface PendingCredential {
   accountId: string;
   values: Record<string, string>;
   activate?: boolean;
+  /** Sulla Cloud user the entry was captured under. Undefined only before any account has signed in. */
+  cloudUserId?: string;
 }
 
 const pending = new Map<string, PendingCredential>();
@@ -43,6 +46,10 @@ let vaultUnlocked = false;
 let vaultReady = false;
 let retryDelayMs = 1_000;
 let scheduleFlush: (() => void) | undefined;
+/** The Cloud account currently signed in, as far as first-run holds are concerned. Set by sign-in, cleared by sign-out. */
+let activeCloudUserId: string | undefined;
+/** Sign-out happened: the encrypted staging table must be emptied before anything else is staged. */
+let deleteAllStaged = false;
 
 // Runtime Postgres is NOT up during most of first run (the VM is still
 // starting). Memory is the source of truth for the current process; the
@@ -64,17 +71,33 @@ async function runDurableSync(): Promise<boolean> {
   if (durableRun) return durableRun;
   durableRun = (async() => {
     try {
+      if (deleteAllStaged) {
+        await deleteAllFirstRunCredentials();
+        deleteAllStaged = false;
+        durableLoaded = true;
+        // Rows staged after sign-out live only in `pending`; stage them again now that the table is clean.
+        unsyncedWrites.clear();
+        for (const [key, entry] of pending) unsyncedWrites.set(key, entry);
+        firstRunTrace('pending', 'encrypted sign-in copies cleared on sign-out', { status: 'success' });
+      }
       if (!durableLoaded) {
         const rows = await loadFirstRunCredentials();
         let merged = 0;
+        let foreign = 0;
         for (const row of rows) {
           const key = keyFor(row);
           if (pending.has(key) || unsyncedDeletes.has(key) || unsyncedDeletes.has(deleteKey(row.integrationId))) continue;
+          if (row.cloudUserId && activeCloudUserId === undefined) bindActiveAccount(row.cloudUserId);
+          if (isForeign(row)) {
+            unsyncedDeletes.add(deleteKey(row.integrationId, row.accountId));
+            foreign++;
+            continue;
+          }
           pending.set(key, row);
           merged++;
         }
         durableLoaded = true;
-        firstRunTrace('pending', 'loaded encrypted sign-ins from runtime Postgres', { status: 'success', integrations: rows.map(row => row.integrationId), merged });
+        firstRunTrace('pending', 'loaded encrypted sign-ins from runtime Postgres', { status: 'success', integrations: rows.map(row => row.integrationId), merged, foreign });
       }
       for (const key of [...unsyncedDeletes]) {
         const [integrationId, accountId] = key.split('\0');
@@ -167,27 +190,63 @@ function clearValues(values: Record<string, string>): void {
   }
 }
 
+/** Overwrites secret bytes (Buffer/Uint8Array) and empties the value map. JS strings cannot be overwritten; they are dropped with their map. */
+function wipeEntry(entry: PendingCredential): void {
+  for (const value of Object.values(entry.values) as unknown[]) {
+    if (ArrayBuffer.isView(value)) (value as Uint8Array).fill(0);
+  }
+  clearValues(entry.values);
+}
+
+/** True when an entry was captured under a Cloud account other than the one now signed in. */
+function isForeign(entry: Pick<PendingCredential, 'cloudUserId'>): boolean {
+  return !!entry.cloudUserId && activeCloudUserId !== undefined && entry.cloudUserId !== activeCloudUserId;
+}
+
+function dropForeignEntries(): void {
+  let dropped = 0;
+  for (const [key, entry] of [...pending]) {
+    if (!isForeign(entry)) continue;
+    pending.delete(key);
+    unsyncedWrites.delete(key);
+    unsyncedDeletes.add(deleteKey(entry.integrationId, entry.accountId));
+    wipeEntry(entry);
+    dropped++;
+    firstRunTrace('pending', 'dropped sign-in captured under a different account', { integrationId: entry.integrationId, status: 'dropped' });
+  }
+  if (dropped) scheduleDurableSync();
+}
+
+/** A Cloud account became the signed-in one: first-run holds from any other account are dropped. */
+function bindActiveAccount(cloudUserId: string): void {
+  if (activeCloudUserId === cloudUserId) return;
+  activeCloudUserId = cloudUserId;
+  dropForeignEntries();
+}
+
 export async function queuePendingCredential(entry: PendingCredential): Promise<void> {
   firstRunTrace('pending', 'sign-in held in memory; encrypted runtime Postgres copy queued until the vault is ready', {
     integrationId: entry.integrationId, accountId: entry.accountId, fields: Object.keys(entry.values), vaultUnlocked, vaultReady,
   });
   if (entry.integrationId === 'sulla-cloud') {
+    if (entry.accountId) bindActiveAccount(entry.accountId);
     for (const [candidateKey, candidate] of pending) {
       if (candidate.integrationId !== 'sulla-cloud') continue;
       pending.delete(candidateKey);
       unsyncedWrites.delete(candidateKey);
-      clearValues(candidate.values);
+      wipeEntry(candidate);
     }
     unsyncedDeletes.add(deleteKey(entry.integrationId));
   }
   const key = keyFor(entry);
   const previous = pending.get(key);
-  if (previous) clearValues(previous.values);
-  const durableEntry = {
+  if (previous) wipeEntry(previous);
+  const durableEntry: PendingCredential = {
     integrationId: entry.integrationId,
     accountId:     entry.accountId,
     values:        { ...entry.values },
     activate:      entry.activate,
+    cloudUserId:   activeCloudUserId,
   };
   pending.set(key, durableEntry);
   unsyncedDeletes.delete(key);
@@ -203,9 +262,31 @@ export async function clearPendingCredential(integrationId: string): Promise<voi
     if (entry.integrationId !== integrationId) continue;
     pending.delete(key);
     unsyncedWrites.delete(key);
-    clearValues(entry.values);
+    wipeEntry(entry);
   }
   unsyncedDeletes.add(deleteKey(integrationId));
+  scheduleDurableSync();
+}
+
+/**
+ * Sign-out (and any path that ends the Cloud session): every first-run hold goes, whatever integration it
+ * belongs to. Secret bytes are overwritten, the scheduled flush retry is stopped, and the encrypted staging
+ * table is emptied on the next durable sync.
+ */
+export async function clearAllPendingCredentials(): Promise<void> {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
+  }
+  retryDelayMs = 1_000;
+  for (const entry of pending.values()) wipeEntry(entry);
+  for (const entry of unsyncedWrites.values()) wipeEntry(entry);
+  pending.clear();
+  unsyncedWrites.clear();
+  unsyncedDeletes.clear();
+  activeCloudUserId = undefined;
+  deleteAllStaged = true;
+  firstRunTrace('pending', 'all first-run sign-ins cleared on sign-out', { status: 'cleared' });
   scheduleDurableSync();
 }
 
@@ -272,10 +353,13 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
     // Keep draining: a refresh or a concurrent sign-in may replace an entry
     // while an earlier snapshot is being written.
     while (true) {
+      dropForeignEntries();
       const snapshot = [...pending.entries()];
       if (!snapshot.length) break;
       let madeProgress = false;
       for (const [key, entry] of snapshot) {
+        // Cleared or dropped (sign-out, another account) since the snapshot: never write it.
+        if (pending.get(key) !== entry) continue;
         try {
           firstRunTrace('pending', 'saving sign-in into the vault', { integrationId: entry.integrationId, accountId: entry.accountId });
           await writeEntry(entry);
@@ -297,7 +381,7 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
           unsyncedDeletes.add(deleteKey(entry.integrationId, entry.accountId));
           scheduleDurableSync();
           pending.delete(key);
-          clearValues(entry.values);
+          wipeEntry(entry);
           flushed.push(entry.integrationId);
           madeProgress = true;
           if (entry.integrationId === 'sulla-cloud') {
@@ -306,7 +390,7 @@ export async function flushPendingCredentials(): Promise<PendingCredentialFlushR
         } catch (error) {
           if (error instanceof PendingSessionExpiredError && entry.integrationId === 'sulla-cloud') {
             if (pending.get(key) === entry) pending.delete(key);
-            clearValues(entry.values);
+            wipeEntry(entry);
             returnToCloudSignIn();
             madeProgress = true;
             continue;
