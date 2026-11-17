@@ -158,7 +158,7 @@ function release(claimant: Claimant): void {
 </script>
 
 <style scoped>
-.vault-host { position: relative; width: 100%; height: 100%; min-height: 420px; background: var(--bg-page); }
+.vault-host { position: relative; width: 100%; height: 100%; min-height: 420px; background: var(--card-solid); }
 .vault-host.popup { min-height: 100%; background: var(--bg-page); }
 .vault-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; color: var(--text-secondary); }
 .vault-state strong { color: var(--text-primary); }

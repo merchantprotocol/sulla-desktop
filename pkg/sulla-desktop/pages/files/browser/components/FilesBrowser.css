@@ -177,7 +177,7 @@
 .avatar.sm { width: 20px; height: 20px; font-size: 9px; }
 
 /* Top bar */
-.main { min-width: 0; min-height: 0; overflow: auto; }
+.main { min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .top { display: flex; align-items: center; gap: 14px; padding: 12px 28px; border-bottom: 1px solid var(--line); background: var(--top-bg); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 5; }
 .crumbs { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12.5px; white-space: nowrap; }
 .crumbs b { color: var(--text); font-weight: 600; }
@@ -221,7 +221,7 @@
 .pill.idle { background: var(--idle-soft); color: var(--muted); }
 
 /* Page header + filters */
-.content { padding: 20px 28px 60px; }
+.content { flex: 1 0 auto; padding: 20px 28px 60px; background: var(--card-solid); }
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .toolbar h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0; font-family: var(--sans); color: var(--text); }
 .folder-up { width: 30px; height: 30px; flex: none; display: grid; place-items: center; padding: 0; border: 1px solid var(--line-2); border-radius: 8px; background: var(--card-solid); color: var(--muted); }
