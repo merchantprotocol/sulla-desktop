@@ -7,6 +7,7 @@
 import { ToolResult } from '../types';
 import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
+import { toolDecisionPort } from './toolDecisionPort';
 
 import type { ToolExecutionContext } from './executionContext';
 
@@ -266,12 +267,12 @@ export abstract class BaseTool<TState = any> {
         }
       }
 
-      const { decisionService } = await import('../services/DecisionService');
+      const decisions = toolDecisionPort.resolve();
       const operations = this.metadata.operationTypes ?? [];
       const sideEffect = (metadata?.sideEffect as ToolSideEffect | undefined) ?? (operations.length && operations.every(operation => operation === 'read') ? 'read' : undefined);
       const relayedWrite = metadata?.relayed === true && requiresToolApproval(sideEffect, { relayed: true });
-      if (this.name !== 'ask_user_question' && (relayedWrite || await decisionService.requiresApproval(this.name))) {
-        const { record, result } = await decisionService.request({
+      if (this.name !== 'ask_user_question' && (relayedWrite || await decisions.requiresApproval(this.name))) {
+        const { record, result } = await decisions.request({
           kind:           'approval',
           title:          `Allow ${ this.metadata.category } / ${ this.name }?`,
           toolName:       this.name,

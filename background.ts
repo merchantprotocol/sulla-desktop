@@ -12,6 +12,8 @@
 import '@pkg/main/ipcGuestGuard';
 // Side effect: registers the pinned-TLS Files transport so agent-side Files calls resolve it in Desktop main. Keep it early.
 import '@pkg/main/sullaFilesTls';
+// Side effect: hands tool calls the real approval inbox. Without it, base.ts refuses approval-gated tools.
+import '@pkg/main/toolDecisionPortRegistration';
 
 import { execFile } from 'child_process';
 import fs from 'fs';
