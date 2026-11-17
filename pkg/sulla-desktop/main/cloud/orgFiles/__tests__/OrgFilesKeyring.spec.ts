@@ -98,13 +98,16 @@ describe('OrgFilesKeyring', () => {
     // risk: tenant isolation — one Cloud account must never receive another account's cached org key.
     // risk: key lifecycle — invalidation must erase plaintext bytes without evicting another profile.
     const vault = new MemoryVault(); const cloud = new FakeOrgFilesCloud(); const cipher = makeCipher();
-    const storeA = new OrgFilesRecipientKeyStore(vault, cloud, webcrypto, async () => ({ userId: 'member-1', deviceId: 'device-1' }), async () => 'proof');
-    const storeB = new OrgFilesRecipientKeyStore(new MemoryVault(), cloud, webcrypto, async () => ({ userId: 'member-2', deviceId: 'device-2' }), async () => 'proof');
+    // Each account's recipient-key store and keyring share one Cloud identity, as production does.
     const profileA = 'cloud-account-a'; const profileB = 'cloud-account-b';
+    const storeA = new OrgFilesRecipientKeyStore(vault, cloud, webcrypto, async () => ({ userId: profileA, deviceId: 'device-1' }), async () => 'proof');
+    const storeB = new OrgFilesRecipientKeyStore(new MemoryVault(), cloud, webcrypto, async () => ({ userId: profileB, deviceId: 'device-2' }), async () => 'proof');
     const keyringA = new OrgFilesKeyring(cloud as never, storeA, cipher, undefined, { userId: async () => profileA });
     const keyringB = new OrgFilesKeyring(cloud as never, storeB, cipher, undefined, { userId: async () => profileB });
-    await storeA.ensure('org-1'); await storeB.ensure('org-1');
+    // A's org key is created before B publishes its recipient key, so B gets its own org key rather than A's.
+    await storeA.ensure('org-1');
     const keyA = await keyringA.createOrgKeyIfMissing('org-1');
+    await storeB.ensure('org-1');
     const keyB = await keyringB.createOrgKeyIfMissing('org-1');
     expect(Buffer.from(keyA)).not.toEqual(Buffer.from(keyB));
     const profileIdA = OrgFilesProfileIdentity.fromCloudUserId(profileA);
