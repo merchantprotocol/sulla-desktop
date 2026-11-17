@@ -62,7 +62,7 @@ export class VaultApplication {
     const { db, config } = this;
     const app = express();
     const domainSyncCodec = new DomainVaultSyncCodecProvider();
-    const repositories = this.options.localAuthority?.repositories ?? new VaultRepositories(
+    const repositories = this.options.localAuthority?.vaultRepositories ?? new VaultRepositories(
       this.options.profileSession ?? new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false).legacy(),
     );
     const localAuthority = this.options.localAuthority ?? new LocalVaultAuthority(db, config, undefined, repositories);
@@ -82,7 +82,7 @@ export class VaultApplication {
       ),
     }, repositories.filesCloudEscrow, filesAudit, domainSyncCodec);
     new SullaCloudRoutes(localAuthority, filesCloudEscrow, VaultApplication.enrollmentPaths, requests).register(app);
-    this.mountCloudSync(app, localAuthority, filesCloudEscrow, domainSyncCodec, requests, repositories.database);
+    this.mountCloudSync(app, localAuthority, filesCloudEscrow, domainSyncCodec, requests, repositories);
     new BrokerExecutionRoutes(localAuthority, requests).register(app);
     new VaultConsoleRoutes(resolve(dirname(fileURLToPath(import.meta.url)), '../console/local')).register(app);
     new VaultErrorHandler().register(app);
@@ -96,7 +96,7 @@ export class VaultApplication {
     filesCloudEscrow: FilesCloudEscrowService,
     domainSyncCodec: DomainVaultSyncCodecProvider,
     requests: VaultRequestInput,
-    database: Database,
+    repositories: VaultRepositories,
   ): void {
     const { config } = this;
     const { serviceIdentity, humanCookie } = requests;
@@ -106,7 +106,7 @@ export class VaultApplication {
       localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
     }, request => { localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token')); });
     // Passwords sync v3: the container builds/applies every body; main only signs hashes.
-    registerCloudSyncRoutes(app, new CloudVaultSyncRunner(database, {
+    registerCloudSyncRoutes(app, new CloudVaultSyncRunner(repositories.database, {
       withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),
       sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
         config.approvalServiceId ?? '', config.approvalServiceToken, input,

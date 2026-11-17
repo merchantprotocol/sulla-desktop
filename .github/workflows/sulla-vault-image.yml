@@ -2,6 +2,13 @@
 name: Publish sulla-vault image
 on:
   workflow_dispatch:
+  # PRs only type-check (job `typecheck`); the image is published after merge.
+  pull_request:
+    paths:
+      - 'services/sulla-vault/**'
+      - 'packages/vault-crypto/**'
+      - 'packages/vault-profiles/**'
+      - '.github/workflows/sulla-vault-image.yml'
   push:
     branches: [main]
     tags: ['v*']
@@ -10,6 +17,7 @@ on:
     paths:
       - 'services/sulla-vault/**'
       - 'packages/vault-crypto/**'
+      - 'packages/vault-profiles/**'
       - 'contracts/server-split/**'
       - 'scripts/contracts/write-base-image-metadata.mjs'
       - '.github/workflows/sulla-vault-image.yml'
@@ -17,7 +25,24 @@ permissions:
   contents: read
   packages: write
 jobs:
+  # A vault that does not compile cannot be published, and an unpublished image
+  # blocks every local build at `vault-pin-check`. Catch it before merge.
+  typecheck:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build vault-crypto
+        run: cd packages/vault-crypto && npm ci --ignore-scripts && npm run build
+      - name: Build sulla-vault (same steps as the Dockerfile)
+        run: cd services/sulla-vault && npm install --ignore-scripts && npm run build
   image:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

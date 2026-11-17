@@ -13,7 +13,7 @@ export declare class ProfileCatalogEntry {
 export declare class ProfileBoundary {
   resolve(entries: readonly (ProfileCatalogEntry | Record<string, unknown>)[], profileId: string): ProfileCatalogEntry | Record<string, unknown>;
   assertCurrent(requestGeneration: number | ProfileGeneration, activeGeneration: number | ProfileGeneration): void;
-  assertCollisionSafe(entries: readonly Record<string, unknown>[]): void;
+  assertCollisionSafe(entries: readonly (ProfileCatalogEntry | Record<string, unknown>)[]): void;
   serializeLogDto(input: { profileId: string | ProfileId; generation: number | ProfileGeneration; event: string }): Readonly<{ profileId: string; generation: number; event: string }>
   serializeCatalogEntry(entry: ProfileCatalogEntry | Record<string, unknown>): Readonly<Record<string, unknown>>;
 }

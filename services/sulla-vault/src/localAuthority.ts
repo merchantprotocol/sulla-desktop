@@ -187,6 +187,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
 
   private repositories: VaultRepositories;
 
+  /** The repository registry this authority is bound to; route composition must share it, never build a second one. */
+  get vaultRepositories(): VaultRepositories { return this.repositories; }
+
   get profileContext() { return this.repositories.session.context; }
 
   assertProfileCurrent(profileId: string, generation: this['profileContext']['generation']): void {

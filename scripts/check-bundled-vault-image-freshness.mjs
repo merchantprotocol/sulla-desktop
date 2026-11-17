@@ -70,6 +70,7 @@ export class BundledVaultImageFreshnessGuard {
   static inputPaths = [
     'services/sulla-vault',
     'packages/vault-crypto',
+    'packages/vault-profiles',
     'contracts/server-split',
     'scripts/contracts/write-base-image-metadata.mjs',
     '.github/workflows/sulla-vault-image.yml',

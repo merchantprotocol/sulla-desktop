@@ -54,6 +54,28 @@ describe('vault profile session query fence', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it('fences clients from both promise-style and callback-style connect', async () => {
+    const clientQuery = vi.fn(async () => ({ rows: [], rowCount: 0 }));
+    const client = { query: clientQuery, release: vi.fn() };
+    const connect = vi.fn((callback?: (error: unknown, client: unknown, done: () => void) => void) => {
+      if (!callback) return Promise.resolve(client);
+      callback(undefined, client, () => undefined);
+      return undefined;
+    });
+    const session = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { connect } as never);
+    const promised = await session.database.connect();
+    let viaCallback: { query(sql: string): Promise<unknown> } | undefined;
+    const pool = session.database as unknown as { connect(callback: (error: unknown, client: typeof viaCallback) => void): void };
+    expect(pool.connect((_error, connected) => { viaCallback = connected; })).toBeUndefined();
+    await promised.query('SELECT 1');
+    await viaCallback!.query('SELECT 1');
+    expect(clientQuery).toHaveBeenCalledTimes(2);
+    session.invalidate();
+    await expect(promised.query('SELECT key')).rejects.toThrow(/stale/i);
+    await expect(viaCallback!.query('SELECT key')).rejects.toThrow(/stale/i);
+    expect(clientQuery).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects promise-style stale queries with a stale error', async () => {
     const query = vi.fn();
     const session = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { query } as never);
