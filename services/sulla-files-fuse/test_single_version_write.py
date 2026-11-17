@@ -15,8 +15,9 @@ class Api:
         self.content = content
         self.writes = 0
 
-    async def read(self, file_id):
-        return self.content, "v1", hashlib.sha256(self.content).hexdigest()
+    async def read_to_file(self, file_id, file):
+        file.write(self.content)
+        return "v1", hashlib.sha256(self.content).hexdigest()
 
     async def write(self, file_id, file, size, version_id, source_hash):
         self.writes += 1
