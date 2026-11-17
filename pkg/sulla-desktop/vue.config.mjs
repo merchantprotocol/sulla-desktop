@@ -50,6 +50,8 @@ export default {
   chainWebpack: (config) => {
     config.target('electron-renderer');
     config.resolve.alias.set('@pkg', path.resolve(rootDir, 'pkg', 'sulla-desktop'));
+    // Workspace package that is not a yarn workspace: build from its TypeScript source, as tsconfig paths do.
+    config.resolve.alias.set('@sulla/vault-crypto$', path.resolve(rootDir, 'packages', 'vault-crypto', 'src', 'index.ts'));
     // electron-renderer otherwise selects Automerge's Node/fs WASM entry. Embed WASM instead.
     config.resolve.alias.set('@automerge/automerge$', path.resolve(rootDir, 'node_modules/@automerge/automerge/dist/mjs/entrypoints/fullfat_base64.js'));
     config.resolve.extensions.add('.ts');
