@@ -49,9 +49,9 @@ export class OrgFilesCloudClient {
     return collection.collectionKeyWrap;
   }
 
-  async createCollection(orgId: string, body: unknown) {
+  async createCollection(orgId: string, body: unknown): Promise<void> {
     const request = new OrgFilesContract().createCollectionRequest(body);
-    return new OrgFilesContract().collectionsResponse(await this.mutate(OrgFilesContract.routes.createCollection, { orgId }, request));
+    await this.mutate(OrgFilesContract.routes.createCollection, { orgId }, request);
   }
 
   async grants(orgId: string, collectionId: string) {

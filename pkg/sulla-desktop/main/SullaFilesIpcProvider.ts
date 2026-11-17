@@ -17,6 +17,7 @@ import { SullaFilesIpcSharingHandlers } from './SullaFilesIpcSharingHandlers';
 import { SullaFilesIpcApi } from './SullaFilesIpcSupport';
 import { SullaFilesIpcUploadHandlers } from './SullaFilesIpcUploadHandlers';
 import { SullaFilesIpcUploadService } from './SullaFilesIpcUploadService';
+import { OrgFilesDesktopRuntime } from './cloud/orgFiles/OrgFilesDesktopRuntime';
 
 import type { Protocol } from 'electron';
 import type { SullaFilesClient } from './sullaFilesClient';
@@ -49,6 +50,8 @@ export class SullaFilesIpcProvider {
   register():void {
     const { ipc, rawIpc, client, protocol, desktop, services, chatImport, logger } = this.deps;
     const watcher = services.watcher();
+    ipc.handle('files-ui:create-org-collection', (_event, input:{ orgId?:string; orgName?:string; name:string }) =>
+      OrgFilesDesktopRuntime.current().createCollection(input));
     const api = new SullaFilesIpcApi(client);
     const upload = new SullaFilesIpcUploadService(client);
     const media = new SullaFilesIpcMediaService(protocol, client);

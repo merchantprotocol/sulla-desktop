@@ -196,14 +196,21 @@ async function stopConversationSync(): Promise<void> {
 async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
   reconcileSyncDrivers();
   if (!prefs.enabled) {
-    await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop(); MemorySyncV1.stop();
+    await stopConversationSync().catch(() => undefined); ConversationSyncService.stop(); VaultSyncV3.stop(); FilesSyncV1.stop();
+    (await import('./orgFiles/OrgFilesDesktopRuntime')).OrgFilesDesktopRuntime.currentOrNull()?.stop(); MemorySyncV1.stop();
     DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop(); CloudDataSync.stop(); ByoUsageSync.stop(); return;
   }
   if (prefs.conversations) { await startConversationSync(); ConversationSyncService.start(); } else { await stopConversationSync(); ConversationSyncService.stop(); }
   // A revoked or key-refused device never starts device-signed sync (see DeviceSyncGate).
   const deviceTrusted = syncGate.allowsSync(DevicesCloudApi.getState());
   if (prefs.vault && deviceTrusted) VaultSyncV3.start(); else VaultSyncV3.stop();
-  if (prefs.files && deviceTrusted) FilesSyncV1.start(); else FilesSyncV1.stop();
+  if (prefs.files && deviceTrusted) {
+    FilesSyncV1.start();
+    (await import('./orgFiles/OrgFilesDesktopRuntime')).OrgFilesDesktopRuntime.current().start();
+  } else {
+    FilesSyncV1.stop();
+    (await import('./orgFiles/OrgFilesDesktopRuntime')).OrgFilesDesktopRuntime.currentOrNull()?.stop();
+  }
   if (prefs.memory) MemorySyncV1.start(); else MemorySyncV1.stop();
   // Marketplace/installable projections are intentionally not user-syncable.
   DeviceInstallSync.stop(); CloudRuntimeProjectionSync.stop();
@@ -261,6 +268,7 @@ export async function stopCloudServices(): Promise<void> {
   VaultDeviceApproval.stop();
   VaultSyncV3.stop();
   FilesSyncV1.stop();
+  (await import('./orgFiles/OrgFilesDesktopRuntime')).OrgFilesDesktopRuntime.currentOrNull()?.stop();
   MemorySyncV1.stop();
   DeviceInstallSync.stop();
   CloudRuntimeProjectionSync.stop();
@@ -346,7 +354,7 @@ export function initCloudConnectionEvents(): void {
 
   ipc.handle('sulla-cloud-connection:sync-now', async(_e: unknown, kind: CloudDataKind | 'all') => {
     if (kind === 'vault') await VaultSyncV3.syncNow();
-    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); await MemorySyncV1.syncNow(); await ByoUsageSync.flush(); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); }
+    else if (kind === 'all') { await syncRuntimeProjections(true); await CloudDataSync.syncEnabled(true); await MemorySyncV1.syncNow(); await ByoUsageSync.flush(); ConversationSyncService.syncNow().catch(() => undefined); FilesSyncV1.wake(); (await import('./orgFiles/OrgFilesDesktopRuntime')).OrgFilesDesktopRuntime.currentOrNull()?.wake(); }
     else if (kind === 'memory') await MemorySyncV1.syncNow();
     else if (kind === 'usage') { await CloudDataSync.syncNow(kind as ProjectionKind, true); await ByoUsageSync.flush(); }
     return getCloudConnectionStatus();

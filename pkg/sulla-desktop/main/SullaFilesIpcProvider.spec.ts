@@ -76,6 +76,7 @@ const PROXIED_CHANNELS = [
   'files-ui:capture-screenshot',
   'files-ui:toggle-recording',
   'files-ui:create-link',
+  'files-ui:create-org-collection',
   'files-ui:list-links',
   'files-ui:revoke-link',
   'files-ui:update-link',

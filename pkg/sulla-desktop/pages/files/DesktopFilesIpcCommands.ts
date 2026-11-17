@@ -133,6 +133,10 @@ export abstract class DesktopFilesIpcCommands {
     return this.ipc.invoke('files-ui:create-link', { fileId, ...options });
   }
 
+  createOrgCollection(input:{ orgId?:string; orgName?:string; name:string }):Promise<{ collectionId:string; path:string }> {
+    return this.ipc.invoke('files-ui:create-org-collection', input);
+  }
+
   updatePublicLink(id:string, options:Partial<ShareLinkOptions>):Promise<ShareLink> {
     return this.ipc.invoke('files-ui:update-link', { id, options });
   }
