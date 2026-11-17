@@ -49,7 +49,8 @@ from common import (
     split_list,
 )
 
-URLHAUS_FEED_URL = "https://urlhaus.abuse.ch/downloads/hostfile/"
+# Desktop fetches the feed (malware-filter's URLhaus hosts file) and delivers it here.
+URLHAUS_FEED_URL = "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt"
 URLHAUS_PATH = os.path.join(BLOCKLIST_DIR, "urlhaus.txt")
 
 SAFE_BROWSING_ENDPOINT = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
@@ -162,10 +163,12 @@ class URLFilter:
                     path=URLHAUS_PATH,
                 )
             except FileNotFoundError:
+                # Normal on first boot: Desktop downloads the list after launch and
+                # delivers it here; it is re-read every URLHAUS_RELOAD_SECS.
                 log(
                     "url_filter",
-                    "warn",
-                    "URLhaus blocklist missing — skipping local blocking",
+                    "info",
+                    "URLhaus blocklist not delivered yet; local blocking starts when it arrives",
                     path=URLHAUS_PATH,
                 )
             except Exception as ex:

@@ -11,6 +11,15 @@
 export class SullaCloudDesktopRoutePolicy {
   static readonly RULES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
     [/^\/devices\/(?:register|heartbeat)$/, ['POST']],
+    [/^\/devices$/, ['GET']],
+    [/^\/devices\/[A-Za-z0-9._~-]{1,200}$/, ['GET', 'PATCH', 'DELETE']],
+    [/^\/memory-sync\/v1\/key-slot$/, ['GET', 'PUT']],
+    [/^\/memory-sync\/v1\/changes$/, ['GET']],
+    [/^\/memory-sync\/v1\/commit$/, ['POST']],
+    [/^\/memory-sync\/v1\/cloud-copy$/, ['DELETE']],
+    [/^\/slack\/inbound$/, ['GET']],
+    [/^\/slack\/inbound\/ack$/, ['POST']],
+    [/^\/slack\/workspaces$/, ['POST', 'DELETE']],
     [/^\/desktop-channel\/tickets$/, ['POST']],
     [/^\/desktop-sync\/[A-Za-z0-9._~-]{1,200}\/(?:vault|conversations)$/, ['PUT', 'DELETE']],
     [/^\/cloud-runtime\/v1\/device\/(?:workflows|agents|skills|custom-agents|recipes|usage|memory|model-catalog)$/, ['PUT', 'DELETE']],

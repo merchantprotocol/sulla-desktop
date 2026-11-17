@@ -14,6 +14,7 @@
   --bg-page: #ffffff;
   --bg-surface: #f8fafc;
   --bg-surface-alt: #f1f5f9;
+  --bg-chrome: #e6ebf1; /* header, traffic-light corner and icon rail; must contrast with --bg-surface (active tab) */
   --bg-surface-hover: #e2e8f0;
   --bg-header: #ffffff;
   --bg-input: #ffffff;
@@ -512,15 +513,15 @@
 }
 
 .theme-default-light .browser-tab,
-.theme-default-light .tab-item,
+.theme-default-light .tab-item:not(.app-titlebar .tab-item),
 .theme-default-light [class*="browser-tab"] {
   background: transparent !important;
   color: var(--text-secondary, #64748b) !important;
 }
 
 .theme-default-light .browser-tab.active,
-.theme-default-light .tab-item.active,
-.theme-default-light .tab-item.on,
+.theme-default-light .tab-item:not(.app-titlebar .tab-item).active,
+.theme-default-light .tab-item:not(.app-titlebar .tab-item).on,
 .theme-default-light [class*="browser-tab"][class*="active"] {
   background: var(--bg-page, #ffffff) !important;
   color: var(--text-primary, #0d0d0d) !important;
