@@ -41,7 +41,7 @@ defineExpose({ focusSearch: () => searchInput.value?.focus() });
 </script>
 
 <style scoped>
-.studio-topbar { display: grid; flex: none; grid-template-columns: minmax(60px, auto) minmax(260px, 520px) 1fr; align-items: center; gap: 16px; height: 58px; padding: 0 28px; border-bottom: 1px solid var(--uc-line); background: color-mix(in srgb, var(--uc-card) 68%, transparent); }
+.studio-topbar { display: grid; flex: none; grid-template-columns: minmax(60px, auto) minmax(260px, 520px) 1fr; align-items: center; gap: 16px; height: 58px; padding: 0 28px; border-bottom: 1px solid var(--uc-line); background: var(--bg-content-header, color-mix(in srgb, var(--uc-card) 68%, transparent)); }
 .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .crumbs button { padding: 0; border: 0; background: none; color: var(--uc-muted); font: inherit; cursor: pointer; }
 .crumbs button:hover { color: var(--uc-accent); }

@@ -16,6 +16,9 @@
   --bg-surface-alt: #f1f5f9;
   /* Chat header, browser toolbar and active tab share this. It matches the rendered Files and Passwords header (their fixed light palette: 40% white over #f4f7fb plus a faint blue glow). */
   --bg-chrome-active: #f6f9fb;
+  /* Main content areas (Settings, Docker, Studio, Marketplace) are white like the chat; their headers keep the chrome blue. Dark themes leave both unset. */
+  --bg-content: #ffffff;
+  --bg-content-header: var(--bg-chrome-active);
   --bg-chrome: #e6ebf1; /* header, traffic-light corner and icon rail; must contrast with --bg-surface (active tab) */
   --bg-surface-hover: #e2e8f0;
   --bg-header: #ffffff;

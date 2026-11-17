@@ -279,6 +279,7 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
+    background: var(--bg-content, transparent);
   }
   .page {
     padding: 26px 32px 48px;
