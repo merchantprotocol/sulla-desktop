@@ -2022,7 +2022,7 @@ function handleTabContextMenuAction(
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
 .app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
-.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow: hidden; }
+.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
 .app-titlebar .tab-item {
   position: relative;
   height: 34px;
@@ -2048,7 +2048,7 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
   z-index: 2;
-  min-width: 64px;
+  min-width: 120px;
   margin-bottom: -1px;
   border: 1px solid var(--border-default);
   border-bottom: 0;
@@ -2103,7 +2103,6 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-pinned { min-width: 64px; max-width: none; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
 .app-titlebar .tab-pinned.tab-active { box-shadow: none; }
 .app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
-.app-titlebar .tab-scroll-chevron { display: none; }
 .app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
 .app-titlebar .tab-scroll-wrapper > button.tab-new { margin-left: 4px; }
 .app-titlebar .tab-new,
