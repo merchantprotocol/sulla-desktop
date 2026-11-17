@@ -1,5 +1,12 @@
 import { webcrypto } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({ default: { app: { getPath: () => '/ud', getVersion: () => '0.0.0' }, net: { fetch: vi.fn() }, safeStorage: { isEncryptionAvailable: () => false } } }));
+vi.mock('../../../sullaCloudAuth', () => ({ getCurrentUserId: vi.fn(async () => 'member-1'), getCurrentAccessToken: vi.fn(async () => 'token'), isCloudSignedIn: vi.fn(async () => false) }));
+vi.mock('../../../deviceIdentity', () => ({ getDesktopDeviceId: vi.fn(async () => 'device-1') }));
+vi.mock('../../deviceKey', () => ({ signDeviceMessageExact: vi.fn(async () => 'device-proof') }));
+vi.mock('../../cloudFetch', () => ({ cloudRequest: vi.fn(), isCloudSignedIn: vi.fn(async () => false) }));
+
 import { OrgFilesKeyCipher, OrgFilesRecipientKeyPayload, type OrgFilesKeyWrap, type OrgFilesRecipientKey } from '@sulla/domain';
 import { OrgFilesKeyring } from '../OrgFilesKeyring';
 import { OrgFilesRecipientKeyStore, type OrgFilesVaultKeyStore } from '../OrgFilesRecipientKeyStore';
