@@ -23,4 +23,6 @@ export class TransactionControlRepository {
     return result;
   }
   rollback(client:pg.PoolClient):Promise<pg.QueryResult> { return client.query('ROLLBACK') }
+  /** Derived, reconstructible state only: acknowledge the commit before its WAL flush. */
+  useAsynchronousCommit(client:pg.PoolClient):Promise<pg.QueryResult> { return client.query('SET LOCAL synchronous_commit = off') }
 }
