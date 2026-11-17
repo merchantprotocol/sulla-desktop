@@ -18,6 +18,7 @@ import { SullaFilesNativeBroker } from './sullaFilesNativeBroker';
 import { getSullaFilesSourceGateway, lockSullaFilesSourceGateway, unlockSullaFilesSourceGateway } from './sullaFilesSourceGateway';
 import { FINDER_BADGE_MIN_INTERVAL_MS } from './sullaFinderBadges';
 import { SullaUseCaseFiles } from './sullaUseCaseFiles';
+import { SullaUseCaseFilesRequest } from './SullaUseCaseFilesRequest';
 import { UseCaseSuggestionCompositionRoot } from '@pkg/agent/useCases/UseCaseSuggestionCompositionRoot';
 import type { SuggestionOptions, UseCaseSuggestion } from '@pkg/agent/useCases/UseCaseSuggestionIndex';
 import { getBuiltinSkillSpecs } from '@pkg/agent/builtinSkills';
@@ -52,7 +53,11 @@ export class SullaFilesWatcher {
   private nativePollDelayMs = NATIVE_POLL_ACTIVE_MS;
   private nativeNextPollAt = 0;
   private readonly suggestionRoot = new UseCaseSuggestionCompositionRoot(postgresClient, getBuiltinSkillSpecs().map(skill => skill.slug), new RedisUseCaseChangeTransport(redisClient));
-  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.requestFiles(endpoint, init), this.suggestionRoot.notifier);
+  private readonly useCaseFilesRequest = new SullaUseCaseFilesRequest(
+    (endpoint, init = {}) => this.requestFiles(endpoint, init),
+    (endpoint, init = {}) => this.requestNativeFiles(endpoint, init),
+  );
+  private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.useCaseFilesRequest.send(endpoint, init), this.suggestionRoot.notifier);
   private nativeEnabled = false;
   private started = false;
   private stopped = false;
