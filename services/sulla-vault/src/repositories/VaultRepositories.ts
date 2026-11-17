@@ -1,7 +1,7 @@
 // Copyright © 2026 Merchant Protocol, LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { Database } from '../db.js';
+import type { Database, Queryable } from '../db.js';
 import { PostgresRewrapHistoryRepository } from './PostgresRewrapHistoryRepository.js';
 import { PostgresSullaCloudRevocationRepository } from './PostgresSullaCloudRevocationRepository.js';
 import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './PostgresVaultItemRepositories.js';
@@ -11,6 +11,11 @@ import { PostgresFilesCloudEscrowRepository } from './PostgresFilesCloudEscrowRe
 import { PostgresFilesKeyBundleRepository } from './PostgresFilesKeyBundleRepository.js';
 import { PgTransactionRunner } from './PgTransactionRunner.js';
 import { PostgresLocalAuthorityRepository } from './PostgresLocalAuthorityRepository.js';
+import { CloudSyncRepositories } from '../browserEnvelope/sync/CloudSyncRepositories.js';
+import { PostgresSyncStateRepository } from '../browserEnvelope/sync/repositories/PostgresSyncStateRepository.js';
+import { PostgresPersonalItemRepository } from '../browserEnvelope/sync/repositories/PostgresPersonalItemRepository.js';
+import { PostgresLegacyAuditRepository } from './PostgresLegacyAuditRepository.js';
+import { PostgresHumanActivityRepository } from './PostgresHumanActivityRepository.js';
 
 /** Single composition point for profile-protected repositories. SQL, pool, and construction order stay unchanged. */
 export class VaultRepositories {
@@ -28,6 +33,9 @@ export class VaultRepositories {
   readonly filesCloudEscrow: PostgresFilesCloudEscrowRepository;
   readonly filesKeyBundles: PostgresFilesKeyBundleRepository;
   readonly localAuthority: PostgresLocalAuthorityRepository;
+  readonly cloudSync: CloudSyncRepositories;
+  readonly legacyAudit: PostgresLegacyAuditRepository;
+  readonly humanActivity: PostgresHumanActivityRepository;
 
   constructor(pool: Database, transactions: PgTransactionRunner = new PgTransactionRunner()) {
     this.rewrapHistory = new PostgresRewrapHistoryRepository(pool);
@@ -44,5 +52,12 @@ export class VaultRepositories {
     this.filesCloudEscrow = new PostgresFilesCloudEscrowRepository(pool);
     this.filesKeyBundles = new PostgresFilesKeyBundleRepository(pool, transactions);
     this.localAuthority = new PostgresLocalAuthorityRepository(pool, transactions);
+    this.cloudSync = new CloudSyncRepositories(new PostgresSyncStateRepository(), new PostgresPersonalItemRepository());
+    this.legacyAudit = VaultRepositories.createLegacyAuditRepository(pool);
+    this.humanActivity = new PostgresHumanActivityRepository(pool);
+  }
+
+  static createLegacyAuditRepository(connection: Queryable): PostgresLegacyAuditRepository {
+    return new PostgresLegacyAuditRepository(connection);
   }
 }

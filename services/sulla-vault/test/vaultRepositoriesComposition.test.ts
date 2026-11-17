@@ -14,6 +14,8 @@ const protectedRepositories = [
   'PostgresVaultRecoveryRepository', 'PostgresIntegrationStateRepository', 'PostgresVaultMigrationRepository',
   'PostgresVaultSyncStateRepository', 'PostgresLegacyCredentialRepository', 'PostgresDesktopAccountRepository',
   'PostgresFilesCloudEscrowRepository', 'PostgresFilesKeyBundleRepository',
+  'PostgresSyncStateRepository', 'PostgresPersonalItemRepository',
+  'PostgresLegacyAuditRepository', 'PostgresHumanActivityRepository',
 ];
 
 class ProtectedRepositoryConstructionScanner {

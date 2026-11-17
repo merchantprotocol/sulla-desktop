@@ -16,9 +16,9 @@ import { SyncAuditEventDispatcher } from './repositories/SyncAuditEventDispatche
 
 export class CloudSyncRepositories {
   constructor(
-    readonly state: PostgresSyncStateRepository = new PostgresSyncStateRepository(),
+    readonly state: PostgresSyncStateRepository,
+    readonly items: PostgresPersonalItemRepository,
     readonly records: PostgresVerifiedRecordSet = new PostgresVerifiedRecordSet(),
-    readonly items: PostgresPersonalItemRepository = new PostgresPersonalItemRepository(),
     readonly pending: PendingEditView = new PendingEditView(),
     readonly audit: SyncAuditEventDispatcher = new SyncAuditEventDispatcher(),
     readonly accounts: PostgresSyncAccountReader = new PostgresSyncAccountReader(),

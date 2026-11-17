@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Queryable } from './db.js';
-import { PostgresLegacyAuditRepository } from './repositories/PostgresLegacyAuditRepository.js';
+import { VaultRepositories } from './repositories/VaultRepositories.js';
 
 export interface PruneOptions {
   batchSize?: number;
@@ -66,7 +66,7 @@ export class LegacyOutboundAuditPruner {
   }
 }
 
-/** @deprecated Use `new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db), options).prune()`. */
+/** @deprecated Use `new LegacyOutboundAuditPruner(VaultRepositories.createLegacyAuditRepository(db), options).prune()`. */
 export function pruneLegacyOutboundAuditRows(db: Queryable, options: PruneOptions = {}): Promise<number> {
-  return new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db), options).prune();
+  return new LegacyOutboundAuditPruner(VaultRepositories.createLegacyAuditRepository(db), options).prune();
 }
