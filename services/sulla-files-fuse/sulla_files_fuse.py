@@ -638,6 +638,49 @@ class SullaFiles(pyfuse3.Operations):
         if siblings is not None:
             siblings.pop(os.path.basename(path), None)
 
+    def _forget_subtree(self, path):
+        """Stop resolving `path` (and anything cached under it) from the cache."""
+        for cached in [key for key in self.path_inode if key == path or key.startswith(path + "/")]:
+            inode = self.path_inode.get(cached)
+            if any(handle.get("inode") == inode for handle in self.handles.values()):
+                # An open handle still commits through this inode: drop only the path mapping.
+                self.path_inode.pop(cached, None)
+                siblings = self.children.get(os.path.dirname(cached))
+                if siblings is not None:
+                    siblings.pop(os.path.basename(cached), None)
+            else:
+                self._forget(cached)
+
+    def _move_cached_path(self, old_path, new_path, collection_id):
+        """Re-key a renamed entry (and, for a folder, everything cached under it) to its new path.
+
+        Without this the old path kept resolving to the moved file's inode and Files id: after
+        `mv c d`, `[ -e c ]` was true and `rm c` deleted d (iMac soak, 2026-11-17).
+        """
+        moved = [key for key in self.path_inode if key == old_path or key.startswith(old_path + "/")]
+        if not moved:
+            return
+        self._forget_subtree(new_path)
+        for key in moved:
+            target = new_path + key[len(old_path):]
+            inode = self.path_inode.pop(key)
+            self.path_inode[target] = inode
+            node = self.nodes.get(inode)
+            if node is not None:
+                node["path"] = target
+                if not node.get("collectionRoot"):
+                    node["collectionId"] = collection_id
+                    node["filesPath"] = self._files_path(target, collection_id)
+            if key in self.children:
+                self.children[target] = self.children.pop(key)
+            self.directory_etags.pop(key, None)
+            self.directory_complete.discard(key)
+        siblings = self.children.get(os.path.dirname(old_path))
+        inode = siblings.pop(os.path.basename(old_path), None) if siblings is not None else None
+        if inode is None:
+            inode = self.path_inode.get(new_path)
+        self.children.setdefault(os.path.dirname(new_path), OrderedDict())[os.path.basename(new_path)] = inode
+
     def _attrs(self, inode):
         node = self.nodes.get(inode)
         if node is None:
@@ -802,6 +845,9 @@ class SullaFiles(pyfuse3.Operations):
             # Truncating a file that is already empty changes nothing. Marking it dirty made every
             # `echo > newfile` upload an empty "update" version before the real content.
             self.handles[handle]["dirty"] = had_content
+            # A shell redirection may flush immediately after O_TRUNC, before its first write.
+            # Keep that empty intermediate state from becoming a spurious version.
+            self.handles[handle]["truncateOnly"] = had_content
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
         info.direct_io = True
@@ -886,7 +932,7 @@ class SullaFiles(pyfuse3.Operations):
             offset = handle["size"]
         end = offset + len(buf)
         if end > MAX_FILE_BYTES:
-            raise pyfuse3.FUSEError(errno.EFBIG)
+            self._refuse_oversize(handle)
         if offset > handle["size"]:
             os.ftruncate(handle["file"].fileno(), end)
         written = os.pwrite(handle["file"].fileno(), buf, offset)
@@ -894,8 +940,22 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EIO)
         handle["size"] = max(handle["size"], end)
         handle["dirty"] = True
-        handle["failedErrno"] = None
+        handle["truncateOnly"] = False
+        if not handle.get("oversize"):
+            handle["failedErrno"] = None
         return len(buf)
+
+    def _refuse_oversize(self, handle):
+        """A write past the mount limit fails the whole file, not just that chunk.
+
+        Before, the chunk got EFBIG but the first 64 MiB stayed dirty and release() committed
+        them: a 65 MB `cp` failed yet left a truncated file (or replaced a good one) in Files.
+        Only an explicit truncate back under the limit makes the handle writable again.
+        """
+        handle["oversize"] = True
+        handle["dirty"] = False
+        handle["failedErrno"] = errno.EFBIG
+        raise pyfuse3.FUSEError(errno.EFBIG)
 
     @traced("setattr", lambda s, a: s._inode_info(a[0], a[-1]), mutating=True)
     async def setattr(self, inode, attr, fields, fh, ctx):
@@ -905,11 +965,13 @@ class SullaFiles(pyfuse3.Operations):
             handle = self.handles[fh]
             size = int(attr.st_size)
             if size > MAX_FILE_BYTES:
-                raise pyfuse3.FUSEError(errno.EFBIG)
+                self._refuse_oversize(handle)
             os.ftruncate(handle["file"].fileno(), size)
             handle["size"] = size
             handle["dirty"] = True
+            handle["truncateOnly"] = False
             handle["failedErrno"] = None
+            handle["oversize"] = False
             self.nodes[inode]["size"] = size
         unsupported = fields.update_mode or fields.update_uid or fields.update_gid or fields.update_atime or fields.update_mtime
         if unsupported:
@@ -926,6 +988,9 @@ class SullaFiles(pyfuse3.Operations):
 
     async def _commit(self, fh):
         handle = self.handles[fh]
+        if handle.get("oversize"):
+            handle["dirty"] = False
+            raise pyfuse3.FUSEError(errno.EFBIG)
         if not handle["dirty"]:
             if handle["failedErrno"]:
                 raise pyfuse3.FUSEError(handle["failedErrno"])
@@ -972,6 +1037,9 @@ class SullaFiles(pyfuse3.Operations):
 
     @traced("flush", lambda s, a: s._handle_info(a[0]))
     async def flush(self, fh):
+        handle = self.handles.get(fh)
+        if handle is not None and handle.get("truncateOnly"):
+            return
         await self._commit(fh)
 
     @traced("fsync", lambda s, a: s._handle_info(a[0]))
@@ -1006,6 +1074,14 @@ class SullaFiles(pyfuse3.Operations):
         if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: row=await self._as_actor(await self._actor(ctx), self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error:
+            if error.errno == errno.EEXIST and not flags & os.O_EXCL:
+                # Another writer created it between the kernel's lookup and this create. open(2)
+                # without O_EXCL must open the existing file, not fail: 4 of 5 concurrent `cp` to
+                # one new path failed with "File exists" (iMac soak, 2026-11-17).
+                self._forget(path)
+                inode = await self._resolve(parent_inode, name)
+                if self.nodes[inode].get("directory"): raise pyfuse3.FUSEError(errno.EISDIR) from error
+                return await self.open(inode, flags, ctx), self._attrs(inode)
             log.error("Create rejected: %s", error)
             raise pyfuse3.FUSEError(error.errno) from error
         inode=self._node(path,False); self.nodes[inode].update({**row,"path":path,"filesPath":self._files_path(path,parent["collectionId"]),"collectionId":parent["collectionId"]})
@@ -1053,6 +1129,12 @@ class SullaFiles(pyfuse3.Operations):
             mapped = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
             log.error("Rename/save rejected: %s", error)
             raise pyfuse3.FUSEError(mapped) from error
+        if target and (target.get("virtualMetadata") or (not target.get("directory") and not node.get("directory"))):
+            # Saved into the target (replace or folder metadata): the source path is gone. The
+            # target keeps its inode and Files id.
+            self._forget_subtree(old_path)
+        else:
+            self._move_cached_path(old_path, new_path, target_collection)
         self.directory_etags.pop(parent["path"], None)
         self.directory_complete.discard(parent["path"])
         self.directory_etags.pop(target_parent["path"], None)
