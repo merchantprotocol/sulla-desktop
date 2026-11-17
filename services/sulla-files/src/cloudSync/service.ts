@@ -36,6 +36,7 @@ import { isUuid } from './validation.js';
 import { OrgRootKeyCache, OrgRootKeyUnavailableError } from './OrgRootKeyCache.js';
 import { OrgCollectionCloudSync } from './OrgCollectionCloudSync.js';
 import { CloudSyncDesktopStatus } from './CloudSyncDesktopStatus.js';
+import { CloudSyncCommitWakeup } from './CloudSyncCommitWakeup.js';
 
 export type { SendStatus } from './CloudSignedResponseHandler.js';
 
@@ -73,7 +74,12 @@ export class CloudSyncService {
   private readonly scheduler = new CloudSyncScheduler(() => this.runLoop(), LOOP_MS);
   private readonly lastPullAt = new Map<string, number>();
   private readonly localCommitAt = new Map<string, number>();
-  private readonly nudgeTimers = new Map<string, NodeJS.Timeout>();
+  private readonly commitWakeup = new CloudSyncCommitWakeup((collectionId, committedAt) => {
+    this.localCommitAt.set(collectionId, committedAt);
+    console.info(`[SullaFilesSync] local_commit_at=${new Date(committedAt).toISOString()} push_started_at=${new Date().toISOString()}`);
+    this.lastPullAt.delete(collectionId);
+    this.nudge();
+  });
 
   constructor(
     private readonly db:pg.Pool,
@@ -114,24 +120,12 @@ export class CloudSyncService {
 
   stop():void {
     this.scheduler.stop();
-    for (const timer of this.nudgeTimers.values()) clearTimeout(timer);
-    this.nudgeTimers.clear();
+    this.commitWakeup.close();
   }
 
   /** Called after a version is inserted; debounce until its surrounding transaction commits. */
   versionCommitted(collectionId:string):void {
-    const committedAt = Date.now();
-    this.localCommitAt.set(collectionId, committedAt);
-    const pending = this.nudgeTimers.get(collectionId);
-    if (pending) clearTimeout(pending);
-    const timer = setTimeout(() => {
-      this.nudgeTimers.delete(collectionId);
-      console.info(`[SullaFilesSync] local_commit_at=${new Date(committedAt).toISOString()} push_started_at=${new Date().toISOString()}`);
-      this.lastPullAt.delete(collectionId);
-      this.nudge();
-    }, 350);
-    timer.unref();
-    this.nudgeTimers.set(collectionId, timer);
+    this.commitWakeup.notify(collectionId);
   }
 
   finderBadges(collectionId:string) { return this.desktopStatus.finderBadges(collectionId) }
