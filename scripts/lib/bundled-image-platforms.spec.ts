@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { ImageIndexPlatformPolicy, PinnedImageSelector } from './bundled-image-platforms';
 import type { ManifestEntry } from './bundled-images';
 
-const PINNED = 'ghcr.io/merchantprotocol/sulla-tools:sha-2c1f2cbf7196fb0bde5b5a3a248a29f45d682e8a';
+const PINNED = 'ghcr.io/merchantprotocol/sulla-tools:sha-ef2c0e008426a3437f9944f922625760a843b4ca';
 
 class ImageIndexFixture {
   static entry(os: string, architecture: string, variant?: string): Record<string, unknown> {
