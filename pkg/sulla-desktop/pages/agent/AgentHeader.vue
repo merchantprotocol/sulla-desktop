@@ -229,7 +229,7 @@
         class="flex gap-2"
       >
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
+          class="titlebar-control cursor-pointer"
           type="button"
           aria-label="Toggle left pane"
           @click="$emit('toggle-left-pane')"
@@ -241,7 +241,7 @@
             stroke="currentColor"
             stroke-width="2"
             stroke-linecap="round"
-            class="h-3.5 w-3.5 fill-[var(--status-info)]"
+            class="h-4 w-4"
           >
             <rect
               x="3"
@@ -272,7 +272,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
+          class="titlebar-control cursor-pointer"
           type="button"
           aria-label="Toggle center pane"
           @click="$emit('toggle-center-pane')"
@@ -291,7 +291,7 @@
           </svg>
         </button>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
+          class="titlebar-control cursor-pointer"
           type="button"
           aria-label="Toggle right pane"
           @click="$emit('toggle-right-pane')"
@@ -328,34 +328,17 @@
       >
         <label class="sr-only">Theme</label>
         <button
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
+          class="titlebar-control cursor-pointer"
           type="button"
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
           @click="toggleTheme"
         >
-          <svg
-            v-if="isDark"
-            aria-hidden="true"
-            viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 fill-[var(--status-info)]"
-          >
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M7 1a1 1 0 0 1 2 0v1a1 1 0 1 1-2 0V1Zm4 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm2.657-5.657a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm-1.415 11.313-.707-.707a1 1 0 0 1 1.415-1.415l.707.708a1 1 0 0 1-1.415 1.414ZM16 7.999a1 1 0 0 0-1-1h-1a1 1 0 1 0 0 2h1a1 1 0 0 0 1-1ZM7 14a1 1 0 1 1 2 0v1a1 1 0 1 1-2 0v-1Zm-2.536-2.464a1 1 0 0 0-1.414 0l-.707.707a1 1 0 0 0 1.414 1.414l.707-.707a1 1 0 0 0 0-1.414Zm0-8.486A1 1 0 0 1 3.05 4.464l-.707-.707a1 1 0 1 1 1.414-1.414l.707.707ZM3 8a1 1 0 0 0-1-1H1a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Z"
-            />
+          <svg v-if="isDark" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
           </svg>
-          <svg
-            v-else
-            aria-hidden="true"
-            viewBox="0 0 16 16"
-            class="h-3.5 w-3.5 fill-[var(--status-info)]"
-          >
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M7.23 3.333C7.757 2.905 7.68 2 7 2a6 6 0 1 0 0 12c.68 0 .758-.905.23-1.332A5.989 5.989 0 0 1 5 8c0-1.885.87-3.568 2.23-4.668ZM12 5a1 1 0 0 1 1 1 1 1 0 0 0 1 1 1 1 0 0 1 0 2 1 1 0 0 0-1 1 1 1 0 1 1-2 0 1 1 0 0 0-1-1 1 1 0 1 1 0-2 1 1 0 0 0 1-1Z"
-            />
+          <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+            <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
           </svg>
         </button>
       </div>
@@ -370,7 +353,7 @@
       <div class="relative hidden lg:flex">
         <button
           type="button"
-          class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 [--tw-ring-color:color-mix(in_srgb,var(--border-subtle)_5%,transparent)] cursor-pointer"
+          class="titlebar-control cursor-pointer"
           aria-label="More options"
           @click="openMoreMenu"
         >
@@ -1936,33 +1919,6 @@ function handleTabContextMenuAction(
   font: inherit;
 }
 
-.app-titlebar .tab-new {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  margin-left: 4px;
-  border-radius: 17px;
-  color: var(--read-3, var(--text-secondary));
-  transition: background .16s, color .16s, transform .5s var(--tab-spring);
-}
-
-.app-titlebar .tab-new svg {
-  transition: transform .5s var(--tab-spring);
-}
-
-.app-titlebar .tab-new:hover {
-  color: var(--read-1, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.app-titlebar .tab-new:hover svg {
-  transform: rotate(90deg);
-}
-
-.app-titlebar .tab-new:active {
-  transform: scale(.88);
-}
-
 .app-titlebar .tab-scroll-chevron {
   width: 24px;
   color: var(--read-3, var(--text-secondary));
@@ -2059,7 +2015,9 @@ function handleTabContextMenuAction(
   padding-top: 0;
   padding-bottom: 0;
   align-items: center;
-  background: var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface, var(--bg-page))));
+  box-sizing: border-box;
+  background: var(--bg-surface-alt);
+  border-bottom: 1px solid var(--border-default);
 }
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
@@ -2082,10 +2040,10 @@ function handleTabContextMenuAction(
 }
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface, var(--bg-page)))); }
+.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
 .app-titlebar .tab-active .tab-activity-dot,
-.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface, var(--bg-page)); }
-.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface, var(--bg-page)))); }
+.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface); }
+.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: none; }
 .app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
@@ -2095,7 +2053,7 @@ function handleTabContextMenuAction(
   border: 1px solid var(--border-default);
   border-bottom: 0;
   border-radius: 9px 9px 0 0;
-  background: var(--bg-surface, var(--bg-page));
+  background: var(--bg-surface);
   box-shadow: none;
   color: var(--text-primary);
   font-weight: 600;
@@ -2104,7 +2062,7 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-active {
   border: 1px solid var(--border-default);
   border-bottom: 0;
-  background: var(--bg-surface, var(--bg-page));
+  background: var(--bg-surface);
   box-sizing: border-box;
 }
 .app-titlebar .tab-accent-bar {
@@ -2129,7 +2087,7 @@ function handleTabContextMenuAction(
   width: 10px;
   height: 10px;
   pointer-events: none;
-  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-surface, var(--bg-page)) 10.5px);
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-surface) 10.5px);
   display: block;
 }
 .app-titlebar .tab-active::before { left: -10px; }
@@ -2147,11 +2105,20 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
 .app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
 .app-titlebar .tab-scroll-wrapper > button.tab-new { margin-left: 4px; }
+.app-titlebar .tab-new,
+.app-titlebar .titlebar-control { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; padding: 0; border: 0; border-radius: 7px; display: grid; place-items: center; color: var(--text-muted); background: transparent; box-shadow: none; }
+.app-titlebar .titlebar-control:hover,
+.app-titlebar .tab-new:hover { background: var(--bg-surface-hover); }
+.app-titlebar .titlebar-control svg,
+.app-titlebar .tab-new svg { width: 16px; height: 16px; }
 .app-titlebar .titlebar-controls { gap: 4px; height: 44px; padding: 0; }
-.app-titlebar .titlebar-controls button { width: 28px !important; height: 28px !important; flex: 0 0 28px; margin: 0; padding: 0; border-radius: 7px; }
+.app-titlebar .titlebar-controls button { width: 28px !important; height: 28px !important; flex: 0 0 28px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; box-shadow: none; }
 .app-titlebar .engine-status-control { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border-radius: 7px; }
-.app-titlebar .engine-status { width: 9px; height: 9px; margin: 0; box-shadow: none; }
-.app-titlebar .engine-status.busy { box-shadow: none; }
+.app-titlebar .engine-status { width: 9px; height: 9px; display: block; flex: none; border-radius: 50%; background: var(--status-warning); box-shadow: none; }
+.app-titlebar .engine-status.ok { background: var(--status-success); }
+.app-titlebar .engine-status.error { background: var(--status-error); }
+.app-titlebar .tab-working .tab-icon::after { z-index: 0; }
+.app-titlebar .tab-item:not(.tab-working) .tab-icon::after { content: none; }
 .app-titlebar .titlebar-controls > .relative { display: flex; align-items: center; justify-content: center; }
 
 .app-titlebar .tab-scroll-container { scrollbar-width: none; }

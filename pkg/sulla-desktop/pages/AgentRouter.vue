@@ -841,6 +841,8 @@ onUnmounted(() => {
   width: 100%;
   height: 100vh;
   overflow: hidden;
+  /* The window's uncovered traffic-light corner is part of the titlebar chrome. */
+  background: var(--bg-surface-alt);
 }
 
 /*

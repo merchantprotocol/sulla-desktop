@@ -74,7 +74,7 @@ function cancelTitle(): void {
   display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px;
   height: 52px; padding: 0 20px;
   border-bottom: 1px solid var(--border-subtle, var(--border-default));
-  background: color-mix(in srgb, var(--bg-page) 88%, transparent);
+  background: var(--bg-surface);
   backdrop-filter: blur(12px);
   font-family: var(--font-body);
 }
