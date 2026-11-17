@@ -37,6 +37,7 @@ The script runs on the **Mac host shell** (bash or zsh, macOS). The `sulla` CLI 
 
 ```bash
 cd scripts/qa/two-device
+./twodev.sh preflight                         # both Macs: one PONG round trip each, PASS or FAIL with a reason
 ./twodev.sh inventory                         # both Macs: version, codesign team id, uptime, org/directory
 A_USER=<userA> B_USER=<userB> ./twodev.sh a1  # each side's directory lists the other user
 A_USER=<userA> B_USER=<userB> B_AGENT_ID=<agentB> ./twodev.sh a2-send
@@ -49,6 +50,12 @@ A_USER=<userA> B_USER=<userB> B_AGENT_ID=<agentB> ./twodev.sh a2-send
 ```
 
 Each agent prompt asks for exactly one sulla tool call and a reply of ids only. An agent that adds prose, skips the tool, or returns `ok:false` makes the step fail with exit 1.
+
+**Preflight.** Every step runs `preflight` for the side(s) it uses before any QA call: the agent gets `Reply with exactly: PONG`. A missing PONG stops the step with exit 1 and a reason. `./twodev.sh preflight` runs both sides and reports each one.
+
+**Waiting lines.** Each agent call prints `waiting on A-mac agent…` (or `B-imac`) on stderr before it starts. A Mac run can take minutes.
+
+**Failure reasons.** When an agent call fails, the operator sees a short sanitized snippet of the reply (first 160 characters, with emails, phone numbers and token-like strings redacted). The machine reason is one of: `model_signin_expired` ("sign-in expired" or "Reconnect in Settings"), `rate_limited`, `timeout`, `no_json_reply`, `no_pong_reply`, `agent_reported_error`, `transport_failed` (ssh or the local chat API did not answer).
 
 ## What PASS means
 
@@ -69,6 +76,7 @@ Each run appends one JSON line per agent call to `$TWODEV_OUT/evidence-<UTC date
 
 - Records the check, machine label (`A-mac` or `B-imac`), the sulla tool name, exit code, and extracted ids (`userIds`, `agentIds`, `orgId`/`teamId`, `conversationId`, `messageId`, `fileId`, and the run's `nonce`, `file` and `found` flags).
 - Never logged: the chat API token, reply text, error text, emails, phone numbers, message bodies, or raw directory output. The prompt is never logged either, so message text never reaches the log.
+- On failure a call logs only `{"ok":false,"error":"<machine reason>"}`, with no ids.
 
 ## Known gaps
 

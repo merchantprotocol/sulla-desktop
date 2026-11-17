@@ -130,8 +130,59 @@ print(json.dumps({args[i]: args[i + 1] for i in range(0, len(args), 2)}, sort_ke
 # walks it for ids, and prints {"ok","found","error","evidence"}. Only ids, userIds,
 # agentIds and flags go into evidence. Extra key=value args (for example nonce=...) merge in.
 readonly PARSE_PY='
-import json, sys
+import json, os, re, sys
 text = sys.stdin.read()
+transport = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+mode = os.environ.get("TWODEV_MODE", "json")
+try:
+    extra = json.loads(os.environ.get("TWODEV_EXTRA_JSON") or "{}")
+except ValueError:
+    extra = {}
+
+SIGNIN = re.compile(r"sign-in expired|reconnect in settings", re.I)
+RATE = re.compile(r"rate.?limit|too many requests|\b429\b", re.I)
+TIMED_OUT = re.compile(r"timed? ?out", re.I)
+REDACTIONS = [
+    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),
+    (re.compile(r"(?i)bearer\s+\S+"), "[token]"),
+    (re.compile(r"[A-Za-z0-9_.-]{20,}"), "[token]"),
+    (re.compile(r"\+?\d[\d\s().-]{7,}\d"), "[phone]"),
+]
+
+def classify(message):
+    if SIGNIN.search(message):
+        return "model_signin_expired"
+    if RATE.search(message):
+        return "rate_limited"
+    if TIMED_OUT.search(message):
+        return "timeout"
+    return None
+
+def snippet(message):
+    out = " ".join(message.split())
+    for pattern, label in REDACTIONS:
+        out = pattern.sub(label, out)
+    return out[:160]
+
+def finish(ok, error, found, evidence, shown, log):
+    print(json.dumps({"ok": ok, "found": found, "error": error,
+                      "snippet": shown, "evidence": evidence, "log": log}, sort_keys=True))
+    sys.exit(0)
+
+def fail(error, shown="", found=None):
+    finish(False, error, found, {}, shown, {"ok": False, "error": error})
+
+if transport != 0:
+    fail("transport_failed")
+
+if mode == "pong":
+    reason = classify(text)
+    if reason:
+        fail(reason, snippet(text))
+    if re.search(r"\bPONG\b", text):
+        finish(True, None, None, {}, "", {"ok": True})
+    fail("no_pong_reply", snippet(text))
+
 decoder = json.JSONDecoder()
 obj = None
 pos = text.find("{")
@@ -144,12 +195,8 @@ while pos != -1 and obj is None:
         pass
     pos = text.find("{", pos + 1)
 
-error = None
 if obj is None:
-    obj = {}
-    error = "no JSON object in reply"
-elif isinstance(obj.get("error"), str):
-    error = obj["error"][:200]
+    fail(classify(text) or "no_json_reply", snippet(text))
 
 SCALAR = ("orgId", "teamId", "conversationId", "messageId", "fileId")
 ids, user_ids, agent_ids = {}, [], []
@@ -171,18 +218,20 @@ def walk(node):
             walk(item)
 
 walk(obj)
-ok = obj.get("ok") if isinstance(obj.get("ok"), bool) else None
 found = obj.get("found") if isinstance(obj.get("found"), bool) else None
-
 evidence = dict(ids)
 evidence["userIds"] = user_ids
 evidence["agentIds"] = agent_ids
 if found is not None:
     evidence["found"] = found
-for pair in sys.argv[1:]:
-    key, _, value = pair.partition("=")
+for key, value in extra.items():
     evidence[key] = value
-print(json.dumps({"ok": ok, "found": found, "error": error, "evidence": evidence}, sort_keys=True))
+
+if obj.get("ok") is not True:
+    agent_error = obj.get("error") if isinstance(obj.get("error"), str) else ""
+    reason = classify(agent_error) or classify(text) or "agent_reported_error"
+    fail(reason, snippet(agent_error or text), found)
+finish(True, None, found, evidence, "", evidence)
 '
 
 # json_field <json> <dotted.path>: print one field ("" when missing; JSON for lists/objects/bools).
@@ -203,22 +252,99 @@ json_field() {
   python3 -I -c "$JSON_FIELD_PY" "$1" "$2"
 }
 
+# pairs_json <key=value>...: validates evidence pairs and prints them as one JSON object.
+# Keys are lowerCamel words and values are short ids or flags, so free text cannot get in.
+pairs_json() {
+  python3 -I -c '
+import json, re, sys
+out = {}
+for arg in sys.argv[1:]:
+    key, sep, value = arg.partition("=")
+    if not sep or not re.fullmatch(r"[a-z][A-Za-z0-9]{0,31}", key) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
+        sys.exit("twodev: internal error: evidence pair rejected")
+    out[key] = value
+print(json.dumps(out, sort_keys=True))
+' "$@"
+}
+
+# report_failure <a|b> <machine-reason> <sanitized-snippet>: operator-only message on stderr.
+report_failure() {
+  local side="$1" reason="$2" shown="$3"
+  echo "$(machine_label "$side") agent call failed: ${reason:-unknown}" >&2
+  if [ -n "$shown" ]; then
+    echo "  agent said: $shown" >&2
+  fi
+}
+
 # agent_call <a|b> <check> <command-label> <prompt> [key=value...]
-# Runs one prompt on that side's agent, parses its JSON reply, logs ids only,
-# prints the parsed object to stdout and returns 0 only when the agent reported ok:true.
+# Runs one prompt on that side's agent and parses its JSON reply. Only validated key=value
+# pairs reach the evidence log, and the prompt never does. A failure logs only
+# {"ok":false,"error":"<machine reason>"}. Prints the parsed object to stdout and returns 0
+# only when the agent reported ok:true.
 agent_call() {
   local side="$1" check="$2" label="$3" prompt="$4"
-  local raw="" code=0 parsed ok
+  local raw="" code=0 parsed ok extra
   shift 4
+  extra="$(pairs_json "$@")"
+  echo "waiting on $(machine_label "$side") agent…" >&2
   raw="$(ask_agent "$side" "$prompt")" || code=$?
-  parsed="$(printf '%s' "$raw" | python3 -I -c "$PARSE_PY" "$@")"
+  parsed="$(printf '%s' "$raw" | TWODEV_MODE=json TWODEV_EXTRA_JSON="$extra" python3 -I -c "$PARSE_PY" "$code")"
   ok="$(json_field "$parsed" ok)"
-  if [ "$code" -eq 0 ] && [ "$ok" != "true" ]; then
-    code=1
+  if [ "$ok" != "true" ]; then
+    if [ "$code" -eq 0 ]; then
+      code=1
+    fi
+    report_failure "$side" "$(json_field "$parsed" error)" "$(json_field "$parsed" snippet)"
   fi
-  log_evidence "$check" "$(machine_label "$side")" "$label" "$code" "$(json_field "$parsed" evidence)"
+  log_evidence "$check" "$(machine_label "$side")" "$label" "$code" "$(json_field "$parsed" log)"
   printf '%s\n' "$parsed"
   return "$code"
+}
+
+# preflight_side <a|b>: one PONG round trip to that side's agent. Prints PASS or FAIL with a reason.
+preflight_side() {
+  local side="$1" raw="" code=0 parsed ok
+  echo "waiting on $(machine_label "$side") agent… (preflight)" >&2
+  raw="$(ask_agent "$side" "Reply with exactly: PONG")" || code=$?
+  parsed="$(printf '%s' "$raw" | TWODEV_MODE=pong TWODEV_EXTRA_JSON='{}' python3 -I -c "$PARSE_PY" "$code")"
+  ok="$(json_field "$parsed" ok)"
+  log_evidence preflight "$(machine_label "$side")" "preflight-pong" "$([ "$ok" = "true" ] && echo 0 || echo 1)" "$(json_field "$parsed" log)"
+  if [ "$ok" = "true" ]; then
+    echo "preflight $(machine_label "$side"): PASS (agent replied PONG)"
+    return 0
+  fi
+  echo "preflight $(machine_label "$side"): FAIL ($(json_field "$parsed" error))"
+  local shown
+  shown="$(json_field "$parsed" snippet)"
+  if [ -n "$shown" ]; then
+    echo "  agent said: $shown" >&2
+  fi
+  return 1
+}
+
+# require_preflight <a|b>...: stops the whole step (exit 1) before any QA call on a failing side.
+require_preflight() {
+  local side
+  for side in "$@"; do
+    if ! preflight_side "$side"; then
+      echo "twodev: stopping before any QA call: $(machine_label "$side") agent failed preflight" >&2
+      exit 1
+    fi
+  done
+}
+
+cmd_preflight() {
+  need_cmds python3 ssh
+  local side rc=0
+  for side in a b; do
+    preflight_side "$side" || rc=1
+  done
+  if [ "$rc" -eq 0 ]; then
+    echo "PREFLIGHT RESULT: PASS"
+  else
+    echo "PREFLIGHT RESULT: FAIL"
+  fi
+  return "$rc"
 }
 
 # has_user <parsed-json> <userId>: exit 0 when the reply lists that userId.
@@ -257,7 +383,7 @@ record = {
     "machine": machine,
     "command": command,
     "exit": int(code),
-    "ids": json.loads(ids),
+    "ids": json.loads(ids or "{}"),
 }
 with open(path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(record, sort_keys=True) + "\n")
@@ -283,6 +409,7 @@ new_nonce() {
 
 cmd_inventory() {
   need_cmds ssh python3
+  require_preflight a b
   local side version team uptime_line parsed code
   for side in a b; do
     echo "== $(machine_label "$side") =="
@@ -310,6 +437,7 @@ cmd_inventory() {
 cmd_a1() {
   require_env A_USER B_USER
   need_cmds python3
+  require_preflight a b
   local pa pb ca=0 cb=0 pass=1
   pa="$(agent_call a a1 org-directory "org/directory" "$(directory_prompt)")" || ca=$?
   pb="$(agent_call b a1 org-directory "org/directory" "$(directory_prompt)")" || cb=$?
@@ -339,6 +467,7 @@ cmd_a1() {
 cmd_a2_send() {
   require_env A_USER B_USER B_AGENT_ID
   need_cmds python3
+  require_preflight a
   local nonce conversation code=0 parsed msg args prompt
   nonce="$(new_nonce)"
   conversation="${TWODEV_CONVERSATION_ID:-}"
@@ -374,6 +503,7 @@ cmd_a2_reply() {
   nonce="${TWODEV_NONCE:-${nonce:-}}"
   [ -n "$conversation" ] && [ -n "$nonce" ] || die "run a2-send first, or set TWODEV_CONVERSATION_ID and TWODEV_NONCE"
 
+  require_preflight b
   args="$(json_obj conversationId "$conversation" message "QA two-device A2 reply. Received nonce ${nonce}.")"
   prompt="Run exactly one sulla tool: org/send_message with arguments ${args}. Do not run any other tool. Then reply with ONLY one JSON object, no prose and no code fences: {\"ok\":true or false,\"error\":null or a short reason,\"conversationId\":\"<id>\",\"messageId\":\"<id>\"}."
   parsed="$(agent_call b a2-reply send-message "org/send_message" "$prompt" nonce="$nonce")" || code=$?
@@ -395,6 +525,7 @@ cmd_a2_check() {
   fi
   nonce="${nonce:-none}"
 
+  require_preflight b
   prompt="Read-only QA check. Using your org tools, look at this Desktop's org inbox and pending contact or conversation requests for a message whose text contains the exact nonce ${nonce}. Do not reply, send or change anything. Stop after one read per tool. Then reply with ONLY one JSON object, no prose and no code fences: {\"ok\":true or false,\"error\":null or a short reason,\"found\":true or false or null,\"conversationId\":\"<id or null>\",\"messageId\":\"<id or null>\"}. Use found null and error \"no inbox tool\" if no sulla tool can read the inbox. Include ids only; never include message bodies."
   parsed="$(agent_call b a2-check inbox-read "org inbox read" "$prompt" nonce="$nonce")" || code=$?
   found="$(json_field "$parsed" found)"
@@ -414,6 +545,7 @@ cmd_a4() {
   local side="${1:-}" nonce fname content dir attempt parsed found prompt search_args
   case "$side" in a | b) ;; *) die "usage: $SCRIPT_NAME a4 <a|b>" ;; esac
   need_cmds python3
+  require_preflight "$side"
   nonce="$(new_nonce)"
   fname="twodev-a4-${side}-${nonce}.md"
   dir="/mnt/sulla-files/$FILES_FOLDER"
@@ -455,6 +587,7 @@ usage() {
 Usage: $SCRIPT_NAME <step>
 
 Steps:
+  preflight          PONG round trip to each Mac's agent; PASS or FAIL with a reason (run this first)
   inventory          app version, codesign team id, uptime and directory call on both Macs
   a1                 each side's org/directory lists the other user (needs A_USER, B_USER)
   a2-send            A sends a nonce message to B's agent (needs A_USER, B_USER, B_AGENT_ID)
@@ -472,6 +605,7 @@ main() {
   need_cmds bash
   local step="${1:-}"
   case "$step" in
+    preflight) cmd_preflight ;;
     inventory) cmd_inventory ;;
     a1) cmd_a1 ;;
     a2-send) cmd_a2_send ;;
