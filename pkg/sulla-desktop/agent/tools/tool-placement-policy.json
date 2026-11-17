@@ -71,6 +71,7 @@
     "browser/eval_js",
     "browser/manage_cookies",
     "budget/budget_set_priority",
+    "budget/budget_set_policy",
     "budget/budget_status",
     "capture/camera_list",
     "capture/camera_release",
@@ -113,6 +114,7 @@
     ],
     "write": [
       "budget/budget_set_priority",
+      "budget/budget_set_policy",
       "agents/close_agent_conversation",
       "agents/report_progress",
       "agents/return_result",

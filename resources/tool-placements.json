@@ -519,6 +519,16 @@
       "sideEffect": "write",
       "credential": "none"
     },
+    "budget/budget_set_policy": {
+      "category": "budget",
+      "name": "budget_set_policy",
+      "placements": [
+        "desktop"
+      ],
+      "relayable": false,
+      "sideEffect": "write",
+      "credential": "none"
+    },
     "budget/budget_status": {
       "category": "budget",
       "name": "budget_status",
