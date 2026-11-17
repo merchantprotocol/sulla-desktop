@@ -81,8 +81,16 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
   injectionMode: 'warn',
 };
 
-/** Host-side cache of the URLhaus blocklist, copied into the proxy's state directory in the guest. */
-const URLHAUS_SRC = 'https://urlhaus.abuse.ch/downloads/hostfile/';
+/**
+ * URLhaus host blocklist sources, tried in order. abuse.ch retired every
+ * anonymous urlhaus.abuse.ch/downloads/* feed (HTTP 410 Gone, seen 2026-11-16);
+ * their data now needs an API key. malware-filter publishes the same URLhaus
+ * data (CC0) as a hosts file every 12 hours, mirrored on GitLab and GitHub Pages.
+ */
+export const URLHAUS_SOURCES = [
+  'https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt',
+  'https://curbengh.github.io/malware-filter/urlhaus-filter-hosts.txt',
+];
 const URLHAUS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Hard cap so a pathological server or redirect loop can't blow the Electron
 // main-process heap. URLhaus's hostfile is normally <50MB; anything over this
@@ -296,7 +304,7 @@ export async function refreshBlocklist(force = false): Promise<{ ok: boolean; ho
     }
   }
 
-  console.log('[threat-proxy] refreshing URLhaus blocklist', { source: URLHAUS_SRC, target });
+  console.log('[threat-proxy] refreshing URLhaus blocklist', { sources: URLHAUS_SOURCES, target });
   await fs.promises.mkdir(path.dirname(target), { recursive: true });
 
   try {
@@ -304,7 +312,26 @@ export async function refreshBlocklist(force = false): Promise<{ ok: boolean; ho
     // full body in the main-process heap. Capped at URLHAUS_MAX_BYTES so a
     // misbehaving mirror can't balloon memory on app boot.
     const tmpPath = `${ target }.tmp`;
-    await downloadToFile(URLHAUS_SRC, tmpPath, URLHAUS_MAX_BYTES);
+    const failures: string[] = [];
+    let fetched = false;
+
+    for (const source of URLHAUS_SOURCES) {
+      try {
+        await downloadToFile(source, tmpPath, URLHAUS_MAX_BYTES);
+        // An error page served with 200 must never replace a good blocklist.
+        if (!await looksLikeHostsFile(tmpPath)) {
+          throw new Error(`response from ${ source } is not a hosts file`);
+        }
+        fetched = true;
+        break;
+      } catch (err: any) {
+        failures.push(err?.message ?? String(err));
+      }
+    }
+    if (!fetched) {
+      await fs.promises.unlink(tmpPath).catch(() => undefined);
+      throw new Error(failures.join('; '));
+    }
     await fs.promises.rename(tmpPath, target);
 
     const hostCount = await countNonCommentLines(target);
@@ -341,6 +368,28 @@ async function countNonCommentLines(p: string): Promise<number> {
     return count;
   } catch {
     return 0;
+  }
+}
+
+/** True when the first data line is a hosts entry ("0.0.0.0 bad.example" or "bad.example"), not HTML or empty. */
+async function looksLikeHostsFile(p: string): Promise<boolean> {
+  const stream = fs.createReadStream(p, { encoding: 'utf-8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const host = trimmed.split(/\s+/).pop() ?? '';
+
+      return /^[a-z0-9.-]+\.[a-z0-9-]+$/i.test(host);
+    }
+
+    return false;
+  } finally {
+    rl.close();
+    stream.destroy();
   }
 }
 
