@@ -5,7 +5,7 @@
 
 import path from 'node:path';
 
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 
 import type { ChatFilesSourceGuard, PreparedChatFilesSource } from './ChatFilesSourceGuard';
 import type { BrowserWindow, OpenDialogOptions, OpenDialogReturnValue } from 'electron';

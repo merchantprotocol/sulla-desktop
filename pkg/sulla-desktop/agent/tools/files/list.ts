@@ -6,7 +6,7 @@
 import { FilesTool } from './common';
 import type { ToolResponse } from '../base';
 import { addChatLinks } from './chatLink';
-import { FilesListingPager } from '@pkg/main/FilesListingPager';
+import { FilesListingPager } from '@pkg/agent/files/FilesListingPager';
 
 /** Same listing the File Manager shows, capped so large collections stay readable. */
 export class FilesListWorker extends FilesTool {

@@ -5,7 +5,7 @@
 
 import path from 'node:path';
 import { shell } from 'electron';
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 import { FINDER_BADGE_ATTRIBUTE, FinderBadgeSync } from './sullaFinderBadges';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import Logging from '@pkg/utils/logging';

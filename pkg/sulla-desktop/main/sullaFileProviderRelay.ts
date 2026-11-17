@@ -9,7 +9,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 import { sullaAppGroupDirectory } from './sullaAppGroup';
 
 /**
