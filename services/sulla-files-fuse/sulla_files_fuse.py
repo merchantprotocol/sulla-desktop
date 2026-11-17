@@ -802,6 +802,11 @@ class SullaFiles(pyfuse3.Operations):
             # Truncating a file that is already empty changes nothing. Marking it dirty made every
             # `echo > newfile` upload an empty "update" version before the real content.
             self.handles[handle]["dirty"] = had_content
+            # Until something is written, the only change is the open's truncate. A shell
+            # redirect (`printf x > f`) opens, dup2()s and closes the first descriptor before
+            # writing, and that close sends a flush. Committing then uploaded an empty version
+            # of a file that was about to get its content back.
+            self.handles[handle]["truncateOnly"] = had_content
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
         info.direct_io = True
@@ -894,6 +899,7 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EIO)
         handle["size"] = max(handle["size"], end)
         handle["dirty"] = True
+        handle["truncateOnly"] = False
         handle["failedErrno"] = None
         return len(buf)
 
@@ -909,6 +915,7 @@ class SullaFiles(pyfuse3.Operations):
             os.ftruncate(handle["file"].fileno(), size)
             handle["size"] = size
             handle["dirty"] = True
+            handle["truncateOnly"] = False
             handle["failedErrno"] = None
             self.nodes[inode]["size"] = size
         unsupported = fields.update_mode or fields.update_uid or fields.update_gid or fields.update_atime or fields.update_mtime
@@ -972,6 +979,12 @@ class SullaFiles(pyfuse3.Operations):
 
     @traced("flush", lambda s, a: s._handle_info(a[0]))
     async def flush(self, fh):
+        handle = self.handles.get(fh)
+        if handle is not None and handle.get("truncateOnly"):
+            # Nothing written since the O_TRUNC open: leave the truncate pending. A later write
+            # makes the next flush upload the real content once; with no write, release (or
+            # fsync) still commits the empty file, so `: > f` keeps truncating.
+            return
         await self._commit(fh)
 
     @traced("fsync", lambda s, a: s._handle_info(a[0]))
@@ -1006,6 +1019,10 @@ class SullaFiles(pyfuse3.Operations):
         if parent.get("collectionRoot") is not True and not parent.get("collectionId"): raise pyfuse3.FUSEError(errno.EPERM)
         try: row=await self._as_actor(await self._actor(ctx), self.api.create(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error:
+            if error.errno == errno.EEXIST and not flags & os.O_EXCL:
+                # Another writer created the same name between our lookup and this create.
+                # open(O_CREAT) without O_EXCL must open the existing file, not fail EEXIST.
+                return await self._open_existing_after_create_race(parent_inode, name, flags, ctx)
             log.error("Create rejected: %s", error)
             raise pyfuse3.FUSEError(error.errno) from error
         inode=self._node(path,False); self.nodes[inode].update({**row,"path":path,"filesPath":self._files_path(path,parent["collectionId"]),"collectionId":parent["collectionId"]})
@@ -1013,6 +1030,17 @@ class SullaFiles(pyfuse3.Operations):
         if len(self.handles) >= MAX_OPEN_HANDLES: raise pyfuse3.FUSEError(errno.EMFILE)
         info=await self._open_handle(inode,flags,ctx,b"",str(row.get("current_version_id") or row.get("versionId") or ""),EMPTY_SHA256)
         return info,self._attrs(inode)
+
+    async def _open_existing_after_create_race(self, parent_inode, name, flags, ctx):
+        """Opens the file a concurrent create won; open() honours O_TRUNC and O_APPEND from flags."""
+        try:
+            inode = await self._resolve(parent_inode, name)
+        except OSError as error:
+            raise pyfuse3.FUSEError(errno.EEXIST) from error
+        if self.nodes[inode].get("directory"):
+            raise pyfuse3.FUSEError(errno.EISDIR)
+        info = await self.open(inode, flags, ctx)
+        return info, self._attrs(inode)
 
     @traced("rename", lambda s, a: {**s._child_info(a[0], a[1], a[-1]), "to": s._child_info(a[2], a[3])["path"]}, mutating=True)
     async def rename(self, parent_inode, name, new_parent_inode, new_name, flags, ctx):
