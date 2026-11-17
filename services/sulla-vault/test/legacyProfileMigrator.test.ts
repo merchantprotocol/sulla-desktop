@@ -88,6 +88,17 @@ describe('opt-in lossless legacy profile migration', () => {
     }
   });
 
+  it('marks failed and preserves the original migration error when destination cleanup also fails', async () => {
+    const test = setup({ failCopy: 'items' });
+    const original = new Error('interrupted');
+    const dropFailure = new Error('drop failed');
+    test.ports.destination.drop = async () => { throw dropFailure; };
+    test.ports.destination.withTransaction = async (_db, operation) => operation({ copy: async () => { throw original; } });
+    await expect(test.migrator.migrate(true)).rejects.toBe(original);
+    expect(original.cause).toBe(dropFailure);
+    expect(test.states).toContain('failed');
+  });
+
   it('requires unlocked state and the explicit feature flag', async () => {
     const disabled = new LegacyProfileMigrator(false, {} as never, setup().ports);
     await expect(disabled.migrate(true)).rejects.toThrow(/disabled/);
