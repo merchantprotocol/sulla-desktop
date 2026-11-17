@@ -13,6 +13,7 @@ import { sullaFilesNativeSourceGrant, sullaFilesNativeSourceRolloutRequested } f
 import Logging from '@pkg/utils/logging';
 import { SullaFilesMountAdapterService } from './SullaFilesMountAdapterService';
 import { SullaFilesMountCredentialService } from './SullaFilesMountCredentialService';
+import { SullaFilesDeadMountRecoveryService } from './SullaFilesDeadMountRecoveryService';
 
 const console = Logging.background;
 const COMPOSE_FILE = '/tmp/sulla-docker-compose.yml';
@@ -197,28 +198,31 @@ export class SullaFilesMountManager extends EventEmitter {
     const credentialGeneration = ++this.credentialGeneration;
     this.publish('starting');
     try {
+      const recovery = new SullaFilesDeadMountRecoveryService(executor);
+      // The health/recreate path must detach ENOTCONN before stopGuest probes
+      // mountinfo or compose touches the poisoned bind. Fail closed if stat
+      // still reports the dead mount after both lazy-unmount methods.
+      await recovery.clearDeadMount();
       await traceAsync('mount: install runtime root', () => executor.execCommand({ root: true }, 'install', '-d', '-m', '0700', RUNTIME_ROOT));
       // Recover a stale adapter/mount before admitting a fresh generation.
       await traceAsync('mount: stop stale guest', () => this.stopGuest());
       if (await traceAsync('mount: classify anchor', () => this.adapterService.mountState(executor)) !== 'anchor') throw new Error('The Files propagation anchor is unavailable');
       await traceAsync('mount: refresh credentials', () => this.credentialService.refresh(credentialGeneration));
       this.onTokenWritten?.();
-      await traceAsync('mount: compose up adapter', () => executor.execCommand(
-        { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
-        'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
-      ));
-      await traceAsync('mount: wait for adapter', () => this.adapterService.waitForAdapter(executor, credentialGeneration));
-      // Prove adapter health with a real Files-backed directory read.
-      // This does not authorize an agent; that admission remains disabled
-      // until Files can enforce a grant-scoped per-agent/job view.
-      await executor.execCommand({}, 'sh', '-c', 'ls -A "$1" >/dev/null', 'sh', MOUNT_PATH);
-      // Docker rslave binds capture the topmost mount (the FUSE layer), not
-      // the shared tmpfs anchor underneath it. Reattach stale agent namespaces
-      // after every adapter generation so long-lived jobs survive recreation.
-      await this.adapterService.reattachStaleAgentMounts(executor).catch(error => {
-        // Agent namespace repair is best-effort: do not make a healthy Files
-        // mount unavailable to new work because one old namespace was busy.
-        console.warn(`[SullaFiles] Could not reattach every running agent mount: ${ error instanceof Error ? error.message : String(error) }`);
+      await recovery.recreateAndReattach(async() => {
+        await traceAsync('mount: compose up adapter', () => executor.execCommand(
+          { root: true }, 'docker', 'compose', '-f', COMPOSE_FILE, '-p', 'sulla',
+          'up', '-d', '--no-deps', '--force-recreate', 'sulla_files_fuse',
+        ));
+        await traceAsync('mount: wait for adapter', () => this.adapterService.waitForAdapter(executor, credentialGeneration));
+        // Prove adapter health with a real Files-backed directory read.
+        await executor.execCommand({}, 'sh', '-c', 'ls -A "$1" >/dev/null', 'sh', MOUNT_PATH);
+      }, async() => {
+        // Docker rslave binds capture the FUSE layer; reattach stale namespaces
+        // after each adapter generation so long-lived jobs survive recreation.
+        await this.adapterService.reattachStaleAgentMounts(executor).catch(error => {
+          console.warn(`[SullaFiles] Could not reattach every running agent mount: ${ error instanceof Error ? error.message : String(error) }`);
+        });
       });
       this.publish('ready', undefined, MOUNT_PATH);
       this.onMounted?.();

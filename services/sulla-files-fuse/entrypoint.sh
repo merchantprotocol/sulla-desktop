@@ -77,8 +77,34 @@ case " $top " in
   *) fail anchor-not-shared ",\"mount\":\"${top:-none}\",\"hint\":\"mount $mount_path from the guest with :rshared over a shared anchor\"" ;;
 esac
 
-emit daemon-exec ",\"url\":\"${SULLA_FILES_FUSE_URL:-https://sulla_files:8792}\""
-exec python3 /usr/local/libexec/sulla-files-fuse.py \
-  --url "${SULLA_FILES_FUSE_URL:-https://sulla_files:8792}" \
-  --status-file "$status_file" \
-  "$mount_path"
+stopping=0
+daemon_pid=
+backoff=2
+shutdown() {
+  stopping=1
+  if [ -n "$daemon_pid" ]; then kill -TERM "$daemon_pid" 2>/dev/null || true; fi
+}
+trap shutdown TERM INT
+
+while :; do
+  emit daemon-exec ",\"url\":\"${SULLA_FILES_FUSE_URL:-https://sulla_files:8792}\""
+  python3 /usr/local/libexec/sulla-files-fuse.py \
+    --url "${SULLA_FILES_FUSE_URL:-https://sulla_files:8792}" \
+    --status-file "$status_file" \
+    "$mount_path" &
+  daemon_pid=$!
+  if wait "$daemon_pid"; then daemon_status=0; else daemon_status=$?; fi
+  daemon_pid=
+  [ "$stopping" -eq 1 ] && exit 0
+  [ "$daemon_status" -eq 0 ] && exit 0
+
+  emit daemon-restart ",\"exitCode\":$daemon_status,\"backoffSeconds\":$backoff"
+  status restarting ",\"exitCode\":$daemon_status,\"backoffSeconds\":$backoff"
+  fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || true
+  sleep "$backoff" &
+  sleep_pid=$!
+  wait "$sleep_pid" || true
+  [ "$stopping" -eq 1 ] && exit 0
+  backoff=$((backoff * 2))
+  [ "$backoff" -gt 15 ] && backoff=15
+done
