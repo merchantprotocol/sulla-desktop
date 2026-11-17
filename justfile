@@ -72,6 +72,7 @@ assets: vault-pin-check
 # build and package; GitHub Actions is not a reliable gate for this.
 vault-pin-check:
     node scripts/check-bundled-vault-image-freshness.mjs --registry
+    node scripts/ts-wrapper.js scripts/check-bundled-image-platforms.ts --registry
 
 # Synthetic upgrade smoke: OLD vault pin (origin/main) -> NEW pin on a throwaway
 # Postgres; proves item rows and the key row survive and the vault still unlocks.
