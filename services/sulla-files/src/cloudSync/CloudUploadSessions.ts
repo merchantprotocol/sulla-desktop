@@ -10,7 +10,7 @@ import { openCloudChunk } from './chunkSource.js';
 import type { FilesSyncCloudApi } from './cloudApi.js';
 import { HttpStatusError } from './CloudSyncErrors.js';
 import type { CloudSyncRepositories } from './CloudSyncRepositories.js';
-import type { CloudRootKeyStore } from './keyStore.js';
+import type { CollectionRootKeyProvider } from './keyStore.js';
 import { buildCommitBatch, type RecursiveDeleteMetadata } from './push.js';
 import type { SyncRow, UploadSession } from './repository.js';
 import type { CloudStagingStore } from './staging.js';
@@ -23,7 +23,7 @@ export class CloudUploadSessions {
     private readonly repositories:CloudSyncRepositories,
     private readonly api:FilesSyncCloudApi,
     private readonly staging:CloudStagingStore,
-    private readonly roots:CloudRootKeyStore,
+    private readonly roots:CollectionRootKeyProvider,
     private readonly store:Store,
   ) {}
 

@@ -41,10 +41,11 @@ export class OrgCollectionRoutes {
     }));
     app.patch('/v1/desktop/org-collections/:id/level',route(async(request,response)=>{
       const result=await this.enrollment.updateLevel(String(request.params.id),request.body?.level as OrgCollectionLevel);
-      if(!result) return response.sendStatus(404); response.json(result);
+      if(!result){ response.sendStatus(404); return; }
+      response.json(result);
     }));
     app.delete('/v1/desktop/org-collections/:id',route(async(request,response)=>{
-      if(!await this.enrollment.unenroll(String(request.params.id))) return response.sendStatus(404);
+      if(!await this.enrollment.unenroll(String(request.params.id))){ response.sendStatus(404); return; }
       this.cloudSync?.clearOrgRootKeys(String(request.params.id)); response.sendStatus(204);
     }));
   }

@@ -8,7 +8,7 @@ import { CloudSyncErrorText } from './CloudSyncErrors.js';
 import type { CloudSyncRepositories } from './CloudSyncRepositories.js';
 import type { CloudUploadSessions } from './CloudUploadSessions.js';
 import { verifyHead, type SyncHead } from './envelope.js';
-import type { CloudRootKeyStore } from './keyStore.js';
+import type { CollectionRootKeyProvider } from './keyStore.js';
 import type { QueuedOperation } from './repository.js';
 import type { CloudStagingStore } from './staging.js';
 import { isUuid } from './validation.js';
@@ -31,7 +31,7 @@ export class CloudSignedResponseHandler {
     private readonly repositories:CloudSyncRepositories,
     private readonly api:FilesSyncCloudApi,
     private readonly staging:CloudStagingStore,
-    private readonly roots:CloudRootKeyStore,
+    private readonly roots:CollectionRootKeyProvider,
     private readonly sessions:CloudUploadSessions,
     private readonly loop:CloudSyncLoopControl,
   ) {}

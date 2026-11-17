@@ -8,7 +8,7 @@ import type pg from 'pg';
 import type { Config } from '../config.js';
 import { TransactionRunner } from '../FilesTransaction.js';
 import type { FilesKeyring } from '../keyring.js';
-import type { CloudRootKeyStore } from '../cloudSync/keyStore.js';
+import type { CollectionRootKeyProvider } from '../cloudSync/keyStore.js';
 import type { RestoreTarget } from '../cloudSync/restore.js';
 
 /** Restore's local writes: a new Files collection with its own local keys, then the wrapped sync root. */
@@ -17,7 +17,7 @@ export class PgCloudRestoreTargetRepository implements RestoreTarget {
     private readonly db:pg.Pool,
     private readonly config:Config,
     private readonly keyring:FilesKeyring,
-    private readonly roots:CloudRootKeyStore,
+    private readonly roots:CollectionRootKeyProvider,
     private readonly transactions = new TransactionRunner(db),
   ) {}
 
