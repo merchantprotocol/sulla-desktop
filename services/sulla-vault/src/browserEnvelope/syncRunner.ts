@@ -180,7 +180,7 @@ export class CloudVaultSyncRunner {
   }
 
   /** Wait for a newer opaque Cloud head; the short unlocked read only obtains the account cursor. */
-  async waitForRemoteChange(deviceId: string, waitMs = 25_000): Promise<{ revision: number; changed: boolean }> {
+  async waitForRemoteChange(deviceId: string, waitMs = 15_000): Promise<{ revision: number; changed: boolean }> {
     await ensureSyncSchema(this.db);
     const cursor = await this.authority.withUnlockedUserKey(async({ userId }) => {
       const state = await this.state(userId);

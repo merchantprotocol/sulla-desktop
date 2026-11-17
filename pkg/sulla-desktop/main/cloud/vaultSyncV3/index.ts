@@ -41,6 +41,8 @@ const RECONCILE_MS = 10 * 60_000;
 const POLL_MS = 500;
 const DEBOUNCE_MS = 300;
 const MAX_ATTEMPTS = 3;
+/** Minimum time between remote-watch cycles; the container holds each wait up to 25s. */
+const WATCH_CYCLE_FLOOR_MS = 1_000;
 
 /** Same shape as DesktopObjectSync's status, so Profile renders it unchanged. */
 export interface VaultSyncStatus {
@@ -93,28 +95,38 @@ class VaultSyncV3Impl {
     this.health.setRunning(false);
   }
 
+  /**
+   * Long-poll the local container for a Cloud revision past our cursor. Each
+   * cycle takes at least WATCH_CYCLE_FLOOR_MS so an immediate return (signed
+   * out, no identity, locked, or a head that did not advance) can never spin.
+   */
   private async watchRemoteChanges(epoch: number): Promise<void> {
     while (epoch === this.remoteWatchEpoch) {
+      const cycleStartedAt = Date.now();
       try {
-        const prefs = await getCloudPreferences().catch(() => null);
-        if (epoch !== this.remoteWatchEpoch) return;
-        if (!prefs?.enabled || !prefs.vault || !await isCloudSignedIn()) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          continue;
-        }
-        const who = await this.identity();
-        if (!who) continue;
-        const waiting = await VaultSyncContainer.wait(who.deviceId);
-        if (waiting.changed) {
-          const seenAt = Date.now();
-          console.log('[VaultSyncV3] remote_change_seen');
-          const result = await this.syncNow();
-          if (!result.lastError) console.log(`[VaultSyncV3] remote_change_seen_to_applied_ms=${Date.now() - seenAt}`);
-        }
+        await this.watchOnce(epoch);
       } catch {
-        if (epoch === this.remoteWatchEpoch) await new Promise(resolve => setTimeout(resolve, 1000));
+        // Container down, offline or locked. The cycle floor keeps retries calm.
+      }
+      const elapsed = Date.now() - cycleStartedAt;
+      if (elapsed < WATCH_CYCLE_FLOOR_MS && epoch === this.remoteWatchEpoch) {
+        await new Promise(resolve => setTimeout(resolve, WATCH_CYCLE_FLOOR_MS - elapsed));
       }
     }
+  }
+
+  private async watchOnce(epoch: number): Promise<void> {
+    const prefs = await getCloudPreferences().catch(() => null);
+    if (!prefs?.enabled || !prefs.vault || !await isCloudSignedIn()) return;
+    const who = await this.identity();
+    if (!who || epoch !== this.remoteWatchEpoch) return;
+    const waiting = await VaultSyncContainer.wait(who.deviceId);
+    if (!waiting.changed || epoch !== this.remoteWatchEpoch) return;
+    const seenAt = Date.now();
+    console.log('[VaultSyncV3] remote_change_seen');
+    const result = await this.syncNow();
+    if (result.lastError) console.log('[VaultSyncV3] remote_change_apply_failed');
+    else console.log(`[VaultSyncV3] remote_change_seen_to_applied_ms=${Date.now() - seenAt}`);
   }
 
   getStatus(): VaultSyncStatus[] {
