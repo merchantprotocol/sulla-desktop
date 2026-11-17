@@ -48,8 +48,8 @@ export class CloudSyncRoutes {
     }));
 
     app.post('/v1/desktop/cloud-sync/collections/:collectionId/pull', route(async(service, request, response) => {
-      service.pullSoon(String(request.params.collectionId));
-      response.status(202).json({ queued: true });
+      const queued = await service.pullSoon(String(request.params.collectionId));
+      response.status(202).json({ queued });
     }));
 
     app.post('/v1/desktop/cloud-sync/collections/:collectionId/enable', route(async(service, request, response) => {

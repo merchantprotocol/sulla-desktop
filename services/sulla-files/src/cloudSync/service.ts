@@ -128,11 +128,13 @@ export class CloudSyncService {
     this.commitWakeup.notify(collectionId);
   }
 
-  /** Authenticated desktop LiveEvents wake: bypass pull throttling for this collection. */
-  pullSoon(collectionId:string):void {
+  /** Authenticated desktop LiveEvents wake: bypass pull throttling for this collection. Collections this Desktop doesn't sync (foreign org events) are ignored. */
+  async pullSoon(collectionId:string):Promise<boolean> {
     if (!isUuid(collectionId)) throw new HttpStatusError(400, 'invalid collectionId');
+    if (!await this.repositories.state.sync(collectionId)) return false;
     this.lastPullAt.delete(collectionId);
     this.nudge();
+    return true;
   }
 
   finderBadges(collectionId:string) { return this.desktopStatus.finderBadges(collectionId) }

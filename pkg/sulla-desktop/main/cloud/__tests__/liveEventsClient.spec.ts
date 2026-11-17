@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CloudLiveEventsClient } from '../liveEventsClient';
 
+// The client's module-level singleton pulls in Electron through sullaCloudAuth; the spec only needs the class.
+vi.mock('../../sullaCloudAuth', () => ({ getCurrentAccessToken: vi.fn(), getCurrentUserId: vi.fn(), isCloudSignedIn: vi.fn() }));
+vi.mock('../cloudEndpoints', () => ({ CLOUD_RELAY_BASE: 'wss://relay.test' }));
+
 class SocketFake {
   listeners=new Map<string,(event:any)=>void>(); closed=0; sent:string[]=[];
   addEventListener(type:string,listener:(event:any)=>void){this.listeners.set(type,listener)}
