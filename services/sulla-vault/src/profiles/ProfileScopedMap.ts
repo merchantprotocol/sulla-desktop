@@ -13,6 +13,16 @@ export class ProfileScopedMap<Value> extends Map<string, Value> {
   override has(key: string): boolean { return super.has(this.scopedKey(key)); }
   override delete(key: string): boolean { return super.delete(this.scopedKey(key)); }
 
+  override get size(): number {
+    let count = 0;
+    for (const _key of this.keys()) count += 1;
+    return count;
+  }
+
+  override forEach(callbackfn: (value: Value, key: string, map: Map<string, Value>) => void, thisArg?: unknown): void {
+    for (const [key, value] of this.entries()) callbackfn.call(thisArg, value, key, this);
+  }
+
   override clear(): void {
     for (const key of super.keys()) if (key.startsWith(`${this.profileId}\0`)) super.delete(key);
   }

@@ -9,6 +9,7 @@ import { VaultRepositories } from '../src/repositories/VaultRepositories.js';
 import { BrokerExecutionService } from '../src/localAuthority/BrokerExecutionService.js';
 import { AuthSession, TokenPair } from '@sulla/domain';
 import { VaultItemTokenStore } from '../src/sullaCloudSession/VaultItemTokenStore.js';
+import { ProfileScopedMap } from '../src/profiles/ProfileScopedMap.js';
 
 const config = {
   bootstrapServiceToken: 'bootstrap-token-000000000000000000000000',
@@ -36,22 +37,63 @@ describe('LocalVaultAuthority profile invalidation', () => {
     (a as unknown as { keys: unknown }).keys = { userId: 'a', publicKey: 'a', userKey: aUserKey, privateKey: aPrivateKey };
     (b as unknown as { keys: unknown }).keys = { userId: 'b', publicKey: 'b', userKey: bUserKey, privateKey: bPrivateKey };
 
-    a.invalidate('profile-a');
+    a.lockProfileSecrets('profile-a');
     expect([...aUserKey]).toEqual([0, 0, 0]);
     expect([...aPrivateKey]).toEqual([0, 0]);
     expect([...bUserKey]).toEqual([9, 10, 11]);
     expect([...bPrivateKey]).toEqual([12, 13]);
   });
 
-  it('invalidates and renews the query session as part of lock', async () => {
-    // risk: profile isolation — a locked session must reject outstanding queries but remain re-unlockable.
+  it('keeps a startup-captured repository usable after lock', async () => {
+    // risk: availability — app.ts retains repository references across lock/unlock; those queries must not become stale.
     const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) };
     const session = new VaultProfileSession({ profileId: 'profile-a', generation: new ProfileGeneration(1) }, pool as never);
-    const authority = new LocalVaultAuthority(pool as never, config as never, undefined, new VaultRepositories(session));
-    await authority.lock();
-    await expect(session.database.query('SELECT 1')).rejects.toThrow(/stale/i);
-    await authority.database.query('SELECT 1');
+    const repositories = new VaultRepositories(session);
+    const capturedEscrowRepository = repositories.filesCloudEscrow;
+    const authority = new LocalVaultAuthority(pool as never, config as never, undefined, repositories);
+    authority.lockNow();
+    await capturedEscrowRepository.findSyncState('synthetic-user');
     expect(pool.query).toHaveBeenCalledOnce();
+  });
+
+  it('rejects repositories after explicit profile-session retirement', async () => {
+    // risk: tenant isolation — a retired profile's captured repositories cannot query after a switch.
+    const pool = { query: vi.fn(async () => ({ rows: [], rowCount: 0 })) };
+    const session = new VaultProfileSession({ profileId: 'profile-a', generation: new ProfileGeneration(1) }, pool as never);
+    const repositories = new VaultRepositories(session);
+    const capturedRepository = repositories.filesCloudEscrow;
+    const authority = new LocalVaultAuthority(pool as never, config as never, undefined, repositories);
+    authority.retireProfileSession('profile-a');
+    await expect(capturedRepository.findSyncState('synthetic-user')).rejects.toThrow(/stale/i);
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it('clears only this profile map entries and zeroizes its key buffers on lock', () => {
+    // risk: secret custody — lock erases this profile's bytes without removing another profile's scoped entries.
+    const a = authority('profile-a');
+    const aUserKey = Buffer.from([4, 5, 6]);
+    const aPrivateKey = new Uint8Array([7, 8]);
+    (a as unknown as { keys: unknown }).keys = { userId: 'a', publicKey: 'a', userKey: aUserKey, privateKey: aPrivateKey };
+    const scoped = (a as unknown as { humanSessions: ProfileScopedMap<string> }).humanSessions;
+    scoped.set('a-session', 'a');
+    Map.prototype.set.call(scoped, 'profile-b\0b-session', 'b');
+
+    a.lockProfileSecrets('profile-a');
+    expect([...aUserKey]).toEqual([0, 0, 0]);
+    expect([...aPrivateKey]).toEqual([0, 0]);
+    expect([...scoped.keys()]).toEqual([]);
+    expect(Map.prototype.get.call(scoped, 'profile-b\0b-session')).toBe('b');
+  });
+
+  it('reports only this profile in ProfileScopedMap size and forEach', () => {
+    // risk: profile isolation — enumeration must never expose another profile's cache entries.
+    const scoped = new ProfileScopedMap<number>('profile-a');
+    scoped.set('one', 1);
+    Map.prototype.set.call(scoped, 'profile-b\0two', 2);
+    expect(scoped.size).toBe(1);
+    const visited: Array<[number, string]> = [];
+    scoped.forEach((value, key) => visited.push([value, key]));
+    expect(visited).toEqual([[1, 'one']]);
   });
 
   it('drops delayed OAuth refresh writes when the captured profile generation is stale', async () => {

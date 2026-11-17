@@ -195,10 +195,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.repositories.session.assertCurrent();
   }
 
-  /** Erase only this authority's profile-bound state before its pool/session can be reused. */
-  invalidate(profileId: string): void {
+  /** Erase this profile's in-memory secrets on lock without retiring its query fence. */
+  lockProfileSecrets(profileId: string): void {
     if (this.repositories.session.context.profileId !== profileId) return;
-    const session = this.repositories.session;
     this.keys?.userKey.fill(0);
     this.keys?.privateKey.fill(0);
     this.keys?.legacyVmk?.fill(0);
@@ -220,8 +219,13 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.relayManager.closeAll('vault_locked');
     this.agentMailboxCloudLane = null;
     this.sullaCloudSessionManager = null;
-    session.invalidate();
-    this.repositories = new VaultRepositories(session.renew());
+  }
+
+  /** Retire a profile's query session during an explicit profile switch. */
+  retireProfileSession(profileId: string): void {
+    if (this.repositories.session.context.profileId !== profileId) return;
+    this.lockProfileSecrets(profileId);
+    this.repositories.session.invalidate();
   }
 
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
@@ -331,7 +335,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.generation += 1;
     for (const request of this.inFlight) request.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
     this.inFlight.clear();
-    this.invalidate(this.repositories.session.context.profileId);
+    this.lockProfileSecrets(this.repositories.session.context.profileId);
     this.migrationState = 'locked';
   }
 
