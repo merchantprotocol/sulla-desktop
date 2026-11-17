@@ -2059,7 +2059,7 @@ function handleTabContextMenuAction(
   padding-top: 0;
   padding-bottom: 0;
   align-items: center;
-  background: var(--bg-surface-alt, var(--bg-surface, var(--bg-page)));
+  background: var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface, var(--bg-page))));
 }
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
@@ -2082,10 +2082,10 @@ function handleTabContextMenuAction(
 }
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-surface-alt, var(--bg-surface, var(--bg-page))); }
+.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface, var(--bg-page)))); }
 .app-titlebar .tab-active .tab-activity-dot,
 .app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface, var(--bg-page)); }
-.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface-alt, var(--bg-surface, var(--bg-page))); }
+.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface, var(--bg-page)))); }
 .app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {

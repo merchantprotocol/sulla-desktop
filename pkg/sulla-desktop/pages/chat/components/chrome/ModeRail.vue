@@ -539,7 +539,7 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .mode-rail {
-  background: var(--bg-surface-alt, var(--bg-surface));
+  background: var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface)));
   border-right: 1px solid var(--border-default);
 }
 
