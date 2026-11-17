@@ -18,7 +18,7 @@ import { WindowBoundsStore } from './WindowBoundsStore';
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
 import { FIRST_RUN_LAST_STEP, getFirstRunState } from '@pkg/main/firstRun/firstRunState';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';

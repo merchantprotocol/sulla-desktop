@@ -10,7 +10,7 @@ import { providerFetch } from '../../../languagemodels/providerBroker';
 // Replace process/transport boundaries, not the logic under test.
 vi.mock('@pkg/main/cloud/byoUsageSync', () => ({ ByoUsageSync: class {} }));
 vi.mock('../../../services/IntegrationService', () => ({ getIntegrationService: vi.fn() }));
-vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
+vi.mock('@pkg/utils/firstRunTraceSink', () => ({ firstRunTrace: vi.fn() }));
 vi.mock('../../../languagemodels/providerBroker', () => ({ providerFetch: vi.fn() }));
 
 class FixtureService extends OpenAICompatibleService {

@@ -41,7 +41,7 @@ import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnec
 import { postgresClient } from '../database/PostgresClient';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';

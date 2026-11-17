@@ -14,14 +14,13 @@
  */
 
 import fs from 'node:fs';
-import path from 'node:path';
 
-import Electron from 'electron';
-
+import { firstRunTraceSink } from '@pkg/utils/firstRunTraceSink';
 import Logging from '@pkg/utils/logging';
 
+import { firstRunTracePath } from './firstRunTraceFile';
+
 const log = Logging['first-run'];
-const TRACE_NAME = 'first-run-trace.log';
 const MAX_TRACE_BYTES = 1024 * 1024;
 
 const SECRET_KEY = /token|secret|password|passphrase|masterkey|master_key|authhash|cookie|credential|api_?key|oauth_code|^code$/i;
@@ -39,10 +38,6 @@ export function scrubText(text: string): string {
     const eq = match.indexOf('=');
     return eq > 0 && eq < 20 ? `${ match.slice(0, eq + 1) }[redacted]` : '[redacted]';
   }), text);
-}
-
-export function firstRunTracePath(): string {
-  return path.join(Electron.app.getPath('userData'), TRACE_NAME);
 }
 
 function oneLine(value: unknown, fallback = '-'): string {
@@ -120,3 +115,6 @@ export function initFirstRunTraceEvents(): void {
     });
   }).catch(() => { /* tracing is best-effort */ });
 }
+
+// Desktop main registers this timeline as the sink the agent and main code record through.
+firstRunTraceSink.register({ trace: firstRunTrace, listenForUiEvents: initFirstRunTraceEvents });

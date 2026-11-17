@@ -56,7 +56,7 @@ import {
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
-import { firstRunTracePath } from './firstRun/firstRunTrace';
+import { firstRunTracePath } from './firstRun/firstRunTraceFile';
 import { DEFAULT_SESSION_TTL_MS, ToolSessionRegistry, type ToolSession } from './mcpToolSessions';
 import Logging from '@pkg/utils/logging';
 

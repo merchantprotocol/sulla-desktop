@@ -10,7 +10,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 import type { BrokerInjection } from '../../vault-broker';
-import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 /**
  * xAI Grok LLM provider.

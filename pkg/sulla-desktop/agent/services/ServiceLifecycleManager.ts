@@ -25,7 +25,7 @@
 
 import { EventEmitter } from 'events';
 
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;

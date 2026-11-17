@@ -35,7 +35,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
-import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';

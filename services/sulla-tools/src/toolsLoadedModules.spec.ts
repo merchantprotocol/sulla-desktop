@@ -48,15 +48,25 @@ describe('sulla-tools loaded modules', () => {
 
   it('loads no Desktop-only module at startup through the container approval registration', async() => {
     // risk: the registration runs when the Tools container starts. Its static closure (DecisionService and what it
-    // imports statically) must stay container-safe. DecisionService's Desktop edges are lazy: the first one is
-    // agent/services/ConversationTitleService.ts -> agent/languagemodels/index.ts -> main/firstRun/firstRunTrace.ts
-    // (dynamic import in generateTitle). That edge predates this change and is tracked in the PR body.
+    // imports statically) must stay container-safe.
     const graph = new ToolsLoadedModuleGraph({
       root:        repoRoot,
       dockerfile:  readFileSync(path.join(repoRoot, 'services/sulla-tools/Dockerfile'), 'utf8'),
       entrypoints: ['services/sulla-tools/src/toolDecisionPortRegistration.ts'],
     });
     expect(await graph.startupViolations()).toEqual([]);
+  }, 120_000);
+
+  it('loads no first-run trace implementation in the Tools bundle, even through lazy imports', async() => {
+    // risk: main/firstRun/firstRunTrace.ts needs Electron, userData and the support timeline. Any Tools-loaded module
+    // that imports it (lazily or not) breaks the container at the first trace. Agent code records through
+    // utils/firstRunTraceSink.ts, and Desktop main registers the real timeline at startup.
+    const graph = new ToolsLoadedModuleGraph({
+      root:        repoRoot,
+      dockerfile:  readFileSync(path.join(repoRoot, 'services/sulla-tools/Dockerfile'), 'utf8'),
+      entrypoints: new ToolManifestEntrypoints(repoRoot).roots(),
+    });
+    expect(await graph.loadedInputs()).not.toContain('pkg/sulla-desktop/main/firstRun/firstRunTrace.ts');
   }, 120_000);
 
   it('exports every name the Desktop credential importers take from the container stub', () => {

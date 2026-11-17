@@ -5,7 +5,7 @@
 
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { AgentContainerLifecycle } from './AgentContainerLauncher';
 
