@@ -28,9 +28,18 @@ export class CollectionRoleGate {
 export class CollectionAccessResolver {
   constructor(private readonly collections:CollectionAccessRepository) {}
 
-  async resolve(_actor:FilesIdentity, collectionId:string):Promise<CollectionAccess> {
+  async resolve(actor:FilesIdentity, collectionId:string):Promise<CollectionAccess> {
     const collection = await this.collections.findAccessible(collectionId);
     if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
+    if (collection.workspace_scope === 'organization') {
+      if (!collection.org_collection_enrolled || collection.owner_user_id !== actor.userId || collection.org_collection_level === 'none') throw Object.assign(new Error('access denied'), { status: 403 });
+      if(actor.agentId||actor.jobId) {
+        if(actor.collectionId&&actor.collectionId!==collectionId) throw Object.assign(new Error('agent collection policy denied access'),{status:403});
+        const role=collection.org_collection_level==='manage'?'edit':collection.org_collection_level;
+        return { role, paths: [], files: [], collection };
+      }
+      return { role: collection.org_collection_level, paths: [], files: [], collection };
+    }
     return { role: 'manage', paths: [], files: [], collection };
   }
 }

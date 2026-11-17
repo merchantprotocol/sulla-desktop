@@ -38,6 +38,33 @@ describe.skipIf(!databaseUrl)('Files collection, journal, version and original-r
     expect((await fixture.pool.query('SELECT name,home,owner_user_id FROM collections WHERE id=$1', [id])).rows[0]).toEqual({ name: 'Synced', home: 'synced', owner_user_id: fixture.userId });
   });
 
+  it('enrolls an org collection idempotently, exposes it to the File Manager, and refuses view-only FUSE writes', async() => {
+    // risk: permissions/data integrity — Cloud refreshes cannot duplicate a local enrollment or turn view into write access.
+    const id=randomUUID();
+    const body={orgId:'org-1',orgName:'Research / Labs',name:'Shared Notes',creatorUserId:'cloud-creator',level:'view'};
+    expect(await fixture.request(`/v1/desktop/org-collections/${id}`,'PUT',{body})).toMatchObject({status:200,body:{id,workspace_scope:'organization',org_collection_level:'view'}});
+    expect(await fixture.request(`/v1/desktop/org-collections/${id}`,'PUT',{body:{...body,name:'Updated name'}})).toMatchObject({status:200});
+    expect((await fixture.pool.query('SELECT COUNT(*)::int AS count,owner_user_id,root_key_source,cloud_creator_user_id FROM collections WHERE id=$1 GROUP BY owner_user_id,root_key_source,cloud_creator_user_id',[id])).rows[0])
+      .toEqual({count:1,owner_user_id:fixture.userId,root_key_source:'org',cloud_creator_user_id:'cloud-creator'});
+    const catalog=await fixture.request('/v1/collections');
+    expect(catalog.body.find((row:any)=>row.id===id)).toMatchObject({workspaceScope:'organization',orgId:'org-1',orgName:'Research / Labs',level:'view',access_role:'view'});
+    expect((await fixture.request(`/v1/collections/${id}/journal`)).status).toBe(200);
+    const duplicateId=randomUUID();
+    expect((await fixture.request(`/v1/desktop/org-collections/${duplicateId}`,'PUT',{body:{...body,name:'Updated name'}})).status).toBe(200);
+    const tree=(await fixture.request('/v1/fuse/tree')).body;
+    expect(tree.collections.find((row:any)=>row.id===id)?.tree_path).toBe(`Organizations/Research _ Labs/Updated name (${id.slice(0,8)})`);
+    expect(tree.collections.find((row:any)=>row.id===duplicateId)?.tree_path).toBe(`Organizations/Research _ Labs/Updated name (${duplicateId.slice(0,8)})`);
+    expect((await fixture.request(`/v1/fuse/files?collectionId=${id}&path=attempt.txt`,'POST',{body:Buffer.from('no'),headers:{'content-type':'application/octet-stream'}})).status).toBe(403);
+    expect((await fixture.request(`/v1/desktop/org-collections/${id}/level`,'PATCH',{body:{level:'edit'}})).status).toBe(200);
+    expect((await fixture.request(`/v1/fuse/files?collectionId=${id}&path=write.txt`,'POST',{body:Buffer.from('yes'),headers:{'content-type':'text/plain'}})).status).toBe(201);
+    expect((await fixture.request(`/v1/desktop/org-collections/${id}/level`,'PATCH',{body:{level:'none'}})).status).toBe(200);
+    expect((await fixture.request('/v1/collections')).body.some((row:any)=>row.id===id)).toBe(false);
+    expect((await fixture.request(`/v1/desktop/org-collections/${duplicateId}`,'DELETE')).status).toBe(204);
+    expect((await fixture.request(`/v1/desktop/org-collections/${id}`,'DELETE')).status).toBe(204);
+    expect((await fixture.request('/v1/collections')).body.some((row:any)=>row.id===id)).toBe(false);
+    expect((await fixture.pool.query('SELECT COUNT(*)::int AS count FROM collections WHERE id=$1',[id])).rows[0].count).toBe(1);
+  });
+
   it('serves the change journal as entries, changed paths and a head sequence', async() => {
     // risk: data accuracy — sync clients that miss or replay journal entries diverge from the server.
     const entries = (await journal()).body;

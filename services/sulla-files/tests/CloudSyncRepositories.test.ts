@@ -41,7 +41,7 @@ describe.skipIf(!databaseUrl)('cloud sync repositories (real Postgres)', () => {
 
   beforeAll(async() => {
     await pool.query(`CREATE SCHEMA ${ schema }`);
-    await pool.query(`CREATE TABLE collections(id uuid PRIMARY KEY,name text NOT NULL,owner_user_id text NOT NULL DEFAULT 'u1',published boolean NOT NULL DEFAULT TRUE,
+    await pool.query(`CREATE TABLE collections(id uuid PRIMARY KEY,name text NOT NULL,owner_user_id text NOT NULL DEFAULT 'u1',published boolean NOT NULL DEFAULT TRUE,workspace_scope text NOT NULL DEFAULT 'principal',org_collection_level text NOT NULL DEFAULT 'none',org_collection_enrolled boolean NOT NULL DEFAULT FALSE,root_key_source text NOT NULL DEFAULT 'local',
       legacy_source boolean NOT NULL DEFAULT FALSE,system_area text,cloud_catalog_sync boolean NOT NULL DEFAULT FALSE,created_at timestamptz NOT NULL DEFAULT NOW())`);
     await pool.query(`CREATE TABLE files(id uuid PRIMARY KEY,collection_id uuid NOT NULL REFERENCES collections(id) ON DELETE CASCADE,path text NOT NULL,current_version_id uuid,
       deleted_at timestamptz,mime text,size bigint NOT NULL DEFAULT 0,extraction_status text NOT NULL DEFAULT 'pending',updated_at timestamptz NOT NULL DEFAULT NOW())`);
@@ -97,6 +97,18 @@ describe.skipIf(!databaseUrl)('cloud sync repositories (real Postgres)', () => {
     expect((await state.sync(otherCollectionId))?.status).toBe('idle');
     expect((await state.needsEscrow(vaultId, 4)).map(row => row.collectionId)).toEqual([collectionId]);
     expect((await state.needsEscrow(vaultId, 5)).map(row => row.collectionId).sort()).toEqual([collectionId, otherCollectionId].sort());
+  });
+
+  it('keeps org roots out of Vault escrow and refuses Cloud writes below edit', async() => {
+    // risk: key custody and permissions — an org root must not be wrapped by a member Vault, and view grants cannot upload.
+    await state.setEnabled(collectionId, true, wrapped);
+    await pool.query("UPDATE collections SET workspace_scope='organization',org_collection_level='view',org_collection_enrolled=TRUE,root_key_source='org' WHERE id=$1", [collectionId]);
+    expect(await state.needsEscrow(randomUUID(), 1)).toEqual([]);
+    expect(await state.canWriteCollection(collectionId)).toBe(false);
+    await pool.query("UPDATE collections SET org_collection_level='edit' WHERE id=$1", [collectionId]);
+    expect(await state.canWriteCollection(collectionId)).toBe(true);
+    await pool.query("UPDATE collections SET workspace_scope='principal' WHERE id=$1", [collectionId]);
+    expect(await state.canWriteCollection(collectionId)).toBe(true);
   });
 
   it('sends the folder name again only after a rename', async() => {
