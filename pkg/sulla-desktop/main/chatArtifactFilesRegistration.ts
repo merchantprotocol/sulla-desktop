@@ -9,7 +9,7 @@ import { getSullaFilesClient } from './sullaFilesClient';
 
 import type { ArtifactFilesRegistration, FilesRegistrationResult } from '@pkg/agent/services/ChatArtifactService';
 import type { ChatArtifactKind, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 
 const AGENT_ID = 'sulla-desktop-artifacts';
 const MAX_ATTEMPTS = 3;

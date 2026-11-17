@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 import { sullaAppGroupDefaultsDomain } from './sullaAppGroup';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { spawnFile } from '@pkg/utils/childProcess';

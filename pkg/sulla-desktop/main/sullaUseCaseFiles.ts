@@ -18,7 +18,7 @@ import Logging from '@pkg/utils/logging';
 
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
 import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 
 const USE_CASE_ROW_LIMIT = 20_000;
 
