@@ -25,7 +25,7 @@ import { PgCloudFolderCoverageStore } from '../Repositories/CloudFolderCoverageR
 import { PgCloudPushCandidateRepository } from '../Repositories/CloudPushCandidateRepository.js';
 import { PgCloudRestoreTargetRepository } from '../Repositories/CloudRestoreTargetRepository.js';
 import { CloudFolderCoverage } from './folderCoverage.js';
-import { CloudRootKeyStore } from './keyStore.js';
+import { CollectionRootKeyProviderSelector, LocalEscrowRootKeyProvider, OrgRootKeyProvider, type CollectionRootKeyProvider, type OrgCollectionKeySource } from './keyStore.js';
 import { CloudPuller } from './pull.js';
 import { CloudPushOrdering } from './pushOrdering.js';
 import { CloudPusher, sha256Text } from './push.js';
@@ -52,7 +52,7 @@ const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
 export class CloudSyncService {
   readonly cryptoModule:CryptoModuleStatus;
   readonly api:FilesSyncCloudApi;
-  readonly roots:CloudRootKeyStore;
+  readonly roots:CollectionRootKeyProvider;
   private readonly repositories:CloudSyncRepositories;
   private readonly staging:CloudStagingStore;
   private readonly transport = new EscrowTransportRequests();
@@ -72,10 +72,11 @@ export class CloudSyncService {
     private readonly keyring:FilesKeyring,
     private readonly store:Store,
     broker:Pick<FilesCloudBroker, 'execute'>,
+    orgKeySource:OrgCollectionKeySource = { get:async() => { throw new Error('organization collection key source is not configured') } },
   ) {
     this.cryptoModule = configureCryptoModule();
     this.api = new FilesSyncCloudApi(broker);
-    this.roots = new CloudRootKeyStore(keyring);
+    this.roots = new CollectionRootKeyProviderSelector(db, new LocalEscrowRootKeyProvider(keyring), new OrgRootKeyProvider(orgKeySource));
     // A live actor, never a copy of config.userId: Vault unlock re-owns Files after this is built.
     this.repositories = new CloudSyncRepositories(db, new CloudSyncActor(config));
     this.staging = new CloudStagingStore(config.dataRoot);
@@ -342,6 +343,11 @@ export class CloudSyncService {
         await this.puller.pull({ collectionId, keyVersion: sync.keyVersion, lastSeq: sync.lastSeq, head: sync.head }, root);
         this.lastPullAt.set(collectionId, Date.now());
         current = (await this.repositories.state.sync(collectionId)) ?? sync;
+      }
+      const collectionScope = (await this.db.query('SELECT workspace_scope,org_collection_level,org_collection_enrolled FROM collections WHERE id=$1',[collectionId])).rows[0];
+      if (collectionScope?.workspace_scope === 'organization' && (!collectionScope.org_collection_enrolled || !['edit','manage'].includes(collectionScope.org_collection_level))) {
+        await this.repositories.state.setStatus(collectionId, 'idle');
+        return;
       }
       let session;
       try {

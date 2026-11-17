@@ -43,8 +43,8 @@ export class PgCloudSyncStateRepository {
   }
 
   async needsEscrow(vaultId:string, vaultEpoch:number):Promise<SyncRow[]> {
-    return (await this.db.query(`SELECT * FROM files_cloud_sync WHERE enabled=TRUE AND wrapped_root IS NOT NULL
-      AND (status='needs-vault' OR escrow_vault_id IS DISTINCT FROM $1 OR escrow_vault_epoch IS DISTINCT FROM $2)`, [vaultId, vaultEpoch])).rows.map(PgCloudSyncStateRepository.syncRow);
+    return (await this.db.query(`SELECT s.* FROM files_cloud_sync s JOIN collections c ON c.id=s.collection_id WHERE s.enabled=TRUE AND s.wrapped_root IS NOT NULL AND c.root_key_source='local'
+      AND (s.status='needs-vault' OR s.escrow_vault_id IS DISTINCT FROM $1 OR s.escrow_vault_epoch IS DISTINCT FROM $2)`, [vaultId, vaultEpoch])).rows.map(PgCloudSyncStateRepository.syncRow);
   }
 
   async setStatus(collectionId:string, status:SyncStatus, lastError:string | null = null):Promise<void> {

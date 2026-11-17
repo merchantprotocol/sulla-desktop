@@ -28,7 +28,7 @@ export class CollectionSyncRoutes {
       for (const collection of rows) {
         try {
           const access = await this.access.collectionAccess(request, collection.id);
-          visible.push({ ...collection, systemArea: collection.system_area ?? null, access_role: access.role, shared_folders: access.paths, shared_files: access.files });
+          visible.push({ ...collection, systemArea: collection.system_area ?? null, ...(collection.workspace_scope==='organization'?{workspaceScope:'organization',orgId:collection.org_id,orgName:collection.org_name,level:collection.org_collection_level}:{}), access_role: access.role, shared_folders: access.paths, shared_files: access.files });
         } catch (error) {
           if ((error as HttpError).status !== 403) throw error;
         }
