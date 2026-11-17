@@ -28,6 +28,8 @@ export class PgCloudRemoteFolderRepository {
 
   async applyRemoteFolderVersion(input:ApplyRemoteInput):Promise<void> {
     const { collectionId, remote, manifest } = input;
+    const creatorType=remote.createdByType??'user';
+    const creatorId=remote.createdById??remote.authorUserId??this.actor.userId;
     await this.transactions.run('cloud-sync-metadata', async client => {
       await lockStoredNamespace(client, collectionId);
       await client.query("SELECT set_config('sulla_files.cloud_pull','on',TRUE)");
@@ -54,8 +56,8 @@ export class PgCloudRemoteFolderRepository {
         } else if (existing) {
           await client.query('UPDATE file_folders SET namespace_parent_version_id=namespace_version_id,namespace_version_id=$3,deleted_at=NULL,updated_at=NOW() WHERE id=$1 AND collection_id=$2', [remote.fileId,collectionId,remote.versionId]);
         } else if (!existing) {
-          await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id,namespace_version_id) VALUES($1,$2,$3,'user',$4,$5)`,
-            [remote.fileId,collectionId,path,this.actor.userId,remote.versionId]);
+          await client.query(`INSERT INTO file_folders(id,collection_id,path,created_by_type,created_by_id,namespace_version_id) VALUES($1,$2,$3,$4,$5,$6)`,
+            [remote.fileId,collectionId,path,creatorType,creatorId,remote.versionId]);
         }
         await client.query(`INSERT INTO files_cloud_folders(collection_id,file_id,version_id,path,deleted) VALUES($1,$2,$3,$4,$5)
           ON CONFLICT(collection_id,file_id) DO UPDATE SET version_id=EXCLUDED.version_id,path=EXCLUDED.path,deleted=EXCLUDED.deleted,updated_at=NOW()`,

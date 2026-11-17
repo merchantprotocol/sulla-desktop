@@ -42,6 +42,12 @@ export class PgCloudSyncStateRepository {
     });
   }
 
+  async canWriteCollection(collectionId:string):Promise<boolean> {
+    const row=(await this.db.query(`SELECT workspace_scope,org_collection_level,org_collection_enrolled FROM collections WHERE id=$1`,[collectionId])).rows[0];
+    if(!row) return false;
+    return row.workspace_scope!=='organization' || (row.org_collection_enrolled===true && ['edit','manage'].includes(row.org_collection_level));
+  }
+
   async needsEscrow(vaultId:string, vaultEpoch:number):Promise<SyncRow[]> {
     return (await this.db.query(`SELECT s.* FROM files_cloud_sync s JOIN collections c ON c.id=s.collection_id WHERE s.enabled=TRUE AND s.wrapped_root IS NOT NULL AND c.root_key_source='local'
       AND (s.status='needs-vault' OR s.escrow_vault_id IS DISTINCT FROM $1 OR s.escrow_vault_epoch IS DISTINCT FROM $2)`, [vaultId, vaultEpoch])).rows.map(PgCloudSyncStateRepository.syncRow);

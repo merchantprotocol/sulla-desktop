@@ -182,6 +182,9 @@ export interface RemoteVersion {
   seq:number;
   deviceId:string | null;
   createdAt:string | null;
+  createdByType?:'user'|'agent-run'|null;
+  createdById?:string|null;
+  authorUserId?:string|null;
 }
 
 export function parseRemoteVersion(value:unknown, collectionId:string, keyVersion:number):RemoteVersion {
@@ -206,6 +209,9 @@ export function parseRemoteVersion(value:unknown, collectionId:string, keyVersio
     seq: version.seq,
     deviceId: typeof version.deviceId === 'string' ? version.deviceId : null,
     createdAt: typeof version.createdAt === 'string' ? version.createdAt : null,
+    createdByType: version.created_by_type === 'agent-run' || version.createdByType === 'agent-run' ? 'agent-run' : version.created_by_type === 'user' || version.createdByType === 'user' ? 'user' : null,
+    createdById: typeof version.created_by_id === 'string' ? version.created_by_id : typeof version.createdById === 'string' ? version.createdById : null,
+    authorUserId: typeof version.authorUserId === 'string' ? version.authorUserId : null,
   };
 }
 

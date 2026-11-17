@@ -212,6 +212,10 @@ export class CloudSyncService {
       await Promise.race([this.kick(), this.scheduler.delay(PREPARE_WAIT_MS)]);
       operation = await this.repositories.operations.nextOperation();
     }
+    if(operation && !await this.repositories.state.canWriteCollection(operation.collectionId)) {
+      await this.repositories.state.setStatus(operation.collectionId, 'idle');
+      return null;
+    }
     return operation ? { handle: operation.handle, op: operation.op, collectionId: operation.collectionId, sha256: operation.sha256 } : null;
   }
 
@@ -223,6 +227,7 @@ export class CloudSyncService {
     const operation = await this.repositories.operations.operationByHandle(input.handle);
     if (!operation) throw new HttpStatusError(404, 'prepared operation not found');
     return this.exclusive(operation.collectionId, async() => {
+      if(!await this.repositories.state.canWriteCollection(operation.collectionId)) throw new HttpStatusError(403, 'organization collection is read-only');
       const current = await this.repositories.operations.operationByHandle(input.handle);
       if (!current) return { status: 'retry' as const, detail: { error: 'operation_superseded' } };
       let response;
@@ -327,6 +332,17 @@ export class CloudSyncService {
     if (await this.repositories.operations.hasOperation(collectionId)) return;
     const root = await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot);
     try {
+      const lastPull = this.lastPullAt.get(collectionId) ?? 0;
+      let current = sync;
+      if (Date.now() - lastPull >= PULL_INTERVAL_MS || !sync.head) {
+        await this.puller.pull({ collectionId, keyVersion: sync.keyVersion, lastSeq: sync.lastSeq, head: sync.head }, root);
+        this.lastPullAt.set(collectionId, Date.now());
+        current = (await this.repositories.state.sync(collectionId)) ?? sync;
+      }
+      if(!await this.repositories.state.canWriteCollection(collectionId)) {
+        await this.repositories.state.setStatus(collectionId, 'idle');
+        return;
+      }
       const info = await this.repositories.state.staleInfoName(collectionId);
       if (info) {
         const body = JSON.stringify(await sealCollectionInfo(root, collectionId, sync.keyVersion, { v: 1, name: info.name }));
@@ -335,18 +351,6 @@ export class CloudSyncService {
       }
       if (sync.uploadSession) {
         await this.sessions.continueUpload(sync, sync.uploadSession, root);
-        return;
-      }
-      const lastPull = this.lastPullAt.get(collectionId) ?? 0;
-      let current = sync;
-      if (Date.now() - lastPull >= PULL_INTERVAL_MS || !sync.head) {
-        await this.puller.pull({ collectionId, keyVersion: sync.keyVersion, lastSeq: sync.lastSeq, head: sync.head }, root);
-        this.lastPullAt.set(collectionId, Date.now());
-        current = (await this.repositories.state.sync(collectionId)) ?? sync;
-      }
-      const collectionScope = (await this.db.query('SELECT workspace_scope,org_collection_level,org_collection_enrolled FROM collections WHERE id=$1',[collectionId])).rows[0];
-      if (collectionScope?.workspace_scope === 'organization' && (!collectionScope.org_collection_enrolled || !['edit','manage'].includes(collectionScope.org_collection_level))) {
-        await this.repositories.state.setStatus(collectionId, 'idle');
         return;
       }
       let session;

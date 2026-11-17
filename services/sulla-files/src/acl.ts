@@ -33,6 +33,12 @@ export class CollectionAccessResolver {
     if (!collection) throw Object.assign(new Error('collection not found'), { status: 404 });
     if (collection.workspace_scope === 'organization') {
       if (!collection.org_collection_enrolled || collection.owner_user_id !== actor.userId || collection.org_collection_level === 'none') throw Object.assign(new Error('access denied'), { status: 403 });
+      if(actor.agentId||actor.jobId) {
+        if(!await this.collections.agentCanUse(collectionId,actor.userId,actor.groupIds??[])) throw Object.assign(new Error('agent access denied'),{status:403});
+        const role=collection.org_collection_level==='none'?null:'view';
+        if(!role) throw Object.assign(new Error('access denied'),{status:403});
+        return { role, paths: [], files: [], collection };
+      }
       return { role: collection.org_collection_level, paths: [], files: [], collection };
     }
     return { role: 'manage', paths: [], files: [], collection };

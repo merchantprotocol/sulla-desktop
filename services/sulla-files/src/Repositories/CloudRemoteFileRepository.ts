@@ -101,12 +101,14 @@ export class PgCloudRemoteFileRepository {
     if (existing && existing.collection_id !== collectionId) throw Object.assign(new Error('Cloud file id belongs to another local collection'), { code: 'FILES_SYNC_INTEGRITY' });
     const parent = await this.localParent(client, fileId, remote.parentVersionId, existing?.current_version_id ?? null);
     const deviceId = (remote.deviceId ?? 'cloud').slice(0, 128);
+    const creatorType = remote.createdByType ?? 'user';
+    const creatorId = remote.createdById ?? remote.authorUserId ?? this.actor.userId;
     const tracked = journalOp !== 'conflict';
 
     if (manifest.deleted) {
       if (existing) {
         await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id)
-          VALUES($1,$2,$3,$4,NULL,0,TRUE,'user',$5,$6,$7)`, [versionId, fileId, collectionId, parent, this.actor.userId, 'Deleted on another device (Sulla Cloud)', deviceId]);
+          VALUES($1,$2,$3,$4,NULL,0,TRUE,$5,$6,$7,$8)`, [versionId, fileId, collectionId, parent, creatorType, creatorId, 'Deleted on another device (Sulla Cloud)', deviceId]);
         await client.query('UPDATE files SET current_version_id=$2,deleted_at=NOW(),updated_at=NOW() WHERE id=$1', [fileId, versionId]);
         await client.query("INSERT INTO journal(collection_id,file_id,version_id,op) VALUES($1,$2,$3,'delete')", [collectionId, fileId, versionId]);
         await client.query(`INSERT INTO files_cloud_versions(version_id,collection_id,file_id,pushed_seq) VALUES($1,$2,$3,$4) ON CONFLICT(version_id) DO NOTHING`,
@@ -129,12 +131,12 @@ export class PgCloudRemoteFileRepository {
       await client.query(`UPDATE files SET path=$2,mime=$3,size=$4,deleted_at=NULL,extracted_at=NULL,extraction_status='pending',updated_at=NOW() WHERE id=$1`,
         [fileId, path, manifest.mime, manifest.size]);
     } else {
-      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,'user',$4,$5,$6)`,
-        [fileId, collectionId, path, this.actor.userId, manifest.mime, manifest.size]);
+      await client.query(`INSERT INTO files(id,collection_id,path,created_by_type,created_by_id,mime,size) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [fileId, collectionId, path, creatorType, creatorId, manifest.mime, manifest.size]);
     }
     await client.query(`INSERT INTO file_versions(id,file_id,chunk_collection_id,parent_version_id,manifest_hash,size,deleted,created_by_type,created_by_id,message,device_id)
-      VALUES($1,$2,$3,$4,$5,$6,FALSE,'user',$7,$8,$9)`,
-    [versionId, fileId, collectionId, tracked ? parent : null, hash, manifest.size, this.actor.userId,
+      VALUES($1,$2,$3,$4,$5,$6,FALSE,$7,$8,$9,$10)`,
+    [versionId, fileId, collectionId, tracked ? parent : null, hash, manifest.size, creatorType, creatorId,
       tracked ? 'Changed on another device (Sulla Cloud)' : 'Conflicted copy kept by Sulla Cloud backup', deviceId]);
     await client.query('UPDATE files SET current_version_id=$2 WHERE id=$1', [fileId, versionId]);
     if (chunkIds.length) await client.query('UPDATE chunks SET refcount=refcount+1 WHERE collection_id=$1 AND id=ANY($2::text[])', [collectionId, chunkIds]);
