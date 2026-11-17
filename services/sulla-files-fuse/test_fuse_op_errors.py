@@ -36,6 +36,10 @@ class ScriptedApi:
             raise outcome
         return outcome, '"r1"'
 
+    async def read_to_file(self, file_id, file):
+        file.write(b"synthetic")
+        return "v1", "synthetic-hash"
+
 
 def page(*names):
     return {"rootCollectionId": "home", "entries": [{"path": name, "kind": "file", "size": 1} for name in names], "nextCursor": None}

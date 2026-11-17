@@ -32,7 +32,7 @@ import trio
 
 # Keep per-handle data on the bounded container tmpfs, not in Python heap.
 MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_OPEN_HANDLES = 32
 # Open-file buffers spill to a disk-backed volume, never to RAM (tmpfs counts
 # against the container memory limit).
@@ -52,6 +52,8 @@ AUTH_RETRY_WINDOW_SECONDS = 20
 MAX_RETRY_AFTER_SECONDS = 2.0
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
+MAX_CONCURRENT_TRANSFERS = max(1, int(os.environ.get("SULLA_FILES_FUSE_MAX_TRANSFERS", "4")))
+TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
 # Hashing a spooled file to detect a no-op write is only worth it for small files.
@@ -270,7 +272,7 @@ class FilesApi:
             raise OSError(errno.EACCES, "Files mount capability is invalid")
         return token.decode("ascii")
 
-    def _request(self, path: str, method="GET", body=None, headers=None, idempotent=None):
+    def _request(self, path: str, method="GET", body=None, headers=None, idempotent=None, sink=None):
         """Send one Files request with bounded retries.
 
         `idempotent` marks a POST the caller can safely repeat (create/mkdir reconcile a
@@ -288,8 +290,12 @@ class FilesApi:
             auth_attempts = 0
             while True:
                 try:
-                    result = self._send(path, method, body, headers)
-                    outcome["status"], outcome["bytes"] = result[0], len(result[2])
+                    if sink is not None:
+                        sink.seek(0)
+                        sink.truncate(0)
+                    result = self._send(path, method, body, headers) if sink is None else self._send(path, method, body, headers, sink=sink)
+                    outcome["status"] = result[0]
+                    outcome["bytes"] = sink.tell() if sink is not None else len(result[2])
                     return result
                 except OSError as error:
                     if getattr(error, "status", None) == 401:
@@ -350,7 +356,7 @@ class FilesApi:
                      ms=round(elapsed * 1000, 1), sent=len(body) if body is not None else 0, received=outcome["bytes"], actor=request_actor.get(),
                      slow=slow or None, failure=outcome.get("failure"), errno=outcome.get("errno"), code=outcome.get("code"))
 
-    def _send(self, path, method, body, headers):
+    def _send(self, path, method, body, headers, sink=None):
         try:
             response = self.http.request(
                 method, f"{self.base_url}{path}", body=body,
@@ -376,8 +382,17 @@ class FilesApi:
                         failure.retry_after = None
                     raise failure
                 length = response.headers.get("Content-Length")
-                if length and int(length) > MAX_RESPONSE_BYTES:
+                limit = MAX_FILE_BYTES if sink is not None else MAX_RESPONSE_BYTES
+                if length and int(length) > limit:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
+                if sink is not None:
+                    received = 0
+                    for chunk in response.stream(STREAM_CHUNK_BYTES, decode_content=False):
+                        received += len(chunk)
+                        if received > MAX_FILE_BYTES:
+                            raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
+                        sink.write(chunk)
+                    return response.status, dict(response.headers), b""
                 payload = response.read(MAX_RESPONSE_BYTES + 1)
                 if len(payload) > MAX_RESPONSE_BYTES:
                     raise OSError(errno.EFBIG, "Files response exceeds the mount limit")
@@ -407,9 +422,16 @@ class FilesApi:
         _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/entry?{query}")
         return json.loads(body)
 
-    async def read(self, file_id):
-        _, headers, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}/content")
-        return body, headers.get("ETag", "").strip('"'), headers.get("X-Sulla-Source-Hash", "")
+    def _read_to_file_sync(self, file_id, file):
+        with TRANSFER_SEMAPHORE:
+            _, headers, _ = self._request(f"/v1/fuse/files/{file_id}/content", sink=file)
+        # FUSE reads use os.pread on fileno(), bypassing BufferedRandom's Python buffer.
+        # Flush here so every caller (including merge-after-write) sees the complete stream.
+        file.flush()
+        return headers.get("ETag", "").strip('"'), headers.get("X-Sulla-Source-Hash", "")
+
+    async def read_to_file(self, file_id, file):
+        return await trio.to_thread.run_sync(self._read_to_file_sync, file_id, file)
 
     def _write_sync(self, file_id, file, size, version_id, source_hash):
         # The content hash lets Files recognise a retried PUT whose first attempt already committed.
@@ -422,7 +444,8 @@ class FilesApi:
         else:
             body = os.pread(file.fileno(), size, 0)
             path = f"/v1/fuse/files/{file_id}/content"
-        _, response_headers, payload = self._request(path, "PUT", body, headers)
+        with TRANSFER_SEMAPHORE:
+            _, response_headers, payload = self._request(path, "PUT", body, headers)
         return json.loads(payload), response_headers.get("X-Sulla-Merged") == "1"
 
     async def write(self, file_id, file, size, version_id, source_hash):
@@ -746,31 +769,39 @@ class SullaFiles(pyfuse3.Operations):
                 data = self._render_folder_metadata(node, current)
                 version_id, source_hash = str(current.get("revision", "")), ""
             else:
-                data, version_id, source_hash = await self.api.read(node["id"])
+                temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
+                try:
+                    version_id, source_hash = await self.api.read_to_file(node["id"], temporary)
+                except BaseException:
+                    temporary.close()
+                    raise
+                temporary.flush()
+                data = None
         except OSError as error:
             raise pyfuse3.FUSEError(error.errno) from error
-        return await self._open_handle(inode, flags, ctx, data, version_id, source_hash, current if node.get("virtualMetadata") else None)
+        return await self._open_handle(inode, flags, ctx, data, version_id, source_hash, current if node.get("virtualMetadata") else None, temporary if not node.get("virtualMetadata") else None)
 
-    async def _open_handle(self, inode, flags, ctx, data, version_id, source_hash, metadata=None):
+    async def _open_handle(self, inode, flags, ctx, data, version_id, source_hash, metadata=None, temporary=None):
         node = self.nodes[inode]
         handle = self.next_handle
         self.next_handle += 1
-        temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
-        temporary.write(data)
+        temporary = temporary or tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
+        if data is not None: temporary.write(data)
         temporary.flush()
         self.handles[handle] = {
-            "inode": inode, "fileId": node.get("id"), "file": temporary, "size": len(data),
+            "inode": inode, "fileId": node.get("id"), "file": temporary, "size": temporary.tell() if data is None else len(data),
             "versionId": version_id, "sourceHash": source_hash, "dirty": False, "failedErrno": None,
             "append": bool(flags & os.O_APPEND),
             "metadata": metadata,
             "actor": await self._actor(ctx),
         }
         if flags & os.O_TRUNC:
+            had_content = self.handles[handle]["size"] > 0
             os.ftruncate(temporary.fileno(), 0)
             self.handles[handle]["size"] = 0
             # Truncating a file that is already empty changes nothing. Marking it dirty made every
             # `echo > newfile` upload an empty "update" version before the real content.
-            self.handles[handle]["dirty"] = len(data) > 0
+            self.handles[handle]["dirty"] = had_content
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
         info.direct_io = True
@@ -810,7 +841,9 @@ class SullaFiles(pyfuse3.Operations):
 
     async def _commit_metadata(self, handle, node, data):
         try:
-            parsed = yaml.safe_load(data.decode("utf-8")) or {}
+            if hasattr(data, "seek"):
+                data.seek(0)
+            parsed = yaml.safe_load(data) or {}
             if not isinstance(parsed, dict) or not isinstance(parsed.get("files", {}), dict):
                 raise ValueError("metadata document must be a mapping and files must be a mapping")
         except (UnicodeDecodeError, yaml.YAMLError, ValueError) as error:
@@ -914,10 +947,9 @@ class SullaFiles(pyfuse3.Operations):
             else:
                 result, merged = await self._as_actor(handle.get("actor"), self.api.write(handle["fileId"], handle["file"], handle["size"], handle["versionId"], handle["sourceHash"]))
                 if merged:
-                    merged_data, merged_version, merged_hash = await self.api.read(handle["fileId"])
                     os.ftruncate(handle["file"].fileno(), 0)
-                    os.pwrite(handle["file"].fileno(), merged_data, 0)
-                    handle.update({"size": len(merged_data), "versionId": merged_version, "sourceHash": merged_hash})
+                    merged_version, merged_hash = await self.api.read_to_file(handle["fileId"], handle["file"])
+                    handle.update({"size": handle["file"].tell(), "versionId": merged_version, "sourceHash": merged_hash})
         except OSError as error:
             fuse_errno = errno.EINVAL if getattr(error, "status", None) == 400 else errno.EACCES if getattr(error, "status", None) == 403 else error.errno
             handle["dirty"] = False
@@ -997,13 +1029,17 @@ class SullaFiles(pyfuse3.Operations):
             target = self.nodes.get(target_inode) if target_inode else None
             actor = await self._actor(ctx)
             if target and target.get("virtualMetadata") and not node.get("directory"):
-                data, _, _ = await self.api.read(node["id"])
-                current = await self._get_folder_metadata(target["collectionId"], target["filesPath"])
                 temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
-                temporary.write(data); temporary.flush()
+                try:
+                    await self.api.read_to_file(node["id"], temporary)
+                    temporary.flush()
+                except BaseException:
+                    temporary.close()
+                    raise
+                current = await self._get_folder_metadata(target["collectionId"], target["filesPath"])
                 metadata_handle = {"metadata": current, "file": temporary}
                 try:
-                    await self._as_actor(actor, self._commit_metadata(metadata_handle, target, data))
+                    await self._as_actor(actor, self._commit_metadata(metadata_handle, target, temporary))
                     await self._as_actor(actor, self.api.delete(node["id"]))
                 finally:
                     temporary.close()
