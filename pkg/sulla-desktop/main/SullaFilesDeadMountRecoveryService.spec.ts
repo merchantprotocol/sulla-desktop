@@ -42,6 +42,16 @@ describe('SullaFilesDeadMountRecoveryService', () => {
     expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'stat', 'recreate', 'reattach']);
   });
 
+  it('falls back to lazy umount when fusermount3 is missing and the stuck mount still times out', async() => {
+    // risk: availability — the VM guest may lack fusermount3; a stuck (TIMEOUT) mount must still be detached, not left to throw.
+    const executor = new FakeExecutor(['TIMEOUT', 'TIMEOUT', 'ok']);
+    const recovery = new SullaFilesDeadMountRecoveryService(executor.asVm());
+
+    await recovery.recreateAndReattach(async() => { executor.events.push('recreate') }, async() => { executor.events.push('reattach') });
+
+    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat', 'recreate', 'reattach']);
+  });
+
   it('never recreates while the mount still reports ENOTCONN after both lazy-unmount attempts', async() => {
     // risk: availability — recreating with a poisoned bind reproduces the multi-minute dead-mount failure.
     const executor = new FakeExecutor(['ENOTCONN', 'ENOTCONN', 'ENOTCONN']);
