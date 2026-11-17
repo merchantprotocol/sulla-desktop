@@ -14,8 +14,8 @@
   --bg-page: #ffffff;
   --bg-surface: #f8fafc;
   --bg-surface-alt: #f1f5f9;
-  /* Chat header, browser toolbar and active tab share this; lighter than the titlebar and rail. */
-  --bg-chrome-active: var(--bg-page);
+  /* Chat header, browser toolbar and active tab share this. It matches the rendered Files and Passwords header (their fixed light palette: 40% white over #f4f7fb plus a faint blue glow). */
+  --bg-chrome-active: #f6f9fb;
   --bg-chrome: #e6ebf1; /* header, traffic-light corner and icon rail; must contrast with --bg-surface (active tab) */
   --bg-surface-hover: #e2e8f0;
   --bg-header: #ffffff;
