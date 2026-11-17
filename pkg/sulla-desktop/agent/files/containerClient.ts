@@ -14,6 +14,7 @@ import { issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import { sullaFilesCapabilityKey } from '@pkg/runtime/sullaFilesKey';
 
 import type { ToolExecutionContext } from '../tools/executionContext';
+import { desktopFilesTransport } from './desktopFilesTransport';
 import { loopbackOrigin } from '@pkg/utils/instance';
 
 const DESKTOP_FILES_ORIGIN = loopbackOrigin('https', 30124);
@@ -39,10 +40,10 @@ function filesApi():{ api: URL; request: FilesFetch } {
 }
 
 const desktopFilesFetch:FilesFetch = async(input, init) => {
-  // Keep Electron and Desktop-only paths out of the Node tools container.
-  const transport = await import('@pkg/main/sullaFilesTls');
-  if (transport.FILES_HTTPS_ORIGIN !== DESKTOP_FILES_ORIGIN) throw new Error('Files Desktop TLS origin is inconsistent');
-  return transport.desktopFilesFetch(input, init);
+  // Desktop main registers its pinned-TLS transport; the Tools container never does, so it fails closed there.
+  const transport = desktopFilesTransport.resolve();
+  if (transport.origin !== DESKTOP_FILES_ORIGIN) throw new Error('Files Desktop TLS origin is inconsistent');
+  return transport.fetch(input, init);
 };
 
 async function readContainerCa():Promise<string> {

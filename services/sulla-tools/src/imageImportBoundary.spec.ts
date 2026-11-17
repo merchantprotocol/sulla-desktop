@@ -47,13 +47,10 @@ describe('ToolsImageImportBoundary against a fixture image', () => {
       "import type { Y } from '@pkg/main/Y';",
       // A word "import" in prose must not be read as an edge to the quoted path.
       "// Shared helpers import the lister from '@pkg/main/Commented' at build time.",
-      // Dynamic import inside a function body: not evaluated at module load, so not a violation.
-      "export async function loadSeam() { return await import('@pkg/main/Dynamic'); }",
     ].join('\n'));
     writeFixture('pkg/sulla-desktop/main/X.ts', 'export const X = 1;\n');
     writeFixture('pkg/sulla-desktop/main/Y.ts', 'export type Y = string;\n');
     writeFixture('pkg/sulla-desktop/main/Commented.ts', 'export const Commented = 3;\n');
-    writeFixture('pkg/sulla-desktop/main/Dynamic.ts', 'export const Dynamic = 2;\n');
 
     const boundary = new ToolsImageImportBoundary({
       root:        fixtureRoot,
@@ -62,6 +59,74 @@ describe('ToolsImageImportBoundary against a fixture image', () => {
     });
 
     expect(boundary.violations()).toEqual(['pkg/sulla-desktop/agent/tools/files/list.ts -> pkg/sulla-desktop/main/X.ts']);
+  });
+
+  it('flags a dynamic @pkg/main import reachable from a tool entrypoint', () => {
+    // risk: a dynamic import inside a function body still runs in the Tools container and crashes with "Cannot find package".
+    fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'tools-image-boundary-'));
+    writeFixture('pkg/sulla-desktop/agent/tools/mail/send.ts', [
+      "export async function loadAuth() { return await import('@pkg/main/sullaCloudAuth'); }",
+      "export const lazy = () => import(\"@pkg/main/Lazy\");",
+    ].join('\n'));
+    writeFixture('pkg/sulla-desktop/main/sullaCloudAuth.ts', 'export const token = 1;\n');
+    writeFixture('pkg/sulla-desktop/main/Lazy.ts', 'export const lazy = 2;\n');
+
+    const boundary = new ToolsImageImportBoundary({
+      root:        fixtureRoot,
+      dockerfile:  'COPY pkg/sulla-desktop/agent ./pkg/sulla-desktop/agent\n',
+      entrypoints: ['pkg/sulla-desktop/agent/tools/mail/send.ts'],
+    });
+
+    expect(boundary.violations()).toEqual([
+      'pkg/sulla-desktop/agent/tools/mail/send.ts -> pkg/sulla-desktop/main/Lazy.ts',
+      'pkg/sulla-desktop/agent/tools/mail/send.ts -> pkg/sulla-desktop/main/sullaCloudAuth.ts',
+    ]);
+  });
+
+  it('does not flag a dynamic import that appears only inside a comment or a string literal', () => {
+    // risk: prose or a quoted example of import('@pkg/main/x') is not a load, so it must not fail the boundary.
+    fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'tools-image-boundary-'));
+    writeFixture('pkg/sulla-desktop/agent/tools/files/doc.ts', [
+      "// Example: await import('@pkg/main/InLineComment') would crash the container.",
+      "/* block: import('@pkg/main/InBlockComment') */",
+      "const example = \"import('@pkg/main/InDoubleString')\";",
+      "const other = 'import(\"@pkg/main/InSingleString\")';",
+      "const tpl = `import('@pkg/main/InTemplate')`;",
+      "const url = 'https://example.test/import(\"@pkg/main/InUrl\")';",
+      "export const docs = [example, other, tpl, url];",
+    ].join('\n'));
+
+    const boundary = new ToolsImageImportBoundary({
+      root:        fixtureRoot,
+      dockerfile:  'COPY pkg/sulla-desktop/agent ./pkg/sulla-desktop/agent\n',
+      entrypoints: ['pkg/sulla-desktop/agent/tools/files/doc.ts'],
+    });
+
+    expect(boundary.violations()).toEqual([]);
+  });
+
+  it('does not flag type-only imports, including typeof and type-alias import() positions', () => {
+    // risk: esbuild erases type-only imports, so flagging them would fail the boundary on code that never loads them.
+    fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'tools-image-boundary-'));
+    writeFixture('pkg/sulla-desktop/agent/tools/files/types.ts', [
+      "import type { X } from '@pkg/main/TypeOnlyStatic';",
+      "import { type Y } from '@pkg/main/TypeOnlyInline';",
+      "export type Z = import('@pkg/main/TypeAlias').Z;",
+      "export const probe: typeof import('@pkg/main/TypeQuery') = undefined as any;",
+      "export type W = X | Y;",
+    ].join('\n'));
+    writeFixture('pkg/sulla-desktop/main/TypeOnlyStatic.ts', 'export type X = 1;\n');
+    writeFixture('pkg/sulla-desktop/main/TypeOnlyInline.ts', 'export type Y = 2;\n');
+    writeFixture('pkg/sulla-desktop/main/TypeAlias.ts', 'export type Z = 3;\n');
+    writeFixture('pkg/sulla-desktop/main/TypeQuery.ts', 'export const probe = 4;\n');
+
+    const boundary = new ToolsImageImportBoundary({
+      root:        fixtureRoot,
+      dockerfile:  'COPY pkg/sulla-desktop/agent ./pkg/sulla-desktop/agent\n',
+      entrypoints: ['pkg/sulla-desktop/agent/tools/files/types.ts'],
+    });
+
+    expect(boundary.violations()).toEqual([]);
   });
 
   it('does not descend into copied modules outside the followed tool, files and Tools scope', () => {

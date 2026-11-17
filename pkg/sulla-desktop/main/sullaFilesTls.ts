@@ -12,6 +12,7 @@ import { verifyVaultCertificate } from './vaultTlsVerifier';
 
 import paths from '@pkg/utils/paths';
 import { loopbackOrigin } from '@pkg/utils/instance';
+import { desktopFilesTransport } from '../agent/files/desktopFilesTransport';
 
 export const FILES_HTTPS_ORIGIN = loopbackOrigin('https', 30124);
 const SESSION_PARTITION = 'sulla-files-service';
@@ -78,3 +79,6 @@ export class SullaFilesTlsServiceProvider {
 export const sullaFilesTlsProvider = new SullaFilesTlsServiceProvider();
 export async function refreshFilesPinnedSessions():Promise<void> { return sullaFilesTlsProvider.resolve().refreshFilesPinnedSessions() }
 export async function desktopFilesFetch(input:string | URL, init?:RequestInit):Promise<Response> { return sullaFilesTlsProvider.resolve().desktopFilesFetch(input, init) }
+
+// Hand the pinned-TLS Files transport to the agent-side Files client. Tools container never loads this module.
+desktopFilesTransport.register({ origin: FILES_HTTPS_ORIGIN, fetch: desktopFilesFetch });

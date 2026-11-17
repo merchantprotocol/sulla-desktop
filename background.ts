@@ -10,6 +10,8 @@
 // a handler, so web content in browser tabs can't reach privileged IPC.
 // eslint-disable-next-line import-x/order
 import '@pkg/main/ipcGuestGuard';
+// Side effect: registers the pinned-TLS Files transport so agent-side Files calls resolve it in Desktop main. Keep it early.
+import '@pkg/main/sullaFilesTls';
 
 import { execFile } from 'child_process';
 import fs from 'fs';
