@@ -23,7 +23,8 @@ export class SullaFilesDeadMountRecoveryService {
     if (state !== 'ENOTCONN' && state !== 'TIMEOUT') return;
 
     await this.executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-uz', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
-    if (await this.statState() === 'ENOTCONN') {
+    const afterFuse = await this.statState();
+    if (afterFuse === 'ENOTCONN' || afterFuse === 'TIMEOUT') {
       await this.executor.execCommand({ root: true, expectFailure: true }, 'umount', '-l', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
     }
     const verified = await this.statState();
