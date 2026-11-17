@@ -12,7 +12,8 @@ describe('organization collection access', () => {
     const collection={id:'org-1',workspace_scope:'organization',owner_user_id:'user-1',org_collection_enrolled:true,org_collection_level:'manage'};
     const repository={findAccessible:vi.fn(async()=>collection),agentCanUse:vi.fn(async()=>true)};
     const resolver=new CollectionAccessResolver(repository as any);
-    expect((await resolver.resolve({kind:'capability',userId:'user-1',deviceId:'d',agentId:'a'},'org-1')).role).toBe('view');
+    expect((await resolver.resolve({kind:'capability',userId:'user-1',deviceId:'d',agentId:'a'},'org-1')).role).toBe('edit');
+    await expect(resolver.resolve({kind:'capability',userId:'user-1',deviceId:'d',agentId:'a',collectionId:'other'},'org-1')).rejects.toMatchObject({status:403});
     repository.agentCanUse.mockResolvedValue(false);
     await expect(resolver.resolve({kind:'capability',userId:'user-1',deviceId:'d',agentId:'a'},'org-1')).rejects.toMatchObject({status:403});
   });
