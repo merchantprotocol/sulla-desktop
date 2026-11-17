@@ -5,14 +5,20 @@
  * "Sulla" is a trademark. See TRADEMARK.md.
  */
 
-/* Deep-ocean background with a starfield. */
+/* Chat body backdrop: the theme's surface colour, so the whole chat matches
+   the chat root and title strip. The starfield stays as decoration. */
 
 .chat-canvas {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, var(--bg-surface-alt) 0%, var(--bg-surface) 60%, var(--bg-page) 100%);
+  background: var(--bg-surface);
   overflow: hidden;
   pointer-events: none;
+}
+
+/* Dark themes keep their deep-ocean gradient; only light themes go flat white. */
+.dark .chat-canvas {
+  background: linear-gradient(135deg, var(--bg-surface-alt) 0%, var(--bg-surface) 60%, var(--bg-page) 100%);
 }
 
 .chat-stars {

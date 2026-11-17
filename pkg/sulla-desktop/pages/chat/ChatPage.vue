@@ -838,8 +838,8 @@ onBeforeUnmount(() => {
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    var(--bg-page) 0%,
-    color-mix(in srgb, var(--bg-page) 78%, transparent) 55%,
+    var(--bg-surface) 0%,
+    color-mix(in srgb, var(--bg-surface) 78%, transparent) 55%,
     transparent 100%
   );
   backdrop-filter: blur(10px);
@@ -873,8 +873,8 @@ onBeforeUnmount(() => {
   pointer-events: none;
   background: linear-gradient(
     to top,
-    var(--bg-page) 0%,
-    color-mix(in srgb, var(--bg-page) 78%, transparent) 45%,
+    var(--bg-surface) 0%,
+    color-mix(in srgb, var(--bg-surface) 78%, transparent) 45%,
     transparent 100%
   );
   backdrop-filter: blur(10px);

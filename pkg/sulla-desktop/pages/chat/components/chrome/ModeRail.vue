@@ -355,7 +355,6 @@ const items: readonly ModeItem[] = Object.freeze([
 
 <style scoped>
 .mode-rail {
-  width: 52px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -386,10 +385,6 @@ const items: readonly ModeItem[] = Object.freeze([
 
 .mode-btn {
   position: relative;
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  margin: 0 auto;
   padding: 0;
   display: flex;
   align-items: center;
@@ -405,15 +400,6 @@ const items: readonly ModeItem[] = Object.freeze([
 .mode-btn:hover {
   color: var(--text-primary);
   background: var(--accent-dim);
-}
-
-.mode-rail .mode-btn.active {
-  color: var(--text-on-accent) !important;
-  background: var(--accent) !important;
-}
-
-.mode-btn.active::before {
-  content: none;
 }
 
 .icon {
@@ -433,14 +419,6 @@ const items: readonly ModeItem[] = Object.freeze([
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.mode-btn:hover .icon {
-  transform: translateY(-1px);
-}
-
-.mode-btn.active .icon {
-  filter: none;
 }
 
 .item-label,
@@ -572,20 +550,48 @@ const items: readonly ModeItem[] = Object.freeze([
   outline-offset: 2px;
 }
 
-.mode-btn.active {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  min-height: 34px;
-  padding: 0;
-  justify-content: center;
+/*
+ * Active state keeps the same 44x40 .mode-btn box as every other item, so
+ * its icon sits on the same axis. The accent square is a 34px pseudo-element
+ * centred inside that box; the expanded rail fills the row instead.
+ */
+.mode-btn.active,
+.mode-btn.active:hover {
   color: var(--text-on-accent);
-  background: var(--accent);
-  border-radius: 7px;
+  background: transparent;
 }
 
 .mode-btn.active::before {
-  content: none;
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border-radius: 7px;
+  background: var(--accent);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.mode-rail.expanded .mode-btn.active::before {
+  width: 100%;
+  height: 100%;
+  border-radius: 20px;
+}
+
+/* Own stacking context so the -1 accent square sits above the rail background,
+   and beat the light themes' `.theme-* .mode-btn.active` !important tint/glow. */
+.mode-rail .mode-btn.active,
+.mode-rail .mode-btn.active:hover {
+  isolation: isolate;
+  color: var(--text-on-accent) !important;
+  background: transparent !important;
+}
+.mode-rail .mode-btn.active::before {
+  background: var(--accent) !important;
+  box-shadow: none !important;
 }
 
 .mode-btn:hover .icon {
@@ -610,10 +616,6 @@ const items: readonly ModeItem[] = Object.freeze([
 
 .expanded .mode-btn {
   gap: 12px;
-}
-
-.rail-footer .mode-btn.active {
-  background: var(--accent);
 }
 
 .mode-rail { background: var(--bg-surface-alt); border-right: 1px solid var(--border-default); }
