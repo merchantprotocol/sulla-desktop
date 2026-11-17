@@ -74,15 +74,21 @@ export class CloudUploadSessions {
           expired = true;
           return;
         }
-        const status = await this.api.putChunk(uploadId, id, wire);
-        if (status === 200 || status === 201) {
-          await this.repositories.chunks.markUploaded(collectionId, id);
-        } else if (status === 409) {
+        let status:number;
+        try {
+          status = await this.api.putChunk(uploadId, id, wire);
+          if (status === 200 || status === 201) await this.repositories.chunks.markUploaded(collectionId, id);
+        } catch (error) {
+          // Record and stop; Promise.all must not settle while sibling PUTs are still in flight.
+          failure = error instanceof Error ? error : new Error(String(error));
+          return;
+        }
+        if (status === 409) {
           // Cloud already holds different bytes for this id; verify and adopt them after the commit.
           if (!session.present.includes(id)) session.present.push(id);
         } else if (status === 404 || status === 410) {
           expired = true;
-        } else {
+        } else if (status !== 200 && status !== 201) {
           failure = Object.assign(new Error(`Chunk upload failed (${ status })`), { status });
         }
       }

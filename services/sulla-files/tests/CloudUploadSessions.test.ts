@@ -52,4 +52,19 @@ describe('CloudUploadSessions',()=>{
     expect(staging.clear).toHaveBeenCalledOnce();
     expect(commit).not.toHaveBeenCalled();
   });
+
+  it('waits for in-flight chunk PUTs before surfacing a network failure, and never commits',async()=>{
+    // risk: sync integrity — a thrown PUT must not let a retry overlap sibling uploads or commit a partial version.
+    const ids=['fails','slow-1','slow-2'];
+    let slowDone=0;
+    const {service}=setup(ids,async id=>{
+      if (id==='fails') throw new Error('network down');
+      await new Promise(resolve=>setTimeout(resolve,20));
+      slowDone++; return 201;
+    });
+    const commit=vi.spyOn(service,'queueCommit');
+    await expect(service.continueUpload({collectionId} as any,session(ids),new Uint8Array(32))).rejects.toThrow('network down');
+    expect(slowDone).toBe(2);
+    expect(commit).not.toHaveBeenCalled();
+  });
 });
