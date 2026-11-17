@@ -32,6 +32,7 @@ function setup(options: { failCopy?: string; owner?: { kdfCloudUserId?: string; 
       withExclusiveReadLock: async operation => operation(),
       tables: async () => Object.keys(fixture),
       rows: async table => fixture[table as keyof typeof fixture],
+      sequences: async () => [],
     },
     destination: {
       assertFresh: async () => {},
