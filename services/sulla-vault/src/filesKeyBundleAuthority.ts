@@ -7,7 +7,6 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { Base64, FilesKeyBundleContext, FilesKeyBundleEnvelope } from '@sulla/vault-crypto';
 
-import type { Database } from './db.js';
 import { VaultCryptoFilesKeyBundleCipher, type FilesKeyBundleCipher } from './filesKeys/FilesKeyBundleCipher.js';
 import { FilesKeyBundlePolicy } from './filesKeys/FilesKeyBundlePolicy.js';
 import type {
@@ -32,9 +31,8 @@ export { VaultFilesKeyBundleError } from './filesKeys/VaultFilesKeyBundleError.j
  */
 export class VaultFilesKeyBundleAuthority {
   constructor(
-    db:Database,
     private readonly identityLease:FilesAuthorityIdentityLease,
-    private readonly repository:PostgresFilesKeyBundleRepository = new PostgresFilesKeyBundleRepository(db),
+    private readonly repository:PostgresFilesKeyBundleRepository,
     private readonly cipher:FilesKeyBundleCipher = new VaultCryptoFilesKeyBundleCipher(),
     private readonly policy:FilesKeyBundlePolicy = new FilesKeyBundlePolicy(),
   ) {}

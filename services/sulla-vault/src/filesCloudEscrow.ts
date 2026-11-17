@@ -5,7 +5,6 @@
 
 /** Files Cloud escrow: memory-key wrap, escrow-key transport and Cloud restore unlock. */
 import type express from 'express';
-import type { Database } from './db.js';
 import type { CloudSyncAuthority } from './browserEnvelope/syncRunner.js';
 import type { FilesAuditEmitter } from './filesAudit.js';
 import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncCodecProvider.js';
@@ -21,8 +20,9 @@ export { FilesEscrowKeyCrypto } from './filesKeys/FilesEscrowKeyCrypto.js';
 export class FilesCloudEscrowService {
   private restoredCloudKey?:{userKey:Uint8Array;vaultId:string;vaultEpoch:number;expiresAt:number};
   private readonly restoreKeyTtlMs=5*60_000;
-  constructor(db:Database,private readonly authority:CloudSyncAuthority,private readonly audit?:FilesAuditEmitter, private readonly codecProvider:DomainVaultSyncCodecProvider=new DomainVaultSyncCodecProvider(),
-    private readonly repository:PostgresFilesCloudEscrowRepository=new PostgresFilesCloudEscrowRepository(db), private readonly keyCrypto:FilesEscrowKeyCrypto=new FilesEscrowKeyCrypto()){}
+  constructor(private readonly authority:CloudSyncAuthority, private readonly repository:PostgresFilesCloudEscrowRepository,
+    private readonly audit?:FilesAuditEmitter, private readonly codecProvider:DomainVaultSyncCodecProvider=new DomainVaultSyncCodecProvider(),
+    private readonly keyCrypto:FilesEscrowKeyCrypto=new FilesEscrowKeyCrypto()){}
   async wrapMemoryKey(memoryKey:string){
     const raw=new Uint8Array(Buffer.from(memoryKey,'base64'));if(raw.byteLength!==32)throw new FilesCloudEscrowError('invalid_request',400);
     // raw is zeroed even when the vault is locked before the callback runs.
