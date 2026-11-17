@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 const { createGitHubOctokit } = vi.hoisted(() => ({ createGitHubOctokit: vi.fn() }));
 vi.mock('../../../tools/github/octokit', () => ({ createGitHubOctokit }));
 // Approval policy storage belongs to the application/Postgres runtime; these tests exercise the registered tool path, not policy persistence.
-vi.mock('../../../services/DecisionService', () => ({ decisionService: { requiresApproval: vi.fn().mockResolvedValue(false) } }));
+// The tool approval port is injected (see tools/toolDecisionPort.ts); this suite registers a port that approves nothing gated.
 // Settings reads fall back to an installation file whose path only the app bootstrap sets ('Fallback path not set' in tests); answer every read with its default.
 vi.mock('../../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: vi.fn(async(_key: string, fallback?: unknown) => fallback), set: vi.fn(async() => undefined) },
@@ -15,6 +15,9 @@ vi.mock('../../../database/models/SullaSettingsModel', () => ({
 
 import { githubToolManifests } from '../../../tools/github/manifests';
 import { ToolRegistry } from '../../../tools/registry';
+import { toolDecisionPort } from '../../../tools/toolDecisionPort';
+
+toolDecisionPort.register({ requiresApproval: vi.fn().mockResolvedValue(false), request: vi.fn() });
 
 describe('github_update_repo registered tool', () => {
   const setup = async() => {

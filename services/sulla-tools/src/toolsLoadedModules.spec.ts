@@ -34,6 +34,18 @@ describe('sulla-tools loaded modules', () => {
     expect(await graph.startupViolations()).toEqual([]);
   }, 120_000);
 
+  it('reaches no Desktop-only module from the base tool class, even through lazy imports', async() => {
+    // risk: agent/tools/base.ts runs in every tool. A lazy import() that reaches Desktop main (approval
+    // inbox, first-run trace, Electron IPC) fails at the first tool call in the container, not at boot.
+    // Approval goes through the injected ToolDecisionPort instead; Desktop registers the real inbox at startup.
+    const graph = new ToolsLoadedModuleGraph({
+      root:        repoRoot,
+      dockerfile:  readFileSync(path.join(repoRoot, 'services/sulla-tools/Dockerfile'), 'utf8'),
+      entrypoints: ['pkg/sulla-desktop/agent/tools/base.ts'],
+    });
+    expect(await graph.sensitiveInputs()).toEqual([]);
+  }, 120_000);
+
   it('exports every name the Desktop credential importers take from the container stub', () => {
     // risk: a missing export is a load-time "No matching export" crash the first time the importer runs.
     const contract = new ModuleExportContract(repoRoot);
