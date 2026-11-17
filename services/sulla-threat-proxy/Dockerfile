@@ -14,6 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN pip install "mitmproxy==${MITMPROXY_VERSION}"
 COPY services/sulla-threat-proxy/addons /opt/sulla-threat-proxy/addons
+COPY services/sulla-threat-proxy/blocklist/urlhaus-default.txt /opt/sulla-threat-proxy/blocklist/urlhaus-default.txt
 COPY --chmod=0755 services/sulla-threat-proxy/entrypoint.sh /usr/local/bin/sulla-threat-proxy
 
 FROM base

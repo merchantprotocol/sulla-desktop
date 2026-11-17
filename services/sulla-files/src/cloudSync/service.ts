@@ -25,7 +25,7 @@ import { PgCloudFolderCoverageStore } from '../Repositories/CloudFolderCoverageR
 import { PgCloudPushCandidateRepository } from '../Repositories/CloudPushCandidateRepository.js';
 import { PgCloudRestoreTargetRepository } from '../Repositories/CloudRestoreTargetRepository.js';
 import { CloudFolderCoverage } from './folderCoverage.js';
-import { CloudRootKeyStore } from './keyStore.js';
+import { CollectionRootKeyProviderSelector, CollectionVaultEscrowPolicy, LocalEscrowRootKeyProvider, OrgRootKeyProvider, type CollectionRootKeyProvider, type OrgCollectionKeySource } from './keyStore.js';
 import { CloudPuller } from './pull.js';
 import { CloudPushOrdering } from './pushOrdering.js';
 import { CloudPusher, sha256Text } from './push.js';
@@ -52,10 +52,11 @@ const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
 export class CloudSyncService {
   readonly cryptoModule:CryptoModuleStatus;
   readonly api:FilesSyncCloudApi;
-  readonly roots:CloudRootKeyStore;
+  readonly roots:CollectionRootKeyProvider;
   private readonly repositories:CloudSyncRepositories;
   private readonly staging:CloudStagingStore;
   private readonly transport = new EscrowTransportRequests();
+  private readonly escrowPolicy:CollectionVaultEscrowPolicy;
   private readonly puller:CloudPuller;
   private readonly pusher:CloudPusher;
   private readonly restorer:CloudRestore;
@@ -72,12 +73,14 @@ export class CloudSyncService {
     private readonly keyring:FilesKeyring,
     private readonly store:Store,
     broker:Pick<FilesCloudBroker, 'execute'>,
+    orgKeySource:OrgCollectionKeySource = { get:async() => { throw new Error('organization collection key source is not configured') } },
   ) {
     this.cryptoModule = configureCryptoModule();
     this.api = new FilesSyncCloudApi(broker);
-    this.roots = new CloudRootKeyStore(keyring);
     // A live actor, never a copy of config.userId: Vault unlock re-owns Files after this is built.
     this.repositories = new CloudSyncRepositories(db, new CloudSyncActor(config));
+    this.roots = new CollectionRootKeyProviderSelector(this.repositories.state, new LocalEscrowRootKeyProvider(keyring), new OrgRootKeyProvider(orgKeySource));
+    this.escrowPolicy = new CollectionVaultEscrowPolicy(this.repositories.state);
     this.staging = new CloudStagingStore(config.dataRoot);
     this.puller = new CloudPuller(this.api, this.repositories.pull, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
     const candidates = new PgCloudPushCandidateRepository(db);
@@ -162,7 +165,8 @@ export class CloudSyncService {
     });
   }
 
-  requestEscrowKey():Promise<{ requestId:string; recipientPublicKey:string }> {
+  async requestEscrowKey(collectionId?:string):Promise<{ requestId:string; recipientPublicKey:string }> {
+    if(collectionId) await this.escrowPolicy.assertAllowed(collectionId);
     return this.transport.issue();
   }
 
@@ -171,7 +175,8 @@ export class CloudSyncService {
    * escrow, queues `create` for collections new to Cloud and `escrow` for ones
    * already there, then zeroes EK.
    */
-  async acceptEscrowKey(input:{ requestId:string; transport:TransportEnvelope; vaultId:string; vaultEpoch:number }):Promise<{ queued:number }> {
+  async acceptEscrowKey(input:{ requestId:string; transport:TransportEnvelope; vaultId:string; vaultEpoch:number; collectionId?:string }):Promise<{ queued:number }> {
+    if(input.collectionId) await this.escrowPolicy.assertAllowed(input.collectionId);
     if (!isUuid(input?.vaultId) || !Number.isSafeInteger(input.vaultEpoch) || input.vaultEpoch < 1) throw new HttpStatusError(400, 'escrow key request is invalid');
     const ek = await this.transport.unwrap(input.requestId, input.transport, input.vaultId, input.vaultEpoch);
     try {
@@ -211,6 +216,10 @@ export class CloudSyncService {
       await Promise.race([this.kick(), this.scheduler.delay(PREPARE_WAIT_MS)]);
       operation = await this.repositories.operations.nextOperation();
     }
+    if(operation && !await this.repositories.state.canWriteCollection(operation.collectionId)) {
+      await this.repositories.state.setStatus(operation.collectionId, 'idle');
+      return null;
+    }
     return operation ? { handle: operation.handle, op: operation.op, collectionId: operation.collectionId, sha256: operation.sha256 } : null;
   }
 
@@ -222,6 +231,7 @@ export class CloudSyncService {
     const operation = await this.repositories.operations.operationByHandle(input.handle);
     if (!operation) throw new HttpStatusError(404, 'prepared operation not found');
     return this.exclusive(operation.collectionId, async() => {
+      if(!await this.repositories.state.canWriteCollection(operation.collectionId)) throw new HttpStatusError(403, 'organization collection is read-only');
       const current = await this.repositories.operations.operationByHandle(input.handle);
       if (!current) return { status: 'retry' as const, detail: { error: 'operation_superseded' } };
       let response;
@@ -326,6 +336,17 @@ export class CloudSyncService {
     if (await this.repositories.operations.hasOperation(collectionId)) return;
     const root = await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot);
     try {
+      const lastPull = this.lastPullAt.get(collectionId) ?? 0;
+      let current = sync;
+      if (Date.now() - lastPull >= PULL_INTERVAL_MS || !sync.head) {
+        await this.puller.pull({ collectionId, keyVersion: sync.keyVersion, lastSeq: sync.lastSeq, head: sync.head }, root);
+        this.lastPullAt.set(collectionId, Date.now());
+        current = (await this.repositories.state.sync(collectionId)) ?? sync;
+      }
+      if(!await this.repositories.state.canWriteCollection(collectionId)) {
+        await this.repositories.state.setStatus(collectionId, 'idle');
+        return;
+      }
       const info = await this.repositories.state.staleInfoName(collectionId);
       if (info) {
         const body = JSON.stringify(await sealCollectionInfo(root, collectionId, sync.keyVersion, { v: 1, name: info.name }));
@@ -335,13 +356,6 @@ export class CloudSyncService {
       if (sync.uploadSession) {
         await this.sessions.continueUpload(sync, sync.uploadSession, root);
         return;
-      }
-      const lastPull = this.lastPullAt.get(collectionId) ?? 0;
-      let current = sync;
-      if (Date.now() - lastPull >= PULL_INTERVAL_MS || !sync.head) {
-        await this.puller.pull({ collectionId, keyVersion: sync.keyVersion, lastSeq: sync.lastSeq, head: sync.head }, root);
-        this.lastPullAt.set(collectionId, Date.now());
-        current = (await this.repositories.state.sync(collectionId)) ?? sync;
       }
       let session;
       try {

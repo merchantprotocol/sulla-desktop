@@ -65,6 +65,9 @@ import { FileListingRoutes } from './routes/FileListingRoutes.js';
 import { ShareRoutes } from './routes/ShareRoutes.js';
 import { OriginalRevealRoutes } from './routes/OriginalRevealRoutes.js';
 import { CollectionSyncRoutes } from './routes/CollectionSyncRoutes.js';
+import { OrgCollectionRoutes } from './routes/OrgCollectionRoutes.js';
+import { OrgCollectionEnrollment } from './Services/OrgCollectionEnrollment.js';
+import { OrgCollectionEnrollmentRepository } from './Repositories/OrgCollectionEnrollmentRepository.js';
 import { CollectionSyncRepository } from './Repositories/CollectionSyncRepository.js';
 import { TrashRoutes, type OperationAccessFactory } from './routes/TrashRoutes.js';
 import { TrashListingRepository } from './Repositories/TrashListingRepository.js';
@@ -300,6 +303,7 @@ export class FilesApplication {
     new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 
     const collectionSync = new CollectionSyncRoutes(db, accessGate, new CollectionSyncRepository(db, FILE_ROW_JSON_SQL));
+    new OrgCollectionRoutes(config, new OrgCollectionEnrollment(new OrgCollectionEnrollmentRepository(db), config)).register(app);
     collectionSync.registerListing(app);
     const agentFiles = new AgentFileRoutes(db, config, store, accessGate, new AgentFileRepository(db, FILE_COLUMNS_SQL), requestAudit);
     agentFiles.registerQuery(app);

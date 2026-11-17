@@ -9,7 +9,7 @@ Sulla Threat Proxy — URL filter addon.
 Pipeline (in order, short-circuits on first definitive hit):
   1. Allowlist  — internal / RFC1918 / user-configured domains bypass everything.
   2. Verdict cache — SQLite cache from common.VerdictCache (6h clean / 7d block TTL).
-  3. URLhaus bloom — local hostname blocklist from abuse.ch (zero latency).
+  3. URLhaus — local hostname blocklist snapshot (zero latency).
   4. Google Safe Browsing v4 — if GOOGLE_SAFE_BROWSING_API_KEY is set.
   5. VirusTotal v3 — only for hosts flagged suspicious by (2) or (3), if VT_API_KEY set.
 
@@ -49,8 +49,9 @@ from common import (
     split_list,
 )
 
-URLHAUS_FEED_URL = "https://urlhaus.abuse.ch/downloads/hostfile/"
+# Desktop downloads the list from Sulla Cloud and delivers it here.
 URLHAUS_PATH = os.path.join(BLOCKLIST_DIR, "urlhaus.txt")
+BUNDLED_URLHAUS_PATH = "/opt/sulla-threat-proxy/blocklist/urlhaus-default.txt"
 
 SAFE_BROWSING_ENDPOINT = "https://safebrowsing.googleapis.com/v4/threatMatches:find"
 VT_ENDPOINT = "https://www.virustotal.com/api/v3/urls/{id}"
@@ -132,44 +133,70 @@ class URLFilter:
     # ────────────────────────────────────────────────────────────────
     # URLhaus local blocklist
     # ────────────────────────────────────────────────────────────────
-    def _reload_urlhaus(self) -> None:
-        """Load URLhaus hostnames from disk. Format: one hostname per line, comments start with #.
+    def _read_urlhaus_file(self, path: str) -> Tuple[Set[str], str]:
+        """Read host entries and the source Updated date from a URLhaus file."""
+        hosts: Set[str] = set()
+        updated = ""
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("# Updated:"):
+                    updated = line.partition(":")[2].strip()
+                    continue
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                host = parts[-1].lower().rstrip(".")
+                if host and "." in host and not host.startswith("#"):
+                    hosts.add(host)
+        return hosts, updated
 
-        Called lazily — file is refreshed out-of-band by the blocklist updater.
+    def _reload_urlhaus(self) -> None:
+        """Load the Desktop list, falling back to the immutable bundled snapshot.
+
+        Called lazily; rechecks both paths every URLHAUS_RELOAD_SECS so a list
+        delivered after startup replaces the bundled default without restart.
         """
         with self._urlhaus_lock:
             if time.time() - self._urlhaus_loaded_at < URLHAUS_RELOAD_SECS and self._urlhaus_hosts:
                 return
-            hosts: Set[str] = set()
             try:
-                with open(URLHAUS_PATH, "r", encoding="utf-8", errors="ignore") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        # Hostfile format can be "0.0.0.0 badhost.com" or just "badhost.com".
-                        parts = line.split()
-                        host = parts[-1].lower()
-                        if host and "." in host:
-                            hosts.add(host)
-                self._urlhaus_hosts = hosts
-                self._urlhaus_loaded_at = time.time()
-                log(
-                    "url_filter",
-                    "info",
-                    "URLhaus blocklist loaded",
-                    host_count=len(hosts),
-                    path=URLHAUS_PATH,
-                )
+                hosts, _updated = self._read_urlhaus_file(URLHAUS_PATH)
             except FileNotFoundError:
-                log(
-                    "url_filter",
-                    "warn",
-                    "URLhaus blocklist missing — skipping local blocking",
-                    path=URLHAUS_PATH,
-                )
+                hosts = set()
             except Exception as ex:
                 log("url_filter", "error", "URLhaus load failed", error=str(ex))
+                hosts = set()
+
+            if not hosts:
+                try:
+                    hosts, updated = self._read_urlhaus_file(BUNDLED_URLHAUS_PATH)
+                    self._urlhaus_hosts = hosts
+                    self._urlhaus_loaded_at = time.time()
+                    log(
+                        "url_filter",
+                        "info",
+                        "using bundled URLhaus default list",
+                        host_count=len(hosts),
+                        updated=updated,
+                        path=BUNDLED_URLHAUS_PATH,
+                    )
+                    return
+                except Exception as ex:
+                    log("url_filter", "error", "URLhaus bundled default load failed", error=str(ex))
+                    self._urlhaus_hosts = set()
+                    self._urlhaus_loaded_at = time.time()
+                    return
+
+            self._urlhaus_hosts = hosts
+            self._urlhaus_loaded_at = time.time()
+            log(
+                "url_filter",
+                "info",
+                "URLhaus blocklist loaded",
+                host_count=len(hosts),
+                path=URLHAUS_PATH,
+            )
 
     def _check_urlhaus(self, host: str) -> Tuple[str, str]:
         self._reload_urlhaus()

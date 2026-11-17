@@ -56,8 +56,8 @@ export class CloudSyncRoutes {
       response.status(202).json(await service.deleteCloudCopy(String(request.params.collectionId)));
     }));
 
-    app.post('/v1/desktop/cloud-sync/escrow-key/request', route(async(service, _request, response) => {
-      response.json(await service.requestEscrowKey());
+    app.post('/v1/desktop/cloud-sync/escrow-key/request', route(async(service, request, response) => {
+      response.json(await service.requestEscrowKey(typeof request.body?.collectionId==='string'?request.body.collectionId:undefined));
     }));
 
     app.post('/v1/desktop/cloud-sync/escrow-key', route(async(service, request, response) => {
