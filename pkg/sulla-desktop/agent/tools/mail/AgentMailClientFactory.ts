@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
+import { CloudOriginResolver } from '@pkg/utils/cloudOrigin';
 
 import { AgentMailboxClient } from './AgentMailboxClient';
 import { AgentMailClient } from './AgentMailClient';
@@ -27,7 +27,7 @@ import {
  */
 export class AgentMailClientFactory {
   constructor(
-    private readonly baseUrl = CLOUD_API_BASE,
+    private readonly baseUrl = new CloudOriginResolver(process.env.SULLA_CLOUD_ORIGIN, console).httpOrigin,
     private readonly serviceAccountExists: () => Promise<boolean> = AgentMailLaneSelector.vaultHasServiceAccount,
   ) {}
 

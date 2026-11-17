@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { CloudOriginResolver } from './cloudOrigin';
+import { CloudOriginResolver } from '@pkg/utils/cloudOrigin';
 
 // One resolver per process. It reads SULLA_CLOUD_ORIGIN once and logs the override state at startup.
 const cloudOrigin = new CloudOriginResolver(process.env.SULLA_CLOUD_ORIGIN, console);
