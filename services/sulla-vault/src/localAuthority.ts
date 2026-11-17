@@ -21,6 +21,7 @@ import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnve
 import type { VaultRelayManager } from './relays.js';
 import type { Database, Queryable } from './db.js';
 import { VaultRepositories } from './repositories/VaultRepositories.js';
+import { VaultProfileSessionFactory } from './profiles/VaultProfileSessionFactory.js';
 import { AgentMailboxCloudLane } from './sullaCloudSession/AgentMailboxCloudLane.js';
 import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionManager.js';
 import { AuditFileSink } from './auditFileSink.js';
@@ -127,7 +128,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     readonly db: Database,
     readonly config: VaultConfig,
     readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
-    readonly repositories: VaultRepositories = new VaultRepositories(db),
+    readonly repositories: VaultRepositories = new VaultRepositories(
+      new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false).legacy(),
+    ),
     readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
     readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
     readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),

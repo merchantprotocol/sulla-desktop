@@ -32,6 +32,7 @@ import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, 
 import { ensureSyncSchema } from './schema.js';
 import { CloudSyncRepositories } from './sync/CloudSyncRepositories.js';
 import { VaultRepositories } from '../repositories/VaultRepositories.js';
+import { VaultProfileSessionFactory } from '../profiles/VaultProfileSessionFactory.js';
 import type { SyncAuditAction } from './sync/repositories/SyncAuditEventDispatcher.js';
 import { DesktopSyncCommitBudget } from './sync/DesktopSyncCommitBudget.js';
 import type { KnownRecordRow } from './sync/repositories/PostgresVerifiedRecordSet.js';
@@ -109,7 +110,7 @@ export class CloudVaultSyncRunner {
     repos?: CloudSyncRepositories,
     private readonly headChainLinkPolicy: HeadChainLinkPolicy = new HeadChainLinkPolicy(),
     private readonly commitBudget: DesktopSyncCommitBudget = new DesktopSyncCommitBudget(),
-  ) { this.repos = repos ?? new VaultRepositories(db).cloudSync; }
+  ) { this.repos = repos ?? new VaultRepositories(new VaultProfileSessionFactory(db, false).legacy()).cloudSync; }
 
   private async env() {
     this.envelope ??= await this.codecProvider.get();

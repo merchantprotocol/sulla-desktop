@@ -13,6 +13,7 @@ import { loadConfig } from './config.js';
 import { connectDatabase, migrate, untilDatabaseReady } from './db.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { VaultRepositories } from './repositories/VaultRepositories.js';
+import { VaultProfileSessionFactory } from './profiles/VaultProfileSessionFactory.js';
 
 // Crash -> non-zero exit -> Docker's restart policy. Postgres outages are waited out
 // (untilDatabaseReady) and /healthz reports them; they never crash the vault.
@@ -20,7 +21,8 @@ const guard = new ProcessGuard({ name: 'sulla-vault' }).catchCrashes();
 const config = loadConfig();
 const db = await connectDatabase(config);
 await untilDatabaseReady('migrations', () => migrate(db));
-const repositories = new VaultRepositories(db);
+const profileSessions = new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false);
+const repositories = new VaultRepositories(profileSessions.legacy());
 await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config, repositories));
 
 const localAuthority = new LocalVaultAuthority(db, config, undefined, repositories);

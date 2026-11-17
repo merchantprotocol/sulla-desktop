@@ -8,6 +8,7 @@ import { VaultLoginVerifier } from './auth/VaultLoginVerifier.js';
 import type { VaultConfig } from './config.js';
 import type { Database } from './db.js';
 import { VaultRepositories } from './repositories/VaultRepositories.js';
+import { VaultProfileSessionFactory } from './profiles/VaultProfileSessionFactory.js';
 
 /** @deprecated use VaultLoginVerifier#make — E9 alias, removed in final cleanup */
 export function makeLoginVerifier(loginHash: string, salt?: Buffer): { salt: Buffer; verifier: Buffer } {
@@ -15,6 +16,8 @@ export function makeLoginVerifier(loginHash: string, salt?: Buffer): { salt: Buf
 }
 
 /** @deprecated use DesktopAccountBootstrapper#ensure with a PostgresDesktopAccountRepository — E9 alias, removed in final cleanup */
-export function ensureDesktopAccount(db: Database, config: VaultConfig, repositories: VaultRepositories = new VaultRepositories(db)): Promise<void> {
+export function ensureDesktopAccount(db: Database, config: VaultConfig, repositories: VaultRepositories = new VaultRepositories(
+  new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false).legacy(),
+)): Promise<void> {
   return new DesktopAccountBootstrapper(repositories.desktopAccount, new VaultLoginVerifier()).ensure(config);
 }
