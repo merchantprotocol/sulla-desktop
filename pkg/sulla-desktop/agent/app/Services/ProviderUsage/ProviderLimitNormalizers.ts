@@ -65,16 +65,21 @@ export class CodexLimitNormalizer extends BaseLimitNormalizer {
     const msg = this.codec.object(event.msg) ? event.msg : undefined;
     const info = this.codec.object(msg?.info) ? msg.info : undefined;
     const usage = this.codec.object(event.usage) ? event.usage : undefined;
-    const payload = [event.rate_limits, usage?.rate_limits, msg?.rate_limits, info?.rate_limits].find((value) =>
+    // Codex emits limits both on legacy event_msg/token_count messages and on
+    // newer item.completed token_count events. Search only these known event
+    // envelopes; arbitrary nested objects must not be mistaken for limits.
+    const item = this.codec.object(event.item) ? event.item : undefined;
+    const itemInfo = this.codec.object(item?.info) ? item.info : undefined;
+    const payload = [event.rate_limits, usage?.rate_limits, msg?.rate_limits, info?.rate_limits, item?.rate_limits, itemInfo?.rate_limits].find((value) =>
       this.codec.object(value),
     ) as Record<string, unknown> | undefined;
     return payload
       ? this.result(
           this.collect(payload, [
-            ['primary', 'Primary'],
-            ['primary_window', 'Primary'],
-            ['secondary', 'Secondary'],
-            ['secondary_window', 'Secondary'],
+            ['primary', '5-hour'],
+            ['primary_window', '5-hour'],
+            ['secondary', 'Weekly'],
+            ['secondary_window', 'Weekly'],
           ]),
         )
       : null;

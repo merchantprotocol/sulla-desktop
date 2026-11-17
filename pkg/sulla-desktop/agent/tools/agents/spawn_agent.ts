@@ -24,6 +24,7 @@ import {
   createJob,
   failJob,
   findTaskByThread,
+  getAllJobs,
   getJob,
   getTaskAbortSignal,
   markCompletionDelivered,
@@ -61,6 +62,8 @@ import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
 import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
+import { budgetPolicyService } from '../../services/BudgetPolicyService';
+import { budgetWorkerAdmission, countBudgetWorkers } from '../../services/BudgetWorkerAdmission';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -307,12 +310,16 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     if (hiddenTasks.length === 0) {
+      const policy = await budgetPolicyService.read();
+      const liveJobs = await getAllJobs();
+      const running = countBudgetWorkers(liveJobs);
       return this.withTaskVisibility(this.response({
           mode:          'tab',
           jobId:         tabs[0].jobId,
           contractId:    tabs[0].contractId,
           childThreadId: tabs[0].childThreadId,
           tabs,
+          budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: null },
           message:       `${ tabs.length } agent tab(s) opened. Each stays open until its agent returns its contract; the result wakes this graph. Your <subagent_directory> shows their progress every turn.`,
       }), decisions);
     }
@@ -859,12 +866,23 @@ export class SpawnAgentWorker extends BaseTool {
     const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
     const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || taskAgentSelector(task) || `task-${ index }`;
-      return taskRunner.run({
+      const run = () => taskRunner.run({
         task: jobTasks[index],
         taskIndex: index,
         threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
         generation: jobTasks[index].generation ?? 1,
       });
+      return budgetWorkerAdmission.run(async() => {
+        const policy = await budgetPolicyService.read();
+        const liveJobs = await getAllJobs();
+        const liveRunning = countBudgetWorkers(liveJobs);
+        return {
+          allowance: policy?.machine?.max_concurrent_workers ?? null,
+          // Running tasks held by this gate have reserved a slot but may not
+          // yet have persisted status=running. Don't count them twice.
+          running: Math.max(0, liveRunning - budgetWorkerAdmission.running),
+        };
+      }, run);
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────
@@ -889,6 +907,8 @@ export class SpawnAgentWorker extends BaseTool {
         const settledJob = await getJob(activityJobId);
         if (settledJob) await deliverJobCompletion(settledJob, [result], index, failureReason);
       }
+      // Completion anywhere can release a slot for this FIFO queue.
+      await budgetWorkerAdmission.slotMayHaveFreed();
       return result;
     };
 
@@ -949,11 +969,24 @@ export class SpawnAgentWorker extends BaseTool {
         })
         .finally(async() => { stopDeadRunWatch(); });
 
+      const policy = await budgetPolicyService.read();
+      const jobs = await getAllJobs();
+      const running = jobs.filter(item => item.visibility !== 'tab').reduce((total, item) => total + item.tasks.filter(child => child.status === 'running').length, 0);
+      const providerPaces = await Promise.all(tasks.map(async task => {
+        const definition = taskAgentSelector(task) ? await agentDefinitionService.findBySlug(taskAgentSelector(task)!) : null;
+        const provider = task.provider?.trim() || definition?.provider || undefined;
+        return { provider, pace: provider ? policy?.providers?.[provider]?.pace ?? null : null, advice: provider ? policy?.providers?.[provider]?.advice : undefined };
+      }));
+      const warnings = [...new Set(providerPaces.filter(item => item.pace === 'hard-conserve').map(item =>
+        `Budgeter warning: ${ item.provider } is hard-conserve. ${ item.advice ?? 'Avoid new work on this provider.' } Explicit provider/model requests are not rerouted.`,
+      ))];
       const response = {
         mode:      'async',
         jobId:     job.jobId,
         taskCount: tasks.length,
         parallel,
+        budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: providerPaces.length === 1 ? providerPaces[0].pace : providerPaces },
+        ...(warnings.length ? { warning: warnings.join(' ') } : {}),
         message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
       };
       return this.response(response);
@@ -994,6 +1027,14 @@ export class SpawnAgentWorker extends BaseTool {
     await safeMarkDelegationsDelivered(delegationIds);
 
     const allSuccess = results.every(r => r.status === 'completed');
+    const policy = await budgetPolicyService.read();
+    const liveJobs = await getAllJobs();
+    const running = countBudgetWorkers(liveJobs);
+    const providerPaces = await Promise.all(tasks.map(async task => {
+      const definition = taskAgentSelector(task) ? await agentDefinitionService.findBySlug(taskAgentSelector(task)!) : null;
+      const provider = task.provider?.trim() || definition?.provider || undefined;
+      return { provider, pace: provider ? policy?.providers?.[provider]?.pace ?? null : null };
+    }));
 
     const formatted = results.map(r =>
       `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
@@ -1001,6 +1042,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     return this.response({
       mode: 'sync', jobId: syncJob.jobId, taskCount: tasks.length, parallel,
+      budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: providerPaces.length === 1 ? providerPaces[0].pace : providerPaces },
       results,
       message: tasks.length === 1
         ? results[0].output
