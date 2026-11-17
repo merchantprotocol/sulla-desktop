@@ -42,6 +42,10 @@ export class PgCloudSyncStateRepository {
     });
   }
 
+  async rootKeySource(collectionId:string):Promise<string | undefined> {
+    return (await this.db.query('SELECT root_key_source FROM collections WHERE id=$1',[collectionId])).rows[0]?.root_key_source;
+  }
+
   async canWriteCollection(collectionId:string):Promise<boolean> {
     const row=(await this.db.query(`SELECT workspace_scope,org_collection_level,org_collection_enrolled FROM collections WHERE id=$1`,[collectionId])).rows[0];
     if(!row) return false;

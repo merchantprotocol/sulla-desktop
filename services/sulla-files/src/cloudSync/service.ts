@@ -25,7 +25,7 @@ import { PgCloudFolderCoverageStore } from '../Repositories/CloudFolderCoverageR
 import { PgCloudPushCandidateRepository } from '../Repositories/CloudPushCandidateRepository.js';
 import { PgCloudRestoreTargetRepository } from '../Repositories/CloudRestoreTargetRepository.js';
 import { CloudFolderCoverage } from './folderCoverage.js';
-import { CollectionRootKeyProviderSelector, LocalEscrowRootKeyProvider, OrgRootKeyProvider, type CollectionRootKeyProvider, type OrgCollectionKeySource } from './keyStore.js';
+import { CollectionRootKeyProviderSelector, CollectionVaultEscrowPolicy, LocalEscrowRootKeyProvider, OrgRootKeyProvider, type CollectionRootKeyProvider, type OrgCollectionKeySource } from './keyStore.js';
 import { CloudPuller } from './pull.js';
 import { CloudPushOrdering } from './pushOrdering.js';
 import { CloudPusher, sha256Text } from './push.js';
@@ -56,6 +56,7 @@ export class CloudSyncService {
   private readonly repositories:CloudSyncRepositories;
   private readonly staging:CloudStagingStore;
   private readonly transport = new EscrowTransportRequests();
+  private readonly escrowPolicy:CollectionVaultEscrowPolicy;
   private readonly puller:CloudPuller;
   private readonly pusher:CloudPusher;
   private readonly restorer:CloudRestore;
@@ -76,9 +77,10 @@ export class CloudSyncService {
   ) {
     this.cryptoModule = configureCryptoModule();
     this.api = new FilesSyncCloudApi(broker);
-    this.roots = new CollectionRootKeyProviderSelector(db, new LocalEscrowRootKeyProvider(keyring), new OrgRootKeyProvider(orgKeySource));
     // A live actor, never a copy of config.userId: Vault unlock re-owns Files after this is built.
     this.repositories = new CloudSyncRepositories(db, new CloudSyncActor(config));
+    this.roots = new CollectionRootKeyProviderSelector(this.repositories.state, new LocalEscrowRootKeyProvider(keyring), new OrgRootKeyProvider(orgKeySource));
+    this.escrowPolicy = new CollectionVaultEscrowPolicy(this.repositories.state);
     this.staging = new CloudStagingStore(config.dataRoot);
     this.puller = new CloudPuller(this.api, this.repositories.pull, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
     const candidates = new PgCloudPushCandidateRepository(db);
@@ -163,7 +165,8 @@ export class CloudSyncService {
     });
   }
 
-  requestEscrowKey():Promise<{ requestId:string; recipientPublicKey:string }> {
+  async requestEscrowKey(collectionId?:string):Promise<{ requestId:string; recipientPublicKey:string }> {
+    if(collectionId) await this.escrowPolicy.assertAllowed(collectionId);
     return this.transport.issue();
   }
 
@@ -172,7 +175,8 @@ export class CloudSyncService {
    * escrow, queues `create` for collections new to Cloud and `escrow` for ones
    * already there, then zeroes EK.
    */
-  async acceptEscrowKey(input:{ requestId:string; transport:TransportEnvelope; vaultId:string; vaultEpoch:number }):Promise<{ queued:number }> {
+  async acceptEscrowKey(input:{ requestId:string; transport:TransportEnvelope; vaultId:string; vaultEpoch:number; collectionId?:string }):Promise<{ queued:number }> {
+    if(input.collectionId) await this.escrowPolicy.assertAllowed(input.collectionId);
     if (!isUuid(input?.vaultId) || !Number.isSafeInteger(input.vaultEpoch) || input.vaultEpoch < 1) throw new HttpStatusError(400, 'escrow key request is invalid');
     const ek = await this.transport.unwrap(input.requestId, input.transport, input.vaultId, input.vaultEpoch);
     try {

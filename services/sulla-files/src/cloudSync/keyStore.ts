@@ -85,13 +85,24 @@ export class OrgRootKeyProvider implements CollectionRootKeyProvider {
 
 
 /** Chooses the root-key authority from the collection's persisted source; organization failures never fall back to Vault escrow. */
+export interface CollectionRootKeySourceRepository { rootKeySource(collectionId:string):Promise<string|undefined> }
+
+export class CollectionVaultEscrowPolicy {
+  constructor(private readonly sources:CollectionRootKeySourceRepository) {}
+  async assertAllowed(collectionId:string):Promise<void> {
+    const source=await this.sources.rootKeySource(collectionId);
+    if(source==='org') throw Object.assign(new Error('Organization collection roots cannot use Vault escrow'),{status:403});
+    if(source!=='local') throw Object.assign(new Error('Cloud sync collection not found'),{status:404});
+  }
+}
+
 export class CollectionRootKeyProviderSelector implements CollectionRootKeyProvider {
-  constructor(private readonly db:Pick<import('pg').Pool,'query'>,private readonly local:CollectionRootKeyProvider,private readonly organization:CollectionRootKeyProvider) {}
+  constructor(private readonly sources:CollectionRootKeySourceRepository,private readonly local:CollectionRootKeyProvider,private readonly organization:CollectionRootKeyProvider) {}
   private async provider(collectionId:string):Promise<CollectionRootKeyProvider> {
-    const row=(await this.db.query('SELECT root_key_source FROM collections WHERE id=$1',[collectionId])).rows[0];
-    if(!row) throw new Error('Cloud sync collection not found');
-    if(row.root_key_source==='org') return this.organization;
-    if(row.root_key_source==='local') return this.local;
+    const source=await this.sources.rootKeySource(collectionId);
+    if(!source) throw new Error('Cloud sync collection not found');
+    if(source==='org') return this.organization;
+    if(source==='local') return this.local;
     throw new Error('Unsupported collection root key source');
   }
   async create(collectionId:string,keyVersion:number) { return (await this.provider(collectionId)).create(collectionId,keyVersion) }

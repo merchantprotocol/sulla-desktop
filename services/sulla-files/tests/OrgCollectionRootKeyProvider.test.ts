@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { describe, expect, it, vi } from 'vitest';
-import { OrgRootKeyProvider } from '../src/cloudSync/keyStore.js';
+import { CollectionVaultEscrowPolicy, OrgRootKeyProvider } from '../src/cloudSync/keyStore.js';
 import { parseRemoteVersion } from '../src/cloudSync/validation.js';
 
 describe('OrgRootKeyProvider', () => {
@@ -24,6 +24,14 @@ describe('OrgRootKeyProvider', () => {
   });
 });
 
+
+describe('organization root custody', () => {
+  it('throws if a caller tries to request Vault escrow for an org root', async() => {
+    // risk: key custody — org root keys may only come from the org key source, never a member Vault.
+    const policy=new CollectionVaultEscrowPolicy({rootKeySource:vi.fn(async()=> 'org')});
+    await expect(policy.assertAllowed('org-collection')).rejects.toMatchObject({status:403});
+  });
+});
 
 describe('organization pull metadata', () => {
   it('retains remote creator identity, including the optional Cloud author user id', () => {
