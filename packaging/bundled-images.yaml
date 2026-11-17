@@ -17,8 +17,8 @@ images:
   - { name: sulla-accounts, source: ghcr.io/merchantprotocol/sulla-accounts:sha-59f2d06f4e152b9feb87cbe9dbe4325c43a59785 }
   - { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:sha-88cd6d000eb4a797afb75ff0cb4f0844e9c9a4ff }
   - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:sha-59f2d06f4e152b9feb87cbe9dbe4325c43a59785 }
-  - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-f119fd5d2e5bf777b14cc78eafc512da9fb7447c }
-  - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:sha-b77c7e78896cb9a3462676753f7cf315d7b99201 }
+  - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-3cec103757bdedeaaac02d4c7bae1cd3efb74d5e }
+  - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:sha-d9c1622135032fd19f9307cc8e4bf9857d4a1b9d }
   - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:sha-ef2c0e008426a3437f9944f922625760a843b4ca }
   - { name: sulla-workflows, source: ghcr.io/merchantprotocol/sulla-workflows:latest }
   - { name: sulla-threat-proxy, source: ghcr.io/merchantprotocol/sulla-threat-proxy:latest }
