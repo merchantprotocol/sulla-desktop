@@ -4,6 +4,7 @@
 - `printf x > f` on a file with content committed an empty version first: bash opens with
   O_TRUNC, dup2()s and closes the first descriptor (a FUSE flush) before it writes.
 - Five `cp src same.bin` at once: four failed with EEXIST although cp never asks for O_EXCL.
+- A 65 MB cp failed with EFBIG but its first 64 MiB were committed as a version.
 """
 import asyncio
 import errno
@@ -98,6 +99,37 @@ class ShellRedirectTests(unittest.TestCase):
         asyncio.run(ops.write(info.fh, 3, b"def"))
         asyncio.run(ops.flush(info.fh))
         self.assertEqual(api.uploads, [b"abcdef"])
+
+
+class OversizeWriteTests(unittest.TestCase):
+    # risk: data accuracy - a refused 65 MB cp committed its first 64 MiB as a real version.
+    def test_a_write_refused_for_size_never_commits_the_truncated_copy(self):
+        adapter, api, ops, inode = make(b"")
+        adapter.MAX_FILE_BYTES = 8
+        info = asyncio.run(ops.open(inode, os.O_WRONLY | os.O_TRUNC, None))
+        asyncio.run(ops.write(info.fh, 0, b"12345678"))
+        with self.assertRaises(adapter.pyfuse3.FUSEError) as refused:
+            asyncio.run(ops.write(info.fh, 8, b"9"))
+        self.assertEqual(refused.exception.errno, errno.EFBIG)
+        for close in (ops.flush, ops.release):
+            with self.assertRaises(adapter.pyfuse3.FUSEError) as closed:
+                asyncio.run(close(info.fh))
+            self.assertEqual(closed.exception.errno, errno.EFBIG)
+        self.assertEqual(api.uploads, [])
+
+    # risk: data accuracy - a writer that truncates back under the limit keeps what it chose.
+    def test_truncating_after_an_oversize_write_commits_the_kept_bytes(self):
+        adapter, api, ops, inode = make(b"")
+        adapter.MAX_FILE_BYTES = 8
+        info = asyncio.run(ops.open(inode, os.O_WRONLY, None))
+        asyncio.run(ops.write(info.fh, 0, b"12345678"))
+        with self.assertRaises(adapter.pyfuse3.FUSEError):
+            asyncio.run(ops.write(info.fh, 8, b"9"))
+        fields = types.SimpleNamespace(update_size=True, update_mode=False, update_uid=False,
+                                       update_gid=False, update_atime=False, update_mtime=False)
+        asyncio.run(ops.setattr(inode, types.SimpleNamespace(st_size=4), fields, info.fh, None))
+        asyncio.run(ops.release(info.fh))
+        self.assertEqual(api.uploads, [b"1234"])
 
 
 class ConcurrentCreateTests(unittest.TestCase):

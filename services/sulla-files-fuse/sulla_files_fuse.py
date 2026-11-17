@@ -891,6 +891,9 @@ class SullaFiles(pyfuse3.Operations):
             offset = handle["size"]
         end = offset + len(buf)
         if end > MAX_FILE_BYTES:
+            # The writer was refused part of its data, so what is spooled is a truncated copy.
+            # Never commit it as a version (a failed 65 MB cp left a 64 MiB version behind).
+            handle["oversize"] = True
             raise pyfuse3.FUSEError(errno.EFBIG)
         if offset > handle["size"]:
             os.ftruncate(handle["file"].fileno(), end)
@@ -912,6 +915,8 @@ class SullaFiles(pyfuse3.Operations):
             size = int(attr.st_size)
             if size > MAX_FILE_BYTES:
                 raise pyfuse3.FUSEError(errno.EFBIG)
+            # An explicit truncate after an oversize write is the writer choosing what to keep.
+            handle["oversize"] = False
             os.ftruncate(handle["file"].fileno(), size)
             handle["size"] = size
             handle["dirty"] = True
@@ -933,6 +938,10 @@ class SullaFiles(pyfuse3.Operations):
 
     async def _commit(self, fh):
         handle = self.handles[fh]
+        if handle.get("oversize"):
+            handle["dirty"] = False
+            handle["failedErrno"] = errno.EFBIG
+            raise pyfuse3.FUSEError(errno.EFBIG)
         if not handle["dirty"]:
             if handle["failedErrno"]:
                 raise pyfuse3.FUSEError(handle["failedErrno"])
