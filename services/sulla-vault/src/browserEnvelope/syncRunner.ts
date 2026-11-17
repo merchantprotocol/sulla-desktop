@@ -32,6 +32,7 @@ import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, 
 import { ensureSyncSchema } from './schema.js';
 import { CloudSyncRepositories } from './sync/CloudSyncRepositories.js';
 import { VaultRepositories } from '../repositories/VaultRepositories.js';
+import { VaultProfileSessionFactory } from '../profiles/VaultProfileSessionFactory.js';
 import type { SyncAuditAction } from './sync/repositories/SyncAuditEventDispatcher.js';
 import { DesktopSyncCommitBudget } from './sync/DesktopSyncCommitBudget.js';
 import type { KnownRecordRow } from './sync/repositories/PostgresVerifiedRecordSet.js';
@@ -94,6 +95,7 @@ function responseBody(body: unknown): any {
 }
 
 export class CloudVaultSyncRunner {
+  private readonly db: Database;
   private readonly repos: CloudSyncRepositories;
   private envelope: DomainVaultSyncCodec | null = null;
   private readonly pending = new Map<string, PendingSend>();
@@ -103,13 +105,17 @@ export class CloudVaultSyncRunner {
   private readonly remoteItems = new RemoteItemParser();
 
   constructor(
-    private readonly db: Database,
+    db: Database,
     private readonly authority: CloudSyncAuthority,
     private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
     repos?: CloudSyncRepositories,
     private readonly headChainLinkPolicy: HeadChainLinkPolicy = new HeadChainLinkPolicy(),
     private readonly commitBudget: DesktopSyncCommitBudget = new DesktopSyncCommitBudget(),
-  ) { this.repos = repos ?? new VaultRepositories(db).cloudSync; }
+  ) {
+    const session = new VaultProfileSessionFactory(db, false).legacy();
+    this.db = session.database;
+    this.repos = repos ?? new VaultRepositories(session).cloudSync;
+  }
 
   private async env() {
     this.envelope ??= await this.codecProvider.get();
