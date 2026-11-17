@@ -55,6 +55,7 @@ import type { UnlockedKeys } from './localAuthority/LocalAuthorityTypes.js';
 import { LocalVaultError } from './localAuthority/LocalVaultError.js';
 import { StreamingRedactor } from './localAuthority/StreamingRedactor.js';
 import { SullaCloudDesktopRoutePolicy } from './localAuthority/SullaCloudDesktopRoutePolicy.js';
+import { ProfileScopedMap } from './profiles/ProfileScopedMap.js';
 
 export { LocalVaultError } from './localAuthority/LocalVaultError.js';
 export type { BrokerStreamSink } from './localAuthority/LocalAuthorityTypes.js';
@@ -86,23 +87,23 @@ export const localAuthorityTestHooks = {
  */
 export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAuthoritySeam {
   readonly filesTransport = new FilesTransportEnvelopeService();
-  private keys: LocalAuthorityVaultSecrets['keys'] = null;
+  private readonly keysByProfile = new Map<string, NonNullable<LocalAuthorityVaultSecrets['keys']>>();
   generation = 0;
   readonly inFlight = new Set<ReturnType<typeof https.request>>();
-  private readonly challenges: LocalAuthorityVaultSecrets['challenges'] = new Map();
-  private readonly cacheChallenges: LocalAuthorityVaultSecrets['cacheChallenges'] = new Map();
-  private readonly challengeRate: LocalAuthorityVaultSecrets['challengeRate'] = new Map();
-  private readonly pendingApprovals: LocalAuthorityVaultSecrets['pendingApprovals'] = new Map();
-  private readonly pendingVaultEnrollments: LocalAuthorityVaultSecrets['pendingVaultEnrollments'] = new Map();
-  private readonly approvals: LocalAuthorityVaultSecrets['approvals'] = new Map();
-  private readonly humanSessions: LocalAuthorityVaultSecrets['humanSessions'] = new Map();
-  readonly oauthRefreshQueues = new Map<string, Promise<void>>();
+  private readonly challenges!: LocalAuthorityVaultSecrets['challenges'];
+  private readonly cacheChallenges!: LocalAuthorityVaultSecrets['cacheChallenges'];
+  private readonly challengeRate!: LocalAuthorityVaultSecrets['challengeRate'];
+  private readonly pendingApprovals!: LocalAuthorityVaultSecrets['pendingApprovals'];
+  private readonly pendingVaultEnrollments!: LocalAuthorityVaultSecrets['pendingVaultEnrollments'];
+  private readonly approvals!: LocalAuthorityVaultSecrets['approvals'];
+  private readonly humanSessions!: LocalAuthorityVaultSecrets['humanSessions'];
+  readonly oauthRefreshQueues!: Map<string, Promise<void>>;
   sullaCloudSessionManager: SullaCloudSessionManager | null = null;
   agentMailboxCloudLane: AgentMailboxCloudLane | null = null;
-  private readonly relaySessions: LocalAuthorityVaultSecrets['relaySessions'] = new Map();
+  private readonly relaySessions!: LocalAuthorityVaultSecrets['relaySessions'];
   securityOperationTail: Promise<void> = Promise.resolve();
   migrationState: LocalVaultState = 'locked';
-  private stagedCacheUpdate: LocalAuthorityVaultSecrets['stagedCacheUpdate'] = null;
+  private readonly stagedCacheUpdates = new Map<string, NonNullable<LocalAuthorityVaultSecrets['stagedCacheUpdate']>>();
   readonly filesAudit: FilesAuditEmitter;
   readonly outboundAuditSink: AuditFileSink;
   readonly outboundAudit: OutboundAuditRecorder;
@@ -111,6 +112,26 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
   /** Created on first use for the same reason. */
   private collaborators?: LocalAuthorityCollaborators;
+
+  private get keys(): LocalAuthorityVaultSecrets['keys'] {
+    return this.keysByProfile.get(this.repositories.session.context.profileId) ?? null;
+  }
+
+  private set keys(value: LocalAuthorityVaultSecrets['keys']) {
+    const profileId = this.repositories.session.context.profileId;
+    if (value) this.keysByProfile.set(profileId, value);
+    else this.keysByProfile.delete(profileId);
+  }
+
+  private get stagedCacheUpdate(): LocalAuthorityVaultSecrets['stagedCacheUpdate'] {
+    return this.stagedCacheUpdates.get(this.repositories.session.context.profileId) ?? null;
+  }
+
+  private set stagedCacheUpdate(value: LocalAuthorityVaultSecrets['stagedCacheUpdate']) {
+    const profileId = this.repositories.session.context.profileId;
+    if (value) this.stagedCacheUpdates.set(profileId, value);
+    else this.stagedCacheUpdates.delete(profileId);
+  }
 
   get rewrapHistory() { return this.repositories.rewrapHistory; }
   get itemRepository() { return this.repositories.items; }
@@ -128,13 +149,24 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     readonly db: Database,
     readonly config: VaultConfig,
     readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
-    readonly repositories: VaultRepositories = new VaultRepositories(
+    repositories: VaultRepositories = new VaultRepositories(
       new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false).legacy(),
     ),
     readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
     readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
     readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
+    this.repositories = repositories;
+    const profileId = repositories.session.context.profileId;
+    this.challenges = new ProfileScopedMap(profileId);
+    this.cacheChallenges = new ProfileScopedMap(profileId);
+    this.challengeRate = new ProfileScopedMap(profileId);
+    this.pendingApprovals = new ProfileScopedMap(profileId);
+    this.pendingVaultEnrollments = new ProfileScopedMap(profileId);
+    this.approvals = new ProfileScopedMap(profileId);
+    this.humanSessions = new ProfileScopedMap(profileId);
+    this.oauthRefreshQueues = new ProfileScopedMap(profileId);
+    this.relaySessions = new ProfileScopedMap(profileId);
     this.filesAudit = new FilesAuditEmitter(config);
     this.outboundAuditSink = new AuditFileSink({ dir: join(config.auditSpoolDir ?? '/var/lib/sulla-vault', 'audit-logs') });
     this.outboundAudit = new OutboundAuditRecorder(this.outboundAuditSink);
@@ -151,6 +183,42 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     if (new Set(credentials.map(([, value]) => value)).size !== credentials.length) {
       throw new Error('Desktop vault service credentials must be distinct');
     }
+  }
+
+  private repositories: VaultRepositories;
+
+  get profileContext() { return this.repositories.session.context; }
+
+  assertProfileCurrent(profileId: string, generation: this['profileContext']['generation']): void {
+    const active = this.repositories.session.context;
+    if (active.profileId !== profileId || active.generation.value !== generation.value) throw new LocalVaultError('vault_locked', 423, 'Vault profile changed during operation');
+    this.repositories.session.assertCurrent();
+  }
+
+  /** Erase only this authority's profile-bound state before its pool/session can be reused. */
+  invalidate(profileId: string): void {
+    if (this.repositories.session.context.profileId !== profileId) return;
+    const session = this.repositories.session;
+    this.keys?.userKey.fill(0);
+    this.keys?.privateKey.fill(0);
+    this.keys?.legacyVmk?.fill(0);
+    this.keys = null;
+    this.keysByProfile.delete(profileId);
+    this.stagedCacheUpdate?.masterKey.fill(0);
+    this.stagedCacheUpdate = null;
+    this.stagedCacheUpdates.delete(profileId);
+    this.parts.enrollment.discardAllPendingEnrollments();
+    this.challenges.clear();
+    this.cacheChallenges.clear();
+    this.challengeRate.clear();
+    this.pendingApprovals.clear();
+    this.approvals.clear();
+    this.humanSessions.clear();
+    this.oauthRefreshQueues.clear();
+    this.agentMailboxCloudLane = null;
+    this.sullaCloudSessionManager = null;
+    session.invalidate();
+    this.repositories = new VaultRepositories(session.renew());
   }
 
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
@@ -263,20 +331,8 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     for (const relay of this.relaySessions.values()) relay.controller.abort(new Error('vault_locked'));
     this.relaySessions.clear();
     this.relayManager.closeAll('vault_locked');
-    this.keys?.userKey.fill(0);
-    this.keys?.privateKey.fill(0);
-    this.keys?.legacyVmk?.fill(0);
-    this.keys = null;
+    this.invalidate(this.repositories.session.context.profileId);
     this.migrationState = 'locked';
-    this.challenges.clear();
-    this.cacheChallenges.clear();
-    this.challengeRate.clear();
-    this.pendingApprovals.clear();
-    this.approvals.clear();
-    this.humanSessions.clear();
-    this.stagedCacheUpdate?.masterKey.fill(0);
-    this.stagedCacheUpdate = null;
-    this.parts.enrollment.discardAllPendingEnrollments();
   }
 
   /**

@@ -15,7 +15,7 @@ describe('vault profile session query fence', () => {
     await session.database.query('SELECT token');
     expect(query).toHaveBeenCalledOnce();
     activeGeneration = 8;
-    expect(() => session.database.query('UPDATE tokens SET value=$1', ['secret'])).toThrow(/stale/i);
+    await expect(session.database.query('UPDATE tokens SET value=$1', ['secret'])).rejects.toThrow(/stale/i);
     expect(query).toHaveBeenCalledOnce();
   });
 
@@ -34,9 +34,23 @@ describe('vault profile session query fence', () => {
     const a = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { query: queryA } as never);
     const b = new VaultProfileSession({ profileId: 'b', generation: new ProfileGeneration(1) }, { query: queryB } as never);
     a.invalidate();
-    expect(() => a.database.query('SELECT key')).toThrow(/stale/i);
+    await expect(a.database.query('SELECT key')).rejects.toThrow(/stale/i);
     await b.database.query('SELECT key');
     expect(queryA).not.toHaveBeenCalled();
     expect(queryB).toHaveBeenCalledOnce();
+  });
+
+  it('does not throw synchronously for stale callback queries and calls the callback asynchronously', async () => {
+    let callbackError: unknown;
+    const query = vi.fn();
+    const session = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { query } as never);
+    session.invalidate();
+    let returned: Promise<unknown> | undefined;
+    expect(() => { returned = session.database.query('SELECT key', (error: unknown) => { callbackError = error; }); }).not.toThrow();
+    await expect(returned).rejects.toThrow(/stale/i);
+    expect(callbackError).toBeUndefined();
+    await new Promise(resolve => queueMicrotask(resolve));
+    expect(callbackError).toBeInstanceOf(Error);
+    expect(query).not.toHaveBeenCalled();
   });
 });

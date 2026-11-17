@@ -23,6 +23,7 @@ import { AgentPolicyGate } from './AgentPolicyGate.js';
  * Moved verbatim from LocalVaultAuthority (E9); vault state lives on the host.
  */
 export class BrokerExecutionService {
+  private readonly staleRefreshWarnings = new Set<string>();
   constructor(private readonly host: LocalAuthorityHost) {}
 
   approve(callerId: string, token: string | undefined, operationId: string): { approvalId: string; expiresAt: number } {
@@ -165,7 +166,9 @@ export class BrokerExecutionService {
 
   /** Serialize token mutations per integration account (refresh tokens rotate). */
   async withCredentialQueue<T>(ref: BrokerCredentialRef, operation: () => Promise<T>): Promise<T> {
-    const queueKey = `${ ref.integrationId ?? '' }/${ ref.accountId ?? '' }`;
+    const profile = this.host.profileContext;
+    const authorityGeneration = this.host.generation;
+    const queueKey = `${ profile.profileId }/${ ref.integrationId ?? '' }/${ ref.accountId ?? '' }`;
     const previous = this.host.oauthRefreshQueues.get(queueKey) ?? Promise.resolve();
     let release!: () => void;
     const current = new Promise<void>(resolve => { release = resolve; });
@@ -173,6 +176,17 @@ export class BrokerExecutionService {
     this.host.oauthRefreshQueues.set(queueKey, queued);
     await previous;
     try {
+      try {
+        this.host.assertProfileCurrent(profile.profileId, profile.generation);
+        this.host.requireGeneration(authorityGeneration);
+      } catch (error) {
+        const warningKey = `${ profile.profileId }/${ profile.generation.value }`;
+        if (!this.staleRefreshWarnings.has(warningKey)) {
+          this.staleRefreshWarnings.add(warningKey);
+          console.warn('Dropped stale vault OAuth refresh work');
+        }
+        throw error;
+      }
       return await operation();
     } finally {
       release();

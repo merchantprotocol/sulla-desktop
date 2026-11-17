@@ -20,6 +20,7 @@ import { PostgresHumanActivityRepository } from './PostgresHumanActivityReposito
 
 /** Single composition point for profile-protected repositories. SQL, pool, and construction order stay unchanged. */
 export class VaultRepositories {
+  readonly session: VaultProfileSession;
   readonly database: Database;
   readonly rewrapHistory: PostgresRewrapHistoryRepository;
   readonly items: PostgresVaultItemRepository;
@@ -40,6 +41,7 @@ export class VaultRepositories {
   readonly humanActivity: PostgresHumanActivityRepository;
 
   constructor(session: VaultProfileSession, transactions: PgTransactionRunner = new PgTransactionRunner()) {
+    this.session = session;
     const pool = session.database;
     this.database = pool;
     this.rewrapHistory = new PostgresRewrapHistoryRepository(pool);

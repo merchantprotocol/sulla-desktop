@@ -13,6 +13,7 @@ import type { VaultDeviceApprovalWrapRequest, VaultEnrollmentAdoptRequest, Vault
 import { transportWrap } from '../filesCloudEscrow.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { LocalVaultError } from './LocalVaultError.js';
+import { ProfileScopedMap } from '../profiles/ProfileScopedMap.js';
 
 type StagedEnrollment = LocalAuthorityHost['pendingVaultEnrollments'] extends Map<string, infer S> ? S : never;
 
@@ -26,9 +27,11 @@ export class VaultEnrollmentService {
   private static readonly STAGED_TTL_MS = 60_000;
 
   /** One expiry timer per staged enrollment, so its keys are zeroed at the TTL even if nothing else runs. */
-  private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly expiryTimers: Map<string, ReturnType<typeof setTimeout>>;
 
-  constructor(private readonly host: LocalAuthorityHost) {}
+  constructor(private readonly host: LocalAuthorityHost) {
+    this.expiryTimers = new ProfileScopedMap(host.profileContext.profileId);
+  }
 
   async wrapVaultEnrollment(serviceId:string, token:string|undefined, input:VaultEnrollmentWrapRequest):Promise<{wrappedUserKey:TransportEnvelope}> {
     this.host.requireApprovalIdentity(serviceId, token);

@@ -30,7 +30,7 @@ export class SullaCloudSessionManagerFactory {
   create(): SullaCloudSessionManager {
     const { items, state, revocations, serialize } = this.dependencies;
     return new SullaCloudSessionManager(
-      new VaultItemTokenStore(new PostgresSullaCloudItemGateway(this.vault, items, state)),
+      new VaultItemTokenStore(new PostgresSullaCloudItemGateway(this.vault, items, state), this.vault),
       new VaultCloudAccountTransport(this.dependencies),
       new CredentialQueueRefreshLock(serialize),
       new VaultRevocationQueue(revocations, this.vault),
