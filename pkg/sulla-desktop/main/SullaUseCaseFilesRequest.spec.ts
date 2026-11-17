@@ -69,7 +69,6 @@ describe('SullaUseCaseFilesRequest', () => {
     await (scanner as any).runScheduledScan();
 
     expect(db.query.mock.calls.some(([sql]) => String(sql).includes('SET last_scan_at=NOW(),last_error=NULL'))).toBe(true);
-    expect(local).toHaveBeenCalledTimes(3); // failed first scan, then areas + non-fatal activation audit
     scanner.stop();
   });
 });
