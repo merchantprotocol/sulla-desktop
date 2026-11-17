@@ -15,7 +15,7 @@
  *
  * When:
  *   - toggle on: full upload on first enable, otherwise resume + reconcile
- *   - every 60 s: if the container reports local edits Cloud lacks, push (≥5 s debounce)
+ *   - while enabled: quickly detect local edits and push (300 ms coalescing)
  *   - every 10 min, on unlock, and on "Sync now": pull first, then push
  *   - toggle off: pause (Cloud keeps a read-only copy); "Delete Cloud copy": signed delete
  *   - Cloud already has a bundle verifiable with the local user key: push records without rewrapping
@@ -36,8 +36,10 @@ import { SyncDriverHealth } from '../syncDriverHealth';
 const console = Logging.background;
 
 const RECONCILE_MS = 10 * 60_000;
-const POLL_MS = 60_000;
-const DEBOUNCE_MS = 5_000;
+// Until the vault container can signal writes directly, this is a bounded safety-net
+// detector. The short coalescing window keeps bursts to one encrypted commit.
+const POLL_MS = 500;
+const DEBOUNCE_MS = 300;
 const MAX_ATTEMPTS = 3;
 
 /** Same shape as DesktopObjectSync's status, so Profile renders it unchanged. */
@@ -58,6 +60,7 @@ class VaultSyncV3Impl {
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private debounce: ReturnType<typeof setTimeout> | null = null;
+  private dirtyObservedAt: number | null = null;
   private inFlight: Promise<VaultSyncStatus> | null = null;
   private status: VaultSyncStatus = { kind: 'vault' };
 
@@ -82,6 +85,7 @@ class VaultSyncV3Impl {
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.debounce) clearTimeout(this.debounce);
     this.reconcileTimer = this.pollTimer = this.debounce = null;
+    this.dirtyObservedAt = null;
     this.health.setRunning(false);
   }
 
@@ -105,9 +109,16 @@ class VaultSyncV3Impl {
     const local = await VaultSyncContainer.status().catch(() => null);
     this.health.setPendingLocalEdits(local?.pendingChanges ?? 0);
     if (!local?.configured || !local.pendingChanges) return;
+    this.dirtyObservedAt ??= Date.now();
     this.debounce = setTimeout(() => {
       this.debounce = null;
-      this.syncNow().catch(() => undefined);
+      const observedAt = this.dirtyObservedAt;
+      this.dirtyObservedAt = null;
+      this.syncNow().then(result => {
+        if (!result.lastError && result.lastSyncAt && observedAt !== null) {
+          console.log(`[VaultSyncV3] local_change_to_cloud_ack_ms=${Date.now() - observedAt}`);
+        }
+      }).catch(() => undefined);
     }, DEBOUNCE_MS);
     this.debounce.unref?.();
   }
