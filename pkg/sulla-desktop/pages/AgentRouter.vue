@@ -872,6 +872,24 @@ onUnmounted(() => {
   height: calc(100% - 44px);
 }
 
+/* Carry the titlebar's bottom line under the traffic-light corner so it runs
+   the full window width, as in the approved header design. */
+.agent-router-body.has-titlebar {
+  position: relative;
+}
+.agent-router-body.has-titlebar::before {
+  content: '';
+  position: absolute;
+  top: 43px;
+  left: 0;
+  width: var(--rail-width);
+  height: 1px;
+  background: var(--border-default);
+  z-index: 1;
+  pointer-events: none;
+  transition: width var(--dur-move) var(--spring);
+}
+
 .agent-router-content {
   position: relative;
   flex: 1;
