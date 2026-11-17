@@ -98,7 +98,7 @@ export class TransactionRunner {
     try {
       await this.control.begin(client); began = Date.now();
       if (this.durability.usesAsynchronousCommit(name)) {
-        await client.query('SET LOCAL synchronous_commit = off');
+        await this.control.useAsynchronousCommit(client);
       }
       // While `work` runs, a pool acquire or chunk staging anywhere below it is a scope violation.
       const result = await TransactionScope.within(name, () => work(client));
