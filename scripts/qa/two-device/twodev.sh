@@ -16,6 +16,8 @@ readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 TWODEV_OUT="${TWODEV_OUT:-$HOME/Sites/sulla/_wt/twodev-evidence}"
 IMAC_HOST="${TWODEV_IMAC_HOST:-Jonathons-iMac.local}"
 APP_PATH="${TWODEV_APP_PATH:-/Applications/Sulla Desktop.app}"
+# Host binary that runs commands inside each Mac's Sulla VM (same path the Desktop terminal uses).
+RUNTIME_BIN="${TWODEV_RUNTIME_BIN:-$APP_PATH/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime}"
 FILES_FOLDER="${TWODEV_FOLDER:-Projects/sulla-desktop/qa/two-device}"
 ORG="${TWODEV_ORG:-}"
 AGENT_MODEL="${TWODEV_AGENT:-sulla-desktop}"
@@ -116,6 +118,37 @@ host_on() {
     b) ssh -o BatchMode=yes "$IMAC_HOST" "$cmd" ;;
     *) die "side must be a or b, got: $side" ;;
   esac
+}
+
+# guest_start <a|b> <host-out-file> <guest-command>: runs one shell command inside that Mac's
+# Sulla VM, where /mnt/sulla-files is mounted, through sulla-runtime exec (the Desktop terminal's
+# own path). It starts detached with stdin from /dev/null, because attached over ssh it hangs.
+# It returns at once. The host out file gets __TWODEV_RC=<exit> when the guest command ends.
+guest_start() {
+  local side="$1" out="$2" cmd="$3" wrapped
+  wrapped="$cmd; echo __TWODEV_RC=\$?"
+  host_on "$side" "rm -f $(printf '%q' "$out"); nohup $(printf '%q' "$RUNTIME_BIN") exec -- sh -lc $(printf '%q' "$wrapped") </dev/null >$(printf '%q' "$out") 2>&1 &"
+}
+
+# guest_wait <a|b> <host-out-file> <seconds>: polls the out file until the guest command ends.
+# Prints the guest exit code and returns 0, or returns 1 when the limit passes first.
+guest_wait() {
+  local side="$1" out="$2" limit="$3" waited=0 rc=""
+  while [ "$waited" -lt "$limit" ]; do
+    rc="$(host_on "$side" "grep -h '^__TWODEV_RC=' $(printf '%q' "$out") 2>/dev/null | tail -1 | cut -d= -f2" || true)"
+    if [ -n "$rc" ]; then
+      printf '%s' "$rc"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 1
+}
+
+# guest_cleanup <a|b> <host-out-file>: removes the temporary out file on that Mac.
+guest_cleanup() {
+  host_on "$1" "rm -f $(printf '%q' "$2")" || true
 }
 
 # Builds a JSON object from key/value argument pairs (quoting-safe).
@@ -622,6 +655,7 @@ collection_id() {
 cmd_a5() {
   local direction="${1:-both}" id nonce fname content prompt parsed code=0 side peer
   case "$direction" in a-to-b|b-to-a|both) ;; *) die "usage: $SCRIPT_NAME a5 [a-to-b|b-to-a|both]" ;; esac
+  require_env ORG
   need_cmds python3 ssh
   id="$(collection_id)"
   for side in a b; do
@@ -633,6 +667,7 @@ cmd_a5() {
       fname="twodev-a5-${side}-${nonce}.txt"
       content="twodev A5 ${side} ${nonce}"
       prompt="Two-device A5. Create source file ${fname} with exactly this content using write_file under /mnt/sulla-files/Projects/sulla-desktop/qa/two-device/: ${content}. Then run exactly one sulla tool: files/share_to_org with arguments $(json_obj source "/mnt/sulla-files/Projects/sulla-desktop/qa/two-device/${fname}" collectionId "$id" name "$fname"). Use read_file on the source to confirm the exact bytes, then exec `shasum -a 256` on that path for SHA-256. Reply only JSON {\"ok\":true or false,\"error\":null or reason,\"collectionId\":\"id\",\"sha256\":\"64 lowercase hex chars\"}; never include bytes."
+      code=0
       parsed="$(agent_call "$side" a5-share-to-org files/share_to_org "$prompt" nonce="$nonce" file="$fname")" || code=$?
       if [ "$code" -ne 0 ]; then
         echo "A5 ${side}-to-${peer} FAIL: source creation/share failed (check the source path and explicit edit grant)" >&2
@@ -642,6 +677,7 @@ cmd_a5() {
       expected_hash="$(json_field "$parsed" evidence.sha256)"
       [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || die "A5 source agent did not report a valid SHA-256"
       prompt="Read-only A5 check. Run exactly one sulla tool: files/list_shared with arguments $(json_obj orgId "$ORG" collectionId "$id"). Find exact file ${fname} and its mounted path with files/list_shared, read it using read_file, then use exec `shasum -a 256` on that mounted path. Reply only JSON {\"ok\":true or false,\"error\":null or reason,\"found\":true or false,\"fileId\":\"id or null\",\"sha256\":\"64 lowercase hex chars\"}. Never include file contents. Expected SHA-256: ${expected_hash}."
+      code=0
       parsed="$(agent_call "$peer" a5-read-shared files/list_shared "$prompt" nonce="$nonce" file="$fname")" || code=$?
       if [ "$code" -ne 0 ] || [ "$(json_field "$parsed" found)" != true ] || [ "$(json_field "$parsed" evidence.sha256)" != "$expected_hash" ]; then
         echo "A5 ${side}-to-${peer} FAIL: peer could not find/read $fname in org collection" >&2
@@ -654,7 +690,7 @@ cmd_a5() {
 }
 
 cmd_a6() {
-  local side="${1:-}" direction="${2:-both}" id path nonce fname content start elapsed found command
+  local side="${1:-}" direction="${2:-both}" id path nonce fname content out rc peer start elapsed found attempt
   case "$side" in a|b) ;; *) die "usage: $SCRIPT_NAME a6 <a|b> [both]" ;; esac
   [ "$direction" = both ] || die "usage: $SCRIPT_NAME a6 <a|b> [both] (runs both directions)"
   require_env TWODEV_COLLECTION_PATH
@@ -665,17 +701,29 @@ cmd_a6() {
   path="$TWODEV_COLLECTION_PATH"
   python3 -I -c 'import re,sys; sys.exit(0 if re.fullmatch(r"/mnt/sulla-files/Organizations/[^/]+/[^/]+", sys.argv[1]) else 1)' "$path" || die "TWODEV_COLLECTION_PATH must be the absolute mounted Organizations/<org>/<collection> path"
   for side in "$side" "$([ "$side" = a ] && echo b || echo a)"; do
+    peer="$([ "$side" = a ] && echo b || echo a)"
     nonce="$(new_nonce)"
     fname="twodev-a6-${side}-${nonce}.txt"
     content="twodev A6 human ${side} ${nonce}"
-    # This shell write simulates a human Files action; it does not use the AI or a Files tool.
-    command="mkdir -p $(printf '%q' "$path") && printf '%s' $(printf '%q' "$content") > $(printf '%q' "$path/$fname")"
-    host_on "$side" "$command"
+    # Human path: a shell in that Mac's Sulla VM writes into the mounted Files folder, as the
+    # Desktop terminal does. No AI, chat API or Files tool is involved in the write.
+    out="/tmp/twodev-a6-${nonce}-write.out"
+    guest_start "$side" "$out" "mkdir -p $(printf '%q' "$path") && printf '%s' $(printf '%q' "$content") > $(printf '%q' "$path/$fname")"
+    rc="$(guest_wait "$side" "$out" 60 || true)"
+    guest_cleanup "$side" "$out"
+    if [ "$rc" != 0 ]; then echo "A6 FAIL: $(machine_label "$side") could not write $fname into the Files mount (exit ${rc:-timeout})" >&2; return 1; fi
+
+    # Peer check: poll the same mount on the other Mac for up to 60s, 5s apart.
     start="$(date +%s)"
     found=0
-    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-      command="test -f $(printf '%q' "$path/$fname")"
-      if host_on "$([ "$side" = a ] && echo b || echo a)" "$command" >/dev/null 2>&1; then found=1; break; fi
+    attempt=0
+    while [ $(( $(date +%s) - start )) -lt 60 ]; do
+      attempt=$((attempt + 1))
+      out="/tmp/twodev-a6-${nonce}-peer${attempt}.out"
+      guest_start "$peer" "$out" "test -f $(printf '%q' "$path/$fname")"
+      rc="$(guest_wait "$peer" "$out" 20 || true)"
+      guest_cleanup "$peer" "$out"
+      if [ "$rc" = 0 ]; then found=1; break; fi
       sleep 5
     done
     elapsed=$(( $(date +%s) - start ))
