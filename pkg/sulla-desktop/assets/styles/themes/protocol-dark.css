@@ -24,6 +24,8 @@
   --bg-page: #0d1117;            /* Level 0 — deepest page background */
   --bg-surface: #161b22;         /* Level 100 — cards, panels, sidebar */
   --bg-surface-alt: #1c2128;     /* Level 200 — nested panels, terminal bars */
+  /* Chat header, browser toolbar and active tab share this; lighter than the titlebar and rail. */
+  --bg-chrome-active: var(--bg-surface);
   --bg-surface-hover: #21262d;   /* Level 300 — hover, active, elevated */
   --bg-elevated: #21262d;        /* Level 300 — modals, dropdowns, popovers */
   --bg-header: rgba(13, 17, 23, 0.85);

@@ -13,6 +13,8 @@
   --bg-page: #0f172a;
   --bg-surface: #1e293b;
   --bg-surface-alt: #334155;
+  /* Chat header, browser toolbar and active tab share this; lighter than the titlebar and rail. */
+  --bg-chrome-active: var(--bg-surface);
   --bg-surface-hover: #475569;
   --bg-header: rgba(15, 23, 42, 0.95);
   --bg-input: #243447;

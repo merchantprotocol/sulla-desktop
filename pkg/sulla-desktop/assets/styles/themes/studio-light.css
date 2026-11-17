@@ -41,6 +41,8 @@
 
   /* Shared contract */
   --bg-page: var(--mk-muted); --bg-surface: var(--mk-bg); --bg-surface-alt: var(--mk-muted); --bg-surface-hover: var(--mk-hover);
+  /* Chat header, browser toolbar and active tab share this; lighter than the titlebar and rail. */
+  --bg-chrome-active: color-mix(in oklab, var(--mk-muted) 50%, var(--mk-bg));
   --bg-elevated: var(--mk-bg); --bg-input: var(--mk-bg); --bg-overlay: oklch(0% 0 0 / .28); --bg-hover: var(--mk-hover); --bg-selected: var(--mk-sel); --bg-glass: oklch(100% 0 0 / .86);
   --text-primary: var(--mk-text); --text-secondary: var(--mk-text-2); --text-muted: var(--mk-text-3); --text-dim: var(--mk-text-4); --text-on-accent: var(--mk-on-accent); --text-link: var(--mk-accent);
   --border-default: var(--mk-border); --border-subtle: var(--mk-border-subtle); --border-strong: var(--mk-border-strong); --border-focus: var(--mk-accent);

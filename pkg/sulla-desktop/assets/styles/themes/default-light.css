@@ -14,6 +14,8 @@
   --bg-page: #ffffff;
   --bg-surface: #f8fafc;
   --bg-surface-alt: #f1f5f9;
+  /* Chat header, browser toolbar and active tab share this; lighter than the titlebar and rail. */
+  --bg-chrome-active: var(--bg-page);
   --bg-chrome: #e6ebf1; /* header, traffic-light corner and icon rail; must contrast with --bg-surface (active tab) */
   --bg-surface-hover: #e2e8f0;
   --bg-header: #ffffff;
