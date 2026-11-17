@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { randomUUID } from 'node:crypto';
 import * as Automerge from '@automerge/automerge';
 import type pg from 'pg';
 
@@ -30,6 +31,12 @@ export class TextVersionMerger {
     private readonly managers:LocalManagerGate,
   ) {}
 
+  /** Each speculative edit needs its own Automerge actor. Reusing a persisted actor in
+   * concurrent clones lets independent writers emit different changes at the same seq. */
+  private edit(document:Automerge.Doc<TextDocument>, text:string):Automerge.Doc<TextDocument> {
+    return editTextDocument(Automerge.clone(document, randomUUID().replaceAll('-', '')), text);
+  }
+
   readonly merge = async(queryable:Queryable, file:any, baseVersionId:string, submitted:Buffer, currentBytes:Buffer,
     readVersion:StoredVersionReader = (fileId, versionId) => this.managers.fuseExperiment().readStoredVersion(fileId, versionId)):Promise<MergedText> => {
     const baseBytes=baseVersionId===file.current_version_id?currentBytes:await readVersion(file.id,baseVersionId);
@@ -46,15 +53,15 @@ export class TextVersionMerger {
       let baseDocument:Automerge.Doc<TextDocument>|undefined,currentDocument:Automerge.Doc<TextDocument>|undefined;
       if(savedCurrent){currentDocument=savedCurrent;if(savedBase){try{baseDocument=Automerge.view(currentDocument,Array.isArray(savedBase.heads)?savedBase.heads:JSON.parse(savedBase.heads));}catch{/* A pre-reset head is rebuilt from the plain version below. */}}}
       if(baseDocument&&currentDocument) {
-        document=Automerge.merge(Automerge.clone(currentDocument),editTextDocument(Automerge.clone(baseDocument),submittedText));
+        document=Automerge.merge(Automerge.clone(currentDocument),this.edit(baseDocument,submittedText));
       } else {
         const baseDocument=newTextDocument(baseText);
-        const rebuiltCurrent=editTextDocument(Automerge.clone(baseDocument),currentText);
-        document=Automerge.merge(rebuiltCurrent,editTextDocument(Automerge.clone(baseDocument),submittedText));
+        const rebuiltCurrent=this.edit(baseDocument,currentText);
+        document=Automerge.merge(rebuiltCurrent,this.edit(baseDocument,submittedText));
       }
     } else {
       const saved=await this.texts.current(queryable,file.id,file.current_version_id);
-      document=editTextDocument(saved??newTextDocument(currentText),submittedText);
+      document=this.edit(saved??newTextDocument(currentText),submittedText);
     }
     const active=this.live.document(file.id);
     if(active) document=Automerge.merge(Automerge.clone(active),document);
