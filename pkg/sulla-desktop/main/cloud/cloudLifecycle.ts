@@ -29,6 +29,7 @@ import { ByoUsageSync } from './byoUsageSync';
 import { VaultSyncV3 } from './vaultSyncV3';
 import { VaultDeviceApproval } from './vaultDeviceApproval';
 import { FilesSyncV1 } from './filesSyncV1';
+import { CloudLiveEvents } from './liveEventsClient';
 import { MemorySyncV1 } from './memorySyncV1';
 import { SyncDriverSupervisor } from './syncDriverSupervisor';
 import { NetworkResumeMonitor, type NetworkResumePowerSource, type NetworkStatusSource } from './networkResumeMonitor';
@@ -254,6 +255,7 @@ function installPrefsListener() {
 /** Called after a successful sign-in and after restoring a saved session. */
 export async function startCloudServices(): Promise<void> {
   signedIn = true;
+  CloudLiveEvents.start();
   startSyncDriverSupervisor();
   networkResume.start();
   installPrefsListener();
@@ -270,6 +272,7 @@ export async function startCloudServices(): Promise<void> {
 
 export async function stopCloudServices(): Promise<void> {
   signedIn = false;
+  CloudLiveEvents.stop();
   stopSyncDriverSupervisor();
   networkResume.stop();
   channel?.stop();

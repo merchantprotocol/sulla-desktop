@@ -42,8 +42,8 @@ export type { SendStatus } from './CloudSignedResponseHandler.js';
 
 const BASE = '/files-sync/v1';
 // A short safety pass keeps missed wakeups bounded; committed versions explicitly nudge below.
-const LOOP_MS = 1_000;
-const PULL_INTERVAL_MS = 5_000;
+const LOOP_MS = 10_000;
+const PULL_INTERVAL_MS = 60_000;
 const PREPARE_WAIT_MS = 5_000;
 const EMPTY_SHA256 = createHash('sha256').update('').digest('hex');
 
@@ -126,6 +126,13 @@ export class CloudSyncService {
   /** Called after a version is inserted; debounce until its surrounding transaction commits. */
   versionCommitted(collectionId:string):void {
     this.commitWakeup.notify(collectionId);
+  }
+
+  /** Authenticated desktop LiveEvents wake: bypass pull throttling for this collection. */
+  pullSoon(collectionId:string):void {
+    if (!isUuid(collectionId)) throw new HttpStatusError(400, 'invalid collectionId');
+    this.lastPullAt.delete(collectionId);
+    this.nudge();
   }
 
   finderBadges(collectionId:string) { return this.desktopStatus.finderBadges(collectionId) }

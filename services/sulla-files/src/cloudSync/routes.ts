@@ -47,6 +47,11 @@ export class CloudSyncRoutes {
       response.json(await service.finderBadges(collectionId));
     }));
 
+    app.post('/v1/desktop/cloud-sync/collections/:collectionId/pull', route(async(service, request, response) => {
+      service.pullSoon(String(request.params.collectionId));
+      response.status(202).json({ queued: true });
+    }));
+
     app.post('/v1/desktop/cloud-sync/collections/:collectionId/enable', route(async(service, request, response) => {
       if (typeof request.body?.enabled !== 'boolean') throw new RouteError(400, 'enabled must be boolean');
       response.json(await service.enable(String(request.params.collectionId), request.body.enabled));
