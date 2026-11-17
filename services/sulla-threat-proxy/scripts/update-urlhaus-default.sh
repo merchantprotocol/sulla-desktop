@@ -1,11 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Refresh the packaged URLhaus hosts-file snapshot from the malware-filter mirror.
+# Refresh the packaged URLhaus hosts-file snapshot from Sulla Cloud (override with URLHAUS_URL).
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TARGET="$ROOT/blocklist/urlhaus-default.txt"
 TMP="$TARGET.tmp"
-URL='https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt'
+URL="${URLHAUS_URL:-https://sulla-workers.merchantprotocol.workers.dev/threat-intel/urlhaus.txt}"
 trap 'rm -f "$TMP"' EXIT HUP INT TERM
 mkdir -p "$(dirname "$TARGET")"
 curl --fail --location --silent --show-error "$URL" --output "$TMP"
