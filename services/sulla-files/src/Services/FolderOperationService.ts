@@ -75,7 +75,7 @@ export class FolderOperationService {
       if (input.batchOperationId) this.context.cancellation.assertNotCancelled(input.batchOperationId);
       const child = await this.files.execute({idempotencyKey:randomUUID(),collectionId:input.collectionId,action:input.action as 'move'|'copy'|'rename'|'trash',
         fileId:file.id,expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),
-        ...(input.action==='trash'?{}:{targetPath:target+file.path.slice(source.length),...(destinationCollection!==input.collectionId?{targetCollectionId:destinationCollection}:{})})},actor,metadataAccess(access),undefined,client);
+        ...(input.action==='trash'?{}:{targetPath:target+file.path.slice(source.length),...(destinationCollection!==input.collectionId?{targetCollectionId:destinationCollection}:{}),parentFollows:true})},actor,metadataAccess(access),undefined,client);
       children.push(child);
     }
     const transferredGrants = destinationCollection!==input.collectionId ? await this.transferGrants(client, input, destinationCollection, source, target!, sourceTree, actor) : undefined;
@@ -165,7 +165,7 @@ export class FolderOperationService {
     const displacedChildren:any[] = [];
     for (const file of destinationFiles) {
       const child = await this.files.execute({idempotencyKey:randomUUID(),collectionId:destinationCollection,action:'rename',fileId:file.id,
-        expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:recovery+file.path.slice(target.length),[folderGrantMigration]:true},
+        expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:recovery+file.path.slice(target.length),[folderGrantMigration]:true,parentFollows:true},
       actor,metadataAccess(access),undefined,client);
       displacedChildren.push(child);
     }

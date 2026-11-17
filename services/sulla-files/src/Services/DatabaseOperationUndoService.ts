@@ -5,6 +5,7 @@
 
 import type pg from 'pg';
 import type { FilesIdentity } from '../auth.js';
+import { CloudRenameSuccessor } from '../Repositories/CloudRenameSuccessor.js';
 import type { DatabaseOperationContext } from './DatabaseOperationContext.js';
 import { OperationRecords, type DatabaseOperationAccess, type DatabaseOperationReceipt, type DatabaseOperationState,
   type OperationGuard, type UndoAuthority } from './DatabaseOperationTypes.js';
@@ -62,6 +63,11 @@ export class DatabaseOperationUndoService {
       // parent while retaining the tombstone and all history.
       updated = await files.untrash(client, file.id, before.versionId);
     } else updated = await files.relocate(client, file.id, before.path, before.collectionId??row.collection_id);
+    if (row.action !== 'copy' && row.action !== 'trash' && !internal?.parentFollows) {
+      const successor = new CloudRenameSuccessor(actor);
+      await successor.versionFor(client, { fileId:file.id, currentVersionId:file.current_version_id, parentFollows:false });
+      if (successor.updatedFile) updated = successor.updatedFile;
+    }
     if (row.displaced_before) await this.restoreDisplaced(client, row, actor, access, internal);
     await audit.recordFileOperation(client, actor, updated, row.action === 'trash' ? 'restore' : row.action === 'copy' ? 'delete' : 'rename', row.id);
     await access.custody?.publish(client,row,true);
@@ -77,7 +83,9 @@ export class DatabaseOperationUndoService {
     await access.path(client, displaced.collection_id, row.displaced_before.path);
     if (!internal?.folderGrantMigration) await policy.permissionBoundary(client, displaced.collection_id, displaced.path, row.displaced_before.path);
     const restored = await files.rename(client, displaced.id, row.displaced_before.path);
-    await this.context.audit.recordFileOperation(client, actor, restored, 'rename', row.id);
+    const successor = new CloudRenameSuccessor(actor);
+    await successor.versionFor(client, { fileId:displaced.id, currentVersionId:displaced.current_version_id, parentFollows:false });
+    await this.context.audit.recordFileOperation(client, actor, successor.updatedFile ?? restored, 'rename', row.id);
   }
 
   private async undoCreateFolder(client:pg.PoolClient, row:any, operationId:string, actor:FilesIdentity, access:DatabaseOperationAccess):Promise<DatabaseOperationReceipt> {
