@@ -54,6 +54,33 @@ describe.skipIf(!databaseUrl)('Files mount write routes (real app, real Postgres
     expect(await write(id, v1, 'not the base', 'z')).toMatchObject({ status: 409, body: { error: 'Files mount version changed' } });
   });
 
+  it('converges concurrent appends from one base without dropping any writer', async() => {
+    // risk: data loss — independent FUSE appenders must all survive concurrent Automerge merges.
+    const path = 'mount/concurrent-append.txt';
+    const id = await fixture.createFile(path);
+    const base = `body of ${ path }`;
+    const initial = (await current(id)).current_version_id;
+    const lines = ['writer-a', 'writer-b', 'writer-c', 'writer-d', 'writer-e'];
+    const responses = await Promise.all(lines.map(line => write(id, initial, base, `${base}\n${line}\n`)));
+
+    expect(responses.map(response => response.status)).toEqual(lines.map(() => 200));
+    const savedLines = (await fixture.request(`/v1/fuse/files/${ id }/content`)).body.split('\n');
+    for (const line of lines) expect(savedLines).toContain(line);
+  });
+
+  it('merges a stale-base append into the latest text version', async() => {
+    // risk: data loss — a stale append must retain both the current writer and the stale writer.
+    const path = 'mount/stale-append.txt';
+    const id = await fixture.createFile(path);
+    const base = `body of ${ path }`;
+    const initial = (await current(id)).current_version_id;
+    expect((await write(id, initial, base, `${base}\ncurrent-writer\n`)).status).toBe(200);
+    expect((await write(id, initial, base, `${base}\nstale-writer\n`)).status).toBe(200);
+    const saved = (await fixture.request(`/v1/fuse/files/${ id }/content`)).body;
+    expect(saved).toContain('current-writer');
+    expect(saved).toContain('stale-writer');
+  });
+
   // risk: data loss — failure of the optional request-audit dual-write must not roll back a successful file version.
   it('commits the file version and durable spool row when audit_log rejects its dual-write', async() => {
     const id = await fixture.createFile('mount/audit-failure.txt');
