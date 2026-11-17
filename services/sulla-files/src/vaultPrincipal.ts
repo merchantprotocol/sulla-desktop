@@ -9,6 +9,8 @@ import { VaultPrincipalRepository } from './Repositories/VaultPrincipalRepositor
 import type { Config } from './config.js';
 import type pg from 'pg';
 
+/** The pre-adoption principal every Files store starts under. */
+export const SENTINEL_USER_ID = 'desktop-user';
 const FOREIGN_PRINCIPAL = 'Existing Files collections belong to another principal; secure migration is required';
 
 /**
@@ -21,13 +23,15 @@ export class VaultPrincipalAdoption {
     db:Pick<pg.Pool, 'connect' | 'query'>,
     private readonly principals = new VaultPrincipalRepository(db),
     private readonly transactions = new TransactionRunner(db),
+    /** Called with the previous principal after a change, so its cached keys are zeroized. */
+    private readonly onPrincipalChanged:(previousUserId:string)=>void = () => undefined,
   ) {}
 
   async adopt(config:Pick<Config, 'userId'>, principalId:string):Promise<void> {
     if (config.userId === principalId) return;
     await this.transactions.run('files-vault-principal-adoption', async client => {
       const rows = await this.principals.lockCollectionOwners(client);
-      if (config.userId !== 'desktop-user' || (rows.length > 0 && !rows.some(row => row.owner_user_id === config.userId || row.owner_user_id === principalId))) {
+      if (config.userId !== SENTINEL_USER_ID || (rows.length > 0 && !rows.some(row => row.owner_user_id === config.userId || row.owner_user_id === principalId))) {
         throw new Error(FOREIGN_PRINCIPAL);
       }
       const sentinelIds = rows.filter(row => row.owner_user_id === config.userId).map(row => row.id);
@@ -37,6 +41,8 @@ export class VaultPrincipalAdoption {
         await this.principals.reassignCollections(sentinelIds, principalId, client);
       }
     });
+    const previousUserId = config.userId;
     config.userId = principalId;
+    this.onPrincipalChanged(previousUserId);
   }
 }

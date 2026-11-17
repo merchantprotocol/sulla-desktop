@@ -43,6 +43,11 @@ export class OrgFilesFilesClient {
     });
   }
 
+  /** Asks Files to drop the org roots of the principal it is serving (sign-out or lock). Files picks the partition itself. */
+  async invalidateCurrentProfile(): Promise<void> {
+    await this.request('/v1/desktop/org-profiles/invalidate-current', { method: 'POST' });
+  }
+
   async enableSync(collectionId: string, keyVersion: number, head?: string | null): Promise<void> {
     await this.request(`/v1/desktop/org-collections/${encodeURIComponent(collectionId)}/sync`, {
       method: 'POST', body: JSON.stringify({ keyVersion, ...(head === undefined ? {} : { head }) }),

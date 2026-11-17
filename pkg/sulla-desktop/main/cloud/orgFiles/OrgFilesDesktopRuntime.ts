@@ -25,11 +25,11 @@ export class OrgFilesDesktopRuntime {
   constructor() {
     const cloud = new OrgFilesCloudClient();
     const recipientStore = new OrgFilesRecipientKeyStore(new FileOrgFilesKeyStore(() => safeStorage), cloud);
+    const files = new OrgFilesFilesClient();
     this.keyring = new OrgFilesKeyring(
       cloud, recipientStore, new OrgFilesKeyCipher(webcrypto.subtle, size => new Uint8Array(randomBytes(size))),
-      async () => true,
+      async () => true, undefined, files,
     );
-    const files = new OrgFilesFilesClient();
     this.memberships = new OrgMembershipDirectory(new CloudOrgMembershipSource());
     this.driver = new OrgCollectionSyncDriver(this.memberships, cloud, this.keyring, files);
     this.creator = new OrgCollectionCreator(cloud, this.keyring, files);
@@ -39,9 +39,9 @@ export class OrgFilesDesktopRuntime {
   static currentOrNull(): OrgFilesDesktopRuntime | null { return this.shared; }
   start(): void { this.driver.start(); }
   wake(): void { this.driver.wake(); }
-  stop(): void { this.driver.stop(); this.keyring.onSignOut(); }
+  stop(): void { this.driver.stop(); void this.keyring.onSignOut(); }
   onVaultUnlocked(): void { this.driver.wake(); }
-  onVaultLocked(): void { this.keyring.onLock(); }
+  onVaultLocked(): void { void this.keyring.onLock(); }
 
   async createCollection(input: { orgId?: string; orgName?: string; name: string }) {
     const requested = input.orgId?.trim() || input.orgName?.trim();

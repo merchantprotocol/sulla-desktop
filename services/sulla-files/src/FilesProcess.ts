@@ -49,10 +49,14 @@ import { FilesSyncCloudApi } from './cloudSync/cloudApi.js';
 import { CloudRootKeyStore } from './cloudSync/keyStore.js';
 import { CloudSyncService } from './cloudSync/service.js';
 import { OrgRootKeyCache } from './cloudSync/OrgRootKeyCache.js';
+import { ProfileIdentity } from './ProfileIdentity.js';
+import { ProfileCaches } from './ProfileCaches.js';
 
 /** The long-lived services the Files process composes before it serves the API. */
 interface FilesServices {
   keyring:FilesKeyring;
+  orgRootKeys:OrgRootKeyCache;
+  profileCaches:ProfileCaches;
   cloudBroker?:FilesCloudBroker;
   chunkStore:ReturnType<typeof createChunkStore>;
   vaultAuthority:ReturnType<typeof configuredVaultFilesKeyBundleAuthority>;
@@ -125,7 +129,10 @@ export class FilesProcess {
   }
 
   private async composeServices(db:pg.Pool, config:Config):Promise<FilesServices> {
-    const keyring = config.keyring = new FilesKeyring(db, undefined, undefined, undefined, new LegacySigningKeySelector(new Store(config.chunkRoot)));
+    const keyring = config.keyring = new FilesKeyring(db, undefined, undefined, undefined, new LegacySigningKeySelector(new Store(config.chunkRoot)), () => ProfileIdentity.fromCloudUserId(config.userId));
+    // Org roots live in the same principal-keyed partitions as the collection keys above.
+    const orgRootKeys = new OrgRootKeyCache(() => ProfileIdentity.fromCloudUserId(config.userId));
+    const profileCaches = new ProfileCaches([keyring, orgRootKeys], () => config.userId);
     // Cloud sync and its chunk source exist only when the vault broker identity is configured.
     const cloudBroker = config.mode === 'desktop' && config.vaultBrokerServiceToken ? new FilesCloudBroker(config) : undefined;
     const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
@@ -133,7 +140,8 @@ export class FilesProcess {
       : undefined;
     const chunkStore = createChunkStore({ db, root: config.chunkRoot, keyring: config.keyring, source: config.mode === 'desktop' && !config.filesRoot ? cloudChunkSource : undefined });
     const vaultAuthority = configuredVaultFilesKeyBundleAuthority(config);
-    const vaultPrincipalAdoption = new VaultPrincipalAdoption(db);
+    // Adoption zeroizes the previous principal's partition the moment config.userId changes.
+    const vaultPrincipalAdoption = new VaultPrincipalAdoption(db, undefined, undefined, previousUserId => profileCaches.invalidatePrincipal(previousUserId));
     const keyRecovery = vaultAuthority && config.keyring instanceof FilesKeyring
       ? new FilesKeyBundleRecovery(db, config.keyring, vaultAuthority)
       : undefined;
@@ -160,7 +168,7 @@ export class FilesProcess {
     // Search has a separate, deliberately small pool so expensive recall cannot starve FUSE or listings.
     const searchDb = await connect(config.databaseUrl, 2);
     const search = new FileSearch(searchDb, embedder);
-    return { keyring, cloudBroker, chunkStore, vaultAuthority, keyRecovery, vaultPrincipalAdoption, indexer, manager, residency, enrichment, search };
+    return { keyring, orgRootKeys, profileCaches, cloudBroker, chunkStore, vaultAuthority, keyRecovery, vaultPrincipalAdoption, indexer, manager, residency, enrichment, search };
   }
 
   /** Brings up identity, collections, the watched folder, indexing and enrichment once per unlock. */
@@ -208,14 +216,14 @@ export class FilesProcess {
   }
 
   private async serve(server:http.Server | https.Server, db:pg.Pool, config:Config, services:FilesServices):Promise<void> {
-    const { keyring, cloudBroker, chunkStore, vaultAuthority, keyRecovery, indexer, manager, residency, enrichment, search } = services;
+    const { keyring, orgRootKeys, profileCaches, cloudBroker, chunkStore, vaultAuthority, keyRecovery, indexer, manager, residency, enrichment, search } = services;
     const recover = keyRecovery && vaultAuthority
       ? async(master:Buffer) => {
         const { principalId } = await vaultAuthority.unlockedPrincipal();
         return keyRecovery.recoverDeviceMaster(master, principalId);
       }
       : undefined;
-    const orgRootKeys=new OrgRootKeyCache();
+    // Desktop's sign-out/lock reaches this through POST /v1/desktop/org-profiles/invalidate-current.
     const lifecycle = new FilesLifecycle(db, config, keyring, { initialize: reportStage => this.initialize(db, config, services, reportStage), stop: async()=>{orgRootKeys.clear();await this.lock(services)}, recover });
     const bootstrapAuthority = config.mode === 'desktop'
       ? new FilesBootstrapAuthority(
@@ -228,7 +236,7 @@ export class FilesProcess {
       ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker, orgRootKeys)
       : undefined;
     if (chunkStore instanceof CachingStore) await chunkStore.start();
-    const app = new FilesApplication({ db, config, manager, search, residency, filesLifecycle: lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync }).build();
+    const app = new FilesApplication({ db, config, manager, search, residency, filesLifecycle: lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync, profileCaches }).build();
     const memoryTelemetry = new MemoryTelemetry(() => ({
       requests: Object.fromEntries(app.locals.inFlightRequests ?? []),
       indexer: indexer.diagnosticJob,

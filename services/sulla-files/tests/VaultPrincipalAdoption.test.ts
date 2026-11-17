@@ -38,6 +38,18 @@ describe.skipIf(!databaseUrl)('Vault principal adoption (real Postgres)', () => 
     expect(await links()).toEqual([{ id: 'l1', owner_user_id: 'principal-1' }, { id: 'l2', owner_user_id: 'principal-1' }, { id: 'l3', owner_user_id: 'someone-else' }]);
   });
 
+  it('reports the previous principal exactly when adoption changes it', async() => {
+    // risk: key lifecycle — the sentinel partition must be zeroized the moment Files switches principals.
+    await schema.collection('desktop-user');
+    const changed: string[] = [];
+    const reporting = new VaultPrincipalAdoption(schema.pool, undefined, undefined, previous => changed.push(previous));
+    const config = { userId: 'desktop-user' };
+    await reporting.adopt(config, 'principal-1');
+    expect(changed).toEqual(['desktop-user']);
+    await reporting.adopt(config, 'principal-1');
+    expect(changed).toEqual(['desktop-user']);
+  });
+
   it('is a no-op when the principal is already adopted', async() => {
     // risk: idempotency — restarting must not rewrite ownership.
     await schema.collection('principal-1');

@@ -10,8 +10,11 @@ import { OrgCollectionEnrollment, type OrgCollectionLevel } from '../Services/Or
 import type { CloudSyncService } from '../cloudSync/service.js';
 
 /** Desktop-control-only enrollment API; agent and job capabilities are explicitly refused. */
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
 export class OrgCollectionRoutes {
-  constructor(private readonly config:Pick<Config,'mode'>,private readonly enrollment:OrgCollectionEnrollment,private readonly cloudSync?:CloudSyncService) {}
+  constructor(private readonly config:Pick<Config,'mode'>,private readonly enrollment:OrgCollectionEnrollment,private readonly cloudSync?:CloudSyncService,
+    private readonly profileCaches?:{ invalidateCurrent():void }) {}
   register(app:express.Express):void {
     const route=(handler:(request:express.Request & {filesIdentity?:FilesIdentity},response:express.Response)=>Promise<void>)=>async(request:express.Request & {filesIdentity?:FilesIdentity},response:express.Response)=>{
       try { const identity=request.filesIdentity;
@@ -43,6 +46,14 @@ export class OrgCollectionRoutes {
       const result=await this.enrollment.updateLevel(String(request.params.id),request.body?.level as OrgCollectionLevel);
       if(!result){ response.sendStatus(404); return; }
       response.json(result);
+    }));
+    // Desktop sign-out/lock drops the org roots of the principal Files is serving (plus the pre-adoption partition).
+    // Files derives the partition itself: Desktop never sends a profile id. Desktop-control capability plus loopback only.
+    app.post('/v1/desktop/org-profiles/invalidate-current',route(async(request,response)=>{
+      if(!this.profileCaches) throw Object.assign(new Error('profile key caches are not configured'),{status:503});
+      if(!LOOPBACK_ADDRESSES.has(request.socket.remoteAddress ?? '')) throw Object.assign(new Error('loopback required'),{status:403});
+      this.profileCaches.invalidateCurrent();
+      response.sendStatus(204);
     }));
     app.delete('/v1/desktop/org-collections/:id',route(async(request,response)=>{
       if(!await this.enrollment.unenroll(String(request.params.id))){ response.sendStatus(404); return; }
