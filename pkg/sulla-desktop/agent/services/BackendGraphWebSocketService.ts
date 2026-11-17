@@ -27,7 +27,6 @@ import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPrevent
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
-import { DEFAULT_AGENT_RUN_LOCATION } from '../database/models/AgentDefinitionModel';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
@@ -42,12 +41,12 @@ import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnec
 import { postgresClient } from '../database/PostgresClient';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
-import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
 import { AgentTurnStopper } from './AgentTurnStopper';
+import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
 import { DesktopOrgMessengerFactory } from './DesktopOrgMessengerFactory';
 import { OrgMembershipDirectory, type OrgMembership } from './OrgMembershipDirectory';
@@ -70,7 +69,6 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
-const VM_OPERATOR_CHANNELS = new Set([SULLA_DESKTOP_CHANNEL_ID, HEARTBEAT_CHANNEL_ID, MOBILE_RELAY_CHANNEL_ID]);
 
 /**
  * Folder key for a conversation container's workspace and provider homes.
@@ -92,6 +90,7 @@ export function getBackendGraphWebSocketService(): BackendGraphWebSocketService 
 }
 
 export class BackendGraphWebSocketService {
+  private readonly runLocationResolver = new AgentRunLocationResolver();
   private readonly wsService = getWebSocketClientService();
   private readonly schedulerService = getSchedulerService();
   private unsubscribes: (() => void)[] = [];
@@ -230,9 +229,15 @@ export class BackendGraphWebSocketService {
 
   /** Execute an explicitly owner-authorized API turn through the same guest
    * lifecycle used by UI chat dispatch, so CLI and Files actor mounts exist. */
-  async executeOwnerApiGraph<T>(state: AgentGraphState, action: () => T): Promise<Awaited<T>> {
-    const channelId = String(state.metadata.wsChannel || '');
-    const threadId = String(state.metadata.threadId || '');
+  resolveRunLocation(state: AgentGraphState, channelId: string): 'vm' | 'container' {
+    return this.runLocationResolver.resolve(state, channelId);
+  }
+
+  async executeOwnerApiGraph<T>(state: AgentGraphState, channelId: string, threadId: string, action: () => T, onProgress?: (message: string) => void, signal?: AbortSignal): Promise<Awaited<T>> {
+    return this.runInConversationContainer(state, channelId, threadId, action, onProgress, signal);
+  }
+
+  private async runInConversationContainer<T>(state: AgentGraphState, channelId: string, threadId: string, action: () => T, onProgress?: (message: string) => void, signal?: AbortSignal): Promise<Awaited<T>> {
     const { modelRouter } = await import('../languagemodels/modelRouter');
     const routedAgentId = resolveAgentIdentity(state.metadata);
     const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
@@ -241,7 +246,7 @@ export class BackendGraphWebSocketService {
     const routed = (await modelRouter.resolve('agents', choice))[0];
     const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
     return executeWithContainerLifecycleRecovery(
-      () => acquireWhenReady(() => this.conversationContainer(channelId, threadId, provider, state), () => {}),
+      () => acquireWhenReady(() => this.conversationContainer(channelId, threadId, provider, state), message => onProgress?.(message), signal),
       lost => this.recoverConversationContainer(channelId, threadId, provider, state, lost),
       action,
     );
@@ -1064,32 +1069,13 @@ export class BackendGraphWebSocketService {
       // Front-door repair channels stay in the VM during the staged rollout,
       // even if an old client sends a container override or its bound agent row changes.
       // Nothing can run in the guest on the Sulla runtime; there every agent runs in a container.
-      const runLocation = effectiveAgentRunLocation(VM_OPERATOR_CHANNELS.has(channelId)
-        ? 'vm'
-        : state.metadata.agent?.runLocation ?? DEFAULT_AGENT_RUN_LOCATION);
+      const runLocation = this.resolveRunLocation(state, channelId);
       const tracedProvider = String(state.metadata.agent?.provider || '').trim();
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       if (runLocation === 'container') {
-        const { modelRouter } = await import('../languagemodels/modelRouter');
-        const routedAgentId = resolveAgentIdentity(state.metadata);
-        const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
-        const { effectiveModelChoice } = await import('../languagemodels/threadModelChoice');
-        const choice = effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, metadata: state.metadata, agentChoice: definition?.model_choice });
-        const routed = (await modelRouter.resolve('agents', choice))[0];
-        const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
-        // Closures lose the narrowing above; pin the checked state for the retry path.
-        const runState = state;
-        await executeWithContainerLifecycleRecovery(
-          () => acquireWhenReady(
-            () => this.conversationContainer(channelId, threadId, provider, runState),
-            message => this.emitMessage(channelId, 'assistant_message', {
-              content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
-            }),
-            runAbort?.signal,
-          ),
-          lost => this.recoverConversationContainer(channelId, threadId, provider, runState, lost),
-          () => graph.execute(runState, startNode),
-        );
+        await this.runInConversationContainer(state, channelId, threadId, () => graph.execute(state, startNode), message => this.emitMessage(channelId, 'assistant_message', {
+          content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
+        }), runAbort?.signal);
       } else {
         await graph.execute(state, startNode);
       }

@@ -126,9 +126,12 @@ export class ChatCompletionsServer {
   private readonly apiChatRunFactory = new ApiChatRunFactory(
     getCurrentUserId,
     state => getMCPServerHost().registerSession(state),
-    (state, operation) => state.metadata.agent?.runLocation === 'container'
-      ? getBackendGraphWebSocketService().executeOwnerApiGraph(state as any, operation)
-      : operation(),
+    (state, operation) => {
+      const service = getBackendGraphWebSocketService();
+      const channelId = state.metadata.wsChannel;
+      if (service.resolveRunLocation(state, channelId) !== 'container') return operation();
+      return service.executeOwnerApiGraph(state, channelId, state.metadata.threadId, operation);
+    },
   );
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
   /** Grace for in-flight responses before open sockets are cut on stop. */

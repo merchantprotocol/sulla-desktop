@@ -4,9 +4,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { ApiChatRunFactory, OwnerIdentityUnavailableError } from './ApiChatRunFactory';
-import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import type { AgentGraphState } from '@pkg/agent/nodes/Graph';
 
-const state = (): BaseThreadState => ({ metadata: { threadId: 'thread', wsChannel: 'api' } } as BaseThreadState);
+const state = (): AgentGraphState => ({ metadata: { threadId: 'thread', wsChannel: 'api' } } as AgentGraphState);
 
 describe('ApiChatRunFactory', () => {
   it('leaves an unopted-in API run unchanged and creates no tool session', async () => {
