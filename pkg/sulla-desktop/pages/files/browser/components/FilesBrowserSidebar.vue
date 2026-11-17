@@ -37,6 +37,13 @@
       <div class="grp">Tracked folders</div>
       <a v-for="collection in trackedCollections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id && section === 'files' && !atRoots }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></a>
     </template>
+    <template v-if="orgCollections.length">
+      <div class="grp">Organizations</div>
+      <template v-for="group in orgCollections" :key="group.orgName">
+        <div class="grp">{{ group.orgName }}</div>
+        <a v-for="collection in group.collections" :key="collection.id" href="#" :class="{ on: snapshot?.collection.id === collection.id && section === 'files' && !atRoots }" @click.prevent="selectCollection(collection.id)"><span class="sv" v-html="icons.folderLine" /><span>{{ collection.name }}</span></a>
+      </template>
+    </template>
     <template v-if="sharedFolders.length">
       <div class="grp">
         Shared folders
@@ -141,7 +148,7 @@ const browser = injectFilesBrowser();
 const { icons, dragDrop } = browser;
 const dataSource = computed(() => browser.props.dataSource);
 const { snapshot, section, currentPath, busy, loading } = browser.state;
-const { atRoots, trackedCollections, sharedFolders, otherCollections } = browser.location;
+const { atRoots, trackedCollections, orgCollections, sharedFolders, otherCollections } = browser.location;
 const { sections, folderFavorites, quotaBytes, totalBytes, storageWhere, storagePercent, collectionFileCount, syncLine, syncTooltip, brandLine, accountLine } = browser.sidebar;
 const { accountName, syncState } = browser.presenter;
 const { formatBytes, initials } = browser.format;

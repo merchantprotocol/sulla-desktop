@@ -151,7 +151,11 @@ export class DesktopFilesDataSource extends DesktopFilesIpcCommands implements F
     const availableCollections = collections.map(collection => ({ id: collection.id,
       name: collection.name || roots.find(root => root.collectionId === collection.id)?.name || collection.explorer_path || '',
       systemArea: (collection as FilesApiCollection & { systemArea?: 'logs' | 'sulla' | null }).systemArea ?? null,
-      treePath: collection.explorer_path ?? '' }));
+      treePath: collection.explorer_path ?? '',
+      workspaceScope: (collection as FilesApiCollection & { workspaceScope?: 'personal' | 'organization' }).workspaceScope,
+      orgId: (collection as FilesApiCollection & { orgId?: string }).orgId,
+      orgName: (collection as FilesApiCollection & { orgName?: string }).orgName,
+      level: (collection as FilesApiCollection & { level?: string }).level }));
     const collection = collections.find(item => item.id === this.collectionId) ??
       collections.find(item => item.id === roots.find(root => root.id === 'default')?.collectionId) ??
       collections.find(item => availableCollections.some(candidate => candidate.id === item.id));
