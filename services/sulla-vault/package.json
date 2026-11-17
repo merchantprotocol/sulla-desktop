@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.4.2-6257cca.tgz",
+    "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.5.0-23dc81f.tgz",
     "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz",
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
     "express": "5.2.1",
