@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import type { AgentGraphState, BaseThreadState } from '@pkg/agent/nodes/Graph';
 
 export class OwnerIdentityUnavailableError extends Error {
   constructor() { super('owner identity unavailable'); }
@@ -57,9 +57,10 @@ export class ApiChatRunFactory {
   constructor(
     private readonly ownerUserId: () => Promise<string>,
     private readonly registerSession: (state: BaseThreadState) => ApiChatSession,
+    private readonly runOwnerRuntime: <T>(state: AgentGraphState, operation: () => Promise<T>) => Promise<T> = (_state, operation) => operation(),
   ) {}
 
-  async run<T>(state: BaseThreadState, runAsOwner: boolean, operation: () => Promise<T>): Promise<T> {
+  async run<T>(state: AgentGraphState, runAsOwner: boolean, operation: () => Promise<T>): Promise<T> {
     if (!runAsOwner) return operation();
     const userId = await this.ownerUserId();
     if (!userId) throw new OwnerIdentityUnavailableError();
@@ -69,7 +70,7 @@ export class ApiChatRunFactory {
     try {
       binding.bind(userId);
       session = this.registerSession(state);
-      return await operation();
+      return await this.runOwnerRuntime(state, operation);
     } finally {
       try {
         session?.revoke();

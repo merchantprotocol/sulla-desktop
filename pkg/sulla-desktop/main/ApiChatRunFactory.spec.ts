@@ -4,9 +4,9 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { ApiChatRunFactory, OwnerIdentityUnavailableError } from './ApiChatRunFactory';
-import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import type { AgentGraphState } from '@pkg/agent/nodes/Graph';
 
-const state = (): BaseThreadState => ({ metadata: { threadId: 'thread', wsChannel: 'api' } } as BaseThreadState);
+const state = (): AgentGraphState => ({ metadata: { threadId: 'thread', wsChannel: 'api' } } as AgentGraphState);
 
 describe('ApiChatRunFactory', () => {
   it('leaves an unopted-in API run unchanged and creates no tool session', async () => {
@@ -43,6 +43,21 @@ describe('ApiChatRunFactory', () => {
     expect('isTrustedUser' in graph.metadata).toBe(false);
     expect(run).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledOnce();
+  });
+
+  it('requests the owner runtime only for trusted API runs', async () => {
+    // risk: keeping container CLI and owner Files access behind explicit owner authorization
+    const runtime = vi.fn(async (_state: AgentGraphState, operation: () => Promise<string>) => operation());
+    const register = vi.fn(() => ({ revoke: vi.fn() }));
+    const factory = new ApiChatRunFactory(async () => 'local-owner', register, runtime);
+    const run = vi.fn(async () => 'done');
+
+    await factory.run(state(), true, run);
+    await factory.run(state(), false, run);
+
+    expect(runtime).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it('refuses an owner run when no local identity is available', async () => {

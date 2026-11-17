@@ -32,6 +32,7 @@ import { ToolRequestArguments } from '@pkg/runtime/toolRequestArguments';
 import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
 import { ApiChatRunFactory, OwnerIdentityUnavailableError } from './ApiChatRunFactory';
 import { getCurrentUserId } from './sullaCloudAuth';
+import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -125,6 +126,12 @@ export class ChatCompletionsServer {
   private readonly apiChatRunFactory = new ApiChatRunFactory(
     getCurrentUserId,
     state => getMCPServerHost().registerSession(state),
+    (state, operation) => {
+      const service = getBackendGraphWebSocketService();
+      const channelId = state.metadata.wsChannel;
+      if (service.resolveRunLocation(state, channelId) !== 'container') return operation();
+      return service.executeOwnerApiGraph(state, channelId, state.metadata.threadId, operation);
+    },
   );
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
   /** Grace for in-flight responses before open sockets are cut on stop. */
