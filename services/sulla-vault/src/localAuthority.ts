@@ -215,6 +215,9 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.approvals.clear();
     this.humanSessions.clear();
     this.oauthRefreshQueues.clear();
+    for (const relay of this.relaySessions.values()) relay.controller.abort(new Error('vault_locked'));
+    this.relaySessions.clear();
+    this.relayManager.closeAll('vault_locked');
     this.agentMailboxCloudLane = null;
     this.sullaCloudSessionManager = null;
     session.invalidate();
@@ -328,9 +331,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.generation += 1;
     for (const request of this.inFlight) request.destroy(new LocalVaultError('vault_locked', 423, 'Vault locked during request'));
     this.inFlight.clear();
-    for (const relay of this.relaySessions.values()) relay.controller.abort(new Error('vault_locked'));
-    this.relaySessions.clear();
-    this.relayManager.closeAll('vault_locked');
     this.invalidate(this.repositories.session.context.profileId);
     this.migrationState = 'locked';
   }
