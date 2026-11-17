@@ -6,8 +6,11 @@ import { createHash } from 'crypto';
 import { OrgFilesContract, OrgFilesRecipientKeyPayload, type OrgFilesRecipientKey } from '@sulla/domain';
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { getCurrentUserId } from '../../sullaCloudAuth';
-import { signDeviceMessage } from '../deviceKey';
+import { signDeviceMessageExact } from '../deviceKey';
 import { OrgFilesCloudClient } from './OrgFilesCloudClient';
+
+/** Signing domain for org Files recipient keys. Cloud verifies deviceMessage(ORG_FILES_KEY_DOMAIN, [canonical]). */
+export const ORG_FILES_KEY_DOMAIN = 'org-files-key-v1' as const;
 
 /** Implemented by the existing encrypted Vault item client; never by Files or disk. */
 export interface OrgFilesVaultKeyStore {
@@ -21,7 +24,8 @@ export class OrgFilesRecipientKeyStore {
     private readonly cloud: Pick<OrgFilesCloudClient, 'publishRecipientKey' | 'recipientKeys'>,
     private readonly crypto: Crypto = globalThis.crypto,
     private readonly identity: () => Promise<{ userId: string; deviceId: string }> = async () => ({ userId: await getCurrentUserId(), deviceId: await getDesktopDeviceId() }),
-    private readonly sign: (payload: string) => Promise<string> = async payload => (await signDeviceMessage('files-sync-v1', [payload])).signature,
+    // Exact framing: Cloud verifies deviceMessage('org-files-key-v1', [canonical]), with no timestamp appended.
+    private readonly sign: (domain: typeof ORG_FILES_KEY_DOMAIN, payload: string) => Promise<string> = (domain, payload) => signDeviceMessageExact(domain, [payload]),
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -42,7 +46,7 @@ export class OrgFilesRecipientKeyStore {
     if (existing?.deviceId === deviceId) return existing;
     const bare = { orgId, userId, deviceId, publicKey, keyId: fingerprint, createdAt: existing?.createdAt ?? this.now() };
     const payload = new OrgFilesRecipientKeyPayload(bare).canonical();
-    const key = new OrgFilesContract().recipientKeyRequest({ key: { ...bare, signature: await this.sign(payload) } }).key;
+    const key = new OrgFilesContract().recipientKeyRequest({ key: { ...bare, signature: await this.sign(ORG_FILES_KEY_DOMAIN, payload) } }).key;
     await this.cloud.publishRecipientKey(orgId, key);
     return key;
   }

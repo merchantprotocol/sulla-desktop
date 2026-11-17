@@ -42,11 +42,12 @@ describe('OrgFilesKeyring', () => {
 
   it('signs the canonical recipient payload before publishing', async () => {
     // risk: key authenticity — Cloud must receive a device signature over the canonical public-key identity.
-    const vault = new MemoryVault(); const cloud = new FakeOrgFilesCloud(); let signed = '';
+    const vault = new MemoryVault(); const cloud = new FakeOrgFilesCloud(); let signed = ''; let domain = '';
     const store = new OrgFilesRecipientKeyStore(vault, cloud, webcrypto,
-      async () => ({ userId: 'member-1', deviceId: 'device-1' }), async payload => { signed = payload; return 'device-proof'; },
+      async () => ({ userId: 'member-1', deviceId: 'device-1' }), async (purpose, payload) => { domain = purpose; signed = payload; return 'device-proof'; },
       () => '2026-11-17T00:00:00.000Z');
     const key = await store.ensure('org-1');
+    expect(domain).toBe('org-files-key-v1');
     expect(signed).toBe(new OrgFilesRecipientKeyPayload(key).canonical());
     expect(key.signature).toBe('device-proof');
   });
