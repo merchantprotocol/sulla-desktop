@@ -80,10 +80,11 @@ export class LegacyProfileMigrator {
     } catch (error) {
       let dropError: unknown;
       try { await this.ports.destination.drop(entry.dbIdentifier); } catch (failure) { dropError = failure; }
-      await this.ports.catalog.setState(entry, 'failed');
-      if (dropError !== undefined) {
-        if (error instanceof Error) Object.defineProperty(error, 'cause', { value: dropError, configurable: true });
-        throw error;
+      let stateError: unknown;
+      try { await this.ports.catalog.setState(entry, 'failed'); } catch (failure) { stateError = failure; }
+      if (error instanceof Error) {
+        if (dropError !== undefined) Object.defineProperty(error, 'cause', { value: dropError, configurable: true });
+        if (stateError !== undefined) Object.defineProperty(error, 'profileFailureStateError', { value: stateError, configurable: true });
       }
       throw error;
     }
