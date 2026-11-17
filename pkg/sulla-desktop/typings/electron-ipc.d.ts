@@ -554,6 +554,7 @@ export interface IpcMainInvokeEvents {
   'files-ui:capture-screenshot': (mode?: import('@pkg/main/sullaFilesCapture').ScreenshotMode) => { reference: SullaFileReference };
   'files-ui:toggle-recording': (input: { mic: boolean; camera: boolean }) => { recording: boolean; setup?: boolean; capture?: import('@pkg/main/sullaFilesCapture').CaptureResult; error?: string };
   'files-ui:create-link': (input: import('@pkg/main/sullaFilesLinkService').CreateShareInput) => import('@pkg/main/sullaFilesLinkService').ShareLink;
+  'files-ui:create-org-collection': (input: { orgId?: string; orgName?: string; name: string }) => { collectionId: string; path: string };
   'files-ui:list-links': () => import('@pkg/main/sullaFilesLinkService').ShareLink[];
   'files-ui:revoke-link': (id: string) => void;
   'files-ui:update-link': (input: { id: string; options: Partial<import('@pkg/main/sullaFilesLinkService').CreateShareInput> }) => import('@pkg/main/sullaFilesLinkService').ShareLink;

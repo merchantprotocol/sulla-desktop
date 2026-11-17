@@ -25,6 +25,8 @@ export class DesktopVaultStateDependencies implements VaultStateDependencies {
   async setLifecycleVaultUnlocked(unlocked: boolean): Promise<void> {
     const { getServiceLifecycleManager } = await import('@pkg/agent/services/ServiceLifecycleManager');
     await getServiceLifecycleManager().setVaultUnlocked(unlocked);
+    const runtime = (await import('@pkg/main/cloud/orgFiles/OrgFilesDesktopRuntime')).OrgFilesDesktopRuntime.currentOrNull();
+    if (unlocked) runtime?.onVaultUnlocked(); else runtime?.onVaultLocked();
   }
 
   async initializeVaultKey(): Promise<boolean> {

@@ -12,7 +12,7 @@ import { OrgFilesCloudClient } from './OrgFilesCloudClient';
 /** Signing domain for org Files recipient keys. Cloud verifies deviceMessage(ORG_FILES_KEY_DOMAIN, [canonical]). */
 export const ORG_FILES_KEY_DOMAIN = 'org-files-key-v1' as const;
 
-/** Implemented by the existing encrypted Vault item client; never by Files or disk. */
+/** Per-device private-key custody. Production uses FileOrgFilesKeyStore in ~/.sulla. */
 export interface OrgFilesVaultKeyStore {
   read(itemKey: string): Promise<JsonWebKey | null>;
   write(itemKey: string, value: JsonWebKey): Promise<void>;
@@ -38,6 +38,9 @@ export class OrgFilesRecipientKeyStore {
       const pair = await this.crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as CryptoKeyPair;
       privateJwk = await this.crypto.subtle.exportKey('jwk', pair.privateKey);
       await this.vault.write(itemKey, privateJwk);
+      // A concurrent creator may have won the atomic create-if-absent write. Publish only the durable key.
+      privateJwk = await this.vault.read(itemKey);
+      if (!privateJwk) throw new Error('Org Files recipient key could not be saved locally');
     }
     // A private JWK may be reconstructed only in memory. Public JWK is derived from its x/y coordinates.
     const publicKey: JsonWebKey = { kty: privateJwk.kty, crv: privateJwk.crv, x: privateJwk.x, y: privateJwk.y, ext: true, key_ops: [] };
