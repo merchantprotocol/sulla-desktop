@@ -179,6 +179,22 @@ export class CloudVaultSyncRunner {
     });
   }
 
+  /** Wait for a newer opaque Cloud head; the short unlocked read only obtains the account cursor. */
+  async waitForRemoteChange(deviceId: string, waitMs = 15_000): Promise<{ revision: number; changed: boolean }> {
+    await ensureSyncSchema(this.db);
+    const cursor = await this.authority.withUnlockedUserKey(async({ userId }) => {
+      const state = await this.state(userId);
+      if (!state) throw new CloudSyncError('sync_not_configured', 409, 'Cloud sync is not turned on');
+      return { vaultId: state.vault_id, revision: num(state.head_seq) };
+    });
+    const query = new URLSearchParams({ deviceId, scope: 'personal', cursor: String(cursor.revision), waitMs: String(Math.min(25_000, Math.max(0, waitMs))) });
+    const response = await this.cloud('GET', `/cloud-vault-sync/vaults/${ cursor.vaultId }/wait?${ query }`);
+    if (response.status !== 200) throw new CloudSyncError('cloud_error', 502, `Sulla Cloud returned ${ response.status } for the vault revision wait`);
+    const revision = Number(response.body.revision);
+    if (!Number.isSafeInteger(revision) || revision < 0) throw new CloudSyncError('cloud_error', 502, 'Sulla Cloud returned an invalid vault revision');
+    return { revision, changed: response.body.changed === true && revision > cursor.revision };
+  }
+
   /**
    * Pull Cloud deltas, verify every record MAC and the signed head over the
    * merged state, then apply them. Anything that fails verification stops the

@@ -15,7 +15,7 @@
  *
  * When:
  *   - toggle on: full upload on first enable, otherwise resume + reconcile
- *   - every 60 s: if the container reports local edits Cloud lacks, push (≥5 s debounce)
+ *   - while enabled: quickly detect local edits and push (300 ms coalescing)
  *   - every 10 min, on unlock, and on "Sync now": pull first, then push
  *   - toggle off: pause (Cloud keeps a read-only copy); "Delete Cloud copy": signed delete
  *   - Cloud already has a bundle verifiable with the local user key: push records without rewrapping
@@ -36,9 +36,13 @@ import { SyncDriverHealth } from '../syncDriverHealth';
 const console = Logging.background;
 
 const RECONCILE_MS = 10 * 60_000;
-const POLL_MS = 60_000;
-const DEBOUNCE_MS = 5_000;
+// Until the vault container can signal writes directly, this is a bounded safety-net
+// detector. The short coalescing window keeps bursts to one encrypted commit.
+const POLL_MS = 500;
+const DEBOUNCE_MS = 300;
 const MAX_ATTEMPTS = 3;
+/** Minimum time between remote-watch cycles; the container holds each wait up to 25s. */
+const WATCH_CYCLE_FLOOR_MS = 1_000;
 
 /** Same shape as DesktopObjectSync's status, so Profile renders it unchanged. */
 export interface VaultSyncStatus {
@@ -57,7 +61,9 @@ class VaultSyncV3Impl {
   private lastCounts = { pushed: 0, pulled: 0 };
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private remoteWatchEpoch = 0;
   private debounce: ReturnType<typeof setTimeout> | null = null;
+  private dirtyObservedAt: number | null = null;
   private inFlight: Promise<VaultSyncStatus> | null = null;
   private status: VaultSyncStatus = { kind: 'vault' };
 
@@ -70,6 +76,8 @@ class VaultSyncV3Impl {
       this.syncIfEnabled().catch(() => undefined);
     }, RECONCILE_MS);
     this.pollTimer = setInterval(() => { this.pushIfDirty().catch(() => undefined) }, POLL_MS);
+    const watchEpoch = ++this.remoteWatchEpoch;
+    this.watchRemoteChanges(watchEpoch).catch(() => undefined);
     this.reconcileTimer.unref?.();
     this.pollTimer.unref?.();
     this.syncIfEnabled().catch(() => undefined);
@@ -82,7 +90,43 @@ class VaultSyncV3Impl {
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.debounce) clearTimeout(this.debounce);
     this.reconcileTimer = this.pollTimer = this.debounce = null;
+    this.dirtyObservedAt = null;
+    this.remoteWatchEpoch++;
     this.health.setRunning(false);
+  }
+
+  /**
+   * Long-poll the local container for a Cloud revision past our cursor. Each
+   * cycle takes at least WATCH_CYCLE_FLOOR_MS so an immediate return (signed
+   * out, no identity, locked, or a head that did not advance) can never spin.
+   */
+  private async watchRemoteChanges(epoch: number): Promise<void> {
+    while (epoch === this.remoteWatchEpoch) {
+      const cycleStartedAt = Date.now();
+      try {
+        await this.watchOnce(epoch);
+      } catch {
+        // Container down, offline or locked. The cycle floor keeps retries calm.
+      }
+      const elapsed = Date.now() - cycleStartedAt;
+      if (elapsed < WATCH_CYCLE_FLOOR_MS && epoch === this.remoteWatchEpoch) {
+        await new Promise(resolve => setTimeout(resolve, WATCH_CYCLE_FLOOR_MS - elapsed));
+      }
+    }
+  }
+
+  private async watchOnce(epoch: number): Promise<void> {
+    const prefs = await getCloudPreferences().catch(() => null);
+    if (!prefs?.enabled || !prefs.vault || !await isCloudSignedIn()) return;
+    const who = await this.identity();
+    if (!who || epoch !== this.remoteWatchEpoch) return;
+    const waiting = await VaultSyncContainer.wait(who.deviceId);
+    if (!waiting.changed || epoch !== this.remoteWatchEpoch) return;
+    const seenAt = Date.now();
+    console.log('[VaultSyncV3] remote_change_seen');
+    const result = await this.syncNow();
+    if (result.lastError) console.log('[VaultSyncV3] remote_change_apply_failed');
+    else console.log(`[VaultSyncV3] remote_change_seen_to_applied_ms=${Date.now() - seenAt}`);
   }
 
   getStatus(): VaultSyncStatus[] {
@@ -105,9 +149,16 @@ class VaultSyncV3Impl {
     const local = await VaultSyncContainer.status().catch(() => null);
     this.health.setPendingLocalEdits(local?.pendingChanges ?? 0);
     if (!local?.configured || !local.pendingChanges) return;
+    this.dirtyObservedAt ??= Date.now();
     this.debounce = setTimeout(() => {
       this.debounce = null;
-      this.syncNow().catch(() => undefined);
+      const observedAt = this.dirtyObservedAt;
+      this.dirtyObservedAt = null;
+      this.syncNow().then(result => {
+        if (!result.lastError && result.lastSyncAt && observedAt !== null) {
+          console.log(`[VaultSyncV3] local_change_to_cloud_ack_ms=${Date.now() - observedAt}`);
+        }
+      }).catch(() => undefined);
     }, DEBOUNCE_MS);
     this.debounce.unref?.();
   }
