@@ -87,10 +87,10 @@ export class ProfileBoundary {
           !dbIdentifier.startsWith(DATABASE_PREFIX) || !DATABASE_SUFFIX.test(dbIdentifier)) {
         throw new Error('Invalid profile database identifier');
       }
-      const digest = createHash('sha256').update(cloudUserId, 'utf8').digest('hex').slice(0, 48);
-      if (dbIdentifier !== `${DATABASE_PREFIX}${digest}`) throw new Error('Profile database identifier does not match its Cloud identity');
       const existing = byDatabase.get(dbIdentifier);
       if (existing !== undefined && existing !== cloudUserId) throw new Error('Profile database identifier collision');
+      const digest = createHash('sha256').update(cloudUserId, 'utf8').digest('hex').slice(0, 48);
+      if (dbIdentifier !== `${DATABASE_PREFIX}${digest}`) throw new Error('Profile database identifier does not match its Cloud identity');
       byDatabase.set(dbIdentifier, cloudUserId);
     }
   }
