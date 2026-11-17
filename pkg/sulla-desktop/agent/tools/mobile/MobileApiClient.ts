@@ -14,9 +14,10 @@
  */
 
 import type { ToolExecutionContext } from '../executionContext';
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { configuredVaultBrokerProvider } from '../../../vault-broker';
 
-const DEFAULT_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+const DEFAULT_API_BASE = CLOUD_API_BASE;
 
 export class MobileApiClient {
   async request<T>(ctx: ToolExecutionContext | undefined, method: string, pathSegment: string, body?: unknown): Promise<T> {

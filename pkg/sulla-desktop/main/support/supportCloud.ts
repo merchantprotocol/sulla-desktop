@@ -6,13 +6,14 @@
 import crypto from 'node:crypto';
 import { app } from 'electron';
 
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { deviceMessage, getDevicePublicKey, signDeviceMessageExact } from '@pkg/main/cloud/deviceKey';
 import { supportDeviceIdentity } from '@pkg/main/support/supportIdentity';
 import { SupportStateStore } from '@pkg/main/supportState';
 
 function stateStore() { return new SupportStateStore(app.getPath('userData')) }
 
-const ORIGIN = 'https://sulla-workers.merchantprotocol.workers.dev';
+const ORIGIN = CLOUD_API_BASE;
 let preferredIdentity: string | null = null;
 function identities(): string[] { return [...new Set([preferredIdentity, supportDeviceIdentity.readEnrolled(), stateStore().read().supportIdentity?.guestDeviceId, supportDeviceIdentity.getOrCreate()].filter((value):value is string=>!!value))] }
 

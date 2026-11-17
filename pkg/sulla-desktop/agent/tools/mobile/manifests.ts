@@ -10,7 +10,7 @@ import type { ToolManifest } from '../registry';
  * agent can check whether signed-in devices are reachable.
  *
  * Requests use the user's Cloud JWT from vault `sulla-cloud/api_token`.
- * Base URL defaults to https://sulla-workers.merchantprotocol.workers.dev, can
+ * Base URL defaults to the Sulla Cloud origin (CLOUD_API_BASE, production unless SULLA_CLOUD_ORIGIN is set), can
  * be overridden via vault `sulla-cloud/mobile_api_url`.
  */
 export const mobileToolManifests: ToolManifest[] = [

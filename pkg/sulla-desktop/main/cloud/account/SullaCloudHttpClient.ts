@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { CLOUD_API_BASE } from '../cloudEndpoints';
+
 /** The fetch Desktop sends Sulla Cloud requests with. Tests pass a fake; production uses the global fetch at call time. */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -12,7 +14,7 @@ export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
  * paths; the account endpoints live in ElectronCloudAccountTransport.
  */
 export class SullaCloudHttpClient {
-  static readonly API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+  static readonly API_BASE = CLOUD_API_BASE;
 
   constructor(
     private readonly fetchFn: FetchLike = (input, init) => fetch(input, init),
