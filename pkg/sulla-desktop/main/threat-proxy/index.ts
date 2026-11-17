@@ -38,6 +38,7 @@ import {
 } from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 
 const console = Logging['threat-proxy'];
 
@@ -82,14 +83,14 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
 };
 
 /**
- * URLhaus host blocklist sources, tried in order. abuse.ch retired every
- * anonymous urlhaus.abuse.ch/downloads/* feed (HTTP 410 Gone, seen 2026-11-16);
- * their data now needs an API key. malware-filter publishes the same URLhaus
- * data (CC0) as a hosts file every 12 hours, mirrored on GitLab and GitHub Pages.
+ * Where installs download the URLhaus host blocklist: Sulla Cloud only. Cloud
+ * refreshes its copy daily, replaces it only with a verified download and keeps
+ * one backup. abuse.ch retired its anonymous feeds (HTTP 410, seen 2026-11-16),
+ * so Cloud owns the upstream choice. When Cloud is unreachable the proxy keeps
+ * its last delivered list, or the default list bundled in the image.
  */
 export const URLHAUS_SOURCES = [
-  'https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt',
-  'https://curbengh.github.io/malware-filter/urlhaus-filter-hosts.txt',
+  `${ CLOUD_API_BASE }/threat-intel/urlhaus.txt`,
 ];
 const URLHAUS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Hard cap so a pathological server or redirect loop can't blow the Electron
