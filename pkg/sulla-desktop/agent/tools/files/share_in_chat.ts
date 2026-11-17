@@ -4,8 +4,16 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { FilesTool } from './common';
-import { fileChatLink } from './chatLink';
+import { fileChatLink, MobileFileLink } from './chatLink';
 import type { ToolResponse } from '../base';
+import { CloudOriginResolver, CLOUD_ORIGIN_ENV } from '@pkg/utils/cloudOrigin';
+import { DEFAULT_MOBILE_FILE_ORIGIN } from '@pkg/shared/filesReferences';
+
+/** Web origin for private `/f/<id>` links: the configured Cloud origin when overridden (staging, Wrangler preview), else sulladesktop.com. */
+function mobileFileOrigin(): string {
+  const selection = new CloudOriginResolver(process.env[CLOUD_ORIGIN_ENV], console).selection;
+  return selection.overridden ? selection.origin : DEFAULT_MOBILE_FILE_ORIGIN;
+}
 
 export class FilesShareInChatWorker extends FilesTool {
   name = ''; description = '';
@@ -18,13 +26,16 @@ export class FilesShareInChatWorker extends FilesTool {
       fileId = resolved.fileId;
     }
     if (!fileId) throw new Error('Supply file_id or path');
-    // TODO(files-instant-sync): ensure the descriptor and encrypted content are pushed before returning its mobile link.
-    // Until the instant-sync hook lands, resolution can fail if this new file has not reached Cloud yet.
+    // Best-effort nudge: ask the local Files sync to push now (202, async). A failure is ignored;
+    // the descriptor lookup below decides whether the file is reachable yet.
+    // TODO(files-instant-sync): replace the nudge with a confirmed push once the sync hook lands.
+    await this.containerRequest('/v1/local/sync', input, { method: 'POST' }).catch(() => undefined);
     // containerJson derives identity exclusively from the trusted execution
     // context. No org/user/owner value from input is forwarded as authority.
     const file = await this.containerJson<any>(`/v1/files/${encodeURIComponent(String(fileId))}`, input);
     const chatLink = fileChatLink(file);
-    if (!chatLink) throw new Error('File unavailable');
-    return { successBoolean: true, responseString: JSON.stringify({ fileId, path: file.path, name: file.name, chatLink, instruction: 'Put chatLink on its own line in the assistant message.' }) };
+    const mobileUrl = new MobileFileLink(mobileFileOrigin()).url(file);
+    if (!chatLink || !mobileUrl) throw new Error('File unavailable');
+    return { successBoolean: true, responseString: JSON.stringify({ fileId, path: file.path, name: file.name, chatLink, mobileUrl, instruction: 'Put chatLink on its own line in the assistant message. mobileUrl is the private link for mobile; it needs sign-in.' }) };
   }
 }
