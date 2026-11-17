@@ -9,10 +9,11 @@ describe('BudgetWorkerAdmission', () => {
     // risk: too many concurrent worker graphs consume machine resources
     const admission = new BudgetWorkerAdmission();
     let releaseFirst!: () => void;
-    const first = admission.run(1, () => new Promise<void>(resolve => { releaseFirst = resolve; }));
+    const state = async() => ({ allowance: 1, running: 0 });
+    const first = admission.run(state, () => new Promise<void>(resolve => { releaseFirst = resolve; }));
     await Promise.resolve();
     let secondStarted = false;
-    const second = admission.run(1, async() => { secondStarted = true; });
+    const second = admission.run(state, async() => { secondStarted = true; });
     await Promise.resolve();
     expect(secondStarted).toBe(false);
     expect(admission.queued).toBe(1);
@@ -20,5 +21,47 @@ describe('BudgetWorkerAdmission', () => {
     await Promise.all([first, second]);
     expect(secondStarted).toBe(true);
     expect(admission.running).toBe(0);
+  });
+
+  it('recounts live work when an unrelated task settles and starts queued work FIFO', async() => {
+    // risk: stale cross-job counts strand workers or exceed machine allowance
+    const admission = new BudgetWorkerAdmission();
+    let liveRunning = 0;
+    const snapshot = async() => ({ allowance: 2, running: liveRunning });
+    let finish!: () => void;
+    const order: string[] = [];
+    const first = admission.run(snapshot, () => new Promise<void>(resolve => { order.push('first'); finish = resolve; }));
+    await Promise.resolve();
+    const second = admission.run(snapshot, async() => { order.push('second'); });
+    const third = admission.run(snapshot, async() => { order.push('third'); });
+    liveRunning = 1;
+    await admission.slotMayHaveFreed();
+    expect(order).toEqual(['first']);
+    liveRunning = 0;
+    await admission.slotMayHaveFreed();
+    expect(order).toEqual(['first', 'second']);
+    finish();
+    await Promise.all([first, second, third]);
+    expect(order).toEqual(['first', 'second', 'third']);
+  });
+
+  it('drains queued work when policy becomes unavailable (fail-open)', async() => {
+    // risk: a deleted/invalid policy file must never deadlock hidden work
+    const admission = new BudgetWorkerAdmission();
+    let policyExists = true;
+    const snapshot = async() => policyExists ? { allowance: 1, running: 0 } : { allowance: null, running: 0 };
+    let finish!: () => void;
+    const first = admission.run(snapshot, () => new Promise<void>(resolve => { finish = resolve; }));
+    await Promise.resolve();
+    let started = false;
+    const second = admission.run(snapshot, async() => { started = true; });
+    await Promise.resolve();
+    expect(started).toBe(false);
+    policyExists = false;
+    await admission.slotMayHaveFreed();
+    await second;
+    expect(started).toBe(true);
+    finish();
+    await first;
   });
 });

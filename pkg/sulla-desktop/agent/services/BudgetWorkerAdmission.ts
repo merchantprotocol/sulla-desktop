@@ -2,42 +2,57 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-type WaitingTask = { resolve: (release: () => void) => void };
+type AdmissionSnapshot = { allowance: number | null; running: number };
+type WaitingTask = { resolve: (release: () => void) => void; snapshot: () => Promise<AdmissionSnapshot> };
 
 /** FIFO admission gate; queued tasks are never rejected or preempted. */
 export class BudgetWorkerAdmission {
   private active = 0;
   private waiting: WaitingTask[] = [];
-  private allowance = Number.MAX_SAFE_INTEGER;
-  private externalRunning = 0;
-
+  private draining = false;
+  private drainRequested = false;
   get queued(): number { return this.waiting.length; }
   get running(): number { return this.active; }
 
-  async run<T>(allowance: number, operation: () => Promise<T>, externalRunning = 0): Promise<T> {
-    this.allowance = Math.max(0, Math.floor(allowance));
-    this.externalRunning = Math.max(0, Math.floor(externalRunning));
-    const release = await this.acquire();
+  async run<T>(snapshot: () => Promise<AdmissionSnapshot>, operation: () => Promise<T>): Promise<T> {
+    const release = await this.acquire(snapshot);
     try { return await operation(); } finally { release(); }
   }
 
-  private acquire(): Promise<() => void> {
+  /** Call on every task settlement, including tasks started outside this gate. */
+  async slotMayHaveFreed(): Promise<void> { await this.drain(); }
+
+  private async acquire(snapshot: () => Promise<AdmissionSnapshot>): Promise<() => void> {
     return new Promise(resolve => {
-      if (this.active + this.externalRunning < this.allowance && this.waiting.length === 0) { this.active++; resolve(this.releaseHandle()); return; }
-      this.waiting.push({ resolve });
-      this.drain();
+      this.waiting.push({ resolve, snapshot });
+      void this.drain();
     });
   }
 
   private releaseHandle(): () => void {
     let released = false;
-    return () => { if (released) return; released = true; this.active--; this.drain(); };
+    return () => { if (released) return; released = true; this.active--; void this.drain(); };
   }
 
-  private drain(): void {
-    while (this.active + this.externalRunning < this.allowance && this.waiting.length) {
+  private async drain(): Promise<void> {
+    if (this.draining) { this.drainRequested = true; return; }
+    this.draining = true;
+    try {
+    // Reserve one slot before awaiting filesystem/database reads so concurrent
+    // drain triggers cannot over-admit the same FIFO head.
+    while (this.waiting.length) {
+      const first = this.waiting[0];
+      let state: AdmissionSnapshot;
+      try { state = await first.snapshot(); } catch { state = { allowance: null, running: 0 }; }
+      const limit = state.allowance == null ? Number.MAX_SAFE_INTEGER : Math.max(0, Math.floor(state.allowance));
+      if (this.active + Math.max(0, state.running) >= limit) return;
+      this.waiting.shift();
       this.active++;
-      this.waiting.shift()!.resolve(this.releaseHandle());
+      first.resolve(this.releaseHandle());
+    }
+    } finally {
+      this.draining = false;
+      if (this.drainRequested) { this.drainRequested = false; void this.drain(); }
     }
   }
 }

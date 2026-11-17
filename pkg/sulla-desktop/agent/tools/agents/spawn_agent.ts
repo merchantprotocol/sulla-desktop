@@ -871,15 +871,17 @@ export class SpawnAgentWorker extends BaseTool {
         threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
         generation: jobTasks[index].generation ?? 1,
       });
-      return budgetPolicyService.read().then(async policy => {
-        if (policy?.machine?.max_concurrent_workers === undefined) return run();
+      return budgetWorkerAdmission.run(async() => {
+        const policy = await budgetPolicyService.read();
         const liveJobs = await getAllJobs();
         const liveRunning = liveJobs.filter(item => item.visibility !== 'tab').reduce((total, item) => total + item.tasks.filter(child => child.status === 'running').length, 0);
-        // Tasks already admitted through this gate are included in liveRunning;
-        // subtract them so the gate accounts only for legacy/other executors.
-        const externalRunning = Math.max(0, liveRunning - budgetWorkerAdmission.running);
-        return budgetWorkerAdmission.run(policy.machine.max_concurrent_workers, run, externalRunning);
-      });
+        return {
+          allowance: policy?.machine?.max_concurrent_workers ?? null,
+          // Running tasks held by this gate have reserved a slot but may not
+          // yet have persisted status=running. Don't count them twice.
+          running: Math.max(0, liveRunning - budgetWorkerAdmission.running),
+        };
+      }, run);
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────
@@ -904,6 +906,8 @@ export class SpawnAgentWorker extends BaseTool {
         const settledJob = await getJob(activityJobId);
         if (settledJob) await deliverJobCompletion(settledJob, [result], index, failureReason);
       }
+      // Completion anywhere can release a slot for this FIFO queue.
+      await budgetWorkerAdmission.slotMayHaveFreed();
       return result;
     };
 
