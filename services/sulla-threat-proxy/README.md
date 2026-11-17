@@ -35,10 +35,11 @@ removes the rules.
 
 ## URLhaus blocklist sources
 
-Desktop refreshes URLhaus data in this order: the Sulla Cloud route
-(`CLOUD_API_BASE/threat-intel/urlhaus.txt`), then the malware-filter GitLab
-mirror, then its GitHub Pages mirror. Invalid or non-hosts responses are
-rejected and the next source is tried.
+Desktop downloads URLhaus data only from Sulla Cloud
+(`CLOUD_API_BASE/threat-intel/urlhaus.txt`). Cloud refreshes its copy daily,
+serves a new list only after it verifies it, and keeps the previous list as a
+backup. Responses that are not a hosts file are rejected, and the last
+delivered list stays in place.
 
 The image also ships `blocklist/urlhaus-default.txt`, a validated URLhaus
 hosts-file snapshot refreshed with `scripts/update-urlhaus-default.sh`. It is

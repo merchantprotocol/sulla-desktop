@@ -13,11 +13,9 @@ vi.mock('@pkg/main/cloud/cloudEndpoints', () => ({ CLOUD_API_BASE: 'https://stag
 import { URLHAUS_SOURCES } from './index';
 
 describe('URLhaus source order', () => {
-  it('tries the configured Sulla Cloud route before the malware-filter mirrors', () => {
+  it('downloads only from the configured Sulla Cloud route', () => {
     expect(URLHAUS_SOURCES).toEqual([
       'https://staging-workers.example.test/threat-intel/urlhaus.txt',
-      'https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt',
-      'https://curbengh.github.io/malware-filter/urlhaus-filter-hosts.txt',
     ]);
   });
 });

@@ -49,7 +49,7 @@ from common import (
     split_list,
 )
 
-# Desktop fetches the feed (malware-filter's URLhaus hosts file) and delivers it here.
+# Desktop downloads the list from Sulla Cloud and delivers it here.
 URLHAUS_PATH = os.path.join(BLOCKLIST_DIR, "urlhaus.txt")
 BUNDLED_URLHAUS_PATH = "/opt/sulla-threat-proxy/blocklist/urlhaus-default.txt"
 
