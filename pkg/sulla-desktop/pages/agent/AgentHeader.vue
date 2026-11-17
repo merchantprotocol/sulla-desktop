@@ -1495,10 +1495,6 @@ function handleTabContextMenuAction(
 .app-titlebar {
   -webkit-app-region: drag;
   app-region: drag;
-  /* One theme surface for the whole bar, with its content edge running
-     edge-to-edge beneath the tab strip. */
-  background: var(--bg-surface-alt, var(--bg-surface, var(--bg-page)));
-  border-bottom: 1px solid var(--border-default);
 }
 
 .app-titlebar a,
@@ -1927,298 +1923,6 @@ function handleTabContextMenuAction(
   display: none;
 }
 
-/* Arc-style titlebar tabs. Kept under .app-titlebar to avoid the theme files'
-   global .tab selectors. */
-.app-titlebar .tab-scroll-wrapper {
-  --tab-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
-
-  align-items: center;
-  height: 43px;
-  padding: 3px 5px 5px;
-  margin-left: 14px;
-  /* The chrome background and edge live on .app-titlebar so they span the
-     full width instead of stopping where the tabs begin. */
-  background: transparent;
-}
-
-.app-titlebar .tab-scroll-container {
-  align-items: center;
-  gap: 4px;
-  height: 40px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-behavior: smooth;
-}
-
-.app-titlebar .tab-active-indicator {
-  position: absolute;
-  display: block;
-  top: 1px;
-  left: 0;
-  height: 34px;
-  border-radius: 17px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent-hover) 50%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 20%, transparent);
-  pointer-events: none;
-  z-index: 0;
-  transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
-}
-
-.app-titlebar .tab-active-indicator {
-  background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--accent-border), 0 4px 14px color-mix(in srgb, var(--accent-hover) 18%, transparent);
-}
-
-.app-titlebar .tab-active-indicator::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 22px;
-  height: 3px;
-  margin-left: -11px;
-  border-radius: 3px 3px 0 0;
-  background: var(--accent-hover);
-  box-shadow: 0 0 10px var(--accent-hover);
-}
-
-.app-titlebar .tab-item {
-  /* Wide enough that titles read; the strip scrolls with its arrows when full. */
-  width: auto;
-  min-width: 160px;
-  max-width: 260px;
-  height: 34px;
-  flex: 0 1 auto;
-  gap: 9px;
-  padding: 0 8px 0 12px;
-  border: 0;
-  border-radius: 17px;
-  color: var(--read-3, var(--text-secondary));
-  background: transparent;
-  font-size: 12.5px;
-  font-weight: 500;
-  z-index: 1;
-  transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform .5s var(--tab-spring), width .58s var(--tab-spring), min-width .58s var(--tab-spring), opacity .3s, padding .58s var(--tab-spring);
-}
-
-.app-titlebar .tab-item:hover {
-  color: var(--read-2, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
-
-.app-titlebar .tab-item:active {
-  transform: scale(.95);
-  transition: transform .08s;
-}
-
-.app-titlebar .tab-active,
-.app-titlebar .tab-active-native {
-  color: var(--read-1, var(--text-primary));
-  background: transparent;
-  border: 0;
-  border-radius: 17px;
-  font-weight: 500;
-}
-
-.app-titlebar .tab-accent-bar {
-  display: none;
-}
-
-.app-titlebar .tab-active::before,
-.app-titlebar .tab-active::after,
-.app-titlebar .tab-inactive::before {
-  display: none;
-}
-
-.app-titlebar .tab-pinned {
-  width: auto;
-  min-width: 0;
-  max-width: 150px;
-  flex: 0 0 auto;
-  gap: 6px;
-  padding: 0 12px 0 10px;
-  border-radius: 10px 10px 4px 4px;
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.app-titlebar .tab-pinned-boundary {
-  margin-left: 18px;
-}
-
-.app-titlebar .tab-pinned-boundary::before {
-  content: '';
-  display: block;
-  position: absolute;
-  left: -10px;
-  top: 8px;
-  width: 1px;
-  height: 18px;
-  background: var(--bg-surface-hover);
-  pointer-events: none;
-}
-
-.app-titlebar .tab-preview {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent);
-}
-
-.app-titlebar .tab-icon {
-  position: relative;
-  width: 16px;
-  height: 16px;
-  opacity: .85;
-}
-
-.app-titlebar .tab-favicon-img,
-.app-titlebar .tab-favicon-svg {
-  width: 16px;
-  height: 16px;
-}
-
-.app-titlebar .tab-active .tab-icon,
-.app-titlebar .tab-active-native .tab-icon {
-  color: var(--accent);
-  filter: none;
-}
-
-.app-titlebar .tab-working .tab-icon::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 55%, var(--accent-hover) 85%, transparent);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), currentColor calc(100% - 1.5px));
-  animation: tab-working-spin 1s linear infinite;
-}
-
-.app-titlebar .tab-working-streak {
-  position: absolute;
-  display: block;
-  left: 14px;
-  right: 14px;
-  bottom: 3px;
-  height: 2px;
-  border-radius: 2px;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.app-titlebar .tab-working-streak::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  width: 40%;
-  background: linear-gradient(90deg, transparent, var(--accent-hover), transparent);
-  animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
-}
-
-@keyframes tab-working-spin {
-  to { transform: rotate(1turn); }
-}
-
-@keyframes tab-working-streak {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(260%); }
-}
-
-.app-titlebar .tab-close {
-  width: 18px;
-  height: 18px;
-  margin-left: auto;
-  border-radius: 9px;
-  color: var(--read-4, var(--text-muted));
-  opacity: 0;
-  transform: scale(.6);
-  transition: opacity .16s, transform .4s var(--tab-spring), background .16s, color .16s;
-}
-
-.app-titlebar .tab-item:hover .tab-close {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.app-titlebar .tab-close:hover {
-  color: var(--read-1, var(--text-primary));
-  background: var(--bg-surface-hover);
-}
-
-/* Tab strip "option A": every tab reads as its own card, the active tab is a
-   solid surface with its close button showing, and pinned tabs carry a pin
-   plus an accent underline. Replaces the sliding glow pill. */
-.app-titlebar .tab-active-indicator {
-  display: none;
-}
-
-.app-titlebar .tab-scroll-container {
-  gap: 6px;
-}
-
-.app-titlebar .tab-item {
-  height: 32px;
-  border-radius: 9px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent);
-}
-
-.app-titlebar .tab-item:hover {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-
-.app-titlebar .tab-active,
-.app-titlebar .tab-active-native {
-  color: var(--text-primary);
-  background: var(--bg-surface);
-  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.app-titlebar .tab-active .tab-close,
-.app-titlebar .tab-active-native .tab-close {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.app-titlebar .tab-pinned {
-  border-radius: 9px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent), inset 0 -2px 0 var(--accent);
-}
-
-.app-titlebar .tab-pinned.tab-active,
-.app-titlebar .tab-pinned.tab-active-native {
-  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), inset 0 -2px 0 var(--accent);
-}
-
-.app-titlebar .tab-pinned-boundary::before {
-  background: var(--border-strong, var(--border-default));
-}
-
-.engine-status {
-  width: 9px;
-  height: 9px;
-  margin: 0 4px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--status-success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 18%, transparent);
-}
-
-.engine-status.busy {
-  background: var(--status-warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 18%, transparent);
-  animation: engine-pulse 1.4s ease-in-out infinite;
-}
-
-.engine-status.error {
-  background: var(--status-error);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-error) 18%, transparent);
-}
-
-@keyframes engine-pulse { 50% { opacity: .4; } }
-
-@media (prefers-reduced-motion: reduce) {
-  .engine-status.busy { animation: none; }
-}
-
 .tab-rename {
   flex: 1;
   min-width: 0;
@@ -2343,64 +2047,6 @@ function handleTabContextMenuAction(
     animation: none;
   }
 }
-</style>
-
-<style>
-/* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
-.tab-anim-enter-from {
-  opacity: 0;
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  padding-left: 0;
-  padding-right: 0;
-  overflow: hidden;
-}
-
-.tab-anim-enter-active {
-  overflow: hidden;
-  transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
-}
-
-.tab-anim-enter-to {
-  opacity: 1;
-  width: 136px;
-  max-width: 176px;
-}
-
-.tab-anim-leave-from {
-  opacity: 1;
-  width: 136px;
-  max-width: 176px;
-}
-
-.tab-anim-leave-active {
-  overflow: hidden;
-  transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
-}
-
-.tab-anim-leave-to {
-  opacity: 0;
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  padding-left: 0;
-  padding-right: 0;
-  overflow: hidden;
-}
-
-.tab-anim-move {
-  transition: transform .58s var(--tab-spring);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .tab-anim-enter-active,
-  .tab-anim-leave-active,
-  .tab-anim-move {
-    transition-duration: 0s;
-  }
-}
-
 /* Approved full-width titlebar treatment. */
 .app-titlebar {
   position: relative;
@@ -2493,8 +2139,8 @@ function handleTabContextMenuAction(
   height: auto;
   background: color-mix(in srgb, var(--border-default) 55%, transparent);
 }
-.app-titlebar .tab-active-indicator { display: none !important; }
-.app-titlebar .tab-pinned { min-width: 64px; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
+.app-titlebar .tab-active-indicator { display: none; }
+.app-titlebar .tab-pinned { min-width: 64px; max-width: none; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
 .app-titlebar .tab-pinned.tab-active { box-shadow: none; }
 .app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
 .app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
@@ -2508,6 +2154,111 @@ function handleTabContextMenuAction(
 
 .app-titlebar .tab-scroll-container { scrollbar-width: none; }
 .app-titlebar .tab-scroll-container::-webkit-scrollbar { display: none; }
+.app-titlebar .tab-scroll-wrapper.tabs-normal { --tab-basis: 190px; --tab-padding: 12px; --tab-gap: 8px; }
 .app-titlebar .tab-scroll-wrapper.tabs-tight { --tab-basis: 150px; --tab-padding: 9px; --tab-gap: 6px; }
 .app-titlebar .tab-scroll-wrapper.tabs-compact { --tab-basis: 96px; --tab-padding: 6px; --tab-gap: 5px; }
+/* Preserve titlebar-only affordances while keeping geometry in the approved tab treatment. */
+.app-titlebar .tab-pinned-boundary { margin-left: 18px; }
+.app-titlebar .tab-pinned-boundary::before {
+  content: '';
+  display: block;
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong, var(--border-default));
+  pointer-events: none;
+}
+.app-titlebar .tab-preview { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent); }
+.app-titlebar .tab-working .tab-icon::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 55%, var(--accent-hover) 85%, transparent);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), currentColor calc(100% - 1.5px));
+  animation: tab-working-spin 1s linear infinite;
+}
+.app-titlebar .tab-working-streak {
+  position: absolute;
+  display: block;
+  left: 14px;
+  right: 14px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.app-titlebar .tab-working-streak::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent-hover), transparent);
+  animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
+}
+@keyframes tab-working-spin { to { transform: rotate(1turn); } }
+@keyframes tab-working-streak { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+
+</style>
+
+<style>
+/* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
+.tab-anim-enter-from {
+  opacity: 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.tab-anim-enter-active {
+  overflow: hidden;
+  transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
+}
+
+.tab-anim-enter-to {
+  opacity: 1;
+  width: 136px;
+  max-width: 176px;
+}
+
+.tab-anim-leave-from {
+  opacity: 1;
+  width: 136px;
+  max-width: 176px;
+}
+
+.tab-anim-leave-active {
+  overflow: hidden;
+  transition: opacity .3s, width .58s var(--tab-spring), min-width .58s var(--tab-spring), max-width .58s var(--tab-spring), padding .58s var(--tab-spring);
+}
+
+.tab-anim-leave-to {
+  opacity: 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  overflow: hidden;
+}
+
+.tab-anim-move {
+  transition: transform .58s var(--tab-spring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-anim-enter-active,
+  .tab-anim-leave-active,
+  .tab-anim-move {
+    transition-duration: 0s;
+  }
+}
+
+
 </style>
