@@ -1055,6 +1055,26 @@ class SullaFiles(pyfuse3.Operations):
             if handle is not None:
                 handle["file"].close()
 
+    async def statfs(self, ctx):
+        # df and stat -f need filesystem totals. The Files service exposes no quota, so report the
+        # disk that holds this client's spool (the local space every write stages through).
+        # Without a readable spool dir, fall back to the root filesystem; never fail the call.
+        try:
+            volume = os.statvfs(SPOOL_DIR)
+        except OSError:
+            volume = os.statvfs("/")
+        data = pyfuse3.StatvfsData()
+        data.f_bsize = volume.f_bsize
+        data.f_frsize = volume.f_frsize
+        data.f_blocks = volume.f_blocks
+        data.f_bfree = volume.f_bfree
+        data.f_bavail = volume.f_bavail
+        data.f_files = volume.f_files
+        data.f_ffree = volume.f_ffree
+        data.f_favail = volume.f_favail
+        data.f_namemax = 255
+        return data
+
     def _child(self, parent_inode, name):
         parent=self.nodes.get(parent_inode)
         if not parent or not parent.get("directory"): raise pyfuse3.FUSEError(errno.ENOTDIR)

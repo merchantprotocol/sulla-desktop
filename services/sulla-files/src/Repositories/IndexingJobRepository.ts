@@ -61,8 +61,15 @@ export class IndexingJobRepository {
    * holds) and marks each claimed file `indexing`, in one statement: one commit per batch.
    */
   async claimBatch(limit:number):Promise<ClaimedIndexJob[]> {
+    // Lock order matches every other indexing writer (lockEligibility, lockJob): the file row
+    // first, then its job row. The old claim locked job rows and only then the file rows, so it
+    // deadlocked (40P01) against a commit that held a file and waited for the job.
+    // FOR UPDATE OF f, j SKIP LOCKED locks each candidate's file before its job, in the ORDER BY
+    // sequence (oldest first, version id as tie-break), so concurrent claims walk the same order.
     const claimed = await this.db.query(`WITH picked AS (
-        SELECT version_id FROM file_index_jobs WHERE status='pending' AND available_at<=NOW() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $1
+        SELECT j.version_id FROM file_index_jobs j JOIN files f ON f.id=j.file_id
+        WHERE j.status='pending' AND j.available_at<=NOW()
+        ORDER BY j.created_at,j.version_id FOR UPDATE OF f, j SKIP LOCKED LIMIT $1
       ), claimed AS (
         UPDATE file_index_jobs j SET status='indexing',attempts=j.attempts+1,started_at=NOW(),last_error=NULL,reason_code='indexing',reason='Local extraction is in progress.'
         FROM picked WHERE j.version_id=picked.version_id RETURNING j.file_id,j.version_id,j.attempts,j.created_at

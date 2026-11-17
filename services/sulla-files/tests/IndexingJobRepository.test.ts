@@ -45,6 +45,22 @@ describe.skipIf(!databaseUrl)('indexing job, accounting and search content repos
     expect((await database.job(notDue.versionId)).status).toBe('pending');
   });
 
+  // risk: deadlock (40P01) — the claim locks each file row before its job, the same order as lockEligibility.
+  // A commit holding a file row must make the claim skip that job, not wait on it while holding a job lock.
+  it('skips a job whose file row another transaction holds, without waiting on it', async() => {
+    const held = await database.file(collectionId, 'held.txt');
+    const free = await database.file(collectionId, 'free.txt');
+    await database.pool.query("UPDATE file_index_jobs SET created_at=NOW()-INTERVAL '1 hour' WHERE version_id=$1", [held.versionId]);
+    const holder = await database.pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM files WHERE id=$1 FOR UPDATE', [held.fileId]);
+      expect((await jobs.claimBatch(5)).map(job => job.version_id)).toEqual([free.versionId]);
+      expect((await database.job(held.versionId)).status).toBe('pending');
+      await holder.query('ROLLBACK');
+    } finally { holder.release() }
+  });
+
   // risk: two workers index the same version — SKIP LOCKED must hand a concurrent claimer different jobs.
   it('never hands a job another transaction is claiming to a second worker', async() => {
     const a = await database.file(collectionId, 'a.txt');

@@ -63,13 +63,19 @@ status starting
 # A crashed FUSE process can leave stale adapter layers on the shared mountpoint.
 # Only ever remove FUSE layers: the bind underneath is the shared propagation
 # anchor, and detaching it makes the new mount invisible outside this container.
-layers=0
-while top_is_fuse; do
-  [ "$layers" -ge 8 ] && fail stale-mount-stuck ",\"layers\":$layers"
-  emit stale-mount-detected ",\"layer\":$layers,\"fsType\":\"${top%% *}\""
-  fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || fail stale-mount-unremovable ",\"layer\":$layers"
-  layers=$((layers + 1))
-done
+# Every layer must go before a daemon mounts again: one lazy unmount removes only the
+# top layer, so a restart that unmounted once stacked a second FUSE mount on the first.
+clear_stale_fuse_layers() {
+  layers=0
+  while top_is_fuse; do
+    [ "$layers" -ge 8 ] && fail stale-mount-stuck ",\"layers\":$layers"
+    emit stale-mount-detected ",\"layer\":$layers,\"fsType\":\"${top%% *}\""
+    fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || fail stale-mount-unremovable ",\"layer\":$layers"
+    layers=$((layers + 1))
+  done
+}
+
+clear_stale_fuse_layers
 
 top=$(top_mount)
 case " $top " in
@@ -103,7 +109,7 @@ while :; do
   if [ $(( $(date +%s) - daemon_started )) -ge 60 ]; then backoff=2; fi
   emit daemon-restart ",\"exitCode\":$daemon_status,\"backoffSeconds\":$backoff"
   status restarting ",\"exitCode\":$daemon_status,\"backoffSeconds\":$backoff"
-  fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || true
+  clear_stale_fuse_layers
   sleep "$backoff" &
   sleep_pid=$!
   wait "$sleep_pid" || true
