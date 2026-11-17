@@ -11,11 +11,14 @@ import type { PostgresIntegrationStateRepository } from '../repositories/Postgre
 import { SULLA_CLOUD_INTEGRATION_ID } from '../sullaCloudRelay.js';
 import type { SullaCloudItemGateway, SullaCloudSessionRecord } from './SullaCloudItemGateway.js';
 import type { VaultUserKeyHolder } from './VaultRevocationQueue.js';
+import type { ProfileContext } from '../profiles/VaultProfileSession.js';
 
 /** What the gateway needs from the vault authority (it owns the keys, the lock generation and the transaction/audit plumbing). */
 export interface SullaCloudVaultContext extends VaultUserKeyHolder {
   generation(): number;
   requireGeneration(generation: number): void;
+  profileContext?(): ProfileContext;
+  assertProfileCurrent?(context: ProfileContext): void;
   transaction<T>(work: (client: Queryable) => Promise<T>): Promise<T>;
   auditHumanAction(client: Queryable, userId: string, action: string, itemId?: string | null): Promise<void>;
 }

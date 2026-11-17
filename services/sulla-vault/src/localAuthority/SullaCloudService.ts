@@ -191,6 +191,8 @@ export class SullaCloudService {
       userKey: () => { const keys = this.host.requireKeys(); return { userId: keys.userId, userKey: keys.userKey }; },
       generation: () => this.host.generation,
       requireGeneration: generation => this.host.requireGeneration(generation),
+      profileContext: () => this.host.profileContext,
+      assertProfileCurrent: context => this.host.assertProfileCurrent(context.profileId, context.generation),
       transaction: work => this.host.runSecurityOperation(() => this.host.runTransaction(work)),
       auditHumanAction: (client, userId, action, itemId) => this.host.auditHumanAction(client, userId, action, itemId ?? null),
     }, {

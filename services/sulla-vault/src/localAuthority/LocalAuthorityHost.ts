@@ -36,6 +36,7 @@ import type { AgentMailboxCloudLane } from '../sullaCloudSession/AgentMailboxClo
 import type { SullaCloudSessionManager } from '../sullaCloudSession/SullaCloudSessionManager.js';
 import type { LocalAuthorityCollaborators } from './LocalAuthorityCollaborators.js';
 import type { Challenge, HumanSession, StagedCacheUpdate, UnlockedKeys } from './LocalAuthorityTypes.js';
+import type { ProfileContext } from '../profiles/VaultProfileSession.js';
 
 /**
  * Key material and the grants that unlock it. LocalVaultAuthority keeps these `private`: only
@@ -73,6 +74,8 @@ export interface LocalAuthoritySeam {
   sullaCloudSessionManager: SullaCloudSessionManager | null;
   agentMailboxCloudLane:    AgentMailboxCloudLane | null;
   readonly oauthRefreshQueues: Map<string, Promise<void>>;
+  readonly profileContext: ProfileContext;
+  assertProfileCurrent(profileId: string, generation: ProfileContext['generation']): void;
   readonly inFlight:         Set<ClientRequest>;
 
   // Dependencies.
