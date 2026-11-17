@@ -2119,6 +2119,8 @@ function handleTabContextMenuAction(
 }
 .app-titlebar .tab-active .tab-accent-bar,
 .app-titlebar .tab-active-native .tab-accent-bar { opacity: 1; }
+.app-titlebar .tab-active .tab-icon,
+.app-titlebar .tab-active-native .tab-icon { color: var(--accent); opacity: 1; }
 .app-titlebar .tab-active::before,
 .app-titlebar .tab-active::after {
   content: '';
