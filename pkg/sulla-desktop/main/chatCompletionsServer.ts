@@ -30,6 +30,8 @@ import { hostPort, loopbackOrigin } from '@pkg/utils/instance';
 import { describePortOwner } from '@pkg/utils/portOwner';
 import { ToolRequestArguments } from '@pkg/runtime/toolRequestArguments';
 import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
+import { ApiChatRunFactory, OwnerIdentityUnavailableError } from './ApiChatRunFactory';
+import { getCurrentUserId } from './sullaCloudAuth';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -120,6 +122,10 @@ const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
 };
 
 export class ChatCompletionsServer {
+  private readonly apiChatRunFactory = new ApiChatRunFactory(
+    getCurrentUserId,
+    state => getMCPServerHost().registerSession(state),
+  );
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
   /** Grace for in-flight responses before open sockets are cut on stop. */
   static readonly CONNECTION_DRAIN_MS = 1_000;
@@ -575,7 +581,9 @@ export class ChatCompletionsServer {
 
       // Process the user input directly — model param is the agent ID
       const resolvedThreadId = thread_id || nextThreadId();
-      const responseContent = await this.processUserInputDirect(messages, model, resolvedThreadId);
+      const installationBearer = req.headers.authorization?.replace(/^Bearer\s+/i, '') === this.apiToken;
+      const runAsOwner = installationBearer && req.body?.sulla?.run_as_owner === true;
+      const responseContent = await this.processUserInputDirect(messages, model, resolvedThreadId, runAsOwner);
 
       // Return the response in OpenAI format
       const response = {
@@ -603,6 +611,9 @@ export class ChatCompletionsServer {
 
       res.json(response);
     } catch (error) {
+      if (error instanceof OwnerIdentityUnavailableError) {
+        return res.status(400).json({ error: { message: error.message, type: 'invalid_request_error' } });
+      }
       console.error('[ChatCompletionsAPI] Error handling chat completion:', error);
       res.status(500).json({
         error: {
@@ -617,7 +628,7 @@ export class ChatCompletionsServer {
    * Process user input directly, without any UI interaction.
    * The agentId is used as the wsChannel so the graph loads that agent's prompts.
    */
-  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL, threadId?: string): Promise<string> {
+  private async processUserInputDirect(messages: any, agentId: string = WS_CHANNEL, threadId?: string, runAsOwner = false): Promise<string> {
     threadId = threadId || nextThreadId();
 
     // Get or create persistent AgentGraph for this thread
@@ -645,7 +656,7 @@ export class ChatCompletionsServer {
       state.metadata.waitingForUser = false;
 
       // Execute on the persistent AgentGraph starting from input_handler
-      await graph.execute(state, 'input_handler');
+      await this.apiChatRunFactory.run(state, runAsOwner, () => graph.execute(state, 'input_handler'));
 
       // Extract the final response text
       const agentMeta = (state.metadata as any).agent;
@@ -662,6 +673,7 @@ export class ChatCompletionsServer {
 
       return responseText;
     } catch (err: any) {
+      if (err instanceof OwnerIdentityUnavailableError) throw err;
       console.error('[ChatCompletionsAPI] Error processing user input:', err);
       return `Error: ${ err.message || String(err) }`;
     } finally {
