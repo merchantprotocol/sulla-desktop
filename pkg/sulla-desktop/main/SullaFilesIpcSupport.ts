@@ -5,7 +5,7 @@
 
 import path from 'node:path';
 
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 
 import type { BrowserWindow, IpcMainInvokeEvent, OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveDialogReturnValue, WebContents } from 'electron';
 import type { SullaFilesCaptureService } from './sullaFilesCapture';

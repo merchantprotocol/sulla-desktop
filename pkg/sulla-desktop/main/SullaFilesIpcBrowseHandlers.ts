@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { FilesListingPager } from './FilesListingPager';
+import { FilesListingPager } from '../agent/files/FilesListingPager';
 import { FilesChangeFeed } from './sullaFilesChangeFeed';
 import { FilesApiError } from './sullaFilesClient';
 import { SULLA_FILES_UUID as UUID } from './SullaFilesIpcSupport';
