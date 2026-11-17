@@ -554,15 +554,15 @@
 }
 
 .theme-noir-light .browser-tab,
-.theme-noir-light .tab-item,
+.theme-noir-light .tab-item:not(.app-titlebar .tab-item),
 .theme-noir-light [class*="browser-tab"] {
   background: transparent !important;
   color: var(--text-secondary, #3d4f63) !important;
 }
 
 .theme-noir-light .browser-tab.active,
-.theme-noir-light .tab-item.active,
-.theme-noir-light .tab-item.on,
+.theme-noir-light .tab-item:not(.app-titlebar .tab-item).active,
+.theme-noir-light .tab-item:not(.app-titlebar .tab-item).on,
 .theme-noir-light [class*="browser-tab"][class*="active"] {
   background: var(--bg-page, #f4f7fb) !important;
   color: var(--text-primary, #1a2332) !important;

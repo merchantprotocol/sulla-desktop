@@ -512,15 +512,15 @@
 }
 
 .theme-default-light .browser-tab,
-.theme-default-light .tab-item,
+.theme-default-light .tab-item:not(.app-titlebar .tab-item),
 .theme-default-light [class*="browser-tab"] {
   background: transparent !important;
   color: var(--text-secondary, #64748b) !important;
 }
 
 .theme-default-light .browser-tab.active,
-.theme-default-light .tab-item.active,
-.theme-default-light .tab-item.on,
+.theme-default-light .tab-item:not(.app-titlebar .tab-item).active,
+.theme-default-light .tab-item:not(.app-titlebar .tab-item).on,
 .theme-default-light [class*="browser-tab"][class*="active"] {
   background: var(--bg-page, #ffffff) !important;
   color: var(--text-primary, #0d0d0d) !important;

@@ -539,8 +539,8 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .mode-rail {
-  background: color-mix(in srgb, var(--bg-surface) 60%, transparent);
-  border-right-color: var(--border-subtle);
+  background: var(--bg-surface-alt, var(--bg-surface));
+  border-right: 1px solid var(--border-default);
 }
 
 .active-indicator {

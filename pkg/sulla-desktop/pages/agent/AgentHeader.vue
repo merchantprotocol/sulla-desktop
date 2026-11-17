@@ -1495,11 +1495,6 @@ function handleTabContextMenuAction(
 .app-titlebar {
   -webkit-app-region: drag;
   app-region: drag;
-  /* One surface for the whole bar: the logo, the tab strip and the right-hand
-     controls share the tab strip's glass background and a single bottom
-     border that runs edge to edge. */
-  background: color-mix(in srgb, var(--bg-page) 93%, var(--text-primary));
-  border-bottom: 1px solid var(--border-default);
 }
 
 .app-titlebar a,
@@ -1928,298 +1923,6 @@ function handleTabContextMenuAction(
   display: none;
 }
 
-/* Arc-style titlebar tabs. Kept under .app-titlebar to avoid the theme files'
-   global .tab selectors. */
-.app-titlebar .tab-scroll-wrapper {
-  --tab-spring: linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
-
-  align-items: center;
-  height: 43px;
-  padding: 3px 5px 5px;
-  margin-left: 14px;
-  /* The background and bottom border live on .app-titlebar so they span the
-     full width instead of stopping where the tabs begin. */
-  background: transparent;
-}
-
-.app-titlebar .tab-scroll-container {
-  align-items: center;
-  gap: 4px;
-  height: 40px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-behavior: smooth;
-}
-
-.app-titlebar .tab-active-indicator {
-  position: absolute;
-  display: block;
-  top: 1px;
-  left: 0;
-  height: 34px;
-  border-radius: 17px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent-hover) 50%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 20%, transparent);
-  pointer-events: none;
-  z-index: 0;
-  transition: transform .58s var(--tab-spring), width .58s var(--tab-spring), opacity .2s;
-}
-
-.app-titlebar .tab-active-indicator {
-  background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--accent-border), 0 4px 14px color-mix(in srgb, var(--accent-hover) 18%, transparent);
-}
-
-.app-titlebar .tab-active-indicator::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -5px;
-  width: 22px;
-  height: 3px;
-  margin-left: -11px;
-  border-radius: 3px 3px 0 0;
-  background: var(--accent-hover);
-  box-shadow: 0 0 10px var(--accent-hover);
-}
-
-.app-titlebar .tab-item {
-  /* Wide enough that titles read; the strip scrolls with its arrows when full. */
-  width: auto;
-  min-width: 160px;
-  max-width: 260px;
-  height: 34px;
-  flex: 0 1 auto;
-  gap: 9px;
-  padding: 0 8px 0 12px;
-  border: 0;
-  border-radius: 17px;
-  color: var(--read-3, var(--text-secondary));
-  background: transparent;
-  font-size: 12.5px;
-  font-weight: 500;
-  z-index: 1;
-  transition: color .16s cubic-bezier(.22, 1, .36, 1), background .16s cubic-bezier(.22, 1, .36, 1), transform .5s var(--tab-spring), width .58s var(--tab-spring), min-width .58s var(--tab-spring), opacity .3s, padding .58s var(--tab-spring);
-}
-
-.app-titlebar .tab-item:hover {
-  color: var(--read-2, var(--text-primary));
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
-}
-
-.app-titlebar .tab-item:active {
-  transform: scale(.95);
-  transition: transform .08s;
-}
-
-.app-titlebar .tab-active,
-.app-titlebar .tab-active-native {
-  color: var(--read-1, var(--text-primary));
-  background: transparent;
-  border: 0;
-  border-radius: 17px;
-  font-weight: 500;
-}
-
-.app-titlebar .tab-accent-bar {
-  display: none;
-}
-
-.app-titlebar .tab-active::before,
-.app-titlebar .tab-active::after,
-.app-titlebar .tab-inactive::before {
-  display: none;
-}
-
-.app-titlebar .tab-pinned {
-  width: auto;
-  min-width: 0;
-  max-width: 150px;
-  flex: 0 0 auto;
-  gap: 6px;
-  padding: 0 12px 0 10px;
-  border-radius: 10px 10px 4px 4px;
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.app-titlebar .tab-pinned-boundary {
-  margin-left: 18px;
-}
-
-.app-titlebar .tab-pinned-boundary::before {
-  content: '';
-  display: block;
-  position: absolute;
-  left: -10px;
-  top: 8px;
-  width: 1px;
-  height: 18px;
-  background: var(--bg-surface-hover);
-  pointer-events: none;
-}
-
-.app-titlebar .tab-preview {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent);
-}
-
-.app-titlebar .tab-icon {
-  position: relative;
-  width: 16px;
-  height: 16px;
-  opacity: .85;
-}
-
-.app-titlebar .tab-favicon-img,
-.app-titlebar .tab-favicon-svg {
-  width: 16px;
-  height: 16px;
-}
-
-.app-titlebar .tab-active .tab-icon,
-.app-titlebar .tab-active-native .tab-icon {
-  color: var(--read-1, var(--text-primary));
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent-hover) 70%, transparent));
-}
-
-.app-titlebar .tab-working .tab-icon::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent 0 55%, var(--accent-hover) 85%, transparent);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), currentColor calc(100% - 1.5px));
-  animation: tab-working-spin 1s linear infinite;
-}
-
-.app-titlebar .tab-working-streak {
-  position: absolute;
-  display: block;
-  left: 14px;
-  right: 14px;
-  bottom: 3px;
-  height: 2px;
-  border-radius: 2px;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.app-titlebar .tab-working-streak::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  width: 40%;
-  background: linear-gradient(90deg, transparent, var(--accent-hover), transparent);
-  animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
-}
-
-@keyframes tab-working-spin {
-  to { transform: rotate(1turn); }
-}
-
-@keyframes tab-working-streak {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(260%); }
-}
-
-.app-titlebar .tab-close {
-  width: 18px;
-  height: 18px;
-  margin-left: auto;
-  border-radius: 9px;
-  color: var(--read-4, var(--text-muted));
-  opacity: 0;
-  transform: scale(.6);
-  transition: opacity .16s, transform .4s var(--tab-spring), background .16s, color .16s;
-}
-
-.app-titlebar .tab-item:hover .tab-close {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.app-titlebar .tab-close:hover {
-  color: var(--read-1, var(--text-primary));
-  background: var(--bg-surface-hover);
-}
-
-/* Tab strip "option A": every tab reads as its own card, the active tab is a
-   solid surface with its close button showing, and pinned tabs carry a pin
-   plus an accent underline. Replaces the sliding glow pill. */
-.app-titlebar .tab-active-indicator {
-  display: none;
-}
-
-.app-titlebar .tab-scroll-container {
-  gap: 6px;
-}
-
-.app-titlebar .tab-item {
-  height: 32px;
-  border-radius: 9px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent);
-}
-
-.app-titlebar .tab-item:hover {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
-}
-
-.app-titlebar .tab-active,
-.app-titlebar .tab-active-native {
-  color: var(--text-primary);
-  background: var(--bg-surface);
-  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.app-titlebar .tab-active .tab-close,
-.app-titlebar .tab-active-native .tab-close {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.app-titlebar .tab-pinned {
-  border-radius: 9px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 70%, transparent), inset 0 -2px 0 var(--accent);
-}
-
-.app-titlebar .tab-pinned.tab-active,
-.app-titlebar .tab-pinned.tab-active-native {
-  box-shadow: inset 0 0 0 1px var(--border-strong, var(--border-default)), inset 0 -2px 0 var(--accent);
-}
-
-.app-titlebar .tab-pinned-boundary::before {
-  background: var(--border-strong, var(--border-default));
-}
-
-.engine-status {
-  width: 9px;
-  height: 9px;
-  margin: 0 4px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--status-success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-success) 18%, transparent);
-}
-
-.engine-status.busy {
-  background: var(--status-warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 18%, transparent);
-  animation: engine-pulse 1.4s ease-in-out infinite;
-}
-
-.engine-status.error {
-  background: var(--status-error);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-error) 18%, transparent);
-}
-
-@keyframes engine-pulse { 50% { opacity: .4; } }
-
-@media (prefers-reduced-motion: reduce) {
-  .engine-status.busy { animation: none; }
-}
-
 .tab-rename {
   flex: 1;
   min-width: 0;
@@ -2344,6 +2047,163 @@ function handleTabContextMenuAction(
     animation: none;
   }
 }
+/* Approved full-width titlebar treatment. */
+.app-titlebar {
+  position: relative;
+  z-index: 20;
+  width: calc(100% + var(--rail-width, 64px));
+  margin-left: calc(-1 * var(--rail-width, 64px));
+  transition: width var(--dur-move) var(--spring), margin-left var(--dur-move) var(--spring);
+  min-height: 44px;
+  height: 44px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+  background: var(--bg-surface-alt, var(--bg-surface, var(--bg-page)));
+}
+.app-titlebar > div:first-child { height: 44px; }
+.app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
+.app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
+.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
+.app-titlebar .tab-item {
+  position: relative;
+  height: 34px;
+  min-width: 64px;
+  max-width: none;
+  flex: 0 1 var(--tab-basis, 190px);
+  gap: var(--tab-gap, 8px);
+  padding: 0 var(--tab-padding, 12px);
+  border: 0;
+  border-radius: 9px 9px 0 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted, var(--text-secondary));
+  overflow: visible;
+}
+.app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
+.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-surface-alt, var(--bg-surface, var(--bg-page))); }
+.app-titlebar .tab-active .tab-activity-dot,
+.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface, var(--bg-page)); }
+.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface-alt, var(--bg-surface, var(--bg-page))); }
+.app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
+.app-titlebar .tab-active,
+.app-titlebar .tab-active-native {
+  z-index: 2;
+  min-width: 120px;
+  margin-bottom: -1px;
+  border: 1px solid var(--border-default);
+  border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  background: var(--bg-surface, var(--bg-page));
+  box-shadow: none;
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow: visible;
+}
+.app-titlebar .tab-active {
+  border: 1px solid var(--border-default);
+  border-bottom: 0;
+  background: var(--bg-surface, var(--bg-page));
+  box-sizing: border-box;
+}
+.app-titlebar .tab-accent-bar {
+  display: block;
+  top: -1px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 0 0 2px 2px;
+  opacity: 0;
+}
+.app-titlebar .tab-active .tab-accent-bar,
+.app-titlebar .tab-active-native .tab-accent-bar { opacity: 1; }
+.app-titlebar .tab-active .tab-icon,
+.app-titlebar .tab-active-native .tab-icon { color: var(--accent); opacity: 1; }
+.app-titlebar .tab-active::before,
+.app-titlebar .tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-surface, var(--bg-page)) 10.5px);
+  display: block;
+}
+.app-titlebar .tab-active::before { left: -10px; }
+.app-titlebar .tab-active::after { right: -10px; transform: scaleX(-1); }
+.app-titlebar .tab-inactive + .tab-inactive::before {
+  display: block;
+  top: 9px;
+  bottom: 9px;
+  height: auto;
+  background: color-mix(in srgb, var(--border-default) 55%, transparent);
+}
+.app-titlebar .tab-active-indicator { display: none; }
+.app-titlebar .tab-pinned { min-width: 64px; max-width: none; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
+.app-titlebar .tab-pinned.tab-active { box-shadow: none; }
+.app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
+.app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
+.app-titlebar .tab-scroll-wrapper > button.tab-new { margin-left: 4px; }
+.app-titlebar .titlebar-controls { gap: 4px; height: 44px; padding: 0; }
+.app-titlebar .titlebar-controls button { width: 28px !important; height: 28px !important; flex: 0 0 28px; margin: 0; padding: 0; border-radius: 7px; }
+.app-titlebar .engine-status-control { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border-radius: 7px; }
+.app-titlebar .engine-status { width: 9px; height: 9px; margin: 0; box-shadow: none; }
+.app-titlebar .engine-status.busy { box-shadow: none; }
+.app-titlebar .titlebar-controls > .relative { display: flex; align-items: center; justify-content: center; }
+
+.app-titlebar .tab-scroll-container { scrollbar-width: none; }
+.app-titlebar .tab-scroll-container::-webkit-scrollbar { display: none; }
+.app-titlebar .tab-scroll-wrapper.tabs-normal { --tab-basis: 190px; --tab-padding: 12px; --tab-gap: 8px; }
+.app-titlebar .tab-scroll-wrapper.tabs-tight { --tab-basis: 150px; --tab-padding: 9px; --tab-gap: 6px; }
+.app-titlebar .tab-scroll-wrapper.tabs-compact { --tab-basis: 96px; --tab-padding: 6px; --tab-gap: 5px; }
+/* Preserve titlebar-only affordances while keeping geometry in the approved tab treatment. */
+.app-titlebar .tab-pinned-boundary { margin-left: 18px; }
+.app-titlebar .tab-pinned-boundary::before {
+  content: '';
+  display: block;
+  position: absolute;
+  left: -10px;
+  top: 8px;
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong, var(--border-default));
+  pointer-events: none;
+}
+.app-titlebar .tab-preview { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 75%, transparent); }
+.app-titlebar .tab-working .tab-icon::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 55%, var(--accent-hover) 85%, transparent);
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), currentColor calc(100% - 1.5px));
+  animation: tab-working-spin 1s linear infinite;
+}
+.app-titlebar .tab-working-streak {
+  position: absolute;
+  display: block;
+  left: 14px;
+  right: 14px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.app-titlebar .tab-working-streak::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent-hover), transparent);
+  animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
+}
+@keyframes tab-working-spin { to { transform: rotate(1turn); } }
+@keyframes tab-working-streak { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+
 </style>
 
 <style>
@@ -2402,100 +2262,5 @@ function handleTabContextMenuAction(
   }
 }
 
-/* Approved full-width titlebar treatment. */
-.app-titlebar {
-  position: relative;
-  z-index: 20;
-  width: calc(100% + var(--rail-width, 64px));
-  margin-left: calc(-1 * var(--rail-width, 64px));
-  transition: width var(--dur-move) var(--spring), margin-left var(--dur-move) var(--spring);
-  min-height: 44px;
-  height: 44px;
-  padding-top: 0;
-  padding-bottom: 0;
-  align-items: center;
-  background: color-mix(in srgb, var(--bg-page) 93%, var(--text-primary));
-}
-.app-titlebar > div:first-child { height: 44px; }
-.app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
-.app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
-.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
-.app-titlebar .tab-item {
-  position: relative;
-  height: 34px;
-  min-width: 64px;
-  max-width: none;
-  flex: 0 1 var(--tab-basis, 190px);
-  gap: var(--tab-gap, 8px);
-  padding: 0 var(--tab-padding, 12px);
-  border: 0;
-  border-radius: 9px 9px 0 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-muted, var(--text-secondary));
-  overflow: visible;
-}
-.app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-page); }
-.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-page) 93%, var(--text-primary)); }
-.app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
-.app-titlebar .tab-active,
-.app-titlebar .tab-active-native {
-  z-index: 2;
-  min-width: 120px;
-  margin-bottom: -1px;
-  border: 0;
-  border-radius: 9px 9px 0 0;
-  background: var(--bg-page);
-  box-shadow: none;
-  color: var(--text-primary);
-  font-weight: 600;
-  overflow: visible;
-}
-.app-titlebar .tab-active {
-  border: 1px solid var(--border-default);
-  border-bottom: 0;
-  background: var(--bg-page);
-  box-sizing: border-box;
-}
-.app-titlebar .tab-active .tab-accent-bar,
-.app-titlebar .tab-active-native .tab-accent-bar { display: none; }
-.app-titlebar .tab-active::before,
-.app-titlebar .tab-active::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  width: 10px;
-  height: 10px;
-  pointer-events: none;
-  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-page, var(--bg-surface)) 10.5px);
-  display: block;
-}
-.app-titlebar .tab-active::before { left: -10px; }
-.app-titlebar .tab-active::after { right: -10px; transform: scaleX(-1); }
-.app-titlebar .tab-inactive + .tab-inactive::before {
-  display: block;
-  top: 9px;
-  bottom: 9px;
-  height: auto;
-  background: color-mix(in srgb, var(--border-default) 55%, transparent);
-}
-.app-titlebar .tab-active-indicator { display: none !important; }
-.app-titlebar .tab-pinned { min-width: 64px; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
-.app-titlebar .tab-pinned.tab-active { box-shadow: none; }
-.app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
-.app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
-.app-titlebar .tab-scroll-wrapper > button.tab-new { margin-left: 4px; }
-.app-titlebar .titlebar-controls { gap: 4px; height: 44px; padding: 0; }
-.app-titlebar .titlebar-controls button { width: 28px !important; height: 28px !important; flex: 0 0 28px; margin: 0; padding: 0; border-radius: 7px; }
-.app-titlebar .engine-status-control { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border-radius: 7px; }
-.app-titlebar .engine-status { width: 9px; height: 9px; margin: 0; box-shadow: none; }
-.app-titlebar .engine-status.busy { box-shadow: none; }
-.app-titlebar .titlebar-controls > .relative { display: flex; align-items: center; justify-content: center; }
 
-.app-titlebar .tab-scroll-container { scrollbar-width: none; }
-.app-titlebar .tab-scroll-container::-webkit-scrollbar { display: none; }
-.app-titlebar .tab-scroll-wrapper.tabs-tight { --tab-basis: 150px; --tab-padding: 9px; --tab-gap: 6px; }
-.app-titlebar .tab-scroll-wrapper.tabs-compact { --tab-basis: 96px; --tab-padding: 6px; --tab-gap: 5px; }
 </style>
