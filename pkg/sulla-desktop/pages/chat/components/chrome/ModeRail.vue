@@ -581,6 +581,19 @@ const items: readonly ModeItem[] = Object.freeze([
   border-radius: 20px;
 }
 
+/* Own stacking context so the -1 accent square sits above the rail background,
+   and beat the light themes' `.theme-* .mode-btn.active` !important tint/glow. */
+.mode-rail .mode-btn.active,
+.mode-rail .mode-btn.active:hover {
+  isolation: isolate;
+  color: var(--text-on-accent) !important;
+  background: transparent !important;
+}
+.mode-rail .mode-btn.active::before {
+  background: var(--accent) !important;
+  box-shadow: none !important;
+}
+
 .mode-btn:hover .icon {
   transform: none;
 }
