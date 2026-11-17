@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { BudgetWorkerAdmission } from '../../../services/BudgetWorkerAdmission';
+import { BudgetWorkerAdmission, countBudgetWorkers } from '../../../services/BudgetWorkerAdmission';
 
 describe('BudgetWorkerAdmission', () => {
   it('queues hidden work at the allowance and starts FIFO work when a slot frees', async() => {
@@ -63,5 +63,41 @@ describe('BudgetWorkerAdmission', () => {
     expect(started).toBe(true);
     finish();
     await first;
+  });
+
+  it('does not count a running parent task that owns a child job', () => {
+    // risk: manager/orchestrator tasks must not consume scarce worker slots
+    expect(countBudgetWorkers([
+      { jobId: 'manager', visibility: 'hidden', tasks: [{ status: 'running' }] },
+      { jobId: 'worker', parentJobId: 'manager', parentTaskIndex: 0, visibility: 'hidden', tasks: [{ status: 'running' }] },
+    ])).toBe(1);
+  });
+
+  it('admits a child at cap one while its own parent task is running', async() => {
+    // risk: a manager holding the only slot can deadlock all of its workers
+    const admission = new BudgetWorkerAdmission();
+    const jobs = [
+      { jobId: 'manager', visibility: 'hidden', tasks: [{ status: 'running' }] },
+      { jobId: 'child-job', parentJobId: 'manager', parentTaskIndex: 0, visibility: 'hidden', tasks: [{ status: 'queued' }] },
+    ];
+    let started = false;
+    await admission.run(async() => ({ allowance: 1, running: countBudgetWorkers(jobs) }), async() => { started = true; });
+    expect(started).toBe(true);
+  });
+
+  it('keeps FIFO order when a parent exclusion opens the only slot', async() => {
+    // risk: orchestrator exclusion must not let later workers jump the queue
+    const admission = new BudgetWorkerAdmission();
+    const jobs = [
+      { jobId: 'manager', visibility: 'hidden', tasks: [{ status: 'running' }] },
+      { jobId: 'child', parentJobId: 'manager', parentTaskIndex: 0, visibility: 'hidden', tasks: [{ status: 'queued' }] },
+    ];
+    const state = async() => ({ allowance: 1, running: countBudgetWorkers(jobs) });
+    const order: string[] = [];
+    await Promise.all([
+      admission.run(state, async() => { order.push('first'); }),
+      admission.run(state, async() => { order.push('second'); }),
+    ]);
+    expect(order).toEqual(['first', 'second']);
   });
 });

@@ -5,6 +5,22 @@
 type AdmissionSnapshot = { allowance: number | null; running: number };
 type WaitingTask = { resolve: (release: () => void) => void; snapshot: () => Promise<AdmissionSnapshot> };
 
+/** Count hidden running tasks, excluding managers that currently own child jobs. */
+export function countBudgetWorkers(jobs: Array<{ jobId: string; visibility?: string; parentJobId?: string | null; parentTaskIndex?: number | null; tasks: Array<{ status: string }> }>): number {
+  return jobs.filter(job => job.visibility !== 'tab').reduce((total, job) => {
+    const parentIndexes = new Set(jobs.filter(child => child.parentJobId === job.jobId)
+      .map(child => child.parentTaskIndex).filter((index): index is number => index !== null && index !== undefined));
+    const hasUnindexedChild = jobs.some(child => child.parentJobId === job.jobId && (child.parentTaskIndex === null || child.parentTaskIndex === undefined));
+    const running = job.tasks.reduce((count, task, index) => {
+      if (task.status !== 'running') return count;
+      // Legacy child rows may omit the parent index; conservatively treat all
+      // running tasks in that parent job as orchestration rather than workers.
+      return hasUnindexedChild || parentIndexes.has(index) ? count : count + 1;
+    }, 0);
+    return total + running;
+  }, 0);
+}
+
 /** FIFO admission gate; queued tasks are never rejected or preempted. */
 export class BudgetWorkerAdmission {
   private active = 0;

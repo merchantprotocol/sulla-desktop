@@ -24,6 +24,7 @@ import {
   createJob,
   failJob,
   findTaskByThread,
+  getAllJobs,
   getJob,
   getTaskAbortSignal,
   markCompletionDelivered,
@@ -62,7 +63,7 @@ import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
 import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 import { budgetPolicyService } from '../../services/BudgetPolicyService';
-import { budgetWorkerAdmission } from '../../services/BudgetWorkerAdmission';
+import { budgetWorkerAdmission, countBudgetWorkers } from '../../services/BudgetWorkerAdmission';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -311,7 +312,7 @@ export class SpawnAgentWorker extends BaseTool {
     if (hiddenTasks.length === 0) {
       const policy = await budgetPolicyService.read();
       const liveJobs = await getAllJobs();
-      const running = liveJobs.filter(job => job.visibility !== 'tab').reduce((total, job) => total + job.tasks.filter(task => task.status === 'running').length, 0);
+      const running = countBudgetWorkers(liveJobs);
       return this.withTaskVisibility(this.response({
           mode:          'tab',
           jobId:         tabs[0].jobId,
@@ -874,7 +875,7 @@ export class SpawnAgentWorker extends BaseTool {
       return budgetWorkerAdmission.run(async() => {
         const policy = await budgetPolicyService.read();
         const liveJobs = await getAllJobs();
-        const liveRunning = liveJobs.filter(item => item.visibility !== 'tab').reduce((total, item) => total + item.tasks.filter(child => child.status === 'running').length, 0);
+        const liveRunning = countBudgetWorkers(liveJobs);
         return {
           allowance: policy?.machine?.max_concurrent_workers ?? null,
           // Running tasks held by this gate have reserved a slot but may not
@@ -1028,7 +1029,7 @@ export class SpawnAgentWorker extends BaseTool {
     const allSuccess = results.every(r => r.status === 'completed');
     const policy = await budgetPolicyService.read();
     const liveJobs = await getAllJobs();
-    const running = liveJobs.filter(job => job.visibility !== 'tab').reduce((total, job) => total + job.tasks.filter(task => task.status === 'running').length, 0);
+    const running = countBudgetWorkers(liveJobs);
     const providerPaces = await Promise.all(tasks.map(async task => {
       const definition = taskAgentSelector(task) ? await agentDefinitionService.findBySlug(taskAgentSelector(task)!) : null;
       const provider = task.provider?.trim() || definition?.provider || undefined;
