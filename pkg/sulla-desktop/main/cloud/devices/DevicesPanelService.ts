@@ -54,7 +54,8 @@ export type DevicesPanelErrorCode =
   | 'cloud_error';
 
 export class DevicesPanelError extends Error {
-  constructor(readonly code: DevicesPanelErrorCode, message: string) {
+  /** `httpStatus` and `request` (e.g. `GET /devices`) are set when Cloud answered with a non-2xx status. */
+  constructor(readonly code: DevicesPanelErrorCode, message: string, readonly httpStatus?: number, readonly request?: string) {
     super(message);
     this.name = 'DevicesPanelError';
   }
@@ -71,7 +72,7 @@ export class DevicesPanelService {
   async list(): Promise<CloudDevicesList> {
     const thisDeviceId = await this.thisDevice.get();
     const res = await this.http.send('GET', '/devices');
-    this.assertOk(res, 'Couldn\'t load your devices from Sulla Cloud.');
+    this.assertOk(res, 'Couldn\'t load your devices from Sulla Cloud.', 'GET /devices');
     const rows: any[] = Array.isArray(res.data?.devices) ? res.data.devices : [];
     const devices = rows
       .filter(row => typeof row?.id === 'string' && row.id && row.deviceType !== 'app' && !row.revokedAt)
@@ -91,7 +92,7 @@ export class DevicesPanelService {
       throw new DevicesPanelError('invalid_name', `Device names can be up to ${ DEVICE_NAME_MAX_LENGTH } characters.`);
     }
     const res = await this.http.send('PATCH', `/devices/${ encodeURIComponent(id) }`, { name });
-    this.assertOk(res, 'Sulla Cloud didn\'t save the new name.');
+    this.assertOk(res, 'Sulla Cloud didn\'t save the new name.', 'PATCH /devices/:id');
     const view = this.toView(res.data?.device ?? { ...this.lastListed.get(id), name }, await this.thisDevice.get());
     this.lastListed.set(id, view);
 
@@ -104,7 +105,7 @@ export class DevicesPanelService {
       throw new DevicesPanelError('this_device', 'This computer can\'t be removed from here. Sign out instead.');
     }
     const res = await this.http.send('DELETE', `/devices/${ encodeURIComponent(id) }`);
-    this.assertOk(res, 'Sulla Cloud didn\'t remove the device.');
+    this.assertOk(res, 'Sulla Cloud didn\'t remove the device.', 'DELETE /devices/:id');
     const after = await this.list();
     if (after.devices.some(row => row.id === id)) {
       throw new DevicesPanelError('not_removed', `Sulla Cloud didn't remove "${ device.name }". It may belong to another account. Refresh and try again.`);
@@ -120,10 +121,10 @@ export class DevicesPanelService {
     return device;
   }
 
-  private assertOk(res: { status: number; data: any }, message: string): void {
+  private assertOk(res: { status: number; data: any }, message: string, request: string): void {
     if (res.status >= 200 && res.status < 300) return;
     const detail = typeof res.data?.error === 'string' ? ` (${ res.data.error })` : '';
-    throw new DevicesPanelError('cloud_error', `${ message }${ detail }`);
+    throw new DevicesPanelError('cloud_error', `${ message }${ detail }`, res.status, request);
   }
 
   private toView(row: any, thisDeviceId: string): CloudDeviceView {

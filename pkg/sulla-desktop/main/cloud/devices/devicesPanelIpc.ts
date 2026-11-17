@@ -7,28 +7,35 @@
 
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { cloudRequest } from '../cloudFetch';
-import {
-  DevicesPanelError, DevicesPanelService, type CloudDeviceView, type CloudDevicesList, type DevicesHttp, type DevicesPanelErrorCode,
-} from './DevicesPanelService';
+import { DevicesPanelErrorMapper, DevicesRequestFailure, type DevicesPanelFailure } from './devicesPanelErrorMapper';
+import { DevicesPanelService, type CloudDeviceView, type CloudDevicesList, type DevicesHttp } from './DevicesPanelService';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
-export type DevicesPanelResult<T> = { ok: true; value: T } | { ok: false; code: DevicesPanelErrorCode | 'not_signed_in'; error: string };
+export type DevicesPanelResult<T> = { ok: true; value: T } | DevicesPanelFailure;
 
 /** `DevicesHttp` over the existing authenticated Cloud request path. */
 export class CloudRequestDevicesHttp implements DevicesHttp {
   async send(method: 'GET' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<{ status: number; data: any }> {
-    const response = await cloudRequest(method, path, body === undefined
-      ? {}
-      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let response: Response;
+    try {
+      response = await cloudRequest(method, path, body === undefined
+        ? {}
+        : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    } catch (error) {
+      throw new DevicesRequestFailure(`${ method } ${ path }`, error);
+    }
 
     return { status: response.status, data: await response.json().catch(() => null) };
   }
 }
 
 export class DevicesPanelIpc {
-  constructor(private readonly service: DevicesPanelService) {}
+  constructor(
+    private readonly service: DevicesPanelService,
+    private readonly mapper: DevicesPanelErrorMapper = new DevicesPanelErrorMapper(),
+  ) {}
 
   register(): void {
     const ipc = getIpcMainProxy(Logging.background);
@@ -42,11 +49,7 @@ export class DevicesPanelIpc {
     try {
       return { ok: true, value: await action() };
     } catch (error) {
-      if (error instanceof DevicesPanelError) return { ok: false, code: error.code, error: error.message };
-      const message = error instanceof Error ? error.message : String(error);
-      if (/not signed in|sign in to sulla cloud/i.test(message)) return { ok: false, code: 'not_signed_in', error: 'Sign in to Sulla Cloud to see your devices.' };
-
-      return { ok: false, code: 'cloud_error', error: 'Couldn\'t reach Sulla Cloud. Check your connection and try again.' };
+      return this.mapper.map(error);
     }
   }
 }
