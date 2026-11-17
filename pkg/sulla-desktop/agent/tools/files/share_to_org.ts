@@ -5,6 +5,7 @@
 
 import { FilesTool } from './common';
 import type { ToolResponse } from '../base';
+import { NO_ORG_COLLECTION_MESSAGE } from './list_shared';
 
 /** Copies a source file's current content through Files API into an existing editable org collection. */
 export class FilesShareToOrgWorker extends FilesTool {
@@ -15,7 +16,7 @@ export class FilesShareToOrgWorker extends FilesTool {
     const collection = collections.find(item => item.workspaceScope === 'organization' && (
       input.collectionId ? item.id === input.collectionId : item.orgName === input.orgName && item.name === input.collectionName
     ));
-    if (!collection) throw new Error('No organization collection found; use files/list_shared. Collections must be created by an org admin in the UI.');
+    if (!collection) throw new Error(NO_ORG_COLLECTION_MESSAGE);
     const level = collection.level ?? collection.access_role;
     if (level === 'view') throw new Error(`You can view ${collection.name} but not add files to it; ask an org admin for edit`);
     if (!['edit', 'manage', 'owner', 'admin'].includes(level)) throw new Error(`You do not have edit access to ${collection.name}`);

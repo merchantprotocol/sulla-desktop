@@ -31,6 +31,13 @@ describe('organization Files tools', () => {
     expect(JSON.parse(result.responseString)).toEqual([{ collectionId: 'org-collection', orgId: 'org-1', orgName: 'Acme', name: 'Shared', level: 'edit', path: '/mnt/sulla-files/Organizations/Acme/Shared' }]);
   });
 
+  it('returns the mounted explorer_path, including the collision suffix, for a shared collection', async () => {
+    const suffixed = { ...organization, name: 'Shared', explorer_path: 'Organizations/Acme/Shared (abcd1234)' };
+    const worker = new FakeListSharedWorker([suffixed]);
+    const result = await (worker as any)._validatedCall({});
+    expect(JSON.parse(result.responseString)[0].path).toBe('/mnt/sulla-files/Organizations/Acme/Shared (abcd1234)');
+  });
+
   it('copies the current source through Files API into the selected editable org collection', async () => {
     const worker = new FakeShareToOrgWorker([organization]);
     const result = await (worker as any)._validatedCall({ source: '/mnt/sulla-files/Reports/current.txt', collectionId: 'org-collection', folder: 'inbox' });
@@ -47,7 +54,7 @@ describe('organization Files tools', () => {
 
   it('refuses unknown collections and never targets a personal collection', async () => {
     const worker = new FakeShareToOrgWorker([{ id: 'personal', name: 'Home', workspaceScope: 'principal', level: 'manage' }]);
-    await expect((worker as any)._validatedCall({ source: 'x', collectionId: 'personal' })).rejects.toThrow('Use files/list_shared');
+    await expect((worker as any)._validatedCall({ source: 'x', collectionId: 'personal' })).rejects.toThrow('No organization collection found. Use files/list_shared to see the collections you can use. Org collections are created by an org owner or admin.');
     expect(worker.writes).toHaveLength(0);
   });
 });
