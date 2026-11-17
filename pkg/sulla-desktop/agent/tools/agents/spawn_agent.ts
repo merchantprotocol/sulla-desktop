@@ -309,12 +309,16 @@ export class SpawnAgentWorker extends BaseTool {
     }
 
     if (hiddenTasks.length === 0) {
+      const policy = await budgetPolicyService.read();
+      const liveJobs = await getAllJobs();
+      const running = liveJobs.filter(job => job.visibility !== 'tab').reduce((total, job) => total + job.tasks.filter(task => task.status === 'running').length, 0);
       return this.withTaskVisibility(this.response({
           mode:          'tab',
           jobId:         tabs[0].jobId,
           contractId:    tabs[0].contractId,
           childThreadId: tabs[0].childThreadId,
           tabs,
+          budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: null },
           message:       `${ tabs.length } agent tab(s) opened. Each stays open until its agent returns its contract; the result wakes this graph. Your <subagent_directory> shows their progress every turn.`,
       }), decisions);
     }
@@ -1018,6 +1022,14 @@ export class SpawnAgentWorker extends BaseTool {
     await safeMarkDelegationsDelivered(delegationIds);
 
     const allSuccess = results.every(r => r.status === 'completed');
+    const policy = await budgetPolicyService.read();
+    const liveJobs = await getAllJobs();
+    const running = liveJobs.filter(job => job.visibility !== 'tab').reduce((total, job) => total + job.tasks.filter(task => task.status === 'running').length, 0);
+    const providerPaces = await Promise.all(tasks.map(async task => {
+      const definition = taskAgentSelector(task) ? await agentDefinitionService.findBySlug(taskAgentSelector(task)!) : null;
+      const provider = task.provider?.trim() || definition?.provider || undefined;
+      return { provider, pace: provider ? policy?.providers?.[provider]?.pace ?? null : null };
+    }));
 
     const formatted = results.map(r =>
       `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
@@ -1025,6 +1037,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     return this.response({
       mode: 'sync', jobId: syncJob.jobId, taskCount: tasks.length, parallel,
+      budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: providerPaces.length === 1 ? providerPaces[0].pace : providerPaces },
       results,
       message: tasks.length === 1
         ? results[0].output
