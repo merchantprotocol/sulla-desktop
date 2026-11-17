@@ -16,6 +16,7 @@ import type { SyncRow, UploadSession } from './repository.js';
 import type { CloudStagingStore } from './staging.js';
 
 const BASE = '/files-sync/v1';
+const MAX_CONCURRENT_CHUNK_UPLOADS = 4;
 
 /** One collection's open upload: resumable chunk PUTs, the queued commit, and dropping it cleanly. */
 export class CloudUploadSessions {
@@ -47,28 +48,55 @@ export class CloudUploadSessions {
         await this.dropSession(collectionId);
         return;
       }
-      let wire:Buffer;
-      try {
-        wire = await this.staging.get(collectionId, id);
-      } catch {
-        await this.dropSession(collectionId);
-        return;
-      }
-      const status = await this.api.putChunk(session.uploadId, id, wire);
-      if (status === 200 || status === 201) {
-        await this.repositories.chunks.markUploaded(collectionId, id);
-      } else if (status === 409) {
-        // Cloud already holds different bytes for this id; verify and adopt them after the commit.
-        if (!session.present.includes(id)) session.present.push(id);
-      } else if (status === 404 || status === 410) {
-        await this.dropSession(collectionId);
-        return;
-      } else {
-        throw Object.assign(new Error(`Chunk upload failed (${ status })`), { status });
-      }
+    }
+    if (await this.uploadMissingChunks(collectionId, session.uploadId, remote.missing, session)) {
+      await this.dropSession(collectionId);
+      return;
     }
     await this.repositories.state.saveSession(collectionId, session, 0, 'syncing');
     await this.queueCommit(sync, session, root);
+  }
+
+  /** PUT independent ciphertext chunks concurrently, but keep version commit ordering serial. */
+  private async uploadMissingChunks(collectionId:string, uploadId:string, missing:string[], session:UploadSession):Promise<boolean> {
+    let next = 0;
+    let expired = false;
+    let failure:Error | undefined;
+    const worker = async():Promise<void> => {
+      while (!expired && !failure) {
+        const index = next++;
+        if (index >= missing.length) return;
+        const id = missing[index];
+        let wire:Buffer;
+        try {
+          wire = await this.staging.get(collectionId, id);
+        } catch {
+          expired = true;
+          return;
+        }
+        let status:number;
+        try {
+          status = await this.api.putChunk(uploadId, id, wire);
+          if (status === 200 || status === 201) await this.repositories.chunks.markUploaded(collectionId, id);
+        } catch (error) {
+          // Record and stop; Promise.all must not settle while sibling PUTs are still in flight.
+          failure = error instanceof Error ? error : new Error(String(error));
+          return;
+        }
+        if (status === 409) {
+          // Cloud already holds different bytes for this id; verify and adopt them after the commit.
+          if (!session.present.includes(id)) session.present.push(id);
+        } else if (status === 404 || status === 410) {
+          expired = true;
+        } else if (status !== 200 && status !== 201) {
+          failure = Object.assign(new Error(`Chunk upload failed (${ status })`), { status });
+        }
+      }
+    };
+    const count = Math.min(MAX_CONCURRENT_CHUNK_UPLOADS, missing.length);
+    await Promise.all(Array.from({length:count}, () => worker()));
+    if (failure) throw failure;
+    return expired;
   }
 
   async queueCommit(sync:SyncRow, session:UploadSession | UploadSession[], root:Uint8Array, batch?:RecursiveDeleteMetadata):Promise<void> {
