@@ -425,6 +425,9 @@ class FilesApi:
     def _read_to_file_sync(self, file_id, file):
         with TRANSFER_SEMAPHORE:
             _, headers, _ = self._request(f"/v1/fuse/files/{file_id}/content", sink=file)
+        # FUSE reads use os.pread on fileno(), bypassing BufferedRandom's Python buffer.
+        # Flush here so every caller (including merge-after-write) sees the complete stream.
+        file.flush()
         return headers.get("ETag", "").strip('"'), headers.get("X-Sulla-Source-Hash", "")
 
     async def read_to_file(self, file_id, file):
@@ -793,11 +796,12 @@ class SullaFiles(pyfuse3.Operations):
             "actor": await self._actor(ctx),
         }
         if flags & os.O_TRUNC:
+            had_content = self.handles[handle]["size"] > 0
             os.ftruncate(temporary.fileno(), 0)
             self.handles[handle]["size"] = 0
             # Truncating a file that is already empty changes nothing. Marking it dirty made every
             # `echo > newfile` upload an empty "update" version before the real content.
-            self.handles[handle]["dirty"] = self.handles[handle]["size"] > 0
+            self.handles[handle]["dirty"] = had_content
         info = pyfuse3.FileInfo(fh=handle)
         info.keep_cache = False
         info.direct_io = True
