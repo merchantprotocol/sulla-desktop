@@ -81,7 +81,7 @@ describe('OrgFilesKeyring', () => {
       { userId: async () => 'member-1' });
     await keyring.createOrgKeyIfMissing('org-1');
     keyring.onLock();
-    await keyring.getOrgKey('org-1', 1);
-    expect(cloud.wraps.filter(wrap => wrap.recipientUserId === 'member-1')).toHaveLength(1);
+    cloud.wraps = [];
+    await expect(keyring.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
   });
 });
