@@ -6,10 +6,13 @@ import { createHash } from 'crypto';
 import { OrgFilesContract, OrgFilesRecipientKeyPayload, type OrgFilesRecipientKey } from '@sulla/domain';
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { getCurrentUserId } from '../../sullaCloudAuth';
-import { signDeviceMessage } from '../deviceKey';
+import { signDeviceMessageExact } from '../deviceKey';
 import { OrgFilesCloudClient } from './OrgFilesCloudClient';
 
-/** Opaque storage for the per-device recipient private JWK. Production uses FileOrgFilesKeyStore. */
+/** Signing domain for org Files recipient keys. Cloud verifies deviceMessage(ORG_FILES_KEY_DOMAIN, [canonical]). */
+export const ORG_FILES_KEY_DOMAIN = 'org-files-key-v1' as const;
+
+/** Per-device private-key custody. Production uses FileOrgFilesKeyStore in ~/.sulla. */
 export interface OrgFilesVaultKeyStore {
   read(itemKey: string): Promise<JsonWebKey | null>;
   write(itemKey: string, value: JsonWebKey): Promise<void>;
@@ -21,7 +24,8 @@ export class OrgFilesRecipientKeyStore {
     private readonly cloud: Pick<OrgFilesCloudClient, 'publishRecipientKey' | 'recipientKeys'>,
     private readonly crypto: Crypto = globalThis.crypto,
     private readonly identity: () => Promise<{ userId: string; deviceId: string }> = async () => ({ userId: await getCurrentUserId(), deviceId: await getDesktopDeviceId() }),
-    private readonly sign: (payload: string) => Promise<string> = async payload => (await signDeviceMessage('files-sync-v1', [payload])).signature,
+    // Exact framing: Cloud verifies deviceMessage('org-files-key-v1', [canonical]), with no timestamp appended.
+    private readonly sign: (domain: typeof ORG_FILES_KEY_DOMAIN, payload: string) => Promise<string> = (domain, payload) => signDeviceMessageExact(domain, [payload]),
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -34,10 +38,9 @@ export class OrgFilesRecipientKeyStore {
       const pair = await this.crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as CryptoKeyPair;
       privateJwk = await this.crypto.subtle.exportKey('jwk', pair.privateKey);
       await this.vault.write(itemKey, privateJwk);
-      // A concurrent creator may have won an atomic create-if-absent write.
-      // Always publish the public half of the key that is actually durable.
+      // A concurrent creator may have won the atomic create-if-absent write. Publish only the durable key.
       privateJwk = await this.vault.read(itemKey);
-      if (!privateJwk) throw new Error('Org Files recipient key could not be saved to Vault');
+      if (!privateJwk) throw new Error('Org Files recipient key could not be saved locally');
     }
     // A private JWK may be reconstructed only in memory. Public JWK is derived from its x/y coordinates.
     const publicKey: JsonWebKey = { kty: privateJwk.kty, crv: privateJwk.crv, x: privateJwk.x, y: privateJwk.y, ext: true, key_ops: [] };
@@ -46,7 +49,7 @@ export class OrgFilesRecipientKeyStore {
     if (existing?.deviceId === deviceId) return existing;
     const bare = { orgId, userId, deviceId, publicKey, keyId: fingerprint, createdAt: existing?.createdAt ?? this.now() };
     const payload = new OrgFilesRecipientKeyPayload(bare).canonical();
-    const key = new OrgFilesContract().recipientKeyRequest({ key: { ...bare, signature: await this.sign(payload) } }).key;
+    const key = new OrgFilesContract().recipientKeyRequest({ key: { ...bare, signature: await this.sign(ORG_FILES_KEY_DOMAIN, payload) } }).key;
     await this.cloud.publishRecipientKey(orgId, key);
     return key;
   }

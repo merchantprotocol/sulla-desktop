@@ -5,8 +5,7 @@
 
 // Runs the cloud-sync repositories' real SQL against Postgres. Point SULLA_FILES_TEST_DATABASE_URL at a
 // throwaway database (e.g. `docker run --rm -e POSTGRES_PASSWORD=x -p 55432:5432 postgres:16-alpine`).
-// Each run creates and drops its own schema: minimal base tables, then the real cloud-sync migrations
-// 048 (sync state, chunk map, versions, heads, operations), 051 (skips), 052 (info op) and 058 (batches).
+// Each run creates and drops its own schema: minimal base tables, then the real cloud-sync migrations.
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
@@ -18,6 +17,9 @@ import { PgCloudFileHeadRepository } from '../src/Repositories/CloudFileHeadRepo
 import { PgCloudOperationQueueRepository } from '../src/Repositories/CloudOperationQueueRepository.js';
 import { PgCloudPushProgressRepository } from '../src/Repositories/CloudPushProgressRepository.js';
 import { PgCloudSyncStateRepository } from '../src/Repositories/CloudSyncStateRepository.js';
+import { CloudSyncService } from '../src/cloudSync/service.js';
+import { OrgRootKeyCache } from '../src/cloudSync/OrgRootKeyCache.js';
+import { Store } from '../src/store.js';
 import type { SyncHead } from '../src/cloudSync/envelope.js';
 import type { UploadSession } from '../src/cloudSync/repository.js';
 
@@ -52,7 +54,7 @@ describe.skipIf(!databaseUrl)('cloud sync repositories (real Postgres)', () => {
     await pool.query('CREATE TABLE files_protected_files(file_id uuid PRIMARY KEY)');
     await pool.query(`CREATE TABLE file_sync_cursors(collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,device_id TEXT NOT NULL,
       last_seq BIGINT NOT NULL DEFAULT 0,last_push_seq BIGINT NOT NULL DEFAULT 0,PRIMARY KEY(collection_id,device_id))`);
-    for (const name of ['048_cloud_sync.sql', '051_cloud_backup_skips.sql', '052_cloud_sync_collection_info.sql', '058_file_restore_versions.sql']) {
+    for (const name of ['048_cloud_sync.sql', '051_cloud_backup_skips.sql', '052_cloud_sync_collection_info.sql', '058_file_restore_versions.sql', '070_cloud_sync_org_key_status.sql']) {
       await pool.query(migration(name));
     }
   });
@@ -109,6 +111,35 @@ describe.skipIf(!databaseUrl)('cloud sync repositories (real Postgres)', () => {
     expect(await state.canWriteCollection(collectionId)).toBe(true);
     await pool.query("UPDATE collections SET workspace_scope='principal' WHERE id=$1", [collectionId]);
     expect(await state.canWriteCollection(collectionId)).toBe(true);
+  });
+
+  it('enables an enrolled org collection without creating it or queuing escrow', async() => {
+    // risk: key custody and data integrity — org sync must adopt an existing Cloud collection without persisting its root or minting a second collection.
+    const root=Buffer.alloc(32,0x6a);
+    await pool.query("UPDATE collections SET workspace_scope='organization',org_collection_level='edit',org_collection_enrolled=TRUE,root_key_source='org' WHERE id=$1",[collectionId]);
+    expect(await state.enrolledOrgCollection(collectionId)).toBe(true);
+    await state.enableOrgSync(collectionId,4);
+    const sync=await state.sync(collectionId);
+    expect(sync).toMatchObject({enabled:true,keyVersion:4,status:'idle',cloudCreated:true,lastSeq:0,head:null,escrowVaultId:null,escrowVaultEpoch:null,
+      wrappedRoot:{version:1,algorithm:'xchacha20-poly1305',nonce:'org-key-source',ciphertext:'org-key-source'}});
+    expect(await operations.hasOperation(collectionId)).toBe(false);
+    const persisted=(await pool.query('SELECT to_jsonb(c)::text||to_jsonb(s)::text AS text FROM collections c JOIN files_cloud_sync s ON s.collection_id=c.id WHERE c.id=$1',[collectionId])).rows[0].text;
+    expect(persisted).not.toContain(root.toString('base64'));
+    root.fill(0);
+    await state.enableOrgSync(collectionId,4);
+    expect((await state.sync(collectionId))?.keyVersion).toBe(4);
+    await pool.query("UPDATE collections SET org_collection_enrolled=FALSE WHERE id=$1",[collectionId]);
+    await expect(state.enableOrgSync(collectionId,4)).rejects.toMatchObject({status:404});
+  });
+
+  it('marks enabled org sync needs-org-key when advance has no cached root',async()=>{
+    // risk: reliability and key custody — missing org material is a recoverable waiting state, not a failed sync loop.
+    await pool.query("UPDATE collections SET workspace_scope='organization',org_collection_level='edit',org_collection_enrolled=TRUE,root_key_source='org' WHERE id=$1",[collectionId]);
+    await state.enableOrgSync(collectionId,5);
+    const config:any={deviceId:'test-device',userId:'test-user',mode:'desktop',dataRoot:'/tmp/files-org-key-spec'};
+    const service=new CloudSyncService(pool,config,{} as any,new Store('/tmp/files-org-key-spec/chunks'),{execute:async()=>{throw new Error('unexpected Cloud request')}},new OrgRootKeyCache());
+    await (service as any).advance(collectionId);
+    expect((await state.sync(collectionId))?.status).toBe('needs-org-key');
   });
 
   it('sends the folder name again only after a rename', async() => {

@@ -10,7 +10,7 @@ import type { NamespaceOperation } from './namespace.js';
 import type { Envelope } from '../crypto.js';
 import type { SyncHead } from './envelope.js';
 
-export type SyncStatus = 'off' | 'idle' | 'syncing' | 'error' | 'needs-vault';
+export type SyncStatus = 'off' | 'idle' | 'syncing' | 'error' | 'needs-vault' | 'needs-org-key';
 export type CloudOp = 'create' | 'escrow' | 'upload-open' | 'commit' | 'delete' | 'info';
 
 export interface UploadSession {

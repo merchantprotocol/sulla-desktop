@@ -18,29 +18,30 @@ import { DeviceMessage, type DevicePurpose as DomainDevicePurpose } from '@sulla
 import { DesktopDeviceIdentity, desktopDeviceIdentity } from './device/DesktopDeviceIdentity';
 
 /**
- * Slack purpose tags (SLACK-1) match the sulla-workers verifier but are not yet in the vendored domain
- * registry. They use the same framing (tag + parts joined by "\n", no newline inside a part) and are signed
- * with the same device key through `signBytes`. Every other purpose goes through the domain codec unchanged.
+ * Desktop-only purpose tags that are not yet in the vendored domain registry (Slack SLACK-1, Org Files key
+ * recipients). They use the same framing (tag + parts joined by "\n", no newline inside a part) and are signed with
+ * the same device key through `signBytes`. Every other purpose goes through the domain codec unchanged.
  */
-export class SlackDeviceMessage {
+export class LocalDeviceMessage {
   static readonly PURPOSE_TAGS = {
     'slack-inbound-v1':   'sulla-slack-inbound-v1',
     'slack-workspace-v1': 'sulla-slack-workspace-v1',
+    'org-files-key-v1':   'sulla-org-files-key-v1',
   } as const;
 
-  static isSlackPurpose(purpose: string): purpose is SlackDevicePurpose {
-    return Object.hasOwn(SlackDeviceMessage.PURPOSE_TAGS, purpose);
+  static isLocalPurpose(purpose: string): purpose is LocalDevicePurpose {
+    return Object.hasOwn(LocalDeviceMessage.PURPOSE_TAGS, purpose);
   }
 
-  static bytes(purpose: SlackDevicePurpose, parts: ReadonlyArray<string | number>): Buffer {
+  static bytes(purpose: LocalDevicePurpose, parts: ReadonlyArray<string | number>): Buffer {
     const values = parts.map(String);
     if (values.some(value => value.includes('\n'))) throw new TypeError('message parts must not contain newlines');
-    return Buffer.from([SlackDeviceMessage.PURPOSE_TAGS[purpose], ...values].join('\n'), 'utf8');
+    return Buffer.from([LocalDeviceMessage.PURPOSE_TAGS[purpose], ...values].join('\n'), 'utf8');
   }
 }
 
-export type SlackDevicePurpose = keyof typeof SlackDeviceMessage.PURPOSE_TAGS;
-export type DevicePurpose = DomainDevicePurpose | SlackDevicePurpose;
+export type LocalDevicePurpose = keyof typeof LocalDeviceMessage.PURPOSE_TAGS;
+export type DevicePurpose = DomainDevicePurpose | LocalDevicePurpose;
 
 /** Raw 32-byte public key, base64: the format the cloud stores. */
 export async function getDevicePublicKey(): Promise<string> {
@@ -53,21 +54,21 @@ export async function getDeviceKeyFingerprint(): Promise<string> {
 }
 
 export function deviceMessage(purpose: DevicePurpose, parts: (string | number)[]): string {
-  if (SlackDeviceMessage.isSlackPurpose(purpose)) return SlackDeviceMessage.bytes(purpose, parts).toString('utf8');
+  if (LocalDeviceMessage.isLocalPurpose(purpose)) return LocalDeviceMessage.bytes(purpose, parts).toString('utf8');
   return new DeviceMessage(purpose, parts).toString();
 }
 
 /** Sign an already-complete purpose-bound field list (for contracts where ts is not the final field). */
 export async function signDeviceMessageExact(purpose: DevicePurpose, parts: (string | number)[]): Promise<string> {
-  if (SlackDeviceMessage.isSlackPurpose(purpose)) return desktopDeviceIdentity().signBytes(SlackDeviceMessage.bytes(purpose, parts));
+  if (LocalDeviceMessage.isLocalPurpose(purpose)) return desktopDeviceIdentity().signBytes(LocalDeviceMessage.bytes(purpose, parts));
   return desktopDeviceIdentity().signExact(purpose, parts);
 }
 
 /** Sign a purpose-bound message. Returns { ts, signature } (unix seconds, base64). */
 export async function signDeviceMessage(purpose: DevicePurpose, parts: (string | number)[]): Promise<{ ts: number; signature: string }> {
-  if (SlackDeviceMessage.isSlackPurpose(purpose)) {
+  if (LocalDeviceMessage.isLocalPurpose(purpose)) {
     const slackTs = Math.floor(Date.now() / 1000);
-    const bytes = SlackDeviceMessage.bytes(purpose, [...parts, slackTs]);
+    const bytes = LocalDeviceMessage.bytes(purpose, [...parts, slackTs]);
 
     return { ts: slackTs, signature: await desktopDeviceIdentity().signBytes(bytes) };
   }

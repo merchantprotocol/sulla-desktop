@@ -25,7 +25,7 @@ import { PgCloudFolderCoverageStore } from '../Repositories/CloudFolderCoverageR
 import { PgCloudPushCandidateRepository } from '../Repositories/CloudPushCandidateRepository.js';
 import { PgCloudRestoreTargetRepository } from '../Repositories/CloudRestoreTargetRepository.js';
 import { CloudFolderCoverage } from './folderCoverage.js';
-import { CollectionRootKeyProviderSelector, CollectionVaultEscrowPolicy, LocalEscrowRootKeyProvider, OrgRootKeyProvider, type CollectionRootKeyProvider, type OrgCollectionKeySource } from './keyStore.js';
+import { CollectionRootKeyProviderSelector, CollectionVaultEscrowPolicy, LocalEscrowRootKeyProvider, OrgRootKeyProvider, type CollectionRootKeyProvider } from './keyStore.js';
 import { CloudPuller } from './pull.js';
 import { CloudPushOrdering } from './pushOrdering.js';
 import { CloudPusher, sha256Text } from './push.js';
@@ -33,6 +33,9 @@ import { CloudRemoteContent } from './remoteContent.js';
 import { CloudRestore, RestoreError, type RestoreInput } from './restore.js';
 import { CloudStagingStore } from './staging.js';
 import { isUuid } from './validation.js';
+import { OrgRootKeyCache, OrgRootKeyUnavailableError } from './OrgRootKeyCache.js';
+import { OrgCollectionCloudSync } from './OrgCollectionCloudSync.js';
+import { CloudSyncDesktopStatus } from './CloudSyncDesktopStatus.js';
 
 export type { SendStatus } from './CloudSignedResponseHandler.js';
 
@@ -57,6 +60,8 @@ export class CloudSyncService {
   private readonly staging:CloudStagingStore;
   private readonly transport = new EscrowTransportRequests();
   private readonly escrowPolicy:CollectionVaultEscrowPolicy;
+  private readonly orgSync:OrgCollectionCloudSync;
+  private readonly desktopStatus:CloudSyncDesktopStatus;
   private readonly puller:CloudPuller;
   private readonly pusher:CloudPusher;
   private readonly restorer:CloudRestore;
@@ -73,13 +78,15 @@ export class CloudSyncService {
     private readonly keyring:FilesKeyring,
     private readonly store:Store,
     broker:Pick<FilesCloudBroker, 'execute'>,
-    orgKeySource:OrgCollectionKeySource = { get:async() => { throw new Error('organization collection key source is not configured') } },
+    readonly orgRootKeys:OrgRootKeyCache = new OrgRootKeyCache(),
   ) {
     this.cryptoModule = configureCryptoModule();
     this.api = new FilesSyncCloudApi(broker);
     // A live actor, never a copy of config.userId: Vault unlock re-owns Files after this is built.
     this.repositories = new CloudSyncRepositories(db, new CloudSyncActor(config));
-    this.roots = new CollectionRootKeyProviderSelector(this.repositories.state, new LocalEscrowRootKeyProvider(keyring), new OrgRootKeyProvider(orgKeySource));
+    this.orgSync=new OrgCollectionCloudSync(this.repositories.state,this.orgRootKeys,collectionId=>{this.lastPullAt.delete(collectionId);this.nudge()});
+    this.desktopStatus=new CloudSyncDesktopStatus(this.cryptoModule,this.repositories.catalog);
+    this.roots = new CollectionRootKeyProviderSelector(this.repositories.state, new LocalEscrowRootKeyProvider(keyring), new OrgRootKeyProvider(this.orgRootKeys));
     this.escrowPolicy = new CollectionVaultEscrowPolicy(this.repositories.state);
     this.staging = new CloudStagingStore(config.dataRoot);
     this.puller = new CloudPuller(this.api, this.repositories.pull, new CloudRemoteContent(db, this.api, keyring, store), config.deviceId.slice(0, 12));
@@ -106,26 +113,8 @@ export class CloudSyncService {
     this.scheduler.stop();
   }
 
-  // ---- §5.1 desktop-control API ----
-
-  finderBadges(collectionId:string) { return this.repositories.catalog.finderBadges(collectionId) }
-
-  async status() {
-    const rows = await this.repositories.catalog.statusRows();
-    return {
-      cryptoModule: this.cryptoModule,
-      collections: rows.map(row => ({
-        collectionId: row.collection_id,
-        name: row.name,
-        enabled: Boolean(row.enabled),
-        status: row.status,
-        lastSyncAt: row.last_sync_at ?? null,
-        pendingBytes: Number(row.pending_bytes),
-        conflicts: Number(row.conflicts),
-        lastError: row.last_error ?? null,
-      })),
-    };
-  }
+  finderBadges(collectionId:string) { return this.desktopStatus.finderBadges(collectionId) }
+  status() { return this.desktopStatus.status() }
 
   /** Human-only (main enforces the guard). On: queue `create` once the vault escrow key arrives. Off: pause, delete nothing. */
   async enable(collectionId:string, enabled:boolean):Promise<{ enabled:boolean }> {
@@ -169,6 +158,18 @@ export class CloudSyncService {
     if(collectionId) await this.escrowPolicy.assertAllowed(collectionId);
     return this.transport.issue();
   }
+
+  requestOrgRootTransport():Promise<{requestId:string;recipientPublicKey:string}> { return this.orgSync.requestTransport() }
+
+  async installOrgRoot(input:{collectionId:string;requestId:string;keyVersion:number;transport:TransportEnvelope}):Promise<void> {
+    return this.orgSync.installRoot(input);
+  }
+
+  async enableOrgSync(collectionId:string,keyVersion:number,_head?:string|null):Promise<{enabled:boolean}> {
+    return this.orgSync.enable(collectionId,keyVersion,_head);
+  }
+
+  clearOrgRootKeys(collectionId?:string):void { this.orgRootKeys.clear(collectionId) }
 
   /**
    * Unwraps EK with the single-use pair it issued, seals each pending collection's
@@ -244,8 +245,6 @@ export class CloudSyncService {
     });
   }
 
-  // ---- §6.1 restore ----
-
   async cloudCollections() {
     const remote = await this.api.listCollections();
     const local = await this.repositories.catalog.localCollectionIds(remote.map(entry => String(entry?.id ?? '')));
@@ -306,8 +305,6 @@ export class CloudSyncService {
     }
   }
 
-  // ---- background bearer work ----
-
   private nudge():void {
     this.scheduler.nudge();
   }
@@ -334,7 +331,12 @@ export class CloudSyncService {
     const sync = await this.repositories.state.sync(collectionId);
     if (!sync?.enabled || !sync.wrappedRoot || !sync.cloudCreated) return;
     if (await this.repositories.operations.hasOperation(collectionId)) return;
-    const root = await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot);
+    let root:Buffer;
+    try { root=await this.roots.unwrap(collectionId, sync.keyVersion, sync.wrappedRoot) }
+    catch(error) {
+      if(error instanceof OrgRootKeyUnavailableError) { await this.repositories.state.setOrgKeyMissing(collectionId); return }
+      throw error;
+    }
     try {
       const lastPull = this.lastPullAt.get(collectionId) ?? 0;
       let current = sync;

@@ -46,6 +46,30 @@ export class PgCloudSyncStateRepository {
     return (await this.db.query('SELECT root_key_source FROM collections WHERE id=$1',[collectionId])).rows[0]?.root_key_source;
   }
 
+  async enrolledOrgCollection(collectionId:string):Promise<boolean> {
+    const row=(await this.db.query(`SELECT 1 FROM collections WHERE id=$1 AND workspace_scope='organization' AND root_key_source='org' AND org_collection_enrolled=TRUE`,[collectionId])).rows[0];
+    return Boolean(row);
+  }
+
+  async enableOrgSync(collectionId:string,keyVersion:number):Promise<void> {
+    await this.transactions.run('cloud-sync-metadata',async client=>{
+      const row=(await client.query(`SELECT s.key_version,s.cloud_created,c.root_key_source,c.workspace_scope,c.org_collection_enrolled FROM collections c LEFT JOIN files_cloud_sync s ON s.collection_id=c.id WHERE c.id=$1 FOR UPDATE OF c`,[collectionId])).rows[0];
+      if(!row||row.root_key_source!=='org'||row.workspace_scope!=='organization'||row.org_collection_enrolled!==true) throw Object.assign(new Error('organization collection not found'),{status:404});
+      if(row.cloud_created&&Number(row.key_version)===keyVersion) {
+        await client.query(`UPDATE files_cloud_sync SET enabled=TRUE,status=CASE WHEN status='needs-org-key' THEN 'idle' ELSE status END,last_error=NULL,updated_at=NOW() WHERE collection_id=$1`,[collectionId]);
+      } else {
+        await client.query(`INSERT INTO files_cloud_sync(collection_id,enabled,key_version,wrapped_root,last_seq,head,status,cloud_created,escrow_vault_id,escrow_vault_epoch)
+          VALUES($1,TRUE,$2,'{"version":1,"algorithm":"xchacha20-poly1305","nonce":"org-key-source","ciphertext":"org-key-source"}'::jsonb,0,NULL,'idle',TRUE,NULL,NULL)
+          ON CONFLICT(collection_id) DO UPDATE SET enabled=TRUE,key_version=EXCLUDED.key_version,wrapped_root=EXCLUDED.wrapped_root,last_seq=0,head=NULL,status='idle',cloud_created=TRUE,escrow_vault_id=NULL,escrow_vault_epoch=NULL,upload_session=NULL,last_error=NULL,updated_at=NOW()`,[collectionId,keyVersion]);
+      }
+      await client.query("INSERT INTO file_sync_cursors(collection_id,device_id) VALUES($1,'cloud') ON CONFLICT DO NOTHING",[collectionId]);
+    });
+  }
+
+  async setOrgKeyMissing(collectionId:string):Promise<void> {
+    await this.db.query("UPDATE files_cloud_sync SET status='needs-org-key',last_error=NULL,updated_at=NOW() WHERE collection_id=$1 AND enabled=TRUE",[collectionId]);
+  }
+
   async canWriteCollection(collectionId:string):Promise<boolean> {
     const row=(await this.db.query(`SELECT workspace_scope,org_collection_level,org_collection_enrolled FROM collections WHERE id=$1`,[collectionId])).rows[0];
     if(!row) return false;

@@ -48,6 +48,7 @@ import { FilesCloudChunkSource } from './cloudSync/chunkSource.js';
 import { FilesSyncCloudApi } from './cloudSync/cloudApi.js';
 import { CloudRootKeyStore } from './cloudSync/keyStore.js';
 import { CloudSyncService } from './cloudSync/service.js';
+import { OrgRootKeyCache } from './cloudSync/OrgRootKeyCache.js';
 
 /** The long-lived services the Files process composes before it serves the API. */
 interface FilesServices {
@@ -214,7 +215,8 @@ export class FilesProcess {
         return keyRecovery.recoverDeviceMaster(master, principalId);
       }
       : undefined;
-    const lifecycle = new FilesLifecycle(db, config, keyring, { initialize: reportStage => this.initialize(db, config, services, reportStage), stop: () => this.lock(services), recover });
+    const orgRootKeys=new OrgRootKeyCache();
+    const lifecycle = new FilesLifecycle(db, config, keyring, { initialize: reportStage => this.initialize(db, config, services, reportStage), stop: async()=>{orgRootKeys.clear();await this.lock(services)}, recover });
     const bootstrapAuthority = config.mode === 'desktop'
       ? new FilesBootstrapAuthority(
         config.bootstrapServiceId ?? 'sulla-desktop-files-bootstrap',
@@ -223,7 +225,7 @@ export class FilesProcess {
       )
       : undefined;
     const cloudSync = cloudBroker && config.keyring instanceof FilesKeyring
-      ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker)
+      ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker, orgRootKeys)
       : undefined;
     if (chunkStore instanceof CachingStore) await chunkStore.start();
     const app = new FilesApplication({ db, config, manager, search, residency, filesLifecycle: lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync }).build();
