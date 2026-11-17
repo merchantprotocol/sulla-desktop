@@ -30,6 +30,7 @@ export class CloudSyncRoutes {
     const runner = this.runner;
     this.route(app, 'status', () => runner.status());
     this.route(app, 'pull', request => runner.pull(this.deviceId(request)));
+    this.route(app, 'wait', request => runner.waitForRemoteChange(this.deviceId(request), Number(request.body?.waitMs ?? 25_000)));
     this.route(app, 'prepare', request => {
       const op = request.body?.op as SyncOp;
       if (!this.ops.has(op)) throw new CloudSyncError('invalid_operation', 400, 'Unknown sync operation');

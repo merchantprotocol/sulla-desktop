@@ -59,6 +59,7 @@ class VaultSyncV3Impl {
   private lastCounts = { pushed: 0, pulled: 0 };
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private remoteWatchEpoch = 0;
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private dirtyObservedAt: number | null = null;
   private inFlight: Promise<VaultSyncStatus> | null = null;
@@ -73,6 +74,8 @@ class VaultSyncV3Impl {
       this.syncIfEnabled().catch(() => undefined);
     }, RECONCILE_MS);
     this.pollTimer = setInterval(() => { this.pushIfDirty().catch(() => undefined) }, POLL_MS);
+    const watchEpoch = ++this.remoteWatchEpoch;
+    this.watchRemoteChanges(watchEpoch).catch(() => undefined);
     this.reconcileTimer.unref?.();
     this.pollTimer.unref?.();
     this.syncIfEnabled().catch(() => undefined);
@@ -86,7 +89,32 @@ class VaultSyncV3Impl {
     if (this.debounce) clearTimeout(this.debounce);
     this.reconcileTimer = this.pollTimer = this.debounce = null;
     this.dirtyObservedAt = null;
+    this.remoteWatchEpoch++;
     this.health.setRunning(false);
+  }
+
+  private async watchRemoteChanges(epoch: number): Promise<void> {
+    while (epoch === this.remoteWatchEpoch) {
+      try {
+        const prefs = await getCloudPreferences().catch(() => null);
+        if (epoch !== this.remoteWatchEpoch) return;
+        if (!prefs?.enabled || !prefs.vault || !await isCloudSignedIn()) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+        const who = await this.identity();
+        if (!who) continue;
+        const waiting = await VaultSyncContainer.wait(who.deviceId);
+        if (waiting.changed) {
+          const seenAt = Date.now();
+          console.log('[VaultSyncV3] remote_change_seen');
+          const result = await this.syncNow();
+          if (!result.lastError) console.log(`[VaultSyncV3] remote_change_seen_to_applied_ms=${Date.now() - seenAt}`);
+        }
+      } catch {
+        if (epoch === this.remoteWatchEpoch) await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
   }
 
   getStatus(): VaultSyncStatus[] {

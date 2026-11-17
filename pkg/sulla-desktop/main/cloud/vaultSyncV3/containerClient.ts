@@ -67,6 +67,7 @@ async function call<T>(path: string, body: Record<string, unknown> = {}): Promis
 export const VaultSyncContainer = {
   status: () => call<LocalSyncStatus>('status'),
   pull:   (deviceId: string) => call<{ applied: number; conflictCopies: number; headSeq: number; syncPaused?: boolean; cloudMissing?: boolean }>('pull', { deviceId }),
+  wait:   (deviceId: string, waitMs = 25_000) => call<{ revision: number; changed: boolean }>('wait', { deviceId, waitMs }),
   prepare: (op: SyncOp, deviceId: string) => call<PreparedSync | { idle: true }>('prepare', { op, deviceId }),
   send:   (handle: string, ts: number, signature: string) => call<{ ok: boolean; status: number; error?: string; detail?: any }>('send', { handle, ts, signature }),
   heldList:    () => call<{ held: HeldPolicyChange[] }>('held/list'),
