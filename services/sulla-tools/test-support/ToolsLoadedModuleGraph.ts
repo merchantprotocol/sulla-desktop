@@ -75,14 +75,31 @@ export class ToolsLoadedModuleGraph {
     return Object.keys(metafile.inputs).sort();
   }
 
-  /** Loaded inputs under the Desktop trees the Tools image never copies. Each one is a load-time crash. */
+  /** Loaded inputs under the Desktop trees the Tools image never copies, through any import kind (lazy included). */
   async sensitiveInputs(): Promise<string[]> {
     return (await this.loadedInputs()).filter(input => this.isSensitive(input));
   }
 
-  /** Sensitive inputs that are not explained by the allowlist. Empty means the image loads no such module. */
-  async violations(): Promise<string[]> {
-    return (await this.sensitiveInputs()).filter(input => !(input in TYPE_ONLY_ALLOWLIST));
+  /**
+   * Startup violations: Desktop-only inputs reachable from the entrypoints through static `import` statements
+   * only. Lazy `require()` and `import()` edges are not followed, because they run when a tool runs, not when
+   * the container starts. Empty means the container's startup closure loads no Desktop-only module.
+   */
+  async startupViolations(): Promise<string[]> {
+    const metafile = await this.analyse();
+    const reached = new Set<string>(this.entrypoints);
+    const queue = [...reached];
+    for (let index = 0; index < queue.length; index++) {
+      for (const imported of metafile.inputs[queue[index]]?.imports ?? []) {
+        if (imported.kind !== 'import-statement') continue;
+        if (!(imported.path in metafile.inputs) || reached.has(imported.path)) continue;
+        reached.add(imported.path);
+        queue.push(imported.path);
+      }
+    }
+    return [...reached]
+      .filter(input => this.isSensitive(input) && !(input in TYPE_ONLY_ALLOWLIST))
+      .sort();
   }
 
   /** Shortest load chain from an entrypoint to `input` (inclusive), or [] when the input is not loaded. */
