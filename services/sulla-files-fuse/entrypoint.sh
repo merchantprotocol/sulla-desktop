@@ -87,6 +87,7 @@ shutdown() {
 trap shutdown TERM INT
 
 while :; do
+  daemon_started=$(date +%s)
   emit daemon-exec ",\"url\":\"${SULLA_FILES_FUSE_URL:-https://sulla_files:8792}\""
   python3 /usr/local/libexec/sulla-files-fuse.py \
     --url "${SULLA_FILES_FUSE_URL:-https://sulla_files:8792}" \
@@ -98,6 +99,8 @@ while :; do
   [ "$stopping" -eq 1 ] && exit 0
   [ "$daemon_status" -eq 0 ] && exit 0
 
+  # A daemon that ran for a minute was healthy: a crash after that restarts at the base backoff, not the grown one.
+  if [ $(( $(date +%s) - daemon_started )) -ge 60 ]; then backoff=2; fi
   emit daemon-restart ",\"exitCode\":$daemon_status,\"backoffSeconds\":$backoff"
   status restarting ",\"exitCode\":$daemon_status,\"backoffSeconds\":$backoff"
   fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || true
