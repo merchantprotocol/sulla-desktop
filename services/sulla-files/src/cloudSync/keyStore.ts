@@ -67,7 +67,7 @@ export interface OrgCollectionKeySource { get(collectionId:string,keyVersion:num
 export class OrgRootKeyProvider implements CollectionRootKeyProvider {
   constructor(private readonly source:OrgCollectionKeySource) {}
   async create(collectionId:string,keyVersion:number):Promise<{root:Buffer;wrapped:Envelope}> {
-    const root=Buffer.from(await this.source.get(collectionId,keyVersion));
+    const supplied=await this.source.get(collectionId,keyVersion); const root=Buffer.isBuffer(supplied)?supplied:Buffer.from(supplied);
     if(root.length!==32) { root.fill(0); throw new Error('Invalid organization root key') }
     return {root,wrapped:await this.wrap(collectionId,keyVersion,root)};
   }
@@ -77,7 +77,7 @@ export class OrgRootKeyProvider implements CollectionRootKeyProvider {
     return {version:1,algorithm:'xchacha20-poly1305',nonce:'org-key-source',ciphertext:'org-key-source'};
   }
   async unwrap(collectionId:string,keyVersion:number,_wrapped:Envelope):Promise<Buffer> {
-    const root=Buffer.from(await this.source.get(collectionId,keyVersion));
+    const supplied=await this.source.get(collectionId,keyVersion); const root=Buffer.isBuffer(supplied)?supplied:Buffer.from(supplied);
     if(root.length!==32) { root.fill(0); throw new Error('Invalid organization root key') }
     return root;
   }

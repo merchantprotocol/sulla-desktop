@@ -303,7 +303,7 @@ export class FilesApplication {
     new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 
     const collectionSync = new CollectionSyncRoutes(db, accessGate, new CollectionSyncRepository(db, FILE_ROW_JSON_SQL));
-    new OrgCollectionRoutes(config, new OrgCollectionEnrollment(new OrgCollectionEnrollmentRepository(db), config)).register(app);
+    new OrgCollectionRoutes(config, new OrgCollectionEnrollment(new OrgCollectionEnrollmentRepository(db), config), this.dependencies.cloudSync).register(app);
     collectionSync.registerListing(app);
     const agentFiles = new AgentFileRoutes(db, config, store, accessGate, new AgentFileRepository(db, FILE_COLUMNS_SQL), requestAudit);
     agentFiles.registerQuery(app);
