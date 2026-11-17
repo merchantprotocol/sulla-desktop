@@ -36,10 +36,12 @@ import { isUuid } from './validation.js';
 import { OrgRootKeyCache, OrgRootKeyUnavailableError } from './OrgRootKeyCache.js';
 import { OrgCollectionCloudSync } from './OrgCollectionCloudSync.js';
 import { CloudSyncDesktopStatus } from './CloudSyncDesktopStatus.js';
+import { CloudSyncCommitWakeup } from './CloudSyncCommitWakeup.js';
 
 export type { SendStatus } from './CloudSignedResponseHandler.js';
 
 const BASE = '/files-sync/v1';
+// A short safety pass keeps missed wakeups bounded; committed versions explicitly nudge below.
 const LOOP_MS = 10_000;
 const PULL_INTERVAL_MS = 60_000;
 const PREPARE_WAIT_MS = 5_000;
@@ -71,6 +73,13 @@ export class CloudSyncService {
   private readonly locks = new CollectionLocks();
   private readonly scheduler = new CloudSyncScheduler(() => this.runLoop(), LOOP_MS);
   private readonly lastPullAt = new Map<string, number>();
+  private readonly localCommitAt = new Map<string, number>();
+  private readonly commitWakeup = new CloudSyncCommitWakeup((collectionId, committedAt) => {
+    this.localCommitAt.set(collectionId, committedAt);
+    console.info(`[SullaFilesSync] local_commit_at=${new Date(committedAt).toISOString()} push_started_at=${new Date().toISOString()}`);
+    this.lastPullAt.delete(collectionId);
+    this.nudge();
+  });
 
   constructor(
     private readonly db:pg.Pool,
@@ -111,6 +120,21 @@ export class CloudSyncService {
 
   stop():void {
     this.scheduler.stop();
+    this.commitWakeup.close();
+  }
+
+  /** Called after a version is inserted; debounce until its surrounding transaction commits. */
+  versionCommitted(collectionId:string):void {
+    this.commitWakeup.notify(collectionId);
+  }
+
+  /** Authenticated desktop LiveEvents wake: bypass pull throttling for this collection. Collections this Desktop doesn't sync (foreign org events) are ignored. */
+  async pullSoon(collectionId:string):Promise<boolean> {
+    if (!isUuid(collectionId)) throw new HttpStatusError(400, 'invalid collectionId');
+    if (!await this.repositories.state.sync(collectionId)) return false;
+    this.lastPullAt.delete(collectionId);
+    this.nudge();
+    return true;
   }
 
   finderBadges(collectionId:string) { return this.desktopStatus.finderBadges(collectionId) }
@@ -241,7 +265,15 @@ export class CloudSyncService {
       } catch (error) {
         return this.responses.failed(current, CloudSyncErrorText.safe(error), undefined);
       }
-      return this.responses.handleResponse(current, response.status, response.body, response.headers);
+      const result = await this.responses.handleResponse(current, response.status, response.body, response.headers);
+      if (result.status === 'sent' && current.op === 'commit') {
+        const startedAt = this.localCommitAt.get(operation.collectionId);
+        if (startedAt !== undefined) {
+          console.info(`[SullaFilesSync] cloud_confirmed_at=${new Date().toISOString()} commit_to_cloud_ms=${Date.now() - startedAt}`);
+          this.localCommitAt.delete(operation.collectionId);
+        }
+      }
+      return result;
     });
   }
 

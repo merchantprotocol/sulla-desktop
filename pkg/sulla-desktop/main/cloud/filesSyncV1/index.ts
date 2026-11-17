@@ -44,6 +44,7 @@ class FilesSyncV1Impl {
   restart():void { this.stop(); this.start() }
   stop():void { this.stopped=true; this.health.setRunning(false); if(this.timer) clearTimeout(this.timer); this.timer=null }
   wake():void { if(!this.stopped) this.schedule(0) }
+  async pullSoon(collectionId:string):Promise<void> { if(this.stopped)return; await FilesSyncContainer.pullSoon(collectionId); this.wake() }
   /** Called when the network returns: the next attempt should not wait out a long offline backoff. */
   resetBackoff():void { this.backoff=1_000 }
   async status():Promise<FilesSyncStatus & {driverHealth:ReturnType<SyncDriverHealth['snapshot']>}> { return {...await FilesSyncContainer.status(),driverHealth:this.health.snapshot()} }

@@ -40,6 +40,7 @@ async function vaultJson<T>(path:string, body:Record<string,unknown>):Promise<T>
 }
 export const FilesSyncContainer={
   status:()=>filesJson<FilesSyncStatus>('/v1/desktop/cloud-sync/status'),
+  pullSoon:(collectionId:string)=>filesJson<{queued:boolean}>(`/v1/desktop/cloud-sync/collections/${encodeURIComponent(collectionId)}/pull`,{method:'POST'}),
   enable:(collectionId:string,enabled:boolean)=>filesJson<void>(`/v1/desktop/cloud-sync/collections/${encodeURIComponent(collectionId)}/enable`,{method:'POST',body:JSON.stringify({enabled})}),
   deleteCloudCopy:(collectionId:string)=>filesJson<void>(`/v1/desktop/cloud-sync/collections/${encodeURIComponent(collectionId)}/delete-cloud-copy`,{method:'POST'}),
   prepare:()=>filesJson<PreparedFilesSync|null>('/v1/desktop/cloud-sync/prepare',{method:'POST'}),

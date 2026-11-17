@@ -51,7 +51,7 @@ export class CloudSyncScheduler {
   }
 
   nudge():void {
-    this.schedule(0);
+    void this.kick();
   }
 
   /** Starts a pass now (or marks the running one to repeat) and returns it. */

@@ -235,6 +235,7 @@ export class FilesProcess {
     const cloudSync = cloudBroker && config.keyring instanceof FilesKeyring
       ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker, orgRootKeys)
       : undefined;
+    if (manager && cloudSync) manager.setCloudCommitWakeup(collectionId => cloudSync.versionCommitted(collectionId));
     if (chunkStore instanceof CachingStore) await chunkStore.start();
     const app = new FilesApplication({ db, config, manager, search, residency, filesLifecycle: lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync, profileCaches }).build();
     const memoryTelemetry = new MemoryTelemetry(() => ({

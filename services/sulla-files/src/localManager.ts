@@ -94,6 +94,7 @@ export class LocalFilesManager {
   private readonly custody:NativeCustody;
   private readonly mount:TrackedFuseMount;
   private readonly ingestor:WatchedFileIngestor;
+  private onVersionCommitted?:(collectionId:string)=>void;
   private readonly scanner:NativeRootScanner;
   private get nativeJournal():NativeOperationJournal { return this.custody.journal }
 
@@ -164,7 +165,7 @@ export class LocalFilesManager {
     this.legacySync = new LegacyFolderSync(db, config, this.store, this.roots, this.rootCollections, this.progress, remote, new LegacySyncRepository(db), this.puller, transactions,
       this.collectionPolicyRepository, { homeCollectionId: () => this.collectionId, rootFor });
     this.catalog = new TrackedRootCatalog(db, config, this.roots, this.rootCollections, this.rootRepository);
-    this.ingestor = new WatchedFileIngestor(db, config, this.store, indexer);
+    this.ingestor = new WatchedFileIngestor(db, config, this.store, indexer, undefined, undefined, undefined, collectionId => this.onVersionCommitted?.(collectionId));
     this.scanner = new NativeRootScanner(config, this.roots, this.rootCollections, new WatchedFolderRepository(db), this.ingestor, this.progress);
     this.files = new TrackedFileRepository(db);
     this.custody = new NativeCustody(db, config, this.store, this.roots, this.rootCollections, this.rootMutations, this.files, (pinned, hash) => this.recovery.verifyPinned(pinned, hash));
@@ -172,6 +173,8 @@ export class LocalFilesManager {
       rootIn: collectionId => this.roots.find(candidate => this.rootCollections.get(candidate.id) === collectionId), rootFor: collectionId => this.rootForCollection(collectionId) });
     this.nativeSources = new NativeSourceOperations(db, { serial: operation => this.serial(operation), fuseRow: fileId => this.fuseRow(fileId) });
   }
+
+  setCloudCommitWakeup(wakeup:(collectionId:string)=>void):void { this.onVersionCommitted=wakeup }
 
   async initialize(beforeScan?:()=>Promise<void>):Promise<void> {
     this.stopped = false;

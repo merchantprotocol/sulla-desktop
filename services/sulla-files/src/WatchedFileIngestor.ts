@@ -35,6 +35,7 @@ export class WatchedFileIngestor {
     private readonly repository = new WatchedFolderRepository(db),
     private readonly chunkRegistry = new ManifestChunkRegistry(),
     private readonly transactions = new TransactionRunner(db),
+    private readonly onVersionCommitted?:(collectionId:string)=>void,
   ) {}
 
   /**
@@ -79,7 +80,7 @@ export class WatchedFileIngestor {
       await this.repository.upsertState(client, { collectionId, path: filePath, fileId, contentHash, size: total, mtimeMs, rootId: root.id });
       return { fileId, versionId };
     });
-    this.indexer?.wake(); if (renameFrom) missing.delete(contentHash);
+    this.indexer?.wake(); this.onVersionCommitted?.(collectionId); if (renameFrom) missing.delete(contentHash);
     if (root.primary && filePath.startsWith('Recordings/') && mime(filePath).startsWith('video/') && !/-(?:camera|mic|system-audio)\.[^/]+$/i.test(filePath)) {
       await this.repository.queueRecordingEnrichment(fileId, versionId).catch(error => console.warn('[SullaFiles] recording enrichment hook unavailable:', error));
     }
