@@ -75,7 +75,7 @@ function cancelTitle(): void {
   height: 52px; padding: 0 20px;
   /* Same treatment as the browser tab's toolbar (BrowserTab.vue .browser-toolbar). */
   border-bottom: 1px solid var(--border-default);
-  background: var(--bg-surface-alt);
+  background: var(--bg-chrome-active);
   backdrop-filter: blur(12px);
   font-family: var(--font-body);
 }

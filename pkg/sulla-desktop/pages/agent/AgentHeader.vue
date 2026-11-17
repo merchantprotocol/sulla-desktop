@@ -2042,7 +2042,7 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
 .app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
 .app-titlebar .tab-active .tab-activity-dot,
-.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface); }
+.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-chrome-active); }
 .app-titlebar .tab-inactive .tab-activity-dot { box-shadow: none; }
 .app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
 .app-titlebar .tab-active,
@@ -2053,7 +2053,7 @@ function handleTabContextMenuAction(
   border: 1px solid var(--border-default);
   border-bottom: 0;
   border-radius: 9px 9px 0 0;
-  background: var(--bg-surface);
+  background: var(--bg-chrome-active);
   box-shadow: none;
   color: var(--text-primary);
   font-weight: 600;
@@ -2062,7 +2062,7 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-active {
   border: 1px solid var(--border-default);
   border-bottom: 0;
-  background: var(--bg-surface);
+  background: var(--bg-chrome-active);
   box-sizing: border-box;
 }
 .app-titlebar .tab-accent-bar {
@@ -2087,7 +2087,7 @@ function handleTabContextMenuAction(
   width: 10px;
   height: 10px;
   pointer-events: none;
-  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-surface) 10.5px);
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-chrome-active) 10.5px);
   display: block;
 }
 .app-titlebar .tab-active::before { left: -10px; }

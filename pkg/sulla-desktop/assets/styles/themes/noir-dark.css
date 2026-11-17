@@ -53,6 +53,8 @@
   --bg-page: #01030a;            /* Level 0 — deepest page background */
   --bg-surface: #070d1a;         /* Level 100 — cards, panels, sidebar */
   --bg-surface-alt: #03060c;     /* Level 200 — nested panels, terminal bars */
+  /* Chat header, browser toolbar and active tab share this; lighter than the titlebar and rail. */
+  --bg-chrome-active: var(--bg-surface);
   --bg-chrome: #111a2b;          /* header, traffic-light corner and icon rail; must contrast with --bg-surface (active tab) */
   --bg-surface-hover: #070d1a;   /* Level 300 — hover, active, elevated */
   --bg-elevated: #070d1a;        /* Level 300 — modals, dropdowns, popovers */

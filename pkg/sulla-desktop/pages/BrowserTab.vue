@@ -1224,7 +1224,7 @@ onUnmounted(() => {
 
 <style scoped>
 .browser-toolbar {
-  background-color: var(--bg-surface-alt);
+  background-color: var(--bg-chrome-active);
   border-bottom: 1px solid var(--border-default);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   position: relative;
