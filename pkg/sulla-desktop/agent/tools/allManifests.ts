@@ -9,6 +9,7 @@
 import { agentToolManifests } from './agents/manifests';
 import { applescriptToolManifests } from './applescript/manifests';
 import { bookmarkToolManifests } from './bookmarks/manifests';
+import { budgetToolManifests } from './budget/manifests';
 import { bridgeToolManifests } from './bridge/manifests';
 import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
@@ -49,6 +50,7 @@ export const allToolManifests: ToolManifest[] = [
   ...agentToolManifests,
   ...applescriptToolManifests,
   ...bookmarkToolManifests,
+  ...budgetToolManifests,
   ...bridgeToolManifests,
   ...browserToolManifests,
   ...calendarToolManifests,

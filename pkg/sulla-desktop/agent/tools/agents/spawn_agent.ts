@@ -61,6 +61,8 @@ import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { DelegatedTurnPreparer } from '../../services/DelegatedTurnPreparer';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
 import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
+import { budgetPolicyService } from '../../services/BudgetPolicyService';
+import { budgetWorkerAdmission } from '../../services/BudgetWorkerAdmission';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 
@@ -859,12 +861,15 @@ export class SpawnAgentWorker extends BaseTool {
     const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
     const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || taskAgentSelector(task) || `task-${ index }`;
-      return taskRunner.run({
+      const run = () => taskRunner.run({
         task: jobTasks[index],
         taskIndex: index,
         threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
         generation: jobTasks[index].generation ?? 1,
       });
+      return budgetPolicyService.read().then(policy => policy?.machine?.max_concurrent_workers === undefined
+        ? run()
+        : budgetWorkerAdmission.run(policy.machine.max_concurrent_workers, run));
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────
@@ -949,11 +954,21 @@ export class SpawnAgentWorker extends BaseTool {
         })
         .finally(async() => { stopDeadRunWatch(); });
 
+      const policy = await budgetPolicyService.read();
+      const jobs = await getAllJobs();
+      const running = jobs.filter(item => item.visibility !== 'tab').reduce((total, item) => total + item.tasks.filter(child => child.status === 'running').length, 0);
+      const provider = tasks[0]?.provider?.trim() || (tasks[0]?.agentId ? (await agentDefinitionService.findBySlug(tasks[0].agentId))?.provider : undefined);
+      const providerPolicy = provider ? policy?.providers?.[provider] : undefined;
+      const warning = providerPolicy?.pace === 'hard-conserve'
+        ? `Budgeter warning: ${ provider } is hard-conserve. ${ providerPolicy.advice ?? 'Avoid new work on this provider.' } Explicit provider/model requests are not rerouted.`
+        : undefined;
       const response = {
         mode:      'async',
         jobId:     job.jobId,
         taskCount: tasks.length,
         parallel,
+        budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: providerPolicy?.pace ?? null },
+        ...(warning ? { warning } : {}),
         message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
       };
       return this.response(response);
