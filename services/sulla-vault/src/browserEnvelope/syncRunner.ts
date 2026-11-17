@@ -95,6 +95,7 @@ function responseBody(body: unknown): any {
 }
 
 export class CloudVaultSyncRunner {
+  private readonly db: Database;
   private readonly repos: CloudSyncRepositories;
   private envelope: DomainVaultSyncCodec | null = null;
   private readonly pending = new Map<string, PendingSend>();
@@ -104,13 +105,17 @@ export class CloudVaultSyncRunner {
   private readonly remoteItems = new RemoteItemParser();
 
   constructor(
-    private readonly db: Database,
+    db: Database,
     private readonly authority: CloudSyncAuthority,
     private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
     repos?: CloudSyncRepositories,
     private readonly headChainLinkPolicy: HeadChainLinkPolicy = new HeadChainLinkPolicy(),
     private readonly commitBudget: DesktopSyncCommitBudget = new DesktopSyncCommitBudget(),
-  ) { this.repos = repos ?? new VaultRepositories(new VaultProfileSessionFactory(db, false).legacy()).cloudSync; }
+  ) {
+    const session = new VaultProfileSessionFactory(db, false).legacy();
+    this.db = session.database;
+    this.repos = repos ?? new VaultRepositories(session).cloudSync;
+  }
 
   private async env() {
     this.envelope ??= await this.codecProvider.get();
