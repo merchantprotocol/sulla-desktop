@@ -24,8 +24,17 @@ type Captured = { path: string; init: RequestInit };
 class RecordingLinkWorker extends FilesLinkWorker {
   calls: Captured[] = [];
   constructor(private readonly status: number = 201, private readonly body: unknown = { public_url: 'https://sulla.example/s/abc' }) { super() }
+  protected override async containerJson<T = any>(path: string, _input: unknown): Promise<T> {
+    if (path === '/v1/agent-files/file-1') return { file: { collection_id: 'collection-1' } } as T;
+    throw new Error(`Unexpected API call ${ path }`);
+  }
   protected override async containerRequest(path: string, _input: unknown, init: RequestInit = {}): Promise<Response> {
     this.calls.push({ path, init });
+    // Mirrors filesContainerRequest: a non-2xx response throws with Files' error message.
+    if (this.status >= 400) {
+      const error = (this.body as { error?: unknown })?.error;
+      throw new Error(typeof error === 'string' && error ? error : `Sulla Files returned ${ this.status }`);
+    }
     return new Response(JSON.stringify(this.body), { status: this.status, headers: { 'content-type': 'application/json' } });
   }
   execute(input: any) { return this._validatedCall(input) }
@@ -53,7 +62,7 @@ describe('FilesLinkWorker (container call path, no main/ import)', () => {
     expect(worker.calls[0].path).toBe('/v1/links');
     expect(worker.calls[0].init.method).toBe('POST');
     const sent = JSON.parse(String(worker.calls[0].init.body));
-    expect(sent).toMatchObject({ fileId: 'file-1', permission: 'view', assetKind: 'file', keepAvailable: false, expiresAt });
+    expect(sent).toMatchObject({ fileId: 'file-1', collectionId: 'collection-1', permission: 'view', assetKind: 'file', keepAvailable: false, expiresAt });
     expect(sent).not.toHaveProperty('deviceId');
     expect(response.successBoolean).toBe(true);
     expect(response.responseString).toBe('Share link created: https://sulla.example/s/abc');
