@@ -25,3 +25,20 @@ export function getPendingCredential(_integrationId: string): PendingCredential 
 export function hasPendingCredential(_integrationId: string): boolean {
   return false;
 }
+
+/**
+ * Desktop-only writers. Shared OAuth and cloud-session modules import these at load time, so the image
+ * must export them. Writes fail closed: a container must never accept first-run credentials it cannot
+ * persist, so the caller gets an error instead of a silent drop.
+ */
+export async function queuePendingCredential(_entry: PendingCredential): Promise<void> {
+  throw new Error('First-run credentials are only held by the Desktop main process, not the Tools container');
+}
+
+export async function clearPendingCredential(_integrationId: string): Promise<void> {
+  // Nothing is ever queued here, so there is nothing to clear.
+}
+
+export function startPendingCredentialFlush(): void {
+  // The container has no first-run store to flush.
+}
