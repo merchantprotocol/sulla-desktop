@@ -2,7 +2,6 @@ FROM node:24-alpine AS build
 WORKDIR /app
 
 COPY packages/vault-crypto/package*.json ./packages/vault-crypto/
-COPY packages/vault-profiles/src ./packages/vault-profiles/src
 RUN cd packages/vault-crypto && npm ci --ignore-scripts
 COPY packages/vault-crypto/tsconfig.json ./packages/vault-crypto/tsconfig.json
 COPY packages/vault-crypto/src ./packages/vault-crypto/src
@@ -30,7 +29,6 @@ COPY --from=build /app/services/sulla-vault/dist ./dist
 COPY --from=build /app/services/sulla-vault/migrations ./migrations
 COPY --from=build /app/services/sulla-vault/console ./console
 COPY --from=build /app/packages/vault-crypto/package.json /app/packages/vault-crypto/package.json
-COPY --from=build /app/packages/vault-profiles/src /app/packages/vault-profiles/src
 COPY --from=build /app/packages/vault-crypto/dist /app/packages/vault-crypto/dist
 COPY --from=build /app/packages/vault-crypto/node_modules /app/packages/vault-crypto/node_modules
 COPY services/sulla-vault/entrypoint.sh /usr/local/bin/sulla-vault-entrypoint
