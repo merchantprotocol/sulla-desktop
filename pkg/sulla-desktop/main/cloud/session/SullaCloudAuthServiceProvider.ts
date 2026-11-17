@@ -14,7 +14,7 @@ import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunC
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { FirstRunVaultCreation } from '@pkg/main/firstRun/FirstRunVaultCreation';
 import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/utils/firstRunTraceSink';
-import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
+import { clearAllPendingCredentials, clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 import { configuredVaultBrokerProvider, usesContainerVaultAuthority, VaultBrokerError } from '@pkg/vault-broker';
@@ -177,7 +177,7 @@ export class SullaCloudAuthServiceProvider {
         save:  session => this.sessions.saveRefreshed(session),
         /** Server-mode sign-out: drop the first-run copy and the stored account. Throws when the account could not be removed. */
         clear: async() => {
-          await this.sessions.clearPending();
+          await clearAllPendingCredentials();
           await this.sessions.clear();
         },
       },
@@ -220,7 +220,7 @@ export class SullaCloudAuthServiceProvider {
     const desktopSignOut = new DesktopCloudSignOut({
       usesContainerVault:     usesContainerVault,
       clearPendingMasterKey:  () => this.accountWrap.clear(),
-      clearPendingCredential: () => this.sessions.clearPending(),
+      clearPendingCredential: () => clearAllPendingCredentials(),
       clearContainerSession:  () => this.sessions.clear(),
     }, this.refresher);
     this.signOut = new CloudSignOutService(desktopSignOut, this.status, {

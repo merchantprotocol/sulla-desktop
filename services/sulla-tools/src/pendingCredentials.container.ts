@@ -39,6 +39,10 @@ export async function clearPendingCredential(_integrationId: string): Promise<vo
   // Nothing is ever queued here, so there is nothing to clear.
 }
 
+export async function clearAllPendingCredentials(): Promise<void> {
+  // Nothing is ever queued here, so there is nothing to clear.
+}
+
 export function startPendingCredentialFlush(): void {
   // The container has no first-run store to flush.
 }

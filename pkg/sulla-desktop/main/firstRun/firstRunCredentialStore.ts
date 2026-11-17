@@ -47,7 +47,7 @@ function seal(entry: PendingCredential): { envelope: StoredEnvelope; keyId: stri
   const nonce = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
   const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify({ values: entry.values, activate: entry.activate }), 'utf8'),
+    cipher.update(JSON.stringify({ values: entry.values, activate: entry.activate, cloudUserId: entry.cloudUserId }), 'utf8'),
     cipher.final(),
     cipher.getAuthTag(),
   ]);
@@ -66,8 +66,10 @@ function open(row: StoredRow): PendingCredential {
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(payload.nonce, 'base64'));
   decipher.setAuthTag(sealed.subarray(sealed.length - 16));
   const plaintext = Buffer.concat([decipher.update(sealed.subarray(0, -16)), decipher.final()]);
-  const parsed = JSON.parse(plaintext.toString('utf8')) as Pick<PendingCredential, 'values' | 'activate'>;
-  return { integrationId: row.integration_id, accountId: row.account_id, values: parsed.values, activate: parsed.activate };
+  const parsed = JSON.parse(plaintext.toString('utf8')) as Pick<PendingCredential, 'values' | 'activate' | 'cloudUserId'>;
+  return {
+    integrationId: row.integration_id, accountId: row.account_id, values: parsed.values, activate: parsed.activate, cloudUserId: parsed.cloudUserId,
+  };
 }
 
 export async function storeFirstRunCredential(entry: PendingCredential): Promise<void> {
@@ -89,6 +91,11 @@ export async function loadFirstRunCredentials(): Promise<PendingCredential[]> {
 
 export async function deleteFirstRunCredential(integrationId: string, accountId: string): Promise<void> {
   await postgresClient.query('DELETE FROM first_run_credentials WHERE integration_id = $1 AND account_id = $2', [integrationId, accountId]);
+}
+
+/** Sign-out: the staging table only ever holds the signed-out account's first-run copies, so drop every row. */
+export async function deleteAllFirstRunCredentials(): Promise<void> {
+  await postgresClient.query('DELETE FROM first_run_credentials');
 }
 
 export async function deleteFirstRunCredentialsForIntegration(integrationId: string): Promise<void> {
