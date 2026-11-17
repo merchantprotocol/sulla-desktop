@@ -61,7 +61,7 @@ export class FileOrgFilesKeyStore implements OrgFilesVaultKeyStore {
       const nonce = randomBytes(12);
       const cipher = createCipheriv('aes-256-gcm', dataKey, nonce);
       cipher.setAAD(Buffer.from(`sulla-org-files-recipient-key|v1|${userId}|${orgId}`));
-      const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+      const ciphertext = Buffer.concat([cipher.update(JSON.stringify({ v: 1, privateJwk: value }), 'utf8'), cipher.final()]);
       const serialized: EncryptedOrgFilesKey = {
         v: 1, nonce: nonce.toString('base64'), ct: ciphertext.toString('base64'),
         tag: cipher.getAuthTag().toString('base64'),
