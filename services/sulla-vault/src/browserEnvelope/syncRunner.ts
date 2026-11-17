@@ -31,6 +31,7 @@ import { DomainVaultSyncCodecProvider } from './DomainVaultSyncCodecProvider.js'
 import { bundleFields, itemRecordFields, tombstoneFields, type LocalAccountRow, type LocalRecoveryRow } from './exportBuilder.js';
 import { ensureSyncSchema } from './schema.js';
 import { CloudSyncRepositories } from './sync/CloudSyncRepositories.js';
+import { VaultRepositories } from '../repositories/VaultRepositories.js';
 import type { SyncAuditAction } from './sync/repositories/SyncAuditEventDispatcher.js';
 import { DesktopSyncCommitBudget } from './sync/DesktopSyncCommitBudget.js';
 import type { KnownRecordRow } from './sync/repositories/PostgresVerifiedRecordSet.js';
@@ -93,6 +94,7 @@ function responseBody(body: unknown): any {
 }
 
 export class CloudVaultSyncRunner {
+  private readonly repos: CloudSyncRepositories;
   private envelope: DomainVaultSyncCodec | null = null;
   private readonly pending = new Map<string, PendingSend>();
   private stateVersion = 0;
@@ -104,10 +106,10 @@ export class CloudVaultSyncRunner {
     private readonly db: Database,
     private readonly authority: CloudSyncAuthority,
     private readonly codecProvider: DomainVaultSyncCodecProvider = new DomainVaultSyncCodecProvider(),
-    private readonly repos: CloudSyncRepositories = new CloudSyncRepositories(),
+    repos?: CloudSyncRepositories,
     private readonly headChainLinkPolicy: HeadChainLinkPolicy = new HeadChainLinkPolicy(),
     private readonly commitBudget: DesktopSyncCommitBudget = new DesktopSyncCommitBudget(),
-  ) {}
+  ) { this.repos = repos ?? new VaultRepositories(db).cloudSync; }
 
   private async env() {
     this.envelope ??= await this.codecProvider.get();

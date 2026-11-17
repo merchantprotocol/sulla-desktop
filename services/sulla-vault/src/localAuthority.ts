@@ -20,13 +20,9 @@ import { DomainVaultSyncCodecProvider } from './browserEnvelope/DomainVaultSyncC
 import { StoredKeyEnvelopeReaderProvider } from './browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultRelayManager } from './relays.js';
 import type { Database, Queryable } from './db.js';
-import { PostgresLocalAuthorityRepository } from './repositories/PostgresLocalAuthorityRepository.js';
-import { PostgresRewrapHistoryRepository } from './repositories/PostgresRewrapHistoryRepository.js';
-import { PostgresSullaCloudRevocationRepository } from './repositories/PostgresSullaCloudRevocationRepository.js';
+import { VaultRepositories } from './repositories/VaultRepositories.js';
 import { AgentMailboxCloudLane } from './sullaCloudSession/AgentMailboxCloudLane.js';
 import { SullaCloudSessionManager } from './sullaCloudSession/SullaCloudSessionManager.js';
-import { PostgresVaultAuditLogRepository, PostgresVaultItemRepository } from './repositories/PostgresVaultItemRepositories.js';
-import { PostgresIntegrationStateRepository, PostgresLegacyCredentialRepository, PostgresVaultMigrationRepository, PostgresVaultRecoveryRepository, PostgresVaultSyncStateRepository, PostgresVaultUserRepository } from './repositories/PostgresVaultAuthorityRepositories.js';
 import { AuditFileSink } from './auditFileSink.js';
 import { FilesAuditEmitter } from './filesAudit.js';
 import { OutboundAuditRecorder } from './outboundAudit.js';
@@ -112,26 +108,27 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   codecProvider = new DomainVaultSyncCodecProvider();
 
   readonly brokerRedirectPolicy = new BrokerRedirectPolicy();
-  /** Created on first use from `db`, so instances built without the constructor (specs) still work. */
-  private localAuthorityRepository?: PostgresLocalAuthorityRepository;
   /** Created on first use for the same reason. */
   private collaborators?: LocalAuthorityCollaborators;
+
+  get rewrapHistory() { return this.repositories.rewrapHistory; }
+  get itemRepository() { return this.repositories.items; }
+  get auditLogRepository() { return this.repositories.auditLog; }
+  get userRepository() { return this.repositories.users; }
+  get recoveryRepository() { return this.repositories.recovery; }
+  get integrationStateRepository() { return this.repositories.integrationState; }
+  get migrationRepository() { return this.repositories.migration; }
+  get syncStateRepository() { return this.repositories.syncState; }
+  get legacyCredentialRepository() { return this.repositories.legacyCredentials; }
+  get revocationRepository() { return this.repositories.revocations; }
+  get localStore() { return this.repositories.localAuthority; }
 
   constructor(
     readonly db: Database,
     readonly config: VaultConfig,
     readonly relayManager: VaultRelayManager = new DefaultVaultRelayManager(),
-    readonly rewrapHistory: PostgresRewrapHistoryRepository = new PostgresRewrapHistoryRepository(db),
-    readonly itemRepository: PostgresVaultItemRepository = new PostgresVaultItemRepository(db),
-    readonly auditLogRepository: PostgresVaultAuditLogRepository = new PostgresVaultAuditLogRepository(db),
-    readonly userRepository: PostgresVaultUserRepository = new PostgresVaultUserRepository(db),
-    readonly recoveryRepository: PostgresVaultRecoveryRepository = new PostgresVaultRecoveryRepository(db),
-    readonly integrationStateRepository: PostgresIntegrationStateRepository = new PostgresIntegrationStateRepository(db),
-    readonly migrationRepository: PostgresVaultMigrationRepository = new PostgresVaultMigrationRepository(db),
-    readonly syncStateRepository: PostgresVaultSyncStateRepository = new PostgresVaultSyncStateRepository(db),
-    readonly legacyCredentialRepository: PostgresLegacyCredentialRepository = new PostgresLegacyCredentialRepository(),
+    readonly repositories: VaultRepositories = new VaultRepositories(db),
     readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
-    readonly revocationRepository: PostgresSullaCloudRevocationRepository = new PostgresSullaCloudRevocationRepository(db),
     readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
     readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
   ) {
@@ -168,10 +165,6 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     return this as unknown as LocalAuthorityHost;
   }
 
-  get localStore(): PostgresLocalAuthorityRepository {
-    this.localAuthorityRepository ??= new PostgresLocalAuthorityRepository(this.db);
-    return this.localAuthorityRepository;
-  }
 
   /** Seals one item for its `items` row (domain `LocalItemCipher`: fresh item key, AAD binds owner + item id). */
   async sealItem(plaintext: string, userKey: Uint8Array, context: LocalItemContext): Promise<LocalEncryptedItem> {

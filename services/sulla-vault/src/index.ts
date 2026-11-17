@@ -12,7 +12,7 @@ import { ensureDesktopAccount } from './auth.js';
 import { loadConfig } from './config.js';
 import { connectDatabase, migrate, untilDatabaseReady } from './db.js';
 import { ProcessGuard } from './ProcessGuard.js';
-import { PostgresLegacyAuditRepository } from './repositories/PostgresLegacyAuditRepository.js';
+import { VaultRepositories } from './repositories/VaultRepositories.js';
 
 // Crash -> non-zero exit -> Docker's restart policy. Postgres outages are waited out
 // (untilDatabaseReady) and /healthz reports them; they never crash the vault.
@@ -20,12 +20,13 @@ const guard = new ProcessGuard({ name: 'sulla-vault' }).catchCrashes();
 const config = loadConfig();
 const db = await connectDatabase(config);
 await untilDatabaseReady('migrations', () => migrate(db));
-await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config));
+const repositories = new VaultRepositories(db);
+await untilDatabaseReady('desktop account', () => ensureDesktopAccount(db, config, repositories));
 
-const localAuthority = new LocalVaultAuthority(db, config);
+const localAuthority = new LocalVaultAuthority(db, config, undefined, repositories);
 const app = createApp(db, config, { localAuthority });
 // Background, batched, lock-free sweep of legacy agent-use rows; failures retry on next start.
-void new LegacyOutboundAuditPruner(new PostgresLegacyAuditRepository(db)).prune().catch((error) => console.warn(`sulla-vault: audit row cleanup stopped (${ (error as Error).message }); it resumes on next start`));
+void new LegacyOutboundAuditPruner(repositories.legacyAudit).prune().catch((error) => console.warn(`sulla-vault: audit row cleanup stopped (${ (error as Error).message }); it resumes on next start`));
 if (!config.tlsCertificatePath || !config.tlsPrivateKeyPath) {
   throw new Error('Desktop vault TLS identity is required');
 }
