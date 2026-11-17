@@ -18,6 +18,8 @@ export class FilesShareInChatWorker extends FilesTool {
       fileId = resolved.fileId;
     }
     if (!fileId) throw new Error('Supply file_id or path');
+    // TODO(files-instant-sync): ensure the descriptor and encrypted content are pushed before returning its mobile link.
+    // Until the instant-sync hook lands, resolution can fail if this new file has not reached Cloud yet.
     // containerJson derives identity exclusively from the trusted execution
     // context. No org/user/owner value from input is forwarded as authority.
     const file = await this.containerJson<any>(`/v1/files/${encodeURIComponent(String(fileId))}`, input);
