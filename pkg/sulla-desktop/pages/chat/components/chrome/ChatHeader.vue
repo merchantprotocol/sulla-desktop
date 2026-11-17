@@ -73,8 +73,9 @@ function cancelTitle(): void {
   /* Equal outer columns keep the title truly centred whatever the sides hold. */
   display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px;
   height: 52px; padding: 0 20px;
-  border-bottom: 1px solid var(--border-subtle, var(--border-default));
-  background: var(--bg-surface);
+  /* Same treatment as the browser tab's toolbar (BrowserTab.vue .browser-toolbar). */
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-surface-alt);
   backdrop-filter: blur(12px);
   font-family: var(--font-body);
 }
