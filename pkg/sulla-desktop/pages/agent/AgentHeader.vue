@@ -1495,10 +1495,9 @@ function handleTabContextMenuAction(
 .app-titlebar {
   -webkit-app-region: drag;
   app-region: drag;
-  /* One surface for the whole bar: the logo, the tab strip and the right-hand
-     controls share the tab strip's glass background and a single bottom
-     border that runs edge to edge. */
-  background: color-mix(in srgb, var(--bg-page) 93%, var(--text-primary));
+  /* One theme surface for the whole bar, with its content edge running
+     edge-to-edge beneath the tab strip. */
+  background: var(--bg-surface-alt, var(--bg-surface, var(--bg-page)));
   border-bottom: 1px solid var(--border-default);
 }
 
@@ -1937,7 +1936,7 @@ function handleTabContextMenuAction(
   height: 43px;
   padding: 3px 5px 5px;
   margin-left: 14px;
-  /* The background and bottom border live on .app-titlebar so they span the
+  /* The chrome background and edge live on .app-titlebar so they span the
      full width instead of stopping where the tabs begin. */
   background: transparent;
 }
@@ -2077,8 +2076,8 @@ function handleTabContextMenuAction(
 
 .app-titlebar .tab-active .tab-icon,
 .app-titlebar .tab-active-native .tab-icon {
-  color: var(--read-1, var(--text-primary));
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent-hover) 70%, transparent));
+  color: var(--accent);
+  filter: none;
 }
 
 .app-titlebar .tab-working .tab-icon::after {
@@ -2414,7 +2413,7 @@ function handleTabContextMenuAction(
   padding-top: 0;
   padding-bottom: 0;
   align-items: center;
-  background: color-mix(in srgb, var(--bg-page) 93%, var(--text-primary));
+  background: var(--bg-surface-alt, var(--bg-surface, var(--bg-page)));
 }
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
@@ -2437,17 +2436,20 @@ function handleTabContextMenuAction(
 }
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-page); }
-.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg-page) 93%, var(--text-primary)); }
+.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: 0 0 0 2px var(--bg-surface-alt, var(--bg-surface, var(--bg-page))); }
+.app-titlebar .tab-active .tab-activity-dot,
+.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface, var(--bg-page)); }
+.app-titlebar .tab-inactive .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-surface-alt, var(--bg-surface, var(--bg-page))); }
 .app-titlebar .tab-item:hover { color: var(--text-primary); background: var(--bg-surface-hover, color-mix(in srgb, var(--text-primary) 7%, transparent)); }
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
   z-index: 2;
   min-width: 120px;
   margin-bottom: -1px;
-  border: 0;
+  border: 1px solid var(--border-default);
+  border-bottom: 0;
   border-radius: 9px 9px 0 0;
-  background: var(--bg-page);
+  background: var(--bg-surface, var(--bg-page));
   box-shadow: none;
   color: var(--text-primary);
   font-weight: 600;
@@ -2456,11 +2458,21 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-active {
   border: 1px solid var(--border-default);
   border-bottom: 0;
-  background: var(--bg-page);
+  background: var(--bg-surface, var(--bg-page));
   box-sizing: border-box;
 }
+.app-titlebar .tab-accent-bar {
+  display: block;
+  top: -1px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 0 0 2px 2px;
+  opacity: 0;
+}
 .app-titlebar .tab-active .tab-accent-bar,
-.app-titlebar .tab-active-native .tab-accent-bar { display: none; }
+.app-titlebar .tab-active-native .tab-accent-bar { opacity: 1; }
 .app-titlebar .tab-active::before,
 .app-titlebar .tab-active::after {
   content: '';
@@ -2469,7 +2481,7 @@ function handleTabContextMenuAction(
   width: 10px;
   height: 10px;
   pointer-events: none;
-  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-page, var(--bg-surface)) 10.5px);
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-surface, var(--bg-page)) 10.5px);
   display: block;
 }
 .app-titlebar .tab-active::before { left: -10px; }
