@@ -49,6 +49,7 @@ export class VersionWriter {
     private readonly stager:VersionContentStager,
     private readonly chunkRegistry:ManifestChunkRegistry,
     private readonly versions:VersionWriteRepository,
+    private readonly onVersionCommitted?:(collectionId:string)=>void,
   ) {}
 
   /** Encrypts and durably writes a version's chunks. Call this before opening the transaction that commits it. */
@@ -102,6 +103,7 @@ export class VersionWriter {
     // the open transaction never queues behind other writers' fsyncs) before committing.
     for (const chunk of chunks) if (!this.store.presentNow(input.collectionId, chunk.id)) throw Object.assign(new HttpError(503, 'Files storage changed while saving; retry the request'), { code: 'FILES_DB_RETRYABLE' });
     await this.versions.journalPut(client, input.collectionId, file.id, version.id);
+    this.onVersionCommitted?.(input.collectionId);
     return { ...file, current_version_id: version.id, size: input.bytes.length, path: input.path, mime: input.mime, publication_status: version.publication_status };
   };
 }

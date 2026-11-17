@@ -231,7 +231,8 @@ export class FilesApplication {
     const accessGate = new FilesAccessGate(db);
     const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db));
     const managers = new LocalManagerGate(config, manager);
-    const versionWriter = new VersionWriter(config, accessGate, store, contentStager, new ManifestChunkRegistry(), new VersionWriteRepository());
+    const versionWriter = new VersionWriter(config, accessGate, store, contentStager, new ManifestChunkRegistry(), new VersionWriteRepository(),
+      collectionId => this.dependencies.cloudSync?.versionCommitted(collectionId));
     const automergeDocuments = new AutomergeDocumentRepository(db); const automergeTexts = new AutomergeTextStore(automergeDocuments);
     const liveText = new LiveTextCoordinator(db, config, store, accessGate, transactions, versionWriter, automergeDocuments, automergeTexts, requestAudit);
     app.locals.liveTextSessions = liveText.sessions;
