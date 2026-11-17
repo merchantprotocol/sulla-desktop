@@ -14,12 +14,12 @@
 images:
   - { name: sulla-postgres, source: ghcr.io/merchantprotocol/sulla-postgres:sha-0d3b8b5560c706fb1c1e80b479891e3183a0f11a }
   - { name: redis, source: redis:7-alpine }
-  - { name: sulla-accounts, source: ghcr.io/merchantprotocol/sulla-accounts:sha-ef9d4c3e5d7c8a22568cb4e7e870b158f8e56fa8 }
+  - { name: sulla-accounts, source: ghcr.io/merchantprotocol/sulla-accounts:sha-59f2d06f4e152b9feb87cbe9dbe4325c43a59785 }
   - { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:sha-096902b4f62fe57ce1f08b857ad93a59477076ca }
-  - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:sha-ef9d4c3e5d7c8a22568cb4e7e870b158f8e56fa8 }
+  - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:sha-59f2d06f4e152b9feb87cbe9dbe4325c43a59785 }
   - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-ef9d4c3e5d7c8a22568cb4e7e870b158f8e56fa8 }
-  - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:sha-ef9d4c3e5d7c8a22568cb4e7e870b158f8e56fa8 }
-  - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:sha-ef9d4c3e5d7c8a22568cb4e7e870b158f8e56fa8 }
+  - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:sha-798d07e0fb597b716dfcb73afbc8a8041558e257 }
+  - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:sha-ce74b3442baf43c52c232a8962169de367ea65af }
   - { name: sulla-workflows, source: ghcr.io/merchantprotocol/sulla-workflows:latest }
   - { name: sulla-threat-proxy, source: ghcr.io/merchantprotocol/sulla-threat-proxy:latest }
   - { name: sulla-python-runtime, source: ghcr.io/merchantprotocol/sulla-python-runtime:latest }
