@@ -2,10 +2,14 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { OrgFilesContract, type OrgFilesRoute } from '@sulla/domain';
+import { OrgFilesContract, type OrgCollectionKeyWrap, type OrgFilesRoute } from '@sulla/domain';
 import { cloudRequest } from '../cloudFetch';
 
 export type OrgFilesCloudTransport = (method: string, path: string, body?: unknown) => Promise<unknown>;
+
+export class OrgFilesCloudError extends Error {
+  constructor(readonly status: number) { super(`Org Files Cloud request failed (${status})`); }
+}
 
 export class OrgFilesCloudClient {
   constructor(private readonly transport: OrgFilesCloudTransport = OrgFilesCloudClient.authenticatedRequest) {}
@@ -35,6 +39,14 @@ export class OrgFilesCloudClient {
 
   async collections(orgId: string) {
     return new OrgFilesContract().collectionsResponse(await this.get(OrgFilesContract.routes.listCollections, { orgId }));
+  }
+
+  async getCollectionKeyWrap(orgId: string, collectionId: string): Promise<OrgCollectionKeyWrap> {
+    const result = await this.collections(orgId);
+    const collection = result.collections.find(item => item.collection.collectionId === collectionId)?.collection as
+      (typeof result.collections[number]['collection'] & { collectionKeyWrap?: OrgCollectionKeyWrap }) | undefined;
+    if (!collection?.collectionKeyWrap) throw new Error(`Org Files collection ${collectionId} did not include its root key wrap`);
+    return collection.collectionKeyWrap;
   }
 
   async createCollection(orgId: string, body: unknown) {
@@ -73,7 +85,7 @@ export class OrgFilesCloudClient {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`Org Files Cloud request failed (${response.status})`);
+    if (!response.ok) throw new OrgFilesCloudError(response.status);
     return value;
   }
 }
