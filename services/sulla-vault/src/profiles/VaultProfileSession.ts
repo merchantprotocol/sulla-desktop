@@ -61,15 +61,21 @@ export class VaultProfileSession {
         };
         if (property === 'connect') return (...args: unknown[]) => {
           try { session.assertCurrent(); } catch { return stale(args); }
-          return Promise.resolve(target.connect(...args as Parameters<pg.Pool['connect']>)).then(client => {
-          return new Proxy(client, { get(connection, key, proxyReceiver) {
+          const fence = (client: pg.PoolClient): pg.PoolClient => new Proxy(client, { get(connection, key, proxyReceiver) {
             if (key === 'query') return (...queryArgs: unknown[]) => {
               try { session.assertCurrent(); } catch { return stale(queryArgs); }
               return connection.query(...queryArgs as Parameters<pg.PoolClient['query']>);
             };
             return Reflect.get(connection, key, proxyReceiver);
           } });
-          });
+          const callback = args.at(-1);
+          if (typeof callback === 'function') {
+            // Callback-style connect returns nothing; the client is fenced before the caller sees it.
+            type ConnectCallback = Parameters<pg.Pool['connect']>[0];
+            target.connect((error, client, done) => (callback as ConnectCallback)(error, client && fence(client), done));
+            return undefined;
+          }
+          return target.connect().then(fence);
         };
         return Reflect.get(target, property, receiver);
       },

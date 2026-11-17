@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Queryable } from './db.js';
+import type { PostgresLegacyAuditRepository } from './repositories/PostgresLegacyAuditRepository.js';
 import { VaultRepositories } from './repositories/VaultRepositories.js';
 
 export interface PruneOptions {

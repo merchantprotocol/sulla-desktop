@@ -9,7 +9,7 @@ import { PgTransactionRunner, type TransactionPool } from './PgTransactionRunner
 /** Transactional catalog state and single-active-profile pointer repository. */
 export class PostgresVaultProfileActivationRepository {
   constructor(
-    private readonly pool: TransactionPool,
+    private readonly pool: TransactionPool & Pick<pg.Pool, 'query'>,
     private readonly transactions = new PgTransactionRunner(),
     private readonly boundary = new ProfileBoundary(),
   ) {}
