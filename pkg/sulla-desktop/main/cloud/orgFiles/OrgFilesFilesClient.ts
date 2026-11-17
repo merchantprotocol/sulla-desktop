@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { FilesTransportEnvelopeService, type FilesTransportEnvelope } from '@pkg/vault-crypto';
+import { FilesTransportEnvelopeService, type FilesTransportEnvelope } from '@sulla/vault-crypto';
 import { getSullaFilesClient, type SullaFilesClient } from '@pkg/main/sullaFilesClient';
 
 export interface OrgRootTransportRequest { requestId: string; recipientPublicKey: string }

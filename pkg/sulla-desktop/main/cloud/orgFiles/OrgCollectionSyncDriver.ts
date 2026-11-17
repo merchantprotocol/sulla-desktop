@@ -44,13 +44,17 @@ export class OrgCollectionSyncDriver {
     const localById = new Map(local.map(item => [item.id, item]));
     const found = new Set<string>();
     const completedOrgs = new Set<string>();
+    const memberOrgs = new Set(organizations.map(org => org.orgId));
     for (const org of organizations) {
       try {
         await this.keyring.ensureRecipientKey(org.orgId);
         try { await this.keyring.wrapPendingMembers(org.orgId); }
         catch (error) {
-          if (this.isNotAllowed(error)) continue;
-          throw error;
+          if (this.isNotAllowed(error)) {
+            this.logger.warn(`[OrgCollectionSyncDriver] Cloud does not allow pending-member wraps for ${org.orgId}`);
+          } else {
+            throw error;
+          }
         }
         const remote = await this.cloud.collections(org.orgId);
         completedOrgs.add(org.orgId);
@@ -58,7 +62,7 @@ export class OrgCollectionSyncDriver {
       } catch (error) { this.logger.warn(`[OrgCollectionSyncDriver] Org ${org.orgId} sync failed`, error); }
     }
     for (const entry of local) {
-      if (!found.has(entry.id) && completedOrgs.has(entry.orgId)) {
+      if (!found.has(entry.id) && (!memberOrgs.has(entry.orgId) || completedOrgs.has(entry.orgId))) {
         try { await this.files.unenroll(entry.id); }
         catch (error) { this.logger.warn(`[OrgCollectionSyncDriver] Could not unenroll collection ${entry.id}`, error); }
       }
