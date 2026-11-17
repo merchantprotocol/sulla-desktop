@@ -43,9 +43,9 @@ export class OrgFilesFilesClient {
     });
   }
 
-  /** Asks Files to drop one Cloud profile's org roots and collection keys (sign-out or lock). */
-  async invalidateProfile(profileId: string): Promise<void> {
-    await this.request(`/v1/desktop/org-profiles/${encodeURIComponent(profileId)}/invalidate`, { method: 'POST' });
+  /** Asks Files to drop the org roots of the principal it is serving (sign-out or lock). Files picks the partition itself. */
+  async invalidateCurrentProfile(): Promise<void> {
+    await this.request('/v1/desktop/org-profiles/invalidate-current', { method: 'POST' });
   }
 
   async enableSync(collectionId: string, keyVersion: number, head?: string | null): Promise<void> {

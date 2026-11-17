@@ -135,8 +135,8 @@ export interface FilesApplicationDependencies {
   indexer?:IndexingQueue;
   chunkStore?:Store;
   cloudSync?:CloudSyncService;
-  /** Drops one Cloud profile's cached keys when Desktop signs it out or locks it. */
-  profileCaches?:{ invalidateProfile(profileId:string):void };
+  /** Drops the served principal's cached keys when Desktop signs out or locks. */
+  profileCaches?:{ invalidateCurrent():void };
 }
 
 /** The request-independent services every route group shares, built once per app. */

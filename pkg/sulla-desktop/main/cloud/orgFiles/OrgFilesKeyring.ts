@@ -30,8 +30,8 @@ export class OrgFilesKeyring {
     private readonly cipher: OrgFilesKeyCipher,
     private readonly canWrapForPending: (orgId: string) => Promise<boolean> = async () => false,
     private readonly identity: OrgFilesKeyringIdentity = { userId: getCurrentUserId },
-    /** Files holds its own copy of the profile's org roots; sign-out and lock must reach it too. */
-    private readonly filesCache: { invalidateProfile(profileId: string): Promise<unknown> } = { invalidateProfile: async () => undefined },
+    /** Files holds its own copy of the org roots; sign-out and lock must reach it too. Files resolves the partition itself. */
+    private readonly filesCache: { invalidateCurrentProfile(): Promise<unknown> } = { invalidateCurrentProfile: async () => undefined },
   ) {}
 
   ensureRecipientKey(orgId: string) { return this.recipientKeys.ensure(orgId); }
@@ -101,12 +101,10 @@ export class OrgFilesKeyring {
   }
 
   async onLock(): Promise<void> {
-    let profileId: string;
-    try { profileId = OrgFilesProfileIdentity.fromCloudUserId(await this.identity.userId()); }
-    catch { this.invalidateAll(); return; }
-    this.invalidateProfile(profileId);
+    try { this.invalidateProfile(OrgFilesProfileIdentity.fromCloudUserId(await this.identity.userId())); }
+    catch { this.invalidateAll(); }
     // Local zeroization already happened; a Files outage must not fail the lock (Files drops its keys on stop).
-    await this.filesCache.invalidateProfile(profileId).catch(() => undefined);
+    await this.filesCache.invalidateCurrentProfile().catch(() => undefined);
   }
 
   async onSignOut(): Promise<void> { await this.onLock(); }

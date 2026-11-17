@@ -8,14 +8,13 @@ import type { FilesIdentity } from '../auth.js';
 import type { Config } from '../config.js';
 import { OrgCollectionEnrollment, type OrgCollectionLevel } from '../Services/OrgCollectionEnrollment.js';
 import type { CloudSyncService } from '../cloudSync/service.js';
-import { ProfileIdentity } from '../ProfileIdentity.js';
 
 /** Desktop-control-only enrollment API; agent and job capabilities are explicitly refused. */
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 export class OrgCollectionRoutes {
   constructor(private readonly config:Pick<Config,'mode'>,private readonly enrollment:OrgCollectionEnrollment,private readonly cloudSync?:CloudSyncService,
-    private readonly profileCaches?:{ invalidateProfile(profileId:string):void }) {}
+    private readonly profileCaches?:{ invalidateCurrent():void }) {}
   register(app:express.Express):void {
     const route=(handler:(request:express.Request & {filesIdentity?:FilesIdentity},response:express.Response)=>Promise<void>)=>async(request:express.Request & {filesIdentity?:FilesIdentity},response:express.Response)=>{
       try { const identity=request.filesIdentity;
@@ -48,13 +47,12 @@ export class OrgCollectionRoutes {
       if(!result){ response.sendStatus(404); return; }
       response.json(result);
     }));
-    // Desktop sign-out/lock drops that Cloud profile's keys here. Desktop-control capability plus loopback only.
-    app.post('/v1/desktop/org-profiles/:profileId/invalidate',route(async(request,response)=>{
+    // Desktop sign-out/lock drops the org roots of the principal Files is serving (plus the pre-adoption partition).
+    // Files derives the partition itself: Desktop never sends a profile id. Desktop-control capability plus loopback only.
+    app.post('/v1/desktop/org-profiles/invalidate-current',route(async(request,response)=>{
       if(!this.profileCaches) throw Object.assign(new Error('profile key caches are not configured'),{status:503});
       if(!LOOPBACK_ADDRESSES.has(request.socket.remoteAddress ?? '')) throw Object.assign(new Error('loopback required'),{status:403});
-      const profileId=String(request.params.profileId);
-      if(!ProfileIdentity.isProfileId(profileId)) throw Object.assign(new Error('invalid profile id'),{status:400});
-      this.profileCaches.invalidateProfile(profileId);
+      this.profileCaches.invalidateCurrent();
       response.sendStatus(204);
     }));
     app.delete('/v1/desktop/org-collections/:id',route(async(request,response)=>{

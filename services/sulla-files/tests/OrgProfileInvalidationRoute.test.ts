@@ -5,53 +5,55 @@
 
 import { describe, expect, it } from 'vitest';
 import { OrgCollectionRoutes } from '../src/routes/OrgCollectionRoutes.js';
-import { ProfileIdentity } from '../src/ProfileIdentity.js';
 
 type Handler = (request: unknown, response: unknown) => Promise<void>;
 
-function captureRoute(profileCaches?: { invalidateProfile(profileId: string): void }) {
+function registerRoutes(profileCaches?: { invalidateCurrent(): void }) {
   const posts = new Map<string, Handler>();
   new OrgCollectionRoutes({ mode: 'desktop' }, {} as never, undefined, profileCaches)
     .register({ post: (path: string, handler: Handler) => posts.set(path, handler), put() {}, patch() {}, get() {}, delete() {} } as never);
-  return posts.get('/v1/desktop/org-profiles/:profileId/invalidate')!;
+  return posts;
 }
 
-function call(handler: Handler, profileId: string, remoteAddress: string, capability = true) {
+function call(handler: Handler, remoteAddress: string, capability = true) {
   const state = { status: 0, body: undefined as unknown, sent: undefined as number | undefined };
   const response = {
     setHeader() {}, status(code: number) { state.status = code; return this }, json(body: unknown) { state.body = body; return this },
     sendStatus(code: number) { state.sent = code; return this },
   };
-  const request = { params: { profileId }, socket: { remoteAddress }, filesIdentity: capability ? { kind: 'capability' } : undefined };
+  const request = { params: {}, socket: { remoteAddress }, filesIdentity: capability ? { kind: 'capability' } : undefined };
   return handler(request, response).then(() => state);
 }
 
-describe('profile invalidation route', () => {
-  it('drops the named profile from loopback with a desktop capability', async () => {
-    // risk: key lifecycle — sign-out must reach Files and erase that profile's keys.
-    const calls: string[] = [];
-    const handler = captureRoute({ invalidateProfile: id => calls.push(id) });
-    const profileId = ProfileIdentity.fromCloudUserId('member-1');
-    const state = await call(handler, profileId, '127.0.0.1');
+describe('invalidate-current route', () => {
+  it('is the only invalidation route and carries no profile id in its path', () => {
+    // risk: tenant isolation — Desktop must not name a partition; Files picks the principal it serves.
+    const paths = [...registerRoutes({ invalidateCurrent() {} }).keys()];
+    expect(paths).toContain('/v1/desktop/org-profiles/invalidate-current');
+    expect(paths.some(path => path.includes('org-profiles/:profileId'))).toBe(false);
+  });
+
+  it('drops the served principal from loopback with a desktop capability', async () => {
+    // risk: key lifecycle — sign-out must reach Files and erase the signed-in principal's org roots.
+    let calls = 0;
+    const handler = registerRoutes({ invalidateCurrent() { calls++ } }).get('/v1/desktop/org-profiles/invalidate-current')!;
+    const state = await call(handler, '127.0.0.1');
     expect(state.sent).toBe(204);
-    expect(calls).toEqual([profileId]);
+    expect(calls).toBe(1);
   });
 
   it('refuses non-loopback callers and missing capabilities without touching keys', async () => {
     // risk: key lifecycle + access control — only the local Desktop may drop keys, and only with its capability.
-    const calls: string[] = [];
-    const handler = captureRoute({ invalidateProfile: id => calls.push(id) });
-    const profileId = ProfileIdentity.fromCloudUserId('member-1');
-    expect((await call(handler, profileId, '10.0.0.5')).status).toBe(403);
-    expect((await call(handler, profileId, '127.0.0.1', false)).status).toBe(403);
-    expect(calls).toEqual([]);
+    let calls = 0;
+    const handler = registerRoutes({ invalidateCurrent() { calls++ } }).get('/v1/desktop/org-profiles/invalidate-current')!;
+    expect((await call(handler, '10.0.0.5')).status).toBe(403);
+    expect((await call(handler, '127.0.0.1', false)).status).toBe(403);
+    expect(calls).toBe(0);
   });
 
-  it('rejects malformed profile ids', async () => {
-    // risk: key lifecycle — arbitrary strings must never select a cache partition.
-    const calls: string[] = [];
-    const handler = captureRoute({ invalidateProfile: id => calls.push(id) });
-    expect((await call(handler, 'profile_unscoped', '127.0.0.1')).status).toBe(400);
-    expect(calls).toEqual([]);
+  it('answers 503 when profile caches are not configured', async () => {
+    // risk: key lifecycle — an unwired Files must fail loudly rather than report a silent sign-out.
+    const handler = registerRoutes(undefined).get('/v1/desktop/org-profiles/invalidate-current')!;
+    expect((await call(handler, '127.0.0.1')).status).toBe(503);
   });
 });

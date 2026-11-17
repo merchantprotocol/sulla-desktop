@@ -6,10 +6,12 @@ vi.mock('electron', () => ({ default: { app: { getPath: () => '/ud', getVersion:
 vi.mock('../../../sullaCloudAuth', () => ({ getCurrentUserId: vi.fn(async () => 'member-1'), getCurrentAccessToken: vi.fn(async () => 'token'), isCloudSignedIn: vi.fn(async () => false) }));
 vi.mock('../../../deviceIdentity', () => ({ getDesktopDeviceId: vi.fn(async () => 'device-1') }));
 vi.mock('../../deviceKey', () => ({ signDeviceMessageExact: vi.fn(async () => 'device-proof') }));
+vi.mock('../../../sullaFilesClient', () => ({ getSullaFilesClient: vi.fn() }));
 vi.mock('../../cloudFetch', () => ({ cloudRequest: vi.fn(), isCloudSignedIn: vi.fn(async () => false) }));
 
 import { OrgFilesKeyCipher, OrgFilesRecipientKeyPayload, type OrgFilesKeyWrap, type OrgFilesRecipientKey } from '@sulla/domain';
 import { OrgFilesKeyring, OrgFilesProfileIdentity } from '../OrgFilesKeyring';
+import { OrgFilesFilesClient } from '../OrgFilesFilesClient';
 import { OrgFilesRecipientKeyStore, type OrgFilesVaultKeyStore } from '../OrgFilesRecipientKeyStore';
 
 class MemoryVault implements OrgFilesVaultKeyStore {
@@ -124,22 +126,25 @@ describe('OrgFilesKeyring', () => {
     await expect(keyringB.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
   });
 
-  it('sends sign-out and lock to Files for the signed-out profile only', async () => {
+  it('asks Files to drop its current principal on sign-out and lock, without sending a profile id', async () => {
     // risk: key lifecycle — Files must drop the signed-out account's org roots, and a Files outage must not keep local keys alive.
     const vault = new MemoryVault(); const cloud = new FakeOrgFilesCloud(); const cipher = makeCipher();
     const store = new OrgFilesRecipientKeyStore(vault, cloud, webcrypto,
       async () => ({ userId: 'member-1', deviceId: 'device-1' }), async () => 'proof');
     await store.ensure('org-1');
-    const filesCalls: string[] = [];
+    const requests: Array<{ path: string; init?: RequestInit }> = [];
     let reachable = true;
-    const filesCache = { invalidateProfile: async (profileId: string) => { if (!reachable) throw new Error('files offline'); filesCalls.push(profileId) } };
-    const keyring = new OrgFilesKeyring(cloud as never, store, cipher, undefined, { userId: async () => 'member-1' }, filesCache);
+    const files = new OrgFilesFilesClient(async (path, init) => {
+      if (!reachable) throw new Error('files offline');
+      requests.push({ path, init }); return undefined;
+    });
+    const keyring = new OrgFilesKeyring(cloud as never, store, cipher, undefined, { userId: async () => 'member-1' }, files);
     await keyring.createOrgKeyIfMissing('org-1');
-    const expected = OrgFilesProfileIdentity.fromCloudUserId('member-1');
     await keyring.onLock();
-    expect(filesCalls).toEqual([expected]);
+    expect(requests).toEqual([{ path: '/v1/desktop/org-profiles/invalidate-current', init: { method: 'POST' } }]);
     await keyring.onSignOut();
-    expect(filesCalls).toEqual([expected, expected]);
+    expect(requests.map(r => r.path)).toEqual(['/v1/desktop/org-profiles/invalidate-current', '/v1/desktop/org-profiles/invalidate-current']);
+    expect(requests.every(r => !r.path.includes('member') && !r.path.includes('profile_'))).toBe(true);
     reachable = false;
     await keyring.createOrgKeyIfMissing('org-1');
     cloud.wraps = [];
