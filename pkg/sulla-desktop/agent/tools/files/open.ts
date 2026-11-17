@@ -41,7 +41,11 @@ export class FilesOpenWorker extends FilesTool {
       kind = resolved.kind;
       collectionId = resolved.collectionId;
       fileId = resolved.fileId ?? '';
-      resolvedPath = resolved.folderPath ?? normalizeOpenPath(String(input.path)).slice('/mnt/sulla-files/'.length);
+      // FileResolveRoutes returns folderPath as the file's parent directory.
+      // Keep the requested path for files; use folderPath only for folders.
+      resolvedPath = kind === 'folder'
+        ? resolved.folderPath ?? normalizeOpenPath(String(input.path)).slice('/mnt/sulla-files/'.length)
+        : normalizeOpenPath(String(input.path)).slice('/mnt/sulla-files/'.length);
     } else {
       const record = await this.containerJson<FilesRecord>(`/v1/agent-files/${ encodeURIComponent(fileId) }`, input);
       fileId = record.file.id;
