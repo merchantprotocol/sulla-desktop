@@ -37,6 +37,7 @@ export interface VaultConfig {
   legacyDatabaseUrl?:           string;
   tlsCertificatePath?:          string;
   tlsPrivateKeyPath?:           string;
+  profileProvisioningEnabled?:  boolean;
 }
 
 function jsonEnvironment(name: string): unknown | undefined {
@@ -80,5 +81,7 @@ export function loadConfig(): VaultConfig {
     legacyDatabaseUrl:          process.env.SULLA_VAULT_LEGACY_DATABASE_URL,
     tlsCertificatePath:         process.env.SULLA_VAULT_TLS_CERTIFICATE_PATH,
     tlsPrivateKeyPath:          process.env.SULLA_VAULT_TLS_PRIVATE_KEY_PATH,
+    // Explicitly dark by default; account/profile routing remains on the legacy single DB.
+    profileProvisioningEnabled: process.env.SULLA_VAULT_PROFILE_PROVISIONING === 'enabled',
   };
 }

@@ -12,6 +12,7 @@
     "@sulla/domain": "file:../../vendor/sulla-core/sulla-domain-0.4.2-6257cca.tgz",
     "@sulla/foundation": "file:../../vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz",
     "@sulla/vault-crypto": "file:../../packages/vault-crypto",
+    "@sulla/vault-profiles": "file:../../packages/vault-profiles",
     "express": "5.2.1",
     "libsodium-wrappers-sumo": "0.8.4",
     "pg": "8.18.0",
