@@ -386,8 +386,11 @@ const items: readonly ModeItem[] = Object.freeze([
 
 .mode-btn {
   position: relative;
-  margin: 0 6px;
-  padding: 8px 0;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  margin: 0 auto;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -404,22 +407,13 @@ const items: readonly ModeItem[] = Object.freeze([
   background: var(--accent-dim);
 }
 
-.mode-btn.active {
-  color: var(--text-on-accent);
-  background: var(--accent-dim);
+.mode-rail .mode-btn.active {
+  color: var(--text-on-accent) !important;
+  background: var(--accent) !important;
 }
 
 .mode-btn.active::before {
-  content: '';
-  position: absolute;
-  left: -6px;
-  top: 50%;
-  width: 3px;
-  height: 26px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent-hover);
-  box-shadow: 0 0 10px var(--accent-hover);
-  transform: translateY(-50%);
+  content: none;
 }
 
 .icon {
@@ -446,7 +440,7 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .mode-btn.active .icon {
-  filter: drop-shadow(0 0 10px var(--accent-glow));
+  filter: none;
 }
 
 .item-label,
@@ -509,7 +503,7 @@ const items: readonly ModeItem[] = Object.freeze([
 .mode-rail {
   box-sizing: border-box;
   width: 64px;
-  padding: 40px 10px 10px;
+  padding: 12px 10px 10px;
   overflow: visible;
   color: var(--text-muted);
   transition: width var(--dur-move) var(--spring);
@@ -526,26 +520,7 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .active-indicator {
-  position: absolute;
-  inset: 0 0 auto;
-  display: block;
-  border-radius: 20px;
-  pointer-events: none;
-  opacity: 0;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 14%, transparent));
-  box-shadow: inset 0 0 0 .5px color-mix(in srgb, var(--accent-hover) 50%, transparent), 0 0 22px color-mix(in srgb, var(--accent) 22%, transparent);
-  transition: transform var(--dur-move) var(--spring), opacity .12s ease;
-  z-index: 0;
-}
-
-.mode-rail {
-  background: var(--bg-chrome, var(--bg-surface-alt, var(--bg-surface)));
-  border-right: 1px solid var(--border-default);
-}
-
-.active-indicator {
-  background: var(--accent-dim);
-  box-shadow: inset 0 0 0 1px var(--accent-border), 0 6px 16px color-mix(in srgb, var(--accent-hover) 22%, transparent);
+  display: none;
 }
 
 .active-indicator.visible {
@@ -598,8 +573,15 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .mode-btn.active {
-  color: var(--text-primary);
-  background: transparent;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-radius: 7px;
 }
 
 .mode-btn.active::before {
@@ -611,7 +593,7 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .mode-btn.active .icon {
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-hover) 60%, transparent));
+  filter: none;
 }
 
 .recipe-app-btn.status-ok { color: var(--status-success); }
@@ -631,8 +613,10 @@ const items: readonly ModeItem[] = Object.freeze([
 }
 
 .rail-footer .mode-btn.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--accent);
 }
+
+.mode-rail { background: var(--bg-surface-alt); border-right: 1px solid var(--border-default); }
 
 .icon {
   width: 20px;

@@ -805,7 +805,8 @@ onBeforeUnmount(() => {
   width: 100%; height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg-page);
+  /* Match the active titlebar tab's content surface (also used by the chat title strip). */
+  background: var(--bg-surface);
   color: var(--text-primary);
   font-family: var(--font-body);
 }
