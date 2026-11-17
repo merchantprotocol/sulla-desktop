@@ -32,7 +32,7 @@ describe('FilesOpenWorker', () => {
   beforeEach(() => {
     state.listener = undefined;
     state.message = undefined;
-    const webContents = {
+    const webContents: any = {
       isLoading: () => false,
       once: vi.fn(),
       send: vi.fn((_channel: string, message: typeof state.message) => {
@@ -40,7 +40,6 @@ describe('FilesOpenWorker', () => {
         queueMicrotask(() => state.listener?.({ sender: webContents }, { opened: true, tabId: 'tab-1', path: message?.path, how: 'document-editor' }));
       }),
     };
-    state.webContents = webContents;
     state.window = { webContents, focus: vi.fn() };
   });
 
