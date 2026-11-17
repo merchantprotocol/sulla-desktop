@@ -46,6 +46,19 @@ describe('sulla-tools loaded modules', () => {
     expect(await graph.sensitiveInputs()).toEqual([]);
   }, 120_000);
 
+  it('loads no Desktop-only module at startup through the container approval registration', async() => {
+    // risk: the registration runs when the Tools container starts. Its static closure (DecisionService and what it
+    // imports statically) must stay container-safe. DecisionService's Desktop edges are lazy: the first one is
+    // agent/services/ConversationTitleService.ts -> agent/languagemodels/index.ts -> main/firstRun/firstRunTrace.ts
+    // (dynamic import in generateTitle). That edge predates this change and is tracked in the PR body.
+    const graph = new ToolsLoadedModuleGraph({
+      root:        repoRoot,
+      dockerfile:  readFileSync(path.join(repoRoot, 'services/sulla-tools/Dockerfile'), 'utf8'),
+      entrypoints: ['services/sulla-tools/src/toolDecisionPortRegistration.ts'],
+    });
+    expect(await graph.startupViolations()).toEqual([]);
+  }, 120_000);
+
   it('exports every name the Desktop credential importers take from the container stub', () => {
     // risk: a missing export is a load-time "No matching export" crash the first time the importer runs.
     const contract = new ModuleExportContract(repoRoot);

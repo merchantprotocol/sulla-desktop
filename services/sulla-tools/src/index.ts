@@ -10,6 +10,7 @@ import express from 'express';
 import Redis from 'ioredis';
 import { Pool } from 'pg';
 
+import './toolDecisionPortRegistration.js';
 import { executeCatalogTool, initializeCatalog, listTools, resolveTool, scopeToolExecutionContext } from './catalog.js';
 import { config, validateConfig } from './config.js';
 import { RedisRevocationStore, RequestStore } from './stores.js';
