@@ -16,8 +16,12 @@ readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 TWODEV_OUT="${TWODEV_OUT:-$HOME/Sites/sulla/_wt/twodev-evidence}"
 IMAC_HOST="${TWODEV_IMAC_HOST:-Jonathons-iMac.local}"
 APP_PATH="${TWODEV_APP_PATH:-/Applications/Sulla Desktop.app}"
+# Host binary that runs commands inside each Mac's Sulla VM (same path the Desktop terminal uses).
+RUNTIME_BIN="${TWODEV_RUNTIME_BIN:-$APP_PATH/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime}"
 FILES_FOLDER="${TWODEV_FOLDER:-Projects/sulla-desktop/qa/two-device}"
 ORG="${TWODEV_ORG:-}"
+# A6 peer wait: one push (~10s) plus one peer pull (~60s) can exceed a minute.
+A6_WAIT="${TWODEV_A6_WAIT:-180}"
 AGENT_MODEL="${TWODEV_AGENT:-sulla-desktop}"
 EVIDENCE_LOG="$TWODEV_OUT/evidence-$(date -u +%Y-%m-%d).jsonl"
 
@@ -118,6 +122,37 @@ host_on() {
   esac
 }
 
+# guest_start <a|b> <host-out-file> <guest-command>: runs one shell command inside that Mac's
+# Sulla VM, where /mnt/sulla-files is mounted, through sulla-runtime exec (the Desktop terminal's
+# own path). It starts detached with stdin from /dev/null, because attached over ssh it hangs.
+# It returns at once. The host out file gets __TWODEV_RC=<exit> when the guest command ends.
+guest_start() {
+  local side="$1" out="$2" cmd="$3" wrapped
+  wrapped="$cmd; echo __TWODEV_RC=\$?"
+  host_on "$side" "rm -f $(printf '%q' "$out"); nohup $(printf '%q' "$RUNTIME_BIN") exec -- sh -lc $(printf '%q' "$wrapped") </dev/null >$(printf '%q' "$out") 2>&1 &"
+}
+
+# guest_wait <a|b> <host-out-file> <seconds>: polls the out file until the guest command ends.
+# Prints the guest exit code and returns 0, or returns 1 when the limit passes first.
+guest_wait() {
+  local side="$1" out="$2" limit="$3" waited=0 rc=""
+  while [ "$waited" -lt "$limit" ]; do
+    rc="$(host_on "$side" "grep -h '^__TWODEV_RC=' $(printf '%q' "$out") 2>/dev/null | tail -1 | cut -d= -f2" || true)"
+    if [ -n "$rc" ]; then
+      printf '%s' "$rc"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 1
+}
+
+# guest_cleanup <a|b> <host-out-file>: removes the temporary out file on that Mac.
+guest_cleanup() {
+  host_on "$1" "rm -f $(printf '%q' "$2")" || true
+}
+
 # Builds a JSON object from key/value argument pairs (quoting-safe).
 json_obj() {
   python3 -I -c '
@@ -199,7 +234,7 @@ while pos != -1 and obj is None:
 if obj is None:
     fail(classify(text) or "no_json_reply", snippet(text))
 
-SCALAR = ("orgId", "teamId", "conversationId", "messageId", "fileId")
+SCALAR = ("orgId", "teamId", "conversationId", "messageId", "fileId", "collectionId")
 ids, user_ids, agent_ids = {}, [], []
 
 def walk(node):
@@ -225,6 +260,10 @@ evidence["userIds"] = user_ids
 evidence["agentIds"] = agent_ids
 if found is not None:
     evidence["found"] = found
+reported_hash = obj.get("sha256")
+if isinstance(reported_hash, str) and re.fullmatch(r"[0-9a-f]{64}", reported_hash):
+    evidence["sha256"] = reported_hash
+    extra["sha256"] = reported_hash
 for key, value in extra.items():
     evidence[key] = value
 
@@ -232,7 +271,7 @@ if obj.get("ok") is not True:
     agent_error = obj.get("error") if isinstance(obj.get("error"), str) else ""
     reason = classify(agent_error) or classify(text) or "agent_reported_error"
     fail(reason, snippet(agent_error or text), found)
-finish(True, None, found, evidence, "", evidence)
+finish(True, None, found, evidence, "", {key: value for key, value in evidence.items() if key != "sha256"})
 '
 
 # json_field <json> <dotted.path>: print one field ("" when missing; JSON for lists/objects/bools).
@@ -574,7 +613,129 @@ cmd_a4() {
   return 1
 }
 
-# ---------------------------------------------------------------- placeholders
+# ---------------------------------------------------------------- A5 / A6
+
+# Setup is deliberately idempotent: Desktop returns the existing org collection by name.
+cmd_a5_setup() {
+  require_env ORG
+  require_preflight a
+  local args prompt parsed code=0 id
+  args="$(json_obj orgId "$ORG")"
+  prompt="Run exactly one sulla tool: files/list_shared with arguments ${args}. Find a collection named twodev-proof and reply only JSON {\"ok\":true,\"collectionId\":\"id\"} if found; otherwise {\"ok\":true,\"found\":false}."
+  parsed="$(agent_call a a5-setup find-proof-collection files/list_shared "$prompt")" || code=$?
+  [ "$code" -eq 0 ] || return 1
+  id="$(json_field "$parsed" evidence.collectionId)"
+  if [ -z "$id" ]; then
+    args="$(json_obj orgId "$ORG" name twodev-proof)"
+    prompt="Run exactly one sulla tool: files/create_org_collection with arguments ${args}. Do not run any other tool. Reply only JSON: {\"ok\":true or false,\"error\":null or reason,\"orgId\":\"id\",\"collectionId\":\"id\"}."
+    parsed="$(agent_call a a5-setup create-org-collection files/create_org_collection "$prompt")" || code=$?
+    [ "$code" -eq 0 ] || return 1
+    id="$(json_field "$parsed" evidence.collectionId)"
+  fi
+  [ -n "$id" ] || die "a5-setup: create_org_collection returned no collectionId"
+  printf '%s\n' "$id" >"$TWODEV_OUT/twodev-org-collection-id"
+  echo "A5 setup: collectionId saved to $TWODEV_OUT/twodev-org-collection-id"
+}
+
+require_b2_session() {
+  require_env B_USER
+  [[ "$B_USER" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || die "B_USER must be a Cloud user UUID"
+  if ! host_on b "grep -h 'SullaCloudAuth]' ~/Library/Logs/sulla-desktop/*.log 2>/dev/null | tail -2 | grep -F 'user=$B_USER' >/dev/null"; then
+    die "B-imac Cloud user mismatch: sign the iMac into B2 (B_USER) before running B-side checks"
+  fi
+}
+
+collection_id() {
+  local value="${TWODEV_COLLECTION_ID:-}"
+  if [ -z "$value" ] && [ -f "$TWODEV_OUT/twodev-org-collection-id" ]; then
+    value="$(cat "$TWODEV_OUT/twodev-org-collection-id")"
+  fi
+  [[ "$value" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || die "set TWODEV_COLLECTION_ID or run a5-setup first"
+  printf '%s' "$value"
+}
+
+cmd_a5() {
+  local direction="${1:-both}" id nonce fname content prompt parsed code=0 side peer
+  case "$direction" in a-to-b|b-to-a|both) ;; *) die "usage: $SCRIPT_NAME a5 [a-to-b|b-to-a|both]" ;; esac
+  require_env ORG
+  need_cmds python3 ssh
+  id="$(collection_id)"
+  for side in a b; do
+    if [ "$direction" = "both" ] || { [ "$direction" = "a-to-b" ] && [ "$side" = a ]; } || { [ "$direction" = "b-to-a" ] && [ "$side" = b ]; }; then
+      peer=b; [ "$side" = b ] && peer=a
+      require_preflight "$side" "$peer"
+      if [ "$peer" = b ]; then require_b2_session; fi
+      nonce="$(new_nonce)"
+      fname="twodev-a5-${side}-${nonce}.txt"
+      content="twodev A5 ${side} ${nonce}"
+      prompt="Two-device A5. Create source file ${fname} with exactly this content using write_file under /mnt/sulla-files/Projects/sulla-desktop/qa/two-device/: ${content}. Then run exactly one sulla tool: files/share_to_org with arguments $(json_obj source "/mnt/sulla-files/Projects/sulla-desktop/qa/two-device/${fname}" collectionId "$id" name "$fname"). Use read_file on the source to confirm the exact bytes, then exec `shasum -a 256` on that path for SHA-256. Reply only JSON {\"ok\":true or false,\"error\":null or reason,\"collectionId\":\"id\",\"sha256\":\"64 lowercase hex chars\"}; never include bytes."
+      code=0
+      parsed="$(agent_call "$side" a5-share-to-org files/share_to_org "$prompt" nonce="$nonce" file="$fname")" || code=$?
+      if [ "$code" -ne 0 ]; then
+        echo "A5 ${side}-to-${peer} FAIL: source creation/share failed (check the source path and explicit edit grant)" >&2
+        return 1
+      fi
+      local expected_hash
+      expected_hash="$(json_field "$parsed" evidence.sha256)"
+      [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || die "A5 source agent did not report a valid SHA-256"
+      prompt="Read-only A5 check. Run exactly one sulla tool: files/list_shared with arguments $(json_obj orgId "$ORG" collectionId "$id"). Find exact file ${fname} and its mounted path with files/list_shared, read it using read_file, then use exec `shasum -a 256` on that mounted path. Reply only JSON {\"ok\":true or false,\"error\":null or reason,\"found\":true or false,\"fileId\":\"id or null\",\"sha256\":\"64 lowercase hex chars\"}. Never include file contents. Expected SHA-256: ${expected_hash}."
+      code=0
+      parsed="$(agent_call "$peer" a5-read-shared files/list_shared "$prompt" nonce="$nonce" file="$fname")" || code=$?
+      if [ "$code" -ne 0 ] || [ "$(json_field "$parsed" found)" != true ] || [ "$(json_field "$parsed" evidence.sha256)" != "$expected_hash" ]; then
+        echo "A5 ${side}-to-${peer} FAIL: peer could not find/read $fname in org collection" >&2
+        return 1
+      fi
+      echo "A5 ${side}-to-${peer}: PASS (peer found file; SHA-256 matches)"
+    fi
+  done
+  echo "A5 RESULT: PASS (both directions; take File Manager evidence)"
+}
+
+cmd_a6() {
+  local side="${1:-}" direction="${2:-both}" id path nonce fname content out rc peer start elapsed found attempt
+  case "$side" in a|b) ;; *) die "usage: $SCRIPT_NAME a6 <a|b> [both]" ;; esac
+  [ "$direction" = both ] || die "usage: $SCRIPT_NAME a6 <a|b> [both] (runs both directions)"
+  require_env TWODEV_COLLECTION_PATH
+  need_cmds python3 ssh
+  id="$(collection_id)"
+  require_preflight a b
+  require_b2_session
+  path="$TWODEV_COLLECTION_PATH"
+  python3 -I -c 'import re,sys; sys.exit(0 if re.fullmatch(r"/mnt/sulla-files/Organizations/[^/]+/[^/]+", sys.argv[1]) else 1)' "$path" || die "TWODEV_COLLECTION_PATH must be the absolute mounted Organizations/<org>/<collection> path"
+  for side in "$side" "$([ "$side" = a ] && echo b || echo a)"; do
+    peer="$([ "$side" = a ] && echo b || echo a)"
+    nonce="$(new_nonce)"
+    fname="twodev-a6-${side}-${nonce}.txt"
+    content="twodev A6 human ${side} ${nonce}"
+    # Human path: a shell in that Mac's Sulla VM writes into the mounted Files folder, as the
+    # Desktop terminal does. No AI, chat API or Files tool is involved in the write.
+    out="/tmp/twodev-a6-${nonce}-write.out"
+    guest_start "$side" "$out" "mkdir -p $(printf '%q' "$path") && printf '%s' $(printf '%q' "$content") > $(printf '%q' "$path/$fname")"
+    rc="$(guest_wait "$side" "$out" 60 || true)"
+    guest_cleanup "$side" "$out"
+    if [ "$rc" != 0 ]; then echo "A6 FAIL: $(machine_label "$side") could not write $fname into the Files mount (exit ${rc:-timeout})" >&2; return 1; fi
+
+    # Peer check: poll the same mount on the other Mac for up to 60s, 5s apart.
+    start="$(date +%s)"
+    found=0
+    attempt=0
+    while [ $(( $(date +%s) - start )) -lt "$A6_WAIT" ]; do
+      attempt=$((attempt + 1))
+      out="/tmp/twodev-a6-${nonce}-peer${attempt}.out"
+      guest_start "$peer" "$out" "test -f $(printf '%q' "$path/$fname")"
+      rc="$(guest_wait "$peer" "$out" 20 || true)"
+      guest_cleanup "$peer" "$out"
+      if [ "$rc" = 0 ]; then found=1; break; fi
+      sleep 5
+    done
+    elapsed=$(( $(date +%s) - start ))
+    log_evidence a6 "$(machine_label "$side")" "human-file-visible-on-peer" "$([ "$found" = 1 ] && echo 0 || echo 1)" "$(json_obj collectionId "$id" nonce "$nonce" file "$fname" found "$([ "$found" = 1 ] && echo true || echo false)")"
+    if [ "$found" -ne 1 ]; then echo "A6 FAIL: $fname did not appear on peer within ${A6_WAIT}s; verify B2 sign-in, org enrollment, and edit grant" >&2; return 1; fi
+    echo "A6 $(machine_label "$side") -> peer: PASS after ${elapsed}s ($fname)"
+  done
+  echo "A6 RESULT: PASS (both directions; confirm File Manager listing screenshots)"
+}
+
 
 cmd_todo() {
   local check="$1" reason="$2"
@@ -595,8 +756,9 @@ Steps:
   a2-reply           B's agent replies with the nonce in the same conversation (after a2-send)
   a2-check           B's agent looks for the nonce in its org inbox (MANUAL if no tool can read it)
   a4 <a|b>           write an AI-created file on one side and confirm File Manager search
-  a5                 TODO (org sharing not built)
-  a6                 TODO (org sharing not built)
+  a5-setup           create/reuse the twodev-proof org collection (needs ORG)
+  a5 [direction]     AI share + receiver read/hash (a-to-b|b-to-a|both)
+  a6 <a|b>           human Files mount write and peer check (TWODEV_A6_WAIT s (default 180), both directions; starts on given side)
 
 Evidence is appended to \$TWODEV_OUT/evidence-<date>.jsonl.
 USAGE
@@ -613,8 +775,9 @@ main() {
     a2-reply) cmd_a2_reply ;;
     a2-check) cmd_a2_check ;;
     a4) shift; cmd_a4 "${1:-}" ;;
-    a5) cmd_todo A5 "org sharing from A to the org is not built yet" ;;
-    a6) cmd_todo A6 "org shared folder across Desktops is not built yet" ;;
+    a5-setup) cmd_a5_setup ;;
+    a5) shift; cmd_a5 "${1:-both}" ;;
+    a6) shift; cmd_a6 "${1:-}" "${2:-both}" ;;
     -h | --help | help | "") usage ;;
     *) usage >&2; die "unknown step: $step" ;;
   esac
