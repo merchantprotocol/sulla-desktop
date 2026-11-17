@@ -453,11 +453,11 @@ const items: readonly ModeItem[] = Object.freeze([
   left: calc(100% + 10px);
   top: 50%;
   padding: 5px 10px;
-  border: 1px solid var(--accent-dim);
+  border: 1px solid var(--border-default);
   border-radius: 5px;
-  color: var(--text-primary, var(--text-primary));
-  background: var(--accent);
-  box-shadow: 0 6px 22px var(--bg-page);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--text-primary) 15%, transparent);
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: .08em;
@@ -581,17 +581,9 @@ const items: readonly ModeItem[] = Object.freeze([
   border-radius: 20px;
 }
 
-/* Own stacking context so the -1 accent square sits above the rail background,
-   and beat the light themes' `.theme-* .mode-btn.active` !important tint/glow. */
-.mode-rail .mode-btn.active,
-.mode-rail .mode-btn.active:hover {
+/* Own stacking context so the -1 accent square sits above the rail background. */
+.mode-btn.active {
   isolation: isolate;
-  color: var(--text-on-accent) !important;
-  background: transparent !important;
-}
-.mode-rail .mode-btn.active::before {
-  background: var(--accent) !important;
-  box-shadow: none !important;
 }
 
 .mode-btn:hover .icon {
