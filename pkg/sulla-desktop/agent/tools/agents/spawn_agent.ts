@@ -957,18 +957,21 @@ export class SpawnAgentWorker extends BaseTool {
       const policy = await budgetPolicyService.read();
       const jobs = await getAllJobs();
       const running = jobs.filter(item => item.visibility !== 'tab').reduce((total, item) => total + item.tasks.filter(child => child.status === 'running').length, 0);
-      const provider = tasks[0]?.provider?.trim() || (tasks[0]?.agentId ? (await agentDefinitionService.findBySlug(tasks[0].agentId))?.provider : undefined);
-      const providerPolicy = provider ? policy?.providers?.[provider] : undefined;
-      const warning = providerPolicy?.pace === 'hard-conserve'
-        ? `Budgeter warning: ${ provider } is hard-conserve. ${ providerPolicy.advice ?? 'Avoid new work on this provider.' } Explicit provider/model requests are not rerouted.`
-        : undefined;
+      const providerPaces = await Promise.all(tasks.map(async task => {
+        const definition = taskAgentSelector(task) ? await agentDefinitionService.findBySlug(taskAgentSelector(task)!) : null;
+        const provider = task.provider?.trim() || definition?.provider || undefined;
+        return { provider, pace: provider ? policy?.providers?.[provider]?.pace ?? null : null, advice: provider ? policy?.providers?.[provider]?.advice : undefined };
+      }));
+      const warnings = [...new Set(providerPaces.filter(item => item.pace === 'hard-conserve').map(item =>
+        `Budgeter warning: ${ item.provider } is hard-conserve. ${ item.advice ?? 'Avoid new work on this provider.' } Explicit provider/model requests are not rerouted.`,
+      ))];
       const response = {
         mode:      'async',
         jobId:     job.jobId,
         taskCount: tasks.length,
         parallel,
-        budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: providerPolicy?.pace ?? null },
-        ...(warning ? { warning } : {}),
+        budget: { allowance: policy?.machine?.max_concurrent_workers ?? null, running, queued: budgetWorkerAdmission.queued, providerPace: providerPaces.length === 1 ? providerPaces[0].pace : providerPaces },
+        ...(warnings.length ? { warning: warnings.join(' ') } : {}),
         message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
       };
       return this.response(response);
