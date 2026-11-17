@@ -29,17 +29,15 @@
   resolved "https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz"
   integrity sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==
 
-"@sulla/domain@file:vendor/sulla-core/sulla-domain-0.4.2-6257cca.tgz":
-  version "0.4.2"
-  resolved "file:vendor/sulla-core/sulla-domain-0.4.2-6257cca.tgz#ee03cef410ca12e0fd6d7d235d606859567b844f"
-  integrity sha512-FC008ge4cT8063IrNaLlEubiLc2ZZtrhxJaR6iDcjIQzbq2FTAJSJA2yManTKfzSHwheGMxDnNDtMwrbTWGjcA==
+"@sulla/domain@file:vendor/sulla-core/sulla-domain-0.5.0-23dc81f.tgz":
+  version "0.5.0"
+  resolved "file:vendor/sulla-core/sulla-domain-0.5.0-23dc81f.tgz#d73e1a35787624c360c6657bd43ef7bd680e0aa8"
+  integrity sha512-EevlKUiyerCycZtjdn+Lv/cV+e+BTznZXAGhftEZ7meGho7E9LruLfKVq7LohXw/Wy/ssPGiPexU8d+et75BmA==
   dependencies:
     "@noble/ciphers" "^2.0.1"
     "@noble/curves" "^2.0.1"
     "@noble/hashes" "^2.0.1"
     "@sulla/foundation" "0.1.1"
-    fflate "^0.8.3"
-    zod "^3.25.0"
 
 "@sulla/foundation@0.1.1", "@sulla/foundation@file:vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz":
   version "0.1.1"
