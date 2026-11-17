@@ -38,6 +38,7 @@ import {
 } from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 
 const console = Logging['threat-proxy'];
 
@@ -88,6 +89,7 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
  * data (CC0) as a hosts file every 12 hours, mirrored on GitLab and GitHub Pages.
  */
 export const URLHAUS_SOURCES = [
+  `${ CLOUD_API_BASE }/threat-intel/urlhaus.txt`,
   'https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt',
   'https://curbengh.github.io/malware-filter/urlhaus-filter-hosts.txt',
 ];

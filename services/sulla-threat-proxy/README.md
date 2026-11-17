@@ -33,6 +33,22 @@ If the proxy is not running, redirected connections are refused: agent web
 traffic fails closed. The user can switch scanning off in Sulla Desktop, which
 removes the rules.
 
+## URLhaus blocklist sources
+
+Desktop refreshes URLhaus data in this order: the Sulla Cloud route
+(`CLOUD_API_BASE/threat-intel/urlhaus.txt`), then the malware-filter GitLab
+mirror, then its GitHub Pages mirror. Invalid or non-hosts responses are
+rejected and the next source is tried.
+
+The image also ships `blocklist/urlhaus-default.txt`, a validated URLhaus
+hosts-file snapshot refreshed with `scripts/update-urlhaus-default.sh`. It is
+installed read-only at `/opt/sulla-threat-proxy/blocklist/urlhaus-default.txt`,
+outside the writable state directory. On first start, or whenever the
+Desktop-delivered `/var/lib/sulla-threat-proxy/blocklist/urlhaus.txt` is
+missing or empty, the proxy loads this snapshot. It rechecks the delivered
+file every five minutes and switches to it once a non-empty list arrives, so
+first-run protection works even while offline.
+
 ## State
 
 Bind-mounted from `/mnt/data/var/lib/sulla/threat-proxy` on the runtime data
