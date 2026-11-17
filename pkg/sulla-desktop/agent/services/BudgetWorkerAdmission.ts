@@ -11,6 +11,7 @@ export class BudgetWorkerAdmission {
   private waiting: WaitingTask[] = [];
   private draining = false;
   private drainRequested = false;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
   get queued(): number { return this.waiting.length; }
   get running(): number { return this.active; }
 
@@ -45,7 +46,10 @@ export class BudgetWorkerAdmission {
       let state: AdmissionSnapshot;
       try { state = await first.snapshot(); } catch { state = { allowance: null, running: 0 }; }
       const limit = state.allowance == null ? Number.MAX_SAFE_INTEGER : Math.max(0, Math.floor(state.allowance));
-      if (this.active + Math.max(0, state.running) >= limit) return;
+      if (this.active + Math.max(0, state.running) >= limit) {
+        this.scheduleRetry();
+        return;
+      }
       this.waiting.shift();
       this.active++;
       first.resolve(this.releaseHandle());
@@ -54,6 +58,16 @@ export class BudgetWorkerAdmission {
       this.draining = false;
       if (this.drainRequested) { this.drainRequested = false; void this.drain(); }
     }
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer || this.waiting.length === 0) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.drain();
+    }, 1000);
+    // A queued task should not keep an otherwise idle app process alive.
+    (this.retryTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
   }
 }
 
