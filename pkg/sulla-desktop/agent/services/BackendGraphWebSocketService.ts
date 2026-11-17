@@ -228,6 +228,25 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
+  /** Execute an explicitly owner-authorized API turn through the same guest
+   * lifecycle used by UI chat dispatch, so CLI and Files actor mounts exist. */
+  async executeOwnerApiGraph<T>(state: AgentGraphState, action: () => T): Promise<Awaited<T>> {
+    const channelId = String(state.metadata.wsChannel || '');
+    const threadId = String(state.metadata.threadId || '');
+    const { modelRouter } = await import('../languagemodels/modelRouter');
+    const routedAgentId = resolveAgentIdentity(state.metadata);
+    const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
+    const { effectiveModelChoice } = await import('../languagemodels/threadModelChoice');
+    const choice = effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, metadata: state.metadata, agentChoice: definition?.model_choice });
+    const routed = (await modelRouter.resolve('agents', choice))[0];
+    const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
+    return executeWithContainerLifecycleRecovery(
+      () => acquireWhenReady(() => this.conversationContainer(channelId, threadId, provider, state), () => {}),
+      lost => this.recoverConversationContainer(channelId, threadId, provider, state, lost),
+      action,
+    );
+  }
+
   constructor(private readonly turnPreparer = new DelegatedTurnPreparer(), dependencies: { inboxRepository?: AgentInboxRepository; inboxReceiverResolver?: AgentInboxReceiverResolver; inboxRunGuard?: ReceiverRunGuard } = {}) {
     const repository = dependencies.inboxRepository ?? new PostgresAgentInboxRepository(new DesktopPostgresConnection(postgresClient));
     this.inboxRunGuard = dependencies.inboxRunGuard ?? new ReceiverRunGuard();

@@ -57,6 +57,7 @@ export class ApiChatRunFactory {
   constructor(
     private readonly ownerUserId: () => Promise<string>,
     private readonly registerSession: (state: BaseThreadState) => ApiChatSession,
+    private readonly runOwnerRuntime: <T>(state: BaseThreadState, operation: () => Promise<T>) => Promise<T> = (_state, operation) => operation(),
   ) {}
 
   async run<T>(state: BaseThreadState, runAsOwner: boolean, operation: () => Promise<T>): Promise<T> {
@@ -69,7 +70,7 @@ export class ApiChatRunFactory {
     try {
       binding.bind(userId);
       session = this.registerSession(state);
-      return await operation();
+      return await this.runOwnerRuntime(state, operation);
     } finally {
       try {
         session?.revoke();
