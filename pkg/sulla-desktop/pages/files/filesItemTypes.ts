@@ -142,7 +142,7 @@ export interface FilesVersion {
 
 export interface FilesSnapshot {
   collection: { id: string; name: string; home: string; systemArea?: 'logs' | 'sulla' | null; orgId?: string; retentionPolicy: Record<string, unknown>; storageQuota?: number; keptBytes?: number; fileCount?: number; totalBytes?: number; agentRunCount?: number; desktopCount?: number; memberCount?: number; accountName?: string; accountRole?: string; ownerUserId?: string; sharedFolders?: string[]; cloudCatalogSync?: boolean; cloudBackup?: { enabled:boolean; status:'off'|'idle'|'syncing'|'error'|'needs-vault'; lastSyncAt?:string|null; pendingBytes:number; conflicts:number; lastError?:string|null; cryptoModule:{provider:string;version:string;fips:boolean} } };
-  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'sulla' | null }[];
+  availableCollections?: { id:string; name:string; treePath?:string; systemArea?: 'logs' | 'sulla' | null; workspaceScope?:'personal' | 'organization'; orgId?:string; orgName?:string; level?:string }[];
   folders?:(string | FilesFolderState)[];
   files: FilesItem[];
   trash?: FilesTrashItem[];

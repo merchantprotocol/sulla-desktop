@@ -7,12 +7,31 @@ import { computed } from 'vue';
 
 import { FilesBrowserState } from './FilesBrowserState';
 
+import type { FilesSnapshot } from '../types';
+
+type FilesCollectionRow = NonNullable<FilesSnapshot['availableCollections']>[number];
+
+/** One "Organizations" sub-heading and the shared collections listed under it. */
+export interface FilesOrgCollectionGroup { orgName:string; collections:FilesCollectionRow[] }
+
 /** Where the browser is: the loaded collection, the open section and folder, and the titles for them. */
 export class FilesBrowserLocation {
   readonly activeFiles = computed(() => this.state.snapshot.value?.files.filter(file => !file.deletedAt && file.path.split('/').at(-1) !== '_folder-metadata.yaml') ?? []);
   readonly trashItems = computed(() => this.state.snapshot.value?.trash ?? []);
   readonly sharedFolders = computed(() => this.state.snapshot.value?.collection.sharedFolders ?? []);
-  readonly trackedCollections = computed(() => this.userCollections.value.slice(1));
+  /** Organization collections are listed under "Organizations" instead, so they are not tracked folders. */
+  readonly trackedCollections = computed(() => this.userCollections.value.filter(collection => collection.workspaceScope !== 'organization').slice(1));
+  /** Organization collections grouped by org name, then sorted by collection name. */
+  readonly orgCollections = computed<FilesOrgCollectionGroup[]>(() => this.userCollections.value
+    .filter(collection => collection.workspaceScope === 'organization')
+    .sort((a, b) => (a.orgName ?? '').localeCompare(b.orgName ?? '') || a.name.localeCompare(b.name))
+    .reduce<FilesOrgCollectionGroup[]>((groups, collection) => {
+      const orgName = collection.orgName || collection.orgId || 'Organization';
+      const group = groups.at(-1);
+      if (group?.orgName === orgName) group.collections.push(collection);
+      else groups.push({ orgName, collections: [collection] });
+      return groups;
+    }, []));
   /** My Files opens on one folder per collection (this desktop's Files plus each synced folder), the same tree Sulla Cloud and Mobile show. */
   readonly userCollections = computed(() => (this.state.snapshot.value?.availableCollections ?? []).filter(collection => !collection.systemArea));
   readonly atRoots = computed(() => this.state.collectionsRoot.value && this.state.section.value === 'files' && this.userCollections.value.length > 1);
