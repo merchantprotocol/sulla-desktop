@@ -867,9 +867,15 @@ export class SpawnAgentWorker extends BaseTool {
         threadId: `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
         generation: jobTasks[index].generation ?? 1,
       });
-      return budgetPolicyService.read().then(policy => policy?.machine?.max_concurrent_workers === undefined
-        ? run()
-        : budgetWorkerAdmission.run(policy.machine.max_concurrent_workers, run));
+      return budgetPolicyService.read().then(async policy => {
+        if (policy?.machine?.max_concurrent_workers === undefined) return run();
+        const liveJobs = await getAllJobs();
+        const liveRunning = liveJobs.filter(item => item.visibility !== 'tab').reduce((total, item) => total + item.tasks.filter(child => child.status === 'running').length, 0);
+        // Tasks already admitted through this gate are included in liveRunning;
+        // subtract them so the gate accounts only for legacy/other executors.
+        const externalRunning = Math.max(0, liveRunning - budgetWorkerAdmission.running);
+        return budgetWorkerAdmission.run(policy.machine.max_concurrent_workers, run, externalRunning);
+      });
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────
