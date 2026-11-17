@@ -36,7 +36,7 @@ describe('organization Files tools', () => {
     const result = await (worker as any)._validatedCall({ source: '/mnt/sulla-files/Reports/current.txt', collectionId: 'org-collection', folder: 'inbox' });
     expect(JSON.parse(result.responseString)).toEqual({ collectionId: 'org-collection', path: 'inbox/current.txt', versionId: 'new-version' });
     expect(worker.writes).toHaveLength(1);
-    expect(worker.writes[0].path).toContain('collectionId=org-collection');
+    expect(worker.writes[0].path).toContain('/v1/files/import?collectionId=org-collection');
     expect(worker.writes[0].init.body).toBeInstanceOf(ArrayBuffer);
   });
 

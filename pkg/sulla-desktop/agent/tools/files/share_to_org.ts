@@ -30,7 +30,7 @@ export class FilesShareToOrgWorker extends FilesTool {
     const fileName = input.name ?? sourcePath.split('/').filter(Boolean).at(-1);
     if (!fileName) throw new Error('Could not determine source file name');
     const path = [input.folder, fileName].filter(Boolean).join('/');
-    const upload = await this.containerRequest(`/v1/files/upload?collectionId=${encodeURIComponent(collection.id)}&path=${encodeURIComponent(path)}`, input, { method: 'PUT', headers: { 'content-type': detail.mime ?? 'application/octet-stream' }, body: content });
+    const upload = await this.containerRequest(`/v1/files/import?collectionId=${encodeURIComponent(collection.id)}&path=${encodeURIComponent(path)}`, input, { method: 'PUT', headers: { 'content-type': detail.mime ?? 'application/octet-stream', 'x-sulla-expected-bytes': String(content.byteLength) }, body: content });
     if (!upload.ok) throw new Error(`Unable to copy file into organization collection (${upload.status})`);
     const result = await upload.json() as any;
     return { successBoolean: true, responseString: JSON.stringify({ collectionId: collection.id, path: result.path, versionId: result.versionId ?? result.current_version_id }) };
