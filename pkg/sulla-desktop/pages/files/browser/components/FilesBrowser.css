@@ -177,8 +177,8 @@
 .avatar.sm { width: 20px; height: 20px; font-size: 9px; }
 
 /* Top bar */
-.main { min-width: 0; min-height: 0; overflow: auto; }
-.top { display: flex; align-items: center; gap: 14px; padding: 12px 28px; border-bottom: 1px solid var(--line); background: var(--top-bg); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 5; }
+.main { min-width: 0; min-height: 0; overflow: auto; background: #fff; }
+.top { display: flex; align-items: center; gap: 14px; padding: 12px 28px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, #fff 40%, var(--paper)); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 5; }
 .crumbs { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12.5px; white-space: nowrap; }
 .crumbs b { color: var(--text); font-weight: 600; }
 .crumbs .c { color: var(--muted); }
