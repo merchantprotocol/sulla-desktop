@@ -1,6 +1,6 @@
 # Files durability soak
 
-`files-soak.sh` is a standard-library-only QA harness for the Sulla Desktop Linux VM. Run it **inside the VM**, where `/mnt/sulla-files` is mounted and Docker manages the Files services. It does not SSH or call the Mac host. The soak folder is created below the detected personal collection (`Files`, `Personal`, `My Files`, or an unambiguous non-organization root); organization collections are excluded. Bulk data is about 225 MB on average and at most 300 MB, well below the iMac's 1.5 GB test-data budget.
+`files-soak.sh` is a self-contained, standard-library-only QA harness for the Sulla Desktop Linux VM. Run it **inside the VM**, where `/mnt/sulla-files` is mounted and Docker manages the Files services. It does not SSH or call the Mac host. The soak folder is created below the detected personal collection (`Files`, `Personal`, `My Files`, or an unambiguous non-organization root); organization collections are excluded. Bulk data is about 225 MB on average and at most 300 MB, well below the iMac's 1.5 GB test-data budget.
 
 ```sh
 cd /path/to/scripts/qa/files-soak
