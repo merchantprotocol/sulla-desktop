@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { randomBytes, webcrypto } from 'node:crypto';
+import { safeStorage } from 'electron';
 import { OrgFilesKeyCipher } from '@sulla/domain';
 import { CloudOrgMembershipSource, OrgMembershipDirectory } from '../../../agent/services/OrgMembershipDirectory';
 import { FileOrgFilesKeyStore } from '../device/FileOrgFilesKeyStore';
@@ -23,7 +24,7 @@ export class OrgFilesDesktopRuntime {
 
   constructor() {
     const cloud = new OrgFilesCloudClient();
-    const recipientStore = new OrgFilesRecipientKeyStore(new FileOrgFilesKeyStore(), cloud);
+    const recipientStore = new OrgFilesRecipientKeyStore(new FileOrgFilesKeyStore(() => safeStorage), cloud);
     this.keyring = new OrgFilesKeyring(
       cloud, recipientStore, new OrgFilesKeyCipher(webcrypto.subtle, size => new Uint8Array(randomBytes(size))),
       async () => true,

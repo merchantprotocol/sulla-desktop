@@ -42,9 +42,13 @@ export class OrgFilesCloudClient {
   }
 
   async getCollectionKeyWrap(orgId: string, collectionId: string): Promise<OrgCollectionKeyWrap> {
-    const result = await this.collections(orgId);
-    const collection = result.collections.find(item => item.collection.collectionId === collectionId)?.collection as
-      (typeof result.collections[number]['collection'] & { collectionKeyWrap?: OrgCollectionKeyWrap }) | undefined;
+    const route = OrgFilesContract.routes.listCollections;
+    const response = await this.get(route, { orgId });
+    // Validate the full endpoint response, but read the optional-in-older-contract
+    // key-wrap field from the original response so contract projection cannot strip it.
+    new OrgFilesContract().collectionsResponse(response);
+    const payload = response as { collections?: Array<{ collection?: { collectionId?: string; collectionKeyWrap?: OrgCollectionKeyWrap } }> };
+    const collection = payload.collections?.find(item => item.collection?.collectionId === collectionId)?.collection;
     if (!collection?.collectionKeyWrap) throw new Error(`Org Files collection ${collectionId} did not include its root key wrap`);
     return collection.collectionKeyWrap;
   }
