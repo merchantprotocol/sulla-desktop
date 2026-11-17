@@ -28,11 +28,19 @@ describe('ApiChatRunFactory', () => {
     // risk: preventing request-controlled identity from authorizing private data access
     const revoke = vi.fn();
     const graph = state();
-    const run = vi.fn(async () => 'done');
+    let seen: Record<string, unknown> = {};
+    const run = vi.fn(async () => {
+      seen = { ...graph.metadata };
+      return 'done';
+    });
     const factory = new ApiChatRunFactory(async () => 'local-owner', () => ({ revoke }));
 
     await expect(factory.run(graph, true, run)).resolves.toBe('done');
-    expect(graph.metadata).toMatchObject({ userId: 'local-owner', ownerUserId: 'local-owner', isTrustedUser: 'trusted', threadId: 'thread' });
+    expect(seen).toMatchObject({ userId: 'local-owner', ownerUserId: 'local-owner', isTrustedUser: 'trusted', threadId: 'thread' });
+    expect(graph.metadata).toMatchObject({ threadId: 'thread', wsChannel: 'api' });
+    expect('userId' in graph.metadata).toBe(false);
+    expect('ownerUserId' in graph.metadata).toBe(false);
+    expect('isTrustedUser' in graph.metadata).toBe(false);
     expect(run).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledOnce();
   });
