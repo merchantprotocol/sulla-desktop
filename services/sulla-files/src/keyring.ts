@@ -12,6 +12,7 @@ import { TransactionRunner } from './FilesTransaction.js';
 import { CollectionKeyRepository } from './Repositories/CollectionKeyRepository.js';
 import { FilesKeyStateRepository } from './Repositories/FilesKeyStateRepository.js';
 import { LegacySigningKeySelector } from './Services/LegacySigningKeySelector.js';
+import { UNSCOPED_PROFILE_ID } from './ProfileIdentity.js';
 
 import type pg from 'pg';
 
@@ -33,7 +34,9 @@ export class FilesKeyring {
   private master?:  Buffer;
   private epoch = 0;
   private pending?: Promise<void>;
+  /** Collection keys are cached per Cloud profile so one account's sign-out never drops another's. */
   private readonly cache = new Map<string, CollectionKeys>();
+  private readonly profileEpochs = new Map<string, number>();
   constructor(
     private readonly db:pg.Pool,
     private readonly collectionKeys = new CollectionKeyRepository(db),
@@ -41,6 +44,8 @@ export class FilesKeyring {
     private readonly transactions = new TransactionRunner(db),
     /** Chooses between the current and pre-#2369 signing key; absent, the current key is always used. */
     private readonly legacyKeys?:LegacySigningKeySelector,
+    /** Active Cloud profile id; the cache is keyed by it. Absent, every caller shares one profile. */
+    private readonly profileOf:()=>string=()=>UNSCOPED_PROFILE_ID,
   ) {}
   get unlocked():boolean { return Boolean(this.master) }
 
@@ -120,16 +125,18 @@ export class FilesKeyring {
 
   async keys(id:string, queryable:Queryable = this.db):Promise<CollectionKeys> {
     if (!this.master) throw Object.assign(new Error('Files is locked'), { status: 503 });
-    const cached = this.cache.get(id); if (cached) return cached;
-    const epoch = this.epoch; const master = Buffer.from(this.master);
+    const profile = this.profileOf(); const cacheKey = this.cacheKey(profile, id);
+    const cached = this.cache.get(cacheKey); if (cached) return cached;
+    const epoch = this.epoch; const profileEpoch = this.profileEpoch(profile); const master = Buffer.from(this.master);
     try {
       const row = await this.collectionKeys.findWrappedKeys(id, queryable);
       if (!row) throw new Error('Collection key unavailable; secure key exchange is required');
       const keys = await this.unwrap(id, row.data_key, row.dedup_key, master);
       if (epoch !== this.epoch) { keys.data.fill(0); keys.dedup.fill(0); throw new Error('Files was locked during key access') }
-      const concurrent = this.cache.get(id);
+      if (profileEpoch !== this.profileEpoch(profile)) { keys.data.fill(0); keys.dedup.fill(0); throw new Error('Files profile was invalidated during key access') }
+      const concurrent = this.cache.get(cacheKey);
       if (concurrent) { keys.data.fill(0); keys.dedup.fill(0); return concurrent }
-      this.cache.set(id, keys); return keys;
+      this.cache.set(cacheKey, keys); return keys;
     } finally { master.fill(0) }
   }
 
@@ -187,7 +194,8 @@ export class FilesKeyring {
       committed = true;
       if (epoch !== this.epoch) throw new Error('Files device recovery committed while the service was locking');
       this.master = Buffer.from(master);
-      for (const [id, keys] of recovered) this.cache.set(id, { data: Buffer.from(keys.data), dedup: Buffer.from(keys.dedup) });
+      const profile = this.profileOf();
+      for (const [id, keys] of recovered) this.cache.set(this.cacheKey(profile, id), { data: Buffer.from(keys.data), dedup: Buffer.from(keys.dedup) });
     } catch (error) {
       if (committed) throw new Error('Files device recovery committed but remained locked; retry unlock with the replacement master', { cause: error });
       throw new Error('Files device recovery failed; existing key envelopes were preserved', { cause: error });
@@ -205,4 +213,19 @@ export class FilesKeyring {
     for (const keys of this.cache.values()) { keys.data.fill(0); keys.dedup.fill(0) }
     this.cache.clear();
   }
+
+  /** Zeroizes and forgets one profile's cached collection keys; other profiles are untouched. */
+  invalidateProfile(profileId:string):void {
+    this.profileEpochs.set(profileId, this.profileEpoch(profileId) + 1);
+    const prefix = `${ profileId }\u0000`;
+    for (const [cacheKey, keys] of [...this.cache]) {
+      if (!cacheKey.startsWith(prefix)) continue;
+      keys.data.fill(0); keys.dedup.fill(0);
+      this.cache.delete(cacheKey);
+    }
+  }
+
+  private profileEpoch(profileId:string):number { return this.profileEpochs.get(profileId) ?? 0 }
+
+  private cacheKey(profileId:string, id:string):string { return `${ profileId }\u0000${ id }` }
 }

@@ -135,6 +135,8 @@ export interface FilesApplicationDependencies {
   indexer?:IndexingQueue;
   chunkStore?:Store;
   cloudSync?:CloudSyncService;
+  /** Drops one Cloud profile's cached keys when Desktop signs it out or locks it. */
+  profileCaches?:{ invalidateProfile(profileId:string):void };
 }
 
 /** The request-independent services every route group shares, built once per app. */
@@ -303,7 +305,7 @@ export class FilesApplication {
     new ShareRoutes(accessGate, shares, contentReadFailures).register(app);
 
     const collectionSync = new CollectionSyncRoutes(db, accessGate, new CollectionSyncRepository(db, FILE_ROW_JSON_SQL));
-    new OrgCollectionRoutes(config, new OrgCollectionEnrollment(new OrgCollectionEnrollmentRepository(db), config), this.dependencies.cloudSync).register(app);
+    new OrgCollectionRoutes(config, new OrgCollectionEnrollment(new OrgCollectionEnrollmentRepository(db), config), this.dependencies.cloudSync, this.dependencies.profileCaches).register(app);
     collectionSync.registerListing(app);
     const agentFiles = new AgentFileRoutes(db, config, store, accessGate, new AgentFileRepository(db, FILE_COLUMNS_SQL), requestAudit);
     agentFiles.registerQuery(app);

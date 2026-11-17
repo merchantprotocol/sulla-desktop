@@ -123,4 +123,27 @@ describe('OrgFilesKeyring', () => {
     await expect(keyringA.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
     await expect(keyringB.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
   });
+
+  it('sends sign-out and lock to Files for the signed-out profile only', async () => {
+    // risk: key lifecycle — Files must drop the signed-out account's org roots, and a Files outage must not keep local keys alive.
+    const vault = new MemoryVault(); const cloud = new FakeOrgFilesCloud(); const cipher = makeCipher();
+    const store = new OrgFilesRecipientKeyStore(vault, cloud, webcrypto,
+      async () => ({ userId: 'member-1', deviceId: 'device-1' }), async () => 'proof');
+    await store.ensure('org-1');
+    const filesCalls: string[] = [];
+    let reachable = true;
+    const filesCache = { invalidateProfile: async (profileId: string) => { if (!reachable) throw new Error('files offline'); filesCalls.push(profileId) } };
+    const keyring = new OrgFilesKeyring(cloud as never, store, cipher, undefined, { userId: async () => 'member-1' }, filesCache);
+    await keyring.createOrgKeyIfMissing('org-1');
+    const expected = OrgFilesProfileIdentity.fromCloudUserId('member-1');
+    await keyring.onLock();
+    expect(filesCalls).toEqual([expected]);
+    await keyring.onSignOut();
+    expect(filesCalls).toEqual([expected, expected]);
+    reachable = false;
+    await keyring.createOrgKeyIfMissing('org-1');
+    cloud.wraps = [];
+    await expect(keyring.onLock()).resolves.toBeUndefined();
+    await expect(keyring.getOrgKey('org-1', 1)).rejects.toThrow('No Org Files key wrap available');
+  });
 });

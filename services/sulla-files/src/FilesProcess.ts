@@ -49,6 +49,7 @@ import { FilesSyncCloudApi } from './cloudSync/cloudApi.js';
 import { CloudRootKeyStore } from './cloudSync/keyStore.js';
 import { CloudSyncService } from './cloudSync/service.js';
 import { OrgRootKeyCache } from './cloudSync/OrgRootKeyCache.js';
+import { ProfileIdentity } from './ProfileIdentity.js';
 
 /** The long-lived services the Files process composes before it serves the API. */
 interface FilesServices {
@@ -125,7 +126,7 @@ export class FilesProcess {
   }
 
   private async composeServices(db:pg.Pool, config:Config):Promise<FilesServices> {
-    const keyring = config.keyring = new FilesKeyring(db, undefined, undefined, undefined, new LegacySigningKeySelector(new Store(config.chunkRoot)));
+    const keyring = config.keyring = new FilesKeyring(db, undefined, undefined, undefined, new LegacySigningKeySelector(new Store(config.chunkRoot)), () => ProfileIdentity.fromCloudUserId(config.userId));
     // Cloud sync and its chunk source exist only when the vault broker identity is configured.
     const cloudBroker = config.mode === 'desktop' && config.vaultBrokerServiceToken ? new FilesCloudBroker(config) : undefined;
     const cloudChunkSource:CloudChunkSource | undefined = cloudBroker
@@ -215,7 +216,11 @@ export class FilesProcess {
         return keyRecovery.recoverDeviceMaster(master, principalId);
       }
       : undefined;
-    const orgRootKeys=new OrgRootKeyCache();
+    // Cloud profile of the signed-in account. Org roots and collection keys are partitioned by it.
+    const profileOf = () => ProfileIdentity.fromCloudUserId(config.userId);
+    const orgRootKeys=new OrgRootKeyCache(profileOf);
+    // Desktop's sign-out/lock reaches this through POST /v1/desktop/org-profiles/:profileId/invalidate.
+    const profileCaches = { invalidateProfile: (profileId:string) => { keyring.invalidateProfile(profileId); orgRootKeys.invalidateProfile(profileId) } };
     const lifecycle = new FilesLifecycle(db, config, keyring, { initialize: reportStage => this.initialize(db, config, services, reportStage), stop: async()=>{orgRootKeys.clear();await this.lock(services)}, recover });
     const bootstrapAuthority = config.mode === 'desktop'
       ? new FilesBootstrapAuthority(
@@ -228,7 +233,7 @@ export class FilesProcess {
       ? new CloudSyncService(db, config, config.keyring, chunkStore, cloudBroker, orgRootKeys)
       : undefined;
     if (chunkStore instanceof CachingStore) await chunkStore.start();
-    const app = new FilesApplication({ db, config, manager, search, residency, filesLifecycle: lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync }).build();
+    const app = new FilesApplication({ db, config, manager, search, residency, filesLifecycle: lifecycle, bootstrapAuthority, indexer, chunkStore, cloudSync, profileCaches }).build();
     const memoryTelemetry = new MemoryTelemetry(() => ({
       requests: Object.fromEntries(app.locals.inFlightRequests ?? []),
       indexer: indexer.diagnosticJob,

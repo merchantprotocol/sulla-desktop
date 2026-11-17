@@ -25,11 +25,11 @@ export class OrgFilesDesktopRuntime {
   constructor() {
     const cloud = new OrgFilesCloudClient();
     const recipientStore = new OrgFilesRecipientKeyStore(new FileOrgFilesKeyStore(() => safeStorage), cloud);
+    const files = new OrgFilesFilesClient();
     this.keyring = new OrgFilesKeyring(
       cloud, recipientStore, new OrgFilesKeyCipher(webcrypto.subtle, size => new Uint8Array(randomBytes(size))),
-      async () => true,
+      async () => true, undefined, files,
     );
-    const files = new OrgFilesFilesClient();
     this.memberships = new OrgMembershipDirectory(new CloudOrgMembershipSource());
     this.driver = new OrgCollectionSyncDriver(this.memberships, cloud, this.keyring, files);
     this.creator = new OrgCollectionCreator(cloud, this.keyring, files);

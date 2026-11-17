@@ -43,6 +43,11 @@ export class OrgFilesFilesClient {
     });
   }
 
+  /** Asks Files to drop one Cloud profile's org roots and collection keys (sign-out or lock). */
+  async invalidateProfile(profileId: string): Promise<void> {
+    await this.request(`/v1/desktop/org-profiles/${encodeURIComponent(profileId)}/invalidate`, { method: 'POST' });
+  }
+
   async enableSync(collectionId: string, keyVersion: number, head?: string | null): Promise<void> {
     await this.request(`/v1/desktop/org-collections/${encodeURIComponent(collectionId)}/sync`, {
       method: 'POST', body: JSON.stringify({ keyVersion, ...(head === undefined ? {} : { head }) }),
