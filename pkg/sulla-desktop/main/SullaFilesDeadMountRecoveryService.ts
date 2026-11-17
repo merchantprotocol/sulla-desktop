@@ -20,19 +20,24 @@ export class SullaFilesDeadMountRecoveryService {
 
   async clearDeadMount():Promise<void> {
     const state = await this.statState();
-    if (state !== 'ENOTCONN') return;
+    if (state !== 'ENOTCONN' && state !== 'TIMEOUT') return;
 
     await this.executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-uz', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
     if (await this.statState() === 'ENOTCONN') {
       await this.executor.execCommand({ root: true, expectFailure: true }, 'umount', '-l', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
     }
     const verified = await this.statState();
-    if (verified === 'ENOTCONN') throw new Error('The dead Files mount still reports ENOTCONN after lazy unmount');
+    if (verified === 'ENOTCONN' || verified === 'TIMEOUT') throw new Error(`The dead Files mount still reports ${ verified } after lazy unmount`);
   }
 
+  /**
+   * Stat the Files mount under a timeout: a live-but-stuck FUSE daemon blocks stat forever.
+   * A timeout (exit 124) or empty output means the mount is stuck, so it is reported as TIMEOUT.
+   */
   private async statState():Promise<string> {
-    return (await this.executor.execCommand(
-      { root: true, capture: true }, 'python3', '-c', STAT_ERROR, SULLA_FILES_GUEST_MOUNT_PATH,
-    )).trim();
+    const output = await this.executor.execCommand(
+      { root: true, capture: true, expectFailure: true }, 'timeout', '10', 'python3', '-c', STAT_ERROR, SULLA_FILES_GUEST_MOUNT_PATH,
+    ).catch(() => '');
+    return output.trim() || 'TIMEOUT';
   }
 }
