@@ -550,15 +550,15 @@
 }
 
 .theme-protocol-light .browser-tab,
-.theme-protocol-light .tab-item,
+.theme-protocol-light .tab-item:not(.app-titlebar .tab-item),
 .theme-protocol-light [class*="browser-tab"] {
   background: transparent !important;
   color: var(--text-secondary, #3d4f63) !important;
 }
 
 .theme-protocol-light .browser-tab.active,
-.theme-protocol-light .tab-item.active,
-.theme-protocol-light .tab-item.on,
+.theme-protocol-light .tab-item:not(.app-titlebar .tab-item).active,
+.theme-protocol-light .tab-item:not(.app-titlebar .tab-item).on,
 .theme-protocol-light [class*="browser-tab"][class*="active"] {
   background: var(--bg-page, #f4f7fb) !important;
   color: var(--text-primary, #1a2332) !important;
