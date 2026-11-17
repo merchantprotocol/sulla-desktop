@@ -20,6 +20,8 @@ APP_PATH="${TWODEV_APP_PATH:-/Applications/Sulla Desktop.app}"
 RUNTIME_BIN="${TWODEV_RUNTIME_BIN:-$APP_PATH/Contents/Resources/resources/darwin/sulla-runtime/sulla-runtime}"
 FILES_FOLDER="${TWODEV_FOLDER:-Projects/sulla-desktop/qa/two-device}"
 ORG="${TWODEV_ORG:-}"
+# A6 peer wait: one push (~10s) plus one peer pull (~60s) can exceed a minute.
+A6_WAIT="${TWODEV_A6_WAIT:-180}"
 AGENT_MODEL="${TWODEV_AGENT:-sulla-desktop}"
 EVIDENCE_LOG="$TWODEV_OUT/evidence-$(date -u +%Y-%m-%d).jsonl"
 
@@ -717,7 +719,7 @@ cmd_a6() {
     start="$(date +%s)"
     found=0
     attempt=0
-    while [ $(( $(date +%s) - start )) -lt 60 ]; do
+    while [ $(( $(date +%s) - start )) -lt "$A6_WAIT" ]; do
       attempt=$((attempt + 1))
       out="/tmp/twodev-a6-${nonce}-peer${attempt}.out"
       guest_start "$peer" "$out" "test -f $(printf '%q' "$path/$fname")"
@@ -728,7 +730,7 @@ cmd_a6() {
     done
     elapsed=$(( $(date +%s) - start ))
     log_evidence a6 "$(machine_label "$side")" "human-file-visible-on-peer" "$([ "$found" = 1 ] && echo 0 || echo 1)" "$(json_obj collectionId "$id" nonce "$nonce" file "$fname" found "$([ "$found" = 1 ] && echo true || echo false)")"
-    if [ "$found" -ne 1 ]; then echo "A6 FAIL: $fname did not appear on peer within 60s; verify B2 sign-in, org enrollment, and edit grant" >&2; return 1; fi
+    if [ "$found" -ne 1 ]; then echo "A6 FAIL: $fname did not appear on peer within ${A6_WAIT}s; verify B2 sign-in, org enrollment, and edit grant" >&2; return 1; fi
     echo "A6 $(machine_label "$side") -> peer: PASS after ${elapsed}s ($fname)"
   done
   echo "A6 RESULT: PASS (both directions; confirm File Manager listing screenshots)"
@@ -756,7 +758,7 @@ Steps:
   a4 <a|b>           write an AI-created file on one side and confirm File Manager search
   a5-setup           create/reuse the twodev-proof org collection (needs ORG)
   a5 [direction]     AI share + receiver read/hash (a-to-b|b-to-a|both)
-  a6 <a|b>           human Files mount write and peer check (60s, both directions; starts on given side)
+  a6 <a|b>           human Files mount write and peer check (TWODEV_A6_WAIT s (default 180), both directions; starts on given side)
 
 Evidence is appended to \$TWODEV_OUT/evidence-<date>.jsonl.
 USAGE
