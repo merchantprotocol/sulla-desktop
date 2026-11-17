@@ -10,11 +10,12 @@ describe('BudgetWorkerAdmission', () => {
     const admission = new BudgetWorkerAdmission();
     let releaseFirst!: () => void;
     const state = async() => ({ allowance: 1, running: 0 });
+    const flush = () => new Promise(resolve => setTimeout(resolve, 0));
     const first = admission.run(state, () => new Promise<void>(resolve => { releaseFirst = resolve; }));
-    await Promise.resolve();
+    await flush();
     let secondStarted = false;
     const second = admission.run(state, async() => { secondStarted = true; });
-    await Promise.resolve();
+    await flush();
     expect(secondStarted).toBe(false);
     expect(admission.queued).toBe(1);
     releaseFirst();
