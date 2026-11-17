@@ -15,6 +15,7 @@ describe('ApiChatRunFactory', () => {
     const register = vi.fn();
     const run = vi.fn(async () => 'ok');
     const graph = state();
+    Object.assign(graph.metadata, { userId: 'attacker-user', ownerUserId: 'attacker-owner', sub: 'attacker-sub' });
 
     await expect(new ApiChatRunFactory(owner, register).run(graph, false, run)).resolves.toBe('ok');
     expect(graph.metadata).toMatchObject({ threadId: 'thread', wsChannel: 'api' });
@@ -31,7 +32,7 @@ describe('ApiChatRunFactory', () => {
     const factory = new ApiChatRunFactory(async () => 'local-owner', () => ({ revoke }));
 
     await expect(factory.run(graph, true, run)).resolves.toBe('done');
-    expect(graph.metadata).toMatchObject({ userId: 'local-owner', ownerUserId: 'local-owner', isTrustedUser: 'trusted' });
+    expect(graph.metadata).toMatchObject({ userId: 'local-owner', ownerUserId: 'local-owner', isTrustedUser: 'trusted', threadId: 'thread' });
     expect(run).toHaveBeenCalledOnce();
     expect(revoke).toHaveBeenCalledOnce();
   });
