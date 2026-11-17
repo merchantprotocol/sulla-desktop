@@ -70,6 +70,8 @@
     "browser/agent_storage",
     "browser/eval_js",
     "browser/manage_cookies",
+    "budget/budget_set_priority",
+    "budget/budget_status",
     "capture/camera_list",
     "capture/camera_release",
     "capture/camera_set",
@@ -92,6 +94,7 @@
   ],
   "sideEffects": {
     "read": [
+      "budget/budget_status",
       "desktop/find",
       "desktop/get",
       "desktop/guide",
@@ -109,6 +112,7 @@
       "redis/redis_ttl"
     ],
     "write": [
+      "budget/budget_set_priority",
       "agents/close_agent_conversation",
       "agents/report_progress",
       "agents/return_result",
