@@ -34,6 +34,10 @@ export class OrgFilesRecipientKeyStore {
       const pair = await this.crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']) as CryptoKeyPair;
       privateJwk = await this.crypto.subtle.exportKey('jwk', pair.privateKey);
       await this.vault.write(itemKey, privateJwk);
+      // A concurrent creator may have won an atomic create-if-absent write.
+      // Always publish the public half of the key that is actually durable.
+      privateJwk = await this.vault.read(itemKey);
+      if (!privateJwk) throw new Error('Org Files recipient key could not be saved to Vault');
     }
     // A private JWK may be reconstructed only in memory. Public JWK is derived from its x/y coordinates.
     const publicKey: JsonWebKey = { kty: privateJwk.kty, crv: privateJwk.crv, x: privateJwk.x, y: privateJwk.y, ext: true, key_ops: [] };
