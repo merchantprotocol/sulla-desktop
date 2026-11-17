@@ -57,6 +57,17 @@ describe('legacy profile migration on PostgreSQL-compatible databases', () => {
     expect((await profile.query("SELECT count(*)::int AS n FROM audit_log WHERE actor_user_id=(SELECT id FROM users WHERE email='x@x.test') AND action='migration-test'")).rows[0].n).toBe(1);
     const bytes=await profile.query("SELECT login_hash_salt FROM users"); expect(Buffer.from(bytes.rows[0].login_hash_salt).toString('hex')).toBe('01');
     expect((await profile.query('SELECT count(*)::int AS n FROM items')).rows[0].n).toBe(502);
+    // risk: data accuracy + sync ordering — change_seq/updated_at copied exactly; new rows sort after the copy.
+    const sourceItems = await legacy.query('SELECT id, change_seq, updated_at::text AS updated_at FROM items ORDER BY id');
+    const copiedItems = await profile.query('SELECT id, change_seq, updated_at::text AS updated_at FROM items ORDER BY id');
+    expect(copiedItems.rows).toEqual(sourceItems.rows);
+    const maxCopiedSeq = Math.max(...copiedItems.rows.map((row: any) => Number(row.change_seq)));
+    const newItem = await profile.query("INSERT INTO items(owner_user_id,item_type,ciphertext,encrypted_item_key) SELECT id,'login','[9]'::jsonb,'{}'::jsonb FROM users RETURNING change_seq");
+    expect(Number(newItem.rows[0].change_seq)).toBeGreaterThan(maxCopiedSeq);
+    const maxCopiedAudit = Math.max(...(await profile.query('SELECT id FROM audit_log WHERE action=\'migration-test\'')).rows.map((row: any) => Number(row.id)));
+    expect(Number(inserted.rows[0].id)).toBeGreaterThan(maxCopiedAudit);
+    // triggers are back on after the copy transaction (tgenabled 'O' = origin, enabled)
+    expect((await profile.query("SELECT tgenabled FROM pg_trigger WHERE tgname='items_change_seq'")).rows[0].tgenabled).toBe('O');
     await legacy.close(); await profile.close();
   });
 });
