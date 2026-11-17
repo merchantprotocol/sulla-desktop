@@ -40,8 +40,7 @@ async function load():Promise<void> {
   try {
     if (props.documentFile.collectionId) dataSource.selectCollection(props.documentFile.collectionId);
     const snapshot = await dataSource.load();
-    item.value = snapshot.files.find(file => file.id === props.documentFile.fileId) ??
-      snapshot.files.find(file => file.path === props.documentFile.path) ?? null;
+    item.value = await dataSource.resolveFile(props.documentFile, snapshot.files);
     if (!item.value) return;
     updateTab(props.tabId, {
       title: item.value.path.split('/').at(-1) || 'Paper',

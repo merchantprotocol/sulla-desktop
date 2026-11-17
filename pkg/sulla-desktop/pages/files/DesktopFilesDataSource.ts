@@ -282,6 +282,27 @@ export class DesktopFilesDataSource extends DesktopFilesIpcCommands implements F
     return found;
   }
 
+  /**
+   * Resolves one document for the editor. `load()` only lists the collection root, so a nested file is
+   * found by id through metadata first; only when that misses is its parent folder loaded (scoping the
+   * data source to the file's folder) and searched by path, following every page.
+   */
+  async resolveFile(ref:{ fileId?:string; path?:string }, known:FilesItem[] = []):Promise<FilesItem|null> {
+    const live = (file:FilesItem|undefined):FilesItem|null => file && !file.deletedAt ? file : null;
+    const inKnown = live(known.find(file => ref.fileId !== undefined && file.id === ref.fileId)) ?? live(known.find(file => ref.path !== undefined && file.path === ref.path));
+    if (inKnown) return inKnown;
+    if (ref.fileId) {
+      const [byId] = await this.filesByIds([ref.fileId]);
+      if (byId) return byId;
+    }
+    if (!ref.path) return null;
+    const slash = ref.path.lastIndexOf('/');
+    const parent = slash < 0 ? '' : ref.path.slice(0, slash);
+    const samePath = (file:FilesItem) => file.path === ref.path && !file.deletedAt;
+    const firstPage = (await this.loadFolder(parent)).find(samePath);
+    return firstPage ?? (await this.listFolderChildren(parent)).find(samePath) ?? null;
+  }
+
   listFolderChildren(path:string):Promise<FilesItem[]> { return this.pageAll({ path, children:true }) }
 
   listFolderTree(path:string):Promise<FilesItem[]> { return this.pageAll({ path, children:false }) }
