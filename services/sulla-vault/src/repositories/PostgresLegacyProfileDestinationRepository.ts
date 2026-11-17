@@ -16,6 +16,7 @@ export class PostgresLegacyProfileDestinationRepository {
     private readonly admin: Queryable,
     private readonly migrationsDirectory: string,
     private readonly transactions = new PgTransactionRunner(),
+    private readonly maxParameters = 60_000,
   ) {}
 
   async assertFresh(dbIdentifier: string): Promise<void> {
@@ -31,9 +32,9 @@ export class PostgresLegacyProfileDestinationRepository {
     await new VaultMigrator(this.migrationsDirectory).migrate(this.database(dbIdentifier));
   }
 
-  async withTransaction<T>(dbIdentifier: string, operation: (writer: { copy(table: string, rows: readonly Record<string, unknown>[]): Promise<void> }) => Promise<T>): Promise<T> {
+  async withTransaction<T>(dbIdentifier: string, operation: (writer: { prepare(tables: readonly string[]): Promise<readonly string[]>; copy(table: string, rows: readonly Record<string, unknown>[]): Promise<void> }) => Promise<T>): Promise<T> {
     return this.transactions.run(this.database(dbIdentifier) as unknown as TransactionPool, async client => operation({
-      copy: async (table, rows) => this.copyWith(client, table, rows),
+      prepare: tables => this.prepareCopy(client, tables), copy: (table, rows) => this.copyWith(client, table, rows),
     }));
   }
 
@@ -47,14 +48,46 @@ export class PostgresLegacyProfileDestinationRepository {
     await this.admin.query(`DROP DATABASE IF EXISTS \"${dbIdentifier}\"`);
   }
 
+  private async prepareCopy(client: pg.PoolClient, source: readonly string[]): Promise<readonly string[]> {
+    const names = [...new Set(source)]; if (names.some(name => !TABLE_IDENTIFIER.test(name))) throw new Error('Invalid source table identifier');
+    const result = await client.query<{table_name:string}>("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name");
+    const dest = result.rows.map(row => row.table_name).filter(name => name !== 'vault_profile_catalog' && name !== 'vault_profile_active');
+    if (names.length !== dest.length || [...names].sort().some((name,i) => name !== dest[i])) throw new Error('Legacy and profile table sets differ');
+    const fk = await client.query<{table_name:string; foreign_table_name:string; deferrable:boolean}>("SELECT tc.table_name,ccu.table_name AS foreign_table_name,tc.is_deferrable='YES' AS deferrable FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name=kcu.constraint_name AND tc.constraint_schema=kcu.constraint_schema JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name=tc.constraint_name AND ccu.constraint_schema=tc.constraint_schema WHERE tc.constraint_type='FOREIGN KEY' AND tc.table_schema='public'");
+    const pending = new Set(names), deps = new Map(names.map(n=>[n,new Set<string>()]));
+    for (const edge of fk.rows) if(pending.has(edge.table_name)&&pending.has(edge.foreign_table_name)) deps.get(edge.table_name)!.add(edge.foreign_table_name);
+    const ordered:string[]=[];
+    while(pending.size){ const ready=[...pending].filter(n=>[...deps.get(n)!].every(d=>!pending.has(d))).sort();
+      if(!ready.length){ await client.query('SET CONSTRAINTS ALL DEFERRED');
+        const cycleEdges = fk.rows.filter(edge => pending.has(edge.table_name) && pending.has(edge.foreign_table_name) && this.isInCycle(edge.table_name, edge.foreign_table_name, deps));
+        if(cycleEdges.some(edge => !edge.deferrable)) throw new Error('Foreign key dependency cycle contains a non-deferrable constraint');
+        ordered.push(...[...pending].sort()); break; }
+      for(const n of ready){pending.delete(n);ordered.push(n);}
+    }
+    for(const n of names)this.assertTable(n);
+    if(names.length)await client.query(`TRUNCATE ${names.map(n=>`public."${n}"`).join(',')} RESTART IDENTITY CASCADE`);
+    return ordered;
+  }
+  private isInCycle(from: string, to: string, dependencies: ReadonlyMap<string, ReadonlySet<string>>): boolean {
+    const visited = new Set<string>(); const stack = [to];
+    while (stack.length) { const node = stack.pop()!; if (node === from) return true; if (visited.has(node)) continue; visited.add(node); stack.push(...(dependencies.get(node) ?? [])); }
+    return false;
+  }
   private async copyWith(client: pg.PoolClient, table: string, rows: readonly Record<string, unknown>[]): Promise<void> {
-    this.assertTable(table);
-    if (!rows.length) return;
-    const columns = [...new Set(rows.flatMap(row => Object.keys(row)))].sort();
-    if (!columns.length || columns.some(column => !TABLE_IDENTIFIER.test(column))) throw new Error('Invalid row column');
-    const values: unknown[] = [];
-    const tuples = rows.map(row => `(${columns.map(column => { values.push(row[column] ?? null); return `$${values.length}`; }).join(',')})`);
-    await client.query(`INSERT INTO public.\"${table}\" (${columns.map(column => `\"${column}\"`).join(',')}) VALUES ${tuples.join(',')}`, values);
+    this.assertTable(table); if(!rows.length)return;
+    const columns=[...new Set(rows.flatMap(r=>Object.keys(r)))].sort(); if(!columns.length||columns.some(c=>!TABLE_IDENTIFIER.test(c)))throw new Error('Invalid row column');
+    const info=await client.query<{column_name:string;data_type:string;is_identity:string;is_generated:string}>("SELECT column_name,data_type,is_identity,is_generated FROM information_schema.columns WHERE table_schema='public' AND table_name=$1",[table]);
+    const meta=new Map(info.rows.map(c=>[c.column_name,c])); const cols=columns.filter(c=>meta.get(c)?.is_generated!=='ALWAYS');
+    const identity=cols.some(c=>meta.get(c)?.is_identity==='YES'); const batch=Math.max(1,Math.floor(this.maxParameters/Math.max(1,cols.length)));
+    for(let off=0;off<rows.length;off+=batch){const values:unknown[]=[], tuples=rows.slice(off,off+batch).map(row=>`(${cols.map(c=>{let v=row[c]??null;const type=meta.get(c)?.data_type;if(v!==null&&(type==='json'||type==='jsonb'))v=JSON.stringify(v);values.push(v);return `$${values.length}${type==='jsonb'?'::jsonb':type==='json'?'::json':''}`}).join(',')})`);
+      if(cols.length)await client.query(`INSERT INTO public."${table}" (${cols.map(c=>`"${c}"`).join(',')}) ${identity?'OVERRIDING SYSTEM VALUE ':''}VALUES ${tuples.join(',')}`,values);
+    }
+    for(const c of info.rows.filter(c=>c.is_identity==='YES'||c.data_type==='integer'||c.data_type==='bigint')){if(!cols.includes(c.column_name))continue;
+      const r=await client.query<{sequence:string|null}>('SELECT pg_get_serial_sequence($1,$2) AS sequence',[`public.${table}`,c.column_name]); const seq=r.rows[0]?.sequence;if(!seq)continue;
+      if(!/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(seq.split('.').at(-1)!.replaceAll('"','')))throw new Error('Invalid sequence identifier');
+      const max=await client.query<{max:string|null}>(`SELECT max("${c.column_name}") AS max FROM public."${table}"`);
+      if(max.rows[0]?.max===null)await client.query('SELECT setval($1::regclass,1,false)',[seq]);else await client.query('SELECT setval($1::regclass,$2,true)',[seq,max.rows[0].max]);
+    }
   }
 
   private database(identifier: string): Database { this.assertDatabaseIdentifier(identifier); return this.databaseFor(identifier); }

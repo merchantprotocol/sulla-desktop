@@ -39,7 +39,7 @@ function setup(options: { failCopy?: string; owner?: { kdfCloudUserId?: string; 
       drop: async () => { dest.clear(); dropped = true; },
       withTransaction: async (_db, operation) => {
         const staged = new Map<string, readonly Record<string, unknown>[]>();
-        await operation({ copy: async (table, rows) => {
+        await operation({ prepare: async tables => tables, copy: async (table, rows) => {
           if (!backupDone) throw new Error('backup missing');
           if (table === options.failCopy) throw new Error('interrupted');
           staged.set(table, cloneRows(rows));
@@ -93,7 +93,7 @@ describe('opt-in lossless legacy profile migration', () => {
     const original = new Error('interrupted');
     const dropFailure = new Error('drop failed');
     test.ports.destination.drop = async () => { throw dropFailure; };
-    test.ports.destination.withTransaction = async (_db, operation) => operation({ copy: async () => { throw original; } });
+    test.ports.destination.withTransaction = async (_db, operation) => operation({ prepare: async tables => tables, copy: async () => { throw original; } });
     await expect(test.migrator.migrate(true)).rejects.toBe(original);
     expect(original.cause).toBe(dropFailure);
     expect(test.states).toContain('failed');

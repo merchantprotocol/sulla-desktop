@@ -18,7 +18,7 @@ export interface LegacyMigrationPorts {
     assertFresh(dbIdentifier: string): Promise<void>;
     prepareSchema(dbIdentifier: string): Promise<void>;
     drop(dbIdentifier: string): Promise<void>;
-    withTransaction<T>(dbIdentifier: string, operation: (writer: { copy(table: string, rows: readonly Record<string, unknown>[]): Promise<void> }) => Promise<T>): Promise<T>;
+    withTransaction<T>(dbIdentifier: string, operation: (writer: { prepare(tables: readonly string[]): Promise<readonly string[]>; copy(table: string, rows: readonly Record<string, unknown>[]): Promise<void> }) => Promise<T>): Promise<T>;
     rows(dbIdentifier: string, table: string): Promise<readonly Record<string, unknown>[]>;
   };
   catalog: {
@@ -63,7 +63,8 @@ export class LegacyProfileMigrator {
         const sourceRows = new Map<string, readonly Record<string, unknown>[]>();
         for (const table of tables) sourceRows.set(table, await this.ports.source.rows(table));
         await this.ports.destination.withTransaction(entry.dbIdentifier, async writer => {
-          for (const table of tables) await writer.copy(table, sourceRows.get(table)!);
+          const ordered = await writer.prepare(tables);
+          for (const table of ordered) await writer.copy(table, sourceRows.get(table)!);
         });
         for (const table of tables) {
           const original = sourceRows.get(table)!;
