@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, rm, unlink, writeFile, rename } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../src/db.js';
 import { LocalFilesManager } from '../src/localManager.js';
 import { TransactionScope } from '../src/TransactionScope.js';
@@ -76,6 +76,21 @@ describe.skipIf(!databaseUrl)('watched folder scan and ingest (real Postgres + t
     // #2356 integrity: every manifest chunk has its chunks row.
     const missing = await pool.query('SELECT 1 FROM jsonb_array_elements_text($1::jsonb) AS t(chunk_id) WHERE NOT EXISTS(SELECT 1 FROM chunks c WHERE c.collection_id=$2 AND c.id=t.chunk_id)', [JSON.stringify(version.chunk_ids), collectionId]);
     expect(missing.rowCount).toBe(0);
+  });
+
+  // risk: sync freshness — watched-root commits, including changes discovered after FUSE writes, must wake Cloud push immediately.
+  it('nudges Cloud sync after a watched-root version commit but not on no-op scans', async() => {
+    const committed = vi.fn();
+    manager.setCloudCommitWakeup(committed);
+    await writeFile(join(filesRoot, 'wake.txt'), 'first');
+    await scan();
+    expect(committed).toHaveBeenCalledTimes(1);
+    expect(committed).toHaveBeenCalledWith(collectionId);
+    await scan();
+    expect(committed).toHaveBeenCalledTimes(1);
+    await writeFile(join(filesRoot, 'wake.txt'), 'second');
+    await scan();
+    expect(committed).toHaveBeenCalledTimes(2);
   });
 
   // risk: version history — an edit creates a new version on the same file; an unchanged rescan creates none.
