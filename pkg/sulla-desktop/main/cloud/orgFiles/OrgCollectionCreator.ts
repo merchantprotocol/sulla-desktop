@@ -27,12 +27,12 @@ export class OrgCollectionCreator {
     if (!input.orgId || !name || name.length > 128 || /[\\/\0]/.test(name)) throw new Error('A valid organization and collection name are required');
     const creatorUserId = await this.identity.userId();
     if (!creatorUserId) throw new Error('Sign in to Sulla Cloud before creating an org collection');
-    const orgKey = await this.keyring.createOrgKeyIfMissing(input.orgId);
-    orgKey.fill(0);
     const collectionId = this.uuid();
     const keyVersion = 1;
     const root = this.crypto.getRandomValues(new Uint8Array(32));
     try {
+      const orgKey = await this.keyring.createOrgKeyIfMissing(input.orgId);
+      orgKey.fill(0);
       const collectionKeyWrap = await this.keyring.wrapCollectionRoot(input.orgId, root, { orgId: input.orgId, collectionId, keyVersion });
       await this.cloud.createCollection(input.orgId, { collectionId, name, collectionKeyWrap });
       await this.files.enroll({ id: collectionId, orgId: input.orgId, orgName: input.orgName, name, creatorUserId, level: 'manage' });

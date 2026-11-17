@@ -97,6 +97,7 @@ const cloudResumeSync = new CloudResumeSync({
 });
 const networkResume = new NetworkResumeMonitor({ power: powerEvents, net: networkStatus });
 networkResume.on('online', () => { cloudResumeSync.handleOnline().catch(() => undefined) });
+networkResume.on('online', () => { void import('./orgFiles/OrgFilesDesktopRuntime').then(({ OrgFilesDesktopRuntime }) => OrgFilesDesktopRuntime.currentOrNull()?.wake()).catch(() => undefined) });
 
 /**
  * Native, local-only approval. Default button is Deny; the dialog can only
@@ -220,7 +221,14 @@ async function applySyncPreferences(prefs: CloudPreferences): Promise<void> {
 
 // One immutable gate; services are reached lazily (import cycle: vaultSyncV3/filesSyncV1 -> sullaCloudAuth -> here), so nothing is captured by value at load.
 const syncGate = new DeviceSyncGate(
-  { channel: { start: () => getChannel().start(), stop: () => getChannel().stop() }, vault: { start: () => VaultSyncV3.start(), stop: () => VaultSyncV3.stop() }, files: { start: () => FilesSyncV1.start(), stop: () => FilesSyncV1.stop() } },
+  {
+    channel: { start: () => getChannel().start(), stop: () => getChannel().stop() },
+    vault: { start: () => VaultSyncV3.start(), stop: () => VaultSyncV3.stop() },
+    files: {
+      start: () => { FilesSyncV1.start(); void import('./orgFiles/OrgFilesDesktopRuntime').then(({ OrgFilesDesktopRuntime }) => OrgFilesDesktopRuntime.current().start()).catch(error => console.warn('[CloudLifecycle] Org Files sync start failed:', error)); },
+      stop: () => { FilesSyncV1.stop(); void import('./orgFiles/OrgFilesDesktopRuntime').then(({ OrgFilesDesktopRuntime }) => OrgFilesDesktopRuntime.currentOrNull()?.stop()).catch(() => undefined); },
+    },
+  },
   async kind => isCloudKindEnabled(await getCloudPreferences(), kind),
 );
 

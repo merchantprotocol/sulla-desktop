@@ -9,7 +9,7 @@ import { getCurrentUserId } from '../../sullaCloudAuth';
 import { signDeviceMessage } from '../deviceKey';
 import { OrgFilesCloudClient } from './OrgFilesCloudClient';
 
-/** Implemented by the existing encrypted Vault item client; never by Files or disk. */
+/** Opaque storage for the per-device recipient private JWK. Production uses FileOrgFilesKeyStore. */
 export interface OrgFilesVaultKeyStore {
   read(itemKey: string): Promise<JsonWebKey | null>;
   write(itemKey: string, value: JsonWebKey): Promise<void>;
