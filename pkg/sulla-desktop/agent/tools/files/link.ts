@@ -5,9 +5,6 @@
 
 import { FilesTool } from './common';
 
-import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
-import { isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
-
 import type { ToolResponse } from '../base';
 
 export class FilesLinkWorker extends FilesTool {
@@ -28,7 +25,6 @@ export class FilesLinkWorker extends FilesTool {
       return { successBoolean: true, responseString: 'File link saved.' };
     }
 
-    if (!await isCloudSignedIn()) return { successBoolean: false, responseString: 'Sign in to Sulla Cloud before creating a public share link.' };
     const assetKind = input.asset_kind === 'capture' ? 'capture' : input.asset_kind === 'artifact' ? 'artifact' : 'file';
     const keepAvailable = typeof input.keep_available === 'boolean' ? input.keep_available : assetKind === 'capture';
     const expiresAt = input.expires_at ? new Date(input.expires_at) : undefined;
@@ -48,7 +44,6 @@ export class FilesLinkWorker extends FilesTool {
           keepAvailable,
           assetKind,
           captureMetadata: input.capture_metadata,
-          deviceId:        await getDesktopDeviceId(),
         }),
       });
       const share = await response.json() as { public_url?: string };
