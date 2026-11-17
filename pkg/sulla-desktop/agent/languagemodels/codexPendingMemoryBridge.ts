@@ -15,7 +15,7 @@ import {
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { BaseThreadState } from '../nodes/Graph';
 

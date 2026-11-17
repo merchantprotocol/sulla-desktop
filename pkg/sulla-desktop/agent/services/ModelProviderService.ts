@@ -23,7 +23,7 @@ import { getSelectBoxProvider } from '../integrations/select_box';
 import { getCliStatus } from '../tools/models/shared';
 
 import { hasPendingCredential } from '@pkg/main/firstRun/pendingCredentials';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 
 // ── Public types ─────────────────────────────────────────────────

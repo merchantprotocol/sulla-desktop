@@ -23,7 +23,7 @@ import { cliTierModelId, isTierName, resolveTierToModelId, type ModelTier } from
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
-import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { OPENAI_COMPATIBLE_PROVIDERS } from './openAICompatibleProviders';
 import { getOpenAICompatibleProviderService } from './OpenAICompatibleProviderService';
 import { ModelDispatchService } from './ModelDispatchService';

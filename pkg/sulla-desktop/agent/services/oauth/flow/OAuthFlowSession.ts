@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import { BrowserWindow, shell } from 'electron';
 
 import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import { OAuthCallbackPortInUseError, startOAuthCallbackServer } from '../../OAuthCallbackServer';
 import { CallbackPortInUseError, CallbackPortLease } from './CallbackPortLease';

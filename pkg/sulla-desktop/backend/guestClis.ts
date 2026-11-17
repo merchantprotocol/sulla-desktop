@@ -13,7 +13,7 @@
 import * as childProcess from 'child_process';
 
 import Logging from '@pkg/utils/logging';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import paths from '@pkg/utils/paths';
 import { sullaRuntimeDirectory } from './sullaRuntime/artifacts';
 

@@ -153,7 +153,7 @@ vi.mock('@pkg/main/firstRun/FirstRunVaultCreation', () => ({
     onLifecycleLocked(): Promise<void> { return Promise.resolve(); }
   },
 }));
-vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: env.trace, initFirstRunTraceEvents: vi.fn() }));
+vi.mock('@pkg/utils/firstRunTraceSink', () => ({ firstRunTrace: env.trace, initFirstRunTraceEvents: vi.fn() }));
 vi.mock('@pkg/main/firstRun/pendingCredentials', () => ({
   getPendingCredential:       () => env.state.pending,
   queuePendingCredential:     env.queuePendingCredential,

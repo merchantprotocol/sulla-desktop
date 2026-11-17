@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { configuredVaultBrokerProvider } from '../../../../vault-broker';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { OAuthProviderConfig, OAuthTokenSet } from '../../../integrations/oauth/OAuthProvider';
 import type { ResolvedTokenCustody } from '../custody/TokenCustody';

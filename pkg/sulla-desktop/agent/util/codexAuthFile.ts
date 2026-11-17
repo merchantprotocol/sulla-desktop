@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import * as os from 'os';
 import * as path from 'path';
 import { app } from 'electron';
-import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { OAuthTokenSet } from '../integrations/oauth/OAuthProvider';
 

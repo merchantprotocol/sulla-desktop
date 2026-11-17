@@ -13,7 +13,7 @@ import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycle
 import { applyFirstRunChoicesWhenReady } from '@pkg/main/firstRun/applyFirstRunChoices';
 import { getFirstRunState, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { FirstRunVaultCreation } from '@pkg/main/firstRun/FirstRunVaultCreation';
-import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace, initFirstRunTraceEvents } from '@pkg/utils/firstRunTraceSink';
 import { clearPendingCredential, getPendingCredential, queuePendingCredential, startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';

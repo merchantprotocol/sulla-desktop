@@ -17,7 +17,7 @@ import { RefreshScheduler } from './oauth/RefreshScheduler';
 import { configuredVaultBrokerProvider } from '../../vault-broker';
 import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 

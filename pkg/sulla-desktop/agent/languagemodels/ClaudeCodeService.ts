@@ -35,7 +35,7 @@ import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver
 import { handleClaudeAuthFailure } from './credentials/ClaudeAuthFailureCoordinator';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
-import { firstRunTrace } from '../../main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';

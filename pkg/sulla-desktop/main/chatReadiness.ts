@@ -15,7 +15,7 @@
 
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import mainEvents from '@pkg/main/mainEvents';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
