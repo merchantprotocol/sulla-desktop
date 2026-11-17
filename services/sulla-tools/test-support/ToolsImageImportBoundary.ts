@@ -13,8 +13,13 @@ export interface ToolsImageImportBoundaryOptions {
 
 interface RuntimeImport { specifier: string; typeOnly: boolean }
 
+// Static edges only: `import x from`, `import {..} from`, `import * as`, `import 'x'`, and `export ... from`.
+// Dynamic `import()` expressions are deliberately NOT followed. They run inside function bodies
+// (e.g. a runtime-guarded seam that only executes on Desktop), so they are not evaluated when the
+// Tools entrypoints load. A missing copied path only breaks the image when a static edge pulls it in
+// at module evaluation. Manifest `loader: () => import('./x')` targets are discovered as ROOTS by
+// ToolManifestEntrypoints instead.
 const STATIC_IMPORT = /\b(import|export)\s+(type\s+)?(?:[^'";]*?\s+from\s+)?(['"])([^'"\n]+)\3/g;
-const DYNAMIC_IMPORT = /\bimport\s*\(\s*(['"])([^'"\n]+)\1/g;
 const OVERRIDE_SOURCE = 'services/sulla-tools/src/pendingCredentials.container.ts';
 const OVERRIDE_TARGET = 'pkg/sulla-desktop/main/firstRun/pendingCredentials.ts';
 
@@ -83,7 +88,6 @@ export class ToolsImageImportBoundary {
     const source = readFileSync(path.join(this.root, file), 'utf8');
     const imports: RuntimeImport[] = [];
     for (const match of source.matchAll(STATIC_IMPORT)) imports.push({ specifier: match[4], typeOnly: Boolean(match[2]) });
-    for (const match of source.matchAll(DYNAMIC_IMPORT)) imports.push({ specifier: match[2], typeOnly: false });
     return imports;
   }
 }

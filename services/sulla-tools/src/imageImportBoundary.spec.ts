@@ -45,9 +45,12 @@ describe('ToolsImageImportBoundary against a fixture image', () => {
     writeFixture('pkg/sulla-desktop/agent/entry.ts', [
       "import { X } from '@pkg/main/X';",
       "import type { Y } from '@pkg/main/Y';",
+      // Dynamic import inside a function body: not evaluated at module load, so not a violation.
+      "export async function loadSeam() { return await import('@pkg/main/Dynamic'); }",
     ].join('\n'));
     writeFixture('pkg/sulla-desktop/main/X.ts', 'export const X = 1;\n');
     writeFixture('pkg/sulla-desktop/main/Y.ts', 'export type Y = string;\n');
+    writeFixture('pkg/sulla-desktop/main/Dynamic.ts', 'export const Dynamic = 2;\n');
 
     const boundary = new ToolsImageImportBoundary({
       root:        fixtureRoot,
