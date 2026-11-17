@@ -158,6 +158,7 @@ vi.mock('@pkg/main/firstRun/pendingCredentials', () => ({
   getPendingCredential:       () => env.state.pending,
   queuePendingCredential:     env.queuePendingCredential,
   clearPendingCredential:     env.clearPendingCredential,
+  clearAllPendingCredentials: vi.fn(async() => {}),
   startPendingCredentialFlush: vi.fn(),
 }));
 vi.mock('@pkg/main/cloud/account/ElectronCloudAccountTransport', async(importActual) => {

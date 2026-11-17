@@ -13,12 +13,13 @@ export interface LegacyMigrationPorts {
     withExclusiveReadLock<T>(operation: () => Promise<T>): Promise<T>;
     tables(): Promise<readonly string[]>;
     rows(table: string): Promise<readonly Record<string, unknown>[]>;
+    sequences(): Promise<readonly { name: string; lastValue: string | number; isCalled: boolean }[]>;
   };
   destination: {
     assertFresh(dbIdentifier: string): Promise<void>;
     prepareSchema(dbIdentifier: string): Promise<void>;
     drop(dbIdentifier: string): Promise<void>;
-    withTransaction<T>(dbIdentifier: string, operation: (writer: { copy(table: string, rows: readonly Record<string, unknown>[]): Promise<void> }) => Promise<T>): Promise<T>;
+    withTransaction<T>(dbIdentifier: string, operation: (writer: { prepare(tables: readonly string[], sequences: readonly { name: string; lastValue: string | number; isCalled: boolean }[]): Promise<readonly string[]>; copy(table: string, rows: readonly Record<string, unknown>[]): Promise<void> }) => Promise<T>): Promise<T>;
     rows(dbIdentifier: string, table: string): Promise<readonly Record<string, unknown>[]>;
   };
   catalog: {
@@ -62,8 +63,10 @@ export class LegacyProfileMigrator {
         const tables = await this.ports.source.tables();
         const sourceRows = new Map<string, readonly Record<string, unknown>[]>();
         for (const table of tables) sourceRows.set(table, await this.ports.source.rows(table));
+        const sequences = await this.ports.source.sequences();
         await this.ports.destination.withTransaction(entry.dbIdentifier, async writer => {
-          for (const table of tables) await writer.copy(table, sourceRows.get(table)!);
+          const ordered = await writer.prepare(tables, sequences);
+          for (const table of ordered) await writer.copy(table, sourceRows.get(table)!);
         });
         for (const table of tables) {
           const original = sourceRows.get(table)!;
