@@ -7,6 +7,9 @@ COPY packages/vault-crypto/tsconfig.json ./packages/vault-crypto/tsconfig.json
 COPY packages/vault-crypto/src ./packages/vault-crypto/src
 RUN cd packages/vault-crypto && npm run build
 
+COPY packages/vault-profiles/package.json ./packages/vault-profiles/package.json
+COPY packages/vault-profiles/src ./packages/vault-profiles/src
+
 COPY services/sulla-vault/package.json ./services/sulla-vault/package.json
 COPY vendor/sulla-core/sulla-domain-0.4.2-6257cca.tgz ./vendor/sulla-core/sulla-domain-0.4.2-6257cca.tgz
 COPY vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz ./vendor/sulla-core/sulla-foundation-0.1.1-7d4a6dd.tgz
@@ -31,6 +34,8 @@ COPY --from=build /app/services/sulla-vault/console ./console
 COPY --from=build /app/packages/vault-crypto/package.json /app/packages/vault-crypto/package.json
 COPY --from=build /app/packages/vault-crypto/dist /app/packages/vault-crypto/dist
 COPY --from=build /app/packages/vault-crypto/node_modules /app/packages/vault-crypto/node_modules
+COPY --from=build /app/packages/vault-profiles/package.json /app/packages/vault-profiles/package.json
+COPY --from=build /app/packages/vault-profiles/src /app/packages/vault-profiles/src
 COPY services/sulla-vault/entrypoint.sh /usr/local/bin/sulla-vault-entrypoint
 RUN chmod 0755 /usr/local/bin/sulla-vault-entrypoint
 EXPOSE 8787
