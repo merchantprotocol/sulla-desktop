@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
+import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { LegacyProfileMigrator } from '../src/profiles/LegacyProfileMigrator.js';
 import { PostgresLegacyProfileSourceRepository } from '../src/repositories/PostgresLegacyProfileSourceRepository.js';
 import { PostgresLegacyProfileDestinationRepository } from '../src/repositories/PostgresLegacyProfileDestinationRepository.js';
@@ -10,16 +11,28 @@ import { LegacyProfileHashRepository } from '../src/repositories/LegacyProfileHa
 import { ProfileCatalogEntry } from '@sulla/vault-profiles';
 import { VaultMigrator } from '../src/database/VaultMigrator.js';
 
+// Mirrors node-pg: no params means simple protocol (multi-statement allowed, last result returned);
+// with params means a single extended-protocol statement.
+async function pgliteQuery(db: PGlite, text: string, params?: unknown[]): Promise<any> {
+  if (!params || params.length === 0) {
+    const results: any[] = await db.exec(text);
+    const last: any = results[results.length - 1] ?? { rows: [], affectedRows: 0, fields: [] };
+    return { rows: last.rows ?? [], rowCount: last.affectedRows ?? (last.rows ?? []).length, fields: last.fields ?? [] };
+  }
+  const res: any = await db.query(text, params);
+  return { rows: res.rows ?? [], rowCount: res.affectedRows ?? (res.rows ?? []).length, fields: res.fields ?? [] };
+}
+
 class PglitePool {
   constructor(readonly db: PGlite) {}
-  async query(...args: any[]) { return this.db.query(args[0], args[1]); }
-  async connect() { return { query: async (...args: any[]) => this.db.query(args[0], args[1]), release() {} } as any; }
+  async query(...args: any[]) { return pgliteQuery(this.db, args[0], args[1]); }
+  async connect() { return { query: async (...args: any[]) => pgliteQuery(this.db, args[0], args[1]), release() {} } as any; }
 }
 
 describe('legacy profile migration on PostgreSQL-compatible databases', () => {
   it('copies table contents exactly, preserves sequences, json and bytea', async () => {
     // risk: data accuracy, encrypted bytes, FK integrity and future serial inserts
-    const legacy = new PGlite(); const profile = new PGlite();
+    const legacy = new PGlite({ extensions: { pgcrypto } }); const profile = new PGlite({ extensions: { pgcrypto } });
     const sourcePool = new PglitePool(legacy); const destinationPool = new PglitePool(profile);
     const migrationPath = new URL('../migrations', import.meta.url).pathname;
     await new VaultMigrator(new URL('../src/database', import.meta.url).pathname).migrate(sourcePool as any);
