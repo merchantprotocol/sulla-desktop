@@ -1,7 +1,7 @@
 // Copyright © 2026 Merchant Protocol, LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { Queryable } from '../db.js';
+import type { Database, Queryable } from '../db.js';
 import type { VaultProfileSession } from '../profiles/VaultProfileSession.js';
 import { PostgresRewrapHistoryRepository } from './PostgresRewrapHistoryRepository.js';
 import { PostgresSullaCloudRevocationRepository } from './PostgresSullaCloudRevocationRepository.js';
@@ -20,6 +20,7 @@ import { PostgresHumanActivityRepository } from './PostgresHumanActivityReposito
 
 /** Single composition point for profile-protected repositories. SQL, pool, and construction order stay unchanged. */
 export class VaultRepositories {
+  readonly database: Database;
   readonly rewrapHistory: PostgresRewrapHistoryRepository;
   readonly items: PostgresVaultItemRepository;
   readonly auditLog: PostgresVaultAuditLogRepository;
@@ -40,6 +41,7 @@ export class VaultRepositories {
 
   constructor(session: VaultProfileSession, transactions: PgTransactionRunner = new PgTransactionRunner()) {
     const pool = session.database;
+    this.database = pool;
     this.rewrapHistory = new PostgresRewrapHistoryRepository(pool);
     this.items = new PostgresVaultItemRepository(pool);
     this.auditLog = new PostgresVaultAuditLogRepository(pool);

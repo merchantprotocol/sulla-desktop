@@ -82,7 +82,7 @@ export class VaultApplication {
       ),
     }, repositories.filesCloudEscrow, filesAudit, domainSyncCodec);
     new SullaCloudRoutes(localAuthority, filesCloudEscrow, VaultApplication.enrollmentPaths, requests).register(app);
-    this.mountCloudSync(app, localAuthority, filesCloudEscrow, domainSyncCodec, requests);
+    this.mountCloudSync(app, localAuthority, filesCloudEscrow, domainSyncCodec, requests, repositories.database);
     new BrokerExecutionRoutes(localAuthority, requests).register(app);
     new VaultConsoleRoutes(resolve(dirname(fileURLToPath(import.meta.url)), '../console/local')).register(app);
     new VaultErrorHandler().register(app);
@@ -96,8 +96,9 @@ export class VaultApplication {
     filesCloudEscrow: FilesCloudEscrowService,
     domainSyncCodec: DomainVaultSyncCodecProvider,
     requests: VaultRequestInput,
+    database: Database,
   ): void {
-    const { db, config } = this;
+    const { config } = this;
     const { serviceIdentity, humanCookie } = requests;
     registerFilesCloudEscrowRoute(app, filesCloudEscrow, request => {
       // Main calls with the approval service identity; Files/agents cannot invoke this route directly.
@@ -105,7 +106,7 @@ export class VaultApplication {
       localAuthority.requireApprovalIdentity(identity.serviceId, identity.token);
     }, request => { localAuthority.humanSessionStatus(humanCookie(request), request.header('x-csrf-token')); });
     // Passwords sync v3: the container builds/applies every body; main only signs hashes.
-    registerCloudSyncRoutes(app, new CloudVaultSyncRunner(db, {
+    registerCloudSyncRoutes(app, new CloudVaultSyncRunner(database, {
       withUnlockedUserKey: operation => localAuthority.withUnlockedUserKey(operation),
       sullaCloudRequest: input => localAuthority.executeDesktopSullaCloudRequest(
         config.approvalServiceId ?? '', config.approvalServiceToken, input,
