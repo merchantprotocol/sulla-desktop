@@ -70,6 +70,7 @@ prompt = base64.b64decode(os.environ["TWODEV_PROMPT_B64"]).decode("utf-8")
 payload = json.dumps({
     "model": os.environ["TWODEV_MODEL"],
     "stream": False,
+    "sulla": {"run_as_owner": True},
     "messages": [{"role": "user", "content": prompt}],
 }).encode("utf-8")
 request = urllib.request.Request(
