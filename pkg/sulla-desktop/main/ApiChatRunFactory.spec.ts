@@ -47,7 +47,7 @@ describe('ApiChatRunFactory', () => {
 
   it('requests the owner runtime only for trusted API runs', async () => {
     // risk: keeping container CLI and owner Files access behind explicit owner authorization
-    const runtime = vi.fn(async (_state: BaseThreadState, operation: () => Promise<string>) => operation());
+    const runtime = vi.fn(async (_state: AgentGraphState, operation: () => Promise<string>) => operation());
     const register = vi.fn(() => ({ revoke: vi.fn() }));
     const factory = new ApiChatRunFactory(async () => 'local-owner', register, runtime);
     const run = vi.fn(async () => 'done');

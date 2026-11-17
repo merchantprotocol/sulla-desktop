@@ -227,12 +227,13 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
-  /** Execute an explicitly owner-authorized API turn through the same guest
-   * lifecycle used by UI chat dispatch, so CLI and Files actor mounts exist. */
+  /** Resolves whether this turn runs in the VM or a container. */
   resolveRunLocation(state: AgentGraphState, channelId: string): 'vm' | 'container' {
     return this.runLocationResolver.resolve(state, channelId);
   }
 
+  /** Execute an explicitly owner-authorized API turn through the same guest
+   * lifecycle used by UI chat dispatch, so CLI and Files actor mounts exist. */
   async executeOwnerApiGraph<T>(state: AgentGraphState, channelId: string, threadId: string, action: () => T, onProgress?: (message: string) => void, signal?: AbortSignal): Promise<Awaited<T>> {
     return this.runInConversationContainer(state, channelId, threadId, action, onProgress, signal);
   }
