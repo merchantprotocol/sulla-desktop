@@ -30,7 +30,7 @@ export class OrgFilesCloudClient {
 
   putKeyWraps(orgId: string, wraps: unknown): Promise<void> {
     const body = new OrgFilesContract().putKeyWrapsRequest({ wraps });
-    return this.mutate(OrgFilesContract.routes.putKeyWraps, { orgId }, body);
+    return this.mutate(OrgFilesContract.routes.putKeyWraps, { orgId }, body).then(() => undefined);
   }
 
   async pendingKeyWraps(orgId: string) {
