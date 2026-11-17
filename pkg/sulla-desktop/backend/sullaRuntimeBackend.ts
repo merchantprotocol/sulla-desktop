@@ -25,6 +25,7 @@ import {
 } from './bundledImages';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
+import { SullaServiceStartupDecision } from './SullaServiceStartupDecision';
 import { filesTlsBind } from './filesTlsIdentity';
 import { vaultTlsBind } from './vaultTlsIdentity';
 import { accountsSecretBinds, assertNoHostBindMounts, provisionAccountsSecretsInGuest } from './sullaComposeMounts';
@@ -213,6 +214,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #managedSullaRefreshImages = new Map<string, string>();
   /** Services running an image bundled with the app: the exact reference they must run. */
   #pinnedSullaImages = new Map<string, string>();
+  readonly #startupDecision = new SullaServiceStartupDecision();
   #managedServicesReconciliation?: Promise<void>;
   #hostPreparationDeferred = false;
   #backendStartSettled?: Promise<void>;
@@ -247,7 +249,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     { refreshVault: refreshVaultPinnedSessions, refreshFiles: refreshFilesPinnedSessions }, () => paths.appHome,
   );
   readonly #imageFreshness = new SullaServiceImageFreshness(this, this.#managedSullaRefreshImages, this.#pinnedSullaImages,
-    (target, timeoutSec, generation) => this.waitForDockerServiceHealthy(target, timeoutSec, generation));
+    (target, timeoutSec, generation) => this.waitForDockerServiceHealthy(target, timeoutSec, generation), this.#startupDecision);
   readonly #accountsDatabase = new SullaAccountsDatabaseRepository({
     capture: args => this.execCommand({ capture: true, root: true }, ...args),
     run:     args => this.execCommand({ root: true }, ...args),
@@ -1067,6 +1069,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const image = resolveSullaServiceImage(
       'sulla-threat-proxy', process.cwd(), Electron.app.getVersion(), process.env.SULLA_THREAT_PROXY_IMAGE,
     );
+    if (image.bundled && !process.env.SULLA_THREAT_PROXY_IMAGE) this.#pinnedSullaImages.set('threat_proxy', image.image);
     const resolvedImage = image.build ? image.image : `\${SULLA_THREAT_PROXY_IMAGE:-${ image.image }}`;
 
     if (shouldRefreshSullaServiceImage(image, process.env.SULLA_THREAT_PROXY_IMAGE)) {
@@ -1118,6 +1121,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // Bundled base images (postgres, redis, the function runtimes) run at
     // their pinned version and are updated with the app, not refreshed.
     const bundledBaseServices = new Set(pinComposeImages(compose, currentBundledImageLock()));
+    for (const service of bundledBaseServices) {
+      const image = compose.services[service]?.image;
+
+      if (typeof image === 'string') this.#pinnedSullaImages.set(service, image);
+    }
 
     for (const service of ['python_runtime', 'shell_runtime', 'node_runtime']) {
       const image = compose.services[service]?.image;
@@ -1158,6 +1166,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const accountsImage = resolveSullaServiceImage(
         'sulla-accounts', process.cwd(), Electron.app.getVersion(), process.env.SULLA_ACCOUNTS_IMAGE,
       );
+      if (accountsImage.bundled && !process.env.SULLA_ACCOUNTS_IMAGE) this.#pinnedSullaImages.set('sulla_accounts', accountsImage.image);
       const resolvedAccountsImage = accountsImage.build ? accountsImage.image : `\${SULLA_ACCOUNTS_IMAGE:-${ accountsImage.image }}`;
 
       if (shouldRefreshSullaServiceImage(accountsImage, process.env.SULLA_ACCOUNTS_IMAGE)) {
@@ -1203,6 +1212,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       delete compose.services.sulla_accounts;
       this.#optionalSullaFallbackImages.delete('sulla_accounts');
       this.#managedSullaRefreshImages.delete('sulla_accounts');
+      this.#pinnedSullaImages.delete('sulla_accounts');
       console.warn('[Sulla] Accounts provisioning unavailable; continuing without the optional service:', error);
     }
     let vaultIdentities: {
@@ -1215,6 +1225,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const vaultImage = resolveSullaServiceImage(
         'sulla-vault', process.cwd(), Electron.app.getVersion(), process.env.SULLA_VAULT_IMAGE,
       );
+      if (vaultImage.bundled && !process.env.SULLA_VAULT_IMAGE) this.#pinnedSullaImages.set('sulla_vault', vaultImage.image);
 
       const image = vaultImage.build ? vaultImage.image : `\${SULLA_VAULT_IMAGE:-${ vaultImage.image }}`;
 
@@ -1271,6 +1282,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const workflowImage = resolveSullaServiceImage(
       'sulla-workflows', process.cwd(), Electron.app.getVersion(), process.env.SULLA_WORKFLOW_IMAGE,
     );
+    if (workflowImage.bundled && !process.env.SULLA_WORKFLOW_IMAGE) this.#pinnedSullaImages.set('workflow_manager', workflowImage.image);
     const image = workflowImage.build ? workflowImage.image : `\${SULLA_WORKFLOW_IMAGE:-${ workflowImage.image }}`;
 
     if (shouldRefreshSullaServiceImage(workflowImage, process.env.SULLA_WORKFLOW_IMAGE)) {
@@ -1325,6 +1337,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const relayImage = resolveSullaServiceImage(
       'sulla-relay', process.cwd(), Electron.app.getVersion(), process.env.SULLA_RELAY_IMAGE,
     );
+    if (relayImage.bundled && !process.env.SULLA_RELAY_IMAGE) this.#pinnedSullaImages.set('sulla_relay', relayImage.image);
     const resolvedRelayImage = relayImage.build ? relayImage.image : `\${SULLA_RELAY_IMAGE:-${ relayImage.image }}`;
     if (shouldRefreshSullaServiceImage(relayImage, process.env.SULLA_RELAY_IMAGE)) {
       this.#managedSullaRefreshImages.set('sulla_relay', relayImage.image);
@@ -1357,6 +1370,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const toolsImage = resolveSullaServiceImage(
       'sulla-tools', process.cwd(), Electron.app.getVersion(), process.env.SULLA_TOOLS_IMAGE,
     );
+    if (toolsImage.bundled && !process.env.SULLA_TOOLS_IMAGE) this.#pinnedSullaImages.set('tools', toolsImage.image);
     const resolvedToolsImage = toolsImage.build ? toolsImage.image : `\${SULLA_TOOLS_IMAGE:-${ toolsImage.image }}`;
     if (shouldRefreshSullaServiceImage(toolsImage, process.env.SULLA_TOOLS_IMAGE)) {
       this.#managedSullaRefreshImages.set('tools', toolsImage.image);
@@ -1512,6 +1526,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const fuseImage = resolveSullaServiceImage(
         'sulla-files-fuse', process.cwd(), Electron.app.getVersion(), process.env.SULLA_FILES_FUSE_IMAGE,
       );
+      if (fuseImage.bundled && !process.env.SULLA_FILES_FUSE_IMAGE) this.#pinnedSullaImages.set('sulla_files_fuse', fuseImage.image);
       const resolvedFuseImage = fuseImage.build ? fuseImage.image : `\${SULLA_FILES_FUSE_IMAGE:-${ fuseImage.image }}`;
       if (shouldRefreshSullaServiceImage(fuseImage, process.env.SULLA_FILES_FUSE_IMAGE)) {
         this.#managedSullaRefreshImages.set('sulla_files_fuse', fuseImage.image);
@@ -1788,6 +1803,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           );
         }
       };
+      const recreatePinnedService = async(service: string): Promise<void> => {
+        // A stale running image can still have an unchanged Compose config hash.
+        // Force recreation from the installed pin; without -v, named data volumes survive.
+        await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', service);
+      };
 
       // Desktop leaves some running containers alone below (a live Files
       // starter, a service still in its start period). Compose's own diff never
@@ -1962,14 +1982,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               // let it finish, then replace it only if a newer image exists.
               // Any other service still in its start period is left to finish
               // too: compose's fallback would recreate it mid-migration.
-              if (service === 'sulla_files') {
+              if (this.#pinnedSullaImages.has(service) && state.startsWith('running') &&
+                  await this.#imageFreshness.isStale(container, service, generation)) {
+                await recreatePinnedService(service);
+              } else if (service === 'sulla_files') {
                 if (!state.startsWith('running')) {
                   await startOptionalService(service);
-                } else if (await this.#imageFreshness.isStale(container, service, generation)) {
+                } else if (this.#managedSullaRefreshImages.has(service) &&
+                    await this.#imageFreshness.isStale(container, service, generation)) {
                   await startOptionalService(service);
                 } else {
                   await configDrift.reconcile(entry);
                 }
+              } else if (service === 'sulla_files_fuse' && this.#startupDecision.fuseAction(state) === 'start') {
+                await recreatePinnedService(service);
               } else if (state !== 'running starting') {
                 await startOptionalService(service);
               } else {

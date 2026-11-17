@@ -5,6 +5,7 @@
 
 import type { VMExecutor } from '../backend';
 import type { ComposeServiceTarget } from '../sullaComposeContainers';
+import { SullaServiceStartupDecision } from '../SullaServiceStartupDecision';
 
 /**
  * After a running service finishes starting, pull its published image and
@@ -19,6 +20,7 @@ export class SullaServiceImageFreshness {
     /** Service -> image bundled with this app (live view of the backend's map). */
     private readonly pinnedImages: ReadonlyMap<string, string>,
     private readonly waitHealthy: (target: ComposeServiceTarget, timeoutSec: number, generation?: number) => Promise<void>,
+    private readonly startupDecision = new SullaServiceStartupDecision(),
   ) {}
 
   async isStale(container: string, service: string, generation?: number): Promise<boolean> {
@@ -35,7 +37,7 @@ export class SullaServiceImageFreshness {
           this.guest.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', pinnedImage),
         ]);
 
-        return running.trim() !== pinned.trim();
+        return this.startupDecision.imageAction(running, pinned) === 'recreate';
       } catch (error) {
         console.warn(`[Sulla] Could not compare ${ container } with its bundled image ${ pinnedImage }; keeping it:`, error);
 
@@ -50,7 +52,7 @@ export class SullaServiceImageFreshness {
         this.guest.execCommand({ capture: true, root: true }, 'docker', 'image', 'inspect', '--format', '{{.Id}}', refreshImage),
       ]);
 
-      return running.trim() !== latest.trim();
+      return this.startupDecision.imageAction(running, latest) === 'recreate';
     } catch (error) {
       console.warn(`[Sulla] Could not check ${ refreshImage } for ${ service }; keeping the running container:`, error);
 
