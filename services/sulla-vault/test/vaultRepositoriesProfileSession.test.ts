@@ -30,7 +30,7 @@ describe('VaultRepositories profile session composition', () => {
     const repositories = new VaultRepositories(session);
     current = 4;
 
-    await expect(repositories.items.insertImportedItem(['item-a', 'owner-a', 'note', 'cipher', 'key', {}])).rejects.toThrow(/stale/i);
+    expect(() => repositories.items.insertImportedItem(['item-a', 'owner-a', 'note', 'cipher', 'key', {}])).toThrow(/stale/i);
     expect(query).not.toHaveBeenCalled();
   });
 

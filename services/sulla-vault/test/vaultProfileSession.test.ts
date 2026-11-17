@@ -15,7 +15,7 @@ describe('vault profile session query fence', () => {
     await session.database.query('SELECT token');
     expect(query).toHaveBeenCalledOnce();
     activeGeneration = 8;
-    await expect(session.database.query('UPDATE tokens SET value=$1', ['secret'])).rejects.toThrow(/stale/i);
+    expect(() => session.database.query('UPDATE tokens SET value=$1', ['secret'])).toThrow(/stale/i);
     expect(query).toHaveBeenCalledOnce();
   });
 
@@ -34,7 +34,7 @@ describe('vault profile session query fence', () => {
     const a = new VaultProfileSession({ profileId: 'a', generation: new ProfileGeneration(1) }, { query: queryA } as never);
     const b = new VaultProfileSession({ profileId: 'b', generation: new ProfileGeneration(1) }, { query: queryB } as never);
     a.invalidate();
-    await expect(a.database.query('SELECT key')).rejects.toThrow(/stale/i);
+    expect(() => a.database.query('SELECT key')).toThrow(/stale/i);
     await b.database.query('SELECT key');
     expect(queryA).not.toHaveBeenCalled();
     expect(queryB).toHaveBeenCalledOnce();

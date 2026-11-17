@@ -28,11 +28,12 @@ import { VaultRequestInput } from './http/VaultRequestInput.js';
 import { VaultRequestPipeline } from './http/VaultRequestPipeline.js';
 import { VaultRepositories } from './repositories/VaultRepositories.js';
 import { VaultProfileSessionFactory } from './profiles/VaultProfileSessionFactory.js';
+import type { VaultProfileSession } from './profiles/VaultProfileSession.js';
 
 import type { VaultConfig } from './config.js';
 import type { Database } from './db.js';
 
-export interface VaultApplicationOptions { localAuthority?: LocalVaultAuthority }
+export interface VaultApplicationOptions { localAuthority?: LocalVaultAuthority; profileSession?: VaultProfileSession }
 
 /**
  * Composition root of the local vault HTTP API: builds the shared authorities once and mounts
@@ -62,7 +63,7 @@ export class VaultApplication {
     const app = express();
     const domainSyncCodec = new DomainVaultSyncCodecProvider();
     const repositories = this.options.localAuthority?.repositories ?? new VaultRepositories(
-      new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false).legacy(),
+      this.options.profileSession ?? new VaultProfileSessionFactory(db, config.profileProvisioningEnabled ?? false).legacy(),
     );
     const localAuthority = this.options.localAuthority ?? new LocalVaultAuthority(db, config, undefined, repositories);
     const filesKeyBundleAuthority = new VaultFilesKeyBundleAuthority(localAuthority, repositories.filesKeyBundles);
