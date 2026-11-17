@@ -84,6 +84,43 @@ describe.skipIf(!databaseUrl)('Files mount write routes (real app, real Postgres
     expect((await stream({ 'if-match': `"${ v1 }"`, 'x-sulla-source-hash': sha256('body of mount/stream.txt') })).status).toBe(409);
   });
 
+  /** Bumps the file's operation_revision right after the route's unlocked row read, as a settling rename does. */
+  const bumpAfterRowRead = (id:string, times:number) => {
+    const original = fixture.pool.query.bind(fixture.pool) as (...args:any[]) => Promise<any>;
+    const state = { bumps: 0 };
+    const spy = vi.spyOn(fixture.pool, 'query').mockImplementation((async(...args:any[]) => {
+      const result = await original(...args);
+      if (state.bumps < times && args[0] === 'SELECT * FROM files WHERE id=$1' && args[1]?.[0] === id) {
+        state.bumps++;
+        await fixture.admin.query(`UPDATE "${ fixture.schema }".files SET operation_revision=operation_revision+1 WHERE id=$1`, [id]);
+      }
+      return result;
+    }) as any);
+    return { state, restore: () => spy.mockRestore() };
+  };
+
+  it('retries a mount rename when the row moves between its read and the locked check', async() => {
+    // risk: data accuracy — `mv a b; mv b sub/c` failed EPERM (409 'The selected file changed') on the iMac soak.
+    const id = await fixture.createFile('mount/race-a.txt');
+    const race = bumpAfterRowRead(id, 1);
+    try {
+      expect(await fixture.request(`/v1/fuse/files/${ id }`, 'PATCH', { body: { path: 'mount/race-c.txt' } })).toMatchObject({ status: 200 });
+    } finally { race.restore() }
+    expect(race.state.bumps).toBe(1);
+    expect((await current(id)).path).toBe('mount/race-c.txt');
+  });
+
+  it('gives up with 409 and leaves the file in place when the row keeps changing', async() => {
+    // risk: availability — the retry must be bounded, and a refused move must not move anything.
+    const id = await fixture.createFile('mount/race-busy.txt');
+    const race = bumpAfterRowRead(id, 100);
+    try {
+      expect(await fixture.request(`/v1/fuse/files/${ id }`, 'PATCH', { body: { path: 'mount/race-busy-2.txt' } })).toMatchObject({ status: 409 });
+    } finally { race.restore() }
+    expect(race.state.bumps).toBe(4);
+    expect((await current(id)).path).toBe('mount/race-busy.txt');
+  });
+
   it('renames files, creates described folders and removes only empty ones', async() => {
     // risk: data accuracy — namespace moves and removals must never drop live files.
     const id = await fixture.createFile('mount/old-name.txt');

@@ -51,6 +51,34 @@ export class FuseFileRoutes {
     } catch (error) { next(error) } });
   }
 
+  /**
+   * Renames or moves one file for the mount. The mount sends no expected version: this route reads
+   * the row and pins it as the batch's expectation, so a change landing between that read and the
+   * batch's locked re-check (the row's operation_revision moves after a rename settles) is not a
+   * conflict the caller made. Re-read and resubmit a few times before answering 409; `mv a b; mv b
+   * sub/c` failed with EPERM on the second move.
+   */
+  private async moveFile(request:RequestWithIdentity, fileId:string, nextPath:string) {
+    for (let attempt = 1; ; attempt++) {
+      const file = await this.access.fileRow(fileId);
+      const targetCollectionId=String(request.body.targetCollectionId??file.collection_id);
+      const input=parseDatabaseBatch({idempotencyKey:randomUUID(),collectionId:file.collection_id,items:[{
+        itemId:randomUUID(),action:targetCollectionId===file.collection_id?'rename':'move',fileId:file.id,
+        expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:nextPath,
+        ...(targetCollectionId===file.collection_id?{}:{targetCollectionId}),
+      }]});
+      const submitted=await submitDatabaseBatch(this.db,input,this.access.identity(request),this.operationAccess(request));
+      await runDatabaseBatch(this.db,submitted.operationId,this.access.identity(request),this.operationAccess(request));
+      const result=await getDatabaseBatch(this.db,submitted.operationId,this.access.identity(request),this.operationAccess(request));
+      if(result.state==='completed') return result.items[0]?.after;
+      const error=result.items[0]?.error;
+      if(error?.code==='source-conflict' && attempt<FuseFileRoutes.moveAttempts) continue;
+      throw new HttpError(409,error?.message??'Files move did not complete');
+    }
+  }
+
+  private static readonly moveAttempts = 4;
+
   register(app:express.Express):void {
     app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
       const collectionId = String(request.query.collectionId ?? '');
@@ -75,19 +103,9 @@ export class FuseFileRoutes {
       response.status(201).json(file);
     } catch (error) { next(error) } });
     app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
-      const file = await this.access.fileRow(request.params.id); const nextPath = cleanPath(request.body.path, false);
-      const targetCollectionId=String(request.body.targetCollectionId??file.collection_id);
+      const nextPath = cleanPath(request.body.path, false);
       this.access.identity(request);
-      const input=parseDatabaseBatch({idempotencyKey:randomUUID(),collectionId:file.collection_id,items:[{
-        itemId:randomUUID(),action:targetCollectionId===file.collection_id?'rename':'move',fileId:file.id,
-        expectedVersionId:file.current_version_id,expectedRevision:String(file.operation_revision),targetPath:nextPath,
-        ...(targetCollectionId===file.collection_id?{}:{targetCollectionId}),
-      }]});
-      const submitted=await submitDatabaseBatch(this.db,input,this.access.identity(request),this.operationAccess(request));
-      await runDatabaseBatch(this.db,submitted.operationId,this.access.identity(request),this.operationAccess(request));
-      const result=await getDatabaseBatch(this.db,submitted.operationId,this.access.identity(request),this.operationAccess(request));
-      if(result.state!=='completed') throw new HttpError(409,result.items[0]?.error?.message??'Files move did not complete');
-      response.json(result.items[0]?.after);
+      response.json(await this.moveFile(request, request.params.id, nextPath));
     } catch (error) { next(error) } });
     app.delete('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {
       const file = await this.access.fileRow(request.params.id); this.access.identity(request);
