@@ -20,12 +20,13 @@
  * the caller uses to complete the sign-in locally (vault save + relay pair).
  */
 
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { createContainedAuthWindow } from '@pkg/main/containedAuthWindow';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
-const API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+const API_BASE = CLOUD_API_BASE;
 const POLL_INTERVAL_MS = 1_500;
 const POLL_TIMEOUT_MS = 5 * 60 * 1_000; // 5 minutes — matches KV TTL window
 

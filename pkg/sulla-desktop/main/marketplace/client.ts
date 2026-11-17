@@ -32,6 +32,7 @@ import * as path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 
+import { CLOUD_API_BASE } from '@pkg/main/cloud/cloudEndpoints';
 import { cloudRequest, isCloudSignedIn } from '@pkg/main/cloud/cloudFetch';
 import { MarketplaceBrowseRowMapper, type MarketplaceListingFacets } from '@pkg/main/marketplace/MarketplaceBrowseRowMapper';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
@@ -44,7 +45,7 @@ const console = Logging.background;
  * Base URL for the marketplace API. Must match the one used by
  * `sullaCloudAuth.ts` so the JWT is valid for this host.
  */
-export const MARKETPLACE_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+export const MARKETPLACE_API_BASE = CLOUD_API_BASE;
 const API_BASE = MARKETPLACE_API_BASE;
 
 // ─── Types mirroring the marketplace response shapes ────────────────

@@ -14,9 +14,11 @@
  */
 
 import type { ToolExecutionContext } from '../executionContext';
+import { CloudOriginResolver } from '@pkg/utils/cloudOrigin';
 import { configuredVaultBrokerProvider } from '../../../vault-broker';
 
-const DEFAULT_API_BASE = 'https://sulla-workers.merchantprotocol.workers.dev';
+// Built from the pure utils resolver, not main/: the Tools image copies agent/ and utils/ but not main/.
+const DEFAULT_API_BASE = new CloudOriginResolver(process.env.SULLA_CLOUD_ORIGIN, console).httpOrigin;
 
 export class MobileApiClient {
   async request<T>(ctx: ToolExecutionContext | undefined, method: string, pathSegment: string, body?: unknown): Promise<T> {

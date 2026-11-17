@@ -5,7 +5,7 @@
  */
 /**
  * cloudOrigin is dependency-free, so it runs directly with the Node test runner:
- * `node --experimental-strip-types --test pkg/sulla-desktop/main/cloud/__tests__/cloudOrigin.spec.ts`. No install required.
+ * `node --experimental-strip-types --test pkg/sulla-desktop/utils/__tests__/cloudOrigin.spec.ts`. No install required.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
