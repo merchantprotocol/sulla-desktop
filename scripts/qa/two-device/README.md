@@ -22,13 +22,15 @@ The script runs on the **Mac host shell** (bash or zsh, macOS). The `sulla` CLI 
 | Variable | Needed by | Meaning |
 |---|---|---|
 | `A_USER` | a1, a2-send | userId of user A (the Mac). Must appear in B's directory. |
-| `B_USER` | a1, a2-send | userId of user B (the iMac). Must appear in A's directory. |
+| `B_USER` | a1, a2-send, a5, a6 | User id of B (iMac); must appear in A's directory. A5/A6 also check it against recent Cloud-auth log lines. |
 | `B_AGENT_ID` | a2-send | agentId of B's agent (recipient). |
 | `TWODEV_CONVERSATION_ID` | a2-send, a2-reply (optional) | Conversation to use. If unset, a2-send takes `conversationId` from A's directory reply. |
 | `TWODEV_NONCE` | a2-check, a2-reply, a4 (optional) | Fixed nonce. Otherwise one is generated per run. |
 | `TWODEV_AGENT` | all (optional) | Agent model id for the chat API. Default `sulla-desktop`. Letters, digits, `.`, `_`, `-` only. |
 | `TWODEV_ORG` | all (optional) | Org id, passed to `org/directory` as `{"org": ...}`. Unset means the active org. |
 | `TWODEV_FOLDER` | a4 (optional) | Files folder under `/mnt/sulla-files`. Default `Projects/sulla-desktop/qa/two-device`. |
+| `TWODEV_COLLECTION_ID` | a5, a6 (optional) | Org collection id; otherwise uses `$TWODEV_OUT/twodev-org-collection-id` from `a5-setup`. |
+| `TWODEV_COLLECTION_PATH` | a6 | Absolute mounted path under `/mnt/sulla-files/Organizations/<org>/<collection>`, copied from `files/list_shared`. |
 | `TWODEV_IMAC_HOST` | all (optional) | Default `Jonathons-iMac.local`. |
 | `TWODEV_APP_PATH` | inventory (optional) | Default `/Applications/Sulla Desktop.app`. |
 | `TWODEV_OUT` | all (optional) | Evidence directory. Default `~/Sites/sulla/_wt/twodev-evidence`. |
@@ -45,8 +47,9 @@ A_USER=<userA> B_USER=<userB> B_AGENT_ID=<agentB> ./twodev.sh a2-send
 ./twodev.sh a2-check                          # B's agent looks for the nonce in its org inbox (MANUAL if it can't)
 ./twodev.sh a4 a                              # Mac's agent writes a file, searches for it in Mac File Manager
 ./twodev.sh a4 b                              # same on the iMac
-./twodev.sh a5                                # TODO: org sharing not built
-./twodev.sh a6                                # TODO: org sharing not built
+TWODEV_ORG=<org-id> ./twodev.sh a5-setup           # find or create the twodev-proof collection on A
+B_USER=<B2-uuid> ./twodev.sh a5            # A shares and B reads; then reverse direction
+B_USER=<B2-uuid> TWODEV_COLLECTION_PATH=/mnt/sulla-files/Organizations/<org>/<collection> ./twodev.sh a6 a # writes both ways
 ```
 
 Each agent prompt asks for exactly one sulla tool call and a reply of ids only. An agent that adds prose, skips the tool, or returns `ok:false` makes the step fail with exit 1.
@@ -62,7 +65,13 @@ Each agent prompt asks for exactly one sulla tool call and a reply of ids only. 
 - **A1 PASS:** A's `org/directory` reply lists B's `B_USER`, and B's reply lists A's `A_USER`. Both agents report `ok:true`. This proves both users are in one org. The Cloud People page still needs a screenshot.
 - **A2:** `a2-send` prints `SENT` when A's agent reports `ok:true` for `org/send_message`, and it saves the nonce and conversationId to `$TWODEV_OUT/last-a2.json`. That is not delivery. `a2-reply` asks B's agent to answer in the same conversation. `a2-check` asks B's agent to search its org inbox and pending requests for the nonce. If the agent reports it found the nonce, the step prints `AGENT-REPORTED-FOUND`. That is still not PASS, because the agent's own report is the only evidence. Otherwise it prints `MANUAL`. A2 passes only after a human sees the nonce in both Cloud threads.
 - **A4 PASS:** B's or A's agent writes the file under `/mnt/sulla-files/<TWODEV_FOLDER>` with its write_file tool, then runs `files/search` for that name. The step passes when the agent reports `found:true`, with up to 4 tries. Take a File Manager screenshot for the proof report. Search proves indexing, not what the UI shows.
-- **A5, A6:** TODO. Exit code 2 and `TODO` means not run, not a failure. Org sharing is not built yet.
+- **A5 setup.** `a5-setup` checks `files/list_shared` for the named `twodev-proof` collection and creates it with `files/create_org_collection` only if absent. It records only its collection id under `$TWODEV_OUT`. Set `TWODEV_ORG` to the test org id.
+
+**A5.** `a5 [a-to-b|b-to-a|both]` writes a nonce source file as an AI, copies it using `files/share_to_org`, then asks the receiving AI to find/read it with `read_file` and return its SHA-256. The harness compares the source and receiver hashes. Collection owner/creator has manage; the other user needs an explicit edit grant to write in the reverse direction. Until the iMac is signed in as B2 and the grant exists, B-side checks should fail with a clear permission/preflight error rather than report PASS.
+
+**A6.** `a6 <a|b>` simulates human creation by writing through that side's mounted Files path (not the agent); it polls the peer mount every 5 seconds, up to 60 seconds. One invocation iterates both sides, starting with the requested side, and tests both directions. The peer mount check proves sync landed; take a File Manager screenshot to verify the rendered listing. `TWODEV_COLLECTION_PATH` must be copied from the shared collection's `files/list_shared` path.
+
+A5/A6 write nonce-bearing test files; retain or clean them after proof per the project evidence plan. Evidence JSONL contains ids/flags only; hashes are compared in-process and are not logged.
 
 Exit codes: 0 = PASS or ok, 1 = FAIL, 2 = usage, missing env, or TODO/not run.
 
