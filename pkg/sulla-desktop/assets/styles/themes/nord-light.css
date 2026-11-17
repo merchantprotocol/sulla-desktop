@@ -625,31 +625,10 @@
   color: #3b4252 !important;
 }
 
-.theme-nord-light .mode-btn {
-  color: #5e81ac !important;
-}
 
-.theme-nord-light .mode-btn:hover {
-  color: #2e3440 !important;
-  background: rgba(94, 129, 172, 0.15) !important;
-}
 
-.theme-nord-light .mode-btn.active {
-  color: #5e81ac !important;
-  background: rgba(94, 129, 172, 0.2) !important;
-}
 
-.theme-nord-light .mode-btn.active::before {
-  background: #5e81ac !important;
-  box-shadow: 0 0 10px rgba(94, 129, 172, 0.5) !important;
-}
 
-.theme-nord-light .mode-btn::after {
-  color: #2e3440 !important;
-  background: rgba(255, 255, 255, 0.96) !important;
-  border-color: rgba(94, 129, 172, 0.3) !important;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15) !important;
-}
 
 /* Tab Mode Overrides — Light Mode */
 .theme-nord-light .tab-mode-routines,

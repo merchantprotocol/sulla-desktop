@@ -751,34 +751,13 @@
 }
 
 /* Mode buttons - default state */
-.theme-default-light .mode-btn {
-  color: #64748b !important;
-}
 
-.theme-default-light .mode-btn:hover {
-  color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.1) !important;
-}
 
 /* Mode buttons - active state */
-.theme-default-light .mode-btn.active {
-  color: #0ea5e9 !important;
-  background: rgba(14, 165, 233, 0.15) !important;
-}
 
 /* Active indicator bar */
-.theme-default-light .mode-btn.active::before {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 10px rgba(14, 165, 233, 0.5) !important;
-}
 
 /* Tooltip */
-.theme-default-light .mode-btn::after {
-  color: #0d0d0d !important;
-  background: rgba(255, 255, 255, 0.96) !important;
-  border-color: rgba(148, 163, 184, 0.3) !important;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15) !important;
-}
 
 /* ═════════════════════════════════════════════════════════════════
    Tab Mode Overrides (Routines/Marketplace) — Light Mode
