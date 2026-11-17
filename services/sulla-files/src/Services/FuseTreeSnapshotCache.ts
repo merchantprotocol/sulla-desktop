@@ -37,8 +37,8 @@ export class FuseTreeSnapshotCache {
   private async build(key:string, area:string, userId:string):Promise<FuseTreeSnapshot> {
     const rows = await this.tree.snapshot(area, userId);
     // The mount serves exactly one collection at its root: the owner's home.
-    for (const row of rows.collections) row.tree_path = '';
-    const root = rows.collections[0];
+    for (const row of rows.collections) if (row.workspaceScope !== 'organization') row.tree_path = '';
+    const root = rows.collections.find(row => row.workspaceScope !== 'organization');
     const snapshot = { body: Buffer.from(JSON.stringify({ rootCollectionId: root?.id ?? null, collections: rows.collections, files: rows.files, folders: rows.folders })), revision: rows.revision };
     // Only the current owner's tree is worth keeping.
     for (const stale of this.snapshots.keys()) if (stale !== key && !stale.startsWith(`${ userId }\u0000`)) this.snapshots.delete(stale);
