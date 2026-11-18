@@ -244,6 +244,10 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'threat-proxy:get-status': () => import('@pkg/main/threat-proxy').ThreatProxyStatus;
+  'threat-proxy:get-traffic-log': (request?: import('@pkg/main/threat-proxy').TrafficLogRequest) => Promise<{ entries: Record<string, any>[]; error?: string }>;
+  'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
+
   'use-case-recall:query': (text: string, options: Partial<import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallQueryOptions>) => import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallSuggestionResponse;
   'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
   'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
@@ -1277,6 +1281,8 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'threat-proxy:status-changed': (status: import('@pkg/main/threat-proxy').ThreatProxyStatus) => void;
+
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;

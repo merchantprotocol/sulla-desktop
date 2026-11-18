@@ -29,12 +29,12 @@ import path from 'path';
 import readline from 'readline';
 import { URL } from 'url';
 
-import { ipcMain } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { VMExecutor } from '@pkg/backend/backend';
 import {
-  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER,
+  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER, THREAT_PROXY_PUBLIC_DIR, THREAT_PROXY_TRAFFIC_LOG_PATH, type EgressPolicyState,
 } from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -52,6 +52,12 @@ export const SETTINGS_KEYS = {
   allowlist:          'threatProxy.allowlist',
   blockMode:          'threatProxy.blockMode',
   injectionMode:      'threatProxy.injectionMode',
+  scanMaxBytes:        'threatProxy.scanMaxBytes',
+  bufferBudgetMb:      'threatProxy.bufferBudgetMb',
+  scanBufferMaxBytes:  'threatProxy.scanBufferMaxBytes',
+  memoryPressurePercent: 'threatProxy.memoryPressurePercent',
+  trafficLogEnabled:   'threatProxy.trafficLogEnabled',
+  trafficLogRetentionMinutes: 'threatProxy.trafficLogRetentionMinutes',
   blocklistUpdatedAt: 'threatProxy.blocklistUpdatedAt',
 } as const;
 
@@ -67,6 +73,12 @@ export interface ThreatProxySettings {
   allowlist:     string;      // comma-separated domains
   blockMode:     'block' | 'warn' | 'off';
   injectionMode: 'warn' | 'redact' | 'off';
+  scanMaxBytes: number;
+  bufferBudgetMb: number;
+  scanBufferMaxBytes: number;
+  memoryPressurePercent: number;
+  trafficLogEnabled: boolean;
+  trafficLogRetentionMinutes: number;
 }
 
 /** Sensitive credentials sourced from the IntegrationService / vault. */
@@ -80,6 +92,8 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
   allowlist:     '',
   blockMode:     'block',
   injectionMode: 'warn',
+  scanMaxBytes: 2_097_152, bufferBudgetMb: 48, scanBufferMaxBytes: 4_194_304,
+  memoryPressurePercent: 60, trafficLogEnabled: false, trafficLogRetentionMinutes: 30,
 };
 
 /**
@@ -111,6 +125,15 @@ let refreshTimer: NodeJS.Timeout | null = null;
 /** The running Sulla runtime, set by the backend once the guest is up. */
 let guest: VMExecutor | undefined;
 let guestSync: Promise<void> = Promise.resolve();
+let watcher: NodeJS.Timeout | null = null;
+let healthCheck: Promise<void> | undefined;
+let healthyProbes = 0;
+let failedProbes = 0;
+let effectivePolicy: EgressPolicyState = 'off';
+let statusSince = new Date().toISOString();
+let lastTransition = statusSince;
+let statusReason = 'initializing';
+const failOpenTransitions: number[] = [];
 
 // ── Settings helpers ─────────────────────────────────────────────────
 
@@ -132,10 +155,31 @@ async function readSettings(): Promise<ThreatProxySettings> {
     allowlist:     await get(SETTINGS_KEYS.allowlist, DEFAULT_SETTINGS.allowlist),
     blockMode:     await get(SETTINGS_KEYS.blockMode, DEFAULT_SETTINGS.blockMode),
     injectionMode: await get(SETTINGS_KEYS.injectionMode, DEFAULT_SETTINGS.injectionMode),
+    scanMaxBytes: await get(SETTINGS_KEYS.scanMaxBytes, DEFAULT_SETTINGS.scanMaxBytes),
+    bufferBudgetMb: await get(SETTINGS_KEYS.bufferBudgetMb, DEFAULT_SETTINGS.bufferBudgetMb),
+    scanBufferMaxBytes: await get(SETTINGS_KEYS.scanBufferMaxBytes, DEFAULT_SETTINGS.scanBufferMaxBytes),
+    memoryPressurePercent: await get(SETTINGS_KEYS.memoryPressurePercent, DEFAULT_SETTINGS.memoryPressurePercent),
+    trafficLogEnabled: await get(SETTINGS_KEYS.trafficLogEnabled, DEFAULT_SETTINGS.trafficLogEnabled),
+    trafficLogRetentionMinutes: await get(SETTINGS_KEYS.trafficLogRetentionMinutes, DEFAULT_SETTINGS.trafficLogRetentionMinutes),
   };
 }
 
-async function writeSetting(key: string, value: unknown, type: 'string' | 'boolean' = 'string'): Promise<void> {
+export function validateSettings(partial: Partial<ThreatProxySettings>): void {
+  const ranges: Record<string, [number, number]> = {
+    scanMaxBytes: [1, 16_777_216], bufferBudgetMb: [1, 512], scanBufferMaxBytes: [1, 67_108_864],
+    memoryPressurePercent: [10, 95], trafficLogRetentionMinutes: [5, 1440],
+  };
+  for (const [key, [min, max]] of Object.entries(ranges)) {
+    const value = (partial as any)[key];
+    if (value !== undefined && (!Number.isInteger(value) || value < min || value > max)) throw new Error(`${key} must be an integer from ${min} to ${max}`);
+  }
+  if ((partial.enabled !== undefined && typeof partial.enabled !== 'boolean') || (partial.trafficLogEnabled !== undefined && typeof partial.trafficLogEnabled !== 'boolean')) throw new Error('boolean threat proxy setting has invalid value');
+  if (partial.blockMode !== undefined && !['block','warn','off'].includes(partial.blockMode)) throw new Error('blockMode is invalid');
+  if (partial.injectionMode !== undefined && !['warn','redact','off'].includes(partial.injectionMode)) throw new Error('injectionMode is invalid');
+  if (partial.allowlist !== undefined && typeof partial.allowlist !== 'string') throw new Error('allowlist must be a string');
+}
+
+async function writeSetting(key: string, value: unknown, type: 'string' | 'boolean' | 'number' = 'string'): Promise<void> {
   await SullaSettingsModel.set(key, value as any, type);
 }
 
@@ -144,6 +188,7 @@ export async function getSettings(): Promise<ThreatProxySettings> {
 }
 
 export async function setSettings(partial: Partial<ThreatProxySettings>): Promise<ThreatProxySettings> {
+  validateSettings(partial);
   if (partial.enabled !== undefined) {
     await writeSetting(SETTINGS_KEYS.enabled, partial.enabled, 'boolean');
   }
@@ -153,9 +198,12 @@ export async function setSettings(partial: Partial<ThreatProxySettings>): Promis
   if (partial.blockMode !== undefined) {
     await writeSetting(SETTINGS_KEYS.blockMode, partial.blockMode);
   }
-  if (partial.injectionMode !== undefined) {
-    await writeSetting(SETTINGS_KEYS.injectionMode, partial.injectionMode);
+  if (partial.injectionMode !== undefined) { await writeSetting(SETTINGS_KEYS.injectionMode, partial.injectionMode); }
+  for (const key of ['scanMaxBytes','bufferBudgetMb','scanBufferMaxBytes','memoryPressurePercent','trafficLogRetentionMinutes'] as const) {
+    if (partial[key] !== undefined) await writeSetting(SETTINGS_KEYS[key], partial[key], 'number');
   }
+  if (partial.trafficLogEnabled !== undefined) await writeSetting(SETTINGS_KEYS.trafficLogEnabled, partial.trafficLogEnabled, 'boolean');
+  if (partial.trafficLogEnabled === false) await clearTrafficLog();
   console.log('[threat-proxy] settings updated', Object.keys(partial));
   await syncGuest().catch(err => console.error('[threat-proxy] could not apply settings in the guest', err));
 
@@ -204,6 +252,9 @@ export function renderConfigFile(settings: ThreatProxySettings, creds: ThreatPro
     allowlist:                 settings.allowlist,
     blockMode:                 settings.blockMode,
     injectionMode:             settings.injectionMode,
+    scanMaxBytes: settings.scanMaxBytes, bufferBudgetMb: settings.bufferBudgetMb,
+    scanBufferMaxBytes: settings.scanBufferMaxBytes, memoryPressurePercent: settings.memoryPressurePercent,
+    trafficLogEnabled: settings.trafficLogEnabled, trafficLogRetentionMinutes: settings.trafficLogRetentionMinutes,
     injectionScanContentTypes: INJECTION_SCAN_CONTENT_TYPES,
   }, null, 2) }\n`;
 }
@@ -218,10 +269,16 @@ export function renderConfigFile(settings: ThreatProxySettings, creds: ThreatPro
 export async function configureGuest(executor: VMExecutor): Promise<void> {
   guest = executor;
   await syncGuest();
+  startWatcher();
 }
 
 export function clearGuest(executor: VMExecutor): void {
-  if (guest === executor) guest = undefined;
+  if (guest === executor) {
+    if (watcher) clearInterval(watcher);
+    watcher = null;
+    healthyProbes = failedProbes = 0;
+    guest = undefined;
+  }
 }
 
 /** Serialize guest writes so a settings change and a blocklist refresh never interleave. */
@@ -243,7 +300,10 @@ export function syncGuest(): Promise<void> {
 
     await writeGuestConfig(executor, settings, creds);
     await copyBlocklistToGuest(executor);
-    await applyEgressPolicy(executor, settings.enabled);
+    const policy: EgressPolicyState = settings.enabled ? effectivePolicy === 'enforced' ? 'enforced' : 'direct' : 'off';
+    const changed = policy !== effectivePolicy;
+    if (changed) transition(policy, settings.enabled ? 'health_check_pending' : 'disabled');
+    if (changed) { await applyEgressPolicyNow(executor, policy); lastAppliedPolicy = policy; lastReconcileAt = Date.now(); }
   });
 }
 
@@ -275,8 +335,155 @@ async function copyBlocklistToGuest(executor: VMExecutor): Promise<void> {
  * web traffic. Exported for the agent launcher, which re-applies it before
  * every launch so a Docker restart can never leave agents unscanned.
  */
-export async function applyEgressPolicy(executor: Pick<VMExecutor, 'execCommand'>, enforce: boolean): Promise<void> {
-  await executor.execCommand({ root: true }, ...egressPolicyCommand(enforce));
+async function applyEgressPolicyNow(executor: Pick<VMExecutor, 'execCommand'>, state: EgressPolicyState): Promise<void> {
+  await executor.execCommand({ root: true }, ...egressPolicyCommand(state));
+}
+
+/** All policy writes share guestSync's serialized queue. */
+export function applyEgressPolicy(executor: Pick<VMExecutor, 'execCommand'>, state: EgressPolicyState | boolean): Promise<void> {
+  return queueGuestSync(async() => { await applyEgressPolicyNow(executor, state === true ? 'enforced' : state === false ? 'off' : state); });
+}
+
+export function applyCurrentEgressPolicy(state: EgressPolicyState): Promise<void> {
+  transition(state, state === 'direct' ? 'agent_launch_fail_open' : state === 'off' ? 'disabled' : 'healthy');
+  return queueGuestSync(async executor => { await applyEgressPolicyNow(executor, state); });
+}
+
+export interface ThreatProxyStatus { state: 'running' | 'failing-open' | 'off' | 'starting' | 'standby'; reason: string; since: string; lastTransition: string; failOpenTransitions24h: number }
+
+export function getStatus(): ThreatProxyStatus {
+  const now = Date.now();
+  while (failOpenTransitions.length && failOpenTransitions[0] < now - 86_400_000) failOpenTransitions.shift();
+  return { state: statusReason === 'idle' ? 'standby' : !(guest) || effectivePolicy === 'off' ? (guest ? 'off' : 'starting') : effectivePolicy === 'direct' ? 'failing-open' : 'running', reason: statusReason, since: statusSince, lastTransition, failOpenTransitions24h: failOpenTransitions.length };
+}
+
+function transition(state: EgressPolicyState, reason: string): void {
+  if (effectivePolicy === state && statusReason === reason) return;
+  const from = effectivePolicy; effectivePolicy = state; statusReason = reason; statusSince = new Date().toISOString(); lastTransition = statusSince;
+  if (state === 'direct' && from !== 'direct' && reason !== 'idle' && reason !== 'health_check_pending' && reason !== 'disabled') failOpenTransitions.push(Date.now());
+  console.warn('[threat-proxy] egress policy transition', JSON.stringify({ from, to: state, reason, at: lastTransition }));
+  for (const win of BrowserWindow.getAllWindows()) { if (!win.isDestroyed()) win.webContents.send('threat-proxy:status-changed', getStatus()); }
+}
+
+function startWatcher(): void {
+  if (watcher) clearInterval(watcher);
+  watcher = setInterval(() => { void checkProxyHealth(); }, 2_000);
+  void checkProxyHealth();
+}
+
+function checkProxyHealth(): Promise<void> {
+  if (healthCheck) return healthCheck;
+  healthCheck = checkProxyHealthNow().finally(() => { healthCheck = undefined; });
+  return healthCheck;
+}
+
+let lastAppliedPolicy: EgressPolicyState | undefined;
+let lastReconcileAt = 0;
+const RECONCILE_INTERVAL_MS = 60_000;
+
+async function applyWatcherPolicy(executor: VMExecutor, state: EgressPolicyState): Promise<void> {
+  if (lastAppliedPolicy === state && Date.now() - lastReconcileAt < RECONCILE_INTERVAL_MS) return;
+  await applyEgressPolicy(executor, state);
+  lastAppliedPolicy = state;
+  lastReconcileAt = Date.now();
+}
+
+/** One guest command gathers every health signal without entering the proxy container. */
+export const WATCHER_PROBE_SCRIPT = `set +e
+name="$1"
+agents=$(docker ps --filter network=sulla-agents --filter status=running --filter label=com.sulla.workload=agent -q 2>/dev/null | wc -l | tr -d ' ')
+inspect=$(docker inspect --format '{{.State.Status}}|{{.State.Health.Status}}|{{.State.OOMKilled}}|{{.State.Restarting}}|{{.State.Pid}}' "$name" 2>/dev/null)
+if [ -z "$inspect" ]; then echo "absent||||0|0|0|0|0|$agents"; exit 0; fi
+IFS='|' read -r state health oom restarting pid <<EOF
+$inspect
+EOF
+probe=0
+if [ "$state" = running ]; then
+  if command -v nc >/dev/null 2>&1; then nc -z -w1 127.0.0.1 8890 >/dev/null 2>&1; probe=$?
+  elif command -v timeout >/dev/null 2>&1; then timeout 1 sh -c 'exec 3<>/dev/tcp/127.0.0.1/8890' >/dev/null 2>&1; probe=$?
+  else probe=1; fi
+fi
+cg=$(awk -F: '$1=="0"{print $3}' /proc/"$pid"/cgroup 2>/dev/null)
+base="/sys/fs/cgroup\${cg}"
+used=$(cat "$base/memory.current" 2>/dev/null || echo 0)
+limit=$(cat "$base/memory.max" 2>/dev/null || echo 0)
+ca=0; [ ! -s "${THREAT_PROXY_PUBLIC_DIR}/ca-bundle.pem" ] || ca=1
+missing=0
+docker ps --filter network=sulla-agents --filter status=running --filter label=com.sulla.workload=agent --format '{{.Label "sulla.threat-proxy.ca"}}' 2>/dev/null | grep -qx absent && missing=1
+echo "$state|$health|$oom|$restarting|$probe|$used|$limit|$ca|$missing|$agents"`;
+
+/** Health signals gathered by WATCHER_PROBE_SCRIPT, typed. */
+export interface EgressProbe {
+  state: string; health: string; oomKilled: boolean; restarting: boolean; tcpOk: boolean;
+  memCurrent: number; memMax: number; caPresent: boolean; agentsWithoutCa: boolean; runningAgents: number;
+}
+
+export interface EgressCounters { healthyTicks: number; failedProbes: number }
+
+export interface EgressDecision {
+  /** Policy to apply, or null to keep the current one (hold). */
+  policy: EgressPolicyState | null;
+  status: 'running' | 'failing-open' | 'standby' | 'hold';
+  reason: string;
+  countsAsFailOpen: boolean;
+  next: EgressCounters;
+}
+
+/** Parses the probe's pipe-separated line. Returns null for anything that is not a complete probe. */
+export function parseWatcherProbe(output: string): EgressProbe | null {
+  const fields = output.trim().split('|');
+  if (fields.length !== 10) return null;
+  const [state, health, oom, restarting, probe, usedRaw, limitRaw, ca, missing, agents] = fields;
+  if (!/^\d+$/.test(probe) || !/^\d+$/.test(agents)) return null;
+  return {
+    state, health, oomKilled: oom === 'true', restarting: restarting === 'true', tcpOk: probe === '0',
+    memCurrent: Number(usedRaw), memMax: Number(limitRaw), caPresent: ca === '1', agentsWithoutCa: missing === '1',
+    runningAgents: Number(agents),
+  };
+}
+
+/** Pure egress decision. Same branch order and counter updates as the watcher it replaces. */
+export function decideEgress(probe: EgressProbe | null, prev: EgressCounters): EgressDecision {
+  const failOpen = (reason: string, next: EgressCounters): EgressDecision => ({ policy: 'direct', status: 'failing-open', reason, countsAsFailOpen: true, next });
+  if (!probe) return failOpen('probe_parse_error', { healthyTicks: 0, failedProbes: prev.failedProbes });
+  if (probe.runningAgents === 0) return { policy: 'direct', status: 'standby', reason: 'idle', countsAsFailOpen: false, next: { healthyTicks: 0, failedProbes: 0 } };
+  if (probe.agentsWithoutCa) return failOpen('agent_without_ca', { healthyTicks: 0, failedProbes: prev.failedProbes });
+  if (probe.state !== 'running' || probe.health !== 'healthy' || probe.oomKilled || probe.restarting) {
+    return failOpen(`proxy_${probe.state}_${probe.health}_oom_${probe.oomKilled}_restarting_${probe.restarting}`, { healthyTicks: 0, failedProbes: 0 });
+  }
+  if (!probe.tcpOk) {
+    const failedProbes = prev.failedProbes + 1;
+    if (failedProbes >= 2) return failOpen('probe_failed_twice', { healthyTicks: 0, failedProbes });
+    return { policy: null, status: 'hold', reason: 'probe_failed_once', countsAsFailOpen: false, next: { healthyTicks: 0, failedProbes } };
+  }
+  if (Number.isFinite(probe.memCurrent) && Number.isFinite(probe.memMax) && probe.memMax > 0 && probe.memCurrent >= probe.memMax * 0.9) {
+    return failOpen('memory_pressure', { healthyTicks: 0, failedProbes: 0 });
+  }
+  if (!probe.caPresent) return failOpen('ca_bundle_missing', { healthyTicks: 0, failedProbes: 0 });
+  const healthyTicks = prev.healthyTicks + 1;
+  if (healthyTicks >= 3) return { policy: 'enforced', status: 'running', reason: 'healthy', countsAsFailOpen: false, next: { healthyTicks, failedProbes: 0 } };
+  return { policy: null, status: 'hold', reason: 'healthy_pending', countsAsFailOpen: false, next: { healthyTicks, failedProbes: 0 } };
+}
+
+async function checkProxyHealthNow(): Promise<void> {
+  const executor = guest;
+  if (!executor) return;
+  try {
+    const settings = await readSettings();
+    if (!settings.enabled) { healthyProbes = failedProbes = 0; transition('off', 'disabled'); await applyWatcherPolicy(executor, 'off'); return; }
+    const data = await executor.execCommand({ root: true, capture: true }, 'sh', '-c', WATCHER_PROBE_SCRIPT, 'threat-proxy-watch', THREAT_PROXY_CONTAINER);
+    const decision = decideEgress(parseWatcherProbe(data), { healthyTicks: healthyProbes, failedProbes });
+    healthyProbes = decision.next.healthyTicks;
+    failedProbes = decision.next.failedProbes;
+    if (decision.policy === null) return;
+    transition(decision.policy, decision.reason);
+    await applyWatcherPolicy(executor, decision.policy);
+  } catch (err: any) {
+    healthyProbes = 0; failedProbes++;
+    transition('direct', `health_check_error:${err?.message ?? String(err)}`);
+    const current = guest;
+    if (current) await applyWatcherPolicy(current, 'direct').catch(() => { lastAppliedPolicy = undefined; });
+  }
 }
 
 /** Whether agent containers must go through the proxy (and so trust its CA). */
@@ -500,6 +707,28 @@ export async function shutdown(): Promise<void> {
   initialized = false;
 }
 
+export interface TrafficLogRequest { limit?: number; verdict?: string; search?: string }
+export async function getTrafficLog(input: TrafficLogRequest = {}): Promise<{ entries: Record<string, any>[]; error?: string }> {
+  if (!guest) return { entries: [], error: 'The Sulla runtime is not running' };
+  try {
+    const output = await guest.execCommand({ root: true, capture: true }, 'sh', '-c', 'for f in "$1" "$1.1"; do [ ! -f "$f" ] || tail -c 2097152 "$f"; done', 'traffic-log', THREAT_PROXY_TRAFFIC_LOG_PATH);
+    const settings = await readSettings(); const cutoff = Date.now() - settings.trafficLogRetentionMinutes * 60_000;
+    const limit = Math.max(1, Math.min(500, Math.floor(input.limit ?? 200)));
+    const entries = output.split('\n').filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } })
+      .filter(entry => new Date(entry.ts).getTime() >= cutoff)
+      .map(entry => ({ ...entry, path: typeof entry.path === 'string' ? entry.path.replace(/([?&][^=&#]+)=([^&#]*)/g, '$1=…') : entry.path }))
+      .filter(entry => !input.verdict || entry.verdict === input.verdict)
+      .filter(entry => !input.search || `${entry.host ?? ''} ${entry.path ?? ''}`.toLowerCase().includes(input.search.toLowerCase()))
+      .sort((a,b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, limit);
+    return { entries };
+  } catch (err: any) { return { entries: [], error: err?.message ?? String(err) }; }
+}
+
+export async function clearTrafficLog(): Promise<void> {
+  if (!guest) return;
+  await guest.execCommand({ root: true }, 'sh', '-c', ': > "$1"; : > "$1.1"', 'clear-traffic-log', THREAT_PROXY_TRAFFIC_LOG_PATH);
+}
+
 // ── IPC handlers ─────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
@@ -536,6 +765,10 @@ function registerIpcHandlers(): void {
       return { ok: false, error: err?.message ?? String(err) };
     }
   });
+
+  ipcMain.handle('threat-proxy:get-status', () => getStatus());
+  ipcMain.handle('threat-proxy:get-traffic-log', (_event, request: TrafficLogRequest) => getTrafficLog(request));
+  ipcMain.handle('threat-proxy:clear-traffic-log', async() => { try { await clearTrafficLog(); return { ok: true }; } catch (err: any) { return { ok: false, error: err?.message ?? String(err) }; } });
 
   ipcMain.handle('threat-proxy:refresh-blocklist', async() => {
     return refreshBlocklist(true);

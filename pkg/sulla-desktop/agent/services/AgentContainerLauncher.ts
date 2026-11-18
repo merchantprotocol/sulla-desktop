@@ -11,6 +11,7 @@ import Electron from 'electron';
 import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
+import { agentEgressLabels, prepareAgentEgress as prepareAgentEgressWith, type AgentEgress } from './agentEgress';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime, type AgentContainerRuntimeBinding, type AgentContainerRuntimeSupervisor } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
@@ -58,7 +59,8 @@ import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import {
-  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, egressPolicyCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
+  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, ensureAgentNetworkCommand,
+  THREAT_PROXY_PUBLIC_DIR,
 } from '@pkg/backend/threatProxyEgress';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
@@ -66,7 +68,7 @@ import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { filesGuestBindsForAnchor } from '@pkg/backend/guestMountInfo';
-import { egressEnforced } from '@pkg/main/threat-proxy';
+import { applyCurrentEgressPolicy, egressEnforced } from '@pkg/main/threat-proxy';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -623,47 +625,24 @@ export async function repairHostRelay(): Promise<void> {
   await ensureHostRelay(image);
 }
 
-/** How long a launch waits for the threat proxy to publish its CA after a cold boot. */
-const THREAT_PROXY_CA_TIMEOUT_MS = 90_000;
-
-/**
- * Re-apply the agent egress policy before every launch (a Docker or guest
- * restart drops nothing permanent, but this keeps the guarantee local to the
- * launch) and return the CA trust the container needs. With scanning on, a
- * launch that cannot apply the rules or find the proxy CA fails instead of
- * starting an agent whose web traffic would not be scanned.
- */
-async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string> }> {
-  await guestExec(ensureAgentNetworkCommand());
-  const enforce = await egressEnforced();
-
-  await guestExec(egressPolicyCommand(enforce));
-  if (!enforce) return { binds: [], env: {} };
-  // The proxy runs only while agents do. Start it and wait until it accepts
-  // connections; if it cannot start, the launch fails here. (Even without this
-  // the redirect fails closed: a stopped proxy means refused connections.)
-  await ensureOnDemandService('threat_proxy');
-  const deadline = Date.now() + THREAT_PROXY_CA_TIMEOUT_MS;
-
-  while (!await threatProxyCaPresent()) {
-    if (Date.now() >= deadline) {
-      throw new AgentLaunchError('Sulla is still starting its web safety check', true,
-        'The threat proxy has not started (no CA in its state directory); agent web traffic cannot be scanned');
-    }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  const trust = agentCaTrust();
-
-  return { binds: [trust.bind], env: trust.env };
+/** Launch-time egress policy; the logic lives in ./agentEgress so it can be tested without the launcher. */
+function prepareAgentEgress(): Promise<AgentEgress> {
+  return prepareAgentEgressWith({
+    ensureAgentNetworkCommand,
+    caBundlePath: `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`,
+    agentCaTrust,
+    guestExec,
+    egressEnforced,
+    proxyRunning:            () => import('@pkg/main/threat-proxy').then(({ getStatus }) => getStatus().state === 'running'),
+    applyCurrentEgressPolicy,
+    startProxy:              () => ensureOnDemandService('threat_proxy'),
+    warn:                    (message, error) => log.warn(message, error),
+  });
 }
 
-function threatProxyCaPresent(): Promise<boolean> {
-  return guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false);
-}
-
-/** The threat proxy has published its CA, or scanning is off. */
+/** Proxy readiness is never a prerequisite for chat: launch uses direct mode until healthy. */
 export async function threatProxyWarm(): Promise<boolean> {
-  return !await egressEnforced() || await threatProxyCaPresent();
+  return true;
 }
 
 /** The agent image is in the guest and speaks this transport version. */
@@ -1358,6 +1337,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       image,
       labels: {
         'com.sulla.workload':       'agent',
+        ...agentEgressLabels(egress),
         'com.sulla.agent-id':       agentId,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
@@ -1722,6 +1702,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       image,
       labels: {
         'com.sulla.workload':       'agent',
+        ...agentEgressLabels(egress),
         'com.sulla.agent-id':       metadata.agentId ?? run.state.metadata.wsChannel,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
