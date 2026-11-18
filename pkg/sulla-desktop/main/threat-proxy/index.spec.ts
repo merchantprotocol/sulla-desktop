@@ -9,7 +9,7 @@ vi.mock('@pkg/backend/threatProxyEgress', () => ({
   egressPolicyCommand: vi.fn((state: string) => ['egress-policy', state]), installStagedFileCommand: vi.fn((_staged: string, final: string) => ['install', final]), THREAT_PROXY_BLOCKLIST_PATH: '/blocklist', THREAT_PROXY_PUBLIC_DIR: '/public',
   THREAT_PROXY_CONFIG_PATH: '/config', THREAT_PROXY_CONTAINER: 'sulla_threat_proxy', THREAT_PROXY_TRAFFIC_LOG_PATH: '/traffic.jsonl',
 }));
-vi.mock('@pkg/utils/logging', () => ({ default: { 'threat-proxy': { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } }));
+vi.mock('@pkg/utils/logging', () => ({ default: { 'threat-proxy': { log: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } }));
 vi.mock('@pkg/utils/paths', () => ({ default: { altAppHome: '/tmp/sulla' } }));
 vi.mock('@pkg/main/cloud/cloudEndpoints', () => ({ CLOUD_API_BASE: 'https://staging-workers.example.test' }));
 
@@ -337,11 +337,15 @@ describe('threat proxy guest serialization', () => {
     const apply = mod.applyEgressPolicy(guest.executor, 'enforced');
     await settle();
     const since = () => guest.calls.slice(before).filter(call => call !== 'install:/blocklist');
+    // The watcher can enqueue its own policy apply, so only assert from the sync's staged write onward.
     // Staged path is dirname(THREAT_PROXY_CONFIG_PATH) + '/.proxy.json.new'; the mock config path is '/config'.
-    expect(since()).toEqual(['write://.proxy.json.new']);
+    const seq = since();
+    const i = seq.indexOf('write://.proxy.json.new');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(seq.slice(i)).toEqual(['write://.proxy.json.new']);
     release();
     await Promise.all([sync, apply]);
-    expect(since()).toEqual(['write://.proxy.json.new', 'install:/config', 'policy:enforced']);
+    expect(since().slice(i)).toEqual(['write://.proxy.json.new', 'install:/config', 'policy:enforced']);
     mod.clearGuest(guest.executor);
   });
 });
