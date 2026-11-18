@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import tls from 'node:tls';
 
@@ -141,30 +142,44 @@ export class DesktopVaultTransport {
     return new Agent({
       connections: 64,
       connect: (options, callback) => {
-        const socket = tls.connect({ ...options, host: options.hostname, rejectUnauthorized: false });
+        const hostname = typeof options.hostname === 'string' ? options.hostname : '';
+        // Explicit mapping instead of spreading undici's connector options (port is a string there, and it carries undici-only fields).
+        // Mirrors undici's buildConnector: SNI only for non-IP hostnames.
+        const socket = tls.connect({
+          host: hostname,
+          port: Number(options.port) || 443,
+          servername: options.servername ?? (net.isIP(hostname) ? undefined : hostname),
+          localAddress: options.localAddress ?? undefined,
+          timeout: options.timeout ?? undefined,
+          rejectUnauthorized: false,
+        });
         let settled = false;
-        const finish = (error: Error | null, connected?: tls.TLSSocket) => {
+        const fail = (error: Error) => {
           if (settled) return;
           settled = true;
-          callback(error, connected);
+          callback(error, null);
         };
-        socket.once('error', error => finish(error, null));
+        const succeed = (connected: tls.TLSSocket) => {
+          if (settled) return;
+          settled = true;
+          callback(null, connected);
+        };
+        socket.once('error', error => fail(error));
         socket.once('secureConnect', () => {
           void (async() => {
             const certificate = socket.getPeerCertificate(true);
             const raw = certificate.raw;
-            const hostname = typeof options.hostname === 'string' ? options.hostname : '';
             const pem = raw ? `-----BEGIN CERTIFICATE-----\n${raw.toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----` : '';
             const { vaultTlsPins } = require('@pkg/main/vaultTls') as typeof import('@pkg/main/vaultTls');
             if (!pem || !await vaultTlsPins.verifyPeer(hostname, pem)) {
               socket.destroy();
-              finish(new Error('Vault TLS certificate pin verification failed'), null);
+              fail(new Error('Vault TLS certificate pin verification failed'));
               return;
             }
-            finish(null, socket);
+            succeed(socket);
           })().catch((error) => {
             socket.destroy();
-            finish(error as Error, null);
+            fail(error as Error);
           });
         });
         return socket;
