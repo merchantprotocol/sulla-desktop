@@ -18,7 +18,7 @@ docker run -d --name "$origin" --network "$network" --network-alias origin --net
 hosts=2000; [ "$scenario" = many_hosts ] || [ "$scenario" = soak ] || hosts=0; prev=; for arg in "$@"; do if [ "$prev" = --hosts ]; then hosts=$arg; prev=; continue; fi; [ "$arg" = --hosts ] && prev=--hosts; done
 case "$hosts" in *[!0-9]*|"") echo "--hosts must be numeric" >&2; exit 2;; esac
 [ "$hosts" -le 2000 ] || { echo "--hosts cap is 2000" >&2; exit 2; }
-host_args=; i=0; origin_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$origin")
+origin_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$origin"); host_args="--add-host=02teste.cc:$origin_ip"; i=0
 while [ "$i" -lt "$hosts" ]; do host_args="$host_args --add-host=host-$i.test:$origin_ip"; i=$((i+1)); done
 # Run actual entrypoint logic copied from source, adding only the harness-only upstream verification override.
 repo_entry="$repo_root/services/sulla-threat-proxy/entrypoint.sh"; sed '/^[[:space:]]*--set connection_strategy=lazy/a\  --set ssl_insecure=true \\' "$repo_entry" > "$state/entrypoint.sh"; chmod 0755 "$state/entrypoint.sh"
