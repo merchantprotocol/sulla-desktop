@@ -25,7 +25,7 @@ status() {
 
 # Topmost mount at the path: "<fstype> <optional fields>" (mountinfo lists mounts in mount order).
 top_mount() {
-  awk -v path="$mount_path" '$5 == path { opt = ""; for (i = 7; $i != "-"; i++) opt = opt " " $i; fs = $(i + 1) } END { if (fs != "") print fs opt }' /proc/self/mountinfo
+  awk -v path="$mount_path" '$5 == path { opt = $6; for (i = 7; $i != "-"; i++) opt = opt " " $i; fs = $(i + 1) } END { if (fs != "") print fs " " opt }' /proc/self/mountinfo
 }
 
 top_is_fuse() {
@@ -102,6 +102,23 @@ clear_stale_fuse_layers
 # Create it only after stale FUSE layers are gone: stat on a dead layer fails
 # with ENOTCONN, which would make mkdir -p abort the restart it should recover.
 [ -d "$mount_path" ] || mkdir -p "$mount_path" || fail mountpoint-missing ",\"mount\":\"$mount_path\""
+
+# Leave a read-only sentinel mount underneath FUSE. If the adapter dies, shared
+# containers see this marker instead of an apparently empty writable tmpfs dir.
+# Reuse the existing bind on restart; stacking bind mounts would make teardown
+# ambiguous and could leave the sentinel writable after enough restarts.
+top_is_readonly_nonfuse() {
+  top=$(top_mount)
+  case "${top%% *}" in fuse|fuse.*) return 1 ;; esac
+  case " $top " in *" ro"*) return 0 ;; esac
+  return 1
+}
+
+if ! top_is_readonly_nonfuse; then
+  : > "$mount_path/SULLA-FILES-NOT-MOUNTED" || fail marker-create-failed ",\"mount\":\"$mount_path\""
+  mount --bind "$mount_path" "$mount_path" || fail sentinel-bind-failed ",\"mount\":\"$mount_path\""
+  mount -o remount,bind,ro "$mount_path" || fail sentinel-remount-failed ",\"mount\":\"$mount_path\""
+fi
 
 anchor=$(containing_mount /proc/self/mountinfo "$mount_path")
 anchor_mount=${anchor%% *}
