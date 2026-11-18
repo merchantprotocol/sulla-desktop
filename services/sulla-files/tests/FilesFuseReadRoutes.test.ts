@@ -37,7 +37,9 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     expect(stable.body).toMatchObject({ cursor: first.body.cursor, reset: false, changes: [] });
     await fixture.createFile('docs/inner/feed-change.txt');
     const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
-    expect(changed.body).toMatchObject({ reset: false, changes: [expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'insert' })] });
+    const createEvents = changed.body.changes.filter((change:any) => change.path === 'docs/inner/feed-change.txt');
+    expect(changed.body.reset).toBe(false);
+    expect(createEvents).toEqual([expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'update' })]);
     const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='docs/inner/feed-change.txt'`, [fixture.collectionId])).rows[0].id;
     await fixture.pool.query(`UPDATE files SET path='docs/inner/feed-renamed.txt' WHERE id=$1`, [fileId]);
     const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);

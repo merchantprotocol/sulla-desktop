@@ -42,7 +42,17 @@ export class FuseTreeRepository {
     if (!valid || cursor < BigInt(bounds.pruned) || (oldest > 0n && cursor < oldest - 1n)) return { cursor: (newest > BigInt(bounds.pruned) ? newest : BigInt(bounds.pruned)).toString(), reset: true, more: false, changes: [] };
     const rows = (await this.db.query(`SELECT id::text AS id,path,old_path AS "oldPath",kind FROM fuse_change_journal WHERE collection_id=$1 AND id>$2 AND ${visible} ORDER BY id LIMIT 1001`, [collectionId, since])).rows;
     const more = rows.length > 1000; const page = more ? rows.slice(0,1000) : rows;
-    return { cursor: page.at(-1)?.id ?? since, reset: false, more, changes: page.map(({id: _id,...change}:any) => change) };
+    // A single create can journal both insert and current-version update in one
+    // transaction. Return one event per path in this page, with the latest kind.
+    const byPath = new Map<string, {path:string;oldPath:string|null;kind:string}>();
+    for (const { id: _id, ...change } of page as any[]) {
+      const previous = byPath.get(change.path);
+      byPath.set(change.path, {
+        ...change,
+        oldPath: change.oldPath ?? previous?.oldPath ?? null,
+      });
+    }
+    return { cursor: page.at(-1)?.id ?? since, reset: false, more, changes: [...byPath.values()] };
   }
 
   async homeCollectionId(userId:string):Promise<string> {

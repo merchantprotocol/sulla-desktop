@@ -1080,24 +1080,41 @@ class SullaFiles(pyfuse3.Operations):
             else:
                 # The change feed is an optimization, never the source of truth for an
                 # immutable content-cache key: a missed event must not serve old bytes.
-                current_entry = await self.api.entry(node["collectionId"], node["filesPath"])
-                fresh_version = str(current_entry.get("versionId") or current_entry.get("current_version_id") or "")
-                old_version = str(node.get("versionId") or node.get("current_version_id") or "")
-                if fresh_version != old_version:
-                    node.pop("pageCacheVersion", None)
-                    node["versionId"] = fresh_version
-                    node["size"] = int(current_entry.get("size") or 0)
+                current_entry = None
+                entry = getattr(self.api, "entry", None)
+                if callable(entry):
+                    try:
+                        current_entry = await entry(node["collectionId"], node["filesPath"])
+                    except Exception as error:
+                        # Revalidation is an optimization. If it is unavailable, the
+                        # normal read-by-id path below still fetches the complete file.
+                        emit("read-revalidation-failed", logging.WARNING, error=str(error))
+                if current_entry is not None:
+                    fresh_version = str(current_entry.get("versionId") or current_entry.get("current_version_id") or "")
+                    old_version = str(node.get("versionId") or node.get("current_version_id") or "")
+                    if fresh_version != old_version:
+                        node.pop("pageCacheVersion", None)
+                        node["versionId"] = fresh_version
+                        node["size"] = int(current_entry.get("size") or 0)
                 temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
                 try:
                     version_id = str(node.get("versionId") or node.get("current_version_id") or "")
                     source_hash = str(node.get("sourceHash") or "")
-                    cache = self._cache()
-                    if not cache or not cache.get(version_id, source_hash, int(node.get("size", 0)), temporary):
+                    cache = self._cache() if current_entry is not None else None
+                    cache_hit = False
+                    if cache is not None:
+                        try:
+                            cache_hit = callable(getattr(cache, "get", None)) and cache.get(
+                                version_id, source_hash, int(node.get("size", 0)), temporary)
+                        except Exception as error:
+                            emit("read-cache-read-failed", logging.WARNING, error=str(error))
+                    if not cache_hit:
                         version_id, source_hash = await self.api.read_to_file(node["id"], temporary)
                         try:
                             cache = self._cache()
-                            if cache: cache.put(version_id, source_hash, temporary, temporary.tell())
-                        except OSError as error: emit("read-cache-write-failed", logging.WARNING, error=str(error))
+                            put = getattr(cache, "put", None) if cache else None
+                            if callable(put): put(version_id, source_hash, temporary, temporary.tell())
+                        except Exception as error: emit("read-cache-write-failed", logging.WARNING, error=str(error))
                     node["versionId"], node["sourceHash"] = version_id, source_hash
                 except BaseException:
                     temporary.close()

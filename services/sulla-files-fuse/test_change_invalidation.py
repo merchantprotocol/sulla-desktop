@@ -95,6 +95,28 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertEqual(__import__("os").pread(handle["file"].fileno(), 3, 0), b"new")
         handle["file"].close()
 
+    # risk: availability — optional revalidation/cache failures must not turn an ordinary full read into EIO.
+    def test_open_falls_back_to_download_when_revalidation_and_cache_are_unavailable(self):
+        self.pyfuse3.FileInfo = lambda fh: types.SimpleNamespace(fh=fh)
+        class Api:
+            actor_resolver = None
+            async def entry(self, _collection, _path):
+                raise OSError("metadata endpoint unavailable")
+            async def read_to_file(self, _file_id, target):
+                target.write(b"fresh")
+                return "v2", "hash-v2"
+        self.ops.api = Api()
+        self.ops.read_cache = types.SimpleNamespace()  # older/partial cache implementations are optional.
+        inode = self.ops._node("file.txt", False)
+        self.ops.nodes[inode].update({"id": "file-id", "collectionId": "collection", "filesPath": "file.txt",
+                                      "versionId": "v1", "sourceHash": "hash-v1", "size": 5})
+
+        info = asyncio.run(self.ops.open(inode, 0, None))
+        handle = self.ops.handles[info.fh]
+        self.assertEqual(__import__("os").pread(handle["file"].fileno(), 5, 0), b"fresh")
+        self.assertEqual(handle["versionId"], "v2")
+        handle["file"].close()
+
 
 if __name__ == "__main__":
     unittest.main()
