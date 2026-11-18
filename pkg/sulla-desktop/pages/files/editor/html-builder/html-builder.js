@@ -197,8 +197,14 @@
       value = head ? value.slice(0, head.index + head[0].length) + tag + value.slice(head.index + head[0].length) :
         tag + value;
     }
-    // Run mode needs no extra meta: the sandbox (no allow-top-navigation, no
-    // allow-same-origin) is what keeps the page away from the app.
+    if (run) {
+      // The opaque-origin frame can only request navigation; the host validates
+      // the exact frame WindowProxy before acting on a message.
+      const bridge = `<script>(function(){document.addEventListener('click',function(event){var link=event.target&&event.target.closest&&event.target.closest('a[href]');if(!link)return;var href=link.getAttribute('href')||'';if(href.charAt(0)==='#')return;if(/^https?:\/\//i.test(href)){event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'external',href:href},'*');return}if(/^(mailto:|tel:)/i.test(href))return;if(/^[a-z][a-z\\d+.-]*:/i.test(href)||href.slice(0,2)==='//')return;event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'relative',href:href},'*')},true)})()<\/script>`;
+      const head = /<head(?:\s[^>]*)?>/i.exec(value);
+      value = head ? value.slice(0, head.index + head[0].length) + bridge + value.slice(head.index + head[0].length) : bridge + value;
+    }
+    // No allow-top-navigation and no allow-same-origin keeps the page away from the app.
     return value;
   }
 
@@ -462,13 +468,12 @@
       const badge = host.querySelector('.shb-wb-url b');
       if (badge) badge.textContent = policy.run ? 'Scripts running · sandboxed' : 'Preview · scripts don’t run here';
     }
-    addEventListener('message', e => {
-      if (e.data && e.data.sullaPreviewLink != null) {
-        const h = e.data.sullaPreviewLink;
-        toast(h === '#' || !h ? 'Link intercepted: href="#" goes nowhere' : 'Link intercepted: ' + h +
-          ' is not a file in this folder')
-      }
-    });
+    const onFrameMessage = e => {
+      if (e.source !== frame.contentWindow || !e.data || e.data.type !== 'sulla-files-nav') return;
+      if (e.data.kind === 'relative' && typeof options.onNavigate === 'function' && typeof e.data.href === 'string') options.onNavigate(e.data.href);
+      if (e.data.kind === 'external' && typeof options.onOpenExternal === 'function' && typeof e.data.href === 'string' && /^https?:\/\//i.test(e.data.href)) options.onOpenExternal(e.data.href);
+    };
+    addEventListener('message', onFrameMessage);
 
     function setEditing(on) {
       on = Boolean(on && !options.readOnly);
@@ -2221,6 +2226,7 @@
         $('editTog').disabled = options.readOnly;
       },
       destroy() {
+        removeEventListener('message', onFrameMessage);
         externalSourceEditor?.destroy();
         host.innerHTML = '';
       },

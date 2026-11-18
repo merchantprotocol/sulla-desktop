@@ -32,7 +32,7 @@
             <span v-if="readOnly" class="property readonly">Read only</span>
           </div>
         </template>
-        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
+        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" :on-navigate="requestFileNavigation" :on-open-external="openExternal" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
         <div v-if="slashOpen" ref="insertMenu" class="slash-menu" role="menu" tabindex="-1" aria-label="Insert block" @keydown="navigateMenu" :style="{left:`${menuPoint.x}px`,top:`${menuPoint.y}px`}">
           <section v-for="section in menuSections" :key="section.label"><h2>{{ section.label }}</h2><button v-for="entry in section.entries" :key="entry.label" type="button" role="menuitem" :disabled="entry.disabled" @click="insertMarkdown(entry.text)"><span v-html="entry.icon" /><div><b>{{ entry.label }}</b><small>{{ entry.description }}</small></div></button></section>
         </div>
@@ -81,7 +81,7 @@ function onWindowResize(){pageWidth.value=clampPageWidth(Number(localStorage.get
 onMounted(()=>{window.addEventListener('storage',onPageWidthStorage);window.addEventListener('resize',onWindowResize)});
 onBeforeUnmount(()=>{window.removeEventListener('storage',onPageWidthStorage);window.removeEventListener('resize',onWindowResize)});
 const props=defineProps<{ dataSource:FilesDataSource; item:FilesItem; collectionId?:string; files?:FilesItem[] }>();
-const emit=defineEmits<{ back:[]; saved:[item:FilesItem] }>();
+const emit=defineEmits<{ back:[]; saved:[item:FilesItem]; navigate:[href:string]; openExternal:[href:string] }>();
 // Yjs objects must never be wrapped in Vue proxies.
 const liveBinding=shallowRef<EditorCollaboration|null>(null);
 const liveState=ref<'live'|'syncing'|'offline'|null>(null),peers=ref<{id:string;name:string;kind:string}[]>([]);
@@ -106,6 +106,8 @@ function formatDate(value:string){const date=new Date(value);if(!Number.isFinite
 function versionAuthor(version:FilesVersion){if(version.created_by_type==='agent')return peers.value.find(peer=>peer.id===version.created_by_id)?.name||'Sulla';if(version.created_by_type==='user'){if(version.created_by_id===collection.value?.ownerUserId||(props.item.createdByType==='user'&&version.created_by_id===props.item.createdById))return props.item.ownerDisplayName||'Owner';return peers.value.find(peer=>peer.id===version.created_by_id)?.name||'User'}return 'Sulla'}
 async function loadCollection(){const snapshot=await props.dataSource.load();if(props.collectionId&&snapshot.collection.id!==props.collectionId)throw new Error('The document collection is not selected. Reopen this document from Files.');collection.value=snapshot.collection;return snapshot.collection}
 function htmlBack(){emit('back')}
+function requestFileNavigation(href:string){emit('navigate',href)}
+function openExternal(href:string){emit('openExternal',href)}
 function htmlHistory(){void toggleDrawer('history')}
 async function renameHtml(name:string){const suffix=extension.value;titleDraft.value=name.endsWith(suffix)?name.slice(0,-suffix.length):name;editingTitle.value=true;await commitTitle()}
 async function editTitle(){if(readOnly.value||renaming.value)return;renameError.value='';titleDraft.value=title.value;editingTitle.value=true;await nextTick();titleInput.value?.focus();titleInput.value?.select()}
