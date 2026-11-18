@@ -203,7 +203,9 @@ export class ChromeApiService implements ChromeApi {
 
   // Side panel — per-tab views so each tab gets its own sidebar
   private sidePanelViews = new Map<string, WebContentsView>();
+  private sidePanelOwners = new Map<string, Electron.BrowserWindow>();
   private sidePanelActiveTabId: string | null = null;
+  private sidePanelActiveByWindow = new Map<number, string>();
   private sidePanelOptions:     SidePanelOptions = { path: '', enabled: false };
 
   // Action state
@@ -222,6 +224,22 @@ export class ChromeApiService implements ChromeApi {
     // but never attached to any tab, so neither ever fired (search_history
     // always came back empty). Hook every tab view as it is created.
     tabViewManager.onViewCreated?.((tabId, wc) => this.attachWebNavigationListeners(tabId, wc));
+  }
+
+  /** Target the native owner of a browser tab, or the focused agent window for global requests. */
+  private ownerWindow(tabId?: string): Electron.BrowserWindow | null {
+    if (tabId) {
+      const owner = this.tabViewManager.getOwnerWindow(tabId);
+      if (owner && !owner.isDestroyed()) return owner;
+    }
+    const focused = Electron.BrowserWindow.getFocusedWindow();
+    const { windowMapping, getWindow } = require('@pkg/window');
+    if (focused && Object.entries(windowMapping as Record<string, number>).some(([name, id]) => id === focused.id && (name === 'main-agent' || name.startsWith('agent:')))) return focused;
+    return getWindow('main-agent') ?? null;
+  }
+
+  private activeSidePanel(window = this.ownerWindow()): string | null {
+    return window ? this.sidePanelActiveByWindow.get(window.id) ?? null : null;
   }
 
   /**
@@ -434,10 +452,10 @@ export class ChromeApiService implements ChromeApi {
         // Go through the registry (not the view manager directly) so the tab
         // shows up in the tab strip, can be closed from the UI, and is
         // covered by the agent-tab cap. The registry creates the view.
-        tabRegistry.open({ assetId: tabId, url: props.url, origin: 'agent' });
+        tabRegistry.open({ assetId: tabId, url: props.url, origin: 'agent', ownerWindow: this.ownerWindow() ?? undefined });
 
         if (props.active !== false) {
-          this.tabViewManager.setFocusedTab(tabId);
+          this.tabViewManager.setFocusedTab(tabId, undefined, undefined, this.tabViewManager.getOwnerWindow(tabId));
         }
       }
 
@@ -484,12 +502,13 @@ export class ChromeApiService implements ChromeApi {
       }
 
       if (props.active === true && !this.hiddenViews.has(tabId)) {
-        this.tabViewManager.setFocusedTab(tabId);
+        this.tabViewManager.setFocusedTab(tabId, undefined, undefined, this.tabViewManager.getOwnerWindow(tabId));
       } else if (props.active === false && !this.hiddenViews.has(tabId)) {
         // Only clear focus if this tab currently holds it. Otherwise we'd
         // yank a sibling tab offscreen when deactivating a background tab.
-        if (this.tabViewManager.getFocusedTab() === tabId) {
-          this.tabViewManager.setFocusedTab(null);
+        const owner = this.tabViewManager.getOwnerWindow(tabId);
+        if (this.tabViewManager.getFocusedTab(owner) === tabId) {
+          this.tabViewManager.setFocusedTab(null, undefined, undefined, owner);
         }
       }
 
@@ -550,7 +569,7 @@ export class ChromeApiService implements ChromeApi {
         throw new Error(`[ChromeApi] Hidden tab not found: ${ tabId }`);
       }
 
-      const mainWindow = require('@pkg/window').getWindow('main-agent') as Electron.BrowserWindow | null;
+      const mainWindow = this.ownerWindow(tabId);
 
       if (!mainWindow || mainWindow.isDestroyed()) {
         throw new Error('[ChromeApi] Cannot capture hidden tab without the main window');
@@ -1045,7 +1064,7 @@ export class ChromeApiService implements ChromeApi {
         // Invoke the audio-speak handler directly
         const result = await new Promise<void>((resolve, reject) => {
           // Send through the renderer's TTS pipeline via IPC
-          const mainWindow = require('@pkg/window').getWindow('main-agent');
+          const mainWindow = this.ownerWindow();
 
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('chrome-api:tts:speak', utterance);
@@ -1063,7 +1082,7 @@ export class ChromeApiService implements ChromeApi {
     },
 
     stop: (): void => {
-      const mainWindow = require('@pkg/window').getWindow('main-agent');
+      const mainWindow = this.ownerWindow();
 
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('chrome-api:tts:stop');
@@ -1351,7 +1370,7 @@ export class ChromeApiService implements ChromeApi {
 
   /** Notify the main renderer that side panel state changed so browser tabs can adjust bounds. */
   private notifySidePanelState(open: boolean, width: number, tabId?: string): void {
-    const mainWindow = require('@pkg/window').getWindow('main-agent');
+    const mainWindow = tabId ? this.sidePanelOwners.get(tabId) ?? this.ownerWindow(tabId) : this.ownerWindow();
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('side-panel:state-changed', { open, width, tabId });
@@ -1360,26 +1379,29 @@ export class ChromeApiService implements ChromeApi {
 
   /** Hide the currently visible side panel (detach from window) without destroying it. */
   private hideSidePanel(): void {
-    if (!this.sidePanelActiveTabId) return;
-    const view = this.sidePanelViews.get(this.sidePanelActiveTabId);
-    const mainWindow = require('@pkg/window').getWindow('main-agent');
+    const mainWindow = this.ownerWindow();
+    const tabId = this.activeSidePanel(mainWindow);
+    if (!tabId || !mainWindow) return;
+    const view = this.sidePanelViews.get(tabId);
 
     if (view && mainWindow) {
       try { mainWindow.contentView.removeChildView(view) } catch { /* already detached */ }
     }
-    this.notifySidePanelState(false, 0);
+    this.notifySidePanelState(false, 0, tabId);
+    this.sidePanelActiveByWindow.delete(mainWindow.id);
     this.sidePanelActiveTabId = null;
   }
 
   /** Show an existing side panel view for a tab (attach to window). */
   private showSidePanelForTab(tabId: string): void {
     const view = this.sidePanelViews.get(tabId);
-    const mainWindow = require('@pkg/window').getWindow('main-agent');
+    const mainWindow = this.sidePanelOwners.get(tabId) ?? this.ownerWindow(tabId);
 
     if (!view || !mainWindow) return;
 
     mainWindow.contentView.addChildView(view);
     this.sidePanelActiveTabId = tabId;
+    this.sidePanelActiveByWindow.set(mainWindow.id, tabId);
     // Notify renderer — it will position the panel via setBounds
     this.notifySidePanelState(true, 0, tabId);
   }
@@ -1388,18 +1410,22 @@ export class ChromeApiService implements ChromeApi {
     open: async(options: { tabId?: string }): Promise<void> => {
       const tabId = options.tabId || '__global__';
 
-      const mainWindow = require('@pkg/window').getWindow('main-agent');
+      const mainWindow = this.ownerWindow(options.tabId);
 
       if (!mainWindow) return;
 
       // If a different tab's panel is currently visible, hide it first
-      if (this.sidePanelActiveTabId && this.sidePanelActiveTabId !== tabId) {
-        this.hideSidePanel();
+      if (this.activeSidePanel(mainWindow) && this.activeSidePanel(mainWindow) !== tabId) {
+        const oldTabId = this.activeSidePanel(mainWindow)!;
+        const oldView = this.sidePanelViews.get(oldTabId);
+        if (oldView) try { mainWindow.contentView.removeChildView(oldView) } catch { /* detached */ }
+        this.notifySidePanelState(false, 0, oldTabId);
+        this.sidePanelActiveByWindow.delete(mainWindow.id);
       }
 
       // If this tab already has a panel, just show it
       if (this.sidePanelViews.has(tabId)) {
-        if (this.sidePanelActiveTabId !== tabId) {
+        if (this.activeSidePanel(mainWindow) !== tabId) {
           this.showSidePanelForTab(tabId);
         }
 
@@ -1420,6 +1446,7 @@ export class ChromeApiService implements ChromeApi {
       });
 
       this.sidePanelViews.set(tabId, view);
+      this.sidePanelOwners.set(tabId, mainWindow);
 
       // Start with a temporary 1x1 bounds — the renderer will set real bounds
       // via setBounds() after it calculates the tab area split.
@@ -1440,13 +1467,15 @@ export class ChromeApiService implements ChromeApi {
       });
 
       this.sidePanelActiveTabId = tabId;
+      this.sidePanelActiveByWindow.set(mainWindow.id, tabId);
 
       // Notify renderer so it recalculates bounds (splits tab area)
       this.notifySidePanelState(true, 0, tabId);
     },
 
     close: async(options: { tabId?: string; all?: boolean }): Promise<void> => {
-      const tabId = options.tabId || this.sidePanelActiveTabId;
+      const requestWindow = this.ownerWindow(options.tabId);
+      const tabId = options.tabId || this.activeSidePanel(requestWindow);
 
       if (!options.all && tabId) {
         // Close a specific tab's panel (or the active one)
@@ -1454,7 +1483,7 @@ export class ChromeApiService implements ChromeApi {
 
         if (!view) return;
 
-        const mainWindow = require('@pkg/window').getWindow('main-agent');
+        const mainWindow = this.sidePanelOwners.get(tabId) ?? this.ownerWindow(tabId);
 
         if (mainWindow) {
           try { mainWindow.contentView.removeChildView(view) } catch { /* already detached */ }
@@ -1462,16 +1491,17 @@ export class ChromeApiService implements ChromeApi {
 
         (view.webContents as any).close?.();
         this.sidePanelViews.delete(tabId);
+        this.sidePanelOwners.delete(tabId);
 
-        if (this.sidePanelActiveTabId === tabId) {
+        if (requestWindow && this.activeSidePanel(requestWindow) === tabId) {
           this.sidePanelActiveTabId = null;
-          this.notifySidePanelState(false, 0);
+          if (mainWindow) this.sidePanelActiveByWindow.delete(mainWindow.id);
+          this.notifySidePanelState(false, 0, tabId);
         }
       } else {
         // Close all panels (e.g. overlay guard)
-        const mainWindow = require('@pkg/window').getWindow('main-agent');
-
-        for (const [, view] of this.sidePanelViews) {
+        for (const [panelTabId, view] of this.sidePanelViews) {
+          const mainWindow = this.sidePanelOwners.get(panelTabId) ?? this.ownerWindow(panelTabId);
           if (mainWindow) {
             try { mainWindow.contentView.removeChildView(view) } catch { /* */ }
           }
@@ -1479,7 +1509,9 @@ export class ChromeApiService implements ChromeApi {
         }
 
         this.sidePanelViews.clear();
+        this.sidePanelOwners.clear();
         this.sidePanelActiveTabId = null;
+        this.sidePanelActiveByWindow.clear();
 
         this.notifySidePanelState(false, 0);
       }
@@ -1489,15 +1521,18 @@ export class ChromeApiService implements ChromeApi {
      * Called when the user switches tabs — hides/shows the correct panel.
      */
     switchTab: async(tabId: string): Promise<void> => {
-      console.log(`[ChromeApi] sidePanel.switchTab: tabId=${ tabId }, activeTab=${ this.sidePanelActiveTabId }, hasView=${ this.sidePanelViews.has(tabId) }`);
+      const owner = this.ownerWindow(tabId);
+      const activeTabId = this.activeSidePanel(owner);
+      console.log(`[ChromeApi] sidePanel.switchTab: tabId=${ tabId }, activeTab=${ activeTabId }, hasView=${ this.sidePanelViews.has(tabId) }`);
       // Hide current panel if visible
-      if (this.sidePanelActiveTabId) {
-        const currentView = this.sidePanelViews.get(this.sidePanelActiveTabId);
-        const mainWindow = require('@pkg/window').getWindow('main-agent');
+      if (activeTabId) {
+        const currentView = this.sidePanelViews.get(activeTabId);
+        const mainWindow = owner;
 
         if (currentView && mainWindow) {
           try { mainWindow.contentView.removeChildView(currentView) } catch { /* */ }
         }
+        if (owner) this.sidePanelActiveByWindow.delete(owner.id);
         this.sidePanelActiveTabId = null;
       }
 
@@ -1519,8 +1554,9 @@ export class ChromeApiService implements ChromeApi {
 
     /** Set the bounds of the active side panel view (called from renderer). */
     setBounds: async(bounds: Electron.Rectangle): Promise<void> => {
-      if (!this.sidePanelActiveTabId) return;
-      const view = this.sidePanelViews.get(this.sidePanelActiveTabId);
+      const tabId = this.activeSidePanel();
+      if (!tabId) return;
+      const view = this.sidePanelViews.get(tabId);
 
       if (view) {
         view.setBounds(bounds);
@@ -1532,16 +1568,17 @@ export class ChromeApiService implements ChromeApi {
      * @param payload  String prompt for backwards compat, or a rich context object.
      */
     sendPrompt: async(payload: string | SidePanelPromptPayload): Promise<void> => {
-      console.log(`[ChromeApi] sidePanel.sendPrompt: activeTab=${ this.sidePanelActiveTabId }, viewCount=${ this.sidePanelViews.size }`);
-      if (!this.sidePanelActiveTabId) {
+      const activeTabId = this.activeSidePanel();
+      console.log(`[ChromeApi] sidePanel.sendPrompt: activeTab=${ activeTabId }, viewCount=${ this.sidePanelViews.size }`);
+      if (!activeTabId) {
         console.warn('[ChromeApi] sidePanel.sendPrompt: no active tab');
 
         return;
       }
-      const view = this.sidePanelViews.get(this.sidePanelActiveTabId);
+      const view = this.sidePanelViews.get(activeTabId);
 
       if (!view) {
-        console.warn(`[ChromeApi] sidePanel.sendPrompt: no view for tab ${ this.sidePanelActiveTabId }`);
+        console.warn(`[ChromeApi] sidePanel.sendPrompt: no view for tab ${ activeTabId }`);
 
         return;
       }

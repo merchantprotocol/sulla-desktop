@@ -31,6 +31,10 @@ export interface Shortcut {
   key:       string | number;
 }
 
+export function matchesShortcutModifiers(input: Pick<Electron.Input, 'meta' | 'control' | 'shift' | 'alt'>, shortcut: Shortcut): boolean {
+  return Boolean(input.meta) === Boolean(shortcut.meta) && Boolean(input.control) === Boolean(shortcut.control) && Boolean(input.shift) === Boolean(shortcut.shift) && Boolean(input.alt) === Boolean(shortcut.alt);
+}
+
 interface ShortcutExt extends Shortcut {
   callback: () => void;
 }
@@ -48,7 +52,7 @@ export const CommandOrControl = {
   control: os.platform() !== 'darwin' ? true : undefined,
 };
 
-class WindowShortcuts {
+export class WindowShortcuts {
   private window:    BrowserWindow;
   private shortcuts: Record<string, ShortcutExt> = {};
 
@@ -58,13 +62,15 @@ class WindowShortcuts {
   }
 
   private inputCallback = (event: Electron.Event, input: Electron.Input) => {
+    if (input.type !== 'keyDown') return;
     const key = Shortcut.key(input);
 
-    if (this.shortcuts[key]) {
+    if (this.shortcuts[key] && matchesShortcutModifiers(input, this.shortcuts[key])) {
       this.shortcuts[key].callback();
       event.preventDefault();
     }
   };
+
 
   get shortcutsList() {
     return Object.values(this.shortcuts);

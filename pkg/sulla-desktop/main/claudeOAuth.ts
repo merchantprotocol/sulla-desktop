@@ -15,6 +15,7 @@ import { ClaudeOAuthCoordinator } from '@pkg/main/oauth/claude/ClaudeOAuthCoordi
 import { claudeOAuthFailure, type ClaudeOAuthResult } from '@pkg/utils/claudeOAuthContract';
 import Logging from '@pkg/utils/logging';
 import * as window from '@pkg/window';
+import { isAgentWebContents } from '@pkg/window/agentWindows';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg/vault-broker';
 
 const CLAUDE_INTEGRATION_ID = 'claude-code';
@@ -24,7 +25,7 @@ const console = Logging.background;
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   const sender = BrowserWindow.fromWebContents(event.sender);
 
-  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) throw new Error('Claude OAuth is only available from a trusted Sulla window');
+  if (sender !== window.getWindow('first-run') && !isAgentWebContents(event.sender)) throw new Error('Claude OAuth is only available from a trusted Sulla window');
 }
 
 async function persistTokenToVault(token: string): Promise<void> {

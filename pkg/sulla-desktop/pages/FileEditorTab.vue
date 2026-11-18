@@ -39,6 +39,7 @@
 import { defineComponent, ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import * as monaco from 'monaco-editor';
+import { FileEditorTransferState } from './fileEditorTransferState';
 
 (self as any).MonacoEnvironment = {
   getWorkerUrl(_moduleId: string, label: string): string {
@@ -76,10 +77,12 @@ export default defineComponent({
 
   props: {
     filePath: { type: String, required: true },
+    tabId: { type: String, required: true },
+    transferState: { type: Object, default: undefined },
     isDark:   { type: Boolean, default: true },
   },
 
-  setup(props) {
+  setup(props, { emit }) {
     const editorContainerRef = ref<HTMLDivElement | null>(null);
     const dirty     = ref(false);
     const saving    = ref(false);
@@ -87,13 +90,15 @@ export default defineComponent({
 
     let editor: monaco.editor.IStandaloneCodeEditor | null = null;
     let currentModel: monaco.editor.ITextModel | null = null;
+    let modelListener: { dispose(): void } | null = null;
 
     const fileName = computed(() => props.filePath.split('/').pop() || props.filePath);
 
     async function loadFile() {
       loadError.value = '';
       try {
-        const content: string = await ipcRenderer.invoke('filesystem-read-file', props.filePath);
+        const carried = FileEditorTransferState.restore(props.filePath, props.transferState as any);
+        const content: string = carried ? carried.text : await ipcRenderer.invoke('filesystem-read-file', props.filePath);
         const ext  = (props.filePath.split('.').pop() || '').toLowerCase();
         const lang = extToLanguage(ext);
 
@@ -101,15 +106,29 @@ export default defineComponent({
           currentModel?.dispose();
           currentModel = monaco.editor.createModel(content, lang);
           editor.setModel(currentModel);
-          dirty.value = false;
-
-          editor.onDidChangeModelContent(() => {
+          dirty.value = !!carried?.dirty;
+          modelListener?.dispose();
+          modelListener = editor.onDidChangeModelContent(() => {
             dirty.value = true;
+            publishTransferState();
           });
+          publishTransferState();
         }
       } catch (err: any) {
         loadError.value = err?.message || 'Failed to load file';
       }
+    }
+
+    function publishTransferState() {
+      if (!currentModel) return;
+      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-state', { detail: {
+        tabId: props.tabId, fileEditor: { filePath: props.filePath, text: currentModel.getValue(), dirty: dirty.value },
+      } }));
+    }
+
+    function onTransferSnapshotRequest(event: Event) {
+      const tabId = (event as CustomEvent<{ tabId?: string }>).detail?.tabId;
+      if (tabId === props.tabId) publishTransferState();
     }
 
     async function save() {
@@ -160,10 +179,13 @@ export default defineComponent({
 
       await loadFile();
       window.addEventListener('keydown', onGlobalKeydown);
+      window.addEventListener('sulla:tab-transfer-request', onTransferSnapshotRequest);
     });
 
     onBeforeUnmount(() => {
       window.removeEventListener('keydown', onGlobalKeydown);
+      window.removeEventListener('sulla:tab-transfer-request', onTransferSnapshotRequest);
+      modelListener?.dispose();
       currentModel?.dispose();
       editor?.dispose();
     });

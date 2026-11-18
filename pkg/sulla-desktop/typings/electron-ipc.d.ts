@@ -75,6 +75,14 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
+  'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
+  'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
+  'tabs:transfer-released': (transferId: string, tabId: string) => void;
+  'tabs:transfer-adopted': (transferId: string, tabId: string) => void;
+  'tabs:transfer-ready': () => void;
+  'agent-window:open': () => void;
+  'agent-window:close-self': () => void;
   'security:check-progress': (result: import('@pkg/main/security/types').SecurityCheckResult) => void;
   /** Non-fatal renderer diagnostics sent to the main-process debug service. */
   'debug:report': (source: string, error: { message?: string; stack?: string }) => void;
@@ -245,6 +253,7 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'chat:run-state': (channelId: string, threadId: string) => boolean;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
   'security:lock-vault': () => { ok: boolean; error?: string };
@@ -1294,6 +1303,10 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'tabs:release': (transferId: string, tabId: string) => void;
+  'tabs:release-finalize': (transferId: string, tabId: string) => void;
+  'tabs:adopt': (transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number, screenY?: number) => void;
+  'tabs:activate': (transferId: string, tabId: string) => void;
   'threat-proxy:status-changed': (status: import('@pkg/main/threat-proxy').ThreatProxyStatus) => void;
 
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;

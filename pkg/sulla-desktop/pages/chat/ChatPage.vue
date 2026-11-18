@@ -272,6 +272,18 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
 }
 
 const controller = initController();
+onMounted(async() => {
+  const threadId = controller.thread.value.backendThreadId;
+  if (!threadId) return;
+  try {
+    const running = await ipcRenderer.invoke('chat:run-state', 'sulla-desktop', threadId);
+    if (!running) return;
+    controller.restoreActiveRun();
+    window.dispatchEvent(new CustomEvent('sulla:chat-running', { detail: { tabId: props.tabId, running: true } }));
+  } catch (error) {
+    console.warn('[ChatPage] Could not restore live run state', error);
+  }
+});
 if (props.initialAgentId && !controller.thread.value.agentId) {
   controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, props.initialAgentId);
 }

@@ -22,7 +22,8 @@ import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } fro
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
-import { openMain, openDocker, getWindow, openUrlInApp } from '@pkg/window';
+import { openDocker, openUrlInApp } from '@pkg/window';
+import { ensureAgentWindow } from '@pkg/window/agentWindows';
 import { openSupportCenter } from '@pkg/window/supportCenter';
 
 const console = Logging.background;
@@ -96,8 +97,7 @@ async function capturePreferences():Promise<Record<string, unknown>> {
 }
 
 function openFilesScreen(section?:string, filePath?:string):void {
-  openMain();
-  const agentWindow = getWindow('main-agent');
+  const agentWindow = ensureAgentWindow();
   if (!agentWindow) return;
   const send = () => agentWindow.webContents.send('agent-command', { command: 'open-tab', mode: 'files', section, path: filePath });
 
@@ -155,7 +155,7 @@ function registerCaptureShortcuts():void {
       if (panelWindow?.webContents.isLoading()) panelWindow.webContents.once('did-finish-load', send);
       else send();
     }],
-    [CAPTURE_SHORTCUTS[2], () => openMain()],
+    [CAPTURE_SHORTCUTS[2], () => ensureAgentWindow()],
   ];
 
   for (const [accelerator, handler] of registrations) {
@@ -362,7 +362,7 @@ function registerPanelIpc(): void {
   ipcRegistered = true;
 
   ipcMain.on('tray-panel:open-main', () => {
-    openMain();
+    ensureAgentWindow();
     panelWindow?.hide();
   });
 
@@ -372,8 +372,7 @@ function registerPanelIpc(): void {
   });
 
   ipcMain.on('tray-panel:secretary-mode', () => {
-    openMain();
-    const agentWindow = getWindow('main-agent');
+    const agentWindow = ensureAgentWindow();
 
     if (agentWindow) {
       const sendCommand = () => agentWindow.webContents.send('agent-command', { command: 'new-secretary-tab' });

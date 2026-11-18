@@ -176,7 +176,7 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
 
@@ -756,6 +756,7 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 }
 
 const presenceTracker = getHumanPresenceTracker();
+
 
 onMounted(async() => {
   ipcRenderer.on('extension-permission-needed', onPermissionNeeded);

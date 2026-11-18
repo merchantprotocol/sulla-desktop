@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { reactive, readonly, ref, watch } from 'vue';
+import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'conversations' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
@@ -48,6 +49,8 @@ export interface BrowserTab {
   /** Durable launch metadata for a visible agent-owned chat thread. */
   /** Super-admin remote support tab. The session id is opaque and all details are refreshed from Cloud. */
   supportSession?: { sessionId: string };
+  /** Temporary dirty editor state carried only across an in-session transfer. */
+  transferState?: { filePath: string; text: string; dirty: boolean };
   agentChat?: {
     threadId:        string;
     agentId:         string;
@@ -69,11 +72,34 @@ export interface ClosedTab {
   closedAt: number;
 }
 
-const STORAGE_KEY = 'sulla:browser-tabs';
-const HISTORY_KEY = 'sulla:closed-tabs';
-const ORDER_KEY = 'sulla:tab-order';
-const PINNED_KEY = 'sulla:pinned-tabs';
-const ACTIVE_TAB_KEY = 'sulla:active-tab';
+const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
+let adoptPending = new URLSearchParams(window.location.search).get('adoptPending') === '1';
+let adoptFallback: ReturnType<typeof setTimeout> | null = null;
+let closingAfterTransfer = false;
+
+export function shouldEnsureOneTab(): boolean {
+  return !closingAfterTransfer;
+}
+
+export function shouldCloseAfterTransfer(tabCount: number): boolean {
+  return closingAfterTransfer && tabCount === 0;
+}
+const storageKey = (name: string) => makeStorageKey(windowKey, name);
+try {
+  // Namespace GC runs once per app session, in the primary window only. Other
+  // windows carry a frozen knownWindowKeys list and would delete newer windows' namespaces.
+  if (windowKey === 'main') {
+    const runGc = shouldRunGc(windowKey, sessionStorage);
+    const known = JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '["main"]') as string[];
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || '');
+    new WindowStorageMigrator().migrate(localStorage, keys, runGc ? known : null, true);
+  }
+} catch { /* malformed startup metadata must not block tabs */ }
+const STORAGE_KEY = storageKey('browser-tabs');
+const HISTORY_KEY = storageKey('closed-tabs');
+const ORDER_KEY = storageKey('tab-order');
+const PINNED_KEY = storageKey('pinned-tabs');
+const ACTIVE_TAB_KEY = storageKey('active-tab');
 const MAX_HISTORY = 25;
 // Cap the restored-tab count to stop a runaway agent from creating hundreds
 // of tabs, persisting them, and blacking out the main chat window on next
@@ -151,7 +177,7 @@ function persistTabs(tabList: BrowserTab[]): void {
     // Never persist the content field — it holds raw HTML from document-mode
     // tabs. Persisting it is a persistent-XSS vector (HtmlMessageRenderer
     // executes script tags via shadow.innerHTML on restore).
-    const toStore = capped.map(({ assetId: _a, content: _c, ...rest }) => rest);
+    const toStore = capped.map(({ assetId: _a, content: _c, transferState: _state, ...rest }) => rest);
     const serialized = JSON.stringify(toStore);
     try {
       localStorage.setItem(STORAGE_KEY, serialized);
@@ -178,7 +204,7 @@ const MAX_AGENT_TABS = 10;
 const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 
-const restoredTabs = loadPersistedTabs();
+const restoredTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
 // Enforce the agent-tab cap. Called synchronously from the write paths that
@@ -540,9 +566,19 @@ export function useBrowserTabs() {
     if (previewTabId.value === id) previewTabId.value = null;
   }
 
-  function ensureOneTab(): BrowserTab {
+  function ensureOneTab(): BrowserTab | undefined {
+    if (!shouldEnsureOneTab()) return undefined;
     if (tabs.length > 0) {
       return tabs[0];
+    }
+
+    if (adoptPending) {
+      if (!adoptFallback) adoptFallback = setTimeout(() => {
+        adoptFallback = null;
+        adoptPending = false;
+        if (tabs.length === 0) createTab('about:blank', { mode: 'chat' });
+      }, 5000);
+      return undefined;
     }
 
     return createTab('about:blank', { mode: 'chat' });
@@ -578,8 +614,41 @@ export function useBrowserTabs() {
 
     // Always keep at least one tab open
     if (tabs.length === 0) {
-      createTab('about:blank', { mode: 'chat' });
+      ipcRenderer.send('agent-window:close-self');
     }
+  }
+
+  /** Remove a tab for an in-window transfer without closing its conversation. */
+  function releaseTab(id: string): BrowserTab | null {
+    const index = tabs.findIndex(tab => tab.id === id);
+    if (index < 0) return null;
+    const [tab] = tabs.splice(index, 1);
+    if (previewTabId.value === id) previewTabId.value = null;
+    const headerId = `browser-${ id }`;
+    tabOrder.value = tabOrder.value.filter(existing => existing !== headerId);
+    pinnedTabIds.value = pinnedTabIds.value.filter(existing => existing !== headerId);
+    flushPersistTabs();
+    return tab;
+  }
+
+  /** Adopt a transferred tab with its stable id and persisted chat storage identity. */
+  function adoptTab(descriptor: BrowserTab, index = tabs.length, transient?: Record<string, unknown>): BrowserTab {
+    const duplicate = tabs.find(tab => tab.id === descriptor.id);
+    if (duplicate) return duplicate;
+    const editorState = transient?.fileEditor as BrowserTab['transferState'] | undefined;
+    const adopted = { ...descriptor, ...(editorState ? { transferState: editorState } : {}), loading: false };
+    adoptPending = false;
+    if (adoptFallback) { clearTimeout(adoptFallback); adoptFallback = null; }
+    tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, adopted);
+    const headerId = `browser-${ adopted.id }`;
+    if (transient?.pinned === true && !pinnedTabIds.value.includes(headerId)) pinnedTabIds.value = [...pinnedTabIds.value, headerId];
+    const orderedIds = orderPinnedFirst([...tabOrder.value], pinnedTabIds.value);
+    const pinnedCount = orderedIds.filter(existing => pinnedTabIds.value.includes(existing)).length;
+    const insertionIndex = transient?.pinned === true ? Math.min(index, pinnedCount) : Math.max(index, pinnedCount);
+    orderedIds.splice(Math.max(0, Math.min(insertionIndex, orderedIds.length)), 0, headerId);
+    tabOrder.value = orderedIds;
+    flushPersistTabs();
+    return adopted;
   }
 
   function restoreClosedTab(index: number): BrowserTab | null {
@@ -710,6 +779,8 @@ export function useBrowserTabs() {
     openInPreviewTab,
     promoteTab,
     closeTab,
+    releaseTab,
+    adoptTab,
     updateTab,
     getTab,
     isTabPinned,
@@ -802,3 +873,84 @@ export function closeTabByAssetId(assetId: string): boolean {
 
   return true;
 }
+
+export function applyTransferAdoption(adopt: (descriptor: BrowserTab) => unknown, descriptor: Record<string, unknown>, acknowledge: () => void): void {
+  if (!descriptor.id) return;
+  closingAfterTransfer = false;
+  adopt(descriptor as BrowserTab);
+  acknowledge();
+}
+
+/** Insertion index for a tab dropped at screenX: the first tab whose midpoint is right of the drop, else append. */
+export function transferDropIndex(screenX: number | undefined, tabs: readonly Pick<BrowserTab, 'id'>[]): number {
+  const tabEls = Array.from(document.querySelectorAll<HTMLElement>('.tab-item')).filter(el => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  });
+  if (tabEls.length === 0) return tabs.length;
+  const localX = (screenX ?? window.screenX) - window.screenX;
+  for (const el of tabEls) {
+    const rect = el.getBoundingClientRect();
+    if (localX < rect.left + rect.width / 2) {
+      const tabId = el.getAttribute('href')?.match(/\/Browser\/([^/?#]+)/)?.[1];
+      const index = tabs.findIndex(tab => tab.id === tabId);
+      if (index >= 0) return index;
+    }
+  }
+  return tabs.length;
+}
+
+/** Adopt a dropped tab at its drop position. Works before the UI is mounted (no DOM tabs means append). */
+export function adoptTransferredTab(
+  store: Pick<ReturnType<typeof useBrowserTabs>, 'tabs' | 'adoptTab'>,
+  descriptor: BrowserTab,
+  transient: Record<string, unknown> | undefined,
+  screenX: number | undefined,
+): BrowserTab {
+  return store.adoptTab(descriptor, transferDropIndex(screenX, store.tabs), transient);
+}
+
+/**
+ * Release a tab leaving this window. If it is the active tab, first navigate to a neighbour,
+ * then release, then wait for Vue to flush so ChatPage unmounts and saves chat state before the
+ * target adopts the tab. The ack is sent only after that flush.
+ */
+export async function releaseTransferredTab(
+  store: Pick<ReturnType<typeof useBrowserTabs>, 'tabs' | 'releaseTab'>,
+  transferId: string,
+  tabId: string,
+  acknowledge: (transferId: string, tabId: string) => void,
+): Promise<void> {
+  const index = store.tabs.findIndex(tab => tab.id === tabId);
+  if (index < 0) return;
+  if (getPersistedActiveTabId() === tabId) {
+    const neighbour = store.tabs[index + 1] ?? store.tabs[index - 1];
+    if (neighbour) window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: neighbour.id } }));
+  }
+  if (!store.releaseTab(tabId)) return;
+  closingAfterTransfer = store.tabs.length === 0;
+  await nextTick();
+  acknowledge(transferId, tabId);
+}
+
+// Transfer IPC is registered as the store module evaluates, before AgentRouter mounts.
+// This lets a freshly-created window acknowledge adoption while its UI is still booting.
+const transferTabs = useBrowserTabs();
+ipcRenderer.on('tabs:release', (_event: unknown, transferId: string, tabId: string) => {
+  void releaseTransferredTab(transferTabs, transferId, tabId, (id, released) => ipcRenderer.send('tabs:transfer-released', id, released));
+});
+ipcRenderer.on('tabs:adopt', (_event: unknown, transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number) => {
+  const tabId = String(descriptor.id || '');
+  applyTransferAdoption(value => adoptTransferredTab(transferTabs, value, transient, screenX), descriptor, () => ipcRenderer.send('tabs:transfer-adopted', transferId, tabId));
+});
+ipcRenderer.on('tabs:activate', (_event: unknown, _transferId: string, tabId: string) => {
+  if (transferTabs.tabs.some(tab => tab.id === tabId)) {
+    persistActiveTabId(tabId);
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId } }));
+  }
+});
+ipcRenderer.on('tabs:release-finalize', () => {
+  if (shouldCloseAfterTransfer(transferTabs.tabs.length)) ipcRenderer.send('agent-window:close-self');
+});
+ipcRenderer.send('tabs:transfer-ready');
