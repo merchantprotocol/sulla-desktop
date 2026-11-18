@@ -210,6 +210,21 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
   // A tab row linked after the placeholder was written: fold the placeholder in.
   if (headerId !== threadId) await adoptThreadMessagesWith(db, headerId, threadId);
   const rows = threadStateToRows(threadId, state);
+  // The renderer intentionally saves only a bounded window. Preserve the
+  // durable transcript: existing rows keep their sequence position and new
+  // ids are appended after the current tail instead of replacing old rows.
+  if (rows.length > 0) {
+    const stored = await db.query(`
+      SELECT id, position FROM conversation_messages
+      WHERE conversation_id = $1 AND payload IS NOT NULL
+    `, [headerId]);
+    const positions = new Map<string, number>(stored.rows.map(row => [String(row.id), Number(row.position)]));
+    let nextPosition = stored.rows.reduce((max, row) => Math.max(max, Number(row.position) || 0), -1) + 1;
+    for (const row of rows) {
+      const existingPosition = positions.get(row.id);
+      row.position = existingPosition === undefined ? nextPosition++ : existingPosition;
+    }
+  }
 
   if (rows.length > 0) {
     await db.query(`
@@ -249,12 +264,8 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
     `, [JSON.stringify(rows), headerId]);
   }
 
-  await db.query(`
-    UPDATE conversation_messages
-    SET deleted_at = now(), updated_at = now()
-    WHERE conversation_id = $1 AND payload IS NOT NULL AND deleted_at IS NULL
-      AND NOT (id = ANY($2::text[]))
-  `, [headerId, rows.map(r => r.id)]);
+  // Missing ids are not deletions: a bounded renderer save omits older
+  // history by design. Explicit thread deletion uses deleteThreadStateWith.
 
   // Title only fills a placeholder header; a real tab row's title/status/pinned/hidden are never touched.
   await db.query(`

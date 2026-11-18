@@ -28,6 +28,7 @@ import { popoverClosed, defaultSlashCommands } from '../models/Command';
 import { idle as runIdle, isRunning } from '../models/RunState';
 import { emptyTokenUsage } from '../models/Thread';
 import { voiceIdle } from '../models/VoiceState';
+import { MessageWindow } from '../messages/MessageWindow';
 import {
   type MessageId, type ArtifactId, type AttachmentId, type QueuedId, type ThreadId,
   newMessageId, newArtifactId, newThreadId, newQueuedId, newTurnId,
@@ -162,7 +163,10 @@ export class ChatController {
 
     const initial: ThreadState = opts.hydrateFrom ?? this.fresh();
 
-    this.thread = ref(initial.thread);
+    const initialMessages = new MessageWindow().trim(initial.thread.messages);
+    this.thread = ref(initialMessages.length === initial.thread.messages.length
+      ? initial.thread
+      : { ...initial.thread, messages: initialMessages });
     // Never resurrect a non-idle runState from a persisted snapshot (process
     // restart left it stuck on 'thinking' etc.). The backend drives
     // runState live; an idle start is always correct.
@@ -374,9 +378,10 @@ export class ChatController {
   // ─── Message CRUD ───────────────────────────────────────────────
   appendMessage(m: Message): void {
     m = this.stampAuthor(m);
+    const messages = new MessageWindow().trim([...this.thread.value.messages, m]);
     this.thread.value = {
       ...this.thread.value,
-      messages:  [...this.thread.value.messages, m],
+      messages,
       updatedAt: Date.now(),
     };
     this.bus.emit({ kind: 'messageAppended', threadId: this.thread.value.id, message: m });
@@ -420,8 +425,11 @@ export class ChatController {
     this.persist();
   }
 
-  updateMessage<T extends Message>(id: MessageId, patch: Partial<T>): void {
-    const idx = this.thread.value.messages.findIndex(m => m.id === id);
+  updateMessage<T extends Message>(id: MessageId, patch: Partial<T>, knownIndex?: number): void {
+    const messages = this.thread.value.messages;
+    const idx = knownIndex !== undefined && messages[knownIndex]?.id === id
+      ? knownIndex
+      : knownIndex === undefined ? messages.findIndex(m => m.id === id) : -1;
     if (idx < 0) return;
     const next = [...this.thread.value.messages];
     next[idx] = { ...next[idx], ...patch } as Message;
@@ -858,7 +866,9 @@ export class ChatController {
     // DB-restored blobs often lack it; dropping it left per-chat features
     // (heartbeat, sub-agent cards) unable to find their backend thread.
     const backendThreadId = this.thread.value.backendThreadId ?? state.thread.backendThreadId;
-    this.thread.value = backendThreadId ? { ...state.thread, backendThreadId } : state.thread;
+    const bounded = new MessageWindow().trim(state.thread.messages);
+    const restored = bounded.length === state.thread.messages.length ? state.thread : { ...state.thread, messages: bounded };
+    this.thread.value = backendThreadId ? { ...restored, backendThreadId } : restored;
     // Never rehydrate a non-idle runState across a process restart.
     // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
     // authoritative source for whether work is in flight; if we restored
