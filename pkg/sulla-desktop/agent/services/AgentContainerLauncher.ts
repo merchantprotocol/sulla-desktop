@@ -59,7 +59,8 @@ import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import {
-  AGENT_NETWORK, connectServiceNetworkCommand, ensureAgentNetworkCommand,
+  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, ensureAgentNetworkCommand,
+  THREAT_PROXY_PUBLIC_DIR,
 } from '@pkg/backend/threatProxyEgress';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
@@ -627,6 +628,9 @@ export async function repairHostRelay(): Promise<void> {
 /** Launch-time egress policy; the logic lives in ./agentEgress so it can be tested without the launcher. */
 function prepareAgentEgress(): Promise<AgentEgress> {
   return prepareAgentEgressWith({
+    ensureAgentNetworkCommand,
+    caBundlePath: `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`,
+    agentCaTrust,
     guestExec,
     egressEnforced,
     proxyRunning:            () => import('@pkg/main/threat-proxy').then(({ getStatus }) => getStatus().state === 'running'),

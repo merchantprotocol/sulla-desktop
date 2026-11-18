@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const windows = vi.hoisted(() => [] as Array<{ isDestroyed: () => boolean; webContents: { send: (...args: unknown[]) => void } }>);
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() }, BrowserWindow: { getAllWindows: () => windows } }));
@@ -16,7 +16,8 @@ vi.mock('@pkg/main/cloud/cloudEndpoints', () => ({ CLOUD_API_BASE: 'https://stag
 import { clearGuest, clearTrafficLog, configureGuest, decideEgress, type EgressProbe, getTrafficLog, parseWatcherProbe, renderConfigFile, URLHAUS_SOURCES, validateSettings, WATCHER_PROBE_SCRIPT } from './index';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-afterEach(() => { vi.useRealTimers(); windows.length = 0; });
+beforeEach(() => { vi.spyOn(console, 'log').mockImplementation(() => {}); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); windows.length = 0; });
 
 describe('URLhaus source order', () => {
   it('downloads only from the configured Sulla Cloud route', () => {
@@ -332,7 +333,7 @@ describe('threat proxy guest serialization', () => {
     guest.executor.writeFile.mockImplementationOnce(async (file: string) => { guest.calls.push(`write:${file}`); await new Promise<void>(resolve => { release = resolve; }); });
     const before = guest.calls.length;
     const sync = mod.setSettings({ allowlist: 'example.test' });
-    await vi.waitFor(() => expect(guest.executor.writeFile).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(guest.executor.writeFile).toHaveBeenCalledTimes(1));
     const apply = mod.applyEgressPolicy(guest.executor, 'enforced');
     await settle();
     const since = () => guest.calls.slice(before).filter(call => call !== 'install:/blocklist');

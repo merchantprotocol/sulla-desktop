@@ -3,9 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import {
-  agentCaTrust, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR, type EgressPolicyState,
-} from '@pkg/backend/threatProxyEgress';
+type EgressPolicyState = 'enforced' | 'direct' | 'off';
+interface AgentCaTrust { bind?: string; env: Record<string, string> }
 
 /** Proxy startup is optional; agent creation must remain available during outages. */
 export const THREAT_PROXY_START_BUDGET_MS = 5_000;
@@ -17,6 +16,9 @@ export interface AgentEgress { binds: string[]; env: Record<string, string>; caP
 
 /** Everything prepareAgentEgress touches outside itself, injected so the launch policy is testable. */
 export interface AgentEgressDeps {
+  ensureAgentNetworkCommand(): string[];
+  caBundlePath: string;
+  agentCaTrust(): AgentCaTrust;
   guestExec(args: string[]): Promise<unknown>;
   egressEnforced(): Promise<boolean>;
   /** True when the threat proxy currently reports `running` (egress enforced and healthy). */
@@ -33,7 +35,7 @@ export interface AgentEgressDeps {
  * labeled so the watcher holds the policy in direct mode until they exit.
  */
 export async function prepareAgentEgress(deps: AgentEgressDeps): Promise<AgentEgress> {
-  await deps.guestExec(ensureAgentNetworkCommand());
+  await deps.guestExec(deps.ensureAgentNetworkCommand());
   const enabled = await deps.egressEnforced();
   if (!enabled) { await deps.applyCurrentEgressPolicy('off'); return { binds: [], env: {}, caPresent: false }; }
   // Preserve already enforced traffic; direct is only a recovery/startup fallback.
@@ -45,11 +47,11 @@ export async function prepareAgentEgress(deps: AgentEgressDeps): Promise<AgentEg
       new Promise((_, reject) => setTimeout(() => reject(new Error('proxy startup budget exceeded')), THREAT_PROXY_START_BUDGET_MS)),
     ]).catch(error => deps.warn('[AgentContainer] threat proxy is unavailable; continuing direct', error));
   }
-  const caPresent = () => deps.guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false);
+  const caPresent = () => deps.guestExec(['test', '-s', deps.caBundlePath]).then(() => true, () => false);
   const deadline = Date.now() + THREAT_PROXY_START_BUDGET_MS;
   while (!alreadyEnforced && Date.now() < deadline && !await caPresent()) await new Promise(resolve => setTimeout(resolve, 250));
   if (!await caPresent()) { await deps.applyCurrentEgressPolicy('direct'); return { binds: [], env: {}, caPresent: false }; }
-  const trust = agentCaTrust();
+  const trust = deps.agentCaTrust();
   return { binds: trust.bind ? [trust.bind] : [], env: trust.env, caPresent: true };
 }
 

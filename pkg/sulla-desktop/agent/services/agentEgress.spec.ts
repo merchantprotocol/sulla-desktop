@@ -8,6 +8,9 @@ const CA_CHECK = 'ca-bundle.pem';
 function deps(overrides: Partial<AgentEgressDeps> & { caPresent?: boolean } = {}) {
   const { caPresent = true, ...rest } = overrides;
   const d = {
+    ensureAgentNetworkCommand: vi.fn(() => ['ensure-agent-network']),
+    caBundlePath: '/public/ca-bundle.pem',
+    agentCaTrust: vi.fn(() => ({ bind: '/public:/run/ca:ro', env: { NODE_EXTRA_CA_CERTS: '/run/ca/ca.crt', SSL_CERT_FILE: '/run/ca/ca-bundle.pem' } })),
     guestExec: vi.fn(async (args: string[]) => {
       if (args[0] === 'test' && args.at(-1)?.endsWith(CA_CHECK) && !caPresent) throw new Error('no CA');
       return { stdout: '', stderr: '' };
