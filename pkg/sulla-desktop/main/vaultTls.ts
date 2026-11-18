@@ -55,6 +55,15 @@ export class VaultTlsPinService {
     });
   }
 
+  /** Verify a Node TLS peer against the current on-disk pin, including hostname and validity. */
+  async verifyPeer(hostname: string, certificatePem: string): Promise<boolean> {
+    try {
+      return verifyVaultCertificate(hostname, certificatePem, await this.getPinnedFingerprint());
+    } catch {
+      return false;
+    }
+  }
+
   private async readPinnedFingerprint(): Promise<string> {
     const value = normalizeFingerprint(await this.readFingerprintFile());
     if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('Vault TLS fingerprint is missing or invalid');
