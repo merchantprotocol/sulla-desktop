@@ -46,13 +46,20 @@ describe('Files FUSE service definition hash', () => {
 
   // risk: data integrity — unrelated compose regeneration must not recreate a live FUSE mount.
   it('is stable across regeneration-only metadata and ordering changes', () => {
-    expect(hashFilesFuseServiceDefinition({ ...definition, volumes: [...definition.volumes].reverse(), labels: { generatedAt: 'today' }, generation: 1 }))
-      .toBe(hashFilesFuseServiceDefinition({ ...definition, labels: { generatedAt: 'tomorrow' }, generation: 2 }));
+    const before = hashFilesFuseServiceDefinition({ ...definition, labels: { generatedAt: 'today' }, generation: 1 });
+    const regenerated = hashFilesFuseServiceDefinition({ ...definition, volumes: [...definition.volumes].reverse(), labels: { generatedAt: 'tomorrow' }, generation: 2 });
+
+    expect(regenerated).toBe(before);
+    expect(decideFilesFuseRecovery({ ...base, configChanged: regenerated !== before })).toBe('none');
   });
 
   // risk: data integrity — changed mount propagation/bind definitions must be applied.
   it('changes when an adapter bind changes', () => {
-    expect(hashFilesFuseServiceDefinition(definition)).not.toBe(hashFilesFuseServiceDefinition({ ...definition, volumes: ['/mnt/files:/mnt/files:rslave'] }));
+    const before = hashFilesFuseServiceDefinition(definition);
+    const changed = hashFilesFuseServiceDefinition({ ...definition, volumes: ['/mnt/files:/mnt/files:rslave'] });
+
+    expect(changed).not.toBe(before);
+    expect(decideFilesFuseRecovery({ ...base, configChanged: changed !== before })).toBe('recreate');
   });
 });
 
