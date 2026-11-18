@@ -53,7 +53,23 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
     private readonly pollIntervalMs = 60_000,
     readonly hosting: 'cloud' | 'server' = 'cloud',
     private readonly cloudRequester: OrgCloudRequester = (method, path, options) => new DesktopOrgCloudRequester().request(method, path, options),
+    private readonly retryDelayMs = 500,
   ) {}
+
+  /** Cloud requests retry once, after a delay, only when the request throws (no HTTP response). Non-OK responses are returned as-is. */
+  private async sendCloud(method: string, path: string, options: { headers: Record<string, string>; body?: BodyInit | null }): Promise<Response> {
+    const attempts = 2;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        return await this.cloudRequester(method, path, options);
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, this.retryDelayMs));
+      }
+    }
+    throw lastError;
+  }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const orgId = await this.session.orgId();
@@ -68,7 +84,7 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
         if (value) headers[name] = value;
       }
       if (init.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-      response = await this.cloudRequester(String(init.method ?? 'GET'), requestPath, { headers, body: init.body });
+      response = await this.sendCloud(String(init.method ?? 'GET'), requestPath, { headers, body: init.body });
     } else {
       const token = await this.session.accessToken();
       if (!token) throw new Error(`An active Sulla ${ this.hostName() } organization session is required`);
