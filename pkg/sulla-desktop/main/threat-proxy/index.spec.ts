@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() }, BrowserWindow: { getAllWindows: () => [] } }));
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: vi.fn(), set: vi.fn() } }));
 vi.mock('@pkg/backend/threatProxyEgress', () => ({
-  egressPolicyCommand: vi.fn(), installStagedFileCommand: vi.fn(), THREAT_PROXY_BLOCKLIST_PATH: '/blocklist',
+  egressPolicyCommand: vi.fn(() => ['true']), installStagedFileCommand: vi.fn(() => ['true']), THREAT_PROXY_BLOCKLIST_PATH: '/blocklist', THREAT_PROXY_PUBLIC_DIR: '/public',
   THREAT_PROXY_CONFIG_PATH: '/config', THREAT_PROXY_CONTAINER: 'sulla_threat_proxy', THREAT_PROXY_TRAFFIC_LOG_PATH: '/traffic.jsonl',
 }));
 vi.mock('@pkg/utils/logging', () => ({ default: { 'threat-proxy': { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } }));
@@ -70,7 +70,7 @@ describe('threat proxy traffic log', () => {
     expect(result.entries[0]).toMatchObject({ host: 'example.test', path: '/search?q=…&x=…' });
     const readCommand = executor.execCommand.mock.calls.find((call: any[]) => call[4] === 'traffic-log')?.[3] as string;
     expect(readCommand).toContain('tail -c 2097152');
-    expect((readCommand.match(/tail -c 2097152/g) ?? [])).toHaveLength(2);
+    expect(readCommand).toContain('for f in "$1" "$1.1"');
     clearGuest(executor);
   });
 
