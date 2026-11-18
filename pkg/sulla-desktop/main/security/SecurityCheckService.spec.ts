@@ -7,9 +7,10 @@ describe('SecurityCheckService contract', () => {
     const report = SecurityCheckService.createReport('start', [
       { id:'runtime', label:'Runtime', status:'pass', detail:'up' },
       { id:'vault', label:'Vault', status:'warn', detail:'locked' },
+      { id:'containers', label:'Containers', status:'fail', detail:'unavailable' },
       { id:'signature', label:'Signature', status:'not_checked', detail:'dev build' },
     ], 'finish');
-    expect(report.score).toEqual({ on: 1, total: 2 });
+    expect(report.score).toEqual({ on: 1, total: 3 });
   });
 
   it('turns a timed-out dependency into a fail result', async() => {
