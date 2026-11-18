@@ -1973,6 +1973,7 @@
     const MENUS = {
       File: [
         ...(options.onSave ? [['Save', '⌘S', () => options.onSave()]] : []),
+        ...(options.onCreateBookmark ? [['Create bookmark', '', () => options.onCreateBookmark()]] : []),
         ...(options.onRename ? [['Rename…', '', () => {
           $('fname').focus();
           $('fname').select()

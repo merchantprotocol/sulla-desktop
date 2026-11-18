@@ -167,6 +167,8 @@
       @dragover.prevent="onRootDragOver"
       @dragleave="onRootDragLeave"
       @drop.prevent="onDrop"
+      @contextmenu.prevent="openContextMenu($event, null)"
+      @keydown.esc="contextMenu = null"
     >
       <div
         v-if="!loaded && !error"
@@ -303,6 +305,7 @@
           @dragend="onDragEnd"
           @dragover.prevent.stop="onRowDragOver($event, row)"
           @drop.prevent.stop="onDrop"
+          @contextmenu.prevent.stop="openContextMenu($event, row)"
         >
           <span
             v-if="row.record.kind === 'folder'"
@@ -494,6 +497,15 @@
       </template>
     </div>
 
+    <div v-if="contextMenu" class="bm-context-menu" role="menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @keydown.esc="contextMenu = null" @contextmenu.prevent>
+      <button v-if="!contextMenu.row || contextMenu.row.record.kind === 'folder'" type="button" role="menuitem" @click="contextNewFolder">New folder{{ contextMenu.row ? ' inside' : '' }}</button>
+      <template v-if="contextMenu.row && !contextMenu.row.readonly">
+        <button v-if="contextMenu.row.record.kind === 'bookmark'" type="button" role="menuitem" @click="contextOpen">Open</button>
+        <button type="button" role="menuitem" @click="contextRename">Rename</button>
+        <button type="button" role="menuitem" class="danger" @click="contextDelete">Delete</button>
+      </template>
+    </div>
+
     <div
       v-if="undo"
       class="bm-toast"
@@ -523,7 +535,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useBookmarks, bookmarkUrlKey, type BookmarkNode, type BookmarkRecord } from '@pkg/composables/useBookmarks';
@@ -569,6 +581,21 @@ const selectedId = ref<string | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 const searchRef = ref<HTMLInputElement | null>(null);
 const actionError = ref<string | null>(null);
+const contextMenu = ref<{ x: number; y: number; row: Row | null } | null>(null);
+
+function openContextMenu(event: MouseEvent, row: Row | null): void {
+  const width = 176, height = row ? 144 : 44;
+  contextMenu.value = { x: Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6)), y: Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6)), row };
+  void nextTick(() => document.querySelector<HTMLElement>('.bm-context-menu button')?.focus());
+}
+function contextNewFolder(): void {
+  const row = contextMenu.value?.row; contextMenu.value = null;
+  const parentId = row?.record.kind === 'folder' ? row.record.id : null;
+  void createFolder(parentId);
+}
+function contextRename(): void { const row = contextMenu.value?.row; contextMenu.value = null; if (row) startEdit(row.record); }
+function contextDelete(): void { const row = contextMenu.value?.row; contextMenu.value = null; if (row) void removeRow(row); }
+function contextOpen(): void { const row = contextMenu.value?.row; contextMenu.value = null; if (row) keepOpen(row.record); }
 
 // ── Expanded folders (persisted) ──
 const EXPANDED_KEY = 'sulla:bookmarks-expanded';
@@ -854,7 +881,12 @@ function previewSoon(record: BookmarkRecord): void {
   }, 220);
 }
 
+function closeContextMenuOutside(event: PointerEvent): void {
+  if (!(event.target as HTMLElement)?.closest('.bm-context-menu')) contextMenu.value = null;
+}
+onMounted(() => document.addEventListener('pointerdown', closeContextMenuOutside));
 onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeContextMenuOutside);
   if (dockerTimer) clearInterval(dockerTimer);
   if (previewTimer) clearTimeout(previewTimer);
   if (undoTimer) clearTimeout(undoTimer);
@@ -1038,8 +1070,8 @@ async function bookmarkActivePage(): Promise<void> {
   }
 }
 
-async function createFolder(): Promise<void> {
-  const parentId = selectedFolderId();
+async function createFolder(parentOverride?: string | null): Promise<void> {
+  const parentId = parentOverride === undefined ? selectedFolderId() : parentOverride;
   const created = await run(() => addFolder('New folder', parentId));
   if (created) {
     if (parentId) setExpanded(parentId, true);
@@ -1323,7 +1355,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   font-size: 9.5px;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--text-primary);
 }
 
 .bm-actions {
@@ -1365,11 +1397,12 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   border: 1px solid var(--border-default);
   border-radius: 7px;
   color: var(--text-primary);
-  background: var(--bg-surface);
-  transition: border-color 0.12s ease;
+  background: var(--bg-elevated, var(--bg-surface));
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .bm-search:focus-within {
-  border-color: var(--accent-border, var(--border-default));
+  border-color: var(--accent-border, var(--accent));
+  box-shadow: 0 0 0 2px var(--accent-dim);
 }
 .bm-search input {
   flex: 1;
@@ -1381,8 +1414,14 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   font-size: 12px;
 }
 .bm-search input::placeholder {
-  color: var(--text-primary);
+  color: var(--text-secondary, var(--text-muted));
 }
+.bm-label { color: var(--text-primary); }
+.bm-icon, .bm-chevron { color: var(--text-secondary, var(--text-muted)); }
+.bm-context-menu { position: fixed; z-index: 1000; min-width: 168px; padding: 5px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-elevated, var(--bg-surface)); box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 18%, transparent); }
+.bm-context-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:5px; background:transparent; color:var(--text-primary); text-align:left; font:inherit; cursor:pointer; }
+.bm-context-menu button:hover, .bm-context-menu button:focus-visible { outline:none; background:var(--accent-dim); }
+.bm-context-menu button.danger { color:var(--danger, var(--text-primary)); }
 
 .bm-list {
   flex: 1;
@@ -1801,4 +1840,16 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   .bm-row,
   .bm-action { transition-duration: 0.01ms; }
 }
+.bm { background: var(--bg-page); }
+.bm-title { color: var(--text-primary); }
+.bm-search { background: var(--bg-surface); border: 1px solid var(--border-default); color: var(--text-primary); }
+.bm-search input { color: var(--text-primary); }
+.bm-search input::placeholder { color: var(--text-secondary, var(--text-primary)); opacity: 1; }
+.bm-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.bm-row, .bm-row:hover, .bm-row.selected, .bm-row.open { color: var(--text-primary); }
+.bm-label { color: var(--text-primary); }
+.bm-context-menu { position: fixed; z-index: 1000; min-width: 168px; padding: 5px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 18%, transparent); }
+.bm-context-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:5px; background:transparent; color:var(--text-primary); text-align:left; font:inherit; cursor:pointer; }
+.bm-context-menu button:hover, .bm-context-menu button:focus-visible { outline:none; background:var(--accent-dim); }
+.bm-context-menu button.danger { color:var(--status-error, var(--text-primary)); }
 </style>
