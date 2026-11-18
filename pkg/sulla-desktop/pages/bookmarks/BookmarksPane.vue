@@ -1397,7 +1397,8 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   border: 1px solid var(--border-default);
   border-radius: 7px;
   color: var(--text-primary);
-  background: var(--bg-elevated, var(--bg-surface));
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-page));
+  border-color: color-mix(in srgb, var(--text-primary) 22%, var(--bg-page));
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 .bm-search:focus-within {
@@ -1418,7 +1419,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 }
 .bm-label { color: var(--text-primary); }
 .bm-icon, .bm-chevron { color: var(--text-secondary, var(--text-muted)); }
-.bm-context-menu { position: fixed; z-index: 1000; min-width: 168px; padding: 5px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-elevated, var(--bg-surface)); box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 18%, transparent); }
+.bm-context-menu { position: fixed; z-index: 1000; min-width: 168px; padding: 5px; border: 1px solid color-mix(in srgb, var(--text-primary) 18%, var(--bg-page)); border-radius: 8px; background: var(--bg-elevated, var(--bg-page)); box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 18%, transparent); }
 .bm-context-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:5px; background:transparent; color:var(--text-primary); text-align:left; font:inherit; cursor:pointer; }
 .bm-context-menu button:hover, .bm-context-menu button:focus-visible { outline:none; background:var(--accent-dim); }
 .bm-context-menu button.danger { color:var(--danger, var(--text-primary)); }
@@ -1708,7 +1709,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 <style scoped>
 .bm {
   width: 292px;
-  background: color-mix(in srgb, var(--bg-page) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-page) 96%, transparent);
   border-color: var(--border-subtle);
   box-shadow: 16px 0 44px color-mix(in srgb, var(--border-subtle) 20%, transparent);
   backdrop-filter: blur(18px);
@@ -1721,7 +1722,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 }
 
 .bm-title {
-  color: var(--accent-hover);
+  color: var(--text-primary);
   font-size: 10px;
   letter-spacing: 0.18em;
 }
@@ -1743,19 +1744,19 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 .bm-search {
   height: 36px;
   margin: 12px 10px 8px;
-  color: var(--text-dim);
-  background: color-mix(in srgb, var(--bg-page) 72%, transparent);
-  border-color: color-mix(in srgb, var(--border-subtle) 75%, transparent);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-page));
+  border-color: color-mix(in srgb, var(--text-primary) 24%, var(--bg-page));
   border-radius: 11px;
 }
 
 .bm-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent-hover) 50%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .bm-search input {
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-family: ui-monospace, 'SF Mono', monospace;
 }
 
@@ -1765,7 +1766,7 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   margin-bottom: 3px;
   border: 1px solid transparent;
   border-radius: 10px;
-  color: var(--text-muted);
+  color: var(--text-primary);
   transition: background 0.16s, color 0.16s, border-color 0.16s, transform 0.42s cubic-bezier(.22, 1, .36, 1);
 }
 
@@ -1840,16 +1841,5 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
   .bm-row,
   .bm-action { transition-duration: 0.01ms; }
 }
-.bm { background: var(--bg-page); }
-.bm-title { color: var(--text-primary); }
-.bm-search { background: var(--bg-surface); border: 1px solid var(--border-default); color: var(--text-primary); }
-.bm-search input { color: var(--text-primary); }
-.bm-search input::placeholder { color: var(--text-secondary, var(--text-primary)); opacity: 1; }
-.bm-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
-.bm-row, .bm-row:hover, .bm-row.selected, .bm-row.open { color: var(--text-primary); }
-.bm-label { color: var(--text-primary); }
-.bm-context-menu { position: fixed; z-index: 1000; min-width: 168px; padding: 5px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 18%, transparent); }
-.bm-context-menu button { display:block; width:100%; padding:7px 9px; border:0; border-radius:5px; background:transparent; color:var(--text-primary); text-align:left; font:inherit; cursor:pointer; }
-.bm-context-menu button:hover, .bm-context-menu button:focus-visible { outline:none; background:var(--accent-dim); }
-.bm-context-menu button.danger { color:var(--status-error, var(--text-primary)); }
+.bm-search input::placeholder { color: var(--text-secondary, var(--text-muted)); opacity: 1; }
 </style>
