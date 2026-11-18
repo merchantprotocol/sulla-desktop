@@ -41,6 +41,7 @@ from common import (
     FLAG_ERROR,
     FLAG_SUSPICIOUS,
     FLAG_UNKNOWN,
+    fail_open_hook,
     classify_verdict,
     ProxyConfig,
     get_cache,
@@ -58,6 +59,12 @@ VT_ENDPOINT = "https://www.virustotal.com/api/v3/urls/{id}"
 
 # How often to refresh URLhaus blocklist from disk (it's updated externally).
 URLHAUS_RELOAD_SECS = 300
+
+# Largest blocked request body we buffer locally to answer with 451. Bigger or
+# unframed uploads are killed at the headers so the proxy never holds them.
+MAX_BUFFERED_BLOCKED_BODY_BYTES = 64 * 1024
+# Methods that carry no body when they have no Content-Length or Transfer-Encoding.
+BODILESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 # External API budgets — enforced with a simple token bucket.
 # Safe Browsing free tier: 10k/day ≈ 6.9/min. We cap at 6/min to stay well under.
@@ -88,6 +95,8 @@ class _TokenBucket:
 
 
 class URLFilter:
+    log_component = "url_filter"
+
     """mitmproxy addon. Runs on every request; decides block/pass."""
 
     def __init__(self, config: Optional[ProxyConfig] = None, cache=None) -> None:
@@ -135,6 +144,8 @@ class URLFilter:
     # ────────────────────────────────────────────────────────────────
     def _read_urlhaus_file(self, path: str) -> Tuple[Set[str], str]:
         """Read host entries and the source Updated date from a URLhaus file."""
+        if os.path.getsize(path) > 32 * 1024 * 1024:
+            raise ValueError("URLhaus file exceeds 32 MiB")
         hosts: Set[str] = set()
         updated = ""
         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
@@ -149,6 +160,8 @@ class URLFilter:
                 host = parts[-1].lower().rstrip(".")
                 if host and "." in host and not host.startswith("#"):
                     hosts.add(host)
+                    if len(hosts) > 1_000_000:
+                        raise ValueError("URLhaus file exceeds 1,000,000 hosts")
         return hosts, updated
 
     def _reload_urlhaus(self) -> None:
@@ -165,7 +178,11 @@ class URLFilter:
             except FileNotFoundError:
                 hosts = set()
             except Exception as ex:
-                log("url_filter", "error", "URLhaus load failed", error=str(ex))
+                log("url_filter", "error", "URLhaus load failed; keeping current list", error=type(ex).__name__)
+                self._urlhaus_loaded_at = time.time()
+                if self._urlhaus_hosts:
+                    return
+                # No usable list exists yet; continue to the bundled fallback.
                 hosts = set()
 
             if not hosts:
@@ -183,7 +200,7 @@ class URLFilter:
                     )
                     return
                 except Exception as ex:
-                    log("url_filter", "error", "URLhaus bundled default load failed", error=str(ex))
+                    log("url_filter", "error", "URLhaus bundled default load failed", error=type(ex).__name__)
                     self._urlhaus_hosts = set()
                     self._urlhaus_loaded_at = time.time()
                     return
@@ -250,7 +267,7 @@ class URLFilter:
                 return FLAG_BLOCK, f"safe_browsing:{kinds}"
             return FLAG_CLEAN, "safe_browsing:clean"
         except Exception as ex:
-            log("url_filter", "error", "Safe Browsing lookup failed", url=url, error=str(ex))
+            log("url_filter", "error", "Safe Browsing lookup failed", url=url, error=type(ex).__name__)
             return FLAG_ERROR, "safe_browsing:error"
 
     # ────────────────────────────────────────────────────────────────
@@ -287,7 +304,7 @@ class URLFilter:
             log("url_filter", "error", "VT HTTP error", url=url, code=ex.code)
             return FLAG_ERROR, f"vt:http_{ex.code}"
         except Exception as ex:
-            log("url_filter", "error", "VT lookup failed", url=url, error=str(ex))
+            log("url_filter", "error", "VT lookup failed", url=url, error=type(ex).__name__)
             return FLAG_ERROR, "vt:error"
 
     # ────────────────────────────────────────────────────────────────
@@ -370,15 +387,39 @@ class URLFilter:
                 names.append(name)
         return names
 
-    def request(self, flow: http.HTTPFlow) -> None:
+    @staticmethod
+    def _blocked_body_is_small(request) -> bool:
+        """True when a blocked request may be buffered locally and answered with 451.
+
+        Chunked or otherwise framed bodies, bodies over the cap and bodies of
+        unknown length are not small. A request with no framing headers has no
+        body only for bodiless methods (HTTP/2 POST can carry DATA frames with no
+        Content-Length), so those are killed, not buffered.
+        """
+        if request.headers.get("Transfer-Encoding", ""):
+            return False
+        content_length = request.headers.get("Content-Length", "")
+        if content_length:
+            try:
+                return 0 <= int(content_length) <= MAX_BUFFERED_BLOCKED_BODY_BYTES
+            except (TypeError, ValueError):
+                return False
+        return str(getattr(request, "method", "")).upper() in BODILESS_METHODS
+
+    @fail_open_hook
+    def requestheaders(self, flow: http.HTTPFlow) -> None:
         self._apply_config()
         if self.block_mode == "off":
+            flow.metadata["sulla_url_checked"] = True
+            flow.request.stream = True
             return
         url = flow.request.pretty_url
         host = (flow.request.pretty_host or "").lower()
         names = self.flow_names(flow)
 
         if names and all(is_allowlisted(name, self.user_allowlist) for name in names):
+            flow.metadata["sulla_url_checked"] = True
+            flow.request.stream = True
             log("url_filter", "debug", "allowlisted", host=host, url=url)
             return
 
@@ -393,11 +434,39 @@ class URLFilter:
             details=details,
         )
 
+        flow.metadata["sulla_url_checked"] = True
+        flow.metadata["sulla_block_verdict"] = verdict if verdict == FLAG_BLOCK else None
+        flow.metadata["sulla_block_details"] = details if verdict == FLAG_BLOCK else []
+        flow.metadata["sulla_block_url"] = url
         if verdict == FLAG_BLOCK:
+            flow.metadata["sulla_block_details"] = details
             if self.block_mode == "warn":
                 flow.request.headers["X-Sulla-Threat"] = "|".join(details)
+                flow.request.stream = True
                 return
-            self._emit_block(flow, url, details)
+            content_length = flow.request.headers.get("Content-Length", "")
+            if not self._blocked_body_is_small(flow.request):
+                # Mitmproxy 12.3.1 consumes request bodies before its request hook
+                # even when flow.response was assigned in requestheaders. Kill
+                # large/chunked uploads here, before any buffering or upstream.
+                flow.kill()
+                log("url_filter", "warn", "blocked upload killed", host=host, url=url, content_length=content_length or "unknown")
+                return
+            # Small blocked uploads are buffered locally, then receive 451 in request.
+            flow.request.stream = False
+            return
+        flow.request.stream = True
+
+    @fail_open_hook
+    def request(self, flow: http.HTTPFlow) -> None:
+        # Compatibility safety-net for replay paths that bypass requestheaders.
+        if flow.metadata.get("sulla_url_checked"):
+            if flow.metadata.get("sulla_block_verdict") == FLAG_BLOCK and self.block_mode == "block":
+                self._emit_block(flow, flow.metadata.get("sulla_block_url", flow.request.pretty_url), flow.metadata.get("sulla_block_details", []))
+            return
+        self.requestheaders(flow)
+        if flow.metadata.get("sulla_block_verdict") == FLAG_BLOCK and self.block_mode == "block":
+            self._emit_block(flow, flow.metadata.get("sulla_block_url", flow.request.pretty_url), flow.metadata.get("sulla_block_details", []))
 
     def _emit_block(self, flow: http.HTTPFlow, url: str, details: List[str]) -> None:
         body = json.dumps(

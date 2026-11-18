@@ -12,7 +12,7 @@
 export type PreferencesSectionId =
   'general' | 'appearance' |
   'models' | 'personality' | 'heartbeat' | 'voice' | 'workflows' | 'extensions' |
-  'account' | 'files' | 'privacy' |
+  'account' | 'files' | 'privacy' | 'threat' |
   'docker' |
   'advanced';
 
@@ -53,6 +53,7 @@ export const PREFERENCES_NAV: PreferencesNavGroup[] = [
       { id: 'account', icon: 'user', label: 'Account & Cloud' },
       { id: 'files', icon: 'folder', label: 'Files & backups' },
       { id: 'privacy', icon: 'shield', label: 'Privacy & security' },
+      { id: 'threat', icon: 'scan', label: 'Threat Protection' },
     ],
   },
   {

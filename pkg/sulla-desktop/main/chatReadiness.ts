@@ -6,7 +6,7 @@
 /**
  * Whether the first chat can start right away: every chat runs in an agent
  * container, which needs the tools service, an unlocked vault, the agent
- * image and (with scanning on) the threat proxy's CA. The first-run
+ * image and the proxy when available (traffic fails open while it starts). The first-run
  * Finishing screen shows this as its last line ('first-run:chat-ready-status').
  * Once chat is ready the setup window closes and the chat opens
  * ('first-run-chat-ready'); it never waits on the remaining background services. Once the vault unlocks, the slow parts

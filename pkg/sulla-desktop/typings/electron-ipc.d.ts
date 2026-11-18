@@ -244,6 +244,12 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'threat-proxy:get-settings': () => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; keyStatus?: { safeBrowsing: boolean; virusTotal: boolean }; error?: string };
+  'threat-proxy:set-settings': (partial: Partial<import('@pkg/main/threat-proxy').ThreatProxySettings>) => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; error?: string };
+  'threat-proxy:get-status': () => import('@pkg/main/threat-proxy').ThreatProxyStatus;
+  'threat-proxy:get-traffic-log': (request?: import('@pkg/main/threat-proxy').TrafficLogRequest) => Promise<{ entries: Record<string, any>[]; error?: string }>;
+  'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
+
   'org-conversations:organizations': () => readonly { orgId: string; name: string; slug?: string; memberCount: number }[];
   'org-conversations:directory': (org?: string) => { membership: { orgId: string; name: string }; directory: { people: readonly unknown[] } };
   'org-conversations:inbox': (org?: string) => { membership: { orgId: string; name: string }; messages: readonly import('@sulla/domain').MessageEnvelope['data'][] };
@@ -1284,6 +1290,8 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'threat-proxy:status-changed': (status: import('@pkg/main/threat-proxy').ThreatProxyStatus) => void;
+
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;
