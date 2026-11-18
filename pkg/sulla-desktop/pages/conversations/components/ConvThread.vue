@@ -20,6 +20,7 @@ const hasOrg = computed(() => !!store.s.org);
 const threadTitle = computed(() => thread.value?.title ?? '');
 const memberCount = computed(() => (thread.value?.participantIds.length ?? 0));
 const isAgentThread = computed(() => thread.value?.kind === 'agent_thread');
+const other = computed(() => (thread.value?.withId ? store.personFor(thread.value.withId) : undefined));
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
 const goOnline = (): void => { online.value = true; };
 const goOffline = (): void => { online.value = false; };
@@ -60,9 +61,17 @@ function sendDraft(): void {
 
     <template v-else>
       <div class="top">
-        <template v-if="thread">
-          <ConvAvatar :bot="isAgentThread" :ini="isAgentThread ? '' : (thread.title.split(/\s+/).slice(0, 2).map(part => part[0] ?? '').join('').toUpperCase())" size="lg" />
-          <div class="ttl"><b>{{ threadTitle }}</b><small>{{ isAgentThread ? 'Agent thread' : thread.kind === 'group' ? `${memberCount} people` : 'Direct message' }}</small></div>
+        <template v-if="thread && isAgentThread">
+          <span style="display:flex;align-items:center;gap:4px"><ConvAvatar bot size="lg" /><span style="color:var(--dim)">&harr;</span><ConvAvatar bot theirs size="lg" :pres="other?.agentOnline ? 'online' : 'offline'" /></span>
+          <div class="ttl"><b v-if="other"><span class="who you" style="font-size:12px">Your agent</span> and <span class="who theirs" style="font-size:12px">{{ other.firstName }}'s agent</span></b><b v-else>{{ threadTitle }}</b><small>Agent thread{{ other ? ` · you and ${other.name} can watch it` : '' }}</small></div>
+        </template>
+        <template v-else-if="thread && thread.kind === 'group'">
+          <span class="avatar lg bot" style="background:linear-gradient(135deg,#9ec1d3,#3a7fa0);border-radius:10px;font-size:12px">{{ threadTitle.trim()[0]?.toUpperCase() ?? '?' }}</span>
+          <div class="ttl"><b>{{ threadTitle }}</b><small>{{ memberCount }} people</small></div>
+        </template>
+        <template v-else-if="thread">
+          <ConvAvatar :ini="other?.initials ?? '?'" :color="other?.tone ?? ''" :pres="other?.presenceClass ?? ''" size="lg" />
+          <div class="ttl"><b>{{ threadTitle }}</b><small>{{ other?.status ?? 'Direct message' }}</small></div>
         </template>
         <div v-else class="ttl"><b>Conversations</b><small>Choose a conversation on the left</small></div>
         <div class="acts">
@@ -79,7 +88,10 @@ function sendDraft(): void {
       <div class="msgs">
         <div v-if="thread && !messages.length" class="meta" style="padding:16px;color:var(--muted)">No messages yet. Send the first one below.</div>
         <div v-if="!thread" class="empty"><div class="in"><h1>Pick a conversation</h1><p>Choose a conversation on the left to see its messages.</p></div></div>
-        <ConvMessage v-for="message in messages" :key="message.id" :message="message" />
+        <template v-for="(message, index) in messages" :key="message.id">
+          <div v-if="message.day && message.day !== messages[index - 1]?.day" class="day">{{ message.day }}</div>
+          <ConvMessage :message="message" />
+        </template>
       </div>
 
       <div v-if="thread && isAgentThread" class="composer"><div class="box" style="opacity:.75"><div class="cr"><span class="hint">Agent threads are read-only here. Agents post in them, not people.</span></div></div></div>
