@@ -7,6 +7,7 @@
 // /tree with FuseTreeSnapshotCache and FuseTreeRepository), on the real app and a real Postgres.
 // Written against the inline app.ts handlers before the move.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 
 import { FuseTreeRepository } from '../src/Repositories/FuseTreeRepository.js';
 import { FuseTreeSnapshotCache } from '../src/Services/FuseTreeSnapshotCache.js';
@@ -26,6 +27,64 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
   afterAll(() => fixture.stop());
 
   const directory = (query:string, headers:Record<string, string> = {}) => fixture.request(`/v1/fuse/directory?${ query }`, 'GET', { headers });
+
+  it('change feed returns per-collection path events and pages from a journal cursor', async() => {
+    // risk: namespace isolation — ordinary audit writes and other collections must not invalidate this tree.
+    const first = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }`);
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ collectionId: fixture.collectionId, reset: true, more: false, changes: [] });
+    const stable = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
+    expect(stable.body).toMatchObject({ cursor: first.body.cursor, reset: false, changes: [] });
+    await fixture.createFile('docs/inner/feed-change.txt');
+    const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
+    const createEvents = changed.body.changes.filter((change:any) => change.path === 'docs/inner/feed-change.txt');
+    expect(changed.body.reset).toBe(false);
+    expect(createEvents).toEqual([expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'update' })]);
+    const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='docs/inner/feed-change.txt'`, [fixture.collectionId])).rows[0].id;
+    await fixture.pool.query(`UPDATE files SET path='docs/inner/feed-renamed.txt' WHERE id=$1`, [fileId]);
+    const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);
+    expect(rename.body.changes).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-renamed.txt', oldPath: 'docs/inner/feed-change.txt', kind: 'rename' })]));
+    // Files never hard-deletes: unlink soft-deletes via deleted_at (same statement as FuseWriteRepository).
+    await fixture.pool.query(`UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1`, [fileId]);
+    const deleted = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ rename.body.cursor }`);
+    const removedEvents = deleted.body.changes.filter((change:any) => change.path === 'docs/inner/feed-renamed.txt');
+    expect(removedEvents.length).toBeGreaterThan(0);
+    expect(removedEvents.every((change:any) => ['update', 'delete'].includes(change.kind))).toBe(true);
+    const other = randomUUID();
+    await fixture.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
+      VALUES($1,$2,'Other','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [other, fixture.userId, `spec-${ other }`]);
+    expect((await fixture.request(`/v1/fuse/files?collectionId=${ other }&path=feed%2Fanother.txt`, 'POST', {
+      body: Buffer.from('other collection'), headers: { 'content-type': 'application/octet-stream' },
+    })).status).toBe(201);
+    const isolated = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ deleted.body.cursor }`);
+    expect(isolated.body.changes).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-another.txt' })]));
+    await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind,changed_at) VALUES($1,'expired.txt','delete',now()-interval '11 minutes')`, [fixture.collectionId]);
+    // The app's repository throttles its own prune to once per 30 s, so force the prune here, unthrottled.
+    await new FuseTreeRepository(fixture.pool).pruneExpired();
+    expect((await fixture.pool.query(`SELECT 1 FROM fuse_change_journal WHERE path='expired.txt'`)).rowCount).toBe(0);
+    const expired = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=0`);
+    expect(expired.body).toMatchObject({ reset: true, changes: [] });
+    expect((await fixture.request('/v1/fuse/changes?collectionId=00000000-0000-0000-0000-000000000000')).status).toBe(404);
+  });
+
+  it('does not advance past a lower journal id still owned by an open transaction', async() => {
+    // risk: missed invalidation — BIGSERIAL allocation order is not transaction commit order.
+    const baseline = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }`);
+    const held = await fixture.pool.connect();
+    try {
+      await held.query('BEGIN');
+      await held.query(`INSERT INTO fuse_change_journal(collection_id,path,kind) VALUES($1,'docs/inner/slow-commit.txt','insert')`, [fixture.collectionId]);
+      await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind) VALUES($1,'docs/inner/fast-commit.txt','insert')`, [fixture.collectionId]);
+      const whileOpen = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ baseline.body.cursor }`);
+      expect(whileOpen.body.changes.map((row:any) => row.path)).not.toContain('docs/inner/slow-commit.txt');
+      await held.query('COMMIT');
+      const afterCommit = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ whileOpen.body.cursor }`);
+      expect(afterCommit.body.changes.map((row:any) => row.path)).toContain('docs/inner/slow-commit.txt');
+    } finally {
+      await held.query('ROLLBACK').catch(() => undefined);
+      held.release();
+    }
+  });
 
   it('lists one directory\'s live direct children, files and folders, keyset-paged', async() => {
     // risk: data accuracy — a skipped/repeated child or a trashed file in the mount corrupts the user's view.

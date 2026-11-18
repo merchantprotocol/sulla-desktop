@@ -53,6 +53,13 @@ export class FuseReadRoutes {
   }
 
   register(app:express.Express):void {
+    app.get('/v1/fuse/changes', async(request:RequestWithIdentity, response, next) => { try {
+      this.requireMount(); this.access.identity(request);
+      const collectionId = await this.collection('/v1/fuse/changes', request);
+      const since = String(request.query.since ?? '');
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json({ collectionId, ...await this.tree.changes(collectionId, since) });
+    } catch (error) { next(error) } });
     // FUSE v2 reads one directory at a time. The generated parent_path indexes
     // make both the keyset cursor and direct-child predicate bounded by the page.
     app.get('/v1/fuse/directory', async(request:RequestWithIdentity, response, next) => { try {

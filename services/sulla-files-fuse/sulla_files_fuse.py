@@ -19,6 +19,9 @@ Tunables (environment variables, read once at import):
 - SULLA_FILES_FUSE_NETWORK_THREADS (default 64): threads for Files HTTP calls.
 - SULLA_FILES_FUSE_MAX_TRANSFERS (default 4): concurrent file transfers.
 - SULLA_FILES_FUSE_SPOOL: disk-backed spool directory for open-file buffers.
+- SULLA_FILES_FUSE_ATTR_TIMEOUT_S (default 5): kernel attr/entry cache lifetime while the
+  authenticated change-feed poller is healthy; zero disables kernel caching.
+- SULLA_FILES_FUSE_READ_CACHE_MB (default 512): maximum spool-volume immutable read-cache size.
 - SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS (default 1.0) and
   SULLA_FILES_FUSE_HEARTBEAT_SECONDS (default 60): logging thresholds.
 """
@@ -69,6 +72,9 @@ NETWORK_THREAD_LIMIT = max(1, int(os.environ.get("SULLA_FILES_FUSE_NETWORK_THREA
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 MAX_CONCURRENT_TRANSFERS = max(1, int(os.environ.get("SULLA_FILES_FUSE_MAX_TRANSFERS", "4")))
+ATTR_TIMEOUT_SECONDS = max(0.0, float(os.environ.get("SULLA_FILES_FUSE_ATTR_TIMEOUT_S", "5")))
+READ_CACHE_MAX_BYTES = max(0, int(os.environ.get("SULLA_FILES_FUSE_READ_CACHE_MB", "512"))) * 1024 * 1024
+CHANGE_POLL_SECONDS = 1.0
 TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
@@ -147,6 +153,107 @@ class FileBody:
                 raise OSError(errno.EIO, "Files spool ended before its declared size")
             offset += len(chunk)
             yield chunk
+
+
+class ContentReadCache:
+    """Crash-safe spool-volume cache indexed by immutable Files version and content hash."""
+    def __init__(self, directory, max_bytes):
+        self.directory = directory
+        self.max_bytes = max_bytes
+        self.entries = OrderedDict()
+        self.sizes = {}
+        self.disabled = False
+        os.makedirs(directory, exist_ok=True)
+        self._load()
+        self._evict(self.max_bytes)
+
+    def _key(self, version, digest):
+        return hashlib.sha256(f"{version}:{digest}".encode()).hexdigest()
+
+    def _load(self):
+        for name in os.listdir(self.directory):
+            if name.startswith(".readcache-"):
+                try: os.unlink(os.path.join(self.directory, name))
+                except OSError: pass
+                continue
+            if not name.endswith(".readcache"):
+                continue
+            path = os.path.join(self.directory, name)
+            try:
+                size = os.path.getsize(path)
+                if size <= MAX_FILE_BYTES:
+                    self.entries[name[:-10]] = path
+                    self.sizes[name[:-10]] = size
+            except OSError:
+                continue
+
+    def get(self, version, digest, expected_size, destination):
+        if self.disabled or not version or not digest:
+            return False
+        key = self._key(version, digest)
+        path = self.entries.get(key)
+        if not path:
+            return False
+        try:
+            with open(path, "rb") as source:
+                data_hash = hashlib.sha256()
+                size = 0
+                destination.seek(0); destination.truncate(0)
+                while True:
+                    chunk = source.read(STREAM_CHUNK_BYTES)
+                    if not chunk: break
+                    data_hash.update(chunk); destination.write(chunk); size += len(chunk)
+                if size != expected_size or data_hash.hexdigest().lower() != digest.lower():
+                    raise ValueError("cached content failed verification")
+            destination.flush()
+            self.entries.move_to_end(key)
+            return True
+        except (OSError, ValueError):
+            self._remove(key)
+            destination.seek(0); destination.truncate(0)
+            return False
+
+    def put(self, version, digest, source, size):
+        if self.disabled or not version or not digest or size < 0 or size > MAX_FILE_BYTES or size > self.max_bytes:
+            return
+        # Never let the cache consume more than a quarter of currently free spool space.
+        budget = min(self.max_bytes, os.statvfs(self.directory).f_bavail * os.statvfs(self.directory).f_frsize // 4)
+        if size > budget:
+            return
+        key = self._key(version, digest)
+        fd, temporary = tempfile.mkstemp(prefix=".readcache-", dir=self.directory)
+        try:
+            hasher = hashlib.sha256()
+            with os.fdopen(fd, "wb") as output:
+                offset = 0
+                while offset < size:
+                    chunk = os.pread(source.fileno(), min(STREAM_CHUNK_BYTES, size - offset), offset)
+                    if not chunk: raise OSError(errno.EIO, "short read while caching Files content")
+                    output.write(chunk); hasher.update(chunk); offset += len(chunk)
+                output.flush()
+            if hasher.hexdigest().lower() != digest.lower():
+                return
+            target = os.path.join(self.directory, key + ".readcache")
+            # Forget the prior index entry without unlinking its path: replace() atomically
+            # installs the new complete file at that same pathname.
+            self.entries.pop(key, None); self.sizes.pop(key, None)
+            os.replace(temporary, target)
+            self.entries[key] = target; self.sizes[key] = size
+            self._evict(budget)
+        finally:
+            try: os.unlink(temporary)
+            except FileNotFoundError: pass
+
+    def _remove(self, key):
+        path = self.entries.pop(key, None); self.sizes.pop(key, None)
+        if path:
+            try: os.unlink(path)
+            except OSError: pass
+
+    def _evict(self, budget):
+        total = sum(self.sizes.values())
+        while self.entries and total > budget:
+            key = next(iter(self.entries)); total -= self.sizes.get(key, 0); self._remove(key)
 
 
 def traced(operation, describe=None, mutating=False):
@@ -458,6 +565,11 @@ class FilesApi:
             self._request, f"/v1/fuse/directory?{urllib.parse.urlencode(query)}", "GET", None, headers, limiter=self.network_limiter)
         return (None if status == 304 else json.loads(body)), response_headers.get("ETag", etag)
 
+    async def changes(self, collection_id, revision):
+        query = urllib.parse.urlencode({"collectionId": collection_id, "since": revision})
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/changes?{query}", limiter=self.network_limiter)
+        return json.loads(body)
+
     async def entry(self, collection_id, path):
         values = {"path": path}
         if collection_id: values["collectionId"] = collection_id
@@ -581,6 +693,110 @@ class SullaFiles(pyfuse3.Operations):
         self.node_limit = MAX_CACHED_NODES
         self.snapshot_at = 0.0
         self.metadata_cache = {}
+        self.feed_healthy = False
+        self.feed_revisions = {}
+        self.mounted_collections = set()
+        self.feed_failures = 0
+        self.pending_invalidations = OrderedDict()
+        self.pending_tree_reset = False
+        self.read_cache = None
+        self.read_cache_disabled = False
+
+    def _cache(self):
+        if self.read_cache is None and not self.read_cache_disabled:
+            try:
+                self.read_cache = ContentReadCache(SPOOL_DIR, READ_CACHE_MAX_BYTES)
+            except OSError as error:
+                self.read_cache_disabled = True
+                emit("read-cache-disabled", logging.WARNING, error=str(error))
+        return self.read_cache
+
+    def queue_invalidation(self, path):
+        """Queue request-handler mutations; pyfuse3 invalidation runs only in the background poller."""
+        if path:
+            self.pending_invalidations[path] = None
+
+    def invalidate_path(self, path):
+        """Invalidate a path from the background task, never from a FUSE request handler."""
+        inode = self.path_inode.get(path)
+        if inode is not None:
+            try: pyfuse3.invalidate_inode(inode, attr_only=False)
+            except Exception: pass
+        parent, name = os.path.split(path)
+        parent_inode = self.path_inode.get(parent)
+        if parent_inode is not None and name:
+            try: pyfuse3.invalidate_entry(parent_inode, os.fsencode(name))
+            except Exception: pass
+        self.directory_complete.discard(parent)
+        self.directory_etags.pop(parent, None)
+        # The kernel will look the name up again. Keep the inode stable for in-flight FUSE ops;
+        # _resolve refreshes this row from Files before returning it.
+        for cached, cached_inode in tuple(self.path_inode.items()):
+            if cached == path or cached.startswith(path + "/"):
+                node = self.nodes.get(cached_inode)
+                if node is not None: node["stale"] = True
+
+    def consume_change_page(self, result):
+        """Queue path events, reserving whole-tree invalidation for an explicit cursor reset."""
+        if result.get("reset"):
+            self.pending_tree_reset = True
+            return
+        for change in result.get("changes", []):
+            for path in (change.get("path"), change.get("oldPath")):
+                if path: self.queue_invalidation(path)
+
+    def invalidate_tree(self):
+        for inode in tuple(self.nodes):
+            try: pyfuse3.invalidate_inode(inode, attr_only=False)
+            except (AttributeError, RuntimeError): pass
+        for parent, children in tuple(self.children.items()):
+            parent_inode = self.path_inode.get(parent)
+            if parent_inode is None: continue
+            for name in tuple(children):
+                try: pyfuse3.invalidate_entry(parent_inode, os.fsencode(name))
+                except Exception: pass
+        self.directory_complete.clear()
+        self.directory_etags.clear()
+        for inode, node in tuple(self.nodes.items()):
+            if inode != pyfuse3.ROOT_INODE and not node.get("collectionRoot"):
+                node["stale"] = True
+
+    async def follow_changes(self):
+        """Long-lived background poller; never runs inside a FUSE request handler."""
+        while True:
+            roots = [(node.get("collectionId"), path) for path, inode in tuple(self.path_inode.items())
+                     if (node := self.nodes.get(inode)) and node.get("collectionRoot") and node.get("collectionId")]
+            self.mounted_collections.update(collection_id for collection_id, _ in roots)
+            try:
+                for collection_id in tuple(self.mounted_collections):
+                    since = self.feed_revisions.get(collection_id, "")
+                    while True:
+                        result = await self.api.changes(collection_id, since)
+                        self.consume_change_page(result)
+                        since = str(result.get("cursor", since))
+                        self.feed_revisions[collection_id] = since
+                        if not result.get("more"): break
+                self.feed_healthy = bool(self.mounted_collections)
+                self.feed_failures = 0
+                await trio.sleep(CHANGE_POLL_SECONDS)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                self.feed_healthy = False
+                self.feed_failures += 1
+                emit("change-feed-unhealthy", logging.WARNING, error=str(error))
+                await trio.sleep(min(30.0, CHANGE_POLL_SECONDS * (2 ** min(self.feed_failures, 5))))
+
+    async def invalidation_worker(self):
+        """Apply queued invalidations outside request handlers, independent of network delays."""
+        while True:
+            if self.pending_tree_reset:
+                self.pending_tree_reset = False
+                self.pending_invalidations.clear()
+                self.invalidate_tree()
+            else:
+                for path in tuple(self.pending_invalidations):
+                    self.pending_invalidations.pop(path, None)
+                    self.invalidate_path(path)
+            await trio.sleep(0.05)
 
     def _describe(self, describe, args):
         try:
@@ -639,7 +855,8 @@ class SullaFiles(pyfuse3.Operations):
         name = os.fsdecode(name)
         path = "/".join(filter(None, [parent["path"], name]))
         inode = self.path_inode.get(path)
-        if inode is not None:
+        cached_node = self.nodes.get(inode) if inode is not None else None
+        if inode is not None and cached_node is not None and not cached_node.get("stale"):
             return inode
         collection_id = parent.get("collectionId")
         try:
@@ -650,13 +867,18 @@ class SullaFiles(pyfuse3.Operations):
                 self.nodes[pyfuse3.ROOT_INODE]["collectionId"] = collection_id
         except OSError as error:
             if getattr(error, "status", None) == 404 or error.errno == errno.ENOENT:
+                if inode is not None: self._forget_subtree(path)
                 raise pyfuse3.FUSEError(errno.ENOENT) from error
             raise
         if not collection_id:
             raise pyfuse3.FUSEError(errno.ENOENT)
-        inode = self._node(path, row.get("kind") == "directory")
+        if inode is None or cached_node is None:
+            inode = self._node(path, row.get("kind") == "directory")
+        elif cached_node.get("versionId") != row.get("versionId"):
+            cached_node.pop("sourceHash", None)
+        self.nodes[inode]["directory"] = row.get("kind") == "directory"
         self.nodes[inode].update({**row, "path": path, "filesPath": self._files_path(path, collection_id), "collectionId": collection_id,
-                                  "mtimeMs": _mtime_ms(row.get("updated_at"))})
+                                  "mtimeMs": _mtime_ms(row.get("updated_at")), "stale": False})
         return inode
 
     def _node(self, path, directory):
@@ -741,8 +963,9 @@ class SullaFiles(pyfuse3.Operations):
         timestamp = int(node.get("mtimeMs", time.time() * 1000) * 1_000_000)
         attrs.st_atime_ns = attrs.st_mtime_ns = attrs.st_ctime_ns = timestamp
         attrs.generation = 0
-        attrs.entry_timeout = 0
-        attrs.attr_timeout = 0
+        timeout = ATTR_TIMEOUT_SECONDS if getattr(self, "feed_healthy", False) else 0.0
+        attrs.entry_timeout = timeout
+        attrs.attr_timeout = timeout
         return attrs
 
     @traced("getattr", lambda s, a: s._inode_info(a[0], a[-1]))
@@ -855,9 +1078,44 @@ class SullaFiles(pyfuse3.Operations):
                 data = self._render_folder_metadata(node, current)
                 version_id, source_hash = str(current.get("revision", "")), ""
             else:
+                # The change feed is an optimization, never the source of truth for an
+                # immutable content-cache key: a missed event must not serve old bytes.
+                current_entry = None
+                entry = getattr(self.api, "entry", None)
+                if callable(entry):
+                    try:
+                        current_entry = await entry(node["collectionId"], node["filesPath"])
+                    except Exception as error:
+                        # Revalidation is an optimization. If it is unavailable, the
+                        # normal read-by-id path below still fetches the complete file.
+                        emit("read-revalidation-failed", logging.WARNING, error=str(error))
+                if current_entry is not None:
+                    fresh_version = str(current_entry.get("versionId") or current_entry.get("current_version_id") or "")
+                    old_version = str(node.get("versionId") or node.get("current_version_id") or "")
+                    if fresh_version != old_version:
+                        node.pop("pageCacheVersion", None)
+                        node["versionId"] = fresh_version
+                        node["size"] = int(current_entry.get("size") or 0)
                 temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
                 try:
-                    version_id, source_hash = await self.api.read_to_file(node["id"], temporary)
+                    version_id = str(node.get("versionId") or node.get("current_version_id") or "")
+                    source_hash = str(node.get("sourceHash") or "")
+                    cache = self._cache() if current_entry is not None else None
+                    cache_hit = False
+                    if cache is not None:
+                        try:
+                            cache_hit = callable(getattr(cache, "get", None)) and cache.get(
+                                version_id, source_hash, int(node.get("size", 0)), temporary)
+                        except Exception as error:
+                            emit("read-cache-read-failed", logging.WARNING, error=str(error))
+                    if not cache_hit:
+                        version_id, source_hash = await self.api.read_to_file(node["id"], temporary)
+                        try:
+                            cache = self._cache()
+                            put = getattr(cache, "put", None) if cache else None
+                            if callable(put): put(version_id, source_hash, temporary, temporary.tell())
+                        except Exception as error: emit("read-cache-write-failed", logging.WARNING, error=str(error))
+                    node["versionId"], node["sourceHash"] = version_id, source_hash
                 except BaseException:
                     temporary.close()
                     raise
@@ -892,8 +1150,12 @@ class SullaFiles(pyfuse3.Operations):
             # Keep that empty intermediate state from becoming a spurious version.
             self.handles[handle]["truncateOnly"] = had_content
         info = pyfuse3.FileInfo(fh=handle)
-        info.keep_cache = False
-        info.direct_io = True
+        writable = bool(flags & (os.O_WRONLY | os.O_RDWR))
+        # Read-only opens may use kernel page cache only while push invalidation is healthy.
+        info.keep_cache = bool(not writable and self.feed_healthy and version_id and node.get("pageCacheVersion") == version_id)
+        if not writable and version_id:
+            node["pageCacheVersion"] = version_id
+        info.direct_io = not info.keep_cache
         return info
 
     def _render_folder_metadata(self, node, current):
@@ -1074,6 +1336,8 @@ class SullaFiles(pyfuse3.Operations):
         # The result's `path` is collection-relative; the node keys on its full mount path.
         node.update({key: value for key, value in result.items() if key != "path"})
         node["size"] = handle["size"]
+        node["versionId"], node["sourceHash"] = handle.get("versionId"), handle.get("sourceHash")
+        self.queue_invalidation(node.get("path", ""))
         self.snapshot_at = 0.0
         emit("file-committed", path=node.get("path"), fileId=handle.get("fileId"), bytes=handle["size"], actor=handle.get("actor"),
              merged=merged or None, metadata=bool(node.get("virtualMetadata")) or None, versionId=handle.get("versionId") or None)
@@ -1151,6 +1415,7 @@ class SullaFiles(pyfuse3.Operations):
         # The file was just created empty: open it from what we know instead of downloading it back.
         if len(self.handles) >= MAX_OPEN_HANDLES: raise pyfuse3.FUSEError(errno.EMFILE)
         info=await self._open_handle(inode,flags,ctx,b"",str(row.get("current_version_id") or row.get("versionId") or ""),EMPTY_SHA256)
+        self.queue_invalidation(path)
         return info,self._attrs(inode)
 
     @traced("rename", lambda s, a: {**s._child_info(a[0], a[1], a[-1]), "to": s._child_info(a[2], a[3])["path"]}, mutating=True)
@@ -1202,6 +1467,8 @@ class SullaFiles(pyfuse3.Operations):
         self.directory_complete.discard(parent["path"])
         self.directory_etags.pop(target_parent["path"], None)
         self.directory_complete.discard(target_parent["path"])
+        self.queue_invalidation(old_path)
+        self.queue_invalidation(new_path)
 
     @traced("unlink", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def unlink(self, parent_inode, name, ctx):
@@ -1212,6 +1479,7 @@ class SullaFiles(pyfuse3.Operations):
         self._forget(path)
         self.directory_etags.pop(os.path.dirname(path), None)
         self.directory_complete.discard(os.path.dirname(path))
+        self.queue_invalidation(path)
 
     @traced("mkdir", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
     async def mkdir(self, parent_inode, name, mode, ctx):
@@ -1220,6 +1488,7 @@ class SullaFiles(pyfuse3.Operations):
         try: await self._as_actor(await self._actor(ctx), self.api.mkdir(parent["collectionId"],self._files_path(path,parent["collectionId"])))
         except OSError as error: raise pyfuse3.FUSEError(error.errno) from error
         inode=self._node(path,True); self.nodes[inode].update({"collectionId":parent["collectionId"]})
+        self.queue_invalidation(path)
         return self._attrs(inode)
 
     @traced("rmdir", lambda s, a: s._child_info(a[0], a[1], a[-1]), mutating=True)
@@ -1231,6 +1500,7 @@ class SullaFiles(pyfuse3.Operations):
         self._forget(path)
         self.directory_etags.pop(parent["path"], None)
         self.directory_complete.discard(parent["path"])
+        self.queue_invalidation(path)
 
     def _metadata_path(self, node):
         return self._files_path(node["path"], node["collectionId"])
@@ -1332,6 +1602,8 @@ async def main(options):
             nursery.start_soon(heartbeat, operations)
             nursery.start_soon(report_status, operations, status)
             nursery.start_soon(warm_tree, operations, status)
+            nursery.start_soon(operations.follow_changes)
+            nursery.start_soon(operations.invalidation_worker)
             await pyfuse3.main()
             nursery.cancel_scope.cancel()
     except BaseException as error:
