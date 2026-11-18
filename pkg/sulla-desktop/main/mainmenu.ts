@@ -265,6 +265,7 @@ function getFileMenu(): MenuItem {
     submenu: [
       {
         label:       'New Agent Tab',
+        accelerator: 'CmdOrCtrl+N',
         click:       () => sendAgentCommand('new-chat-tab'),
       },
       {
@@ -276,6 +277,7 @@ function getFileMenu(): MenuItem {
       },
       {
         label:       'New Browser Tab',
+        accelerator: 'CmdOrCtrl+T',
         click:       () => sendAgentCommand('new-browser-tab'),
       },
       { type: 'separator' },

@@ -15,6 +15,8 @@ export class WindowContextInitializer {
     // This function serves as the explicit initialization hook
     console.log('[WindowContext] Sulla window context initialized');
 
+    const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
+
     // Get the user data path from main process
     const { ipcRenderer } = require('electron');
     try {
@@ -28,6 +30,9 @@ export class WindowContextInitializer {
       // Every window awaits this before mounting, so only hold the mount for a
       // short bound; on a cold boot finish bootstrapping in the background so
       // the loading overlay can render while Redis/Postgres come up.
+      if (windowKey !== 'main') {
+        void SullaSettingsModel.bootstrap().catch((error: unknown) => console.error('[WindowContext] Secondary settings bootstrap failed:', error));
+      } else {
       const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends');
       const readyInTime = await Promise.race([
         backendsReady.then(() => true),
@@ -41,6 +46,7 @@ export class WindowContextInitializer {
         backendsReady
           .then(() => SullaSettingsModel.bootstrap())
           .catch((error: unknown) => console.error('[WindowContext] Failed to initialize settings:', error));
+      }
       }
     } catch (error) {
       console.error('[WindowContext] Failed to initialize settings:', error);

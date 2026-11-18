@@ -8,6 +8,7 @@
  */
 // hoping this is the absolute earliest we can run in the renderer context
 import { initiateWindowContext } from '@pkg/sulla';
+import '@pkg/composables/useBrowserTabs'; // register transfer IPC before the startup await
 
 import { createApp } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';

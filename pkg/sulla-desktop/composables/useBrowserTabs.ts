@@ -863,3 +863,27 @@ export function closeTabByAssetId(assetId: string): boolean {
 
   return true;
 }
+
+// Transfer IPC is registered as the store module evaluates, before AgentRouter mounts.
+// This lets a freshly-created window acknowledge adoption while its UI is still booting.
+const transferTabs = useBrowserTabs();
+ipcRenderer.on('tabs:release', (_event: unknown, transferId: string, tabId: string) => {
+  transferTabs.releaseTab(tabId);
+  ipcRenderer.send('tabs:transfer-released', transferId, tabId);
+});
+ipcRenderer.on('tabs:adopt', (_event: unknown, transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>) => {
+  const tabId = String(descriptor.id || '');
+  if (!tabId) return;
+  transferTabs.adoptTab(descriptor as BrowserTab, undefined, transient);
+  ipcRenderer.send('tabs:transfer-adopted', transferId, tabId);
+});
+ipcRenderer.on('tabs:activate', (_event: unknown, _transferId: string, tabId: string) => {
+  if (transferTabs.tabs.some(tab => tab.id === tabId)) {
+    persistActiveTabId(tabId);
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId } }));
+  }
+});
+ipcRenderer.on('tabs:release-finalize', () => {
+  if (transferTabs.tabs.length === 0) ipcRenderer.send('agent-window:close-self');
+});
+ipcRenderer.send('tabs:transfer-ready');

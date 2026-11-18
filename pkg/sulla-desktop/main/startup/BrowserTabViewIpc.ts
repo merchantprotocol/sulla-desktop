@@ -87,7 +87,9 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
     // events from the previously visible tab cannot hide the newly active tab.
     ipc.handle('browser-tab-view:focus', async(event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => {
       const owner = ownerWindow(event);
-      if (tabId && tabViewManager.getOwnerWindow(tabId)) assertOwner(event, tabId);
+      const tabOwner = tabId ? tabViewManager.getOwnerWindow(tabId) : null;
+      if (tabId && !tabOwner) return;
+      if (tabOwner && tabOwner !== owner) throw new Error(`Browser tab \"${ tabId }\" is not owned by this window`);
       const clearOwner = clearOnlyIfFocusedTabId ? tabViewManager.getOwnerWindow(clearOnlyIfFocusedTabId) : null;
       if (clearOwner && clearOwner !== owner) throw new Error('Browser tab is not owned by this window');
       tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId, sentAt, owner);
