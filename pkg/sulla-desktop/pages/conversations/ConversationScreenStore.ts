@@ -8,20 +8,30 @@ export const CONV_STORE = Symbol('conversations-screen-store');
 
 /** One row in the org switcher. Comes from the org conversations IPC. */
 export interface OrgView { id: string; name: string; initials: string; memberCount: number }
-/** A member of the active org, from the directory IPC. */
-export interface PersonView { id: string; name: string; initials: string; presence: string; agentOnline: boolean }
-/** A projected conversation for the active org. */
-export interface ThreadView { id: string; kind: 'direct' | 'group' | 'agent_thread'; title: string; participantIds: string[]; latest: string; time: string }
+/** Avatar gradient tone from the mockup: '' (blue), m (amber), d (violet), p (green), a (you). */
+export type AvatarTone = '' | 'm' | 'd' | 'p' | 'a';
+/** Presence dot class from the mockup. An empty value means online (the default green dot). */
+export type PresenceClass = 'online' | 'busy' | 'away' | 'offline';
+/** A member of the active org, from the directory IPC. Role is empty when the directory doesn't send one. */
+export interface PersonView { id: string; name: string; firstName: string; initials: string; tone: AvatarTone; presence: string; presenceClass: PresenceClass; status: string; role: string; agentOnline: boolean }
+/** A projected conversation for the active org. `withId` is the other person in a direct or agent thread. */
+export interface ThreadView { id: string; kind: 'direct' | 'group' | 'agent_thread'; title: string; participantIds: string[]; latest: string; time: string; unread: number; withId: string }
 /** A pending contact request (read-only). Accepting or declining is not wired yet. */
 export interface RequestView { senderId: string; name: string; initials: string; latest: string; time: string; count: number }
-/** One message row. Text is plain user content and is rendered escaped. */
-export interface MessageView { id: string; side: 'me' | 'person' | 'agent'; name: string; initials: string; time: string; text: string }
+/**
+ * One message row. Text is plain user content and is rendered escaped. `side` picks the mockup template:
+ * me (youMsg), person (pMsg), agent (agentMsg, `theirs` for another member's agent) or system (a .sys pill).
+ * `day` is the divider label (TODAY, YESTERDAY, MONDAY...) for the message's calendar day.
+ */
+export interface MessageView { id: string; side: 'me' | 'person' | 'agent' | 'system'; name: string; initials: string; tone: AvatarTone; theirs: boolean; actsFor: string; time: string; day: string; text: string; sysTone: '' | 'bad' }
 
 /** Everything the screens render. The root builds it from the real IPC data only. */
 export interface LiveSnapshot {
   orgId: string;
   orgName: string;
   orgs: OrgView[];
+  /** The signed-in member (the YOU group). Null until the directory lists them. */
+  me: PersonView | null;
   people: PersonView[];
   threads: ThreadView[];
   requests: RequestView[];
@@ -61,11 +71,12 @@ export class ConversationScreenStore {
 
   orgs(): OrgView[] { return this.snapshot?.orgs ?? []; }
   org(): OrgView { return this.orgs().find(org => org.id === this.s.org) ?? { id: '', name: '', initials: '', memberCount: 0 }; }
+  me(): PersonView | null { return this.snapshot?.me ?? null; }
   people(): PersonView[] { return this.snapshot?.people ?? []; }
   requests(): RequestView[] { return this.snapshot?.requests ?? []; }
   threads(): ThreadView[] { return this.snapshot?.threads ?? []; }
   thread(id: string | null): ThreadView | undefined { return id ? this.threads().find(thread => thread.id === id) : undefined; }
-  personFor(id: string): PersonView | undefined { return this.people().find(person => person.id === id); }
+  personFor(id: string): PersonView | undefined { return this.people().find(person => person.id === id) ?? (this.me()?.id === id ? this.me() ?? undefined : undefined); }
   bodyFor(id: string | null): MessageView[] { return id && this.snapshot ? this.snapshot.bodies[id] ?? [] : []; }
 
   /** Agent threads and the main list come from projected data. Followed threads and notes have no backend yet. */

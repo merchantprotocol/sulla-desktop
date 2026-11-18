@@ -32,13 +32,13 @@ const members = computed(() => (thread.value?.participantIds ?? []).map(id => st
     <template v-else-if="thread?.kind === 'group'">
       <h3>Members · {{ members.length }}</h3>
       <div class="card">
-        <div v-for="person in members" :key="person.id" class="memb"><ConvAvatar :ini="person.initials" size="sm" />{{ person.name }}<small>{{ person.presence || 'Not online' }}</small></div>
+        <div v-for="person in members" :key="person.id" class="memb"><ConvAvatar :ini="person.initials" :color="person.tone" size="sm" />{{ person.name }}<small>{{ person.presence || 'Not online' }}</small></div>
       </div>
     </template>
     <template v-else-if="thread">
       <h3>Person</h3>
       <div class="card">
-        <div v-for="person in members" :key="person.id" class="agent-id"><ConvAvatar :ini="person.initials" size="lg" :pres="person.presence.toLowerCase() === 'online' ? 'online' : 'offline'" /><div><b>{{ person.name }}</b><small>{{ person.presence || 'Not online' }}</small></div></div>
+        <div v-for="person in members" :key="person.id" class="agent-id"><ConvAvatar :ini="person.initials" :color="person.tone" size="lg" :pres="person.presenceClass" /><div><b>{{ person.name }}</b><small>{{ person.presence || 'Not online' }}</small></div></div>
         <button class="btn sm" disabled title="Coming soon" style="margin-top:10px"><ConvIcon name="video" />Call</button>
       </div>
     </template>
