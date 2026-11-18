@@ -17,6 +17,8 @@ SOAK_TOKEN_TEST=1 ./files-soak.sh token-empty   # opt-in: empties the adapter to
 ./files-soak.sh env-info                 # images, digests, migrations 067/068, Files metrics probe
 ./files-soak.sh all                      # full sequence (< ~25 min, < 500 MB of QA data)
 ./files-soak.sh summary                  # compact table for the latest run
+./files-soak.sh before-after-summary <run> # one compact JSON object of key numbers for a run label
+./files-soak.sh api-write <rel path> <content>  # write through the Files HTTP API (from inside sulla_files_fuse)
 ./files-soak.sh cleanup                  # removes the soak folder and test containers, separately
 ```
 
@@ -39,21 +41,22 @@ Every check prints one JSON line and appends it to `~/sulla-twodev/soak/results.
 | Current | `/mnt/sulla-files` | `/mnt/sulla-files:/mnt/sulla-files:rslave` |
 | Future | `/mnt/sulla/files` (FUSE on the anchor's parent) | `/mnt/sulla:/mnt/sulla:rslave` |
 
-The mount is `/mnt/sulla/files` when that path is a real mountpoint, otherwise `/mnt/sulla-files`. Overrides: `SOAK_MOUNT`, `SOAK_BIND_SPEC` (`src:dst:propagation`), `SOAK_FILES_CONTAINER` (default `sulla_files`), `SOAK_FUSE_CONTAINER` (`sulla_files_fuse`), `SOAK_PG_CONTAINER` / `SOAK_PG_USER` / `SOAK_PG_DB` (`sulla_postgres`, `sulla`, `sulla`), `SOAK_FUSE_TOKEN_FILE` (`/run/sulla-files-fuse/token`), `SOAK_FUSE_URL` (`https://sulla_files:8792`), `SOAK_TEST_IMAGE` (defaults to `alpine:*`, `busybox:*`, or the FUSE image).
+The mount is `/mnt/sulla/files` when `mountpoint -q /mnt/sulla/files` succeeds, otherwise `/mnt/sulla-files`. Test containers always see the Files mount at the same path the VM uses (`/mnt/sulla/files` in the new layout). Overrides: `SOAK_MOUNT`, `SOAK_BIND_SPEC` (`src:dst:propagation`), `SOAK_FILES_CONTAINER` (default `sulla_files`), `SOAK_FUSE_CONTAINER` (`sulla_files_fuse`), `SOAK_PG_CONTAINER` / `SOAK_PG_USER` / `SOAK_PG_DB` (`sulla_postgres`, `sulla`, `sulla`), `SOAK_FUSE_TOKEN_FILE` (`/run/sulla-files-fuse/token`), `SOAK_FUSE_URL` (`https://sulla_files:8792`), `SOAK_TEST_IMAGE` (defaults to `alpine:*`, `busybox:*`, or the FUSE image).
 
 Other knobs: `SOAK_INVALIDATE_WINDOW` (5 s), `SOAK_OUTAGE_A_SECONDS` (45), `SOAK_OUTAGE_B_SECONDS` (120), `SOAK_LOCK_SECONDS` (30), `SOAK_LATENCY_P95_MS` (1000), `SOAK_LATENCY_LOAD_SECONDS` (20), `SOAK_API_SAMPLE` (40), `SOAK_TOKEN_SECONDS` (20), `SOAK_DESKTOP_VERSION` (for `env-info`), `SOAK_RUN` (run id, summary selector).
 
 ## What each phase proves
 
 - **restart-propagation** (acceptance 1): starts a throwaway `fusesoak-<ts>` container with no restart policy, bound the way agent containers bind Files, writes, runs `docker restart sulla_files_fuse`, waits for the VM mount, then does a new ls/write/read in the **same** container. It fails with the errno text if the mount stays dead for that container (`ENOTCONN`). This is the bind-layout check from the review: the fix to bind the anchor's parent should make it pass.
-- **outage** (acceptance 2): four checksummed writers run through the mount. Sub-test A stops `sulla_files` for 45 s, restarts it and reports per-op success, failure, latency. Sub-test B stops it for 120 s with probes bounded at 150 s; a probe still running at 150 s counts as a hang. Recovery is a fresh write+read. Every successful write is checksum-verified afterward. A `finally` always restarts `sulla_files`.
+- **outage** (acceptance 2): four checksummed writers run through the mount. A write is retried until it succeeds. Sub-test A stops `sulla_files` for 45 s. Pass requires every write started in the window to eventually succeed (`writes_failed == 0`) and every successful write to checksum. Sub-test B stops it for 120 s with probes bounded at 150 s. Pass requires no hang, no op over 150 s, and only clean errnos. Recovery is a fresh write+read. A `finally` always restarts `sulla_files`.
+- **mount readiness**: before each measured phase the mount must answer `ls` within 120 s. A recovery is recorded as `mount-recovery-before-<phase>` with its time.
 - **handles** (acceptance 2): opens 100 files in the VM and in two test containers, holds them, writes and reads, then closes. The adapter cap (`MAX_OPEN_HANDLES = 32`) shows up here as EMFILE. Pass means all 100 open in every place.
 - **token-empty** (acceptance 2, opt-in): backs up the token inside the FUSE container (`*.soak-bak`, never printed), empties it, restarts the adapter, waits, counts EACCES and retry log lines, then restores in a `finally`. Pass requires the restore and mount recovery within 120 s. Skipped by default and in `all`.
 - **lock-contention** (acceptance 3): in one collection, runs creators, mv-over-existing movers and mkdir/rmdir loops in parallel for `SOAK_LOCK_SECONDS`. Counts EIO separately from other errors and reports latency per op kind.
 - **latency** (acceptance 5): 500 files stat'd idle and under a 10 MiB write load; read first vs repeat p50 on 20 files.
-- **staleness** (acceptance 5): writes a new file and then modifies an existing one through the Files upload API from inside `sulla_files_fuse` (token stays there), then polls through the mount. Pass requires visibility within window + slack and no stale reads after the window.
+- **staleness** (acceptance 5): writes a new file (POST `/v1/fuse/files`) and then modifies an existing one (PUT `/v1/fuse/files/{id}/content` with `If-Match`) from inside `sulla_files_fuse` (token stays there), then polls through the mount. The collection id comes from `/v1/collections` by name, or the home collection from `/v1/fuse/directory` when the mount root is the personal collection (`SOAK_PARENT`). Pass requires visibility within window + slack and no stale reads after the window.
 - **eio-capture** (acceptance 2): for every EIO the harness saw, pulls `docker logs -t --since` from `sulla_files` and `sulla_files_fuse` and counts status/code fields within ±2 s. Paths are dropped.
-- **env-info**: container images, image IDs, repo digests, Desktop version (set `SOAK_DESKTOP_VERSION`; unknown otherwise), migrations 067/068 in `files_schema_migrations`, and a probe of `/internal/metrics` and `/metrics` for pool-wait and fsync names. The probe skips gracefully when there is none.
+- **env-info**: container images, image IDs, repo digests, Desktop version (set `SOAK_DESKTOP_VERSION`; unknown otherwise), migrations 067/068 in `files_schema_migrations`, and `GET /v1/local/files-metrics` probed inside `sulla_files` with its local token (`x-sulla-files-token`). Only the numeric fields are recorded.
 - **fuse-identity** (acceptance 4): prints the adapter's id, created, `State.StartedAt`, image, image ID and restart count. Run it before and after a Desktop compose regeneration and compare.
 - **integrity** (acceptance 11): every ledger row written by any phase is checksum-verified through the mount. A sample is verified through the Files API (via the in-container helper, token never leaves the container). Crash-phase writes are checksum-checked in the `crash` phase and added to the ledger for this integrity pass.
 

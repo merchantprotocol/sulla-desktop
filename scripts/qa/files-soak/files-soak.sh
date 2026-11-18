@@ -8,19 +8,24 @@
 # stop, restart and kill Files services. Standard library only; no installs.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PHASES="bulk append ops crash load cloud restart-propagation outage handles token-empty lock-contention latency staleness eio-capture env-info fuse-identity integrity summary all cleanup"
+PHASES="bulk append ops crash load cloud restart-propagation outage handles token-empty lock-contention latency staleness eio-capture env-info fuse-identity integrity summary before-after-summary api-write all cleanup"
 if [[ $# -lt 1 ]]; then
-  echo "usage: files-soak.sh <$(echo $PHASES | tr ' ' '|')> [--with-app-restart]" >&2
+  echo "usage: files-soak.sh <$(echo $PHASES | tr ' ' '|')> [--with-app-restart] [phase arguments]" >&2
   exit 2
 fi
 
 PHASE=""
 WITH_APP_RESTART="false"
+EXTRA_ARGS=()
 for arg in "$@"; do
   case "$arg" in
     --with-app-restart) WITH_APP_RESTART="true" ;;
     *)
-      if [[ " $PHASES " == *" $arg "* ]]; then PHASE="$arg"; else echo "unknown argument: $arg" >&2; exit 2; fi
+      if [[ -z "$PHASE" ]]; then
+        if [[ " $PHASES " == *" $arg "* ]]; then PHASE="$arg"; else echo "unknown phase: $arg" >&2; exit 2; fi
+      else
+        EXTRA_ARGS+=("$arg")
+      fi
       ;;
   esac
 done
@@ -34,7 +39,7 @@ if [[ -z "$PHASE" ]]; then echo "usage: files-soak.sh <phase|all|cleanup> [--wit
 #   SOAK_INVALIDATE_WINDOW (s, default 5)  staleness window; SOAK_LOCK_SECONDS, SOAK_LATENCY_P95_MS
 #   SOAK_OUTAGE_A_SECONDS (45), SOAK_OUTAGE_B_SECONDS (120), SOAK_TOKEN_TEST=1 (opt-in token-empty), SOAK_API_SAMPLE (40)
 #   SOAK_MINUTES (load phase duration; `all` runs load only when set), SOAK_TEST_IMAGE, SOAK_RUN
-exec python3 -I - "$PHASE" "$WITH_APP_RESTART" <<'PYTHON'
+exec python3 -I - "$PHASE" "$WITH_APP_RESTART" "${EXTRA_ARGS[@]}" <<'PYTHON'
 # Sulla Desktop · https://sulladesktop.com
 # Copyright (c) 2025-2026 Merchant Protocol LLC.
 # SPDX-License-Identifier: GPL-2.0-or-later
@@ -77,26 +82,42 @@ def env_float(name, default, low, high):
     return max(low, min(value, high))
 
 
+def is_mountpoint(path):
+    try:
+        return subprocess.run(["mountpoint", "-q", path], timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return os.path.ismount(path)
+
+
+def new_layout():
+    """New layout (PR #2610): FUSE mounts at /mnt/sulla/files and /mnt/sulla-files is a symlink to it."""
+    return is_mountpoint("/mnt/sulla/files")
+
+
 def detect_mount():
-    """Current layout mounts FUSE at /mnt/sulla-files; the future layout mounts it at /mnt/sulla/files."""
+    """Current layout mounts FUSE at /mnt/sulla-files; the new layout mounts it at /mnt/sulla/files."""
     if ENV.get("SOAK_MOUNT"):
         return Path(ENV["SOAK_MOUNT"])
-    future = Path("/mnt/sulla/files")
-    if os.path.ismount(str(future)):
-        return future
-    return Path("/mnt/sulla-files")
+    return Path("/mnt/sulla/files") if new_layout() else Path("/mnt/sulla-files")
 
 
-def bind_spec(mount):
+def bind_spec():
     """The bind agent containers use. The new layout binds the anchor's parent /mnt/sulla rslave."""
     if ENV.get("SOAK_BIND_SPEC"):
         return ENV["SOAK_BIND_SPEC"]
-    if str(mount).startswith("/mnt/sulla/files"):
-        return "/mnt/sulla:/mnt/sulla:rslave"
-    return "/mnt/sulla-files:/mnt/sulla-files:rslave"
+    return "/mnt/sulla:/mnt/sulla:rslave" if new_layout() else "/mnt/sulla-files:/mnt/sulla-files:rslave"
+
+
+def errno_of_text(text):
+    """Map an OS error string, as printed by the shell or Python, back to its errno name (or None)."""
+    for code, name in errno.errorcode.items():
+        if os.strerror(code) == text:
+            return name
+    return None
 
 
 MOUNT = detect_mount()
+MOUNT_WAIT_S = 120  # every phase starts only once the mount answers ls within this bound
 STATE_DIR = Path.home() / "sulla-twodev" / "soak"
 RESULTS = STATE_DIR / "results.jsonl"
 STATE = STATE_DIR / "state.json"
@@ -152,16 +173,6 @@ def find_id(node, name):
             if found is not None:
                 return found
     return None
-def find_key(node, keys):
-    if isinstance(node, dict):
-        for key in keys:
-            if node.get(key) is not None:
-                return node[key]
-        for value in node.values():
-            found = find_key(value, keys)
-            if found is not None:
-                return found
-    return None
 request = json.loads(sys.stdin.read() or "{}")
 action = request.get("action")
 out = {"action": action}
@@ -179,15 +190,36 @@ if action == "metrics":
             out["metric_names"] = sorted({n for n in names if "pool" in n or "fsync" in n})[:30]
             break
     out["probed"] = seen
-elif action == "resolve":
-    status, data = call("GET", "/v1/collections")
-    out["status"] = status
-    out["collectionId"] = find_id(json.loads(data), request["name"]) if status == 200 else None
-elif action == "put":
+if action == "resolve":
+    collection_id, via = None, None
+    if request.get("name"):
+        status, data = call("GET", "/v1/collections")
+        out["collections_status"] = status
+        if status == 200:
+            collection_id = find_id(json.loads(data), request["name"])
+            via = "collection-name" if collection_id is not None else None
+    if collection_id is None:
+        status, data = call("GET", "/v1/fuse/directory?" + urllib.parse.urlencode({"path": ""}))
+        out["directory_status"] = status
+        if status == 200:
+            collection_id, via = json.loads(data).get("rootCollectionId"), "home"
+    out.update({"collectionId": collection_id, "via": via})
+elif action == "write":
     started = time.monotonic()
+    content = request["content"].encode("utf-8")
+    digest = hashlib.sha256(content).hexdigest()
     query = urllib.parse.urlencode({"collectionId": request["collectionId"], "path": request["path"]})
-    status, data = call("PUT", "/v1/files/upload?" + query, body=request["content"].encode("utf-8"), headers={"Content-Type": "application/octet-stream"})
-    out.update({"status": status, "ms": round((time.monotonic() - started) * 1000, 2)})
+    status, data = call("GET", "/v1/fuse/entry?" + query)
+    entry = json.loads(data) if status == 200 else {}
+    if entry.get("kind") == "file" and entry.get("id") and entry.get("versionId"):
+        headers = {"Content-Type": "application/octet-stream", "If-Match": '"%s"' % entry["versionId"],
+                   "X-Sulla-Source-Hash": digest, "X-Sulla-Content-Hash": digest}
+        status, data = call("PUT", "/v1/fuse/files/%s/content" % urllib.parse.quote(str(entry["id"]), safe=""), body=content, headers=headers)
+        out["mode"] = "overwrite"
+    else:
+        status, data = call("POST", "/v1/fuse/files?" + query, body=content, headers={"Content-Type": "application/octet-stream"})
+        out["mode"] = "create"
+    out.update({"status": status, "ms": round((time.monotonic() - started) * 1000, 2), "sha256": digest})
 elif action == "verify":
     counts = collections.Counter()
     for path, expected in request["items"]:
@@ -197,7 +229,7 @@ elif action == "verify":
             counts["unresolved"] += 1
             counts["entry_http_%d" % status] += 1
             continue
-        file_id = find_key(json.loads(data), ("id", "fileId", "file_id"))
+        file_id = json.loads(data).get("id")
         if file_id is None:
             counts["unresolved"] += 1
             continue
@@ -210,6 +242,29 @@ elif action == "verify":
             counts["mismatch"] += 1
     out["counts"] = dict(counts)
 print(json.dumps(out))
+'''
+
+# Runs inside sulla_files (node). The local token comes from the container env and is never printed:
+# only the HTTP status and the JSON body of GET /v1/local/files-metrics leave the container.
+METRICS_PROBE = r'''
+const https = require('https'), http = require('http');
+const token = process.env.SULLA_FILES_LOCAL_TOKEN || '';
+const port = process.env.SULLA_FILES_PORT || '8792';
+if (!token) { console.log(JSON.stringify({ error: 'no_local_token' })); process.exit(0); }
+function get(client, options) {
+  return new Promise(resolve => {
+    const req = client.request(options, res => { let body = ''; res.on('data', c => body += c); res.on('end', () => resolve({ status: res.statusCode, body })); });
+    req.on('error', e => resolve({ error: e.code || e.name }));
+    req.setTimeout(10000, () => { req.destroy(); resolve({ error: 'timeout' }); });
+    req.end();
+  });
+}
+const options = { host: '127.0.0.1', port, path: '/v1/local/files-metrics', method: 'GET', headers: { 'x-sulla-files-token': token }, rejectUnauthorized: false };
+(async () => {
+  let result = await get(https, options);
+  if (result.error) result = await get(http, options);
+  console.log(JSON.stringify(result));
+})();
 '''
 
 
@@ -258,46 +313,65 @@ def parse_rfc3339(text):
 
 
 class ChurnWriter(threading.Thread):
-    """Writes checksummed 256 KiB files until stopped. A hung write just leaves `pending` set."""
+    """Writes checksummed 256 KiB files. Each logical write is retried until it succeeds or `give_up` is set.
 
-    def __init__(self, folder, tag, stop_event, pace=0.2):
+    A write that fails during an outage is not dropped: it keeps retrying, so a write started during the
+    outage either completes after recovery (ok) or is still outstanding when `give_up` fires (failed).
+    `pending` is the logical write in flight; a hung write leaves it set.
+    """
+
+    def __init__(self, folder, tag, give_up, pace=0.2, retry_pause=0.5):
         super().__init__(daemon=True)
         self.folder = folder
         self.tag = tag
-        self.stop_event = stop_event
+        self.stop_event = threading.Event()  # set = start no new logical writes
+        self.give_up = give_up  # set = abandon the logical write in flight
         self.pace = pace
-        self.rows = []  # (name, sha256) for writes that returned success
-        self.ops = []  # (latency_ms, ok, error_key)
+        self.retry_pause = retry_pause
+        self.rows = []  # (name, sha256) for logical writes that completed
+        self.logical = []  # dicts: name, started, ended, ok, attempts, errors
+        self.ops = []  # (started_monotonic, latency_ms, ok, error_key) per attempt
         self.pending = None
         self.index = 0
 
     def run(self):
-        while not self.stop_event.is_set():
+        while not self.stop_event.is_set() and not self.give_up.is_set():
             name = "%s-%06d.bin" % (self.tag, self.index)
             self.index += 1
             data = hashlib.sha256(name.encode()).digest() * 8192
             sha = hashlib.sha256(data).hexdigest()
-            started = time.monotonic()
-            self.pending = (name, started)
-            try:
-                with (self.folder / name).open("wb") as handle:
-                    handle.write(data)
-                    handle.flush()
-                    os.fsync(handle.fileno())
+            record = {"name": name, "started": time.monotonic(), "ended": None, "ok": False, "attempts": 0, "errors": collections.Counter()}
+            self.pending = record
+            while not self.give_up.is_set():
+                attempt_started = time.monotonic()
+                record["attempts"] += 1
+                try:
+                    with (self.folder / name).open("wb") as handle:
+                        handle.write(data)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    self.ops.append((attempt_started, (time.monotonic() - attempt_started) * 1000, True, ""))
+                    record["ok"] = True
+                    break
+                except OSError as exc:
+                    key = err_key(exc)
+                    record["errors"][key] += 1
+                    self.ops.append((attempt_started, (time.monotonic() - attempt_started) * 1000, False, key))
+                    self.give_up.wait(self.retry_pause)
+            record["ended"] = time.monotonic()
+            self.logical.append(record)
+            if record["ok"]:
                 self.rows.append((name, sha))
-                self.ops.append(((time.monotonic() - started) * 1000, True, ""))
-            except OSError as exc:
-                self.ops.append(((time.monotonic() - started) * 1000, False, err_key(exc)))
-            finally:
-                self.pending = None
+            self.pending = None
             self.stop_event.wait(self.pace)
 
 
 class FilesSoak:
-    def __init__(self, phase, with_app_restart):
+    def __init__(self, phase, with_app_restart, extra_args=()):
         self.phase = phase
         self.requested_phase = phase
         self.with_app_restart = with_app_restart
+        self.extra_args = list(extra_args)
         self.run_id = ENV.get("SOAK_RUN") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         self.failures = 0
         self.checks = 0
@@ -350,15 +424,6 @@ class FilesSoak:
         root.mkdir(mode=0o700)
         STATE.write_text(json.dumps({"root": str(root), "parent": str(parent), "stamp": stamp}), encoding="utf-8")
         return root
-
-    def _collection_and_rel(self):
-        try:
-            parts = self.root.resolve().relative_to(MOUNT.resolve()).parts
-        except ValueError as exc:
-            raise CheckFailure("soak root is not under the Files mount") from exc
-        if len(parts) < 2:
-            raise CheckFailure("soak root has no collection component")
-        return parts[0], "/".join(parts[1:])
 
     # ----- process helpers --------------------------------------------------------------
 
@@ -423,7 +488,7 @@ class FilesSoak:
     def _probe_mount(self, timeout=5):
         self._run(["timeout", str(timeout), "ls", "-A", str(MOUNT)], timeout=timeout + 2)
 
-    def _wait_mount(self, cap=300):
+    def _wait_mount(self, cap=MOUNT_WAIT_S):
         started = time.monotonic()
         deadline = started + cap
         while time.monotonic() < deadline:
@@ -453,20 +518,28 @@ class FilesSoak:
             self._docker(["start", CONTAINER_FILES], 90)
 
     def _soak_image(self):
-        if ENV.get("SOAK_TEST_IMAGE"):
-            return ENV["SOAK_TEST_IMAGE"]
+        """First local image that really provides sh and sleep (the probe runs the tools, so a missing one is caught here)."""
+        if getattr(self, "_image", None):
+            return self._image
         images = self._docker(["images", "--format", "{{.Repository}}:{{.Tag}}"], 30).stdout.split()
+        candidates = [ENV["SOAK_TEST_IMAGE"]] if ENV.get("SOAK_TEST_IMAGE") else []
         for prefix in ("alpine:", "busybox:"):
-            match = next((name for name in images if name.startswith(prefix)), None)
-            if match:
-                return match
-        result = self._docker(["inspect", "-f", "{{.Config.Image}}", CONTAINER_FUSE], 15)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        raise CheckFailure("no local image for a test container (alpine, busybox or the FUSE image)")
+            candidates += [name for name in images if name.startswith(prefix)]
+        fuse = self._docker(["inspect", "-f", "{{.Config.Image}}", CONTAINER_FUSE], 15)
+        if fuse.returncode == 0 and fuse.stdout.strip():
+            candidates.append(fuse.stdout.strip())
+        rejected = []
+        for image in dict.fromkeys(candidates):
+            probe = self._docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", image, "-c",
+                                  "command -v sh && command -v sleep && command -v printf >/dev/null"], 90)
+            if probe.returncode == 0:
+                self._image = image
+                return image
+            rejected.append("%s rc=%d" % (image, probe.returncode))
+        raise CheckFailure("no local image provides sh and sleep for a test container (%s)" % ("; ".join(rejected) or "no candidates"))
 
     def _start_test_container(self, name, image):
-        self._run(["docker", "run", "-d", "--name", name, "--label", TEST_LABEL, "-v", bind_spec(MOUNT),
+        self._run(["docker", "run", "-d", "--name", name, "--label", TEST_LABEL, "-v", bind_spec(),
                    "--entrypoint", "sleep", image, "1800"], timeout=90)
 
     def _remove_test_containers(self, names):
@@ -713,8 +786,8 @@ class FilesSoak:
         started = time.monotonic()
         try:
             self._run(command, timeout=timeout)
-            seconds = self._wait_mount(300)
-            self.emit(name + "-mount-recovery", True, "seconds=%.3f cap=300" % seconds, started, {"recovery_s": seconds})
+            seconds = self._wait_mount(MOUNT_WAIT_S)
+            self.emit(name + "-mount-recovery", True, "seconds=%.3f cap=%d" % (seconds, MOUNT_WAIT_S), started, {"recovery_s": seconds})
         except Exception as exc:
             self.emit(name + "-mount-recovery", False, "%s: %s" % (type(exc).__name__, str(exc)[:160]), started)
 
@@ -738,8 +811,8 @@ class FilesSoak:
                 try:
                     self._run(["osascript", "-e", 'tell application "Sulla Desktop" to quit'], timeout=30, check=False)
                     self._run(["open", "-g", "-a", "Sulla Desktop"], timeout=30)
-                    seconds = self._wait_mount(300)
-                    self.emit("app-restart-mount-recovery", True, "seconds=%.3f cap=300" % seconds, start)
+                    seconds = self._wait_mount(MOUNT_WAIT_S)
+                    self.emit("app-restart-mount-recovery", True, "seconds=%.3f cap=%d" % (seconds, MOUNT_WAIT_S), start)
                 except Exception as exc:
                     self.emit("app-restart-mount-recovery", False, "%s: %s" % (type(exc).__name__, str(exc)[:160]), start)
             else:
@@ -821,7 +894,7 @@ class FilesSoak:
             "image_id": (info.get("Image") or "")[:19],
             "restart_count": info.get("RestartCount"),
             "mount": str(MOUNT),
-            "bind_spec": bind_spec(MOUNT),
+            "bind_spec": bind_spec(),
         }
         self.emit("fuse-identity", True, "id=%s started_at=%s" % (metrics["id"], metrics["started_at"]), started, metrics)
 
@@ -830,7 +903,7 @@ class FilesSoak:
         folder.mkdir(exist_ok=True)
         name = "fusesoak-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
         started = time.monotonic()
-        metrics = {"bind_spec": bind_spec(MOUNT)}
+        metrics = {"bind_spec": bind_spec()}
         try:
             self._start_test_container(name, self._soak_image())
             pre = self._ctr(name, 'printf %s "$2" > "$1" && cat "$1"', str(folder / "before.txt"), "pre-" + self.run_id)
@@ -838,12 +911,13 @@ class FilesSoak:
             if not metrics["pre_write_ok"]:
                 raise CheckFailure("pre-restart write/read failed: %s" % pre["err"])
             self._run(["docker", "restart", "--time", "10", CONTAINER_FUSE], timeout=120)
-            metrics["mount_recovery_s"] = self._wait_mount(300)
+            metrics["mount_recovery_s"] = self._wait_mount(MOUNT_WAIT_S)
             ls = self._ctr(name, 'ls "$1" >/dev/null', str(folder))
             write = self._ctr(name, 'printf %s "$2" > "$1" && cat "$1"', str(folder / "after.txt"), "post-" + self.run_id)
             old = self._ctr(name, 'cat "$1" >/dev/null', str(folder / "before.txt"))
             metrics.update({"post_ls_ok": ls["rc"] == 0, "post_write_read_ok": write["rc"] == 0 and write["out"].decode("utf-8", "replace") == "post-" + self.run_id,
-                            "pre_file_read_ok": old["rc"] == 0})
+                            "pre_file_read_ok": old["rc"] == 0, "post_ls_errno": errno_of_text(ls["err"]) if ls["rc"] else None,
+                            "post_write_errno": errno_of_text(write["err"]) if write["rc"] else None})
             evidence = "ls_err=%s write_err=%s" % (ls["err"] or "none", write["err"] or "none")
             if write["rc"] == 0:
                 self.ledger_add([("restart-propagation/after.txt", hashlib.sha256(("post-" + self.run_id).encode()).hexdigest())])
@@ -857,32 +931,50 @@ class FilesSoak:
     def outage(self):
         folder = self.root / "outage"
         folder.mkdir(exist_ok=True)
-        stop = threading.Event()
-        writers = [ChurnWriter(folder, "wr%d" % index, stop) for index in range(4)]
+        give_up = threading.Event()
+        writers = [ChurnWriter(folder, "wr%d" % index, give_up) for index in range(4)]
         for writer in writers:
             writer.start()
         probes = []
         try:
             time.sleep(3)
-            # Sub-test A: stop for OUTAGE_A_S, restart, let writers run after recovery.
-            a_from = [len(w.ops) for w in writers]
+            # Sub-test A: Files down OUTAGE_A_S seconds. Every write started in that window must eventually succeed.
+            a_from = time.monotonic()
             stopped = self._docker(["stop", "-t", "10", CONTAINER_FILES], 90)
             time.sleep(OUTAGE_A_S)
             self._docker(["start", CONTAINER_FILES], 90)
             ready_s = self._wait_container_ready(CONTAINER_FILES, 240)
-            time.sleep(15)
-            a_to = [len(w.ops) for w in writers]
-            a_ops = [op for index, w in enumerate(writers) for op in w.ops[a_from[index]:a_to[index]]]
-            a_ok = [op for op in a_ops if op[1]]
-            a_bad = [op for op in a_ops if not op[1]]
-            a_max = max((op[0] for op in a_ops), default=0)
-            a_metrics = {"stop_rc": stopped.returncode, "down_s": OUTAGE_A_S, "writes_ok": len(a_ok), "writes_failed": len(a_bad),
-                         "p50_ms": pct([op[0] for op in a_ok], 0.5), "p95_ms": pct([op[0] for op in a_ok], 0.95),
-                         "max_ms": round(a_max, 1), "errors": dict(collections.Counter(op[2] for op in a_bad)), "ready_s": ready_s}
-            self.emit("outage-a-restart", stopped.returncode == 0 and a_max < OP_BOUND_S * 1000 and len(a_ok) > 0,
-                      "down=%ds ok=%d failed=%d max_ms=%.0f" % (OUTAGE_A_S, len(a_ok), len(a_bad), a_max), time.monotonic(), a_metrics)
+            a_to = time.monotonic()
+            drain_deadline = time.monotonic() + OP_BOUND_S
+            while time.monotonic() < drain_deadline and any(w.pending is not None for w in writers):
+                time.sleep(1)
+            for writer in writers:
+                writer.stop_event.set()
+            give_up.set()
+            for writer in writers:
+                writer.join(timeout=30)
+            a_records = [rec for w in writers for rec in w.logical if a_from <= rec["started"] <= a_to]
+            a_ok = [rec for rec in a_records if rec["ok"]]
+            a_failed = [rec for rec in a_records if not rec["ok"]]
+            sha_by_name = {name: sha for w in writers for name, sha in w.rows}
+            a_counts = self._verify_rows(folder, [(rec["name"], sha_by_name[rec["name"]]) for rec in a_ok]) if a_ok else collections.Counter()
+            durations = [(rec["ended"] - rec["started"]) * 1000 for rec in a_ok]
+            a_errors = collections.Counter()
+            for rec in a_records:
+                a_errors.update(rec["errors"])
+            a_metrics = {"stop_rc": stopped.returncode, "down_s": OUTAGE_A_S, "writes_started": len(a_records), "writes_ok": len(a_ok),
+                         "writes_failed": len(a_failed), "attempt_errors": dict(a_errors), "p50_ms": pct(durations, 0.5),
+                         "p95_ms": pct(durations, 0.95), "max_ms": round(max(durations, default=0), 1), "ready_s": ready_s,
+                         "verified": a_counts.get("ok", 0), "mismatch": a_counts.get("mismatch", 0), "missing": a_counts.get("missing", 0),
+                         "unverified": a_counts.get("unverified_timeout", 0)}
+            a_pass = (stopped.returncode == 0 and len(a_records) > 0 and not a_failed and a_counts.get("ok", 0) == len(a_ok)
+                      and not a_counts.get("mismatch") and not a_counts.get("missing") and not a_counts.get("unverified_timeout"))
+            self.emit("outage-a-restart", a_pass,
+                      "down=%ds started=%d ok=%d failed=%d verified=%d/%d attempt_errors=%s" %
+                      (OUTAGE_A_S, len(a_records), len(a_ok), len(a_failed), a_counts.get("ok", 0), len(a_ok), json.dumps(dict(a_errors), sort_keys=True)),
+                      a_from, a_metrics)
 
-            # Sub-test B: stop for OUTAGE_B_S with probes that must fail cleanly and never hang past OP_BOUND_S.
+            # Sub-test B: Files down OUTAGE_B_S seconds (>90 s). Probes must fail cleanly with errnos, never hang past OP_BOUND_S.
             self._docker(["stop", "-t", "10", CONTAINER_FILES], 90)
             b_started = time.monotonic()
             while time.monotonic() - b_started < OUTAGE_B_S:
@@ -892,9 +984,15 @@ class FilesSoak:
             b_hung = [p for p in probes if p["hung"]]
             b_max = max((p["ms"] for p in probes), default=0)
             b_errors = dict(collections.Counter(p["err"] for p in probes if p["rc"] not in (0, None)))
-            self.emit("outage-b-stop", not b_hung and b_max < (OP_BOUND_S + SLACK_S) * 1000,
-                      "down=%ds probes=%d hung=%d max_ms=%.0f errors=%s" % (OUTAGE_B_S, len(probes), len(b_hung), b_max, json.dumps(b_errors)),
-                      b_started, {"down_s": OUTAGE_B_S, "probes": len(probes), "hung": len(b_hung), "max_ms": round(b_max, 1), "errors": b_errors})
+            b_unclean = sorted(e for e in b_errors if errno_of_text(e) is None)
+            b_ok_while_down = sum(1 for p in probes if p["rc"] == 0)
+            b_pass = bool(probes) and not b_hung and b_max <= OP_BOUND_S * 1000 and not b_unclean
+            b_metrics = {"down_s": OUTAGE_B_S, "probes": len(probes), "hung": len(b_hung), "max_ms": round(b_max, 1),
+                         "errors": b_errors, "unclean_errors": b_unclean, "ok_while_down": b_ok_while_down, "bound_s": OP_BOUND_S}
+            self.emit("outage-b-stop", b_pass,
+                      "down=%ds probes=%d hung=%d max_ms=%.0f ok_while_down=%d errnos=%s unclean=%s" %
+                      (OUTAGE_B_S, len(probes), len(b_hung), b_max, b_ok_while_down, json.dumps(sorted(errno_of_text(e) or e for e in b_errors)), b_unclean),
+                      b_started, b_metrics)
 
             # Recovery: start Files and prove a fresh write+read works.
             self._docker(["start", CONTAINER_FILES], 90)
@@ -911,7 +1009,9 @@ class FilesSoak:
         except Exception as exc:
             self.emit("outage", False, "%s: %s" % (type(exc).__name__, str(exc)[:200]), time.monotonic())
         finally:
-            stop.set()
+            give_up.set()
+            for writer in writers:
+                writer.stop_event.set()
             for writer in writers:
                 writer.join(timeout=30)
             self.ensure_files_running()
@@ -959,7 +1059,7 @@ class FilesSoak:
         script = ('d="$1"; n="$2"; i=0\n'
                   'while [ "$i" -lt "$n" ]; do eval "exec $((i+10))>\\"$d/h$i\\""; i=$((i+1)); done\n'
                   'i=0; while [ "$i" -lt "$n" ]; do eval "printf v%s $i >&$((i+10))"; i=$((i+1)); done\n'
-                  'echo "opened=$n"; sleep 1\n')
+                  'echo "opened=$n"\n')
         container_results = []
         try:
             image = self._soak_image()
@@ -1180,23 +1280,61 @@ class FilesSoak:
             raise CheckFailure("Files API helper failed: %s" % short_err(proc.stderr))
         return json.loads(lines[-1])
 
+    def _api_scope(self):
+        """(collectionId, base) for Files API paths. `base` is the soak path relative to that collection's root.
+
+        With SOAK_PARENT the mount root is the personal collection itself, so the collection is home and the soak
+        path is relative to the mount. Otherwise the first component under the mount names the collection.
+        """
+        if getattr(self, "_scope_cache", None):
+            return self._scope_cache
+        try:
+            parts = self.root.resolve().relative_to(MOUNT.resolve()).parts
+        except ValueError as exc:
+            raise CheckFailure("soak root is not under the Files mount") from exc
+        if ENV.get("SOAK_PARENT"):
+            name, rel = None, parts
+        else:
+            if len(parts) < 2:
+                raise CheckFailure("soak root has no collection component")
+            name, rel = parts[0], parts[1:]
+        resolved = self._fuse_api({"action": "resolve", "name": name})
+        if not resolved.get("collectionId"):
+            raise CheckFailure("collection id not resolvable through the Files API (collections_status %s, directory_status %s)" %
+                               (resolved.get("collections_status"), resolved.get("directory_status")))
+        self._scope_cache = (resolved["collectionId"], "/".join(rel))
+        return self._scope_cache
+
+    def _api_put(self, rel, content):
+        """Create or overwrite a file through the Files HTTP API (inside the FUSE container). `rel` is soak-relative."""
+        if rel.startswith("/") or ".." in Path(rel).parts:
+            raise CheckFailure("api path must be relative and stay inside the soak root")
+        collection_id, base = self._api_scope()
+        return self._fuse_api({"action": "write", "collectionId": collection_id, "path": "/".join(filter(None, [base, rel])), "content": content})
+
+    def api_write(self):
+        """Sub-command: files-soak.sh api-write <relative path> <content>. Records the checksum in the ledger."""
+        started = time.monotonic()
+        if len(self.extra_args) != 2:
+            raise CheckFailure("usage: files-soak.sh api-write <relative path> <content>")
+        rel, content = self.extra_args
+        result = self._api_put(rel, content)
+        ok = result.get("status") in (200, 201)
+        if ok:
+            self.ledger_add([(rel, result["sha256"])])
+        self.emit("api-write:" + rel, ok, "status=%s mode=%s ms=%s" % (result.get("status"), result.get("mode"), result.get("ms")),
+                  started, {"status": result.get("status"), "mode": result.get("mode"), "ms": result.get("ms")})
+
     def staleness(self):
         folder = self.root / "staleness"
         folder.mkdir(exist_ok=True)
         started = time.monotonic()
-        collection, base = self._collection_and_rel()
-        resolved = self._fuse_api({"action": "resolve", "name": collection})
-        if not resolved.get("collectionId"):
-            raise CheckFailure("collection id not resolvable through the Files API (status %s)" % resolved.get("status"))
-        cid = resolved["collectionId"]
-        existing_rel = base + "/staleness/existing.txt"
-        new_rel = base + "/staleness/new.txt"
         existing = folder / "existing.txt"
         old = b"old-" + self.run_id.encode()
         existing.write_bytes(old)
         new_payload = "new-" + self.run_id + "-" + str(time.time_ns())
         t_api = time.monotonic()
-        put_new = self._fuse_api({"action": "put", "collectionId": cid, "path": new_rel, "content": new_payload})
+        put_new = self._api_put("staleness/new.txt", new_payload)
         new_visible = None
         while time.monotonic() - t_api < 120:
             read = self._probe(["sh", "-c", 'cat "$1"', "sh", str(folder / "new.txt")], 60)
@@ -1206,7 +1344,7 @@ class FilesSoak:
             time.sleep(0.25)
         updated = "upd-" + self.run_id + "-" + str(time.time_ns())
         t_mod = time.monotonic()
-        put_existing = self._fuse_api({"action": "put", "collectionId": cid, "path": existing_rel, "content": updated})
+        put_existing = self._api_put("staleness/existing.txt", updated)
         stale_after_window = 0
         stale_reads = 0
         modified_visible = None
@@ -1222,13 +1360,13 @@ class FilesSoak:
             if elapsed > bound:
                 stale_after_window += 1
             time.sleep(0.25)
-        metrics = {"collection_ok": True, "new_visible_s": new_visible, "new_put_status": put_new.get("status"),
-                   "modify_visible_s": modified_visible, "modify_put_status": put_existing.get("status"),
+        metrics = {"new_visible_s": new_visible, "new_put_status": put_new.get("status"), "new_put_mode": put_new.get("mode"),
+                   "modify_visible_s": modified_visible, "modify_put_status": put_existing.get("status"), "modify_put_mode": put_existing.get("mode"),
                    "window_s": INVALIDATE_WINDOW, "slack_s": SLACK_S, "stale_reads_seen": stale_reads, "stale_reads_after_window": stale_after_window}
         passed = (new_visible is not None and put_new.get("status") in (200, 201)
                   and modified_visible is not None and modified_visible <= bound and stale_after_window == 0)
-        self.ledger_add([("staleness/new.txt", hashlib.sha256(new_payload.encode()).hexdigest())])
-        self.ledger_add([("staleness/existing.txt", hashlib.sha256(updated.encode()).hexdigest())])
+        self.ledger_add([("staleness/new.txt", put_new.get("sha256") or hashlib.sha256(new_payload.encode()).hexdigest())])
+        self.ledger_add([("staleness/existing.txt", put_existing.get("sha256") or hashlib.sha256(updated.encode()).hexdigest())])
         self.emit("staleness-visibility-and-invalidation", passed,
                   "new_visible_s=%s modify_visible_s=%s bound_s=%.1f stale_after_window=%d" % (new_visible, modified_visible, bound, stale_after_window),
                   started, metrics)
@@ -1297,7 +1435,7 @@ class FilesSoak:
 
     def env_info(self):
         started = time.monotonic()
-        metrics = {"mount": str(MOUNT), "bind_spec": bind_spec(MOUNT)}
+        metrics = {"mount": str(MOUNT), "bind_spec": bind_spec()}
         present = []
         for container in (CONTAINER_FILES, CONTAINER_FUSE):
             result = self._docker(["inspect", "-f", '{{.Config.Image}}|{{.Image}}|{{.Created}}|{{index .Config.Labels "org.opencontainers.image.version"}}', container], 20)
@@ -1326,12 +1464,46 @@ class FilesSoak:
                   started, {"applied": rows, "067": applied_067, "068": applied_068, "database": PG_DB})
 
         started = time.monotonic()
+        probe = self._files_metrics()
+        numbers = probe.get("numbers", {})
+        passed = probe.get("status") == 200 and bool(numbers)
+        self.emit("env-files-metrics", passed,
+                  "status=%s numeric_fields=%d error=%s" % (probe.get("status"), len(numbers), probe.get("error", "none")),
+                  started, {"status": probe.get("status"), "numbers": numbers, "error": probe.get("error")})
+
+    @staticmethod
+    def _numeric_leaves(node, prefix=""):
+        """Flatten a metrics JSON body to its numeric leaves only (no names, paths or text values)."""
+        found = {}
+        if isinstance(node, bool):
+            return found
+        if isinstance(node, (int, float)):
+            return {prefix: node} if prefix else {}
+        if isinstance(node, dict):
+            for key, value in node.items():
+                found.update(FilesSoak._numeric_leaves(value, prefix + "." + key if prefix else key))
+        elif isinstance(node, list):
+            for index, value in enumerate(node[:50]):
+                found.update(FilesSoak._numeric_leaves(value, "%s[%d]" % (prefix, index)))
+        return found
+
+    def _files_metrics(self):
+        """GET /v1/local/files-metrics inside sulla_files with its local token. The token never leaves that container."""
+        result = self._docker(["exec", CONTAINER_FILES, "node", "-e", METRICS_PROBE], 40)
+        line = next((ln for ln in result.stdout.splitlines() if ln.startswith("{")), "")
+        if result.returncode != 0 or not line:
+            return {"error": short_err(result.stderr) or "no response"}
         try:
-            metrics_api = self._fuse_api({"action": "metrics"})
-            self.emit("env-files-metrics", True, json.dumps(metrics_api.get("probed", {}), sort_keys=True), started,
-                      {"probed": metrics_api.get("probed"), "metric_names": metrics_api.get("metric_names", [])})
-        except Exception as exc:
-            self.emit("env-files-metrics", True, "skipped: %s" % short_err(str(exc)), started)
+            wrapper = json.loads(line)
+        except ValueError:
+            return {"error": "unparseable response"}
+        if wrapper.get("error"):
+            return {"error": wrapper["error"]}
+        try:
+            body = json.loads(wrapper.get("body") or "null")
+        except ValueError:
+            body = None
+        return {"status": wrapper.get("status"), "numbers": self._numeric_leaves(body)}
 
     def integrity(self):
         started = time.monotonic()
@@ -1349,15 +1521,15 @@ class FilesSoak:
         started = time.monotonic()
         if not rows or API_SAMPLE == 0:
             return
-        collection, base = self._collection_and_rel()
-        resolved = self._fuse_api({"action": "resolve", "name": collection})
-        if not resolved.get("collectionId"):
-            self.emit("integrity-api", False, "collection id not resolvable through the Files API", started)
+        try:
+            collection_id, base = self._api_scope()
+        except CheckFailure as exc:
+            self.emit("integrity-api", False, str(exc)[:180], started)
             return
         rng = random.Random(self.run_id)
         sample = rng.sample(rows, min(API_SAMPLE, len(rows)))
-        items = [[(base + "/" + rel), sha] for rel, sha in sample]
-        verdict = self._fuse_api({"action": "verify", "collectionId": resolved["collectionId"], "items": items})
+        items = [["/".join(filter(None, [base, rel])), sha] for rel, sha in sample]
+        verdict = self._fuse_api({"action": "verify", "collectionId": collection_id, "items": items})
         counts = verdict.get("counts", {})
         passed = counts.get("matched", 0) == len(items)
         self.emit("integrity-api", passed, "sample=%d matched=%d mismatch=%d unresolved=%d" %
@@ -1379,6 +1551,72 @@ class FilesSoak:
                     "successful_writes", "verified", "eio", "hung", "vm_open_ok", "new_visible_s", "modify_visible_s", "stale_reads_after_window"]
             brief = " ".join("%s=%s" % (k, metrics[k]) for k in keys if k in metrics and not isinstance(metrics[k], (dict, list)))
             print("%-38s %-5s %s" % (record.get("check", "?")[:38], "PASS" if record.get("pass") else "FAIL", brief[:110] or record.get("evidence", "")[:110]))
+
+    def before_after_summary(self):
+        """Prints one compact JSON object for one run label (argument, else SOAK_RUN, else the latest run)."""
+        records = []
+        if RESULTS.is_file():
+            for line in RESULTS.read_text(encoding="utf-8").splitlines():
+                try:
+                    records.append(json.loads(line))
+                except ValueError:
+                    continue
+        label = self.extra_args[0] if self.extra_args else (ENV.get("SOAK_RUN") or (records[-1].get("run") if records else None))
+        rows = [r for r in records if r.get("run") == label]
+        latest = {}
+        for row in rows:
+            latest[row.get("check")] = row  # a re-run inside the same label replaces the earlier record
+
+        def metrics(check):
+            return (latest.get(check) or {}).get("metrics") or {}
+
+        def passed(check):
+            return (latest.get(check) or {}).get("pass")
+
+        def pick(source, keys):
+            return {key: source.get(key) for key in keys}
+
+        lock = metrics("lock-contention")
+        handles = metrics("handles-100-concurrent")
+        vm_errors = handles.get("vm_errors") or {}
+        outage_a = metrics("outage-a-restart")
+        outage_b = metrics("outage-b-stop")
+        restart = metrics("restart-propagation")
+        summary = {
+            "run": label,
+            "checks": len(rows),
+            "failed": sorted(r.get("check") for r in latest.values() if not r.get("pass")),
+            "stat": pick(metrics("latency-stat-lookup"), ["stat_idle_p50_ms", "stat_idle_p95_ms", "stat_load_p50_ms", "stat_load_p95_ms",
+                                                          "read_first_p50_ms", "read_repeat_p50_ms"]),
+            "lock": {"per_op": {kind: pick(lock.get(kind) or {}, ["p50_ms", "p95_ms"]) for kind in ("create", "mv-over-existing", "mkdir", "rmdir")},
+                     "eio": lock.get("eio"), "hung_threads": lock.get("hung_threads"), "pass": passed("lock-contention")},
+            "handles": {"pass": passed("handles-100-concurrent"), "vm_ok": handles.get("vm_open_ok"),
+                        "vm_emfile": sum(v for k, v in vm_errors.items() if k.startswith("EMFILE")),
+                        "containers_opened_100": [c.get("opened_100") for c in handles.get("containers") or []]},
+            "outage": {"a": {**pick(outage_a, ["writes_started", "writes_ok", "writes_failed", "down_s", "p95_ms", "max_ms", "ready_s"]), "pass": passed("outage-a-restart")},
+                       "b": {**pick(outage_b, ["down_s", "probes", "hung", "max_ms", "unclean_errors"]), "pass": passed("outage-b-stop")}},
+            "restart_propagation": {**pick(restart, ["mount_recovery_s", "post_ls_errno", "post_write_errno"]), "pass": passed("restart-propagation")},
+            "staleness": {**pick(metrics("staleness-visibility-and-invalidation"), ["new_visible_s", "modify_visible_s", "stale_reads_after_window"]),
+                          "pass": passed("staleness-visibility-and-invalidation")},
+            "integrity": {"mount": pick(metrics("integrity-mount"), ["ledger_rows", "verified", "mismatch", "missing"]),
+                          "api": pick(metrics("integrity-api"), ["sample", "matched", "mismatch", "unresolved"])},
+        }
+        print(json.dumps(summary, sort_keys=True, separators=(",", ":")), flush=True)
+
+    def ensure_mount_ready(self, phase):
+        """Later phases start only after the mount answers ls; a recovery is recorded with its time."""
+        started = time.monotonic()
+        try:
+            self._probe_mount(5)
+            return
+        except Exception:
+            pass
+        try:
+            self._wait_mount(MOUNT_WAIT_S)
+            seconds = round(time.monotonic() - started, 3)
+            self.emit("mount-recovery-before-" + phase, True, "mount answered after %.3fs cap=%ds" % (seconds, MOUNT_WAIT_S), started, {"recovery_s": seconds})
+        except CheckFailure as exc:
+            self.emit("mount-recovery-before-" + phase, False, str(exc)[:160], started, {"recovery_s": None})
 
     def cleanup(self):
         parent = self.root.parent.resolve()
@@ -1407,6 +1645,9 @@ class FilesSoak:
         elif self.phase == "summary":
             self.summary()
             return 0
+        elif self.phase == "before-after-summary":
+            self.before_after_summary()
+            return 0
         else:
             if self.phase == "all":
                 phases = ["fuse-identity", "env-info", "restart-propagation", "bulk", "append", "ops", "handles", "lock-contention",
@@ -1418,6 +1659,8 @@ class FilesSoak:
                 phases = (self.phase,)
             for phase in phases:
                 self.phase = phase
+                if phase not in ("fuse-identity", "env-info", "eio-capture", "summary", "cleanup"):
+                    self.ensure_mount_ready(phase)
                 try:
                     getattr(self, phase.replace("-", "_"))()
                 except Exception as exc:
@@ -1432,12 +1675,13 @@ class FilesSoak:
 
 def main():
     phases = {"bulk", "append", "ops", "crash", "load", "cloud", "restart-propagation", "outage", "handles", "token-empty",
-              "lock-contention", "latency", "staleness", "eio-capture", "env-info", "fuse-identity", "integrity", "summary", "all", "cleanup"}
-    if len(sys.argv) != 3 or sys.argv[1] not in phases:
-        print("usage: files-soak.sh <phase|all|cleanup> [--with-app-restart]", file=sys.stderr)
+              "lock-contention", "latency", "staleness", "eio-capture", "env-info", "fuse-identity", "integrity", "summary",
+              "before-after-summary", "api-write", "all", "cleanup"}
+    if len(sys.argv) < 3 or sys.argv[1] not in phases:
+        print("usage: files-soak.sh <phase|all|cleanup> [--with-app-restart] [phase arguments]", file=sys.stderr)
         return 2
     try:
-        return FilesSoak(sys.argv[1], sys.argv[2] == "true").run()
+        return FilesSoak(sys.argv[1], sys.argv[2] == "true", sys.argv[3:]).run()
     except Exception as exc:
         record = {"phase": sys.argv[1], "check": "preflight", "pass": False, "metrics": {}, "evidence": "%s: %s" % (type(exc).__name__, str(exc)[:180]), "ms": 0}
         line = json.dumps(record, sort_keys=True, separators=(",", ":"))
