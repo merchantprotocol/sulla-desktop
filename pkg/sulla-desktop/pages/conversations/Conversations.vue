@@ -95,7 +95,9 @@ async function initialize(): Promise<void> {
   try {
     organizations.value = [...await ipcRenderer.invoke('org-conversations:organizations')];
     if (!organizations.value.length) {
+      // An empty success is a real answer: stop loading so ConvNav shows "No organization", and keep watching for one.
       error.value = '';
+      loading.value = false;
       scheduleOrganizationRetry();
       return;
     }
@@ -106,6 +108,7 @@ async function initialize(): Promise<void> {
     await refresh();
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'Could not load your organizations';
+    loading.value = true;
     scheduleOrganizationRetry();
   } finally {
     initializing = false;
@@ -115,7 +118,6 @@ async function initialize(): Promise<void> {
 
 function scheduleOrganizationRetry(): void {
   if (!mounted || retryTimer !== undefined) return;
-  loading.value = true;
   const delay = retryDelays[Math.min(retryAttempt, retryDelays.length - 1)];
   retryAttempt++;
   retryTimer = window.setTimeout(() => {
