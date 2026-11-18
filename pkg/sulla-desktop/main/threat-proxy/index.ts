@@ -52,10 +52,6 @@ export const SETTINGS_KEYS = {
   allowlist:          'threatProxy.allowlist',
   blockMode:          'threatProxy.blockMode',
   injectionMode:      'threatProxy.injectionMode',
-  scanMaxBytes:       'threatProxy.scanMaxBytes',
-  bufferBudgetMb:     'threatProxy.bufferBudgetMb',
-  scanBufferMaxBytes: 'threatProxy.scanBufferMaxBytes',
-  memoryPressurePercent: 'threatProxy.memoryPressurePercent',
   blocklistUpdatedAt: 'threatProxy.blocklistUpdatedAt',
 } as const;
 
@@ -71,10 +67,6 @@ export interface ThreatProxySettings {
   allowlist:     string;      // comma-separated domains
   blockMode:     'block' | 'warn' | 'off';
   injectionMode: 'warn' | 'redact' | 'off';
-  scanMaxBytes: number;
-  bufferBudgetMb: number;
-  scanBufferMaxBytes: number;
-  memoryPressurePercent: number;
 }
 
 /** Sensitive credentials sourced from the IntegrationService / vault. */
@@ -88,10 +80,6 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
   allowlist:     '',
   blockMode:     'block',
   injectionMode: 'warn',
-  scanMaxBytes: 2 * 1024 * 1024,
-  bufferBudgetMb: 128,
-  scanBufferMaxBytes: 8 * 1024 * 1024,
-  memoryPressurePercent: 70,
 };
 
 /**
@@ -144,14 +132,10 @@ async function readSettings(): Promise<ThreatProxySettings> {
     allowlist:     await get(SETTINGS_KEYS.allowlist, DEFAULT_SETTINGS.allowlist),
     blockMode:     await get(SETTINGS_KEYS.blockMode, DEFAULT_SETTINGS.blockMode),
     injectionMode: await get(SETTINGS_KEYS.injectionMode, DEFAULT_SETTINGS.injectionMode),
-    scanMaxBytes: await get(SETTINGS_KEYS.scanMaxBytes, DEFAULT_SETTINGS.scanMaxBytes),
-    bufferBudgetMb: await get(SETTINGS_KEYS.bufferBudgetMb, DEFAULT_SETTINGS.bufferBudgetMb),
-    scanBufferMaxBytes: await get(SETTINGS_KEYS.scanBufferMaxBytes, DEFAULT_SETTINGS.scanBufferMaxBytes),
-    memoryPressurePercent: await get(SETTINGS_KEYS.memoryPressurePercent, DEFAULT_SETTINGS.memoryPressurePercent),
   };
 }
 
-async function writeSetting(key: string, value: unknown, type: 'string' | 'boolean' | 'number' = 'string'): Promise<void> {
+async function writeSetting(key: string, value: unknown, type: 'string' | 'boolean' = 'string'): Promise<void> {
   await SullaSettingsModel.set(key, value as any, type);
 }
 
@@ -172,10 +156,6 @@ export async function setSettings(partial: Partial<ThreatProxySettings>): Promis
   if (partial.injectionMode !== undefined) {
     await writeSetting(SETTINGS_KEYS.injectionMode, partial.injectionMode);
   }
-  if (partial.scanMaxBytes !== undefined) await writeSetting(SETTINGS_KEYS.scanMaxBytes, partial.scanMaxBytes, 'number');
-  if (partial.bufferBudgetMb !== undefined) await writeSetting(SETTINGS_KEYS.bufferBudgetMb, partial.bufferBudgetMb, 'number');
-  if (partial.scanBufferMaxBytes !== undefined) await writeSetting(SETTINGS_KEYS.scanBufferMaxBytes, partial.scanBufferMaxBytes, 'number');
-  if (partial.memoryPressurePercent !== undefined) await writeSetting(SETTINGS_KEYS.memoryPressurePercent, partial.memoryPressurePercent, 'number');
   console.log('[threat-proxy] settings updated', Object.keys(partial));
   await syncGuest().catch(err => console.error('[threat-proxy] could not apply settings in the guest', err));
 
@@ -225,10 +205,6 @@ export function renderConfigFile(settings: ThreatProxySettings, creds: ThreatPro
     blockMode:                 settings.blockMode,
     injectionMode:             settings.injectionMode,
     injectionScanContentTypes: INJECTION_SCAN_CONTENT_TYPES,
-    scanMaxBytes: settings.scanMaxBytes,
-    bufferBudgetMb: settings.bufferBudgetMb,
-    scanBufferMaxBytes: settings.scanBufferMaxBytes,
-    memoryPressurePercent: settings.memoryPressurePercent,
   }, null, 2) }\n`;
 }
 
