@@ -10,9 +10,12 @@ export class FilesPreviewPathGuard {
     let decoded:string;
     try { decoded = decodeURIComponent(encodedPath) } catch { return null }
     if (!decoded || decoded.includes('\0') || decoded.includes('\\') || decoded.startsWith('/') || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return null;
-    const root = path.posix.normalize(rootFolder || '.');
-    const joined = path.posix.normalize(path.posix.join(root, decoded));
-    if (joined === '..' || joined.startsWith('../') || path.posix.isAbsolute(joined)) return null;
-    return joined;
+    // '' is the collection root: every relative path inside the collection is allowed.
+    const root = rootFolder ? path.posix.normalize(rootFolder) : '';
+    const joined = path.posix.normalize(path.posix.join(root || '.', decoded));
+    if (path.posix.isAbsolute(joined)) return null;
+    if (!root) return joined === '..' || joined.startsWith('../') ? null : joined;
+    // Confine to the page's folder subtree: "../sibling/x" escapes it and must be refused.
+    return joined === root || joined.startsWith(`${ root }/`) ? joined : null;
   }
 }

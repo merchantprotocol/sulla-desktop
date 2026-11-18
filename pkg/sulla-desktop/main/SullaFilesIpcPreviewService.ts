@@ -10,7 +10,7 @@ import { FilesPreviewPathGuard } from './FilesPreviewPathGuard';
 import { FilesPreviewTokenRegistry } from './FilesPreviewTokenRegistry';
 import type { SullaFilesIpcApi, SullaFilesIpcRegistrar } from './SullaFilesIpcSupport';
 
-const NAVIGATION_BRIDGE = `<script>(function(){document.addEventListener('click',function(event){var link=event.target&&event.target.closest&&event.target.closest('a[href]');if(!link)return;var href=link.getAttribute('href')||'';if(href.charAt(0)==='#')return;if(/^https?:\\/\\//i.test(href)){event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'external',href:href},'*');return}if(/^(mailto:|tel:)/i.test(href))return;if(/^[a-z][a-z\\d+.-]*:/i.test(href)||href.slice(0,2)==='//')return;event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'relative',href:href},'*')},true)})()<\\/script>`;
+const NAVIGATION_BRIDGE = `<script>(function(){document.addEventListener('click',function(event){var link=event.target&&event.target.closest&&event.target.closest('a[href]');if(!link)return;var href=link.getAttribute('href')||'';if(href.charAt(0)==='#')return;if(/^https?:\\/\\//i.test(href)){event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'external',href:href},'*');return}if(/^(mailto:|tel:)/i.test(href))return;if(/^[a-z][a-z\\d+.-]*:/i.test(href)||href.slice(0,2)==='//')return;event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'relative',href:href},'*')},true)})()</script>`;
 
 /** App-only capability URLs for sandboxed, read-only HTML preview documents and assets. */
 export class SullaFilesIpcPreviewService {
@@ -71,6 +71,8 @@ export class SullaFilesIpcPreviewService {
     const relative = new URL(request.url).pathname.slice(1);
     const targetPath = this.paths.resolve(binding.rootFolder, relative);
     if (!targetPath) return new Response(null, { status:404, headers:noStore });
+    // Compare decoded paths: the URL pathname stays percent-encoded (e.g. "My%20Page.html").
+    const documentPath = binding.rootFolder ? `${ binding.rootFolder }/${ binding.rootDocument }` : binding.rootDocument;
     const folder = path.posix.dirname(targetPath) === '.' ? '' : path.posix.dirname(targetPath);
     let file:any;
     try {
@@ -84,7 +86,7 @@ export class SullaFilesIpcPreviewService {
     headers.set('content-type', result.mime);
     if (result.attachment) headers.set('content-disposition', 'attachment');
     let body = upstream.body;
-    if (relative === binding.rootDocument && /\.html?$/i.test(targetPath) && body) {
+    if (targetPath === documentPath && /\.html?$/i.test(targetPath) && body) {
       const html = await upstream.text();
       const head = /<head(?:\s[^>]*)?>/i.exec(html);
       body = new Blob([head ? html.slice(0, head.index + head[0].length) + NAVIGATION_BRIDGE + html.slice(head.index + head[0].length) : NAVIGATION_BRIDGE + html], { type:result.mime }).stream();
