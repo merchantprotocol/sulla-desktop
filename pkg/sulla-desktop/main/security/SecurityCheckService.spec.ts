@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({ app: { isPackaged: false, getPath: () => '' }, session: {} }));
+vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { getSetting: vi.fn() } }));
+vi.mock('@pkg/backend/sullaRuntime/state', () => ({ isSullaRuntimeActive: vi.fn(() => true) }));
+vi.mock('@pkg/config/settingsImpl', () => ({ getSettings: vi.fn(() => ({ application: {} })) }));
+vi.mock('@pkg/agent/services/DesktopVaultClient', () => ({ getDesktopVaultClient: vi.fn() }));
+vi.mock('@pkg/agent/services/VaultKeyService', () => ({ getVaultKeyService: vi.fn() }));
+vi.mock('@pkg/main/threat-proxy', () => ({ getSettings: vi.fn(), getStatus: vi.fn(), getTrafficLog: vi.fn() }));
 import { SecurityCheck, SecurityCheckService } from './SecurityCheckService';
 
 describe('SecurityCheckService contract', () => {
