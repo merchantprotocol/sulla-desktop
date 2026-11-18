@@ -68,6 +68,8 @@ import { OriginalRevealRoutes } from './routes/OriginalRevealRoutes.js';
 import { CollectionSyncRoutes } from './routes/CollectionSyncRoutes.js';
 import { OrgCollectionRoutes } from './routes/OrgCollectionRoutes.js';
 import { OrgCollectionEnrollment } from './Services/OrgCollectionEnrollment.js';
+import { ChunkIntegrityQueryError, ChunkIntegrityScanner } from './Services/ChunkIntegrityScanner.js';
+import { ChunkIntegrityRepository } from './Repositories/ChunkIntegrityRepository.js';
 import { OrgCollectionEnrollmentRepository } from './Repositories/OrgCollectionEnrollmentRepository.js';
 import { CollectionSyncRepository } from './Repositories/CollectionSyncRepository.js';
 import { TrashRoutes, type OperationAccessFactory } from './routes/TrashRoutes.js';
@@ -302,6 +304,15 @@ export class FilesApplication {
     new FileResolveRoutes(accessGate, fileLocator).register(app);
     new LocalRootRoutes(manager).register(app);
     new LocalMaintenanceRoutes(db, config, store, transactions, new ScratchMaintenanceRepository(), manager).register(app);
+    // Read-only: lists chunk ids that do not decrypt under the collection key. Under /v1/local/*, so the local token guard applies.
+    app.get('/v1/local/chunk-integrity/scan', async(request, response, next) => { try {
+      if (!config.keyring) return response.status(503).json({ error:'Files keyring is unavailable' });
+      const options = ChunkIntegrityScanner.parseOptions(request.query);
+      response.json(await new ChunkIntegrityScanner(new ChunkIntegrityRepository(db), store, config.keyring).scan(options));
+    } catch (error) {
+      if (error instanceof ChunkIntegrityQueryError) return response.status(400).json({ error:error.message });
+      next(error);
+    } });
 
     new SearchRoutes(new SearchScopeRepository(db), search).register(app);
     new StarRoutes(accessGate, new StarRepository(db)).register(app);
