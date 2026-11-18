@@ -20,6 +20,7 @@ and blocklist/urlhaus.txt; the proxy owns mitm/ and cache/.
 
 import functools
 import calendar
+import ctypes
 import json
 import os
 import sqlite3
@@ -43,6 +44,33 @@ FLAG_BLOCK = "block"
 FLAG_SUSPICIOUS = "suspicious"
 FLAG_UNKNOWN = "unknown"
 FLAG_ERROR = "error"
+
+_TRIM_LOCK = threading.Lock()
+_TRIMMED_AT = 0.0
+_LIBC = None
+_LIBC_LOADED = False
+
+
+def trim_heap(min_interval_s: float = 1.0) -> None:
+    """Ask glibc to release free heap pages, at most once per interval."""
+    global _LIBC, _LIBC_LOADED, _TRIMMED_AT
+    now = time.monotonic()
+    with _TRIM_LOCK:
+        if now - _TRIMMED_AT < min_interval_s:
+            return
+        _TRIMMED_AT = now
+        try:
+            if not _LIBC_LOADED:
+                try:
+                    _LIBC = ctypes.CDLL("libc.so.6")
+                except OSError:
+                    _LIBC = False
+                _LIBC_LOADED = True
+            if not _LIBC:
+                return
+            _LIBC.malloc_trim(0)
+        except (OSError, AttributeError):
+            pass
 
 
 def log(component: str, level: str, msg: str, **fields: Any) -> None:
