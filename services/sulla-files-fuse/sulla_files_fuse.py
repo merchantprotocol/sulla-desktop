@@ -85,6 +85,8 @@ INVALIDATION_TIMEOUT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_I
 READ_CACHE_MAX_BYTES = max(0, int(os.environ.get("SULLA_FILES_FUSE_READ_CACHE_MB", "512"))) * 1024 * 1024
 INVALIDATION_QUIET_SECONDS = 30.0
 CHANGE_POLL_SECONDS = 1.0
+MAX_PENDING_INVALIDATIONS = 4096
+MAX_ABANDONED_INVALIDATION_THREADS = 3
 FUSE_MOUNT_OPTIONS = {"fsname=sulla-files", "allow_other"}
 TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
@@ -735,6 +737,8 @@ class SullaFiles(pyfuse3.Operations):
         self.invalidation_timeouts = 0
         self.invalidation_timed_out_at = 0.0
         self.invalidation_stuck_logged = False
+        self.abandoned_invalidation_threads = 0
+        self.invalidation_caching_disabled = False
         self.feed_revisions = {}
         self.mounted_collections = set()
         self.feed_failures = 0
@@ -759,13 +763,21 @@ class SullaFiles(pyfuse3.Operations):
 
     def queue_invalidation(self, path, membership_changed=True, node_fresh=False):
         """Queue request-handler mutations; pyfuse3 invalidation runs only in the background poller."""
-        if CHANGE_FEED_ENABLED and path:
-            previous = self.pending_invalidations.get(path)
-            self.pending_invalidations[path] = {
-                "membership_changed": (previous or {}).get("membership_changed", False) or membership_changed,
-                # Freshness is safe only if every coalesced event is local and already applied.
-                "node_fresh": node_fresh if previous is None else previous.get("node_fresh", False) and node_fresh,
-            }
+        if not CHANGE_FEED_ENABLED or not path or self.pending_tree_reset:
+            return
+        if len(self.pending_invalidations) >= MAX_PENDING_INVALIDATIONS:
+            # A full reset is a bounded, conservative replacement for losing arbitrary names.
+            # Directory completeness gates kernel cache timeouts until each directory is listed again.
+            self.pending_invalidations.clear()
+            self.pending_tree_reset = True
+            emit("invalidation-queue-overflow", logging.WARNING, limit=MAX_PENDING_INVALIDATIONS)
+            return
+        previous = self.pending_invalidations.get(path)
+        self.pending_invalidations[path] = {
+            "membership_changed": (previous or {}).get("membership_changed", False) or membership_changed,
+            # Freshness is safe only if every coalesced event is local and already applied.
+            "node_fresh": node_fresh if previous is None else previous.get("node_fresh", False) and node_fresh,
+        }
 
     def _invalidation_thread_busy(self):
         # A cancelled (abandoned) to_thread call keeps its CapacityLimiter token until the kernel call returns.
@@ -782,6 +794,17 @@ class SullaFiles(pyfuse3.Operations):
             # CapacityLimiter(1) token until it returns, so later invalidations queue and time out.
             # Caching stays off (safe degrade); the event loop is never blocked.
             self.invalidation_stuck_logged = True
+            self.abandoned_invalidation_threads += 1
+            if self.abandoned_invalidation_threads >= MAX_ABANDONED_INVALIDATION_THREADS:
+                self.invalidation_caching_disabled = True
+                emit("invalidation-caching-disabled", logging.CRITICAL,
+                     abandonedThreads=self.abandoned_invalidation_threads,
+                     reason="abandoned-thread limit reached; kernel invalidation reliability unknown")
+            else:
+                # A cancelled Trio task cannot reclaim the old limiter token while its worker is
+                # stuck in the kernel. Retire that limiter and route later work to a fresh worker.
+                self.invalidation_limiter = trio.CapacityLimiter(1)
+                self.invalidation_stuck_logged = False
             emit("invalidation-thread-stuck", logging.ERROR, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
 
     async def _run_invalidation(self, function, *args, **kwargs):
@@ -792,21 +815,22 @@ class SullaFiles(pyfuse3.Operations):
         """
         if self.invalidation_limiter is None:
             self.invalidation_limiter = trio.CapacityLimiter(1)
+        limiter = self.invalidation_limiter
         call = functools.partial(function, *args, **kwargs)
         with trio.move_on_after(INVALIDATION_TIMEOUT_SECONDS) as timeout_scope:
             await trio.to_thread.run_sync(call, cancellable=True,
-                                          limiter=self.invalidation_limiter)
+                                          limiter=limiter)
         if timeout_scope.cancelled_caught:
             self._record_invalidation_timeout()
 
     def _finish_invalidation_pass(self, timeouts_before):
         """Restore caching only when a whole pass completed with no timeouts."""
-        if self.invalidation_timeouts == timeouts_before:
+        if self.invalidation_timeouts == timeouts_before and not self.invalidation_caching_disabled:
             self.invalidation_healthy = True
 
     def recover_invalidation_health(self):
         """Restore caching after a quiet period with no timeouts and no stuck kernel call."""
-        if self.invalidation_healthy or self._invalidation_thread_busy():
+        if self.invalidation_healthy or self.invalidation_caching_disabled or self._invalidation_thread_busy():
             return
         if time.monotonic() - self.invalidation_timed_out_at >= INVALIDATION_QUIET_SECONDS:
             self.invalidation_healthy = True
@@ -857,17 +881,12 @@ class SullaFiles(pyfuse3.Operations):
                 if event_path: self.queue_invalidation(event_path, membership_changed=kind in ("insert", "delete", "rename"))
 
     async def invalidate_tree(self):
-        timeouts_before = self.invalidation_timeouts
-        for inode in tuple(self.nodes):
-            try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
-            except Exception: pass
-        for parent, children in tuple(self.children.items()):
-            parent_inode = self.path_inode.get(parent)
-            if parent_inode is None: continue
-            for name in tuple(children):
-                try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
-                except Exception: pass
-        self._finish_invalidation_pass(timeouts_before)
+        """Recover after a pruned cursor without issuing O(tree) kernel reverse invalidations.
+
+        Incomplete directories get zero entry/attr timeout through _attrs. A directory's
+        timeout can return to the normal <=5 s only after its next complete Files listing;
+        already-installed kernel entries therefore self-expire within the existing 5 s cap.
+        """
         self.directory_complete.clear()
         self.directory_etags.clear()
         for inode, node in tuple(self.nodes.items()):
