@@ -15,6 +15,7 @@ import Electron, {
 
 import { WindowBoundsStore } from './WindowBoundsStore';
 import { AgentWindowPersistence } from './AgentWindowPersistence';
+import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
 import { agentWindowRegistry, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
 
 import type { FailureDetails } from '@pkg/backend/backend';
@@ -307,11 +308,14 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   window.on('closed', () => {
     const key = agentWindowRegistry.windowKeyOf(window);
     if (key) agentWindowPersistence.remove(key);
-    if (windowsClosedByLastTab.delete(window.id)) return;
-    if (agentWindowRegistry.getAgentWindows().length > 1) return;
-    const cfg = getSettings();
+    const remainingAgentWindows = agentWindowRegistry.getAgentWindows().filter(other => other.id !== window.id).length;
+    const quit = shouldQuitOnAgentWindowClosed({
+      closingViaLastTab:   windowsClosedByLastTab.delete(window.id),
+      remainingAgentWindows,
+      quitOnClose:         getSettings().application.window.quitOnClose,
+    });
 
-    if (cfg.application.window.quitOnClose) {
+    if (quit) {
       BrowserWindow.getAllWindows().forEach((window) => {
         window.close();
       });
