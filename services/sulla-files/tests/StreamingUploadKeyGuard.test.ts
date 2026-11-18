@@ -36,4 +36,20 @@ describe('streamed upload active-key guard', () => {
     const id = defaultChunkCrypto.chunkId(Buffer.from('data'), stale.dedup);
     expect(await store.has('collection', id)).toBe(false);
   });
+
+  it('skips the fresh-key check for keyrings without keysFresh (test fakes)', async() => {
+    // risk: data integrity — a keyring that lacks keysFresh must not trip the active-key guard.
+    const key = { data:Buffer.alloc(32, 1), dedup:Buffer.alloc(32, 2) };
+    const query = vi.fn(async() => ({ rows:[] }));
+    const service = new StreamingUploadService(undefined, undefined, undefined, undefined, undefined, () => ({ publishChunk:async(_upload:string, _id:string, publish:()=>Promise<void>) => publish() } as never));
+    const config = {
+      keyring:{ keys:async() => ({ data:Buffer.from(key.data), dedup:Buffer.from(key.dedup) }), invalidate:vi.fn() },
+    } as unknown as Config;
+
+    const outcome = await service.streamChunks(config, store as never, {
+      uploadId:'upload-no-fresh', collectionId:'collection', expectedBytes:4, maxBytes:4,
+      body:Readable.from([Buffer.from('data')]), intentDb:{ query } as never,
+    }).catch((error:unknown) => error);
+    expect((outcome as { code?:string } | undefined)?.code).not.toBe('collection_key_unavailable');
+  });
 });

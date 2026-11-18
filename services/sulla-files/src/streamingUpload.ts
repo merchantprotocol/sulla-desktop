@@ -68,7 +68,7 @@ export class StreamingUploadService {
     const { data: dataKey, dedup: dedupKey } = await config.keyring!.keys(input.collectionId);
     let activeKeys:{data:Uint8Array; dedup:Uint8Array} | undefined;
     try {
-    if (config.keyring!.keysFresh) activeKeys = await config.keyring!.keysFresh(input.collectionId);
+    if (typeof config.keyring!.keysFresh === 'function') activeKeys = await config.keyring!.keysFresh(input.collectionId);
     if (activeKeys && (!this.crypto.keysMatch(dataKey, activeKeys.data) || !this.crypto.keysMatch(dedupKey, activeKeys.dedup))) {
       config.keyring!.invalidate?.(input.collectionId);
       throw Object.assign(new Error('Collection key changed during upload staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
