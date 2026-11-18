@@ -97,6 +97,21 @@ describe('ContainerHealPlanner', () => {
     ]);
   });
 
+  // risk: data loss — a running Files adapter owns the bind mount every consumer uses; rm+create must never hit it
+  it('restarts a running unhealthy Files adapter once, then gives up without recreating it', () => {
+    const planner = new ContainerHealPlanner();
+    const adapter = [...healthyDeps, row({
+      container: 'sulla_files_fuse', service: 'sulla_files_fuse', state: 'running', health: 'unhealthy', runningForMs: 2 * MIN,
+    })];
+    const kinds: string[] = [];
+
+    for (let tick = 0; tick < UNHEALTHY_TICKS_BEFORE_RESTART + 3; tick++) {
+      kinds.push(...planner.plan(adapter).map(action => action.kind));
+    }
+
+    expect(kinds).toEqual(['restart', 'give-up']);
+  });
+
   it('starts a fresh incident after the container stays healthy long enough', () => {
     const planner = new ContainerHealPlanner();
 
