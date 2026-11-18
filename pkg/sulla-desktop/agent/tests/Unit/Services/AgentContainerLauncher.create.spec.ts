@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({ default: { app: { getVersion: () => 'test' } } }));
 import { createAgentContainer, removeAgentContainer, AgentLaunchError } from '../../../services/AgentContainerLauncher';
 
 const spec = { name: 'sulla-agent-chat-test-0', image: 'agent-image' } as any;

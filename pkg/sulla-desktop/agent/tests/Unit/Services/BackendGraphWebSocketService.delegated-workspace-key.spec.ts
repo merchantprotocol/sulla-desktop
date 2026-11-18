@@ -113,6 +113,8 @@ describe('conversation container persistence key after a parked delegated wake',
     const secondState = chatState('agent-race-thread');
     secondState.metadata.agentId = 'different-agent';
     const second = service.conversationContainer('mobile-relay', 'agent-race-thread', 'claude', secondState);
+    // conversationContainer awaits a dynamic import before it creates the lifecycle, so wait for the create call to run
+    await vi.waitFor(() => expect(typeof finishFirst).toBe('function'));
     finishFirst(firstLifecycle);
     await expect(first).resolves.toBe(firstLifecycle);
     await expect(second).resolves.toBe(secondLifecycle);
