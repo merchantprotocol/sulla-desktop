@@ -10,7 +10,7 @@ export interface ThreatSettings {
   scanMaxBytes: number; bufferBudgetMb: number; scanBufferMaxBytes: number; memoryPressurePercent: number;
   trafficLogEnabled: boolean; trafficLogRetentionMinutes: number;
 }
-export interface ThreatStatus { state: 'running' | 'failing-open' | 'off' | 'starting'; reason?: string; since?: string }
+export interface ThreatStatus { state: 'running' | 'failing-open' | 'off' | 'starting' | 'standby' | (string & {}); reason?: string; since?: string }
 interface Renderer { invoke<T>(channel: string, ...args: unknown[]): Promise<T>; on(channel: string, cb: (_event: unknown, value: ThreatStatus) => void): void; removeListener(channel: string, cb: (_event: unknown, value: ThreatStatus) => void): void }
 const renderer = ipcRenderer as unknown as Renderer;
 const logic = new ThreatProtectionLogic();

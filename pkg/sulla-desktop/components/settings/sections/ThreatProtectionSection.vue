@@ -10,7 +10,9 @@ import { ThreatProtectionLogic } from '@pkg/composables/preferences/threatProtec
 const logic = new ThreatProtectionLogic();
 const t = useThreatProtection(); const newHost = ref(''); const root = ref<HTMLElement>(); const advanced = ref(false);
 const hosts = computed(() => t.settings.value.allowlist.split(',').map(x => x.trim()).filter(Boolean));
-const labels: Record<string,string> = { running:'Running', 'failing-open':'Failing open', off:'Off', starting:'Starting' };
+const labels: Record<string,string> = { running:'Running', 'failing-open':'Failing open', off:'Off', starting:'Starting', standby:'Standing by' };
+const statusLabel = computed(() => labels[String(t.status.value.state)] ?? 'Standing by');
+const neutralStatus = computed(() => t.status.value.state === 'off' || t.status.value.state === 'standby' || !labels[String(t.status.value.state)]);
 const verdicts: Record<string,string> = { allowed:'Allowed', blocked:'Blocked', warned:'Warned', injection:'Injection flagged', failopen:'Failed open' };
 function updateHosts(values: string[]) { void t.save({ allowlist: values.join(',') }); }
 function addHost() { const host = newHost.value.trim().toLowerCase(); if (!validThreatHost(host) || hosts.value.includes(host)) return; updateHosts([...hosts.value, host]); newHost.value = ''; }
@@ -23,7 +25,7 @@ async function clear() { if (window.confirm('Clear the traffic log? This cannot 
  <div ref="root">
   <div class="ph"><div><h1>Threat Protection</h1><p>Inspect agent web traffic for malicious URLs and prompt injection.</p></div></div>
   <PrefCard title="Protection" :off="!t.settings.value.enabled" :subtitle="undefined">
-   <template #actions><span class="k"><span class="dot" :class="{warn:t.status.value.state==='failing-open',off:t.status.value.state==='off'}"/>{{ labels[t.status.value.state] }}</span></template>
+   <template #actions><span class="k"><span class="dot" :class="{warn:t.status.value.state==='failing-open',off:neutralStatus}"/>{{ statusLabel }}</span></template>
    <div v-if="t.status.value.state==='failing-open'" class="alert warn"><b>Failing open</b><span>{{ t.status.value.reason || 'Agents keep working while protection is unavailable.' }}</span></div>
    <PrefRow title="Threat Protection" subtitle="Inspects agent web traffic for malicious URLs and prompt injection. When off, agent traffic goes direct."><PrefToggle :model-value="t.settings.value.enabled" label="Threat Protection" @update:model-value="t.save({enabled:$event})"/></PrefRow>
    <PrefRow title="If protection is unavailable" subtitle="Agents keep working while it restarts."><span class="muted">Agent traffic goes direct (fail open)</span></PrefRow>
