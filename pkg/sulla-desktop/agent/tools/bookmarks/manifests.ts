@@ -30,7 +30,7 @@ export const bookmarkToolManifests: ToolManifest[] = [
     description: 'Save a useful link, research source, dashboard, deploy URL, artifact, or other agent-owned item in the app Bookmarks pane. Defaults to a root Sulla folder and avoids duplicate URLs within the destination folder.',
     category:    'bookmarks',
     schemaDef:   {
-      url:        { type: 'string', description: 'Bookmark URL accepted by Sulla Desktop.' },
+      url:        { type: 'string', description: 'Bookmark URL accepted by Sulla Desktop: http(s), file, sulla-artifact:, or sulla-file://<fileId>?path=&name= for a Sulla Files document (opens the latest version).' },
       title:      { type: 'string', optional: true, description: 'Display title. Defaults from the URL.' },
       folderId:   { type: 'string', optional: true, description: 'Existing destination folder id.' },
       folderPath: { type: 'string', optional: true, description: 'Slash-separated path such as Sulla/Research. Missing folders are created.' },

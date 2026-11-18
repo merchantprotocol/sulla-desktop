@@ -9,6 +9,8 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { SullaFileBookmarkLink } from '@pkg/shared/sullaFileBookmark';
+
 import { postgresClient } from '../PostgresClient';
 
 export type BookmarkKind = 'bookmark' | 'folder';
@@ -51,9 +53,10 @@ const MAX_URL = 4096;
 export const MAX_FAVICON_BYTES = 64 * 1024;
 
 /**
- * Only navigable web/file URLs and Sulla's inert artifact references may be
- * bookmarked. Rejects javascript:, data: and anything else that could
- * execute when the bookmark is opened.
+ * Only navigable web/file URLs and Sulla's inert artifact and Files references
+ * may be bookmarked. Rejects javascript:, data: and anything else that could
+ * execute when the bookmark is opened. `sulla-file:` must match the strict
+ * Files reference shape (see SullaFileBookmarkLink.parse).
  */
 export function normalizeBookmarkUrl(input: unknown): string {
   if (typeof input !== 'string') throw new Error('Bookmark URL is required');
@@ -65,11 +68,24 @@ export function normalizeBookmarkUrl(input: unknown): string {
   } catch {
     throw new Error('Bookmark URL is invalid');
   }
+  if (parsed.protocol === SullaFileBookmarkLink.SCHEME) {
+    if (!SullaFileBookmarkLink.isValid(trimmed)) throw new Error('Bookmark URL is invalid');
+
+    return trimmed;
+  }
   if (!['http:', 'https:', 'file:', 'sulla-artifact:'].includes(parsed.protocol)) {
     throw new Error(`Bookmark URL scheme ${ parsed.protocol } is not allowed`);
   }
 
   return parsed.toString();
+}
+
+/** Files bookmarks default to the file name; web and file URLs default to the host. */
+function defaultBookmarkTitle(url: string): string {
+  const fileTarget = SullaFileBookmarkLink.parse(url);
+  if (fileTarget) return fileTarget.name;
+
+  return new URL(url).hostname || url;
 }
 
 function cleanTitle(input: unknown, fallback: string): string {
@@ -132,7 +148,7 @@ export class BrowserBookmarkModel {
   static async create(input: CreateBookmarkInput): Promise<BookmarkRecord> {
     const kind: BookmarkKind = input.kind === 'folder' ? 'folder' : 'bookmark';
     const url = kind === 'bookmark' ? normalizeBookmarkUrl(input.url) : null;
-    const title = cleanTitle(input.title, kind === 'folder' ? 'New folder' : (url ? new URL(url).hostname || url : ''));
+    const title = cleanTitle(input.title, kind === 'folder' ? 'New folder' : (url ? defaultBookmarkTitle(url) : ''));
     const parentId = input.parentId || null;
 
     if (parentId) await this.assertFolder(parentId);

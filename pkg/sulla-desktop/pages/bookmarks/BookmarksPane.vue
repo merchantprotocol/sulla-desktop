@@ -366,6 +366,24 @@
             </svg>
           </span>
           <span
+            v-else-if="isSullaFileBookmark(row.record)"
+            class="bm-icon bm-icon-file"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+          </span>
+          <span
             v-else-if="isArtifactBookmark(row.record)"
             class="bm-icon bm-icon-artifact"
           >
@@ -509,8 +527,11 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { useBookmarks, bookmarkUrlKey, type BookmarkNode, type BookmarkRecord } from '@pkg/composables/useBookmarks';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab, useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import { SullaFileBookmarkOpener } from '@pkg/pages/bookmarks/SullaFileBookmarkOpener';
+import { SullaFileBookmarkLink } from '@pkg/shared/sullaFileBookmark';
 import type { ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -694,6 +715,25 @@ function isArtifactBookmark(record: BookmarkRecord): boolean {
   return record.kind === 'bookmark' && !!record.url?.startsWith('sulla-artifact:');
 }
 
+function isSullaFileBookmark(record: BookmarkRecord): boolean {
+  return record.kind === 'bookmark' && SullaFileBookmarkLink.isSullaFileUrl(record.url);
+}
+
+const sullaFileOpener = new SullaFileBookmarkOpener({
+  canOpenInEditor: path => supportsDocumentEditor(path),
+  openDocument:    request => { openDocumentTab(request); },
+  openWithFilesHandler: fileId => ipcRenderer.invoke('files-ui:open-file', { fileId }),
+});
+
+/** Files bookmarks open in the Files document tab (latest version), never in the web browser. */
+async function openSullaFile(record: BookmarkRecord): Promise<void> {
+  try {
+    await sullaFileOpener.open(record);
+  } catch {
+    actionError.value = 'Could not open this file.';
+  }
+}
+
 function artifactIdFromUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -754,6 +794,11 @@ async function openArtifact(record: BookmarkRecord): Promise<void> {
 
 function preview(record: BookmarkRecord): void {
   if (record.kind !== 'bookmark' || !record.url) return;
+  if (isSullaFileBookmark(record)) {
+    void openSullaFile(record);
+
+    return;
+  }
   if (isArtifactBookmark(record)) {
     void openArtifact(record);
 
@@ -765,6 +810,11 @@ function preview(record: BookmarkRecord): void {
 
 function keepOpen(record: BookmarkRecord): void {
   if (record.kind !== 'bookmark' || !record.url) return;
+  if (isSullaFileBookmark(record)) {
+    void openSullaFile(record);
+
+    return;
+  }
   if (isArtifactBookmark(record)) {
     void openArtifact(record);
 
@@ -781,6 +831,11 @@ function keepOpen(record: BookmarkRecord): void {
 
 function openInBackground(record: BookmarkRecord): void {
   if (record.kind !== 'bookmark' || !record.url) return;
+  if (isSullaFileBookmark(record)) {
+    void openSullaFile(record);
+
+    return;
+  }
   if (isArtifactBookmark(record)) {
     void openArtifact(record);
 
@@ -1438,6 +1493,9 @@ defineExpose({ focusSearch: () => searchRef.value?.focus(), reveal });
 }
 .bm-icon-artifact {
   color: var(--status-info);
+}
+.bm-icon-file {
+  color: var(--accent);
 }
 .bm-favicon {
   object-fit: contain;

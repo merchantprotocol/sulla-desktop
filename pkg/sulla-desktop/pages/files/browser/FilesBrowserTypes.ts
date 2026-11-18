@@ -50,7 +50,7 @@ export interface FilesMarquee { left:number; top:number; width:number; height:nu
 
 export type FilesFilterKey = 'type' | 'person' | 'date' | 'folder';
 
-export type FilesTargetAction = 'open' | 'open-sulla' | 'native-open' | 'reveal' | 'reference' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge' | 'new-folder' | 'new-file';
+export type FilesTargetAction = 'open' | 'open-sulla' | 'native-open' | 'reveal' | 'reference' | 'add-bookmark' | 'details' | 'share' | 'rename' | 'move' | 'copy' | 'cut' | 'download' | 'online-only' | 'keep-local' | 'trash' | 'restore' | 'purge' | 'new-folder' | 'new-file';
 
 /** The per-tab explorer binding (history, clipboard, folder preferences). */
 export type FilesExplorer = ReturnType<typeof import('../composables/useFilesExplorerInteractions').useFilesExplorerInteractions>;

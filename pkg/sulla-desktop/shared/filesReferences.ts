@@ -6,6 +6,9 @@
 /** Web origin that serves private mobile file links (`/f/<id>`) when no Cloud origin override is active. */
 export const DEFAULT_MOBILE_FILE_ORIGIN = 'https://sulladesktop.com';
 
+/** The file id shape used by `sulla-file://<id>` references (chat cards, copied references, bookmarks). */
+export const DURABLE_FILE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
 export interface DurableFileReference {
   fileId:string;
   versionId:string;
