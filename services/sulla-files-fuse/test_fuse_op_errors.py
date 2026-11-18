@@ -134,6 +134,12 @@ class FuseOpErrorTests(unittest.TestCase):
         bare.status = 403
         self.assertEqual(table.errno_for_failure(bare), errno.EACCES)
 
+    def test_chunk_key_mismatch_is_immediate_eio_not_a_transient_retry(self):
+        # risk: data integrity — corruption reaches callers immediately instead of being retried as an outage.
+        table = self.adapter.HTTP_ERRNO
+        self.assertEqual(table.errno_for(422, {"code": "chunk_key_mismatch"}), errno.EIO)
+        self.assertNotIn(422, self.adapter.TRANSIENT_STATUSES)
+
 
 if __name__ == "__main__":
     unittest.main()

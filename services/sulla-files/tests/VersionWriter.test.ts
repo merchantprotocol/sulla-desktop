@@ -13,7 +13,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { editTextDocument, newTextDocument } from '../src/automergeText.js';
-import { chunkId, encryptChunk } from '../src/crypto.js';
+import { chunkId, decryptAndVerifyChunk, encryptChunk } from '../src/crypto.js';
 import { migrate } from '../src/db.js';
 import { TransactionRunner } from '../src/FilesTransaction.js';
 import { FilesAccessGate } from '../src/Http/FilesAccessGate.js';
@@ -49,7 +49,7 @@ describe.skipIf(!databaseUrl)('VersionWriter and Automerge text store (real Post
       verifiedCopy: async() => null, reverify: async() => false, fetchPlain: async() => Buffer.alloc(0),
     } });
     const config:any = { deviceId: 'local-device', keyring: keys };
-    writer = new VersionWriter(config, new FilesAccessGate(pool), store, new VersionContentStager(keys, store, { chunkId, encryptChunk }), new ManifestChunkRegistry(), new VersionWriteRepository());
+    writer = new VersionWriter(config, new FilesAccessGate(pool), store, new VersionContentStager(keys, store, { chunkId, encryptChunk, decryptAndVerifyChunk }), new ManifestChunkRegistry(), new VersionWriteRepository());
     transactions = new TransactionRunner(pool);
   }, 30_000);
   afterAll(async() => {

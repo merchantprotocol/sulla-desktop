@@ -371,6 +371,9 @@ class HttpErrno:
         detail = detail or {}
         code = detail.get("code")
         message = str(detail.get("error", "")).lower()
+        if code == "chunk_key_mismatch":
+            # 422 is deliberately outside TRANSIENT_STATUSES; surface corruption immediately.
+            return errno.EIO
         if code in ("EROFS", "FILE_LOCKED") or status == 423:
             return errno.EROFS
         if status in (400, 415, 422, 428):
