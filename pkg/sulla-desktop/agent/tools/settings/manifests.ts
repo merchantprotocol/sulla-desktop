@@ -24,12 +24,12 @@ export const settingsToolManifests: ToolManifest[] = [
   },
   {
     name:        'settings_set',
-    description: 'Write a Sulla Desktop setting through SullaSettingsModel so Postgres and the Redis cache stay in sync. Use this instead of redis_hset on sulla_settings — raw Redis writes of that hash are blocked.',
+    description: 'Write a Sulla Desktop setting through SullaSettingsModel so Postgres and the Redis cache stay in sync. Use this instead of redis_hset on sulla_settings — raw Redis writes of that hash are blocked. JSON object/array values are passed as a JSON string with cast "json" (or "array"); they are parsed before storing. Object/array settings cannot be overwritten by a plain string.',
     category:    'settings',
     schemaDef:   {
       property: { type: 'string', description: 'Setting key.' },
-      value:    { type: 'string', description: 'Value to store. Booleans/numbers/json are accepted and cast via the optional cast field.' },
-      cast:     { type: 'string', optional: true, description: 'Optional cast: string | number | boolean | json | array. Defaults to typeof value.' },
+      value:    { type: 'string', description: 'Value to store. Plain strings, numbers and booleans are stored as given. For JSON objects/arrays, pass the JSON as a string and set cast to "json" (or "array").' },
+      cast:     { type: 'string', optional: true, description: 'Optional cast: string | number | boolean | json | array. Use json or array for JSON values (the value must then be a valid JSON string). Required to overwrite an existing object/array setting. Defaults to typeof value.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./set'),
