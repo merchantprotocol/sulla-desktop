@@ -13,6 +13,7 @@ import { VaultBrokerError } from './VaultBrokerError';
 const TOOLS_VAULT_ENDPOINT = 'https://sulla_vault:8787';
 const DESKTOP_VAULT_ENDPOINT = loopbackOrigin('https', 30135);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PRINCIPAL_TTL_MS = 60_000;
 
 export interface VaultBrokerIdentityContextInput {
   agentId: string; podId: string; credentialScope: NonNullable<ToolExecutionContext['credential_scope']>;
@@ -24,6 +25,7 @@ export class VaultBrokerServiceProvider {
   private configuredBroker: LocalVaultBrokerClient | null | undefined;
   private configuredApproval: LocalVaultApprovalClient | null | undefined;
   private principalId: string | undefined;
+  private principalExpiresAt = 0;
   private principalPromise: Promise<string> | undefined;
 
   constructor(
@@ -43,6 +45,8 @@ export class VaultBrokerServiceProvider {
         this.env.SULLA_VAULT_BROKER_URL ?? TOOLS_VAULT_ENDPOINT,
         { serviceId, serviceToken: token },
         (input, init) => import('./toolsTransport').then(runtime => runtime.toolsVaultFetch(input, init)),
+        undefined,
+        () => this.invalidatePrincipalCache(),
       );
     } else if (this.electronMain()) {
       const identity = async() => (await import('./desktopTransport')).loadDesktopBrokerIdentity();
@@ -51,6 +55,7 @@ export class VaultBrokerServiceProvider {
         identity,
         (input, init) => import('./desktopTransport').then(runtime => runtime.desktopVaultFetch(input, init)),
         (input, init) => import('./desktopTransport').then(runtime => runtime.desktopVaultTransport.fetchStream(input, init)),
+        () => this.invalidatePrincipalCache(),
       );
     } else this.configuredBroker = null;
     return this.configuredBroker;
@@ -71,15 +76,25 @@ export class VaultBrokerServiceProvider {
   }
 
   async getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
-    if (this.principalId) return this.principalId;
+    if (this.principalId && this.principalExpiresAt > Date.now()) return this.principalId;
+    this.invalidatePrincipalCache();
     if (this.principalPromise) return this.principalPromise;
     this.principalPromise = this.loadLocalVaultPrincipalId(signal);
-    try { return this.principalId = await this.principalPromise; }
+    try {
+      this.principalId = await this.principalPromise;
+      this.principalExpiresAt = Date.now() + PRINCIPAL_TTL_MS;
+      return this.principalId;
+    }
     catch (error) {
       const e = error as { status?: number; code?: string };
-      if (e.status === 401 || e.status === 423 || e.code === 'vault_locked') this.principalId = undefined;
+      if (e.status === 401 || e.status === 423 || e.code === 'vault_locked' || e.code === 'invalid_caller_identity') this.invalidatePrincipalCache();
       throw error;
     } finally { this.principalPromise = undefined; }
+  }
+
+  invalidatePrincipalCache(): void {
+    this.principalId = undefined;
+    this.principalExpiresAt = 0;
   }
 
   private async loadLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {

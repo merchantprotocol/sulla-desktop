@@ -46,9 +46,9 @@ export class DesktopVaultIdentityRepository {
       throw new Error('OS-protected vault service identity is unavailable');
     }
     const filePath = path.join(this.appHome(), fileName);
-    let encrypted: Buffer;
+    let mtimeMs: number;
     try {
-      encrypted = await this.readFile(filePath);
+      mtimeMs = (await this.statFile(filePath)).mtimeMs;
     } catch (error) {
       // The runtime writes these identities when it starts the vault. Before that
       // (first launch, startup still running or failed) there is nothing to read.
@@ -57,9 +57,9 @@ export class DesktopVaultIdentityRepository {
       }
       throw error;
     }
-    const mtimeMs = (await this.statFile(filePath)).mtimeMs;
     const cached = this.cache.get(fileName);
     if (cached && cached.mtimeMs === mtimeMs && cached.expiresAt > Date.now()) return cached.identity;
+    const encrypted = await this.readFile(filePath);
     const serviceToken = safeStorage.decryptString(encrypted);
     if (!serviceToken) throw new Error('Vault service identity is empty');
 
@@ -92,7 +92,7 @@ export class DesktopVaultTransport {
   readonly fetch: VaultBrokerFetch = async(input, init) => {
     const session = await this.getPinnedSession(true);
     const response = await session.fetch(input, init);
-    if (response.status === 401) this.identities.invalidate();
+    if (response.status === 401 || response.status === 423) this.identities.invalidate();
     return response;
   };
 
@@ -100,7 +100,9 @@ export class DesktopVaultTransport {
   readonly fetchStream: VaultBrokerFetch = async(input, init) => {
     const session = await this.getPinnedSession(false);
 
-    return session.fetch(input, init);
+    const response = await session.fetch(input, init);
+    if (response.status === 401 || response.status === 423) this.identities.invalidate();
+    return response;
   };
 
   loadBrokerIdentity(): Promise<VaultBrokerServiceIdentity> {
