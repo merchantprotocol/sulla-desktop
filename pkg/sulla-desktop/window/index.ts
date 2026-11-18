@@ -30,6 +30,7 @@ import { isFirstRunTestInstance } from '@pkg/utils/instance';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
+const rendererConsoleLog = Logging['renderer-console'];
 
 /**
  * A mapping of window key (which is our own construct) to a window ID (which is
@@ -94,6 +95,9 @@ export function createWindow(name: string, url: string, options: Electron.Browse
     const method = level === 'warning' ? 'warn' : level;
 
     console[method](`${ name }@${ lineNumber }: ${ message }`);
+    if (level === 'warning' || level === 'error') {
+      rendererConsoleLog[method](`${ name }@${ lineNumber }: ${ message }`);
+    }
   });
   // Intercept navigation on the main window to prevent it from leaving
   // the app. Agent asset cards use <webview> tags with their own

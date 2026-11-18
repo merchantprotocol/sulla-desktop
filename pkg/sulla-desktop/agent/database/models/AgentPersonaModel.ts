@@ -84,6 +84,7 @@ export class AgentPersonaService {
   private wsService = getWebSocketClientService();
   private readonly wsUnsub = new Map<string, () => void>();
   private readonly dispatcher = createMessageDispatcher();
+  private readonly sendRetryDelays = [250, 750, 1500];
 
   readonly messages:     ChatMessage[] = reactive([]);
   /**
@@ -230,22 +231,17 @@ export class AgentPersonaService {
 
     this.registry.setLoading(id, true);
 
-    let delivered: boolean;
-    try {
-      console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${ id }"...`);
-      delivered = await this.wsService.send(id, {
+    console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${ id }"...`);
+    const result = await this.sendWithRetry(id, {
         type:      'user_message',
         data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
         timestamp: Date.now(),
       });
-      console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${ delivered }`);
-    } catch (err) {
-      console.error(`[AgentPersonaService] _addUserMessage() — WebSocket send THREW:`, err);
-      delivered = false;
-    }
+    const delivered = result.delivered;
+    console.log(`[AgentPersonaService] _addUserMessage() — WebSocket send result: delivered=${ delivered }`);
 
     if (!delivered) {
-      console.warn(`[AgentPersonaService] Message delivery FAILED for channel="${ id }" — connection may be down`);
+      console.warn(`[AgentPersonaService] Message delivery FAILED for channel="${ id }": ${ result.error }`);
       this.registry.setLoading(id, false);
       this.graphRunning.value = false;
       this.messages.push({
@@ -253,7 +249,7 @@ export class AgentPersonaService {
         channelId: id,
         threadId:  this.state.threadId,
         role:      'system',
-        content:   'Message could not be delivered — the connection to the agent appears to be down. Please try again.',
+        content:   `Sulla couldn't send that message (${ result.error }). Please send it again.`,
       });
       this.markMessagesChanged();
     }
@@ -296,24 +292,38 @@ export class AgentPersonaService {
     this.markMessagesChanged();
 
     // Send inject_message — backend will push to state.messages without calling graph.execute()
-    let delivered: boolean;
-    try {
-      delivered = await this.wsService.send(id, {
+    const result = await this.sendWithRetry(id, {
         type:      'inject_message',
         data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
         timestamp: Date.now(),
       });
-      console.log(`[AgentPersonaService] injectMessage() — WebSocket send result: delivered=${ delivered }`);
-    } catch (err) {
-      console.error(`[AgentPersonaService] injectMessage() — WebSocket send THREW:`, err);
-      delivered = false;
-    }
+    const delivered = result.delivered;
+    console.log(`[AgentPersonaService] injectMessage() — WebSocket send result: delivered=${ delivered }`);
 
     if (!delivered) {
-      console.warn(`[AgentPersonaService] Inject delivery FAILED for channel="${ id }"`);
+      console.warn(`[AgentPersonaService] Inject delivery FAILED for channel="${ id }": ${ result.error }`);
+      this.messages.push({
+        id: `sys_${ Date.now() }_delivery_fail`, channelId: id, threadId: this.state.threadId,
+        role: 'system', content: `Sulla couldn't send that message (${ result.error }). Please send it again.`,
+      });
+      this.markMessagesChanged();
     }
 
     return delivered;
+  }
+
+  private async sendWithRetry(channelId: string, message: WebSocketMessage): Promise<{ delivered: boolean; error: string }> {
+    let lastError = 'send was not accepted';
+    for (let attempt = 0; attempt <= this.sendRetryDelays.length; attempt++) {
+      if (attempt > 0) await new Promise(resolve => setTimeout(resolve, this.sendRetryDelays[attempt - 1]));
+      try {
+        if (await this.wsService.send(channelId, message)) return { delivered: true, error: '' };
+        lastError = 'send was not accepted';
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    return { delivered: false, error: lastError.slice(0, 160) };
   }
 
   private threadStorageKey(): string {
