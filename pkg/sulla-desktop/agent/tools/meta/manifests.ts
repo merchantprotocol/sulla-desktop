@@ -83,7 +83,7 @@ export const metaToolManifests: ToolManifest[] = [
       command: { type: 'string', optional: true, description: 'The exact shell command to run on the host' },
       cmd:     { type: 'string', optional: true, description: 'Alias for command' },
       cwd:     { type: 'string', optional: true, description: 'Working directory on the host to run the command in (absolute path)' },
-      timeout: { type: 'number', optional: true, description: 'Timeout in milliseconds (default 60000)' },
+      timeout: { type: 'number', optional: true, description: 'Timeout in milliseconds (default 60000). Values under 1000 are treated as seconds.' },
       stdin:   { type: 'string', optional: true, description: 'Optional stdin data to pipe into the command' },
       foreground: { type: 'boolean', optional: true, description: 'Default false: `open` commands get -g so apps launch in the background without stealing the user\'s focus/Space. Set true only when the app must come to the front.' },
     },

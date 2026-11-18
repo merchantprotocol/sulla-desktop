@@ -5,6 +5,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { normalizeTimeoutMs } from '../util/timeoutUnits';
 
 /**
  * Exec Tool - Worker class for execution
@@ -37,7 +38,7 @@ export class ExecWorker extends BaseTool {
     }
 
     const cwd = input.cwd ? String(input.cwd).trim() : undefined;
-    const timeoutMs = input.timeout ? Number(input.timeout) : 120_000;
+    const timeoutMs = normalizeTimeoutMs(input.timeout, 120_000);
     const stdin = input.stdin ? String(input.stdin) : undefined;
 
     // Prepend cd if a working directory was requested

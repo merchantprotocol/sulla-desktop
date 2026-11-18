@@ -73,7 +73,7 @@ function executeSpawn(
         finished = true;
         resolve({
           stdout:   stdout.slice(0, maxOutputChars) + '\n[timeout truncated]',
-          stderr:   stderr.slice(0, maxOutputChars) + '\n[timeout]',
+          stderr:   stderr.slice(0, maxOutputChars) + `\n[timeout] Command timed out after ${ timeoutMs } ms (killed).`,
           exitCode: -1,
         });
       }

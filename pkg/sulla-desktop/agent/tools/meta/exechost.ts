@@ -5,6 +5,7 @@
 
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { clampTimeoutMs, normalizeTimeoutMs } from '../util/timeoutUnits';
 import { HOST_ACCESS_DISABLED_MESSAGE, isHostAccessEnabled } from '../util/hostAccess';
 
 /**
@@ -42,7 +43,10 @@ export class ExecHostWorker extends BaseTool {
     }
 
     const cwd       = input.cwd ? String(input.cwd).trim() : undefined;
-    const timeoutMs = input.timeout ? Number(input.timeout) : 60_000;
+    // `timeoutMs` is always milliseconds; `timeout` is ms but agents often send seconds.
+    const timeoutMs = input.timeoutMs != null && input.timeoutMs !== ''
+      ? clampTimeoutMs(Number(input.timeoutMs) || 60_000)
+      : normalizeTimeoutMs(input.timeout, 60_000);
     const stdin     = input.stdin ? String(input.stdin) : undefined;
     const foreground = input.foreground === true || input.foreground === 'true';
 
@@ -67,6 +71,13 @@ export class ExecHostWorker extends BaseTool {
         stdin,
         // runInGuest is false by default → executes on the host process
       });
+
+      if (res.exitCode === -1 && res.stderr.includes('[timeout]')) {
+        return {
+          successBoolean: false,
+          responseString: `Command timed out after ${ timeoutMs } ms (killed). Pass "timeout" in milliseconds, e.g. 120000.`,
+        };
+      }
 
       if (res.exitCode !== 0) {
         return {
