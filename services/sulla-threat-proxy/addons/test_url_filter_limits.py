@@ -13,6 +13,23 @@ import common
 import url_filter
 
 
+class RecordingDailyCounters:
+    """Stands in for DailyCounters; records the `blocked` flag of each increment."""
+
+    def __init__(self):
+        self.calls = []
+
+    def increment(self, blocked=False, now=None):
+        self.calls.append(blocked)
+
+
+def new_url_filter():
+    """Build a URLFilter without __init__, with the daily counter URLFilter.requestheaders needs."""
+    instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+    instance.daily_counters = RecordingDailyCounters()
+    return instance
+
+
 class URLhausLimitTests(unittest.TestCase):
     # risk: malware blocking — invalid oversized refreshes must not erase a working list.
     def test_oversized_delivery_is_rejected_and_current_set_kept(self):
@@ -23,7 +40,7 @@ class URLhausLimitTests(unittest.TestCase):
                 handle.truncate(32 * 1024 * 1024 + 1)
             with open(bundled, "w", encoding="utf-8") as handle:
                 handle.write("bundled.example\n")
-            instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+            instance = new_url_filter()
             instance._urlhaus_hosts = {"known-good.example"}
             instance._urlhaus_loaded_at = 0
             instance._urlhaus_lock = threading.Lock()
@@ -40,7 +57,7 @@ class URLhausLimitTests(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.writelines(f"host{i}.example\n" for i in range(1_000_001))
             with self.assertRaisesRegex(ValueError, "1,000,000"):
-                url_filter.URLFilter.__new__(url_filter.URLFilter)._read_urlhaus_file(path)
+                new_url_filter()._read_urlhaus_file(path)
 
     class Config:
         generation = 1
@@ -57,7 +74,7 @@ class URLhausLimitTests(unittest.TestCase):
         return flow
 
     def make_blocking_instance(self):
-        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance = new_url_filter()
         instance.config = self.Config()
         instance._config_generation = -1
         instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
@@ -116,7 +133,7 @@ class URLhausLimitTests(unittest.TestCase):
 
     # risk: URL blocking — blocked requests must not be streamed upstream and get 451.
     def test_block_verdict_is_applied_without_request_streaming(self):
-        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance = new_url_filter()
         instance.config = self.Config()
         instance._config_generation = -1
         instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
@@ -127,10 +144,11 @@ class URLhausLimitTests(unittest.TestCase):
         self.assertIsNone(flow.response)
         instance.request(flow)
         self.assertEqual(flow.response.status_code, 451)
+        self.assertEqual(instance.daily_counters.calls, [True])
 
     # risk: policy delivery — warn mode keeps streaming and annotates the outbound request.
     def test_warn_verdict_adds_header_and_keeps_streaming(self):
-        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance = new_url_filter()
         instance.config = self.Config()
         instance.config.get = lambda key, default=None: {"blockMode": "warn", "allowlist": []}.get(key, default)
         instance._config_generation = -1
@@ -141,10 +159,11 @@ class URLhausLimitTests(unittest.TestCase):
         self.assertEqual(flow.request.headers["X-Sulla-Threat"], "urlhaus:exact")
         instance.request(flow)
         self.assertIsNone(flow.response)
+        self.assertEqual(instance.daily_counters.calls, [False])
 
     # risk: availability — a blocked large upload is killed before body buffering or upstream contact.
     def test_blocked_large_upload_is_killed_at_headers(self):
-        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance = new_url_filter()
         instance.config = self.Config()
         instance._config_generation = -1
         instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
@@ -159,7 +178,7 @@ class URLhausLimitTests(unittest.TestCase):
 
     # risk: availability — an internal reputation exception leaves the request unchanged.
     def test_hook_exception_is_fail_open(self):
-        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance = new_url_filter()
         instance._apply_config = lambda: (_ for _ in ()).throw(RuntimeError("config failure"))
         flow = self.make_flow()
         before_stream = flow.request.stream

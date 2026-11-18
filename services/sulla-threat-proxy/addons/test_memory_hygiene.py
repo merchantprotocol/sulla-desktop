@@ -27,7 +27,8 @@ def test_interval_loop_collects_and_trims_at_interval(monkeypatch):
 
     async def fake_sleep(seconds):
         calls.append(seconds)
-        if calls.count(15) == 2:
+        # Cancel on the third tick so the loop completes two full collect cycles first.
+        if calls.count(15) == 3:
             raise asyncio.CancelledError
 
     monkeypatch.setattr(memory_hygiene.asyncio, "sleep", fake_sleep)
@@ -35,7 +36,7 @@ def test_interval_loop_collects_and_trims_at_interval(monkeypatch):
         asyncio.run(hygiene._interval_loop())
     except asyncio.CancelledError:
         pass
-    assert calls == [15, "gc", 15, "gc"]
+    assert calls == [15, "gc", 15, "gc", 15]
     assert hygiene.trim_calls == ["trim", "trim"]
 
 
