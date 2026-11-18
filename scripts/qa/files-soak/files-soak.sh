@@ -143,6 +143,65 @@ LATENCY_P95_MS = env_float("SOAK_LATENCY_P95_MS", 1000, 1, 600000)
 LOCK_SECONDS = env_int("SOAK_LOCK_SECONDS", 30, 5, 900)
 API_SAMPLE = env_int("SOAK_API_SAMPLE", 40, 0, 5000)
 TEST_LABEL = "sulla-soak=1"
+
+# In-container holders for the handles check. Only fds 0-9 are valid in POSIX sh / busybox ash,
+# so neither script ever names an fd above 9. Each holder gets its own process with one fd (3).
+# Python path: one process opens N files, writes, reads back and reports errno names.
+HANDLES_PYTHON_SCRIPT = r'''
+import errno, json, os, sys
+folder, count = sys.argv[1], int(sys.argv[2])
+handles, errors, readback_bad = [], {}, 0
+for index in range(count):
+    path = os.path.join(folder, "h%d" % index)
+    try:
+        handle = open(path, "w+b")
+    except OSError as exc:
+        name = errno.errorcode.get(exc.errno, str(exc.errno))
+        errors[name] = errors.get(name, 0) + 1
+        continue
+    handles.append(handle)
+    payload = b"v%d" % index
+    try:
+        handle.write(payload)
+        handle.flush()
+        handle.seek(0)
+        if handle.read() != payload:
+            readback_bad += 1
+    except OSError as exc:
+        name = errno.errorcode.get(exc.errno, str(exc.errno))
+        errors[name] = errors.get(name, 0) + 1
+summary = ",".join("%s:%d" % item for item in sorted(errors.items())) or "none"
+print("mode=python opened=%d readback_bad=%d errors=%s" % (len(handles), readback_bad, summary), flush=True)
+for handle in handles:
+    handle.close()
+'''
+
+# Sh path (no python in the image): one backgrounded sh per file. Each child opens fd 3 on its file
+# (redirection error goes to e<i>), writes v<i>, reads it back, records ok<i> or bad<i>, then holds fd 3.
+HANDLES_SH_SCRIPT = (
+    'd="$1"; n="$2"; s="$(mktemp -d 2>/dev/null || echo /tmp/handles-$$)"; mkdir -p "$s"; i=0\n'
+    'while [ "$i" -lt "$n" ]; do\n'
+    '  sh -c \'if printf "v%s" "$1" >&3 && [ "$(cat "$2")" = "v$1" ]; then : >"$3/ok$1"; else : >"$3/bad$1"; fi; sleep 25\' sh "$i" "$d/h$i" "$s" >/dev/null 2>"$s/e$i" 3>"$d/h$i" &\n'
+    '  i=$((i+1))\n'
+    'done\n'
+    't=0\n'
+    'while :; do\n'
+    '  done_n=0\n'
+    '  for f in "$s"/ok* "$s"/bad*; do [ -e "$f" ] && done_n=$((done_n+1)); done\n'
+    '  for f in "$s"/e*; do [ -s "$f" ] && done_n=$((done_n+1)); done\n'
+    '  [ "$done_n" -ge "$n" ] && break\n'
+    '  t=$((t+1)); [ "$t" -ge 60 ] && break\n'
+    '  sleep 1\n'
+    'done\n'
+    'ok=0; bad=0; emfile=0; eacces=0; enospc=0; other=0\n'
+    'for f in "$s"/ok*; do [ -e "$f" ] && ok=$((ok+1)); done\n'
+    'for f in "$s"/bad*; do [ -e "$f" ] && bad=$((bad+1)); done\n'
+    'for f in "$s"/e*; do [ -s "$f" ] || continue; case "$(cat "$f")" in\n'
+    '  *"Too many open"*) emfile=$((emfile+1));; *"Permission denied"*) eacces=$((eacces+1));;\n'
+    '  *"No space"*) enospc=$((enospc+1));; *) other=$((other+1));;\n'
+    'esac; done\n'
+    'echo "mode=sh opened=$ok readback_bad=$bad errors=EMFILE:$emfile,EACCES:$eacces,ENOSPC:$enospc,other:$other"\n'
+)
 ERRNO_TEXT = re.compile(r"[A-Za-z /-]+$")
 
 # Runs inside sulla_files_fuse (python3 -I -c). The token is read there and never leaves it.
@@ -523,19 +582,28 @@ class FilesSoak:
             return self._image
         images = self._docker(["images", "--format", "{{.Repository}}:{{.Tag}}"], 30).stdout.split()
         candidates = [ENV["SOAK_TEST_IMAGE"]] if ENV.get("SOAK_TEST_IMAGE") else []
-        for prefix in ("alpine:", "busybox:"):
-            candidates += [name for name in images if name.startswith(prefix)]
         fuse = self._docker(["inspect", "-f", "{{.Config.Image}}", CONTAINER_FUSE], 15)
         if fuse.returncode == 0 and fuse.stdout.strip():
             candidates.append(fuse.stdout.strip())
+        for prefix in ("alpine:", "busybox:"):
+            candidates += [name for name in images if name.startswith(prefix)]
+        # Prefer an image with python3 (one process holds all N files); keep an sh-only image as fallback.
+        probe_script = ("command -v sh && command -v sleep && command -v printf >/dev/null && "
+                        "{ command -v python3 >/dev/null && echo python || echo sh-only; }")
         rejected = []
+        sh_only = None
         for image in dict.fromkeys(candidates):
-            probe = self._docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", image, "-c",
-                                  "command -v sh && command -v sleep && command -v printf >/dev/null"], 90)
-            if probe.returncode == 0:
-                self._image = image
+            probe = self._docker(["run", "--rm", "--network", "none", "--entrypoint", "sh", image, "-c", probe_script], 90)
+            if probe.returncode != 0:
+                rejected.append("%s rc=%d" % (image, probe.returncode))
+                continue
+            if "python" in probe.stdout.split():
+                self._image, self._image_python = image, True
                 return image
-            rejected.append("%s rc=%d" % (image, probe.returncode))
+            sh_only = sh_only or image
+        if sh_only:
+            self._image, self._image_python = sh_only, False
+            return sh_only
         raise CheckFailure("no local image provides sh and sleep for a test container (%s)" % ("; ".join(rejected) or "no candidates"))
 
     def _start_test_container(self, name, image):
@@ -1056,10 +1124,6 @@ class FilesSoak:
         for handle in held:
             handle.close()
         names_containers = []
-        script = ('d="$1"; n="$2"; i=0\n'
-                  'while [ "$i" -lt "$n" ]; do eval "exec $((i+10))>\\"$d/h$i\\""; i=$((i+1)); done\n'
-                  'i=0; while [ "$i" -lt "$n" ]; do eval "printf v%s $i >&$((i+10))"; i=$((i+1)); done\n'
-                  'echo "opened=$n"\n')
         container_results = []
         try:
             image = self._soak_image()
@@ -1067,9 +1131,23 @@ class FilesSoak:
                 name = "fusesoak-h%d-%s" % (index, datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S"))
                 names_containers.append(name)
                 self._start_test_container(name, image)
-                result = self._probe(["docker", "exec", name, "sh", "-c", script, "sh", str(folder), "100"], 90)
-                opened = "opened=100" in result["out"].decode("utf-8", "replace")
-                container_results.append({"opened_100": opened, "rc": result["rc"], "err": result["err"] or "none"})
+                if self._image_python:
+                    command = ["python3", "-I", "-c", HANDLES_PYTHON_SCRIPT, str(folder), "100"]
+                else:
+                    command = ["sh", "-c", HANDLES_SH_SCRIPT, "sh", str(folder), "100"]
+                result = self._probe(["docker", "exec", name, *command], 120)
+                text = result["out"].decode("utf-8", "replace")
+                report = re.search(r"mode=(\w+) opened=(\d+) readback_bad=(\d+) errors=(\S+)", text)
+                if report:
+                    opened = int(report.group(2))
+                    container_results.append({"mode": report.group(1), "opened": opened,
+                                              "readback_bad": int(report.group(3)), "errors": report.group(4),
+                                              "opened_100": opened == 100 and int(report.group(3)) == 0,
+                                              "rc": result["rc"]})
+                else:
+                    container_results.append({"mode": "python" if self._image_python else "sh", "opened": 0,
+                                              "opened_100": False, "rc": result["rc"],
+                                              "err": (result["err"] or "none")[:200]})
         except Exception as exc:
             container_results.append({"error": "%s: %s" % (type(exc).__name__, str(exc)[:120])})
         finally:
