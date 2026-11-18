@@ -41,6 +41,9 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     expect(changed.body.reset).toBe(false);
     expect(createEvents).toEqual([expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'insert', versionId: expect.any(String), size: expect.anything() })]);
     const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='docs/inner/feed-change.txt'`, [fixture.collectionId])).rows[0].id;
+    const current = (await fixture.pool.query(`SELECT current_version_id::text AS version_id,size FROM files WHERE id=$1`, [fileId])).rows[0];
+    // risk: stale namespace — create's insert+version-update journal pair must retain membership kind and latest metadata.
+    expect(createEvents[0]).toMatchObject({ kind: 'insert', versionId: current.version_id, size: current.size });
     await fixture.pool.query(`UPDATE files SET path='docs/inner/feed-renamed.txt' WHERE id=$1`, [fileId]);
     const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);
     expect(rename.body.changes).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-renamed.txt', oldPath: 'docs/inner/feed-change.txt', kind: 'rename' })]));

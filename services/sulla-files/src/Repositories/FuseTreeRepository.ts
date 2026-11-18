@@ -49,7 +49,8 @@ export class FuseTreeRepository {
       j.path,j.old_path AS "oldPath",j.kind,j.current_version_id::text AS "versionId",j.size,j.id
       FROM s LEFT JOIN r ON TRUE LEFT JOIN LATERAL (
         SELECT id,path,old_path,kind,current_version_id,size FROM fuse_change_journal
-        WHERE collection_id=$1 AND NOT pg_visible_in_snapshot(xid,$2::pg_snapshot) ORDER BY id LIMIT 1001
+        WHERE collection_id=$1 AND xid >= pg_snapshot_xmin($2::pg_snapshot)
+          AND NOT pg_visible_in_snapshot(xid,$2::pg_snapshot) ORDER BY id LIMIT 1001
       ) j ON TRUE`,[collectionId,since])).rows;
     const state=rows[0];
     const shouldReset=state.prunedXid && BigInt(state.prunedXid)>=BigInt(state.cursorXmin);
@@ -58,15 +59,19 @@ export class FuseTreeRepository {
     const more = changes.length > 1000; const page = more ? changes.slice(0,1000) : changes;
     // A single create can journal both insert and current-version update in one
     // transaction. Return one event per path in this page, with the latest kind.
-    const byPath = new Map<string, {path:string;oldPath:string|null;kind:string}>();
+    const byPath = new Map<string, any>();
     for (const { id: _id, ...change } of page as any[]) {
       const previous = byPath.get(change.path);
+      const membershipKind = ['insert','delete','rename'].includes(change.kind)
+        ? change.kind : previous?.membershipKind;
       byPath.set(change.path, {
         ...change,
         oldPath: change.oldPath ?? previous?.oldPath ?? null,
+        membershipKind,
+        kind: membershipKind ?? 'update',
       });
     }
-    return { cursor:String(state.cursor), reset:more, more:false, changes:more ? [] : [...byPath.values()] };
+    return { cursor:String(state.cursor), reset:more, more:false, changes:more ? [] : [...byPath.values()].map(({membershipKind: _membershipKind, ...change}) => change) };
   }
 
   async homeCollectionId(userId:string):Promise<string> {
