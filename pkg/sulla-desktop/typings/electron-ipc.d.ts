@@ -247,6 +247,7 @@ export interface IpcMainInvokeEvents {
   'org-conversations:organizations': () => readonly { orgId: string; name: string; slug?: string; memberCount: number }[];
   'org-conversations:directory': (org?: string) => { membership: { orgId: string; name: string }; directory: { people: readonly unknown[] } };
   'org-conversations:inbox': (org?: string) => { membership: { orgId: string; name: string }; messages: readonly import('@sulla/domain').MessageEnvelope['data'][] };
+  'org-conversations:contact-requests': (org?: string) => { requests: readonly import('@sulla/domain').MessageEnvelope['data'][] };
   'org-conversations:participant': (org?: string) => { membership: { orgId: string; name: string }; userId: string };
   'org-conversations:start': (request: { orgId: string; participantUserIds: string[]; kind?: 'direct' | 'group' | 'agent_thread' }) => { membership: { orgId: string; name: string }; conversationId: string };
   'org-conversations:send': (input: { orgId: string; conversationId: string; toUserIds: string[]; text: string }) => { messageId: string; message: import('@sulla/domain').MessageEnvelope['data'] };

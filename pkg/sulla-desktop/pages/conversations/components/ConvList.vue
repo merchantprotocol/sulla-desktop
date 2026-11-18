@@ -46,6 +46,18 @@ function createGroup(): void {
     </div>
     <div class="list-body">
       <template v-if="store.s.listTab === 'people'">
+        <template v-if="!picking && store.requests().length">
+          <div class="lgrp">Contact requests · {{ store.requests().length }}</div>
+          <div v-for="request in store.requests()" :key="request.senderId" class="row">
+            <ConvAvatar :ini="request.initials" size="lg" />
+            <div class="tx">
+              <div class="t1"><b>{{ request.name }}</b><time>{{ request.time }}</time></div>
+              <div class="t2">{{ request.latest }}</div>
+              <small class="person-agent">{{ request.count }} request{{ request.count === 1 ? '' : 's' }} · waiting for your answer</small>
+            </div>
+            <div class="acts"><button class="btn sm" disabled title="Coming soon">Allow</button><button class="btn sm ghost" disabled title="Coming soon">Not now</button></div>
+          </div>
+        </template>
         <div v-if="!people.length" class="list-empty"><b>No people yet</b>Members of this organization show up here once they join.</div>
         <div v-for="person in people" :key="person.id" class="row" :class="{ on: picking && picked.includes(person.id) }" @click="picking ? toggle(person.id) : undefined">
           <input v-if="picking" type="checkbox" :checked="picked.includes(person.id)" :aria-label="`Add ${person.name} to the group`" @click.stop="toggle(person.id)" />

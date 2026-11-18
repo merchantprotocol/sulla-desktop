@@ -318,6 +318,11 @@ export class BackendGraphWebSocketService {
     return this.orgMessengerFleet.loadDirectory(org);
   }
 
+  /** Pending contact requests for the signed-in member in the target org (read-only). */
+  contactRequests(org?: string): Promise<readonly import('@sulla/domain').MessageEnvelope['data'][]> {
+    return this.orgMessengerFleet.contactRequests(org);
+  }
+
   memberOrganizations(): Promise<readonly OrgMembership[]> {
     return this.orgMessengerFleet.memberOrganizations();
   }

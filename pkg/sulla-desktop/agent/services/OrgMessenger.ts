@@ -160,6 +160,13 @@ export class OrgMessenger {
     return delivered;
   }
 
+  /** Pending contact requests addressed to the signed-in member in this org. Read-only; never resolves them. */
+  async listContactRequests(): Promise<readonly MessageEnvelope['data'][]> {
+    const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
+    const requests = await this.transport.contactRequests(orgId, userId);
+    return requests.map(request => request.data);
+  }
+
   async checkContactRequests(): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     const requests = await this.transport.contactRequests(orgId, userId);

@@ -11,6 +11,7 @@ export interface OrgConversationsBackend {
   loadOrgInboxMessages(org?: string): Promise<{ membership: { orgId: string; name: string }; messages: readonly MessageEnvelope[] }>;
   orgMessagingParticipant(org?: string): Promise<{ membership: { orgId: string; name: string }; userId: string }>;
   startOrgConversation(request: { conversationId: string; kind: 'direct' | 'group' | 'agent_thread'; participantUserIds: readonly string[] }, org?: string): Promise<{ membership: { orgId: string; name: string }; conversationId: string }>;
+  contactRequests(org?: string): Promise<readonly MessageEnvelope['data'][]>;
   sendOrgMessage(envelope: MessageEnvelope, org?: string): Promise<void>;
 }
 
@@ -26,6 +27,7 @@ export class OrgConversationsIpcController implements IpcController {
       return { membership: result.membership, messages: result.messages.map(message => message.data) };
     });
     this.ipc.handle('org-conversations:participant', (_event, org?: string) => this.backend().orgMessagingParticipant(org));
+    this.ipc.handle('org-conversations:contact-requests', async (_event, org?: string) => ({ requests: await this.backend().contactRequests(org) }));
     this.ipc.handle('org-conversations:start', (_event, request: { orgId: string; participantUserIds: string[]; kind?: 'direct' | 'group' | 'agent_thread' }) => {
       const participantUserIds = [...new Set((request.participantUserIds ?? []).filter(id => typeof id === 'string' && id.trim()))];
       return this.backend().startOrgConversation({

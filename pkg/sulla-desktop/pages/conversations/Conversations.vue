@@ -8,7 +8,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } f
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import SecretaryMode from '@pkg/pages/SecretaryMode.vue';
 import { ConversationProjection, type ConversationMessageData, type ConversationThreadProjection } from './ConversationProjection';
-import { CONV_STORE, ConversationScreenStore, type LiveSnapshot, type MessageView, type OrgView, type PersonView, type ThreadView } from './ConversationScreenStore';
+import { CONV_STORE, ConversationScreenStore, type LiveSnapshot, type MessageView, type OrgView, type PersonView, type RequestView, type ThreadView } from './ConversationScreenStore';
 import ConvList from './components/ConvList.vue';
 import ConvNav from './components/ConvNav.vue';
 import ConvSide from './components/ConvSide.vue';
@@ -23,6 +23,7 @@ defineEmits<{ (event: 'set-mode', mode: string): void }>();
 
 // Data layer: org list, directory, inbox, participant, start and send, all through the existing IPC.
 const organizations = ref<Org[]>([]), activeOrg = ref(''), people = ref<Person[]>([]), messages = ref<MessageData[]>([]), localSent = ref<MessageData[]>([]);
+const contactRequests = ref<MessageData[]>([]);
 const userId = ref(''), userName = ref(''), loading = ref(false), sending = ref(false), secretaryOpen = ref(false), error = ref('');
 const emptyConversations = ref<ConversationThreadProjection[]>([]);
 const projection = new ConversationProjection();
@@ -64,8 +65,14 @@ const snapshot = computed<LiveSnapshot | null>(() => {
       return { id: message.messageId, side: mine ? 'me' : agent ? 'agent' : 'person', name, initials: mine ? initials(userName.value) : initials(displayName(message.from.userId)), time: formatTime(message.createdAt), text: message.body.text };
     });
   }
+  const requests: RequestView[] = [];
+  for (const request of contactRequests.value) {
+    const existing = requests.find(view => view.senderId === request.from.userId);
+    if (existing) { existing.count += 1; continue; }
+    requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
+  }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
-  return { orgId: activeOrg.value, orgName: activeName, orgs, people: memberViews, threads: threadViews, bodies };
+  return { orgId: activeOrg.value, orgName: activeName, orgs, people: memberViews, threads: threadViews, requests, bodies };
 });
 
 function displayName(id: string): string {
@@ -75,16 +82,18 @@ function displayName(id: string): string {
 async function refresh(): Promise<void> {
   if (!activeOrg.value) return;
   const requestedOrg = activeOrg.value;
-  loading.value = true; error.value = ''; people.value = []; messages.value = []; emptyConversations.value = []; localSent.value = [];
+  loading.value = true; error.value = ''; people.value = []; messages.value = []; contactRequests.value = []; emptyConversations.value = []; localSent.value = [];
   try {
-    const [directory, inbox, participant] = await Promise.all([
+    const [directory, inbox, participant, contact] = await Promise.all([
       ipcRenderer.invoke('org-conversations:directory', activeOrg.value),
       ipcRenderer.invoke('org-conversations:inbox', activeOrg.value),
       ipcRenderer.invoke('org-conversations:participant', activeOrg.value),
+      ipcRenderer.invoke('org-conversations:contact-requests', activeOrg.value),
     ]);
     if (activeOrg.value !== requestedOrg) return;
     people.value = (directory.directory.people as Person[]).map((person: any) => ({ ...person, userId: person.userId ?? person.id, displayName: person.displayName ?? person.name ?? person.userId ?? person.id }));
     messages.value = inbox.messages as MessageData[];
+    contactRequests.value = contact.requests as MessageData[];
     userId.value = participant.userId;
     userName.value = people.value.find(person => person.userId === participant.userId)?.displayName ?? '';
   } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load organization conversations'; }

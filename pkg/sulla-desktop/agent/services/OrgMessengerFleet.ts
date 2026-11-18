@@ -145,6 +145,12 @@ export class OrgMessengerFleet {
   }
 
   /** Refreshes and returns only the signed-in user's current member organizations. */
+  async contactRequests(requestedOrg?: string): Promise<readonly MessageEnvelope['data'][]> {
+    const membership = await this.resolveOrg(requestedOrg);
+    const messenger = await this.reachableMessenger(membership);
+    return messenger.listContactRequests();
+  }
+
   async memberOrganizations(): Promise<readonly OrgMembership[]> {
     return this.directory.refresh();
   }

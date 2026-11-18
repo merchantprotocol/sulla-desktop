@@ -12,6 +12,8 @@ export interface OrgView { id: string; name: string; initials: string; memberCou
 export interface PersonView { id: string; name: string; initials: string; presence: string; agentOnline: boolean }
 /** A projected conversation for the active org. */
 export interface ThreadView { id: string; kind: 'direct' | 'group' | 'agent_thread'; title: string; participantIds: string[]; latest: string; time: string }
+/** A pending contact request (read-only). Accepting or declining is not wired yet. */
+export interface RequestView { senderId: string; name: string; initials: string; latest: string; time: string; count: number }
 /** One message row. Text is plain user content and is rendered escaped. */
 export interface MessageView { id: string; side: 'me' | 'person' | 'agent'; name: string; initials: string; time: string; text: string }
 
@@ -22,6 +24,7 @@ export interface LiveSnapshot {
   orgs: OrgView[];
   people: PersonView[];
   threads: ThreadView[];
+  requests: RequestView[];
   bodies: Record<string, MessageView[]>;
 }
 
@@ -59,6 +62,7 @@ export class ConversationScreenStore {
   orgs(): OrgView[] { return this.snapshot?.orgs ?? []; }
   org(): OrgView { return this.orgs().find(org => org.id === this.s.org) ?? { id: '', name: '', initials: '', memberCount: 0 }; }
   people(): PersonView[] { return this.snapshot?.people ?? []; }
+  requests(): RequestView[] { return this.snapshot?.requests ?? []; }
   threads(): ThreadView[] { return this.snapshot?.threads ?? []; }
   thread(id: string | null): ThreadView | undefined { return id ? this.threads().find(thread => thread.id === id) : undefined; }
   personFor(id: string): PersonView | undefined { return this.people().find(person => person.id === id); }
