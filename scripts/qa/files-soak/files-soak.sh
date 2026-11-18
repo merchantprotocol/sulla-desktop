@@ -8,7 +8,7 @@
 # stop, restart and kill Files services. Standard library only; no installs.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PHASES="bulk append ops crash load cloud restart-propagation outage outage-b handles token-empty lock-contention latency staleness eio-capture env-info fuse-identity integrity summary before-after-summary api-write all cleanup"
+PHASES="bulk append ops crash load cloud restart-propagation outage outage-b handles token-empty lock-contention latency staleness eio-capture env-info fuse-identity integrity restart-writes summary before-after-summary api-write all cleanup"
 if [[ $# -lt 1 ]]; then
   echo "usage: files-soak.sh <$(echo $PHASES | tr ' ' '|')> [--with-app-restart] [phase arguments]" >&2
   exit 2
@@ -39,12 +39,14 @@ if [[ -z "$PHASE" ]]; then echo "usage: files-soak.sh <phase|all|cleanup> [--wit
 #   SOAK_INVALIDATE_WINDOW (s, default 5)  staleness window; SOAK_LOCK_SECONDS, SOAK_LATENCY_P95_MS
 #   SOAK_OUTAGE_A_SECONDS (45), SOAK_OUTAGE_B_SECONDS (120), SOAK_TOKEN_TEST=1 (opt-in token-empty), SOAK_API_SAMPLE (40)
 #   SOAK_MINUTES (load phase duration; `all` runs load only when set), SOAK_TEST_IMAGE, SOAK_RUN
+#   SOAK_RESTART_MODE (docker|fuse|both, default docker), SOAK_RESTART_LOOPS (20), SOAK_RESTART_WRITES (10 per path)
 exec python3 -I - "$PHASE" "$WITH_APP_RESTART" "${EXTRA_ARGS[@]}" <<'PYTHON'
 # Sulla Desktop · https://sulladesktop.com
 # Copyright (c) 2025-2026 Merchant Protocol LLC.
 # SPDX-License-Identifier: GPL-2.0-or-later
 # "Sulla" is a trademark. See TRADEMARK.md.
 """Files durability soak + kill-test harness. Standard library only; intended for the Sulla VM."""
+import base64
 import bisect
 import collections
 import concurrent.futures
@@ -373,6 +375,16 @@ req.end();
 '''
 
 
+# Same probe as METRICS_PROBE, for the chunk integrity scan. A 404 means the endpoint is not deployed yet (skipped).
+CHUNK_SCAN_PROBE = METRICS_PROBE.replace("/v1/local/files-metrics", "/v1/local/chunk-integrity/scan")
+# Log lines the restart-writes phase counts and saves (the lines carry names and fingerprints, never key material).
+KEY_LOG_PATTERNS = {
+    "chunk_key_mismatch": re.compile(r"chunk_key_mismatch"),
+    "collection_key_unavailable": re.compile(r"collection_key_unavailable"),
+    "key_fingerprint": re.compile(r"key[-_ ]?fingerprint", re.IGNORECASE),
+}
+
+
 class CheckFailure(Exception):
     pass
 
@@ -592,7 +604,25 @@ class FilesSoak:
             raise CheckFailure("personal collection is ambiguous; expected Files, Personal, or one non-organization collection")
         raise CheckFailure("no personal collection directory found (only organization/system folders are visible)")
 
+    def _new_run_root(self):
+        """A fresh folder for this run. A reused root makes superseded writes count as mismatches (RESULTS.md item 6)."""
+        previous = None
+        if STATE.exists():
+            try:
+                previous = json.loads(STATE.read_text(encoding="utf-8")).get("root")
+            except (OSError, ValueError, AttributeError):
+                previous = None
+        parent = self._personal_collection().resolve()
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        root = parent / ("files-soak-" + stamp)
+        root.mkdir(mode=0o700)  # an existing folder with this stamp fails loudly rather than being reused
+        STATE.write_text(json.dumps({"root": str(root), "parent": str(parent), "stamp": stamp, "previous_root": previous}), encoding="utf-8")
+        self.previous_root = Path(previous).name if previous else None  # the old folder is left in place, never deleted here
+        return root
+
     def _get_run_root(self):
+        if self.phase == "restart-writes":
+            return self._new_run_root()
         if STATE.exists():
             try:
                 saved = json.loads(STATE.read_text(encoding="utf-8"))
@@ -1634,6 +1664,7 @@ class FilesSoak:
         if not resolved.get("collectionId"):
             raise CheckFailure("collection id not resolvable through the Files API (collections_status %s, directory_status %s)" %
                                (resolved.get("collections_status"), resolved.get("directory_status")))
+        self._scope_name = name
         self._scope_cache = (resolved["collectionId"], "/".join(rel))
         return self._scope_cache
 
@@ -1907,6 +1938,261 @@ class FilesSoak:
                   (len(items), counts.get("matched", 0), counts.get("mismatch", 0), counts.get("unresolved", 0), EIO_COUNTS[self.phase]),
                   started, {"sample": len(items), **counts})
 
+    # ----- restart-writes: writes right after each Files restart ------------------------
+
+    RESTART_TARGETS = {"docker": (CONTAINER_FILES,), "fuse": (CONTAINER_FUSE,), "both": (CONTAINER_FILES, CONTAINER_FUSE)}
+    RESTART_REPEAT_BYTES = 4096  # repeated slots keep the same text every loop, so writes dedupe onto stored chunks
+
+    @staticmethod
+    def _random_text(length):
+        """Random ASCII text. Only its checksum is kept; the text itself is never printed or logged."""
+        return base64.b64encode(os.urandom(length)).decode("ascii")[:length]
+
+    @staticmethod
+    def _bounded(fn, timeout=FILE_TIMEOUT):
+        """Run one mount operation in a thread with a bound: a hung write is a failed write, not a stuck phase."""
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=timeout)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    def _wait_until(probe, cap, interval=0.2):
+        """Poll `probe` quickly until it stops raising; returns seconds waited. Raises CheckFailure after `cap`."""
+        started = time.monotonic()
+        last = "not tried"
+        while True:
+            try:
+                probe()
+                return round(time.monotonic() - started, 3)
+            except Exception as exc:  # not ready yet; the last reason is reported on timeout
+                last = "%s: %s" % (type(exc).__name__, str(exc)[:120])
+            if time.monotonic() - started >= cap:
+                raise CheckFailure("not ready within %ds (%s)" % (cap, last))
+            time.sleep(interval)
+
+    def _api_ready_probe(self):
+        resolved = self._fuse_api({"action": "resolve", "name": self._scope_name}, timeout=30)
+        if not resolved.get("collectionId"):
+            raise CheckFailure("API resolve returned no collection")
+
+    def _mount_write(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as handle:
+            handle.write(text.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    @staticmethod
+    def _undecryptable_ids(node, found=None):
+        """Chunk ids the scan lists as undecryptable: any list under a key whose name contains 'undecryptable'."""
+        found = [] if found is None else found
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if "undecryptable" in key.lower() and isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, (str, int)):
+                            found.append(str(item))
+                        elif isinstance(item, dict) and item.get("chunkId", item.get("id")) is not None:
+                            found.append(str(item.get("chunkId", item.get("id"))))
+                else:
+                    FilesSoak._undecryptable_ids(value, found)
+        elif isinstance(node, list):
+            for value in node:
+                FilesSoak._undecryptable_ids(value, found)
+        return found
+
+    def _chunk_scan(self):
+        """GET /v1/local/chunk-integrity/scan inside sulla_files. A 404 means the endpoint is not deployed yet: skipped."""
+        try:
+            result = self._docker(["exec", CONTAINER_FILES, "node", "-e", CHUNK_SCAN_PROBE], 90)
+        except CheckFailure as exc:
+            return {"state": "error", "error": str(exc)[:120]}
+        line = next((ln for ln in result.stdout.splitlines() if ln.startswith("{")), "")
+        if result.returncode != 0 or not line:
+            return {"state": "error", "error": short_err(result.stderr) or "no response"}
+        try:
+            wrapper = json.loads(line)
+        except ValueError:
+            return {"state": "error", "error": "unparseable probe response"}
+        if wrapper.get("error"):
+            return {"state": "error", "error": str(wrapper["error"])[:120]}
+        status = wrapper.get("status")
+        if status == 404:
+            return {"state": "skipped", "status": 404}
+        if status != 200:
+            return {"state": "error", "status": status}
+        try:
+            body = json.loads(wrapper.get("body") or "null")
+        except ValueError:
+            return {"state": "error", "status": status, "error": "unparseable body"}
+        return {"state": "scanned", "status": status, "undecryptable": self._undecryptable_ids(body)}
+
+    def _key_log_hits(self, since_epoch, path):
+        """Counts per key-log pattern in sulla_files logs since the loop began. Matching lines are saved to `path`."""
+        since = datetime.datetime.fromtimestamp(since_epoch - 1, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = self._docker(["logs", "--since", since, CONTAINER_FILES], 90)
+        lines = [line[:300] for line in (result.stdout + result.stderr).splitlines() if any(p.search(line) for p in KEY_LOG_PATTERNS.values())]
+        path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        return {name: sum(1 for line in lines if pattern.search(line)) for name, pattern in KEY_LOG_PATTERNS.items()}
+
+    def _read_back(self, written):
+        """Read every (rel, sha) back through the mount and through the API; any non-match is a bad read."""
+        started = time.monotonic()
+        counts = self._verify_rows(self.root, written, cap=600) if written else collections.Counter()
+        mount_bad = len(written) - counts.get("ok", 0)
+        api_bad = 0
+        if written:
+            collection_id, base = self._api_scope()
+            items = [["/".join(filter(None, [base, rel])), sha] for rel, sha in written]
+            verdict = self._fuse_api({"action": "verify", "collectionId": collection_id, "items": items}, timeout=300)
+            api_bad = len(items) - verdict.get("counts", {}).get("matched", 0)
+        return {"files": len(written), "mount_bad": mount_bad, "api_bad": api_bad, "bad": mount_bad + api_bad,
+                "mount_errors": {k: v for k, v in counts.items() if k != "ok"}, "ms": round((time.monotonic() - started) * 1000)}
+
+    def restart_writes(self):
+        """Restart Files (SOAK_RESTART_MODE: docker = sulla_files, fuse = sulla_files_fuse, both = each loop does both).
+
+        After every restart, the phase polls the mount and the API quickly and writes as soon as both answer.
+        Each loop writes SOAK_RESTART_WRITES files through the mount and as many through the API. Half the slots
+        repeat identical text in every loop (dedupe path); the rest are new random text. After each loop it reads
+        every file written so far back through both paths, runs the chunk scan (skipped on 404) and saves the
+        key-log lines since the loop began. The final pass repeats the read-back and scan with no restart.
+
+        Desktop heals a stopped Files within seconds, so this phase restarts and never stops Files.
+        """
+        phase_started = time.monotonic()
+        mode = ENV.get("SOAK_RESTART_MODE", "docker")
+        if mode not in self.RESTART_TARGETS:
+            raise CheckFailure("SOAK_RESTART_MODE must be docker, fuse or both")
+        loops = env_int("SOAK_RESTART_LOOPS", 20, 1, 500)
+        per_path = env_int("SOAK_RESTART_WRITES", 10, 1, 200)
+        repeat_slots = max(1, per_path // 2)
+        targets = self.RESTART_TARGETS[mode]
+        folder = self.root / "restart-writes"
+        folder.mkdir(exist_ok=True)
+        log_dir = STATE_DIR / ("restart-writes-" + self.run_id)  # outside Sulla Files: logs are never saved there
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self._api_scope()  # warm the scope cache; fails fast if the collection cannot be resolved
+        repeat_text = {slot: self._random_text(self.RESTART_REPEAT_BYTES) for slot in range(repeat_slots)}
+        written = []  # (soak-relative path, sha256 of the stored text) for every applied write
+        totals = collections.Counter()
+        undecryptable = []  # unique chunk ids the scan reported
+        loop_rows = []
+
+        def note_undecryptable(ids):
+            for chunk_id in ids:
+                if chunk_id not in undecryptable:
+                    undecryptable.append(chunk_id)
+
+        for loop in range(1, loops + 1):
+            started = time.monotonic()
+            since_epoch = time.time()
+            prefix = "loop-%02d" % loop
+            metrics = {"loop": loop, "mode": mode}
+            loop_failures = 0
+            loop_ok = False
+            readback = {"bad": 0, "files": 0}
+            scan = {"state": "not-run"}
+            hits = {name: 0 for name in KEY_LOG_PATTERNS}
+            try:
+                for name in targets:
+                    restart_started = time.monotonic()
+                    self._run(["docker", "restart", "--time", "10", name], timeout=150)
+                    metrics["restart_%s_s" % name] = round(time.monotonic() - restart_started, 3)
+                metrics["mount_ready_s"] = self._wait_until(lambda: self._probe_mount(5), MOUNT_WAIT_S)
+                metrics["api_ready_s"] = self._wait_until(self._api_ready_probe, MOUNT_WAIT_S)
+
+                batch = []
+                mount_s = api_s = 0.0
+                for slot in range(per_path):
+                    text = repeat_text[slot] if slot < repeat_slots else self._random_text(random.randint(512, 8192))
+                    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    for route in ("mount", "api"):
+                        rel = "restart-writes/%s/%s-%02d.txt" % (prefix, route, slot)
+                        write_started = time.monotonic()
+                        try:
+                            if route == "mount":
+                                self._bounded(lambda r=rel, t=text: self._mount_write(r, t))
+                                ok = True
+                            else:
+                                result = self._api_put(rel, text)
+                                ok = self._put_applied(result) and result.get("written_sha256") == sha
+                        except Exception as exc:  # a failed or hung write is recorded, the loop continues
+                            ok = False
+                            if isinstance(exc, OSError):
+                                self.note_error(exc, "write")
+                        elapsed = time.monotonic() - write_started
+                        if route == "mount":
+                            mount_s += elapsed
+                        else:
+                            api_s += elapsed
+                        if ok:
+                            batch.append((rel, sha))
+                        else:
+                            loop_failures += 1
+                            totals["write_failures"] += 1
+                written.extend(batch)
+                self.ledger_add(batch)
+                metrics.update(files_written=len(batch), mount_write_s=round(mount_s, 3), api_write_s=round(api_s, 3))
+
+                readback = self._read_back(written)
+                totals["bad_reads"] += readback["bad"]
+                scan = self._chunk_scan()
+                note_undecryptable(scan.get("undecryptable", []))
+                hits = self._key_log_hits(since_epoch, log_dir / ("%s.key-log.txt" % prefix))
+                totals["chunk_key_mismatch_lines"] += hits["chunk_key_mismatch"]
+                loop_ok = (loop_failures == 0 and readback["bad"] == 0 and scan["state"] != "error"
+                           and not scan.get("undecryptable") and hits["chunk_key_mismatch"] == 0)
+            except Exception as exc:
+                metrics["error"] = "%s: %s" % (type(exc).__name__, str(exc)[:160])
+                totals["loop_errors"] += 1
+            metrics.update(readback_files=readback["files"], readback_bad=readback["bad"], chunk_scan=scan["state"],
+                           undecryptable=len(scan.get("undecryptable", [])), key_log=hits, write_failures=loop_failures)
+            evidence = ("mode=%s files=%d writes_failed=%d readback=%d/%d bad chunk_scan=%s undecryptable=%d "
+                        "key_log=%s restart_s=%s mount_ready_s=%s api_ready_s=%s" %
+                        (mode, metrics.get("files_written", 0), loop_failures, readback["bad"], readback["files"], scan["state"],
+                         len(scan.get("undecryptable", [])), ",".join("%s=%d" % kv for kv in hits.items()),
+                         ",".join(str(metrics[k]) for k in sorted(metrics) if k.startswith("restart_") and k.endswith("_s")) or "none",
+                         metrics.get("mount_ready_s"), metrics.get("api_ready_s")))
+            if "error" in metrics:
+                evidence += " error=" + metrics["error"]
+            self.emit("restart-writes-loop-%02d" % loop, loop_ok, evidence, started, metrics)
+            loop_rows.append({"loop": loop, "ok": loop_ok, "metrics": metrics})
+
+        # Final pass: no restart, every file written in the run read back through both paths, then one more scan.
+        started = time.monotonic()
+        final = self._read_back(written)
+        final_scan = self._chunk_scan()
+        note_undecryptable(final_scan.get("undecryptable", []))
+        totals["bad_reads"] += final["bad"]
+        final_ok = final["bad"] == 0 and final_scan["state"] != "error" and not final_scan.get("undecryptable")
+        self.emit("restart-writes-final-readback", final_ok,
+                  "files=%d bad=%d (mount=%d api=%d) chunk_scan=%s undecryptable=%d" %
+                  (final["files"], final["bad"], final["mount_bad"], final["api_bad"], final_scan["state"], len(final_scan.get("undecryptable", []))),
+                  started, {"files": final["files"], "bad": final["bad"], "chunk_scan": final_scan["state"]})
+
+        passed = (not totals["loop_errors"] and all(row["ok"] for row in loop_rows) and final_ok
+                  and totals["write_failures"] == 0 and totals["bad_reads"] == 0 and not undecryptable
+                  and totals["chunk_key_mismatch_lines"] == 0)
+        if undecryptable:
+            self.emit("restart-writes-undecryptable", False, "undecryptable chunk ids=%d (full list in %s)" % (len(undecryptable), log_dir.name),
+                      time.monotonic(), {"undecryptable_chunk_ids": undecryptable[:50]})
+        summary = {"run": self.run_id, "mode": mode, "loops": loops, "writes_per_path": per_path, "files": len(written),
+                   "bad_reads_total": totals["bad_reads"], "write_failures": totals["write_failures"],
+                   "chunk_key_mismatch_lines": totals["chunk_key_mismatch_lines"], "undecryptable_chunk_ids": undecryptable,
+                   "loops_passed": sum(1 for row in loop_rows if row["ok"]), "passed": passed}
+        (log_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+        verdict = ("loops=%d/%d files=%d bad_reads_total=%d write_failures=%d undecryptable=%d chunk_key_mismatch_lines=%d "
+                   "previous_root_left_in_place=%s summary=%s" %
+                   (summary["loops_passed"], loops, len(written), totals["bad_reads"], totals["write_failures"], len(undecryptable),
+                    totals["chunk_key_mismatch_lines"], self.previous_root or "none", log_dir.name))
+        self.emit("restart-writes", passed, verdict, phase_started, {"loops": loops, "files": len(written), "bad_reads_total": totals["bad_reads"], "undecryptable": len(undecryptable)})
+        print("RESTART-WRITES %s" % ("PASS" if passed else "FAIL"), flush=True)
+
     def summary(self):
         if not RESULTS.is_file():
             print("no results yet at %s" % RESULTS)
@@ -2052,7 +2338,7 @@ class FilesSoak:
 
 def main():
     phases = {"bulk", "append", "ops", "crash", "load", "cloud", "restart-propagation", "outage", "outage-b", "handles", "token-empty",
-              "lock-contention", "latency", "staleness", "eio-capture", "env-info", "fuse-identity", "integrity", "summary",
+              "lock-contention", "latency", "staleness", "eio-capture", "env-info", "fuse-identity", "integrity", "restart-writes", "summary",
               "before-after-summary", "api-write", "all", "cleanup"}
     if len(sys.argv) < 3 or sys.argv[1] not in phases:
         print("usage: files-soak.sh <phase|all|cleanup> [--with-app-restart] [phase arguments]", file=sys.stderr)
