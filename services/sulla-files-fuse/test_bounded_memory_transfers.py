@@ -41,7 +41,7 @@ class BoundedTransferTests(unittest.TestCase):
         adapter, _ = load_adapter()
         api = adapter.FilesApi("http://files", "/unused")
         attempts = []
-        def send(path, method, body, headers, sink=None):
+        def send(path, method, body, headers, sink=None, **_kwargs):
             attempts.append(1)
             sink.write(b"partial" if len(attempts) == 1 else b"complete")
             if len(attempts) == 1:

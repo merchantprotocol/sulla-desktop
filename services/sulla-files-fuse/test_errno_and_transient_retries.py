@@ -63,7 +63,7 @@ class ErrnoTableTests(unittest.TestCase):
         entries = []
         adapter.emit = lambda event, level, **fields: entries.append((event, level, fields))
         adapter.log.setLevel(logging.DEBUG)
-        api._send = lambda *_args: (_ for _ in ()).throw(failure(errno.ENOENT, 404, {"error": "Files entry not found"}))
+        api._send = lambda *_args, **_kwargs: (_ for _ in ()).throw(failure(errno.ENOENT, 404, {"error": "Files entry not found"}))
         with self.assertRaises(OSError) as caught:
             api._request("/v1/fuse/entry?path=new.txt")
         self.assertEqual(caught.exception.errno, errno.ENOENT)
@@ -92,7 +92,7 @@ class TransientRetryTests(unittest.TestCase):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             if len(calls) == 1:
                 raise failure(errno.EIO, 500, {"error": "Client has encountered a connection error and is not queryable"})
@@ -104,28 +104,89 @@ class TransientRetryTests(unittest.TestCase):
         self.assertEqual(api._request("/v1/fuse/files/f/content", "PUT", b"data")[0], 200)
         self.assertEqual(calls, ["PUT", "PUT", "PUT"])
 
-    # risk: unbounded retry loops wedge a mount thread forever; a persistent outage must surface as EIO.
-    def test_persistent_server_failure_surfaces_eio_after_bounded_retries(self):
+    # risk: unbounded retry loops wedge a mount thread forever; a persistent outage must surface as EIO at the deadline.
+    def test_persistent_server_failure_surfaces_eio_at_the_deadline(self):
         api = self.adapter.FilesApi("http://files", "/unused")
+        api.max_wait_seconds = 0.5
+        now = [0.0]
+        self.adapter.time = types.SimpleNamespace(monotonic=lambda: now[0], sleep=lambda delay: (self.sleeps.append(delay), now.__setitem__(0, now[0] + delay)))
         calls = []
 
-        def send(*_args):
-            calls.append(1)
+        def send(*_args, **_kwargs):
+            calls.append(now[0])
             raise failure(errno.EIO, 503)
 
         api._send = send
         with self.assertRaises(OSError) as caught:
             api._request("/v1/fuse/files/f/content", "PUT", b"data")
         self.assertEqual(caught.exception.errno, errno.EIO)
-        self.assertEqual(len(calls), self.adapter.MAX_TRANSIENT_RETRIES + 1)
-        self.assertLess(sum(self.sleeps), 5.0)
+        # Retries keep going while the fake clock is inside the deadline, and the last wait is clipped to it.
+        self.assertGreaterEqual(len(calls), 2)
+        self.assertLess(max(calls), 0.5)
+        self.assertAlmostEqual(now[0], 0.5, places=6)
+
+    def _outage_api(self, max_wait, refused_until, error_factory):
+        """An FilesApi whose connections are refused (or fail with `error_factory`) until a fake clock reaches `refused_until`."""
+        api = self.adapter.FilesApi("http://files", "/unused")
+        api._token = lambda: "synthetic"
+        api.max_wait_seconds = max_wait
+        now = [0.0]
+        self.adapter.time = types.SimpleNamespace(monotonic=lambda: now[0], sleep=lambda delay: now.__setitem__(0, now[0] + delay))
+        attempts = []
+
+        def request(method, url, **_kwargs):
+            attempts.append(method)
+            if now[0] < refused_until:
+                raise error_factory()
+            return Response(200, {"kind": "file", "id": "f1", "size": 0, "versionId": "v1"})
+
+        api.http.request = request
+        return api, attempts, now
+
+    # risk: data integrity — connection refused means the request never left, so a create may retry for every method.
+    def test_create_retries_connection_refused_until_files_comes_back(self):
+        refused = lambda: self.adapter.urllib3.exceptions.NewConnectionError(None, "connection refused")
+        api, attempts, _now = self._outage_api(max_wait=10, refused_until=2.0, error_factory=refused)
+        row = api._create_sync("c1", "Stress/a.txt")
+        self.assertEqual(row["id"], "f1")
+        self.assertGreater(len(attempts), 1)
+        self.assertEqual(set(attempts), {"POST"})
+
+    # risk: data loss — a Files outage longer than the deadline must fail the write with EIO, not hang.
+    def test_connection_refused_past_the_deadline_surfaces_eio(self):
+        refused = lambda: self.adapter.urllib3.exceptions.NewConnectionError(None, "connection refused")
+        api, attempts, now = self._outage_api(max_wait=2, refused_until=float("inf"), error_factory=refused)
+        with self.assertRaises(OSError) as caught:
+            api._create_sync("c1", "Stress/a.txt")
+        self.assertEqual(caught.exception.errno, errno.EIO)
+        self.assertGreaterEqual(now[0], 2.0 - 1e-6)
+        self.assertGreater(len(attempts), 1)
+
+    # risk: data integrity — rename (PATCH) and replace (POST) are not idempotent, but a refused connection sent nothing, so they retry.
+    def test_connection_refused_is_retried_for_non_idempotent_rename_and_replace(self):
+        refused = lambda: self.adapter.urllib3.exceptions.NewConnectionError(None, "connection refused")
+        for method, path in (("PATCH", "/v1/fuse/files/f1"), ("POST", "/v1/fuse/files/f1/replace")):
+            with self.subTest(method=method):
+                api, attempts, _now = self._outage_api(max_wait=10, refused_until=1.0, error_factory=refused)
+                status, _, _ = api._request(path, method, b"{}", {"Content-Type": "application/json"})
+                self.assertEqual(status, 200)
+                self.assertGreater(len(attempts), 1)
+
+    # risk: duplicate writes — a read timeout may come after the server acted, so a non-idempotent call must not be replayed.
+    def test_read_timeout_after_send_is_not_replayed_for_non_idempotent_calls(self):
+        timed_out = lambda: self.adapter.urllib3.exceptions.TimeoutError("read timed out")
+        api, attempts, _now = self._outage_api(max_wait=10, refused_until=float("inf"), error_factory=timed_out)
+        with self.assertRaises(OSError) as caught:
+            api._request("/v1/fuse/files/f1/replace", "POST", b"{}", {"Content-Type": "application/json"})
+        self.assertEqual(caught.exception.errno, errno.EIO)
+        self.assertEqual(attempts, ["POST"])
 
     # risk: duplicate files — a create whose reply was lost must not fail or create twice on retry.
     def test_create_replay_after_lost_reply_returns_the_empty_file_it_made(self):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append((method, path.split("?", 1)[0]))
             if method == "POST" and len(calls) == 1:
                 raise failure(errno.EIO, None, transient=True)
@@ -144,7 +205,7 @@ class TransientRetryTests(unittest.TestCase):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             raise failure(errno.EEXIST, 409, {"error": "A file already occupies Stress/a.txt"})
 
@@ -159,7 +220,7 @@ class TransientRetryTests(unittest.TestCase):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             if method == "POST" and len(calls) == 1:
                 raise failure(errno.EIO, 503)

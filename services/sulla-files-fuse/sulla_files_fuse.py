@@ -4,7 +4,24 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # "Sulla" is a trademark. See TRADEMARK.md.
 
-"""Read/write FUSE view of every tracked Sulla Files collection."""
+"""Read/write FUSE view of every tracked Sulla Files collection.
+
+Tunables (environment variables, read once at import):
+
+- SULLA_FILES_FUSE_MAX_OPEN_HANDLES (default 4096, minimum 32): open file handles
+  the mount keeps before new opens fail with EMFILE (MAX_OPEN_HANDLES).
+- SULLA_FILES_FUSE_MAX_WAIT_S (default 75): the deadline for one Files request,
+  shared by every retry of it (MAX_WAIT_SECONDS). Connection-refused and connect
+  timeouts are retried until this deadline for every method, because nothing was
+  sent. Read timeouts and 5xx responses are retried only for idempotent calls, and
+  then only until this deadline; after that the caller gets EIO. The connect phase
+  itself is capped at 5 seconds.
+- SULLA_FILES_FUSE_NETWORK_THREADS (default 64): threads for Files HTTP calls.
+- SULLA_FILES_FUSE_MAX_TRANSFERS (default 4): concurrent file transfers.
+- SULLA_FILES_FUSE_SPOOL: disk-backed spool directory for open-file buffers.
+- SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS (default 1.0) and
+  SULLA_FILES_FUSE_HEARTBEAT_SECONDS (default 60): logging thresholds.
+"""
 
 import argparse
 import datetime
@@ -33,7 +50,7 @@ import trio
 # Keep per-handle data on the bounded container tmpfs, not in Python heap.
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-MAX_OPEN_HANDLES = 32
+MAX_OPEN_HANDLES = max(32, int(os.environ.get("SULLA_FILES_FUSE_MAX_OPEN_HANDLES", "4096")))
 # Open-file buffers spill to a disk-backed volume, never to RAM (tmpfs counts
 # against the container memory limit).
 SPOOL_DIR = os.environ.get("SULLA_FILES_FUSE_SPOOL", "/var/spool/sulla-files-fuse")
@@ -45,11 +62,10 @@ DIRECTORY_PAGE_SIZE = 500
 IDEMPOTENT_RETRY_METHODS = ("DELETE", "GET", "HEAD", "PUT")
 MAX_CONFLICT_RETRIES = 3
 # A lost Files database connection, a restart or a saturated VM answers 5xx or times out.
-# Those are retried (bounded, ~3 s in total) before a mount client ever sees EIO.
-MAX_TRANSIENT_RETRIES = 5
+# These failures are retried until the configured request deadline (MAX_WAIT_SECONDS) before clients see EIO.
 TRANSIENT_STATUSES = (500, 502, 503, 504)
-AUTH_RETRY_WINDOW_SECONDS = 20
-MAX_RETRY_AFTER_SECONDS = 2.0
+MAX_WAIT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_MAX_WAIT_S", "75")))
+NETWORK_THREAD_LIMIT = max(1, int(os.environ.get("SULLA_FILES_FUSE_NETWORK_THREADS", "64")))
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 MAX_CONCURRENT_TRANSFERS = max(1, int(os.environ.get("SULLA_FILES_FUSE_MAX_TRANSFERS", "4")))
@@ -256,11 +272,20 @@ class FilesApi:
         self.base_url = base_url.rstrip("/")
         self.token_file = token_file
         self.actor_resolver = actor_resolver
+        self.max_wait_seconds = MAX_WAIT_SECONDS
         self.http = urllib3.PoolManager(num_pools=4, maxsize=64, block=True)
+        # Network waits must not consume Trio's shared worker pool: local spool/handle
+        # bookkeeping and actor lookups remain schedulable during a Files outage.
+        self.network_limiter = trio.CapacityLimiter(NETWORK_THREAD_LIMIT)
         self._last_auth_retry_log = 0.0
 
     def _token(self):
-        descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            descriptor = os.open(self.token_file, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError as error:
+            failure = OSError(errno.EACCES, "Files mount capability is not ready")
+            failure.transient_auth = True
+            raise failure from error
         try:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
@@ -269,7 +294,9 @@ class FilesApi:
         finally:
             os.close(descriptor)
         if not token or len(token) > MAX_TOKEN_BYTES:
-            raise OSError(errno.EACCES, "Files mount capability is invalid")
+            failure = OSError(errno.EACCES, "Files mount capability is invalid")
+            failure.transient_auth = True
+            raise failure
         return token.decode("ascii")
 
     def _request(self, path: str, method="GET", body=None, headers=None, idempotent=None, sink=None):
@@ -280,6 +307,7 @@ class FilesApi:
         raised after an ambiguous attempt carries `after_retry=True` so callers can reconcile.
         """
         started = time.monotonic()
+        deadline = started + self.max_wait_seconds
         stats["requests"] += 1
         outcome = {"status": None, "bytes": 0, "error": None}
         repeatable = method in IDEMPOTENT_RETRY_METHODS if idempotent is None else idempotent
@@ -288,28 +316,36 @@ class FilesApi:
             transient_attempts = 0
             auth_retry_started = None
             auth_attempts = 0
+            last_transient_error = None
+            # True once an earlier attempt may have reached Files (a sent request whose outcome is unknown).
+            ambiguous_attempts = False
             while True:
+                if last_transient_error is not None and time.monotonic() >= deadline:
+                    raise last_transient_error
                 try:
                     if sink is not None:
                         sink.seek(0)
                         sink.truncate(0)
-                    result = self._send(path, method, body, headers) if sink is None else self._send(path, method, body, headers, sink=sink)
+                    remaining = max(0.01, deadline - time.monotonic())
+                    result = self._send(path, method, body, headers, timeout_seconds=remaining) if sink is None else self._send(path, method, body, headers, sink=sink, timeout_seconds=remaining)
                     outcome["status"] = result[0]
                     outcome["bytes"] = sink.tell() if sink is not None else len(result[2])
                     return result
                 except OSError as error:
-                    if getattr(error, "status", None) == 401:
+                    if getattr(error, "transient_auth", False) or getattr(error, "status", None) == 401 or getattr(error, "transient", False) or getattr(error, "status", None) in TRANSIENT_STATUSES:
+                        last_transient_error = error
+                    if getattr(error, "status", None) == 401 or getattr(error, "transient_auth", False):
                         auth_retry_started = time.monotonic() if auth_retry_started is None else auth_retry_started
                         elapsed = time.monotonic() - auth_retry_started
-                        if elapsed < AUTH_RETRY_WINDOW_SECONDS:
+                        if time.monotonic() < deadline:
                             auth_attempts += 1
                             now = time.monotonic()
                             if now - self._last_auth_retry_log >= 1:
                                 self._last_auth_retry_log = now
                                 emit("files-auth-retry", logging.WARNING, method=method, path=path.split("?", 1)[0], attempt=auth_attempts, elapsed=round(elapsed, 1))
-                            time.sleep(min(2.0, 0.25 * (2 ** min(auth_attempts - 1, 3))))
+                            time.sleep(min(max(0, deadline - time.monotonic()), 2.0, 0.25 * (2 ** min(auth_attempts - 1, 3))))
                             continue
-                    if transient_attempts:
+                    if ambiguous_attempts:
                         error.after_retry = True
                     detail = getattr(error, "detail", None) or {}
                     transient_conflict = getattr(error, "status", None) == 409 and (
@@ -318,11 +354,14 @@ class FilesApi:
                     )
                     transient_transport = getattr(error, "transient", False)
                     transient_status = getattr(error, "status", None) in TRANSIENT_STATUSES
-                    if (transient_transport or transient_status) and repeatable and transient_attempts < MAX_TRANSIENT_RETRIES:
+                    # A connect-phase failure (not_sent) never reached Files, so every method may retry it.
+                    not_sent = getattr(error, "not_sent", False)
+                    if (transient_transport or transient_status) and (repeatable or not_sent) and time.monotonic() < deadline:
                         transient_attempts += 1
+                        ambiguous_attempts = ambiguous_attempts or not not_sent
                         retry_after = getattr(error, "retry_after", None)
-                        delay = min(MAX_RETRY_AFTER_SECONDS, retry_after) if retry_after is not None else 0.1 * (2 ** (transient_attempts - 1))
-                        time.sleep(min(MAX_RETRY_AFTER_SECONDS, delay) + random.uniform(0, 0.05))
+                        delay = max(0, retry_after) if retry_after is not None else min(5.0, 0.1 * (2 ** min(transient_attempts - 1, 6)))
+                        time.sleep(min(max(0, deadline - time.monotonic()), delay + random.uniform(0, 0.05)))
                         continue
                     if not transient_conflict:
                         raise
@@ -356,12 +395,13 @@ class FilesApi:
                      ms=round(elapsed * 1000, 1), sent=len(body) if body is not None else 0, received=outcome["bytes"], actor=request_actor.get(),
                      slow=slow or None, failure=outcome.get("failure"), errno=outcome.get("errno"), code=outcome.get("code"))
 
-    def _send(self, path, method, body, headers, sink=None):
+    def _send(self, path, method, body, headers, sink=None, timeout_seconds=None):
+        timeout_seconds = timeout_seconds or self.max_wait_seconds
         try:
             response = self.http.request(
                 method, f"{self.base_url}{path}", body=body,
                 headers={"Authorization": f"Bearer {self._token()}", **({"X-Sulla-Actor": request_actor.get()} if request_actor.get() else {}), **(headers or {})},
-                timeout=urllib3.Timeout(connect=5.0, read=120.0 if method == "PUT" else 15.0),
+                timeout=urllib3.Timeout(total=timeout_seconds, connect=min(5.0, timeout_seconds), read=min(timeout_seconds, 120.0 if method == "PUT" else 15.0)),
                 retries=False, preload_content=False,
             )
             try:
@@ -404,6 +444,9 @@ class FilesApi:
         except urllib3.exceptions.HTTPError as error:
             failure = OSError(errno.EIO, "Files service unavailable")
             failure.transient = isinstance(error, (urllib3.exceptions.TimeoutError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.ProtocolError))
+            # Connect-phase failures (refused, unreachable, connect timeout) happen before any request byte leaves,
+            # so the request was never sent. A read timeout or reset may have reached Files: not_sent stays unset.
+            failure.not_sent = isinstance(error, (urllib3.exceptions.ConnectTimeoutError, urllib3.exceptions.NewConnectionError))
             raise failure from error
 
     async def directory_page(self, collection_id, path, cursor=None, etag=None):
@@ -412,14 +455,14 @@ class FilesApi:
         if cursor: query["cursor"] = cursor
         headers = {"If-None-Match": etag} if etag and not cursor else None
         status, response_headers, body = await trio.to_thread.run_sync(
-            self._request, f"/v1/fuse/directory?{urllib.parse.urlencode(query)}", "GET", None, headers)
+            self._request, f"/v1/fuse/directory?{urllib.parse.urlencode(query)}", "GET", None, headers, limiter=self.network_limiter)
         return (None if status == 304 else json.loads(body)), response_headers.get("ETag", etag)
 
     async def entry(self, collection_id, path):
         values = {"path": path}
         if collection_id: values["collectionId"] = collection_id
         query = urllib.parse.urlencode(values)
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/entry?{query}")
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/entry?{query}", limiter=self.network_limiter)
         return json.loads(body)
 
     def _read_to_file_sync(self, file_id, file):
@@ -431,7 +474,7 @@ class FilesApi:
         return headers.get("ETag", "").strip('"'), headers.get("X-Sulla-Source-Hash", "")
 
     async def read_to_file(self, file_id, file):
-        return await trio.to_thread.run_sync(self._read_to_file_sync, file_id, file)
+        return await trio.to_thread.run_sync(self._read_to_file_sync, file_id, file, limiter=self.network_limiter)
 
     def _write_sync(self, file_id, file, size, version_id, source_hash):
         # The content hash lets Files recognise a retried PUT whose first attempt already committed.
@@ -451,28 +494,28 @@ class FilesApi:
     async def write(self, file_id, file, size, version_id, source_hash):
         if size > MAX_FILE_BYTES:
             raise OSError(errno.EFBIG, "Files write exceeds the mount limit")
-        return await trio.to_thread.run_sync(self._write_sync, file_id, file, size, version_id, source_hash)
+        return await trio.to_thread.run_sync(self._write_sync, file_id, file, size, version_id, source_hash, limiter=self.network_limiter)
 
     async def replace(self, target_id, source_id):
         body = json.dumps({"sourceFileId": source_id}).encode()
-        _, _, payload = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{target_id}/replace", "POST", body, {"Content-Type":"application/json"})
+        _, _, payload = await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{target_id}/replace", "POST", body, {"Content-Type":"application/json"}, limiter=self.network_limiter)
         return json.loads(payload or b"{}")
 
     async def metadata(self, collection_id, path):
         query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/metadata?{query}")
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/metadata?{query}", limiter=self.network_limiter)
         return json.loads(body)
 
     async def folder_metadata(self, collection_id, path):
         query = urllib.parse.urlencode({"collectionId": collection_id, "path": path})
-        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/folder-metadata?{query}")
+        _, _, body = await trio.to_thread.run_sync(self._request, f"/v1/fuse/folder-metadata?{query}", limiter=self.network_limiter)
         return json.loads(body)
 
     async def put_metadata(self, collection_id, path, set_values, unset, revision=None):
         value = {"collectionId": collection_id, "path": path, "set": set_values, "unset": unset}
         if revision is not None: value["baseRevision"] = revision
         body = json.dumps(value).encode()
-        _, _, payload = await trio.to_thread.run_sync(self._request, "/v1/fuse/metadata", "PUT", body, {"Content-Type":"application/json"})
+        _, _, payload = await trio.to_thread.run_sync(self._request, "/v1/fuse/metadata", "PUT", body, {"Content-Type":"application/json"}, limiter=self.network_limiter)
         return json.loads(payload)
 
     def _create_sync(self, collection_id, path):
@@ -492,19 +535,19 @@ class FilesApi:
             return {**row, "current_version_id": row.get("versionId")}
 
     async def create(self, collection_id, path):
-        return await trio.to_thread.run_sync(self._create_sync, collection_id, path)
+        return await trio.to_thread.run_sync(self._create_sync, collection_id, path, limiter=self.network_limiter)
 
     async def rename(self, file_id, collection_id, path):
         body = json.dumps({"path": path, "targetCollectionId": collection_id}).encode()
-        await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "PATCH", body, {"Content-Type":"application/json"})
+        await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "PATCH", body, {"Content-Type":"application/json"}, limiter=self.network_limiter)
 
     async def rename_folder(self, collection_id, path, target_collection_id, target_path):
         body = json.dumps({"collectionId": collection_id, "path": path,
                            "targetCollectionId": target_collection_id, "targetPath": target_path}).encode()
-        await trio.to_thread.run_sync(self._request, "/v1/fuse/folders", "PATCH", body, {"Content-Type":"application/json"})
+        await trio.to_thread.run_sync(self._request, "/v1/fuse/folders", "PATCH", body, {"Content-Type":"application/json"}, limiter=self.network_limiter)
 
     async def delete(self, file_id):
-        await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "DELETE")
+        await trio.to_thread.run_sync(self._request, f"/v1/fuse/files/{file_id}", "DELETE", limiter=self.network_limiter)
 
     def _mkdir_sync(self, collection_id, path):
         body = json.dumps({"collectionId":collection_id,"path":path}).encode()
@@ -512,11 +555,11 @@ class FilesApi:
         self._request("/v1/fuse/folders", "POST", body, {"Content-Type":"application/json"}, idempotent=True)
 
     async def mkdir(self, collection_id, path):
-        await trio.to_thread.run_sync(self._mkdir_sync, collection_id, path)
+        await trio.to_thread.run_sync(self._mkdir_sync, collection_id, path, limiter=self.network_limiter)
 
     async def rmdir(self, collection_id, path):
         query = urllib.parse.urlencode({"collectionId":collection_id,"path":path})
-        await trio.to_thread.run_sync(self._request, f"/v1/fuse/folders?{query}", "DELETE")
+        await trio.to_thread.run_sync(self._request, f"/v1/fuse/folders?{query}", "DELETE", limiter=self.network_limiter)
 
 
 class SullaFiles(pyfuse3.Operations):
