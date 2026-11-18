@@ -34,7 +34,7 @@ def make(adapter, content):
     api = Api(content)
     operations = adapter.SullaFiles(api)
     inode = operations._node("f.txt", False)
-    operations.nodes[inode].update({"id": "file-1", "collectionId": "home", "directory": False})
+    operations.nodes[inode].update({"id": "file-1", "collectionId": "home", "directory": False, "size": len(content)})
     operations._actor = types.MethodType(noop_actor, operations)
     return api, operations, inode
 
