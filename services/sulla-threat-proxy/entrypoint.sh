@@ -48,7 +48,7 @@ exec mitmdump \
   --set confdir="$state/mitm" \
   --set connection_strategy=lazy \
   --set block_global=false \
-  --set stream_large_bodies=16m \
+  --set stream_large_bodies=8m \
   --set flow_detail=0 \
   -s "$addons/url_filter.py" \
   -s "$addons/prompt_injection.py"

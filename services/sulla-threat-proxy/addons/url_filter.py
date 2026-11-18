@@ -27,6 +27,7 @@ import base64
 import json
 import os
 import threading
+import os
 import time
 import urllib.parse
 import urllib.request
@@ -135,6 +136,8 @@ class URLFilter:
     # ────────────────────────────────────────────────────────────────
     def _read_urlhaus_file(self, path: str) -> Tuple[Set[str], str]:
         """Read host entries and the source Updated date from a URLhaus file."""
+        if os.path.getsize(path) > 32 * 1024 * 1024:
+            raise ValueError("URLhaus file exceeds 32 MiB")
         hosts: Set[str] = set()
         updated = ""
         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
@@ -149,6 +152,8 @@ class URLFilter:
                 host = parts[-1].lower().rstrip(".")
                 if host and "." in host and not host.startswith("#"):
                     hosts.add(host)
+                    if len(hosts) > 1_000_000:
+                        raise ValueError("URLhaus file exceeds 1,000,000 hosts")
         return hosts, updated
 
     def _reload_urlhaus(self) -> None:
@@ -165,8 +170,9 @@ class URLFilter:
             except FileNotFoundError:
                 hosts = set()
             except Exception as ex:
-                log("url_filter", "error", "URLhaus load failed", error=str(ex))
-                hosts = set()
+                log("url_filter", "error", "URLhaus load failed; keeping current list", error=str(ex))
+                self._urlhaus_loaded_at = time.time()
+                return
 
             if not hosts:
                 try:
@@ -370,15 +376,18 @@ class URLFilter:
                 names.append(name)
         return names
 
-    def request(self, flow: http.HTTPFlow) -> None:
+    def requestheaders(self, flow: http.HTTPFlow) -> None:
         self._apply_config()
+        flow.metadata["sulla_url_checked"] = True
         if self.block_mode == "off":
+            flow.request.stream = True
             return
         url = flow.request.pretty_url
         host = (flow.request.pretty_host or "").lower()
         names = self.flow_names(flow)
 
         if names and all(is_allowlisted(name, self.user_allowlist) for name in names):
+            flow.request.stream = True
             log("url_filter", "debug", "allowlisted", host=host, url=url)
             return
 
@@ -396,8 +405,17 @@ class URLFilter:
         if verdict == FLAG_BLOCK:
             if self.block_mode == "warn":
                 flow.request.headers["X-Sulla-Threat"] = "|".join(details)
+                flow.request.stream = True
                 return
             self._emit_block(flow, url, details)
+            return
+        flow.request.stream = True
+
+    def request(self, flow: http.HTTPFlow) -> None:
+        # Compatibility safety-net for replay paths that bypass requestheaders.
+        if flow.metadata.get("sulla_url_checked"):
+            return
+        self.requestheaders(flow)
 
     def _emit_block(self, flow: http.HTTPFlow, url: str, details: List[str]) -> None:
         body = json.dumps(

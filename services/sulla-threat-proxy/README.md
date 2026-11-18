@@ -75,3 +75,16 @@ test fails the build. Locally:
 ```sh
 docker build -f services/sulla-threat-proxy/Dockerfile -t sulla-threat-proxy:local .
 ```
+
+## Memory bounds
+
+The proxy has a 512 MiB container limit. Response buffering is admitted through
+an aggregate 128 MiB reservation budget (override with
+`SULLA_PROXY_BUFFER_BUDGET_MB`); responses over 8 MiB, under cgroup memory
+pressure, or unable to reserve budget are streamed instead. Scanning decodes at
+most a 2 MiB prefix, and streamed responses are inspected as they pass without
+being retained. Request bodies are streamed after URL policy has decided to
+allow them. WebSocket, TCP, and UDP addons retain only the latest message.
+URLhaus input is capped at 32 MiB and one million hosts. These limits bound
+proxy-owned buffers; kernel socket buffers and the Python/mitmproxy runtime
+still contribute to total RSS.
