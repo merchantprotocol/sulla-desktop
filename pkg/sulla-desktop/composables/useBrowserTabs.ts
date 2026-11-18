@@ -49,6 +49,8 @@ export interface BrowserTab {
   /** Durable launch metadata for a visible agent-owned chat thread. */
   /** Super-admin remote support tab. The session id is opaque and all details are refreshed from Cloud. */
   supportSession?: { sessionId: string };
+  /** Temporary dirty editor state carried only across an in-session transfer. */
+  transferState?: { filePath: string; text: string; dirty: boolean };
   agentChat?: {
     threadId:        string;
     agentId:         string;
@@ -71,6 +73,8 @@ export interface ClosedTab {
 }
 
 const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
+let adoptPending = new URLSearchParams(window.location.search).get('adoptPending') === '1';
+let adoptFallback: ReturnType<typeof setTimeout> | null = null;
 const storageKey = (name: string) => makeStorageKey(windowKey, name);
 try {
   // Namespace GC runs once per app session, in the primary window only. Other
@@ -164,7 +168,7 @@ function persistTabs(tabList: BrowserTab[]): void {
     // Never persist the content field — it holds raw HTML from document-mode
     // tabs. Persisting it is a persistent-XSS vector (HtmlMessageRenderer
     // executes script tags via shadow.innerHTML on restore).
-    const toStore = capped.map(({ assetId: _a, content: _c, ...rest }) => rest);
+    const toStore = capped.map(({ assetId: _a, content: _c, transferState: _state, ...rest }) => rest);
     const serialized = JSON.stringify(toStore);
     try {
       localStorage.setItem(STORAGE_KEY, serialized);
@@ -553,9 +557,18 @@ export function useBrowserTabs() {
     if (previewTabId.value === id) previewTabId.value = null;
   }
 
-  function ensureOneTab(): BrowserTab {
+  function ensureOneTab(): BrowserTab | undefined {
     if (tabs.length > 0) {
       return tabs[0];
+    }
+
+    if (adoptPending) {
+      if (!adoptFallback) adoptFallback = setTimeout(() => {
+        adoptFallback = null;
+        adoptPending = false;
+        if (tabs.length === 0) createTab('about:blank', { mode: 'chat' });
+      }, 5000);
+      return undefined;
     }
 
     return createTab('about:blank', { mode: 'chat' });
@@ -593,6 +606,39 @@ export function useBrowserTabs() {
     if (tabs.length === 0) {
       ipcRenderer.send('agent-window:close-self');
     }
+  }
+
+  /** Remove a tab for an in-window transfer without closing its conversation. */
+  function releaseTab(id: string): BrowserTab | null {
+    const index = tabs.findIndex(tab => tab.id === id);
+    if (index < 0) return null;
+    const [tab] = tabs.splice(index, 1);
+    if (previewTabId.value === id) previewTabId.value = null;
+    const headerId = `browser-${ id }`;
+    tabOrder.value = tabOrder.value.filter(existing => existing !== headerId);
+    pinnedTabIds.value = pinnedTabIds.value.filter(existing => existing !== headerId);
+    flushPersistTabs();
+    return tab;
+  }
+
+  /** Adopt a transferred tab with its stable id and persisted chat storage identity. */
+  function adoptTab(descriptor: BrowserTab, index = tabs.length, transient?: Record<string, unknown>): BrowserTab {
+    const duplicate = tabs.find(tab => tab.id === descriptor.id);
+    if (duplicate) return duplicate;
+    const editorState = transient?.fileEditor as BrowserTab['transferState'] | undefined;
+    const adopted = { ...descriptor, ...(editorState ? { transferState: editorState } : {}), loading: false };
+    adoptPending = false;
+    if (adoptFallback) { clearTimeout(adoptFallback); adoptFallback = null; }
+    tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, adopted);
+    const headerId = `browser-${ adopted.id }`;
+    if (transient?.pinned === true && !pinnedTabIds.value.includes(headerId)) pinnedTabIds.value = [...pinnedTabIds.value, headerId];
+    const orderedIds = orderPinnedFirst([...tabOrder.value], pinnedTabIds.value);
+    const pinnedCount = orderedIds.filter(existing => pinnedTabIds.value.includes(existing)).length;
+    const insertionIndex = transient?.pinned === true ? Math.min(index, pinnedCount) : Math.max(index, pinnedCount);
+    orderedIds.splice(Math.max(0, Math.min(insertionIndex, orderedIds.length)), 0, headerId);
+    tabOrder.value = orderedIds;
+    flushPersistTabs();
+    return adopted;
   }
 
   function restoreClosedTab(index: number): BrowserTab | null {
@@ -723,6 +769,8 @@ export function useBrowserTabs() {
     openInPreviewTab,
     promoteTab,
     closeTab,
+    releaseTab,
+    adoptTab,
     updateTab,
     getTab,
     isTabPinned,

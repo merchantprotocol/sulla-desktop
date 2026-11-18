@@ -12,8 +12,8 @@ export interface AgentWindowOptions {
 }
 
 /** Query flag used to initialize a new secondary window without clearing restored tabs on reload. */
-export function initialTabsQuery(initialTabs: AgentWindowOptions['initialTabs'], isPrimary: boolean): string {
-  if (isPrimary || initialTabs === 'restore') return '';
+export function initialTabsQuery(initialTabs: AgentWindowOptions['initialTabs']): string {
+  if (initialTabs === 'restore') return '';
   return initialTabs === 'adopt' ? '&adoptPending=1' : '&freshAgentTab=1';
 }
 
@@ -46,6 +46,11 @@ export class AgentWindowRegistry {
 
   getAgentWindows(): BrowserWindow[] {
     return Array.from(this.keys.keys()).map(id => BrowserWindow.fromId(id)).filter((win): win is BrowserWindow => !!win && !win.isDestroyed());
+  }
+
+  getAgentWindowsByFocusOrder(): BrowserWindow[] {
+    const alive = this.getAgentWindows();
+    return [...this.focusOrder.map(id => alive.find(win => win.id === id)).filter((win): win is BrowserWindow => !!win), ...alive.filter(win => !this.focusOrder.includes(win.id))];
   }
 
   getActiveAgentWindow(): BrowserWindow | null {
@@ -99,7 +104,8 @@ export function openAgentWindow(options: AgentWindowOptions = {}): BrowserWindow
 export function ensureAgentWindow(): BrowserWindow { return agentWindowRegistry.ensureAgentWindow(requireCreator()); }
 export function getActiveAgentWindow(): BrowserWindow | null { return agentWindowRegistry.getActiveAgentWindow(); }
 export function getAgentWindows(): BrowserWindow[] { return agentWindowRegistry.getAgentWindows(); }
+export function getAgentWindowsByFocusOrder(): BrowserWindow[] { return agentWindowRegistry.getAgentWindowsByFocusOrder(); }
 export function isAgentWebContents(contents: Electron.WebContents): boolean { return agentWindowRegistry.isAgentWebContents(contents); }
 export function agentWindowFor(contents: Electron.WebContents): BrowserWindow | null { return agentWindowRegistry.agentWindowFor(contents); }
 export function windowKeyOf(window: BrowserWindow): string | null { return agentWindowRegistry.windowKeyOf(window); }
-export function newAgentWindow(): BrowserWindow { return openAgentWindow(); }
+export function newAgentWindow(): BrowserWindow { return openAgentWindow({ initialTabs: 'fresh-chat' }); }

@@ -10,6 +10,14 @@ import { newMessageId } from '@pkg/pages/chat/types/chat';
 import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 describe('ChatController use-case queue routing', () => {
+  it('restores a live run into renderer state when a chat tab is adopted', () => {
+    // risk: an adopted live chat must stay marked running so the user cannot accidentally submit a duplicate turn
+    const controller = new ChatController();
+    controller.restoreActiveRun();
+    expect(controller.isRunning.value).toBe(true);
+    controller.dispose();
+  });
+
   it('keeps a queued Ask-agent intent intact until the active run is idle', () => {
     // risk: agent routing metadata must not be lost when a queued turn is sent during another run
     const controller = new ChatController();

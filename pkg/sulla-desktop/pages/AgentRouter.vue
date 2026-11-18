@@ -176,7 +176,7 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab } = useBrowserTabs();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus } = useVaultUnlock();
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
 
@@ -753,7 +753,45 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 
 const presenceTracker = getHumanPresenceTracker();
 
+async function onTabTransferRelease(_event: Electron.IpcRendererEvent, transferId: string, tabId: string): Promise<void> {
+  const wasActive = route.path === `/Browser/${ tabId }`;
+  if (wasActive) {
+    const fallback = browserTabs.find(tab => tab.id !== tabId);
+    await router.replace(fallback ? `/Browser/${ fallback.id }` : '/Chat').catch(() => undefined);
+  }
+  if (!releaseTab(tabId)) return;
+  await nextTick();
+  ipcRenderer.send('tabs:transfer-released', transferId, tabId);
+}
+
+function onTabTransferAdopt(_event: Electron.IpcRendererEvent, transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number): void {
+  const tabId = String(descriptor.id || '');
+  if (!tabId) return;
+  const localX = (screenX ?? window.screenX) - window.screenX;
+  const tabEls = Array.from(document.querySelectorAll<HTMLElement>('.tab-item'));
+  let index = browserTabs.length;
+  for (let i = 0; i < tabEls.length; i++) {
+    const rect = tabEls[i].getBoundingClientRect();
+    if (localX < rect.left + rect.width / 2) { index = i; break; }
+  }
+  const tab = adoptTab(descriptor as any, index, transient);
+  ipcRenderer.send('tabs:transfer-adopted', transferId, tabId);
+}
+
+function onTabTransferActivate(_event: Electron.IpcRendererEvent, _transferId: string, tabId: string): void {
+  if (browserTabs.some(tab => tab.id === tabId)) void router.replace(`/Browser/${ tabId }`);
+}
+
+function onTabTransferFinalize(_event: Electron.IpcRendererEvent, _transferId: string, _tabId: string): void {
+  if (browserTabs.length === 0) ipcRenderer.send('agent-window:close-self');
+}
+
 onMounted(async() => {
+  ipcRenderer.on('tabs:release', onTabTransferRelease);
+  ipcRenderer.on('tabs:adopt', onTabTransferAdopt);
+  ipcRenderer.on('tabs:activate', onTabTransferActivate);
+  ipcRenderer.on('tabs:release-finalize', onTabTransferFinalize);
+  ipcRenderer.send('tabs:transfer-ready');
   ipcRenderer.on('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.on('database:available', onDatabaseAvailable);
   void refreshRailExtensions().catch(err => console.warn('[AgentRouter] extension rail load failed:', err));
@@ -811,6 +849,10 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  ipcRenderer.removeListener('tabs:release', onTabTransferRelease);
+  ipcRenderer.removeListener('tabs:adopt', onTabTransferAdopt);
+  ipcRenderer.removeListener('tabs:activate', onTabTransferActivate);
+  ipcRenderer.removeListener('tabs:release-finalize', onTabTransferFinalize);
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('database:available', onDatabaseAvailable);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);

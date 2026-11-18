@@ -52,9 +52,8 @@ describe('AgentWindowRegistry', () => {
 
 describe('initial agent-window tabs', () => {
   it('keeps restored tabs, starts fresh-chat windows clean, and leaves adopt windows empty', () => {
-    expect(initialTabsQuery('restore', false)).toBe('');
-    expect(initialTabsQuery('fresh-chat', false)).toBe('&freshAgentTab=1');
-    expect(initialTabsQuery('adopt', false)).toBe('&adoptPending=1');
-    expect(initialTabsQuery('fresh-chat', true)).toBe('');
+    expect(initialTabsQuery('restore')).toBe('');
+    expect(initialTabsQuery('fresh-chat')).toBe('&freshAgentTab=1');
+    expect(initialTabsQuery('adopt')).toBe('&adoptPending=1');
   });
 });

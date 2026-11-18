@@ -17,6 +17,7 @@ import { WindowBoundsStore } from './WindowBoundsStore';
 import { AgentWindowPersistence } from './AgentWindowPersistence';
 import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
 import { agentWindowRegistry, initialTabsQuery, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
+import { TabTransferService } from '@pkg/main/tabs/TabTransferService';
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
@@ -184,7 +185,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
   const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
-  const windowURL = `${ url }${ initialTabsQuery(initialTabs, name === 'main-agent') }`;
+  const windowURL = `${ url }${ initialTabsQuery(initialTabs) }`;
   const window = createWindow(
     name,
     windowURL,
@@ -418,6 +419,14 @@ function sendToMain(payload: Record<string, unknown>): void {
 
 // Allow renderer processes to open URLs inside the app via IPC.
 if (process.type === 'browser') {
+  void import('./browserTabViewManager').then(({ BrowserTabViewManager }) => {
+    new TabTransferService(ipcMain, screen, agentWindowRegistry.agentWindowFor.bind(agentWindowRegistry), agentWindowRegistry.getAgentWindowsByFocusOrder.bind(agentWindowRegistry), openAgentWindow, BrowserTabViewManager.getInstance()).install();
+  }).catch(error => console.error('[TabTransfer] Could not initialize transfer service', error));
+  ipcMain.handle('chat:run-state', async(event, channelId: string, threadId: string) => {
+    if (!agentWindowRegistry.isAgentWebContents(event.sender) || !channelId || !threadId) return false;
+    const { getBackendGraphWebSocketService } = await import('@pkg/agent/services/BackendGraphWebSocketService');
+    return getBackendGraphWebSocketService().hasActiveRun(channelId, threadId);
+  });
   ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
   });

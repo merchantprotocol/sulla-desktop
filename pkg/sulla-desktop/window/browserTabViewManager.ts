@@ -128,6 +128,8 @@ export class BrowserTabViewManager {
     else this.transferringTabs.delete(tabId);
   }
 
+  isTransferring(tabId: string): boolean { return this.transferringTabs.has(tabId); }
+
   /** Check that a renderer is the registered owner of this tab. */
   ownsTab(tabId: string, owner: Electron.BrowserWindow): boolean {
     return this.ownerFor(tabId) === owner;

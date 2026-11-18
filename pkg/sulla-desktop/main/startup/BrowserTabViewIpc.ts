@@ -44,6 +44,7 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
 
     ipc.handle('browser-tab-view:destroy', async(event: Electron.IpcMainInvokeEvent, tabId: string) => {
       assertOwner(event, tabId);
+      if (tabViewManager.isTransferring(tabId)) return;
       tabRegistry.close(tabId);
     });
 
