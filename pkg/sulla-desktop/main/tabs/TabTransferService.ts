@@ -20,6 +20,7 @@ interface DragState extends TransferPayload { source: BrowserWindow }
 export class TabTransferService {
   private readonly drags = new Map<number, DragState>();
   private readonly readyWindows = new Set<number>();
+  private readonly watchedSenders = new Set<number>();
   private polling: ReturnType<typeof setInterval> | null = null;
   private lastPointer = { x: 0, y: 0 };
 
@@ -57,8 +58,16 @@ export class TabTransferService {
     if (payload.descriptor.mode === 'browser' && !this.views.ownsTab(payload.tabId, source)) return;
     this.drags.set(event.sender.id, { ...payload, source });
     this.startPointerPolling();
-    event.sender.once('destroyed', () => {
-      this.drags.delete(event.sender.id);
+    this.watchSenderDestruction(event.sender);
+  }
+
+  /** Registers the destroyed cleanup once per sender, so repeated drags don't stack listeners. */
+  private watchSenderDestruction(sender: Electron.WebContents): void {
+    if (this.watchedSenders.has(sender.id)) return;
+    this.watchedSenders.add(sender.id);
+    sender.once('destroyed', () => {
+      this.watchedSenders.delete(sender.id);
+      this.drags.delete(sender.id);
       if (this.drags.size === 0 && this.polling) { clearInterval(this.polling); this.polling = null; }
     });
   }

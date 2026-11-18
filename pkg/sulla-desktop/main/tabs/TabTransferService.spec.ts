@@ -10,6 +10,15 @@ class FakeIpc {
   emit(channel: string, ...args: any[]) { for (const listener of this.listeners.get(channel) || []) listener(...args); }
 }
 
+/** Minimal WebContents stand-in: send plus the once/destroy pair the service relies on. */
+class FakeWebContents {
+  destroyedListeners: Array<() => void> = [];
+  constructor(public id: number, private readonly onSend: (channel: string, ...args: any[]) => void) {}
+  send(channel: string, ...args: any[]) { this.onSend(channel, ...args); }
+  once(channel: string, listener: () => void) { if (channel === 'destroyed') this.destroyedListeners.push(listener); return this; }
+  destroy() { for (const listener of this.destroyedListeners.splice(0)) listener(); }
+}
+
 class FakeWindow {
   id: number;
   bounds: Electron.Rectangle;
@@ -17,14 +26,14 @@ class FakeWindow {
   isDestroyed = () => false;
   isVisible = () => true;
   actions: string[];
-  webContents: any;
+  webContents: FakeWebContents;
   constructor(id: number, actions: string[], bounds = { x: 0, y: 0, width: 800, height: 600 }, ipc?: FakeIpc) {
     this.id = id; this.bounds = bounds; this.actions = actions;
-    this.webContents = { id, send: (channel: string, ...args: any[]) => {
+    this.webContents = new FakeWebContents(id, (channel: string, ...args: any[]) => {
       actions.push(channel);
       if (channel === 'tabs:release') ipc?.emit('tabs:transfer-released', { sender: this.webContents }, args[0], args[1]);
       if (channel === 'tabs:adopt') ipc?.emit('tabs:transfer-adopted', { sender: this.webContents }, args[0], args[1].id);
-    } };
+    });
   }
   getBounds() { return this.bounds; }
   setBounds(bounds: Electron.Rectangle) { this.bounds = bounds; this.actions.push('move-window'); }
@@ -48,6 +57,23 @@ describe('TabTransferService', () => {
     expect(actions).toContain('tabs:release-finalize');
     expect(actions).not.toContain('conversation-history:close');
     expect(actions).not.toContain('chat:stop');
+  });
+
+  it('registers the destroyed cleanup once per sender across repeated drags', () => {
+    // risk: listener leak on long-lived agent windows (one drag-start per tab drag)
+    const ipc = new FakeIpc(); const actions: string[] = [];
+    const source = new FakeWindow(1, actions, { x: 0, y: 0, width: 800, height: 600 }, ipc);
+    const views = { ownsTab: () => true, markTransferring: () => {}, moveViewToWindow: () => true } as any;
+    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 0, y: 0 }) } as any, () => source as any, () => [source] as any, () => source as any, views);
+    service.install();
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-1', descriptor: { id: 'tab-1' }, tabCount: 2 });
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-2', descriptor: { id: 'tab-2' }, tabCount: 2 });
+    expect(source.webContents.destroyedListeners).toHaveLength(1);
+
+    // once the sender is destroyed, the next drag from a fresh sender with the same id registers again
+    source.webContents.destroy();
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-3', descriptor: { id: 'tab-3' }, tabCount: 2 });
+    expect(source.webContents.destroyedListeners).toHaveLength(1);
   });
 
   it('opens a new window for an outside multi-tab drop but moves a single-tab source window', async() => {
