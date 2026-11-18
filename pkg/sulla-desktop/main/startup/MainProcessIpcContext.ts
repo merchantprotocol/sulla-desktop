@@ -12,6 +12,7 @@ import type { VaultStatusMonitor } from './VaultStatusMonitor';
 /** The `ipcMainProxy` background.ts hands to onMainProxyLoad. */
 export interface IpcHandleRegistrar {
   handle(channel: string, listener: (...args: any[]) => any): void;
+  on?(channel: string, listener: (...args: any[]) => void): void;
 }
 
 /** `@pkg/window`'s window lookup, injected so the import order stays in sulla.ts. */
