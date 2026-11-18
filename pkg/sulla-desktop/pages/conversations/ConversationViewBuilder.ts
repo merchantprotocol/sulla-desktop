@@ -76,15 +76,18 @@ export class ConversationViewBuilder {
 
   thread(thread: ConversationThreadProjection): ThreadView {
     const last = thread.messages.at(-1);
+    const withId = thread.participantIds.find(id => id !== this.userId) ?? '';
+    // Mockup agent-thread title: "Your agent and Alex's agent".
+    const title = thread.kind === 'agent_thread' && withId ? `Your agent and ${this.displayName(withId).split(/\s+/)[0]}'s agent` : thread.title;
     return {
       id: thread.id,
       kind: thread.kind,
-      title: thread.title,
+      title,
       participantIds: thread.participantIds,
       latest: last ? this.preview(last, thread.kind) : thread.latest,
       time: this.listTime(last?.createdAt ?? ''),
       unread: thread.unread,
-      withId: thread.participantIds.find(id => id !== this.userId) ?? '',
+      withId,
     };
   }
 

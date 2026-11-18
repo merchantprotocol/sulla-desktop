@@ -63,7 +63,7 @@ function sendDraft(): void {
       <div class="top">
         <template v-if="thread && isAgentThread">
           <span style="display:flex;align-items:center;gap:4px"><ConvAvatar bot size="lg" /><span style="color:var(--dim)">&harr;</span><ConvAvatar bot theirs size="lg" :pres="other?.agentOnline ? 'online' : 'offline'" /></span>
-          <div class="ttl"><b>{{ threadTitle }}</b><small>Agent thread{{ other ? ` · you and ${other.name} can watch it` : '' }}</small></div>
+          <div class="ttl"><b v-if="other"><span class="who you" style="font-size:12px">Your agent</span> and <span class="who theirs" style="font-size:12px">{{ other.firstName }}'s agent</span></b><b v-else>{{ threadTitle }}</b><small>Agent thread{{ other ? ` · you and ${other.name} can watch it` : '' }}</small></div>
         </template>
         <template v-else-if="thread && thread.kind === 'group'">
           <span class="avatar lg bot" style="background:linear-gradient(135deg,#9ec1d3,#3a7fa0);border-radius:10px;font-size:12px">{{ threadTitle.trim()[0]?.toUpperCase() ?? '?' }}</span>
