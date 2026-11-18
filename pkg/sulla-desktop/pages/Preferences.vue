@@ -73,7 +73,7 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   account:     'profile email cloud sign in remote access phone servers master password vault passwords',
   files:       'folders sync finder backups exclusions',
   security:    'host access telemetry usage sandbox vault password encryption approvals rules audit',
-  threat:      'threat proxy malware phishing url link injection allowlist safe browsing virustotal fail open reputation traffic log',
+  threat:      'security threat proxy malware phishing url link injection allowlist safe browsing virustotal fail open reputation traffic log',
   docker:      'memory cpu virtual machine engine path terminal command line restart snapshots network',
   advanced: 'debug logs troubleshooting health extensions experimental vault proxy reset factory',
 };
@@ -313,5 +313,7 @@ onBeforeUnmount(() => {
 
 .sulla-prefs {
   @include sulla-window;
+
+  .nav a.child { margin-left: 12px; padding-left: 12px; font-size: 0.94em; }
 }
 </style>
