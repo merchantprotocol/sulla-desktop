@@ -133,6 +133,16 @@ class BoundedDecoderTests(unittest.TestCase):
         self.assertEqual(response.stream(b""), [])
         self.assertEqual(response.raw_content, b"original")
 
+    # risk: availability — over-limit responses stay unmodified while scanning only a bounded window.
+    def test_oversized_response_streams_windowed(self):
+        scanner = prompt_injection.PromptInjectionScanner(self.Config())
+        response = SimpleNamespace(headers={"Content-Type": "text/html", "Content-Length": str(scanner.scan_buffer_max_bytes + 1)}, stream=False)
+        flow = SimpleNamespace(response=response, request=SimpleNamespace(pretty_url="https://example.test/", pretty_host="example.test"), id="oversized-stream")
+        scanner.responseheaders(flow)
+        self.assertTrue(callable(response.stream))
+        self.assertEqual(response.stream(b"original"), [b"original"])
+        self.assertEqual(response.stream(b""), [])
+
     # risk: prompt-injection detection — streamed content is inspected in a bounded first window without editing sent headers.
     def test_windowed_stream_logs_first_window_hit_without_mutating_flow(self):
         scanner = prompt_injection.PromptInjectionScanner.__new__(prompt_injection.PromptInjectionScanner)

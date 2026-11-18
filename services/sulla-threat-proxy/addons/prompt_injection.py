@@ -255,7 +255,7 @@ class PromptInjectionScanner:
         reserve = int(raw_length) if raw_length and raw_length.isdigit() else SCAN_BUFFER_MAX
         if reserve > self.scan_buffer_max_bytes:
             log("prompt_injection", "warn", "fail_open", reason="inspection_limit", content_length=raw_length or "unknown", url=flow.request.pretty_url, host=flow.request.pretty_host)
-            flow.response.stream = True
+            flow.response.stream = self._windowed_stream(flow)
             return
         if self._memory_pressure():
             log("prompt_injection", "warn", "fail_open", reason="memory_pressure", url=flow.request.pretty_url, host=flow.request.pretty_host)
