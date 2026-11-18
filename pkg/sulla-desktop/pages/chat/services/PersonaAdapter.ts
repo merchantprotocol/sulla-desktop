@@ -173,6 +173,10 @@ export class PersonaAdapter {
     this.stopWatchers.push(
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
+        // Only transient streaming/thinking projections depend on run state.
+        for (const message of this.ci.messages.value) {
+          if (message.kind === 'streaming' || message.kind === 'thinking') this.lastRawSignature.delete(message.id);
+        }
         this.messageSyncScheduler.flush();
         if (opts.tabId) {
           window.dispatchEvent(new CustomEvent('sulla:chat-running', {
@@ -522,6 +526,14 @@ export class PersonaAdapter {
 
   private syncMessages(): void {
     const backend = this.ci.messages.value;
+    const transcript = this.controller.thread.value.messages;
+    const indexById = new Map(transcript.map((message, index) => [message.id, index]));
+    const liveIds = new Set(backend.filter(message => message?.id).map(message => message.id));
+    for (const id of this.seen) if (!liveIds.has(id)) this.seen.delete(id);
+    for (const map of [this.lastRawSignature, this.lastMappedHash, this.firstSeenAt, this.firstCompletedAt]) {
+      for (const id of map.keys()) if (!liveIds.has(id)) map.delete(id);
+    }
+    for (const id of this.seenRunning) if (!liveIds.has(id)) this.seenRunning.delete(id);
     for (const b of backend) {
       if (!b?.id) continue;
 
@@ -539,13 +551,15 @@ export class PersonaAdapter {
       }
       // Also update when the message was restored from the local save: appending
       // it again would create a duplicate card that updates can never reach.
-      const existing = this.controller.thread.value.messages.find(m => m.id === mapped.id);
+      const existingIndex = indexById.get(mapped.id);
+      const existing = existingIndex === undefined ? undefined : transcript[existingIndex];
       if (this.seen.has(b.id) || existing) {
         this.seen.add(b.id);
-        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>);
+        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>, existingIndex);
       } else {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
+        indexById.set(mapped.id, this.controller.thread.value.messages.length - 1);
       }
     }
   }
@@ -598,8 +612,8 @@ export class PersonaAdapter {
    * Must cover every backend field MessageDispatcher mutates in place after
    * a message's first push (verified against MessageDispatcher.ts): content,
    * `_completed`, toolCard.status/output/error, subAgentActivity.*, and
-   * workflowNode.status/output/error/nodeIndex/totalNodes. graphRunning is
-   * included because thinking/streaming completion falls back to it.
+   * workflowNode.status/output/error/nodeIndex/totalNodes. Graph-running
+   * transitions invalidate only streaming/thinking messages explicitly.
    * Other kinds (patch, citation, tool_approval, tool_question, channel,
    * proactive, html, workflow_document) are pushed once and never mutated,
    * so kind|role|contentLen already makes their signature stable.
@@ -607,7 +621,6 @@ export class PersonaAdapter {
   private rawSignature(b: BackendMessage): string {
     const contentLen = typeof b.content === 'string' ? b.content.length : -1;
     const completed = (b as any)._completed === true ? 1 : 0;
-    const running = this.ci.graphRunning.value ? 1 : 0;
     const tool = b.toolCard
       ? `${ b.toolCard.status }|${ b.toolCard.output?.length ?? -1 }|${ b.toolCard.error ?? '' }`
       : '';
@@ -618,7 +631,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ running }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }`;
   }
 
   private syncRunState(running: boolean): void {

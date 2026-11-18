@@ -210,6 +210,21 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
   // A tab row linked after the placeholder was written: fold the placeholder in.
   if (headerId !== threadId) await adoptThreadMessagesWith(db, headerId, threadId);
   const rows = threadStateToRows(threadId, state);
+  // The renderer intentionally saves only a bounded window. Preserve the
+  // durable transcript: existing rows keep their sequence position and new
+  // ids are appended after the current tail instead of replacing old rows.
+  if (rows.length > 0) {
+    const stored = await db.query(`
+      SELECT id, position FROM conversation_messages
+      WHERE conversation_id = $1 AND payload IS NOT NULL
+    `, [headerId]);
+    const positions = new Map<string, number>(stored.rows.map(row => [String(row.id), Number(row.position)]));
+    let nextPosition = stored.rows.reduce((max, row) => Math.max(max, Number(row.position) || 0), -1) + 1;
+    for (const row of rows) {
+      const existingPosition = positions.get(row.id);
+      row.position = existingPosition === undefined ? nextPosition++ : existingPosition;
+    }
+  }
 
   if (rows.length > 0) {
     await db.query(`
@@ -249,12 +264,8 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
     `, [JSON.stringify(rows), headerId]);
   }
 
-  await db.query(`
-    UPDATE conversation_messages
-    SET deleted_at = now(), updated_at = now()
-    WHERE conversation_id = $1 AND payload IS NOT NULL AND deleted_at IS NULL
-      AND NOT (id = ANY($2::text[]))
-  `, [headerId, rows.map(r => r.id)]);
+  // Missing ids are not deletions: a bounded renderer save omits older
+  // history by design. Explicit thread deletion uses deleteThreadStateWith.
 
   // Title only fills a placeholder header; a real tab row's title/status/pinned/hidden are never touched.
   await db.query(`
@@ -290,6 +301,16 @@ export async function loadThreadStateWith(db: Queryable, idOrThreadId: string): 
   return { ...state, thread: { ...(state.thread ?? {} as any), messages } };
 }
 
+export async function loadMessagesBeforeWith(db: Queryable, idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
+  const headerId = await resolveHeaderId(db, idOrThreadId);
+  if (!headerId || !beforeMessageId) return [];
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit) || 50));
+  const anchor = await db.query(`SELECT position FROM conversation_messages WHERE conversation_id = $1 AND id = $2 AND deleted_at IS NULL`, [headerId, `${idOrThreadId}:${beforeMessageId}`]);
+  if (!anchor.rows[0]) return [];
+  const result = await db.query(`SELECT payload FROM conversation_messages WHERE conversation_id = $1 AND position < $2 AND deleted_at IS NULL AND payload IS NOT NULL ORDER BY position DESC, seq DESC LIMIT $3`, [headerId, anchor.rows[0].position, safeLimit]);
+  return result.rows.reverse().map(row => row.payload);
+}
+
 export async function deleteThreadStateWith(db: Queryable, idOrThreadId: string): Promise<void> {
   const headerId = await resolveHeaderId(db, idOrThreadId);
   if (!headerId) return;
@@ -298,6 +319,15 @@ export async function deleteThreadStateWith(db: Queryable, idOrThreadId: string)
     WHERE conversation_id = $1 AND payload IS NOT NULL AND deleted_at IS NULL
   `, [headerId]);
   await db.query(`UPDATE conversation_history SET thread_state = NULL WHERE id = $1`, [headerId]);
+  await refreshHeader(db, headerId);
+}
+
+export async function deleteMessagesWith(db: Queryable, threadId: string, messageIds: string[]): Promise<void> {
+  if (!threadId || !messageIds.length) return;
+  const headerId = await resolveHeaderId(db, threadId);
+  if (!headerId) return;
+  const rowIds = messageIds.map(id => `${threadId}:${id}`);
+  await db.query(`UPDATE conversation_messages SET deleted_at = now(), updated_at = now() WHERE conversation_id = $1 AND id = ANY($2::text[]) AND deleted_at IS NULL`, [headerId, rowIds]);
   await refreshHeader(db, headerId);
 }
 
@@ -347,8 +377,16 @@ export class ConversationThreadStore {
     return postgresClient.transaction(client => loadThreadStateWith(client, idOrThreadId));
   }
 
+  static loadMessagesBefore(idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
+    return postgresClient.transaction(client => loadMessagesBeforeWith(client, idOrThreadId, beforeMessageId, limit));
+  }
+
   static deleteThreadState(idOrThreadId: string): Promise<void> {
     return postgresClient.transaction(client => deleteThreadStateWith(client, idOrThreadId));
+  }
+
+  static deleteMessages(threadId: string, messageIds: string[]): Promise<void> {
+    return postgresClient.transaction(client => deleteMessagesWith(client, threadId, messageIds));
   }
 
   static getMessageCount(idOrThreadId: string): Promise<number> {
