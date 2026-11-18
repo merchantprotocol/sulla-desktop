@@ -43,7 +43,8 @@ export class SullaFilesMountCredentialService {
     const executor = this.executor();
     if (!executor) throw new Error('Files mount guest is unavailable');
     const child = executor.spawn(
-      { root: true }, 'sh', '-c', `umask 077; cat > ${ destination }.new && python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' ${ destination }.new && mv -f ${ destination }.new ${ destination } && python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' $(dirname ${ destination })`,
+      // POSIX sh and coreutils/busybox only: the guest may have no python3. The rename is the atomic step; `sync` flushes it.
+      { root: true }, 'sh', '-c', `umask 077; cat > ${ destination }.new && mv -f ${ destination }.new ${ destination } && sync`,
     );
     const complete = new Promise<void>((resolve, reject) => {
       child.once('error', reject);

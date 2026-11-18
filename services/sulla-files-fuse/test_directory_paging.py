@@ -60,11 +60,16 @@ def load_adapter():
     urllib3 = types.ModuleType("urllib3")
     urllib3.PoolManager = lambda **_kwargs: types.SimpleNamespace(request=None)
     urllib3.Timeout = lambda **_kwargs: None
+    # Same hierarchy as urllib3 2.x: connect failures are ConnectTimeoutError subclasses, and all are HTTPError.
+    http_error = type("HTTPError", (Exception,), {})
+    timeout_error = type("TimeoutError", (http_error,), {})
+    connect_timeout_error = type("ConnectTimeoutError", (timeout_error,), {})
     urllib3.exceptions = types.SimpleNamespace(
-        HTTPError=type("HTTPError", (Exception,), {}),
-        TimeoutError=type("TimeoutError", (Exception,), {}),
-        NewConnectionError=type("NewConnectionError", (Exception,), {}),
-        ProtocolError=type("ProtocolError", (Exception,), {}),
+        HTTPError=http_error,
+        TimeoutError=timeout_error,
+        ConnectTimeoutError=connect_timeout_error,
+        NewConnectionError=type("NewConnectionError", (connect_timeout_error, http_error), {}),
+        ProtocolError=type("ProtocolError", (http_error,), {}),
     )
     sys.modules.update(pyfuse3=pyfuse3, trio=trio, yaml=yaml, urllib3=urllib3)
     spec = importlib.util.spec_from_file_location("sulla_files_fuse_test", ROOT / "sulla_files_fuse.py")

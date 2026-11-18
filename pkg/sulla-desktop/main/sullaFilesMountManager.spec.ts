@@ -121,9 +121,12 @@ describe('SullaFilesMountCredentialService token custody', () => {
     expect(settled).toBe(true);
     expect(guest.writes[0]).toBe(`${ VALID_TOKEN }\n`);
     const command = guest.commands[0];
-    expect(command).toContain('fsync');
+    // risk: security + availability — the token lands atomically (write temp, rename) with a private umask, using only sh/coreutils (no python3 in the guest).
+    expect(command).toContain('umask 077');
     expect(command).toContain('mv -f');
     expect(command).toContain('.new');
+    expect(command).toContain('sync');
+    expect(command).not.toContain('python3');
   });
 
   it('refuses to write a token into a guest that was torn down while credentials were fetched', async() => {

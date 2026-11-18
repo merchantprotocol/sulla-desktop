@@ -4,7 +4,24 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # "Sulla" is a trademark. See TRADEMARK.md.
 
-"""Read/write FUSE view of every tracked Sulla Files collection."""
+"""Read/write FUSE view of every tracked Sulla Files collection.
+
+Tunables (environment variables, read once at import):
+
+- SULLA_FILES_FUSE_MAX_OPEN_HANDLES (default 4096, minimum 32): open file handles
+  the mount keeps before new opens fail with EMFILE (MAX_OPEN_HANDLES).
+- SULLA_FILES_FUSE_MAX_WAIT_S (default 75): the deadline for one Files request,
+  shared by every retry of it (MAX_WAIT_SECONDS). Connection-refused and connect
+  timeouts are retried until this deadline for every method, because nothing was
+  sent. Read timeouts and 5xx responses are retried only for idempotent calls, and
+  then only until this deadline; after that the caller gets EIO. The connect phase
+  itself is capped at 5 seconds.
+- SULLA_FILES_FUSE_NETWORK_THREADS (default 64): threads for Files HTTP calls.
+- SULLA_FILES_FUSE_MAX_TRANSFERS (default 4): concurrent file transfers.
+- SULLA_FILES_FUSE_SPOOL: disk-backed spool directory for open-file buffers.
+- SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS (default 1.0) and
+  SULLA_FILES_FUSE_HEARTBEAT_SECONDS (default 60): logging thresholds.
+"""
 
 import argparse
 import datetime
@@ -45,8 +62,7 @@ DIRECTORY_PAGE_SIZE = 500
 IDEMPOTENT_RETRY_METHODS = ("DELETE", "GET", "HEAD", "PUT")
 MAX_CONFLICT_RETRIES = 3
 # A lost Files database connection, a restart or a saturated VM answers 5xx or times out.
-# These failures are retried until the configured request deadline before clients see EIO.
-MAX_TRANSIENT_RETRIES = 5
+# These failures are retried until the configured request deadline (MAX_WAIT_SECONDS) before clients see EIO.
 TRANSIENT_STATUSES = (500, 502, 503, 504)
 MAX_WAIT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_MAX_WAIT_S", "75")))
 NETWORK_THREAD_LIMIT = max(1, int(os.environ.get("SULLA_FILES_FUSE_NETWORK_THREADS", "64")))
@@ -301,6 +317,8 @@ class FilesApi:
             auth_retry_started = None
             auth_attempts = 0
             last_transient_error = None
+            # True once an earlier attempt may have reached Files (a sent request whose outcome is unknown).
+            ambiguous_attempts = False
             while True:
                 if last_transient_error is not None and time.monotonic() >= deadline:
                     raise last_transient_error
@@ -327,7 +345,7 @@ class FilesApi:
                                 emit("files-auth-retry", logging.WARNING, method=method, path=path.split("?", 1)[0], attempt=auth_attempts, elapsed=round(elapsed, 1))
                             time.sleep(min(max(0, deadline - time.monotonic()), 2.0, 0.25 * (2 ** min(auth_attempts - 1, 3))))
                             continue
-                    if transient_attempts:
+                    if ambiguous_attempts:
                         error.after_retry = True
                     detail = getattr(error, "detail", None) or {}
                     transient_conflict = getattr(error, "status", None) == 409 and (
@@ -336,8 +354,11 @@ class FilesApi:
                     )
                     transient_transport = getattr(error, "transient", False)
                     transient_status = getattr(error, "status", None) in TRANSIENT_STATUSES
-                    if (transient_transport or transient_status) and repeatable and time.monotonic() < deadline:
+                    # A connect-phase failure (not_sent) never reached Files, so every method may retry it.
+                    not_sent = getattr(error, "not_sent", False)
+                    if (transient_transport or transient_status) and (repeatable or not_sent) and time.monotonic() < deadline:
                         transient_attempts += 1
+                        ambiguous_attempts = ambiguous_attempts or not not_sent
                         retry_after = getattr(error, "retry_after", None)
                         delay = max(0, retry_after) if retry_after is not None else min(5.0, 0.1 * (2 ** min(transient_attempts - 1, 6)))
                         time.sleep(min(max(0, deadline - time.monotonic()), delay + random.uniform(0, 0.05)))
@@ -423,6 +444,9 @@ class FilesApi:
         except urllib3.exceptions.HTTPError as error:
             failure = OSError(errno.EIO, "Files service unavailable")
             failure.transient = isinstance(error, (urllib3.exceptions.TimeoutError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.ProtocolError))
+            # Connect-phase failures (refused, unreachable, connect timeout) happen before any request byte leaves,
+            # so the request was never sent. A read timeout or reset may have reached Files: not_sent stays unset.
+            failure.not_sent = isinstance(error, (urllib3.exceptions.ConnectTimeoutError, urllib3.exceptions.NewConnectionError))
             raise failure from error
 
     async def directory_page(self, collection_id, path, cursor=None, etag=None):

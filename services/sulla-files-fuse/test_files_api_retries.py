@@ -87,7 +87,7 @@ class FilesApiRetryTests(unittest.TestCase):
             observed.append(kwargs.get("limiter"))
             return function(*args)
         adapter.trio.to_thread.run_sync = run_sync
-        api._request = lambda *_args: (200, {}, b'{"path":"a"}')
+        api._request = lambda *_args, **_kwargs: (200, {}, b'{"path":"a"}')
         asyncio.run(api.entry(None, "a"))
         self.assertEqual(observed, [api.network_limiter])
 
