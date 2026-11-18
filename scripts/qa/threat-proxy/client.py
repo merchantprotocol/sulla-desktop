@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import os
+import socket
 import ssl
 import sys
 import threading
@@ -13,19 +14,56 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+# Socket timeout for one SSE read. The origin emits an event every `rate` seconds, so a read
+# that stays silent this long means the stream stalled. A stall after the deadline is a normal stop.
+SSE_SOCKET_TIMEOUT = 30
+# Extra time a websocket may run past --minutes before the client gives up on it as stalled.
+WS_GRACE_SECONDS = 30
+
 
 class ProxyClient:
     def __init__(self, proxy, ca, origin, args):
         self.proxy, self.ca, self.origin, self.args = proxy, ca, origin, args
         self.errors = 0
         self.messages_received = 0
+        self.streams_completed = 0
         self.security = {}
+
+    def _opener(self):
+        # A fresh opener per request means its own proxy connection: nothing is pooled or shared between requests.
+        return urllib.request.build_opener(urllib.request.ProxyHandler({"http": self.proxy, "https": self.proxy}), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=self.ca) if self.ca and os.path.exists(self.ca) else ssl._create_unverified_context()))
+
+    def stream_for(self, url, duration):
+        """Read one SSE stream until `duration` seconds pass or the origin ends it, then close it.
+
+        Runs in a worker thread. read1() returns as soon as any bytes arrive; read(n) would wait for
+        n bytes, which an event stream at one event per second never fills, so the stream never ends.
+        """
+        deadline = time.monotonic() + duration
+        try:
+            resp = self._opener().open(urllib.request.Request(url, headers={"Accept": "text/event-stream"}), timeout=SSE_SOCKET_TIMEOUT)
+        except Exception as exc:
+            self.errors += 1
+            print(f"sse open failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+            return
+        try:
+            with resp:
+                while time.monotonic() < deadline:
+                    try:
+                        chunk = resp.read1(65536)
+                    except socket.timeout:
+                        if time.monotonic() >= deadline: break  # quiet stream at the deadline: normal stop
+                        raise
+                    if not chunk: break  # origin ended the stream early
+            self.streams_completed += 1
+        except Exception as exc:
+            self.errors += 1
+            print(f"sse read failed ({type(exc).__name__}): {exc}", file=sys.stderr)
 
     def request(self, url, method="GET", data=None, headers=None, expect_block=False, expect_injection=False, barrier=None):
         if self.args.https:
             url = url.replace("http://", "https://", 1).replace(":8080/", ":8443/")
-        # A fresh opener per request means its own proxy connection: nothing is pooled or shared between requests.
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": self.proxy, "https": self.proxy}), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=self.ca) if self.ca and os.path.exists(self.ca) else ssl._create_unverified_context()))
+        opener = self._opener()
         try:
             req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
             if barrier is not None: barrier.wait(timeout=120)  # release all concurrent requests at the same instant
@@ -104,15 +142,27 @@ class ProxyClient:
         elif scenario == "many_hosts":
             await asyncio.gather(*(asyncio.to_thread(self.fire, "many_hosts", i) for i in range(a.hosts)))
         elif scenario == "sse_long":
-            await asyncio.gather(*(self.one(f"{self.origin}/sse?minutes={a.minutes}&rate=1") for _ in range(a.concurrency)))
+            # One dedicated thread per stream: the default executor caps threads (~32), which would queue the rest.
+            loop = asyncio.get_running_loop()
+            url = f"{self.origin}/sse?minutes={a.minutes}&rate=1"
+            with ThreadPoolExecutor(max_workers=a.concurrency) as pool:
+                await asyncio.gather(*(loop.run_in_executor(pool, self.stream_for, url, a.minutes * 60) for _ in range(a.concurrency)))
         elif scenario == "websockets":
             import websockets
             async def socket_load():
                 try:
                     async with websockets.connect(f"ws://origin:8081/ws?msg_kb={a.msg_kb}&rate={a.rate}&minutes={a.minutes}", proxy=self.proxy, open_timeout=30) as ws:
                         async for _ in ws: self.messages_received += 1
+                    self.streams_completed += 1
                 except Exception: self.errors += 1
-            await asyncio.gather(*(socket_load() for _ in range(a.concurrency)))
+            async def bounded_socket_load():
+                # The origin closes after --minutes; past the grace period the socket is stalled, so stop it here.
+                try:
+                    await asyncio.wait_for(socket_load(), timeout=a.minutes * 60 + WS_GRACE_SECONDS)
+                except asyncio.TimeoutError:
+                    self.errors += 1
+                    print("websocket held past --minutes plus grace; closed by client", file=sys.stderr)
+            await asyncio.gather(*(bounded_socket_load() for _ in range(a.concurrency)))
         elif scenario == "blocked_url_check":
             await self.one(f"http://02teste.cc:{a.origin_port}/bytes?n=1", expect_block=True)
         elif scenario == "injection_check":
@@ -153,6 +203,6 @@ async def main():
     else:
         for _ in range(max(1, a.rounds)): await c.run_case(a.scenario)
     os.makedirs(os.path.dirname(a.output), exist_ok=True)
-    with open(a.output, "w") as f: json.dump({"scenario":a.scenario,"errors":c.errors,"security":c.security,"messages_received":c.messages_received,"duration_seconds":time.monotonic()-start},f)
+    with open(a.output, "w") as f: json.dump({"scenario":a.scenario,"errors":c.errors,"client_errors":c.errors,"streams_completed":c.streams_completed,"security":c.security,"messages_received":c.messages_received,"duration_seconds":time.monotonic()-start},f)
 
 if __name__ == "__main__": asyncio.run(main())
