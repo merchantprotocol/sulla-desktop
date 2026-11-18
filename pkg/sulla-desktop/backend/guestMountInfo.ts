@@ -13,7 +13,12 @@
  */
 import type { VMExecutor } from '@pkg/backend/backend';
 
-export const SULLA_FILES_GUEST_MOUNT_PATH = '/mnt/sulla-files';
+/** Stable shared anchor; the replaceable FUSE mount lives one level below it. */
+export const SULLA_FILES_GUEST_PARENT_PATH = '/mnt/sulla';
+export const SULLA_FILES_GUEST_MOUNT_PATH = `${ SULLA_FILES_GUEST_PARENT_PATH }/files`;
+export const SULLA_FILES_GUEST_LEGACY_PATH = '/mnt/sulla-files';
+export const SULLA_FILES_GUEST_CONTAINER_BIND = `${ SULLA_FILES_GUEST_PARENT_PATH }:${ SULLA_FILES_GUEST_PARENT_PATH }:rslave`;
+export const SULLA_FILES_GUEST_FUSE_BIND = `${ SULLA_FILES_GUEST_PARENT_PATH }:${ SULLA_FILES_GUEST_PARENT_PATH }:rshared`;
 export const SULLA_FILES_GUEST_RUNTIME_ROOT = '/var/lib/sulla/files-fuse';
 
 export interface MountInfoEntry {
@@ -110,30 +115,41 @@ export async function probeFilesAnchor(exec: GuestExec, path: string = SULLA_FIL
 }
 
 /**
- * Ensure the guest Files propagation anchor exists before compose starts the
- * FUSE adapter: bind the directory onto itself when nothing is mounted, make
- * it shared only when no adapter is live (never change propagation on a live
- * FUSE mount), and refuse to reuse any unexpected mount.
+ * Ensure the stable parent is shared and the replaceable FUSE mount is below it.
  */
 export async function prepareSullaFilesGuestAnchor(exec: GuestExec, path:string = SULLA_FILES_GUEST_MOUNT_PATH): Promise<'anchor' | 'adapter'> {
 
   await exec.execCommand({ root: true }, 'install', '-d', '-m', '0700', SULLA_FILES_GUEST_RUNTIME_ROOT);
+  await exec.execCommand({ root: true }, 'install', '-d', '-m', '0755', SULLA_FILES_GUEST_PARENT_PATH);
   await exec.execCommand({ root: true }, 'install', '-d', '-m', '0755', path);
-  let probe = await probeFilesAnchor(exec, path);
-
-  if (probe.state === 'not-mounted') {
-    await exec.execCommand({ root: true }, 'mount', '--bind', path, path);
-    probe = await probeFilesAnchor(exec, path);
-    if (probe.state === 'not-mounted') throw new Error(`the bind of ${ path } did not appear in /proc/self/mountinfo`);
+  // Upgrade from the former mount-on-anchor layout. Detach only our known
+  // FUSE mount and its known bind anchor; never cover an unrelated mount.
+  const legacyEntries = parseMountInfo(await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo'));
+  let legacy = classifyFilesAnchor(legacyEntries, SULLA_FILES_GUEST_LEGACY_PATH);
+  if (legacy.state === 'adapter') {
+    await drainFilesAdapterLayers(exec, SULLA_FILES_GUEST_LEGACY_PATH);
+    legacy = classifyFilesAnchor(parseMountInfo(await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo')), SULLA_FILES_GUEST_LEGACY_PATH);
   }
+  if (legacy.state === 'unexpected') throw new Error(`Refusing unexpected legacy Files mount (${ describeMountEntry(legacy.entry) })`);
+  if (legacy.state === 'anchor') await exec.execCommand({ root: true, expectFailure: true }, 'umount', SULLA_FILES_GUEST_LEGACY_PATH);
+  // Preserve the public VM path for existing callers. Refuse nonempty or
+  // unexpected paths rather than hiding user data behind a compatibility link.
+  await exec.execCommand({ root: true }, 'sh', '-c', 'if [ -L "$1" ]; then [ "$(readlink "$1")" = "$2" ] || exit 1; elif [ -e "$1" ]; then [ -d "$1" ] && [ -z "$(ls -A "$1")" ] || exit 1; rmdir "$1"; fi; [ -L "$1" ] || ln -s "$2" "$1"', 'sh', SULLA_FILES_GUEST_LEGACY_PATH, path);
+  let parent = await probeFilesAnchor(exec, SULLA_FILES_GUEST_PARENT_PATH);
+  if (parent.state === 'not-mounted') {
+    await exec.execCommand({ root: true }, 'mount', '--bind', SULLA_FILES_GUEST_PARENT_PATH, SULLA_FILES_GUEST_PARENT_PATH);
+    parent = await probeFilesAnchor(exec, SULLA_FILES_GUEST_PARENT_PATH);
+  }
+  if (parent.state !== 'anchor') throw new Error(`Refusing to reuse unexpected Files parent mount (${ describeMountEntry(parent.entry) })`);
+  await exec.execCommand({ root: true }, 'mount', '--make-rshared', SULLA_FILES_GUEST_PARENT_PATH);
+  const probe = await probeFilesAnchor(exec, path);
   if (probe.state === 'unexpected') {
     throw new Error(`Refusing to reuse unexpected Files propagation mount (${ describeMountEntry(probe.entry) })`);
   }
   // A surviving adapter sits above the owned anchor. The mount manager drains
   // it before the new generation and then validates the revealed anchor.
-  if (probe.state === 'anchor') await exec.execCommand({ root: true }, 'mount', '--make-shared', path);
-
-  return probe.state;
+  // A bare directory under the shared parent is ready for the FUSE adapter.
+  return probe.state === 'adapter' ? 'adapter' : 'anchor';
 }
 
 /**

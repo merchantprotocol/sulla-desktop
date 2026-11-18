@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { VMExecutor } from '@pkg/backend/backend';
-import { SULLA_FILES_GUEST_MOUNT_PATH, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
+import { SULLA_FILES_GUEST_MOUNT_PATH, SULLA_FILES_GUEST_PARENT_PATH, probeFilesAnchor } from '@pkg/backend/guestMountInfo';
 import { traceEvent } from '@pkg/utils/startupTrace';
 import Logging from '@pkg/utils/logging';
 
@@ -105,8 +105,16 @@ export class SullaFilesMountAdapterService {
 
   async mountState(executor:VMExecutor):Promise<'adapter' | 'anchor' | 'none' | 'unexpected'> {
     const probe = await probeFilesAnchor(executor, MOUNT_PATH).catch(() => undefined);
-    if (!probe || probe.state === 'not-mounted' || probe.state === 'unexpected') this.revokeAnchor();
-    if (!probe || probe.state === 'not-mounted') return 'none';
+    if (!probe || probe.state === 'unexpected') {
+      this.revokeAnchor();
+      return probe?.state === 'unexpected' ? 'unexpected' : 'none';
+    }
+    if (probe.state === 'not-mounted') {
+      const parent = await probeFilesAnchor(executor, SULLA_FILES_GUEST_PARENT_PATH).catch(() => undefined);
+      if (parent?.state === 'anchor') return 'anchor';
+      this.revokeAnchor();
+      return parent?.state === 'unexpected' ? 'unexpected' : 'none';
+    }
     return probe.state;
   }
 

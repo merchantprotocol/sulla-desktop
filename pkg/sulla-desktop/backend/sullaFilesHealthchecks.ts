@@ -16,4 +16,4 @@ const LEGACY_FILES_TLS_PROBE = 'node -e \'const fs=require("fs"),https=require("
 export const SULLA_FILES_HEALTHCHECK = `wget -q -T 3 -O /dev/null http://127.0.0.1:8793/healthz || ${ LEGACY_FILES_TLS_PROBE }`;
 
 /** The FUSE mount is live and the adapter's event loop rewrote its status file in the last 2 minutes. */
-export const SULLA_FILES_FUSE_HEALTHCHECK = 'grep -qs "^sulla-files /mnt/sulla-files fuse" /proc/self/mounts && find /tmp/sulla-files-fuse-status.json -mmin -2 2>/dev/null | grep -q .';
+export const SULLA_FILES_FUSE_HEALTHCHECK = 'grep -qs "^sulla-files /mnt/sulla/files fuse" /proc/self/mounts && find /tmp/sulla-files-fuse-status.json -mmin -2 2>/dev/null | grep -q .';

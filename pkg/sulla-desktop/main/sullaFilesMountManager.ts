@@ -103,7 +103,7 @@ export class SullaFilesMountManager extends EventEmitter {
   }
 
   /**
-   * Whether containers may bind /mnt/sulla-files with rslave propagation: the
+   * Whether containers may bind the stable /mnt/sulla parent with rslave: the
    * backend confirmed our shared anchor (or the adapter above it) this
    * generation. Docker refuses rslave binds of a non-shared path, so callers
    * omit the bind otherwise and the container still starts.

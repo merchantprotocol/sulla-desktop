@@ -17,6 +17,6 @@ COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
 COPY --chmod=0755 services/sulla-files-fuse/entrypoint.sh /usr/local/bin/sulla-files-fuse-entrypoint
 COPY --chmod=0755 services/sulla-files-fuse/sulla_files_fuse.py /usr/local/libexec/sulla-files-fuse.py
-RUN install -d -m 0700 /run/sulla-files-fuse /mnt/sulla-files
+RUN install -d -m 0700 /run/sulla-files-fuse /mnt/sulla/files
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/sulla-files-fuse-entrypoint"]

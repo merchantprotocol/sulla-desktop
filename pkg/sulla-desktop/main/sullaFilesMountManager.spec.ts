@@ -44,6 +44,18 @@ class FakeGuestWriter {
 describe('SullaFilesMountAdapterService agent mount recovery', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('recognizes the shared parent anchor before the child FUSE mount exists', async() => {
+    // risk: availability — treating the bare child directory as a missing anchor prevents the adapter from starting.
+    const execCommand = vi.fn(async(_options:unknown, ...args:string[]) => args[0] === 'cat'
+      ? '1 0 8:1 /mnt/sulla /mnt/sulla rw - ext4 /dev/vda rw'
+      : '');
+    const revokeAnchor = vi.fn();
+    const service = new SullaFilesMountAdapterService(async() => undefined, revokeAnchor);
+
+    await expect(service.mountState({ execCommand } as unknown as VMExecutor)).resolves.toBe('anchor');
+    expect(revokeAnchor).not.toHaveBeenCalled();
+  });
+
   it('rewrites a missing token after the adapter remains in waiting-token for 30 seconds', async() => {
     // risk: availability — a lost bind-mounted token must not leave the FUSE adapter stuck indefinitely.
     vi.useFakeTimers();
@@ -52,8 +64,8 @@ describe('SullaFilesMountAdapterService agent mount recovery', () => {
     const execCommand = vi.fn(async(_options:unknown, ...args:string[]) => {
       if (args[0] === 'cat' && args[1] === '/proc/self/mountinfo') {
         return mounted
-          ? '1 0 0:42 / /mnt/sulla-files rw - fuse.sulla-files sulla-files rw'
-          : '1 0 8:1 /mnt/sulla-files /mnt/sulla-files rw - ext4 /dev/vda rw';
+          ? '1 0 0:42 / /mnt/sulla/files rw - fuse.sulla-files sulla-files rw'
+          : '1 0 8:1 /mnt/sulla/files /mnt/sulla/files rw - ext4 /dev/vda rw';
       }
       if (args[0] === 'docker' && args[1] === 'exec' && args[3] === 'cat') {
         return JSON.stringify({ phase: 'waiting-token', updatedAt: new Date(Date.now()).toISOString() });
@@ -94,7 +106,7 @@ describe('SullaFilesMountAdapterService agent mount recovery', () => {
     await service.reattachStaleAgentMounts({ execCommand } as unknown as VMExecutor);
 
     expect(calls.filter(call => call[0] === 'python3')).toHaveLength(1);
-    expect(calls.find(call => call[0] === 'python3')?.slice(-2)).toEqual(['202', '/mnt/sulla-files']);
+    expect(calls.find(call => call[0] === 'python3')?.slice(-2)).toEqual(['202', '/mnt/sulla/files']);
     expect(calls.filter(call => call[0] === 'nsenter')).toHaveLength(2);
     expect(calls.some(call => call[0] === 'python3' && call[3] === '101')).toBe(false);
     expect(calls.some(call => call[0] === 'docker' && call[1] === 'inspect' && call.at(-1) === 'other-container')).toBe(false);

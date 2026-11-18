@@ -9,7 +9,7 @@ RUN ln -s ../sulla-workflows/node_modules services/sulla-agents/node_modules \
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apk add --no-cache util-linux
+RUN apk add --no-cache util-linux && mkdir -p /mnt/sulla && ln -s /mnt/sulla/files /mnt/sulla-files
 COPY --from=build /app/services/sulla-workflows/node_modules ./services/sulla-agents/node_modules
 COPY --from=build /app/services/sulla-agents/dist ./services/sulla-agents/dist
 COPY services/sulla-agents/ui ./services/sulla-agents/ui

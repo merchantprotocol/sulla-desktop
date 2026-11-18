@@ -7,7 +7,7 @@
 set -eu
 
 token_file=${SULLA_FILES_FUSE_TOKEN_FILE:-/run/sulla-files-fuse/token}
-mount_path=${SULLA_FILES_FUSE_MOUNT_PATH:-/mnt/sulla-files}
+mount_path=${SULLA_FILES_FUSE_MOUNT_PATH:-/mnt/sulla/files}
 # Desktop reads this (docker exec cat) to tell a slow-but-progressing adapter from a dead one.
 status_file=${SULLA_FILES_FUSE_STATUS_FILE:-/tmp/sulla-files-fuse-status.json}
 # Desktop writes the capability only after Files unlocks (and migrations finish),

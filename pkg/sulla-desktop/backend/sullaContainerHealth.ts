@@ -52,7 +52,7 @@ export const HEALTHY_RESET_MS = 10 * 60_000;
 /** Require three consecutive one-minute observations before restarting a slow service. */
 export const UNHEALTHY_TICKS_BEFORE_RESTART = 3;
 
-/** The compose service that runs the Files FUSE adapter (it mounts /mnt/sulla-files). */
+/** The compose service that runs the Files FUSE adapter (it mounts /mnt/sulla/files). */
 export const FILES_ADAPTER_SERVICE = 'sulla_files_fuse';
 
 export type HealKind = 'restart' | 'recreate' | 'give-up';
