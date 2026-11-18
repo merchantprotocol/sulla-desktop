@@ -36,6 +36,7 @@ from mitmproxy import http
 
 from common import (
     BLOCKLIST_DIR,
+    DailyCounters,
     FLAG_BLOCK,
     FLAG_CLEAN,
     FLAG_ERROR,
@@ -102,6 +103,7 @@ class URLFilter:
     def __init__(self, config: Optional[ProxyConfig] = None, cache=None) -> None:
         self.config = config or ProxyConfig()
         self.cache = cache or get_cache()
+        self.daily_counters = DailyCounters()
         self.sb_bucket = _TokenBucket(SAFE_BROWSING_BUDGET_PER_MINUTE)
         self.vt_bucket = _TokenBucket(VT_BUDGET_PER_MINUTE)
         self._urlhaus_hosts: Set[str] = set()
@@ -424,6 +426,7 @@ class URLFilter:
             return
 
         verdict, details = self._scan(url, host, names)
+        self.daily_counters.increment(blocked=verdict == FLAG_BLOCK and self.block_mode == "block")
         log(
             "url_filter",
             "info",

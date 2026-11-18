@@ -209,6 +209,44 @@ def classify_verdict(flags: Iterable[str]) -> str:
     return FLAG_UNKNOWN
 
 
+class DailyCounters:
+    """Atomic per-UTC-day request counters in the persistent proxy state dir."""
+
+    def __init__(self, path: Optional[str] = None) -> None:
+        self.path = path or os.path.join(STATE_DIR, "daily-counters.json")
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def day(now: float) -> str:
+        return time.strftime("%Y-%m-%d", time.gmtime(now))
+
+    def increment(self, blocked: bool = False, now: Optional[float] = None) -> Dict[str, Any]:
+        timestamp = time.time() if now is None else now
+        today = self.day(timestamp)
+        with self._lock:
+            current: Dict[str, Any] = {"date": today, "scanned": 0, "blocked": 0}
+            try:
+                with open(self.path, "r", encoding="utf-8") as fh:
+                    stored = json.load(fh)
+                if isinstance(stored, dict) and stored.get("date") == today:
+                    scanned, blocked_count = stored.get("scanned"), stored.get("blocked")
+                    if isinstance(scanned, int) and not isinstance(scanned, bool) and scanned >= 0 and isinstance(blocked_count, int) and not isinstance(blocked_count, bool) and blocked_count >= 0:
+                        current = {"date": today, "scanned": scanned, "blocked": blocked_count}
+            except (OSError, ValueError, TypeError):
+                pass
+            current["scanned"] += 1
+            if blocked:
+                current["blocked"] += 1
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            temporary = self.path + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as fh:
+                json.dump(current, fh, separators=(",", ":"))
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(temporary, self.path)
+            return current
+
+
 class VerdictCache:
     """SQLite-backed TTL cache. Shared across addon modules.
 

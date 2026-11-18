@@ -34,7 +34,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { VMExecutor } from '@pkg/backend/backend';
 import {
-  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER, THREAT_PROXY_PUBLIC_DIR, THREAT_PROXY_TRAFFIC_LOG_PATH, type EgressPolicyState,
+  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER, THREAT_PROXY_PUBLIC_DIR, THREAT_PROXY_TRAFFIC_LOG_PATH, THREAT_PROXY_STATE_DIR, type EgressPolicyState,
 } from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -705,6 +705,20 @@ export async function shutdown(): Promise<void> {
     refreshTimer = null;
   }
   initialized = false;
+}
+
+export interface ThreatDailyCounters { scannedToday: number; blockedToday: number }
+/** Reads the addon's persisted UTC-day counters; older images deliberately report no source. */
+export async function getDailyCounters(): Promise<ThreatDailyCounters | null> {
+  if (!guest) return null;
+  try {
+    const counterPath = `${ THREAT_PROXY_STATE_DIR }/daily-counters.json`;
+    const output = await guest.execCommand({ root: true, capture: true }, 'sh', '-c', 'cat -- "$1"', 'daily-counters', counterPath);
+    const parsed = JSON.parse(output) as { date?: unknown; scanned?: unknown; blocked?: unknown };
+    const today = new Date().toISOString().slice(0, 10);
+    if (parsed.date !== today || !Number.isSafeInteger(parsed.scanned) || (parsed.scanned as number) < 0 || !Number.isSafeInteger(parsed.blocked) || (parsed.blocked as number) < 0) return null;
+    return { scannedToday: parsed.scanned as number, blockedToday: parsed.blocked as number };
+  } catch { return null }
 }
 
 export interface TrafficLogRequest { limit?: number; verdict?: string; search?: string }

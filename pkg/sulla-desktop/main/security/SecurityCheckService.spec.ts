@@ -33,13 +33,13 @@ describe('SecurityCheckService contract', () => {
     expect(SecurityCheckService.signatureStatus('linux', true)).toBe('not_checked');
   });
 
-  it('returns null threat totals when logging is disabled or unavailable', () => {
-    expect(SecurityCheckService.threatSummary(false, false, [], '2026-11-18')).toBeNull();
-    expect(SecurityCheckService.threatSummary(true, true, [], '2026-11-18')).toBeNull();
+  it('hides threat data when disabled and never estimates totals from a missing log', () => {
+    expect(SecurityCheckService.threatSummary(false, [], '2026-11-18')).toBeNull();
+    expect(SecurityCheckService.threatSummary(true, [], '2026-11-18')).toEqual({ scannedToday: null, blockedToday: null, recentBlocked: [] });
   });
 
   it('does not treat the bounded traffic-log tail as a full-day count', () => {
-    const summary = SecurityCheckService.threatSummary(true, false, [
+    const summary = SecurityCheckService.threatSummary(true, [
       { ts:'2026-11-18T09:00:00.000Z', verdict:'blocked', host:'example.test' },
     ], '2026-11-18');
     expect(summary).toMatchObject({ scannedToday:null, blockedToday:null, recentBlocked:[{ host:'example.test' }] });
