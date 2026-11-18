@@ -29,7 +29,7 @@ describe('SullaFilesDeadMountRecoveryService', () => {
 
     await recovery.recreateAndReattach(async() => { executor.events.push('recreate') }, async() => { executor.events.push('reattach') });
 
-    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'stat', 'recreate', 'reattach']);
+    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'recreate', 'reattach']);
   });
 
   it('lazy-unmounts a stat that times out on a stuck FUSE mount before recreate', async() => {
@@ -39,7 +39,7 @@ describe('SullaFilesDeadMountRecoveryService', () => {
 
     await recovery.recreateAndReattach(async() => { executor.events.push('recreate') }, async() => { executor.events.push('reattach') });
 
-    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'stat', 'recreate', 'reattach']);
+    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'recreate', 'reattach']);
   });
 
   it('falls back to lazy umount when fusermount3 is missing and the stuck mount still times out', async() => {
@@ -61,7 +61,7 @@ describe('SullaFilesDeadMountRecoveryService', () => {
 
     expect(executor.events).toEqual([
       'stat', 'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat',
-      'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat', 'stat', 'recreate', 'reattach',
+      'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat', 'recreate', 'reattach',
     ]);
   });
 
