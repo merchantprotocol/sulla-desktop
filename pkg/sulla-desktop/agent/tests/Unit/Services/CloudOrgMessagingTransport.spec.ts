@@ -13,16 +13,20 @@ class TestSession implements OrgCloudSession {
   async userId() { return 'local-user'; }
 }
 
+const cloudRequester = (fetch: typeof globalThis.fetch) => (method: string, path: string, options?: { headers?: Record<string, string>; body?: BodyInit | null }) =>
+  fetch(`https://cloud.test${path}`, { method, headers: options?.headers, body: options?.body });
+
 describe('CloudOrgMessagingTransport', () => {
   it('starts a conversation through the active organization and returns its canonical pair id', async () => {
     // risk: cross-tenant or orphaned first-contact conversation
     const fetch = vi.fn(async () => new Response(JSON.stringify({ conversationId: 'canonical-pair-id' }), { status: 200 }));
-    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch, 'https://cloud.test', 1000, 0), new TestSession());
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch, 'https://cloud.test', 1000, 0), new TestSession(), undefined, 'cloud', cloudRequester(fetch));
     await expect(transport.startConversation({
       conversationId: 'client-generated-id', kind: 'agent_thread', participantUserIds: ['local-user', 'recipient'],
     })).resolves.toEqual({ conversationId: 'canonical-pair-id' });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][0]).toBe('https://cloud.test/orgs/active-org/conversations');
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).has('Authorization')).toBe(false);
     expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({
       conversationId: 'client-generated-id', kind: 'agent_thread', participantUserIds: ['local-user', 'recipient'],
     });
@@ -31,7 +35,7 @@ describe('CloudOrgMessagingTransport', () => {
   it('refuses to start a conversation without the active user as a participant', async () => {
     // risk: conversation created outside the signed-in user's identity
     const fetch = vi.fn();
-    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession());
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession(), undefined, 'cloud', cloudRequester(fetch));
     await expect(transport.startConversation({
       conversationId: 'client-generated-id', kind: 'direct', participantUserIds: ['someone-else', 'recipient'],
     })).rejects.toThrow('active user');
@@ -50,7 +54,7 @@ describe('CloudOrgMessagingTransport', () => {
       return new Response(JSON.stringify({ hostSeq: 8, status: duplicate ? 'duplicate' : 'accepted' }), { status: 200 });
     });
     const http = new SullaCloudHttpClient(fetch, 'https://cloud.test', 1000, 0);
-    const transport = new CloudOrgMessagingTransport(http, new TestSession());
+    const transport = new CloudOrgMessagingTransport(http, new TestSession(), undefined, 'cloud', cloudRequester(fetch));
     const envelope = MessageEnvelope.create({
       messageId: 'stable-message-id', conversationId: 'conversation-1', orgId: 'active-org',
       from: ParticipantAddress.human('active-org', 'local-user'),
@@ -74,7 +78,7 @@ describe('CloudOrgMessagingTransport', () => {
   it('rejects a cursor from another org before issuing a request', async () => {
     // risk: cross-tenant data access
     const fetch = vi.fn();
-    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession());
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession(), undefined, 'cloud', cloudRequester(fetch));
     await expect(transport.pull({ orgId: 'other-org', userId: 'local-user', since: 0 }, 25)).rejects.toThrow('active session');
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -82,7 +86,7 @@ describe('CloudOrgMessagingTransport', () => {
   it('refuses to post an envelope attributed to another org or user', async () => {
     // risk: cross-tenant data access
     const fetch = vi.fn();
-    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession());
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch), new TestSession(), undefined, 'cloud', cloudRequester(fetch));
     const envelope = MessageEnvelope.create({
       messageId: 'wrong-session-message', conversationId: 'conversation-1', orgId: 'other-org',
       from: ParticipantAddress.human('other-org', 'other-user'),
@@ -94,5 +98,14 @@ describe('CloudOrgMessagingTransport', () => {
     });
     await expect(transport.submit(envelope)).rejects.toThrow('active session');
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the Server-hosted path on its Server bearer', async () => {
+    // risk: tenant authorization — Server-hosted org requests require the joined Server credential
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ requests: [] }), { status: 200 }));
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch, 'https://server.test', 1000, 0), new TestSession(), undefined, 'server');
+    await transport.contactRequests('active-org', 'local-user');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).get('Authorization')).toBe('Bearer test-token');
   });
 });

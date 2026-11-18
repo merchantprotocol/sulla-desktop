@@ -31,6 +31,8 @@ const projection = new ConversationProjection();
 // The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
 const cloudStatus = ref<Record<string, any> | null>(null);
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
+let mounted = false, initializing = false, retryAttempt = 0, retryTimer: number | undefined;
+const retryDelays = [2_000, 5_000, 10_000, 20_000, 30_000];
 
 const store = new ConversationScreenStore();
 provide(CONV_STORE, store);
@@ -87,13 +89,45 @@ async function refresh(): Promise<void> {
 }
 
 async function initialize(): Promise<void> {
+  if (!mounted || initializing) return;
+  initializing = true;
   loading.value = true;
   try {
     organizations.value = [...await ipcRenderer.invoke('org-conversations:organizations')];
-    if (!activeOrg.value && organizations.value.length) activeOrg.value = organizations.value[0].orgId;
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load your organizations'; }
-  finally { loading.value = false; }
-  await refresh();
+    if (!organizations.value.length) {
+      error.value = '';
+      scheduleOrganizationRetry();
+      return;
+    }
+    retryAttempt = 0;
+    clearOrganizationRetry();
+    if (!activeOrg.value) activeOrg.value = organizations.value[0].orgId;
+    loading.value = false;
+    await refresh();
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'Could not load your organizations';
+    scheduleOrganizationRetry();
+  } finally {
+    initializing = false;
+    if (retryTimer === undefined && organizations.value.length) loading.value = false;
+  }
+}
+
+function scheduleOrganizationRetry(): void {
+  if (!mounted || retryTimer !== undefined) return;
+  loading.value = true;
+  const delay = retryDelays[Math.min(retryAttempt, retryDelays.length - 1)];
+  retryAttempt++;
+  retryTimer = window.setTimeout(() => {
+    retryTimer = undefined;
+    void initialize();
+  }, delay);
+}
+
+function clearOrganizationRetry(): void {
+  if (retryTimer === undefined) return;
+  window.clearTimeout(retryTimer);
+  retryTimer = undefined;
 }
 
 async function sendMessage(text: string): Promise<void> {
@@ -166,11 +200,18 @@ store.directHandler = personId => void openDirect(personId);
 store.groupHandler = personIds => void createGroup(personIds);
 store.secretaryHandler = () => openSecretaryModal();
 
-const onCloudStatus = (_event: unknown, status: Record<string, any>): void => { cloudStatus.value = status; };
+const onCloudStatus = (_event: unknown, status: Record<string, any>): void => {
+  cloudStatus.value = status;
+  if (status?.signedIn === true && organizations.value.length === 0) {
+    clearOrganizationRetry();
+    void initialize();
+  }
+};
 const goOnline = (): void => { online.value = true; };
 const goOffline = (): void => { online.value = false; };
 
 onMounted(() => {
+  mounted = true;
   void initialize();
   window.addEventListener('sulla:open-conversations-secretary', openSecretary);
   window.addEventListener('online', goOnline);
@@ -179,6 +220,8 @@ onMounted(() => {
   ipcRenderer.invoke('sulla-cloud-connection:get-status').then(status => { cloudStatus.value = status; }).catch(() => undefined);
 });
 onBeforeUnmount(() => {
+  mounted = false;
+  clearOrganizationRetry();
   window.removeEventListener('sulla:open-conversations-secretary', openSecretary);
   window.removeEventListener('online', goOnline);
   window.removeEventListener('offline', goOffline);
@@ -190,7 +233,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="cv-root">
     <div class="app">
-      <ConvNav />
+      <ConvNav :loading="loading" />
       <ConvList />
       <ConvThread :error="error" />
       <ConvSide />

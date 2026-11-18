@@ -77,7 +77,8 @@ async function pullThroughFactory(membership: OrgMembership, hosting: OrgHosting
   const network = new RecordingNetwork();
   vi.stubGlobal('fetch', network.fetch);
   const state = new MemoryState();
-  const factory = new DesktopOrgMessengerFactory(state, {} as AgentInbox, { target: async () => ({ channel: 'sulla-desktop' }) }, { request: async () => {} });
+  const factory = new DesktopOrgMessengerFactory(state, {} as AgentInbox, { target: async () => ({ channel: 'sulla-desktop' }) }, { request: async () => {} }, undefined,
+    (method, path, options) => network.fetch(`${CLOUD_BASE}${path}`, { method, headers: options?.headers, body: options?.body }));
   const session: OrgMessagingSession = { orgId: async () => membership.orgId, userId: () => hosting.credentials.userId(), orgName: async () => membership.name };
   await factory.create(membership, session, hosting).pullInbox();
   return { network, state };
@@ -86,7 +87,7 @@ async function pullThroughFactory(membership: OrgMembership, hosting: OrgHosting
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('OrgHostingResolver', () => {
-  it('routes an org Desktop Accounts does not list under a Server to Sulla Cloud with the Cloud token', async () => {
+  it('routes an org Desktop Accounts does not list under a Server to Sulla Cloud through the brokered requester', async () => {
     // risk: data accuracy — a Cloud org's conversations are read from the wrong host
     const { resolver, tokens } = setup();
     const hosting = await resolver.resolve(CLOUD_ORG);
@@ -95,7 +96,7 @@ describe('OrgHostingResolver', () => {
     expect(tokens.asked).toEqual([]);
 
     const { network } = await pullThroughFactory(CLOUD_ORG, hosting!);
-    expect(network.requests).toEqual([{ url: `${CLOUD_BASE}/orgs/org-cloud/inbox?since=0&limit=50`, authorization: 'Bearer cloud-token' }]);
+    expect(network.requests).toEqual([{ url: `${CLOUD_BASE}/orgs/org-cloud/inbox?since=0&limit=50`, authorization: null }]);
   });
 
   it('routes a Server-hosted org to its Server origin with the Server token and the Server subject, never to Cloud', async () => {

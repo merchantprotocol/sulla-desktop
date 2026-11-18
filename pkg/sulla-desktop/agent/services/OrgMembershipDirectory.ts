@@ -2,7 +2,13 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClient';
+export type OrgCloudRequester = (method: string, path: string, options?: { headers?: Record<string, string>; body?: BodyInit | null }) => Promise<Response>;
+
+class DesktopOrgCloudRequester {
+  async request(method: string, path: string, options?: { headers?: Record<string, string>; body?: BodyInit | null }): Promise<Response> {
+    return (await import('@pkg/main/cloud/cloudFetch')).cloudRequest(method, path, options);
+  }
+}
 
 /** One organization the signed-in human currently belongs to. */
 export interface OrgMembership {
@@ -18,27 +24,16 @@ export interface OrgMembershipSource {
   organizations(): Promise<readonly OrgMembership[]>;
 }
 
-export interface OrgMembershipAuth {
-  accessToken(): Promise<string>;
-}
-
-class DesktopOrgMembershipAuth implements OrgMembershipAuth {
-  async accessToken(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentAccessToken(); }
-}
-
 interface CloudOrganizationSummary { id?: unknown; name?: unknown; slug?: unknown; memberCount?: unknown }
 
 /** Reads GET /cloud-dashboard/v1/organizations: every org the authenticated user is an active member of. */
 export class CloudOrgMembershipSource implements OrgMembershipSource {
   constructor(
-    private readonly http = new SullaCloudHttpClient(),
-    private readonly auth: OrgMembershipAuth = new DesktopOrgMembershipAuth(),
+    private readonly requester: OrgCloudRequester = (method, path, options) => new DesktopOrgCloudRequester().request(method, path, options),
   ) {}
 
   async organizations(): Promise<readonly OrgMembership[]> {
-    const token = await this.auth.accessToken();
-    if (!token) throw new Error('Sulla Cloud session is not ready; retry loading organizations');
-    const response = await this.http.send('/cloud-dashboard/v1/organizations', { headers: { Authorization: `Bearer ${token}` } }, true);
+    const response = await this.requester('GET', '/cloud-dashboard/v1/organizations');
     if (!response.ok) throw new Error(`Could not list Sulla Cloud organizations (${response.status})`);
     const body = await response.json() as { data?: { organizations?: CloudOrganizationSummary[] } };
     return (body.data?.organizations ?? [])
