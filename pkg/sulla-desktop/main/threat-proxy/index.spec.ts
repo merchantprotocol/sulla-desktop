@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() }, BrowserWindow: { getAllWindows: () => [] } }));
+const windows = vi.hoisted(() => [] as Array<{ isDestroyed: () => boolean; webContents: { send: (...args: unknown[]) => void } }>);
+vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() }, BrowserWindow: { getAllWindows: () => windows } }));
+vi.mock('@pkg/agent/services/IntegrationService', () => ({ getIntegrationService: () => ({ getFormValues: async () => [] }) }));
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: vi.fn(), set: vi.fn() } }));
 vi.mock('@pkg/backend/threatProxyEgress', () => ({
-  egressPolicyCommand: vi.fn(() => ['true']), installStagedFileCommand: vi.fn(() => ['true']), THREAT_PROXY_BLOCKLIST_PATH: '/blocklist', THREAT_PROXY_PUBLIC_DIR: '/public',
+  egressPolicyCommand: vi.fn((state: string) => ['egress-policy', state]), installStagedFileCommand: vi.fn((_staged: string, final: string) => ['install', final]), THREAT_PROXY_BLOCKLIST_PATH: '/blocklist', THREAT_PROXY_PUBLIC_DIR: '/public',
   THREAT_PROXY_CONFIG_PATH: '/config', THREAT_PROXY_CONTAINER: 'sulla_threat_proxy', THREAT_PROXY_TRAFFIC_LOG_PATH: '/traffic.jsonl',
 }));
 vi.mock('@pkg/utils/logging', () => ({ default: { 'threat-proxy': { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } }));
@@ -14,7 +16,7 @@ vi.mock('@pkg/main/cloud/cloudEndpoints', () => ({ CLOUD_API_BASE: 'https://stag
 import { clearGuest, clearTrafficLog, configureGuest, decideEgress, type EgressProbe, getTrafficLog, parseWatcherProbe, renderConfigFile, URLHAUS_SOURCES, validateSettings, WATCHER_PROBE_SCRIPT } from './index';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); windows.length = 0; });
 
 describe('URLhaus source order', () => {
   it('downloads only from the configured Sulla Cloud route', () => {
@@ -161,5 +163,234 @@ describe('egress decision', () => {
       state: 'running', health: 'healthy', oomKilled: false, restarting: false, tcpOk: true,
       memCurrent: 1000, memMax: 2000, caPresent: true, agentsWithoutCa: false, runningAgents: 2,
     });
+  });
+});
+
+// ── Watcher, apply throttling, serialization and settings: real module state, mocked guest executor ──
+
+const HEALTHY = 'running|healthy|false|false|0|10|100|1|0|2';
+const UNHEALTHY = 'running|unhealthy|false|false|0|10|100|1|0|2';
+const TCP_FAIL = 'running|healthy|false|false|1|10|100|1|0|2';
+const IDLE = 'absent||||0|0|0|0|0|0';
+
+/** Fresh module instance per test so watcher counters and the effective policy never leak between tests. */
+async function loadProxy() {
+  vi.resetModules();
+  return import('./index');
+}
+
+/** Real macrotask so queued guest work and the watcher's async check finish; only intervals and Date are fake. */
+const settle = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setTimeout(resolve, 2)); };
+
+function fakeGuest(opts: { probe?: () => string; policy?: (state: string) => Promise<void> } = {}) {
+  const state = { probe: opts.probe ?? (() => HEALTHY) };
+  const calls: string[] = [];
+  const executor = {
+    writeFile: vi.fn(async (file: string) => { calls.push(`write:${file}`); }),
+    copyFileIn: vi.fn(async () => undefined),
+    execCommand: vi.fn(async (_opts: unknown, ...args: string[]) => {
+      if (args[3] === 'threat-proxy-watch') return state.probe();
+      if (args[0] === 'egress-policy') { calls.push(`policy:${args[1]}`); await opts.policy?.(args[1]); return ''; }
+      calls.push(args[0] === 'sh' ? `sh:${args[3]}` : `${args[0]}:${args[1]}`);
+      return '';
+    }),
+  } as any;
+  const count = (entry: string) => calls.filter(call => call === entry).length;
+  return { executor, calls, state, count };
+}
+
+async function tick(times = 1) {
+  for (let i = 0; i < times; i++) { vi.advanceTimersByTime(2_000); await settle(); }
+}
+
+/** configureGuest runs the first watcher check immediately; two more healthy ticks reach enforced. */
+async function startEnforced(mod: Awaited<ReturnType<typeof loadProxy>>, guest: ReturnType<typeof fakeGuest>) {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+  await mod.configureGuest(guest.executor);
+  await settle();
+  await tick(2);
+  expect(mod.getStatus().state).toBe('running');
+}
+
+describe('threat proxy watcher', () => {
+  // risk: network protection — a probe that throws must fail open, not leave agents redirected to a dead proxy.
+  it('goes direct when the guest probe throws', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    guest.state.probe = () => { throw new Error('exec failed'); };
+    await tick();
+    expect(mod.getStatus()).toMatchObject({ state: 'failing-open', failOpenTransitions24h: 1 });
+    expect(mod.getStatus().reason).toMatch(/^health_check_error:exec failed/);
+    expect(guest.calls.at(-1)).toBe('policy:direct');
+    mod.clearGuest(guest.executor);
+  });
+
+  // risk: network protection — one missed TCP probe must not flap the policy; the second one goes direct.
+  it('keeps enforcing after one failed probe and goes direct after the second', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    guest.state.probe = () => TCP_FAIL;
+    await tick();
+    expect(mod.getStatus().state).toBe('running');
+    expect(guest.count('policy:direct')).toBe(1); // only the startup sync
+    await tick();
+    expect(mod.getStatus()).toMatchObject({ state: 'failing-open', reason: 'probe_failed_twice' });
+    expect(guest.count('policy:direct')).toBe(2);
+    mod.clearGuest(guest.executor);
+  });
+
+  // risk: data accuracy — an idle runtime with the proxy stopped is standby and must not inflate the fail-open count.
+  it('reports standby and records no fail-open when the proxy stops with zero agents', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    guest.state.probe = () => IDLE;
+    await tick();
+    expect(mod.getStatus()).toMatchObject({ state: 'standby', reason: 'idle', failOpenTransitions24h: 0 });
+    expect(guest.calls.at(-1)).toBe('policy:direct');
+    mod.clearGuest(guest.executor);
+  });
+
+  // risk: data accuracy — the renderer must hear about real transitions only, not every 2 s tick.
+  it('broadcasts status-changed on transitions only', async () => {
+    const send = vi.fn();
+    windows.push({ isDestroyed: () => false, webContents: { send } });
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    const sent = () => send.mock.calls.filter(call => call[0] === 'threat-proxy:status-changed').length;
+    expect(sent()).toBe(2); // off -> direct (pending), direct -> enforced
+    expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ state: 'running' });
+    await tick(3);
+    expect(sent()).toBe(2);
+    guest.state.probe = () => UNHEALTHY;
+    await tick();
+    expect(sent()).toBe(3);
+    expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ state: 'failing-open' });
+    await tick(2);
+    expect(sent()).toBe(3);
+    mod.clearGuest(guest.executor);
+  });
+});
+
+describe('threat proxy apply throttling', () => {
+  // risk: performance/availability — rewriting iptables every 2 s churns the guest firewall; apply only on change.
+  it('applies iptables only when the target policy changes', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    expect(guest.count('policy:enforced')).toBe(1);
+    await tick(5);
+    expect(guest.count('policy:enforced')).toBe(1);
+    guest.state.probe = () => UNHEALTHY;
+    await tick(3);
+    expect(guest.count('policy:direct')).toBe(2); // startup sync + one fail-open
+    mod.clearGuest(guest.executor);
+  });
+
+  // risk: network policy — a firewall flushed behind our back must be repaired by the 60 s reconcile.
+  it('reapplies the unchanged policy after the 60 s reconcile interval', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    await tick(25); // 50 s
+    expect(guest.count('policy:enforced')).toBe(1);
+    await tick(6); // 62 s
+    expect(guest.count('policy:enforced')).toBe(2);
+    mod.clearGuest(guest.executor);
+  });
+
+  // risk: network protection — a failed apply must leave the policy treated as direct and be retried on the next tick.
+  it('treats a failed apply as direct and retries it on the next tick', async () => {
+    let failures = 2;
+    const mod = await loadProxy();
+    const guest = fakeGuest({ policy: async state => { if (state === 'direct' && guest.count('policy:direct') > 1 && failures > 0) { failures--; throw new Error('iptables-restore failed'); } } });
+    await startEnforced(mod, guest);
+    guest.state.probe = () => UNHEALTHY;
+    await tick();
+    expect(guest.count('policy:direct')).toBe(3); // startup sync + failed apply + failed in-tick retry
+    expect(mod.getStatus().state).toBe('failing-open');
+    await tick();
+    expect(guest.count('policy:direct')).toBe(4); // retried, not throttled
+    await tick();
+    expect(guest.count('policy:direct')).toBe(4); // succeeded, now throttled
+    mod.clearGuest(guest.executor);
+  });
+});
+
+describe('threat proxy guest serialization', () => {
+  // risk: network policy — a settings sync and a watcher apply must never interleave their guest commands.
+  it('runs a settings sync and a concurrent watcher apply strictly in order', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest({ probe: () => HEALTHY });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    await mod.configureGuest(guest.executor);
+    await settle();
+    let release!: () => void;
+    guest.executor.writeFile.mockImplementationOnce(async (file: string) => { guest.calls.push(`write:${file}`); await new Promise<void>(resolve => { release = resolve; }); });
+    const before = guest.calls.length;
+    const sync = mod.setSettings({ allowlist: 'example.test' });
+    await vi.waitFor(() => expect(guest.executor.writeFile).toHaveBeenCalledTimes(2));
+    const apply = mod.applyEgressPolicy(guest.executor, 'enforced');
+    await settle();
+    const since = () => guest.calls.slice(before).filter(call => call !== 'install:/blocklist');
+    // Staged path is dirname(THREAT_PROXY_CONFIG_PATH) + '/.proxy.json.new'; the mock config path is '/config'.
+    expect(since()).toEqual(['write://.proxy.json.new']);
+    release();
+    await Promise.all([sync, apply]);
+    expect(since()).toEqual(['write://.proxy.json.new', 'install:/config', 'policy:enforced']);
+    mod.clearGuest(guest.executor);
+  });
+});
+
+describe('threat proxy settings sync', () => {
+  // risk: network protection — saving settings while enforced and healthy must not drop agents to direct.
+  it('keeps enforced egress when settings sync while the proxy is healthy', async () => {
+    const send = vi.fn();
+    windows.push({ isDestroyed: () => false, webContents: { send } });
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    await startEnforced(mod, guest);
+    const directBefore = guest.count('policy:direct');
+    const sendsBefore = send.mock.calls.length;
+    await mod.setSettings({ allowlist: 'example.test', blockMode: 'warn' });
+    await tick();
+    expect(mod.getStatus()).toMatchObject({ state: 'running', reason: 'healthy' });
+    expect(guest.count('policy:direct')).toBe(directBefore);
+    expect(send.mock.calls.length).toBe(sendsBefore);
+    mod.clearGuest(guest.executor);
+  });
+
+  // risk: privacy — turning the traffic log off must erase what was already recorded.
+  it('clears the traffic log when trafficLogEnabled is turned off', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    await mod.configureGuest(guest.executor);
+    await mod.setSettings({ trafficLogEnabled: false });
+    expect(guest.count('sh:clear-traffic-log')).toBe(1);
+    mod.clearGuest(guest.executor);
+  });
+});
+
+describe('threat proxy traffic log read bound', () => {
+  // risk: performance — reading the log must never pull more than 4 MiB out of the guest into the main process.
+  it('reads at most 4 MiB across the active and rotated files', async () => {
+    const mod = await loadProxy();
+    const guest = fakeGuest({ probe: () => IDLE });
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    await mod.configureGuest(guest.executor);
+    await mod.getTrafficLog({});
+    const call = guest.executor.execCommand.mock.calls.find((c: any[]) => c[4] === 'traffic-log');
+    const script = call?.[3] as string;
+    const perFile = [...script.matchAll(/tail -c (\d+)/g)].map(m => Number(m[1]));
+    const files = (script.match(/for f in ((?:"[^"]+"\s*)+);/)?.[1].match(/"[^"]+"/g) ?? []).length;
+    expect(perFile).toHaveLength(1);
+    expect(files).toBe(2);
+    expect(perFile[0] * files).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(script).not.toMatch(/\bcat\b/);
+    mod.clearGuest(guest.executor);
   });
 });
