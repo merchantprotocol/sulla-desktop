@@ -623,6 +623,7 @@ function openModeTab(mode: BrowserTabMode) {
   const tab = createTab('about:blank', { mode });
 
   router.push(`/Browser/${ tab.id }`);
+  return tab;
 }
 
 // ── Phase 7: Keyboard shortcuts ──
@@ -662,10 +663,11 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     return;
   }
 
-  // Cmd+Shift+S: secretary mode
+  // Cmd+Shift+S: open Conversations and start Secretary Mode
   if (meta && e.shiftKey && e.key === 'S') {
     e.preventDefault();
-    openModeTab('secretary');
+    const tab = openModeTab('conversations');
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', { detail: { tabId: tab.id } })), 80);
     return;
   }
 
