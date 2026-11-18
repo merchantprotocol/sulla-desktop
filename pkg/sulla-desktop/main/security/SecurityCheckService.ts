@@ -66,7 +66,7 @@ export class SecurityCheckService {
 
   async summary(): Promise<SecuritySummary> {
     const [locked, threatSettings, threatStatus, traffic] = await Promise.all([
-      getVaultKeyService().isUnlocked().then(unlocked => !unlocked).catch(() => null),
+      Promise.resolve(getVaultKeyService().isUnlocked()).then(unlocked => !unlocked).catch(() => null),
       getThreatSettings().catch(() => null), Promise.resolve(getThreatStatus()), getTrafficLog({ limit: 500 }).catch(() => null),
     ]);
     const now = new Date();
