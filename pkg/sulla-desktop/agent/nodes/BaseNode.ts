@@ -46,6 +46,7 @@ import type { WebSocketMessageHandler } from '../services/WebSocketClientService
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
 import Logging from '@pkg/utils/logging';
+import { TurnHopTiming } from '../utils/turnHopTiming';
 
 // ============================================================================
 // DEFAULT SETTINGS
@@ -997,6 +998,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     systemPrompt: string,
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
+    TurnHopTiming.mark(state, 'BaseNode.normalizedChat.start');
     // Agent-definition override first: an agent whose config.yaml declares
     // model/provider gets its own service instance regardless of role slot.
     // Otherwise route by graph-stamped model slot: work-executing sub-agents
@@ -1004,20 +1006,26 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // modelSlot='primary' so autonomous work runs on the primary chain on
     // every install; only subconscious observers (observation writer/recall,
     // summarizer) keep the fast subconscious chat peer.
+    TurnHopTiming.mark(state, 'resolveLoopProvider.start');
     this.llm = await this.resolveLoopProvider(state);
+    TurnHopTiming.mark(state, 'resolveLoopProvider.end');
     (state.metadata as any).resolvedModel = this.llm.getModel();
     (state.metadata as any).resolvedProvider = this.llm.getProviderName();
 
+    TurnHopTiming.mark(state, 'createNodeRunContext.start');
     const nodeRunContext = this.createNodeRunContext(state, {
       systemPrompt,
       policy: options.nodeRunPolicy,
     });
+    TurnHopTiming.mark(state, 'createNodeRunContext.end');
 
     const callToolAccessPolicy = this.buildToolAccessPolicyForCall(options);
     let messages = [...nodeRunContext.messages];
     const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
-    if (lastUserMessage) await extensionHooks.runAction('on_user_message', { message: lastUserMessage, threadId: state.metadata.threadId });
+    if (lastUserMessage) { TurnHopTiming.mark(state, 'on_user_message.start'); await extensionHooks.runAction('on_user_message', { message: lastUserMessage, threadId: state.metadata.threadId }); TurnHopTiming.mark(state, 'on_user_message.end'); }
+    TurnHopTiming.mark(state, 'before_model_call.start');
     const beforeModel = await extensionHooks.runFilter('before_model_call', { messages, systemPrompt, model: this.llm.getModel() });
+    TurnHopTiming.mark(state, 'before_model_call.end');
     if (beforeModel.denied) {
       const content = `I couldn't send this request to the model because an installed extension blocked it: ${ beforeModel.reason || 'no reason was provided' }`;
       return { content, metadata: { tokens_used: 0, time_spent: 0, finish_reason: FinishReason.Stop, rawProviderContent: content } };
@@ -1059,9 +1067,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // that arrive after it stay pending for the live CLI turn or the next
     // iteration (see utils/steerChannel).
     const promptMeta = new Set(messages.map(m => (m as any).metadata).filter(Boolean));
+    TurnHopTiming.mark(state, 'steerHandling.start');
     for (const steer of pendingSteers(state)) {
       if (promptMeta.has((steer as any).metadata)) markSteerDelivered(steer);
     }
+    TurnHopTiming.mark(state, 'steerHandling.end');
 
     // Curate the exact provider input after the system prompt/context is in
     // place. This compacts stale tool payloads before pair-safe eviction.
@@ -1103,7 +1113,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         // opts back into full schema resolution (explicit config > default).
         const agentToolAllowlist = (state.metadata as any).agent?.tools;
         const hasAgentToolAllowlist = Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0;
+        TurnHopTiming.mark(state, 'SullaSettingsModel.toolMode.start');
         const toolMode = await SullaSettingsModel.get('toolMode', 'slim');
+        TurnHopTiming.mark(state, 'SullaSettingsModel.toolMode.end');
 
         llmTools = (state as any).llmTools;
         if (!llmTools && hasAgentToolAllowlist) {
@@ -1132,7 +1144,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           llmTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
         }
 
+        TurnHopTiming.mark(state, 'filterLLMToolsByAccessPolicy.start');
         const filtered = await this.filterLLMToolsByAccessPolicy(llmTools, options);
+        TurnHopTiming.mark(state, 'filterLLMToolsByAccessPolicy.end');
         llmTools = filtered.tools;
 
         // Apply agent tool allowlist from agent config
@@ -1179,7 +1193,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         // to ask the user a structured question. Deduped against whatever's
         // already present (e.g. when an allowlist already includes it).
         if (!llmTools.some((t: any) => t?.function?.name === 'ask_user_question')) {
+          TurnHopTiming.mark(state, 'toolRegistry.ask_user_question.start');
           const askDef = await toolRegistry.convertToolToLLM('ask_user_question');
+          TurnHopTiming.mark(state, 'toolRegistry.ask_user_question.end');
           if (askDef) llmTools.push(askDef);
         }
       }
@@ -1217,6 +1233,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       controller.setMode(chatMode);
 
       // Always use streaming when available — voice mode adds progressive TTS dispatch
+      TurnHopTiming.mark(state, 'callLLMStreaming.start', messages.length);
       let reply: NormalizedResponse | null = await this.callLLMStreaming(state, messages, {
         maxTokens:   options.maxTokens,
         format:      options.format,
@@ -1228,6 +1245,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         profileId:   (state.metadata as any).profileId,
         routingOwnedRetry: true,
       }, nodeRunContext);
+      TurnHopTiming.mark(state, 'callLLMStreaming.end');
 
 
       if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
@@ -1578,9 +1596,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
     let firstTokenSeen = false;
+    let firstTextSeen = false;
+    let firstActivitySeen = false;
     let providerToolStarted = false;
 
     const onToken = (token: string): void => {
+      if (token && !firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
+      if (token && !firstTextSeen) { firstTextSeen = true; TurnHopTiming.firstEvent(state, 'first.text'); }
       if (voiceTurnId && !firstTokenSeen) {
         firstTokenSeen = true;
         console.log(`[VoiceTrace] ${ JSON.stringify({ turnId: voiceTurnId, stage: 'first_token', ts: new Date().toISOString(), durationMs: Date.now() - voiceStartedAt, size: token.length }) }`);
@@ -1626,6 +1648,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let lastActivity = '';
     const onActivity = (message: string): void => {
       if (!message || message === lastActivity) return;
+      if (!firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
       lastActivity = message;
 
       // Provider is emitting thinking/tool_use blocks — clear proof work
@@ -1709,13 +1732,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let reply: NormalizedResponse | null;
     try {
       const providerId = provider.getProviderId?.();
+      TurnHopTiming.mark(state, 'provider.getAccountId.start');
       const accountId = await provider.getAccountId?.();
+      TurnHopTiming.mark(state, 'provider.getAccountId.end');
+      TurnHopTiming.mark(state, 'issueProviderExecutionContext.start');
       const executionContext = providerId && accountId
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
+      TurnHopTiming.mark(state, 'issueProviderExecutionContext.end');
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
+      TurnHopTiming.mark(state, 'provider.chatStream.start');
       reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted }, { ...options, state, executionContext });
+      TurnHopTiming.mark(state, 'provider.chatStream.end');
     } catch (error) {
       // Once a provider-owned tool began, replaying this call could repeat a side effect,
       // even when the provider later reported a result for that tool.

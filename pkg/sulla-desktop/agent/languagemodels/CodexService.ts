@@ -37,6 +37,7 @@ import { markSteerPending, onSteer } from '../utils/steerChannel';
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
+import { TurnHopTiming } from '../utils/turnHopTiming';
 import paths from '@pkg/utils/paths';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
@@ -633,6 +634,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
+    TurnHopTiming.mark(options.state, 'onActivity.Preparing your turn');
+    TurnHopTiming.emitProviderStart(options.state, 'codex', messages.length);
     const runPhaseStart = Date.now();
     const marks: Record<string, number> = {};
     let lastSetupMark = runPhaseStart;

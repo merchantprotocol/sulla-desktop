@@ -12,6 +12,7 @@ import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import { requeuePendingSteers } from '../utils/steerChannel';
 import { logVoiceSpan } from '../utils/voiceTurn';
+import { TurnHopTiming } from '../utils/turnHopTiming';
 import Logging from '@pkg/utils/logging';
 
 import type { NodeRunPolicy } from './BaseNode';
@@ -62,6 +63,8 @@ export class AgentNode extends BaseNode {
   async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {
     const startTime = Date.now();
     const turnReceivedAt = Date.now();
+    (state.metadata as any).__turnReceivedAt = turnReceivedAt;
+    TurnHopTiming.mark(state, 'AgentNode.execute.entry');
     const preModelPhases: Record<string, number> = {};
     const phaseStart = () => Date.now();
 
@@ -328,6 +331,7 @@ export class AgentNode extends BaseNode {
     systemPrompt: string,
     state: BaseThreadState,
   ): Promise<string | null> {
+    TurnHopTiming.mark(state, 'AgentNode.executeAgent.entry');
     try {
       const policy: Required<NodeRunPolicy> = {
         messageSource:           'graph',
@@ -337,6 +341,7 @@ export class AgentNode extends BaseNode {
       // Find the last assistant message BEFORE the LLM call (for dedup).
       // Content may be a string OR a native content array (when tool_use blocks are present).
       let lastAssistantText: string | null = null;
+      TurnHopTiming.mark(state, 'AgentNode.lastAssistantText.scan.start');
       for (let i = state.messages.length - 1; i >= 0; i--) {
         const msg = state.messages[i];
         if (msg.role === 'assistant') {
@@ -354,7 +359,9 @@ export class AgentNode extends BaseNode {
           break;
         }
       }
+      TurnHopTiming.mark(state, 'AgentNode.lastAssistantText.scan.end', state.messages.length);
 
+      TurnHopTiming.mark(state, 'AgentNode.normalizedChat.start');
       const reply = await this.normalizedChat(state, systemPrompt, {
         temperature:      0.2,
         nodeRunPolicy:    policy,
@@ -363,6 +370,7 @@ export class AgentNode extends BaseNode {
         // user chat, so its dynamic tool discovery is unchanged.
         allowedToolNames: (state.metadata as any).allowedToolNames,
       });
+      TurnHopTiming.mark(state, 'AgentNode.normalizedChat.end');
 
       if (!reply) return null;
 
