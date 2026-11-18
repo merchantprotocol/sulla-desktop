@@ -90,6 +90,7 @@ const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
  */
 const AGENT_OOM_SCORE_ADJ = 500;
 const LEASE_MS = 15 * 60_000;
+const liveAgentContainerNames = new Set<string>();
 
 /**
  * Boot brings sulla-tools up after Desktop is usable, so agents wait for it
@@ -410,6 +411,36 @@ async function removeAgentContainer(
 ): Promise<void> {
   log.info(`[AgentContainer] remove name=${ safeName(name) } reason=${ safeName(reason) } caller=${ safeName(caller) }`);
   await runtime.remove(id);
+  liveAgentContainerNames.delete(name);
+}
+
+export async function createAgentContainer(runtime: ContainerRuntimeDriver, spec: ContainerSpec): Promise<string> {
+  try {
+    const id = await runtime.create(spec);
+    liveAgentContainerNames.add(spec.name);
+    return id;
+  } catch (error) {
+    const message = (error as Error)?.message ?? String(error);
+    if (!/conflict|already in use/i.test(message)) throw error;
+    if (liveAgentContainerNames.has(spec.name)) {
+      throw new AgentLaunchError('This chat is already using its assistant container. Please retry in a moment.', true, 'container name is owned by a live lifecycle');
+    }
+    let existing: any;
+    try { existing = await runtime.inspect(spec.name) } catch {
+      throw new AgentLaunchError('Sulla could not safely replace a stale assistant container. Please retry.', true, message);
+    }
+    if (existing?.Config?.Labels?.['com.sulla.workload'] !== 'agent') {
+      throw new AgentLaunchError('Sulla could not safely replace the conflicting assistant container.', false, 'container name is owned by another workload');
+    }
+    try {
+      await runtime.remove(existing.Id ?? spec.name, true);
+      const id = await runtime.create(spec);
+      liveAgentContainerNames.add(spec.name);
+      return id;
+    } catch (retryError) {
+      throw new AgentLaunchError('Sulla could not start the assistant container because its previous instance is still being removed. Please retry.', true, (retryError as Error)?.message ?? String(retryError));
+    }
+  }
 }
 
 /** Rewrite a Desktop URL through the hostname-only agent relay. */
@@ -1332,7 +1363,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
-    containerId = await phase('create', () => runtime.create({
+    containerId = await phase('create', () => createAgentContainer(runtime, {
       name:   containerName,
       image,
       labels: {
