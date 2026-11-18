@@ -29,6 +29,7 @@ export interface StagerChunkStore {
   getBounded?(collectionId:string, id:string, maxBytes:number, expectedBytes:number):Promise<Uint8Array>;
   put(collectionId:string, id:string, bytes:Uint8Array):Promise<unknown>;
   putStaged?(collectionId:string, id:string, bytes:Uint8Array):Promise<unknown>;
+  quarantineAndReplace?(collectionId:string, id:string, bytes:Uint8Array):Promise<{oldBlobRef:string;newBlobRef:string}>;
 }
 export interface StagerCrypto {
   chunkId(plain:Uint8Array, dedupKey:Uint8Array):string;
@@ -50,7 +51,7 @@ export class ChunkKeyMismatchError extends Error {
  */
 export class VersionContentStager {
   constructor(private readonly keyring:StagerKeyring, private readonly store:StagerChunkStore, private readonly crypto:StagerCrypto,
-    private readonly metrics?:FilesMetrics) {}
+    private readonly metrics?:FilesMetrics, private readonly recordQuarantine?:(event:{collectionId:string;chunkId:string;oldBlobRef:string;newBlobRef:string;reason:string})=>Promise<void>) {}
 
   async stage(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
     const started = performance.now();
@@ -82,7 +83,28 @@ export class VersionContentStager {
         const ciphertext = await this.store.getBounded(collectionId, id, existing, existing);
         try {
           await this.crypto.decryptAndVerifyChunk(ciphertext, data, dedup, id, plain.length);
-        } catch { throw new ChunkKeyMismatchError(collectionId, id) }
+        } catch {
+          if (!this.store.quarantineAndReplace || !this.keyring.keysFresh || !this.crypto.encryptChunkForCollection) {
+            throw new ChunkKeyMismatchError(collectionId, id);
+          }
+          // A corrupt blob is replaceable only after proving this stager still has the active key.
+          // Never let stale cached material quarantine an otherwise healthy blob.
+          let encrypted:Uint8Array;
+          try {
+            if (!active || !defaultChunkCrypto.keysMatch(data, active.data) || !defaultChunkCrypto.keysMatch(dedup, active.dedup)) {
+              console.error('[SullaFiles] collection key mismatch before chunk quarantine', { collectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(data), activeKeyFingerprint:active ? defaultChunkCrypto.keyFingerprint(active.data) : 'unavailable' });
+              this.keyring.invalidate?.(collectionId);
+              throw Object.assign(new Error('Collection key changed before chunk quarantine'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+            }
+            encrypted = await this.crypto.encryptChunkForCollection(plain, data, id, active.data, collectionId);
+          } catch (error) {
+            if ((error as any)?.code === 'collection_key_unavailable') this.keyring.invalidate?.(collectionId);
+            throw error;
+          }
+          const refs = await this.store.quarantineAndReplace(collectionId, id, encrypted);
+          await this.recordQuarantine?.({ collectionId, chunkId:id, ...refs, reason:'decrypt_verify_failed' });
+          chunks.set(id, { id, size:plain.length, storedSize:encrypted.length }); continue;
+        }
         chunks.set(id, { id, size: plain.length, storedSize: existing }); continue;
       }
       let encrypted:Uint8Array;

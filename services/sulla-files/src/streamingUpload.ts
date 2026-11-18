@@ -43,7 +43,7 @@ export interface StreamedUpload {
 }
 
 type StreamInput = Pick<StreamingUploadInput, 'uploadId' | 'collectionId' | 'expectedBytes' | 'maxBytes' | 'body' | 'intentDb'>;
-type ChunkStore = Pick<Store, 'put' | 'getBounded'>;
+type ChunkStore = Pick<Store, 'put' | 'getBounded'> & Partial<Pick<Store,'quarantineAndReplace'>>;
 
 /**
  * Streams an upload into encrypted chunks (phase 1, no transaction) and commits its metadata
@@ -66,6 +66,13 @@ export class StreamingUploadService {
    * namespace lock open (idle-in-transaction is killed after 60 s). */
   async streamChunks(config:Config, store:ChunkStore, input:StreamInput):Promise<StreamedUpload> {
     const { data: dataKey, dedup: dedupKey } = await config.keyring!.keys(input.collectionId);
+    let activeKeys:{data:Uint8Array; dedup:Uint8Array} | undefined;
+    try {
+    if (config.keyring!.keysFresh) activeKeys = await config.keyring!.keysFresh(input.collectionId);
+    if (activeKeys && (!this.crypto.keysMatch(dataKey, activeKeys.data) || !this.crypto.keysMatch(dedupKey, activeKeys.dedup))) {
+      config.keyring!.invalidate?.(input.collectionId);
+      throw Object.assign(new Error('Collection key changed during upload staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+    }
     const intents = this.intentsFor(input.intentDb);
     const chunkIds:string[] = [];
     const chunks:UploadedChunk[] = [];
@@ -77,20 +84,33 @@ export class StreamingUploadService {
       sourceHash.update(plain);
       const id = this.crypto.chunkId(plain, dedupKey);
       chunkIds.push(id);
-      const encrypted = await this.crypto.encryptChunk(plain, dataKey, id);
+      if (activeKeys && this.crypto.chunkId(plain, activeKeys.dedup) !== id) {
+        config.keyring!.invalidate?.(input.collectionId);
+        throw Object.assign(new Error('Collection dedup key changed during upload staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+      }
+      const encrypted = activeKeys
+        ? await this.crypto.encryptChunkForCollection(plain, dataKey, id, activeKeys.data, input.collectionId)
+        : await this.crypto.encryptChunk(plain, dataKey, id);
       const maxStoredBytes = this.crypto.maxEncryptedChunkBytes(plain.byteLength);
       if (encrypted.byteLength > maxStoredBytes) throw new Error('Encrypted chunk exceeded its derived envelope bound');
       await intents.publishChunk(input.uploadId, id, async() => {
         const published = await store.put(input.collectionId, id, encrypted);
         if (!published) {
           const winner = await store.getBounded(input.collectionId, id, maxStoredBytes, encrypted.byteLength);
-          await this.crypto.decryptAndVerifyChunk(winner, dataKey, dedupKey, id, plain.byteLength);
+          try { await this.crypto.decryptAndVerifyChunk(winner, dataKey, dedupKey, id, plain.byteLength) }
+          catch (error) {
+            if (!store.quarantineAndReplace || !activeKeys) throw error;
+            const refs=await store.quarantineAndReplace(input.collectionId,id,encrypted);
+            await input.intentDb.query('INSERT INTO file_chunk_quarantine(collection_id,chunk_id,old_blob_ref,new_blob_ref,reason) VALUES($1,$2,$3,$4,$5)',
+              [input.collectionId,id,refs.oldBlobRef,refs.newBlobRef,'decrypt_verify_failed']);
+          }
         }
       });
       chunks.push({ id, size: plain.byteLength, storedSize: encrypted.byteLength });
     }
 
     return { chunkIds, chunks, totalSize, sourceHash: sourceHash.digest('hex') };
+    } finally { activeKeys?.data.fill(0); activeKeys?.dedup.fill(0); dataKey.fill(0); dedupKey.fill(0) }
   }
 
   /** Phase 2: short metadata transaction on `client` (caller holds BEGIN and the namespace lock). */
