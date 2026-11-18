@@ -7,6 +7,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
@@ -70,28 +71,11 @@ export interface ClosedTab {
 }
 
 const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
-const storageKey = (name: string) => `sulla:${ windowKey }:${ name }`;
-const legacyKeys = ['browser-tabs', 'closed-tabs', 'tab-order', 'pinned-tabs', 'active-tab'];
-if (windowKey === 'main') {
-  try {
-    const known = new Set<string>(JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '[\"main\"]'));
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const key = localStorage.key(i) || '';
-      const match = /^sulla:([^:]+):/.exec(key);
-      if (match && match[1] !== 'main' && !known.has(match[1])) localStorage.removeItem(key);
-    }
-  } catch { /* malformed startup metadata must not block tabs */ }
-}
-if (windowKey === 'main' && localStorage.getItem('sulla:main:migrated') !== '1') {
-  for (const name of legacyKeys) {
-    const legacy = `sulla:${ name }`;
-    if (localStorage.getItem(storageKey(name)) === null && localStorage.getItem(legacy) !== null) {
-      localStorage.setItem(storageKey(name), localStorage.getItem(legacy)!);
-    }
-    localStorage.removeItem(legacy);
-  }
-  localStorage.setItem('sulla:main:migrated', '1');
-}
+const storageKey = (name: string) => makeStorageKey(windowKey, name);
+try {
+  const known = JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '["main"]') as string[];
+  new WindowStorageMigrator().migrate(localStorage, Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || ''), known, windowKey === 'main');
+} catch { /* malformed startup metadata must not block tabs */ }
 const STORAGE_KEY = storageKey('browser-tabs');
 const HISTORY_KEY = storageKey('closed-tabs');
 const ORDER_KEY = storageKey('tab-order');
@@ -201,7 +185,7 @@ const MAX_AGENT_TABS = 10;
 const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 
-const restoredTabs = loadPersistedTabs();
+const restoredTabs = new URLSearchParams(window.location.search).get('freshAgentTab') === '1' ? [] : loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
 // Enforce the agent-tab cap. Called synchronously from the write paths that
