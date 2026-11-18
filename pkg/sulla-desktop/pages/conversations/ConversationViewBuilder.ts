@@ -60,6 +60,15 @@ export class ConversationViewBuilder {
     return 'offline';
   }
 
+  /** Yourself with no presence or an online presence reads Available; otherwise the presence, then the agent host, then Offline. Never empty. */
+  private statusLine(entry: DirectoryPerson, presenceClass: PresenceClass): string {
+    const isSelf = entry.userId === this.userId;
+    if (isSelf && (!entry.presence || presenceClass === 'online')) return 'Available';
+    if (entry.presence) return STATUS[presenceClass];
+    if (entry.agentHostOnline) return 'Agent online';
+    return 'Offline';
+  }
+
   person(entry: DirectoryPerson): PersonView {
     const presenceClass = this.presenceClass(entry.presence);
     return {
@@ -70,7 +79,7 @@ export class ConversationViewBuilder {
       tone: this.tone(entry.userId),
       presence: entry.presence ?? '',
       presenceClass,
-      status: entry.presence ? STATUS[presenceClass] : entry.userId === this.userId ? 'Available' : entry.agentHostOnline ? 'Agent online' : 'Offline',
+      status: this.statusLine(entry, presenceClass),
       role: typeof entry.role === 'string' ? entry.role.charAt(0).toUpperCase() + entry.role.slice(1) : '',
       agentOnline: !!entry.agentHostOnline,
       // The directory reports an agent host (online or not) or names the member's agent.
