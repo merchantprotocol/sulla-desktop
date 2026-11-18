@@ -89,16 +89,18 @@ export class VersionContentStager {
           }
           // A corrupt blob is replaceable only after proving this stager still has the active key.
           // Never let stale cached material quarantine an otherwise healthy blob.
-          const active = await this.keyring.keysFresh(collectionId);
           let encrypted:Uint8Array;
           try {
-            if (!defaultChunkCrypto.keysMatch(data, active.data) || !defaultChunkCrypto.keysMatch(dedup, active.dedup)) {
-              console.error('[SullaFiles] collection key mismatch before chunk quarantine', { collectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(data), activeKeyFingerprint:defaultChunkCrypto.keyFingerprint(active.data) });
+            if (!active || !defaultChunkCrypto.keysMatch(data, active.data) || !defaultChunkCrypto.keysMatch(dedup, active.dedup)) {
+              console.error('[SullaFiles] collection key mismatch before chunk quarantine', { collectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(data), activeKeyFingerprint:active ? defaultChunkCrypto.keyFingerprint(active.data) : 'unavailable' });
               this.keyring.invalidate?.(collectionId);
               throw Object.assign(new Error('Collection key changed before chunk quarantine'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
             }
             encrypted = await this.crypto.encryptChunkForCollection(plain, data, id, active.data, collectionId);
-          } finally { active.data.fill(0); active.dedup.fill(0) }
+          } catch (error) {
+            if ((error as any)?.code === 'collection_key_unavailable') this.keyring.invalidate?.(collectionId);
+            throw error;
+          }
           const refs = await this.store.quarantineAndReplace(collectionId, id, encrypted);
           await this.recordQuarantine?.({ collectionId, chunkId:id, ...refs, reason:'decrypt_verify_failed' });
           chunks.set(id, { id, size:plain.length, storedSize:encrypted.length }); continue;
