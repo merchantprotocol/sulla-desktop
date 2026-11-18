@@ -82,6 +82,31 @@ export function parseMountInfo(text: string): MountInfoEntry[] {
   return entries;
 }
 
+/** The `shared:N` peer group id of a mount, or undefined when it is private. */
+export function peerGroupOf(entry?: MountInfoEntry): number | undefined {
+  const field = entry?.optionalFields.find(candidate => candidate.startsWith('shared:'));
+  if (!field) return undefined;
+  const id = Number(field.slice('shared:'.length));
+
+  return Number.isInteger(id) ? id : undefined;
+}
+
+/**
+ * True when the anchor at `path` is in the same peer group as its parent mount. A self-bind
+ * joins the parent's group, so `--make-rshared` on it is a no-op and FUSE mounts under the
+ * anchor also propagate onto the parent's hidden lower dentry (the duplicate layer). The fix
+ * is a fresh peer group. Once the anchor has its own `shared:N`, this returns false and the
+ * re-peer is skipped.
+ */
+export function anchorSharesParentPeerGroup(entries: MountInfoEntry[], path: string = SULLA_FILES_GUEST_PARENT_PATH): boolean {
+  const anchor = entries.filter(candidate => candidate.mountPoint === path).pop();
+  if (!anchor) return false;
+  const parent = entries.find(candidate => candidate.mountId === anchor.parentId);
+  const anchorGroup = peerGroupOf(anchor);
+
+  return anchorGroup !== undefined && anchorGroup === peerGroupOf(parent);
+}
+
 function normalizeMountPath(path: string): string {
   const normalized = path.replace(/\/+/g, '/').replace(/\/$/, '');
 
@@ -138,6 +163,9 @@ export function describeMountEntry(entry?: MountInfoEntry): string {
 
 type GuestExec = Pick<VMExecutor, 'execCommand'>;
 
+/** Executors already warned about a shared anchor peer group, so the warning logs once per VM session. */
+const warnedSharedPeerGroupExecs = new WeakSet<GuestExec>();
+
 /** Read and classify the guest Files path. Throws when mountinfo cannot be read. */
 export async function probeFilesAnchor(exec: GuestExec, path: string = SULLA_FILES_GUEST_MOUNT_PATH): Promise<FilesAnchorClassification> {
   const text = await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo');
@@ -170,11 +198,26 @@ export async function prepareSullaFilesGuestAnchor(exec: GuestExec, path:string 
   // unexpected paths rather than hiding user data behind a compatibility link.
   await exec.execCommand({ root: true }, 'sh', '-c', 'if [ -L "$1" ]; then [ "$(readlink "$1")" = "$2" ] || exit 1; elif [ -e "$1" ]; then [ -d "$1" ] && [ -z "$(ls -A "$1")" ] || exit 1; rmdir "$1"; fi; [ -L "$1" ] || ln -s "$2" "$1"', 'sh', SULLA_FILES_GUEST_LEGACY_PATH, path);
   let parent = await probeFilesAnchor(exec, SULLA_FILES_GUEST_PARENT_PATH);
+  let justBound = false;
   if (parent.state === 'not-mounted') {
     await exec.execCommand({ root: true }, 'mount', '--bind', SULLA_FILES_GUEST_PARENT_PATH, SULLA_FILES_GUEST_PARENT_PATH);
+    justBound = true;
     parent = await probeFilesAnchor(exec, SULLA_FILES_GUEST_PARENT_PATH);
   }
   if (parent.state !== 'anchor') throw new Error(`Refusing to reuse unexpected Files parent mount (${ describeMountEntry(parent.entry) })`);
+  // Re-peer ONLY an anchor that this call just self-bound (it joined /mnt's peer group on bind).
+  // Never re-peer a live anchor: a running adapter's bind stays in the old group, so moving the
+  // anchor to a new group would make later FUSE mounts miss it. An anchor that already exists in
+  // its parent's group (VM booted by an older Desktop) keeps that group until the next VM boot.
+  if (justBound) {
+    await exec.execCommand({ root: true }, 'mount', '--make-private', SULLA_FILES_GUEST_PARENT_PATH);
+  } else {
+    const mountInfo = parseMountInfo(await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo'));
+    if (anchorSharesParentPeerGroup(mountInfo, SULLA_FILES_GUEST_PARENT_PATH) && !warnedSharedPeerGroupExecs.has(exec)) {
+      warnedSharedPeerGroupExecs.add(exec);
+      console.warn(`[files] ${ SULLA_FILES_GUEST_PARENT_PATH } shares the /mnt peer group; the duplicate FUSE layer will clear on the next VM boot`);
+    }
+  }
   await exec.execCommand({ root: true }, 'mount', '--make-rshared', SULLA_FILES_GUEST_PARENT_PATH);
   const probe = await probeFilesAnchor(exec, path);
   if (probe.state === 'unexpected') {
