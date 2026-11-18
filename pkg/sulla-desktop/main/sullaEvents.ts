@@ -846,7 +846,8 @@ export function initSullaEvents(): void {
   });
 
   // Renderer send timings contain identifiers and numeric marks only—never message content.
-  ipcMainProxy.on('send-hop:log' as any, (_event: unknown, payload: { threadId?: unknown; messageCount?: unknown; marks?: unknown }) => {
+  ipcMainProxy.on('send-hop:log' as any, (_event: unknown, rawPayload: unknown) => {
+    const payload = rawPayload as { threadId?: unknown; messageCount?: unknown; marks?: unknown } | undefined;
     if (typeof payload?.threadId !== 'string' || typeof payload.messageCount !== 'number' || !payload.marks || typeof payload.marks !== 'object') return;
     const allowedMarks = ['keydown', 'controllerSend', 'adapterStart', 'connectionStatusResolved', 'userBubblePushed', 'userBubblePainted', 'ipcSendIssued', 'thinkingShown', 'firstTokenPainted'];
     const marks = Object.fromEntries(allowedMarks.filter(key => typeof (payload.marks as any)[key] === 'number').map(key => [key, (payload.marks as any)[key]]));
