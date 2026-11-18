@@ -65,6 +65,26 @@ export interface ImageReference {
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
+/** Applies the first-install disk limit only when bundled images are missing. */
+export class BundledImagesDiskSpaceGuard {
+  constructor(
+    private readonly freeDiskBytes: () => Promise<number | undefined>,
+    private readonly warnLowDisk: (freeBytes: number) => void,
+    private readonly blockBytes = 10 * 1024 ** 3,
+    private readonly warnBytes = 20 * 1024 ** 3,
+  ) {}
+
+  async assertCanLoad(missingCount: number): Promise<void> {
+    const free = await this.freeDiskBytes();
+
+    if (free === undefined || free >= this.warnBytes) return;
+    this.warnLowDisk(free);
+    if (missingCount > 0 && free < this.blockBytes) {
+      throw new Error(`Your Mac has ${ (free / 1024 ** 3).toFixed(1) } GB free. Sulla needs at least 10 GB to finish setting up. Free up space, then try again.`);
+    }
+  }
+}
+
 /** Parse an image reference the way Docker normalizes it (docker.io, library/). */
 export function parseImageReference(reference: string): ImageReference {
   let rest = reference.trim();
@@ -355,6 +375,8 @@ export interface EnsureBundledImagesOptions {
   filter?:     (image: BundledImage) => boolean;
   /** Called while loading with bytes done / total over the images being loaded. */
   onProgress?: (done: number, total: number, image: BundledImage) => void;
+  /** Called after presence checks, before any missing image is loaded. */
+  beforeLoad?: (missing: readonly BundledImage[]) => Promise<void>;
   log?:        Pick<Console, 'log' | 'warn'>;
 }
 
@@ -386,6 +408,7 @@ export async function ensureBundledImages(options: EnsureBundledImagesOptions): 
       missing.push(image);
     }
   }
+  await options.beforeLoad?.(missing);
   const total = missing.reduce((sum, image) => sum + bundledImageSize(image), 0);
   let done = 0;
 
