@@ -1264,6 +1264,9 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EISDIR)
         if len(self.handles) >= MAX_OPEN_HANDLES:
             raise pyfuse3.FUSEError(errno.EMFILE)
+        # Bound before the branch: the final return reads both names for every node, including virtual metadata.
+        truncating = bool(flags & os.O_TRUNC)
+        prior_size = None
         try:
             if node.get("virtualMetadata"):
                 current = await self._get_folder_metadata(node["collectionId"], node["filesPath"])
@@ -1300,7 +1303,6 @@ class SullaFiles(pyfuse3.Operations):
                         node["size"] = int(current_entry.get("size") or 0)
                 # O_TRUNC discards the old bytes, so the download is skipped entirely. A version whose
                 # chunk the collection key can't decrypt must stay overwritable: the spool starts empty.
-                truncating = bool(flags & os.O_TRUNC)
                 if truncating:
                     prior_size = int(node["size"]) if "size" in node else -1  # -1: unknown, treat as content
                 temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)

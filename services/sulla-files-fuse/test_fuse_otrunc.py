@@ -127,5 +127,48 @@ class OTruncNoPrefetchTests(unittest.TestCase):
         self.assertEqual(api.writes, [])
 
 
+class VirtualMetadataOpenTests(unittest.TestCase):
+    # risk: data integrity. Opening the virtual _folder-metadata.yaml node must not hit an unbound
+    # `truncating`/`prior_size` in open(); a NameError there breaks every read of folder metadata.
+    def _folder_metadata_node(self):
+        adapter, pyfuse3 = load_adapter()
+        api, ops, _ = make(adapter, b"")
+
+        async def folder_metadata(collection_id, path):
+            return {"revision": "rev-1", "folder": {"description": "Docs"}, "files": {}}
+
+        api.folder_metadata = folder_metadata
+        ops._collection_name = types.MethodType(lambda self, collection_id: "Home", ops)
+        inode = ops._node("_folder-metadata.yaml", False)
+        ops.nodes[inode].update({"id": None, "collectionId": "home", "filesPath": "docs",
+                                 "directory": False, "virtualMetadata": True})
+        return adapter, pyfuse3, api, ops, inode
+
+    def test_opening_virtual_metadata_without_o_trunc_renders_folder_metadata(self):
+        adapter, pyfuse3, api, ops, inode = self._folder_metadata_node()
+
+        info = asyncio.run(ops.open(inode, os.O_RDONLY, None))
+
+        handle = ops.handles[info.fh]
+        self.assertEqual(api.reads, 0)
+        self.assertIsNotNone(handle["metadata"])
+        self.assertIn(b"description: Docs", os.pread(handle["file"].fileno(), handle["size"], 0))
+        asyncio.run(ops.release(info.fh))
+        self.assertNotIn(info.fh, ops.handles)
+
+    # risk: data integrity. O_TRUNC on the virtual node must open without NameError and leave an empty spool.
+    def test_opening_virtual_metadata_with_o_trunc_does_not_raise_and_empties_the_spool(self):
+        adapter, pyfuse3, api, ops, inode = self._folder_metadata_node()
+
+        info = asyncio.run(ops.open(inode, os.O_WRONLY | os.O_TRUNC, None))
+
+        handle = ops.handles[info.fh]
+        self.assertEqual(api.reads, 0)
+        self.assertEqual(handle["size"], 0)
+        self.assertIsNotNone(handle["metadata"])
+        # Not released: the commit path for a truncated metadata document needs Files' metadata writer,
+        # which this stub does not model. The open itself is what this spec covers.
+
+
 if __name__ == "__main__":
     unittest.main()
