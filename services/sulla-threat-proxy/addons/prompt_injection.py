@@ -23,7 +23,6 @@ Configurable via the Desktop-managed config (config/proxy.json):
 
 import os
 import io
-import ctypes
 import zlib
 import threading
 import time
@@ -32,7 +31,7 @@ from typing import List, Optional, Tuple
 
 from mitmproxy import http
 
-from common import ProxyConfig, fail_open_hook, is_allowlisted, log, split_list
+from common import ProxyConfig, fail_open_hook, is_allowlisted, log, split_list, trim_heap
 
 # Patterns sorted by confidence. Each is (regex, severity, label).
 # These target indirect-injection phrases that rarely appear in benign content.
@@ -74,10 +73,6 @@ _RESERVATION_MAX_AGE = 120.0
 _PRESSURE_CHECKED_AT = 0.0
 _PRESSURE_VALUE = False
 _PRESSURE_LOCK = threading.Lock()
-_TRIM_LOCK = threading.Lock()
-_TRIMMED_AT = 0.0
-_LIBC = None
-_LIBC_LOADED = False
 
 
 class BoundedBodyDecoder:
@@ -231,24 +226,7 @@ class PromptInjectionScanner:
             return _PRESSURE_VALUE
 
     def _trim_heap(self) -> None:
-        global _LIBC, _LIBC_LOADED, _TRIMMED_AT
-        now = time.monotonic()
-        with _TRIM_LOCK:
-            if now - _TRIMMED_AT < 1.0:
-                return
-            _TRIMMED_AT = now
-            try:
-                if not _LIBC_LOADED:
-                    try:
-                        _LIBC = ctypes.CDLL("libc.so.6")
-                    except OSError:
-                        _LIBC = False
-                    _LIBC_LOADED = True
-                if not _LIBC:
-                    return
-                _LIBC.malloc_trim(0)
-            except (OSError, AttributeError):
-                pass
+        trim_heap()
 
     @fail_open_hook
     def responseheaders(self, flow: http.HTTPFlow) -> None:

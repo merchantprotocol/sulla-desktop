@@ -9,8 +9,7 @@ import gc
 import os
 import time
 
-from common import log
-from prompt_injection import PromptInjectionScanner
+from common import log, trim_heap
 
 
 class MemoryHygiene:
@@ -21,8 +20,6 @@ class MemoryHygiene:
         self._last_run = 0.0
         self._last_log = 0.0
         self._task = None
-        # Reuse the prompt scanner's existing glibc-safe malloc_trim helper.
-        self._trimmer = PromptInjectionScanner()
 
     def running(self) -> None:
         self._task = asyncio.create_task(self._interval_loop())
@@ -42,7 +39,10 @@ class MemoryHygiene:
         try:
             while True:
                 await asyncio.sleep(self.interval_s)
-                self._collect()
+                try:
+                    self._collect()
+                except Exception as ex:
+                    log("memory_hygiene", "warn", "periodic_gc_failed", reason=type(ex).__name__)
         except asyncio.CancelledError:
             raise
 
@@ -50,7 +50,7 @@ class MemoryHygiene:
         started = time.monotonic()
         before = self._rss_bytes()
         collected = gc.collect()
-        self._trimmer._trim_heap()
+        trim_heap()
         after = self._rss_bytes()
         self._closed = 0
         self._last_run = time.monotonic()
