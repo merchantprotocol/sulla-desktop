@@ -26,6 +26,10 @@ export function lockStoredNamespace(client:pg.PoolClient, collectionId:string, s
   return guard().lock(client, collectionId, scopedPath);
 }
 
+export function lockStoredNamespacePaths(client:pg.PoolClient, collectionId:string, scopedPaths:string[]):Promise<void> {
+  return guard().lockPaths(client, collectionId, scopedPaths);
+}
+
 export function assertStoredFilePath(client:pg.PoolClient, collectionId:string, path:string, sameFileId?:string):Promise<void> {
   return guard().assertFilePath(client, collectionId, path, sameFileId);
 }
