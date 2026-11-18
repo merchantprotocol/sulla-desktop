@@ -2,7 +2,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, WebContentsView } from 'electron';
 
 export interface AgentWindowOptions {
   windowKey?: string;
@@ -69,7 +69,7 @@ export class AgentWindowRegistry {
   agentWindowFor(contents: Electron.WebContents): BrowserWindow | null {
     const direct = BrowserWindow.fromWebContents(contents);
     if (direct && this.keys.has(direct.id)) return direct;
-    return this.getAgentWindows().find(win => win.getContentView().children.some(view => view.webContents === contents)) ?? null;
+    return this.getAgentWindows().find(win => win.getContentView().children.some(view => view instanceof WebContentsView && view.webContents === contents)) ?? null;
   }
 
   isAgentWebContents(contents: Electron.WebContents): boolean { return this.agentWindowFor(contents) !== null; }

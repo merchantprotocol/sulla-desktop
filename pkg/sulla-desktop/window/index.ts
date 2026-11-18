@@ -180,7 +180,9 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   const defaultWidth = Math.trunc(fullSize.width * 0.9);
   const defaultHeight = workArea.height;
   // Where the user left it last time, if that spot is still on a connected display.
-  const saved = requestedBounds ?? (windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : undefined);
+  const restoredMainBounds = windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : null;
+  const saved = requestedBounds ?? restoredMainBounds;
+  const persistedWindow = agentWindowPersistence.all().find(record => record.windowKey === windowKey);
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
@@ -221,8 +223,8 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   for (const event of ['move', 'resize', 'maximize', 'unmaximize'] as const) window.on(event, persistGeometry);
   window.on('close', () => { persistGeometry(); agentWindowPersistence.flush(); });
   if (mainBounds.track(window)) {
-    if (saved?.fullScreen) window.setFullScreen(true);
-    else if (saved?.maximized) window.maximize();
+    if (restoredMainBounds?.fullScreen) window.setFullScreen(true);
+    else if (persistedWindow?.maximized ?? restoredMainBounds?.maximized) window.maximize();
   }
 
   if (!Shortcuts.isRegistered(window)) {
