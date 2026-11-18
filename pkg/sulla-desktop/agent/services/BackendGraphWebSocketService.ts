@@ -124,6 +124,7 @@ export class BackendGraphWebSocketService {
     lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle;
     idleTimer: ReturnType<typeof setTimeout>;
   }>();
+  private conversationContainerStarts = new Map<string, Promise<import('./AgentContainerLauncher').AgentContainerLifecycle>>();
 
   private abortKey(channelId: string, threadId: string): string {
     return `${ channelId }|${ threadId }`;
@@ -133,8 +134,8 @@ export class BackendGraphWebSocketService {
     const timer = setTimeout(() => {
       const current = this.conversationContainers.get(key);
       if (current?.lifecycle !== lifecycle) return;
-      const [channelId, ...threadParts] = key.split('|');
-      if (this.hasActiveRun(channelId, threadParts.join('|'))) {
+      const threadId = key;
+      if ([...this.activeAborts.keys()].some(activeKey => activeKey.endsWith(`|${ threadId }`))) {
         current.idleTimer = this.armConversationIdle(key, lifecycle);
         return;
       }
@@ -466,7 +467,21 @@ export class BackendGraphWebSocketService {
     provider: string,
     state: AgentGraphState,
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
-    const key = this.abortKey(channelId, threadId);
+    const key = threadId;
+    const starting = this.conversationContainerStarts.get(key);
+    if (starting) return starting;
+    const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
+    this.conversationContainerStarts.set(key, start);
+    try {
+      return await start;
+    } finally {
+      if (this.conversationContainerStarts.get(key) === start) this.conversationContainerStarts.delete(key);
+    }
+  }
+
+  private async createOrReuseConversationContainer(
+    channelId: string, threadId: string, provider: string, state: AgentGraphState, key: string,
+  ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
     const existing = this.conversationContainers.get(key);
     const model = state.metadata.agent?.model;
     // The container's capability token, Files actor and runtime binding all
@@ -479,7 +494,7 @@ export class BackendGraphWebSocketService {
     // While a turn is in flight the container is in use, and a provider fallback (Claude to Codex)
     // or model switch inside that turn must reuse it: recreating it removed the container under the
     // running turn ("No such container"). Both providers' homes are mounted in every container.
-    const inUse = this.hasActiveRun(channelId, threadId);
+    const inUse = [...this.activeAborts.keys()].some(activeKey => activeKey.endsWith(`|${ threadId }`));
     // Compare what the container's provider bridge actually pins: slot aliases
     // ('primary', …) pin nothing, while 'fast' pins the resolved light model.
     const pinned = (value: string | undefined) => cliPinnedModelId(provider, value);
@@ -511,7 +526,7 @@ export class BackendGraphWebSocketService {
     state: AgentGraphState,
     lost: import('./AgentContainerLauncher').AgentContainerLifecycle,
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
-    const key = this.abortKey(channelId, threadId);
+    const key = threadId;
     const current = this.conversationContainers.get(key);
     if (current?.lifecycle === lost) {
       clearTimeout(current.idleTimer);
@@ -720,7 +735,7 @@ export class BackendGraphWebSocketService {
       const threadId = data?.threadId as string | undefined;
       if (threadId) {
         GraphRegistry.delete(threadId);
-        const key = this.abortKey(channelId, threadId);
+        const key = threadId;
         const container = this.conversationContainers.get(key);
         if (container) {
           clearTimeout(container.idleTimer);

@@ -33,6 +33,7 @@ async function containerKeyFor(channelId: string, threadId: string, state: any):
   const service = Object.create(BackendGraphWebSocketService.prototype);
   service.conversationContainers = new Map();
   service.activeAborts = new Map();
+  service.conversationContainerStarts = new Map();
   await service.conversationContainer(channelId, threadId, 'codex', state);
   for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
   return createAgentContainerLifecycle.mock.calls.at(-1)![0].persistenceKey;
@@ -75,5 +76,23 @@ describe('conversation container persistence key after a parked delegated wake',
   it('keeps the channel-scoped key for an ordinary chat thread', async() => {
     // risk: existing chat workspaces move to a new folder and appear empty
     expect(await containerKeyFor('sulla-desktop', 'chat-thread', chatState('chat-thread'))).toBe('conversation:sulla-desktop:chat-thread');
+  });
+
+  it('shares one lifecycle for a thread dispatched on multiple channels', async() => {
+    // risk: a second channel creates a duplicate named Docker container and fails every turn
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map();
+  service.conversationContainerStarts = new Map();
+    const state = chatState('shared-thread');
+    const [first, second] = await Promise.all([
+      service.conversationContainer('desktop', 'shared-thread', 'codex', state),
+      service.conversationContainer('mobile-relay', 'shared-thread', 'codex', state),
+    ]);
+    expect(first).toBe(second);
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(1);
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
   });
 });
