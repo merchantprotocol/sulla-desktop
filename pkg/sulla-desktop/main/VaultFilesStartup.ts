@@ -6,6 +6,7 @@ export type VaultFilesStartupPhase =
   | 'vault-locked'
   | 'vault-unlocking'
   | 'files-unlocking'
+  | 'files-locked'
   | 'files-unlocked'
   | 'mount-token-written'
   | 'mounted'
@@ -43,6 +44,15 @@ export class VaultFilesStartup {
 
   vaultUnlocking():void { this.phaseValue = 'vault-unlocking' }
   filesUnlocking():void { this.vaultUnlockedValue = true; this.phaseValue = 'files-unlocking' }
+
+  /** The Files container restarted independently of the vault; its in-memory key was lost. */
+  filesLocked():void {
+    this.filesUnlockedValue = false;
+    this.mountTokenWrittenValue = false;
+    this.mountedValue = false;
+    this.reason = 'Files service requires secure bootstrap';
+    this.phaseValue = 'files-locked';
+  }
 
   filesUnlocked():void {
     this.vaultUnlockedValue = true;

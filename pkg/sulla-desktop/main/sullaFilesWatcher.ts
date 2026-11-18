@@ -66,6 +66,8 @@ export class SullaFilesWatcher {
   private unlockPermitted = false;
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
+  private filesRecoveryRun?:Promise<void>;
+  private ensureUnlockedRun?:Promise<void>;
   private readonly startup:VaultFilesStartup;
   private readonly nativeSourceRevalidator:NativeSourceRevalidator;
   private readonly nativeBroker = new SullaFilesNativeBroker({
@@ -180,7 +182,26 @@ export class SullaFilesWatcher {
     }
   }
 
-  private async ensureUnlocked(): Promise<void> {
+  /** Re-bootstrap promptly after the supervisor restarts Files without relocking the app vault. */
+  async recoverAfterContainerRestart():Promise<void> {
+    if (this.filesRecoveryRun) return this.filesRecoveryRun;
+    this.startup.filesLocked();
+    const run = (async() => {
+      if (!await this.appUnlocked() || this.stopped) return;
+      await this.unlockServiceWithRetry();
+    })().finally(() => { if (this.filesRecoveryRun === run) this.filesRecoveryRun = undefined });
+    this.filesRecoveryRun = run;
+    return run;
+  }
+
+  private ensureUnlocked():Promise<void> {
+    if (this.ensureUnlockedRun) return this.ensureUnlockedRun;
+    const run = this.performEnsureUnlocked().finally(() => { if (this.ensureUnlockedRun === run) this.ensureUnlockedRun = undefined });
+    this.ensureUnlockedRun = run;
+    return run;
+  }
+
+  private async performEnsureUnlocked(): Promise<void> {
     const generation = this.lockGeneration;
 
     this.assertUnlockGeneration(generation);
