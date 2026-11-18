@@ -52,7 +52,7 @@ export const CommandOrControl = {
   control: os.platform() !== 'darwin' ? true : undefined,
 };
 
-class WindowShortcuts {
+export class WindowShortcuts {
   private window:    BrowserWindow;
   private shortcuts: Record<string, ShortcutExt> = {};
 
@@ -62,6 +62,7 @@ class WindowShortcuts {
   }
 
   private inputCallback = (event: Electron.Event, input: Electron.Input) => {
+    if (input.type !== 'keyDown') return;
     const key = Shortcut.key(input);
 
     if (this.shortcuts[key] && matchesShortcutModifiers(input, this.shortcuts[key])) {
