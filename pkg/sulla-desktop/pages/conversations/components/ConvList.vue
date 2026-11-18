@@ -4,23 +4,39 @@
   SPDX-License-Identifier: GPL-2.0-or-later
 -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useConvStore } from '../useConvStore';
-import type { PersonView, ThreadView } from '../ConversationScreenStore';
+import type { ListSegment, PersonView, ThreadView } from '../ConversationScreenStore';
 import ConvAvatar from './ConvAvatar.vue';
 import ConvIcon from './ConvIcon.vue';
 
 const store = useConvStore();
-const query = ref('');
+const searchInput = ref<HTMLInputElement | null>(null);
 const picking = ref(false);
 const picked = ref<string[]>([]);
 
 const titles: Record<string, string> = { threads: 'Conversations', people: 'People', agents: 'Agent threads' };
 const title = computed(() => titles[store.s.listTab] ?? 'Conversations');
-const term = computed(() => query.value.trim().toLowerCase());
-const rows = computed<ThreadView[]>(() => store.threadsForTab().filter(thread => !term.value || thread.title.toLowerCase().includes(term.value)));
-const people = computed(() => store.people().filter(person => !term.value || person.name.toLowerCase().includes(term.value)));
-const me = computed(() => (store.me() && (!term.value || store.me()!.name.toLowerCase().includes(term.value)) ? store.me() : null));
+const segments: { id: ListSegment; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'people', label: 'People' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'unread', label: 'Unread' },
+];
+const query = computed({ get: () => store.s.query, set: (value: string) => store.setQuery(value) });
+const rows = computed<ThreadView[]>(() => store.visibleThreads());
+const people = computed(() => store.visiblePeople());
+const me = computed(() => store.visibleMe());
+
+/** The mockup's ⌘K hint: Cmd+K (Ctrl+K off macOS) focuses the search box. */
+function focusSearch(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    searchInput.value?.focus();
+  }
+}
+onMounted(() => window.addEventListener('keydown', focusSearch));
+onBeforeUnmount(() => window.removeEventListener('keydown', focusSearch));
 
 /** The person row is highlighted while their direct conversation is open, as in the mockup. */
 const activeDirectId = computed(() => {
@@ -31,10 +47,17 @@ const activeDirectId = computed(() => {
 /** Mockup threadAvatar(): the other person's avatar for a direct message, a lettered tile for a group. */
 function withPerson(thread: ThreadView): PersonView | undefined { return store.personFor(thread.withId); }
 function groupLetter(thread: ThreadView): string { return thread.title.trim()[0]?.toUpperCase() ?? '?'; }
-function isUnread(thread: ThreadView): boolean { return thread.unread > 0 && store.s.thread !== thread.id; }
+function isUnread(thread: ThreadView): boolean { return store.isUnread(thread); }
 function presOf(person: PersonView | undefined): string { return person ? person.presenceClass : ''; }
 function toggle(personId: string): void {
   picked.value = picked.value.includes(personId) ? picked.value.filter(id => id !== personId) : [...picked.value, personId];
+}
+// Leaving People ends pick mode, so the next visit starts on the normal list.
+watch(() => store.s.listTab, tab => { if (tab !== 'people') { picking.value = false; picked.value = []; } });
+/** New: pick people for a conversation. From the thread lists it opens People in pick mode. */
+function startNew(): void {
+  if (store.s.listTab !== 'people') { store.setListTab('people'); picking.value = true; return; }
+  picking.value = !picking.value;
 }
 function createGroup(): void {
   store.createGroup(picked.value);
@@ -46,8 +69,9 @@ function createGroup(): void {
 <template>
   <section class="list">
     <div class="list-top">
-      <h2>{{ title }}<button v-if="store.s.listTab === 'people'" class="btn sm" :disabled="!store.people().length" @click="picking = !picking"><ConvIcon :name="picking ? 'x' : 'plus'" />{{ picking ? 'Cancel' : 'New' }}</button></h2>
-      <label class="search"><ConvIcon name="search" /><input v-model="query" :placeholder="`Search ${store.org().name || 'conversations'}`" /></label>
+      <h2>{{ title }}<button class="btn sm" :disabled="!store.people().length" @click="startNew"><ConvIcon :name="picking && store.s.listTab === 'people' ? 'x' : 'plus'" />{{ picking && store.s.listTab === 'people' ? 'Cancel' : 'New' }}</button></h2>
+      <label class="search"><ConvIcon name="search" /><input ref="searchInput" v-model="query" :placeholder="`Search ${store.org().name || 'conversations'}`" /><kbd>&#8984;K</kbd></label>
+      <div v-if="store.s.listTab === 'threads'" class="seg" role="tablist" aria-label="Filter conversations"><button v-for="segment in segments" :key="segment.id" role="tab" :aria-selected="store.s.segment === segment.id" :class="{ on: store.s.segment === segment.id }" @click="store.setSegment(segment.id)">{{ segment.label }}</button></div>
     </div>
     <div class="list-body">
       <template v-if="store.s.listTab === 'people'">
@@ -74,6 +98,7 @@ function createGroup(): void {
           </div>
         </template>
         <div v-if="people.length" class="lgrp">Members · {{ people.length }}</div>
+        <div v-else-if="store.people().length" class="list-empty"><b>Nothing here</b></div>
         <div v-else class="list-empty"><b>No people yet</b>Members of this organization show up here once they join.</div>
         <div v-for="person in people" :key="person.id" class="row" :class="{ on: picking ? picked.includes(person.id) : activeDirectId === person.id }" @click="picking ? toggle(person.id) : undefined">
           <input v-if="picking" type="checkbox" class="pick" :checked="picked.includes(person.id)" :aria-label="`Add ${person.name} to the group`" @click.stop="toggle(person.id)" />
@@ -95,7 +120,8 @@ function createGroup(): void {
         </div>
       </template>
       <template v-else>
-        <div v-if="!rows.length" class="list-empty"><b>{{ store.s.listTab === 'agents' ? 'No agent threads yet' : 'No conversations yet' }}</b>Conversations in this organization show up here.</div>
+        <div v-if="!rows.length && (store.s.query.trim() || (store.s.listTab === 'threads' && store.s.segment !== 'all'))" class="list-empty"><b>Nothing here</b></div>
+        <div v-else-if="!rows.length" class="list-empty"><b>{{ store.s.listTab === 'agents' ? 'No agent threads yet' : 'No conversations yet' }}</b>Conversations in this organization show up here.</div>
         <div v-for="thread in rows" :key="thread.id" class="row" :class="{ on: store.s.thread === thread.id }" @click="store.openThread(thread.id)">
           <span v-if="thread.kind === 'agent_thread'" style="position:relative;display:inline-flex;width:34px;height:34px"><ConvAvatar bot size="sm" /><span style="position:absolute;right:0;bottom:0"><ConvAvatar bot theirs size="sm" :pres="withPerson(thread)?.agentOnline ? 'online' : 'offline'" /></span></span>
           <span v-else-if="thread.kind === 'group'" class="avatar lg bot" style="background:linear-gradient(135deg,#9ec1d3,#3a7fa0);border-radius:10px;font-size:12px">{{ groupLetter(thread) }}</span>
