@@ -26,12 +26,13 @@ describe('createAgentContainer', () => {
     // risk: concurrent chat launch deletes the active lifecycle container and kills its turn
     const runtime = {
       create: vi.fn().mockResolvedValueOnce('live-id').mockRejectedValueOnce(new Error('Conflict. name already in use')),
-      inspect: vi.fn(), remove: vi.fn(),
+      inspect: vi.fn().mockResolvedValue({ Id: 'live-id', State: { Running: true }, Config: { Labels: { 'com.sulla.workload': 'agent' } } }),
+      remove: vi.fn(),
     } as any;
     await createAgentContainer(runtime, { ...spec, name: 'sulla-agent-chat-live-test-0' });
     await expect(createAgentContainer(runtime, { ...spec, name: 'sulla-agent-chat-live-test-0' }))
       .rejects.toMatchObject({ name: 'AgentLaunchError', message: expect.stringMatching(/already using/) });
-    expect(runtime.inspect).not.toHaveBeenCalled();
+    expect(runtime.inspect).toHaveBeenCalledTimes(1);
     expect(runtime.remove).not.toHaveBeenCalled();
   });
 
