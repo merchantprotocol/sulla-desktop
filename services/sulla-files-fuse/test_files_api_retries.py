@@ -20,13 +20,15 @@ class FilesApiRetryTests(unittest.TestCase):
         api = adapter.FilesApi("http://files", "/unused")
         api.max_wait_seconds = 1
         calls = []
-        def send(*_args, **_kwargs):
+        def send(path, method, body, headers, sink=None, timeout_seconds=None):
+            # Models the real per-attempt bound: urllib3 Timeout(total=remaining) caps each attempt at its budget.
             calls.append(1)
+            attempt_cost = min(0.6, timeout_seconds) if timeout_seconds is not None else 0.6
+            clock[0] += attempt_cost
             if len(calls) == 1:
-                clock[0] += 0.6
                 return 201, {}, b"created"
-            clock[0] += 0.6
-            error = OSError(errno.EIO, "offline")
+            # Budget consumed mid-attempt: the transport gives up with a timeout-style transient error.
+            error = OSError(errno.EIO, "offline (timed out)")
             error.status = 503
             raise error
         api._send = send
