@@ -21,6 +21,11 @@ export const SULLA_FILES_GUEST_CONTAINER_BIND = `${ SULLA_FILES_GUEST_PARENT_PAT
 export const SULLA_FILES_GUEST_FUSE_BIND = `${ SULLA_FILES_GUEST_PARENT_PATH }:${ SULLA_FILES_GUEST_PARENT_PATH }:rshared`;
 export const SULLA_FILES_GUEST_RUNTIME_ROOT = '/var/lib/sulla/files-fuse';
 
+/** Build the container bind list when the shared Files anchor is prepared. */
+export function filesGuestBindsForAnchor(available: boolean): string[] {
+  return available ? [SULLA_FILES_GUEST_CONTAINER_BIND] : [];
+}
+
 export interface MountInfoEntry {
   mountId:        number;
   parentId:       number;

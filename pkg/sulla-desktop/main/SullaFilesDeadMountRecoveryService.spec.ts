@@ -52,13 +52,28 @@ describe('SullaFilesDeadMountRecoveryService', () => {
     expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat', 'recreate', 'reattach']);
   });
 
-  it('never recreates while the mount still reports ENOTCONN after both lazy-unmount attempts', async() => {
+  it('detaches two stacked dead layers before recreating', async() => {
+    // risk: availability — one stale layer must not conceal a second dead FUSE layer from Docker.
+    const executor = new FakeExecutor(['ENOTCONN', 'ENOTCONN', 'ENOTCONN', 'ENOTCONN', 'ok', 'ok']);
+    const recovery = new SullaFilesDeadMountRecoveryService(executor.asVm());
+
+    await recovery.recreateAndReattach(async() => { executor.events.push('recreate') }, async() => { executor.events.push('reattach') });
+
+    expect(executor.events).toEqual([
+      'stat', 'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat',
+      'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat', 'stat', 'recreate', 'reattach',
+    ]);
+  });
+
+  it('never recreates when all eight detach rounds still report ENOTCONN', async() => {
     // risk: availability — recreating with a poisoned bind reproduces the multi-minute dead-mount failure.
-    const executor = new FakeExecutor(['ENOTCONN', 'ENOTCONN', 'ENOTCONN']);
+    const executor = new FakeExecutor(Array.from({ length: 17 }, () => 'ENOTCONN'));
     const recovery = new SullaFilesDeadMountRecoveryService(executor.asVm());
     const recreate = async() => { executor.events.push('recreate') };
 
     await expect(recovery.recreateAndReattach(recreate, async() => undefined)).rejects.toThrow('still reports ENOTCONN');
-    expect(executor.events).toEqual(['stat', 'lazy-unmount-fuse', 'stat', 'lazy-unmount-fallback', 'stat']);
+    expect(executor.events.filter(event => event === 'lazy-unmount-fuse')).toHaveLength(8);
+    expect(executor.events.filter(event => event === 'lazy-unmount-fallback')).toHaveLength(8);
+    expect(executor.events).not.toContain('recreate');
   });
 });

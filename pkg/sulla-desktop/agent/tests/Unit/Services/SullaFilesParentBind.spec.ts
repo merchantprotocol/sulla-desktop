@@ -5,16 +5,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { sullaFilesGuestBinds } from '../../../services/AgentContainerLauncher';
+import { filesGuestBindsForAnchor } from '@pkg/backend/guestMountInfo';
 
 describe('agent Files mount propagation', () => {
   it('binds the stable parent as rslave, never the replaceable FUSE mount', () => {
     // risk: availability — a direct FUSE bind leaves long-lived agents on a dead superblock after adapter restart.
-    expect(sullaFilesGuestBinds(true)).toEqual(['/mnt/sulla:/mnt/sulla:rslave']);
-    expect(sullaFilesGuestBinds(true).some(bind => bind.startsWith('/mnt/sulla/files:'))).toBe(false);
+    expect(filesGuestBindsForAnchor(true)).toEqual(['/mnt/sulla:/mnt/sulla:rslave']);
+    expect(filesGuestBindsForAnchor(true).some(bind => bind.startsWith('/mnt/sulla/files:'))).toBe(false);
   });
 
   it('omits the mount unless Desktop prepared the shared anchor', () => {
-    expect(sullaFilesGuestBinds(false)).toEqual([]);
+    expect(filesGuestBindsForAnchor(false)).toEqual([]);
   });
 });

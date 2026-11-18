@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { VMExecutor } from '@pkg/backend/backend';
-import { drainFilesAdapterLayers, SULLA_FILES_GUEST_MOUNT_PATH } from '@pkg/backend/guestMountInfo';
+import { SULLA_FILES_GUEST_MOUNT_PATH } from '@pkg/backend/guestMountInfo';
 
 const STAT_ERROR = 'import errno,os,sys;\ntry: os.stat(sys.argv[1]); print("ok")\nexcept OSError as e: print(errno.errorcode.get(e.errno, "ERROR"))';
 
@@ -22,10 +22,19 @@ export class SullaFilesDeadMountRecoveryService {
     const state = await this.statState();
     if (state !== 'ENOTCONN' && state !== 'TIMEOUT') return;
 
-    // Shared-parent propagation can leave repeated identical FUSE layers at
-    // this mountpoint. Drain each top layer, not just the first stale copy.
-    await drainFilesAdapterLayers(this.executor, SULLA_FILES_GUEST_MOUNT_PATH);
-    const verified = await this.statState();
+    // Mountinfo classification is not reliable for a hung mount (and may not
+    // match the adapter subtype), so always retain the unconditional detach
+    // path. Repeat it because shared-parent propagation can stack stale layers.
+    const maxLayers = 8;
+    let verified = state;
+    for (let layer = 0; layer < maxLayers && (verified === 'ENOTCONN' || verified === 'TIMEOUT'); layer++) {
+      await this.executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-uz', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
+      verified = await this.statState();
+      if (verified === 'ENOTCONN' || verified === 'TIMEOUT') {
+        await this.executor.execCommand({ root: true, expectFailure: true }, 'umount', '-l', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
+        verified = await this.statState();
+      }
+    }
     if (verified === 'ENOTCONN' || verified === 'TIMEOUT') throw new Error(`The dead Files mount still reports ${ verified } after lazy unmount`);
   }
 
