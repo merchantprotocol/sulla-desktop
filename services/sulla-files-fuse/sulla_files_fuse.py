@@ -72,6 +72,7 @@ MAX_CONFLICT_RETRIES = 3
 # These failures are retried until the configured request deadline (MAX_WAIT_SECONDS) before clients see EIO.
 TRANSIENT_STATUSES = (500, 502, 503, 504)
 MAX_WAIT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_MAX_WAIT_S", "75")))
+STARTUP_TREE_WAIT_SECONDS = min(MAX_WAIT_SECONDS, max(0.1, float(os.environ.get("SULLA_FILES_FUSE_STARTUP_WAIT_S", "30"))))
 NETWORK_THREAD_LIMIT = max(1, int(os.environ.get("SULLA_FILES_FUSE_NETWORK_THREADS", "64")))
 STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
@@ -82,6 +83,7 @@ INVALIDATION_TIMEOUT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_I
 READ_CACHE_MAX_BYTES = max(0, int(os.environ.get("SULLA_FILES_FUSE_READ_CACHE_MB", "512"))) * 1024 * 1024
 INVALIDATION_QUIET_SECONDS = 30.0
 CHANGE_POLL_SECONDS = 1.0
+FUSE_MOUNT_OPTIONS = {"fsname=sulla-files", "allow_other"}
 TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
@@ -681,6 +683,16 @@ class FilesApi:
         await trio.to_thread.run_sync(self._request, f"/v1/fuse/folders?{query}", "DELETE", limiter=self.network_limiter)
 
 
+class _DiscardDirectoryReply:
+    """Sink used to preload the root namespace without retaining FUSE reply state."""
+    def __init__(self):
+        self.names = []
+
+    def __call__(self, token, name, attrs, offset):
+        self.names.append(name)
+        return True
+
+
 class SullaFiles(pyfuse3.Operations):
     enable_writeback_cache = False
 
@@ -713,6 +725,11 @@ class SullaFiles(pyfuse3.Operations):
         self.pending_tree_reset = False
         self.read_cache = None
         self.read_cache_disabled = False
+        self.initial_tree_loaded = False
+        self.initial_tree_lock = trio.Lock()
+        self.initial_tree_attempted = False
+        self.initial_tree_error = None
+        self.initial_tree_timed_out = False
 
     def _cache(self):
         if self.read_cache is None and not self.read_cache_disabled:
@@ -888,8 +905,31 @@ class SullaFiles(pyfuse3.Operations):
             request_actor.reset(token)
 
     async def refresh(self, force=False):
-        """Legacy startup hook; directory contents are deliberately loaded on demand."""
-        return
+        """Load the initial root namespace before declaring the mount ready."""
+        await self._ensure_initial_tree()
+
+    async def _ensure_initial_tree(self):
+        if self.initial_tree_loaded:
+            return
+        with trio.move_on_after(STARTUP_TREE_WAIT_SECONDS) as timeout:
+            async with self.initial_tree_lock:
+                if not self.initial_tree_loaded and not self.initial_tree_attempted:
+                    self.initial_tree_attempted = True
+                    # Synthetic APIs used by operations that do not exercise directory
+                    # listing need only the lookup path; production FilesApi implements this.
+                    if not callable(getattr(self.api, "directory_page", None)):
+                        return
+                    try:
+                        await self._list_directory(pyfuse3.ROOT_INODE, self.nodes[pyfuse3.ROOT_INODE], 0, _DiscardDirectoryReply())
+                    except OSError as error:
+                        self.initial_tree_error = error
+                        emit("root-listing-failed", logging.ERROR, status=getattr(error, "status", None),
+                             errno=errno.errorcode.get(error.errno, "EIO"), error=str(error))
+        if timeout.cancelled_caught:
+            self.initial_tree_attempted = True
+            self.initial_tree_timed_out = True
+        # An unavailable root must not make Desktop's root probe restart the mount.
+        # The ordinary root readdir path below continues to answer from its last snapshot.
 
     def _touch_node(self, inode):
         node = self.nodes.get(inode)
@@ -917,7 +957,7 @@ class SullaFiles(pyfuse3.Operations):
         path = "/".join(filter(None, [parent["path"], name]))
         inode = self.path_inode.get(path)
         cached_node = self.nodes.get(inode) if inode is not None else None
-        if inode is not None and cached_node is not None and not cached_node.get("stale"):
+        if inode is not None and cached_node is not None and not cached_node.get("stale") and (parent_inode != pyfuse3.ROOT_INODE or cached_node.get("collectionId")):
             return inode
         collection_id = parent.get("collectionId")
         try:
@@ -1024,13 +1064,16 @@ class SullaFiles(pyfuse3.Operations):
         timestamp = int(node.get("mtimeMs", time.time() * 1000) * 1_000_000)
         attrs.st_atime_ns = attrs.st_mtime_ns = attrs.st_ctime_ns = timestamp
         attrs.generation = 0
-        timeout = ATTR_TIMEOUT_SECONDS if CHANGE_FEED_ENABLED and getattr(self, "feed_healthy", False) and getattr(self, "invalidation_healthy", True) else 0.0
+        complete = os.path.dirname(node.get("path", "")) in self.directory_complete
+        timeout = ATTR_TIMEOUT_SECONDS if complete and CHANGE_FEED_ENABLED and getattr(self, "feed_healthy", False) and getattr(self, "invalidation_healthy", True) else 0.0
         attrs.entry_timeout = timeout
         attrs.attr_timeout = timeout
         return attrs
 
     @traced("getattr", lambda s, a: s._inode_info(a[0], a[-1]))
     async def getattr(self, inode, ctx=None):
+        if inode == pyfuse3.ROOT_INODE:
+            await self._ensure_initial_tree()
         if inode not in self.nodes:
             raise pyfuse3.FUSEError(errno.ENOENT)
         return self._attrs(inode)
@@ -1038,6 +1081,8 @@ class SullaFiles(pyfuse3.Operations):
     @traced("lookup", lambda s, a: s._child_info(a[0], a[1], a[-1]))
     async def lookup(self, parent_inode, name, ctx=None):
         try:
+            if parent_inode == pyfuse3.ROOT_INODE:
+                await self._ensure_initial_tree()
             inode = await self._resolve(parent_inode, name)
         except OSError as error:
             raise pyfuse3.FUSEError(error.errno) from error
@@ -1051,22 +1096,24 @@ class SullaFiles(pyfuse3.Operations):
 
     @traced("readdir", lambda s, a: s._inode_info(a[0]))
     async def readdir(self, fh, start_id, token):
+        if fh == pyfuse3.ROOT_INODE:
+            await self._ensure_initial_tree()
         directory = self.nodes.get(fh)
         if not directory:
             raise pyfuse3.FUSEError(errno.ENOENT)
         try:
+            if fh == pyfuse3.ROOT_INODE and self.initial_tree_timed_out:
+                return
+            if fh == pyfuse3.ROOT_INODE and self.initial_tree_error is not None:
+                self.initial_tree_error = None
+                return
             await self._list_directory(fh, directory, start_id, token)
         except OSError as error:
-            if fh != pyfuse3.ROOT_INODE or isinstance(error, pyfuse3.FUSEError):
-                raise
-            # The root must always list: Desktop agents probe the compatibility symlink with `ls -A /mnt/sulla-files` and
-            # recreates the adapter when it fails, so an error here became a restart loop. Answer an
-            # empty (or partial) root, log why, and list again on the next readdir.
-            self.directory_complete.discard(directory["path"])
-            self.directory_etags.pop(directory["path"], None)
-            stats["opErrors"] += 1
-            emit("root-listing-failed", logging.ERROR, errno=_errno_name(HTTP_ERRNO.errno_for_failure(error)),
-                 status=getattr(error, "status", None), code=(getattr(error, "detail", None) or {}).get("code"), error=str(error))
+            if fh == pyfuse3.ROOT_INODE:
+                emit("root-listing-failed", logging.ERROR, status=getattr(error, "status", None),
+                     errno=errno.errorcode.get(error.errno, "EIO"), error=str(error))
+                return
+            raise
 
     async def _list_directory(self, fh, directory, start_id, token):
         directory_path = directory["path"]
@@ -1119,6 +1166,8 @@ class SullaFiles(pyfuse3.Operations):
                 break
         # Only a fully received listing proves a name is gone (not a 304, not a partial reply).
         if listed_fully:
+            if fh == pyfuse3.ROOT_INODE:
+                self.initial_tree_loaded = True
             for gone in old_names - seen_names:
                 self._forget("/".join(filter(None, [directory_path, gone])))
         if total <= MAX_CACHED_NODES and len(self.children.get(directory_path, {})) == total:
@@ -1652,7 +1701,7 @@ async def main(options):
          maxFileBytes=MAX_FILE_BYTES, maxOpenHandles=MAX_OPEN_HANDLES, slowRequestSeconds=SLOW_REQUEST_SECONDS)
     status.set("mounting")
     try:
-        pyfuse3.init(operations, options.mountpoint, {"fsname=sulla-files", "allow_other"})
+        pyfuse3.init(operations, options.mountpoint, FUSE_MOUNT_OPTIONS)
     except Exception as error:
         log.exception("mount failed", extra={"event": "mount-failed", "fields": {"mountpoint": options.mountpoint}})
         status.set("failed", reason="mount-failed", error=str(error))
@@ -1686,9 +1735,9 @@ async def warm_tree(operations, status):
     try:
         await operations.refresh(force=True)
     except OSError as error:
-        # Lookups retry on every access; the mount stays up and Desktop's directory read decides readiness.
+        # Keep health unready; request handlers make bounded attempts rather than exposing an empty root.
         emit("files-unreachable", logging.WARNING, errno=_errno_name(error.errno), error=str(error))
-        status.set("mounted", tree="unavailable", error=str(error))
+        status.set("loading-tree", tree="unavailable", error=str(error))
         return
     nodes = len(operations.path_inode)
     emit("files-reachable", nodes=nodes, ms=round((time.monotonic() - started) * 1000, 1))

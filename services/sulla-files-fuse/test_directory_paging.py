@@ -58,6 +58,7 @@ def load_adapter():
         trio.run_sync_calls.append((limiter, cancellable))
         return await asyncio.to_thread(function, *args, **kwargs)
     trio.to_thread = types.SimpleNamespace(run_sync=run_sync)
+    trio.Lock = asyncio.Lock
     trio.run_sync_calls = []
     trio.CapacityLimiter = lambda _limit: object()
     class MoveOnAfter:
