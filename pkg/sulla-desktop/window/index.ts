@@ -14,7 +14,8 @@ import Electron, {
 } from 'electron';
 
 import { WindowBoundsStore } from './WindowBoundsStore';
-import { agentWindowRegistry, type AgentWindowOptions } from './agentWindows';
+import { AgentWindowPersistence } from './AgentWindowPersistence';
+import { agentWindowRegistry, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
@@ -33,6 +34,7 @@ const console = Logging[`window_${ process.type || 'unknown' }`];
  * assigned by electron).
  */
 export const windowMapping: Record<string, number> = {};
+setAgentWindowMapping(windowMapping);
 
 export const webRoot = 'app://.';
 
@@ -156,6 +158,8 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 const mainUrl = `${ webRoot }/agent.html`;
 /** The main window's last position and size, kept across restarts. */
 const mainBounds = new WindowBoundsStore(path.join(paths.config, 'main-window-bounds.json'));
+const agentWindowPersistence = new AgentWindowPersistence(path.join(paths.config, 'agent-windows.json'), path.join(paths.config, 'main-window-bounds.json'));
+app.on('before-quit', () => agentWindowPersistence.setQuitting());
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -174,13 +178,15 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   const defaultWidth = Math.trunc(fullSize.width * 0.9);
   const defaultHeight = workArea.height;
   // Where the user left it last time, if that spot is still on a connected display.
-  const saved = requestedBounds ?? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea));
+  const saved = requestedBounds ?? (windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : undefined);
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
-  const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }`;
+  const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
+  const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
+  const windowURL = name === 'main-agent' ? url : `${ url }&freshAgentTab=1`;
   const window = createWindow(
     name,
-    url,
+    windowURL,
     {
       title:           'Sulla Agent',
       x:               saved?.x ?? 0,
@@ -206,6 +212,12 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
       },
     });
 
+  const persistGeometry = () => {
+    const key = agentWindowRegistry.windowKeyOf(window);
+    if (key) agentWindowPersistence.update(key, window.getNormalBounds(), window.isMaximized());
+  };
+  for (const event of ['move', 'resize', 'maximize', 'unmaximize'] as const) window.on(event, persistGeometry);
+  window.on('close', persistGeometry);
   if (mainBounds.track(window)) {
     if (saved?.fullScreen) window.setFullScreen(true);
     else if (saved?.maximized) window.maximize();
@@ -232,6 +244,13 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
       { ...CommandOrControl, key: 'N' },
       () => window.webContents.send('agent-command', { command: 'new-chat-tab' }),
       'new chat tab',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, shift: true, key: 'N' },
+      () => newAgentWindow(),
+      'new agent window',
     );
 
     Shortcuts.register(
@@ -286,6 +305,9 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   }
 
   window.on('closed', () => {
+    const key = agentWindowRegistry.windowKeyOf(window);
+    if (key) agentWindowPersistence.remove(key);
+    if (windowsClosedByLastTab.delete(window.id)) return;
     if (agentWindowRegistry.getAgentWindows().length > 1) return;
     const cfg = getSettings();
 
@@ -301,17 +323,29 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   return window;
 }
 
-export function openAgentWindow(options: AgentWindowOptions = {}) {
-  return agentWindowRegistry.openAgentWindow(createAgentWindow, options);
-}
+setAgentWindowCreator(createAgentWindow);
 
-export function ensureAgentWindow() {
-  return agentWindowRegistry.ensureAgentWindow(createAgentWindow);
+export function openAgentWindow(options: AgentWindowOptions = {}) { return agentWindowRegistry.openAgentWindow(createAgentWindow, options); }
+export function restoreAgentWindows() {
+  const records = agentWindowPersistence.all();
+  if (!records.length) return ensureAgentWindow();
+  const workAreas = screen.getAllDisplays().map(display => display.workArea);
+  let first: BrowserWindow | undefined;
+  for (const record of records) {
+    const bounds = workAreas.some(area => record.bounds.x < area.x + area.width && record.bounds.x + record.bounds.width > area.x && record.bounds.y < area.y + area.height && record.bounds.y + record.bounds.height > area.y) ? record.bounds : undefined;
+    const win = openAgentWindow({ windowKey: record.windowKey, bounds, focus: false });
+    if (record.maximized) win.maximize();
+    first ??= win;
+  }
+  first?.show(); first?.focus();
+  return first!;
 }
-
+export function ensureAgentWindow() { return agentWindowRegistry.ensureAgentWindow(createAgentWindow); }
 export function newAgentWindow() { return openAgentWindow(); }
 
-export function openMain() { return ensureAgentWindow(); }
+export function openMain() { return agentWindowRegistry.getAgentWindows().length ? ensureAgentWindow() : restoreAgentWindows(); }
+
+const windowsClosedByLastTab = new Set<number>();
 
 export const getAgentWindows = () => agentWindowRegistry.getAgentWindows();
 export const getActiveAgentWindow = () => agentWindowRegistry.getActiveAgentWindow();
@@ -388,7 +422,10 @@ if (process.type === 'browser') {
   });
   ipcMain.on('agent-window:close-self', (event) => {
     const owner = agentWindowRegistry.agentWindowFor(event.sender);
-    if (owner && !owner.isDestroyed()) owner.close();
+    if (owner && !owner.isDestroyed()) {
+      windowsClosedByLastTab.add(owner.id);
+      owner.close();
+    }
   });
 }
 

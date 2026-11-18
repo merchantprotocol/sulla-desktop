@@ -72,6 +72,16 @@ export interface ClosedTab {
 const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
 const storageKey = (name: string) => `sulla:${ windowKey }:${ name }`;
 const legacyKeys = ['browser-tabs', 'closed-tabs', 'tab-order', 'pinned-tabs', 'active-tab'];
+if (windowKey === 'main') {
+  try {
+    const known = new Set<string>(JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '[\"main\"]'));
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i) || '';
+      const match = /^sulla:([^:]+):/.exec(key);
+      if (match && match[1] !== 'main' && !known.has(match[1])) localStorage.removeItem(key);
+    }
+  } catch { /* malformed startup metadata must not block tabs */ }
+}
 if (windowKey === 'main' && localStorage.getItem('sulla:main:migrated') !== '1') {
   for (const name of legacyKeys) {
     const legacy = `sulla:${ name }`;

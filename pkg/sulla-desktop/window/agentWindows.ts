@@ -14,16 +14,23 @@ export interface AgentWindowOptions {
 export class AgentWindowRegistry {
   private readonly keys = new Map<number, string>();
   private readonly focusOrder: number[] = [];
-  private nextKey = 1;
+
 
   openAgentWindow(create: (name: string, windowKey: string, bounds?: AgentWindowOptions['bounds']) => BrowserWindow, options: AgentWindowOptions = {}): BrowserWindow {
-    const windowKey = options.windowKey ?? `window-${ this.nextKey++ }`;
+    const windowKey = options.windowKey ?? (this.getAgentWindows().length === 0 ? 'main' : `w_${ Math.random().toString(36).slice(2, 10) }`);
     const name = this.getAgentWindows().length === 0 ? 'main-agent' : `agent:${ windowKey }`;
     const window = create(name, windowKey, options.bounds);
+    windowMappingRef()[name] = window.id;
     this.keys.set(window.id, windowKey);
     window.on('focus', () => this.noteFocus(window));
     window.on('closed', () => {
       this.keys.delete(window.id);
+      const mappedName = Object.keys(windowMappingRef()).find(key => windowMappingRef()[key] === window.id);
+      if (mappedName) delete windowMappingRef()[mappedName];
+      if (mappedName === 'main-agent') {
+        const fallback = this.focusOrder.map(id => this.getAgentWindows().find(candidate => candidate.id === id)).find((candidate): candidate is BrowserWindow => !!candidate) ?? this.getAgentWindows()[0];
+        if (fallback) windowMappingRef()['main-agent'] = fallback.id;
+      }
       const index = this.focusOrder.indexOf(window.id);
       if (index >= 0) this.focusOrder.splice(index, 1);
     });
@@ -64,3 +71,29 @@ export class AgentWindowRegistry {
 }
 
 export const agentWindowRegistry = new AgentWindowRegistry();
+
+// Injected by window/index.ts at module initialization, avoiding an import cycle.
+let mappings: Record<string, number> = {};
+export function setAgentWindowMapping(mapping: Record<string, number>): void { mappings = mapping; }
+function windowMappingRef(): Record<string, number> { return mappings; }
+
+let createAgentWindow: ((name: string, windowKey: string, bounds?: AgentWindowOptions['bounds']) => BrowserWindow) | undefined;
+
+/** Register the BrowserWindow factory without importing window/index.ts here. */
+export function setAgentWindowCreator(creator: typeof createAgentWindow): void { createAgentWindow = creator; }
+
+function requireCreator() {
+  if (!createAgentWindow) throw new Error('Agent window creator has not been registered');
+  return createAgentWindow;
+}
+
+export function openAgentWindow(options: AgentWindowOptions = {}): BrowserWindow {
+  return agentWindowRegistry.openAgentWindow(requireCreator(), options);
+}
+export function ensureAgentWindow(): BrowserWindow { return agentWindowRegistry.ensureAgentWindow(requireCreator()); }
+export function getActiveAgentWindow(): BrowserWindow | null { return agentWindowRegistry.getActiveAgentWindow(); }
+export function getAgentWindows(): BrowserWindow[] { return agentWindowRegistry.getAgentWindows(); }
+export function isAgentWebContents(contents: Electron.WebContents): boolean { return agentWindowRegistry.isAgentWebContents(contents); }
+export function agentWindowFor(contents: Electron.WebContents): BrowserWindow | null { return agentWindowRegistry.agentWindowFor(contents); }
+export function windowKeyOf(window: BrowserWindow): string | null { return agentWindowRegistry.windowKeyOf(window); }
+export function newAgentWindow(): BrowserWindow { return openAgentWindow(); }
