@@ -15,9 +15,9 @@ describe('normalizeTimeoutMs', () => {
     expect(normalizeTimeoutMs(120_000)).toBe(120_000);
   });
 
-  it('clamps to a 1 s minimum and a 30 min maximum', () => {
+  it('clamps to a 1 s minimum and a 4 h maximum', () => {
     expect(normalizeTimeoutMs(0.5)).toBe(1_000);
-    expect(normalizeTimeoutMs(999_999_999)).toBe(30 * 60_000);
+    expect(normalizeTimeoutMs(999_999_999)).toBe(4 * 60 * 60_000);
     expect(clampTimeoutMs(10)).toBe(1_000);
   });
 
