@@ -757,10 +757,15 @@ class SullaFiles(pyfuse3.Operations):
                 emit("read-cache-disabled", logging.WARNING, error=str(error))
         return self.read_cache
 
-    def queue_invalidation(self, path):
+    def queue_invalidation(self, path, membership_changed=True, node_fresh=False):
         """Queue request-handler mutations; pyfuse3 invalidation runs only in the background poller."""
         if CHANGE_FEED_ENABLED and path:
-            self.pending_invalidations[path] = None
+            previous = self.pending_invalidations.get(path)
+            self.pending_invalidations[path] = {
+                "membership_changed": (previous or {}).get("membership_changed", False) or membership_changed,
+                # Freshness is safe only if every coalesced event is local and already applied.
+                "node_fresh": node_fresh if previous is None else previous.get("node_fresh", False) and node_fresh,
+            }
 
     def _invalidation_thread_busy(self):
         # A cancelled (abandoned) to_thread call keeps its CapacityLimiter token until the kernel call returns.
@@ -806,7 +811,7 @@ class SullaFiles(pyfuse3.Operations):
         if time.monotonic() - self.invalidation_timed_out_at >= INVALIDATION_QUIET_SECONDS:
             self.invalidation_healthy = True
 
-    async def invalidate_path(self, path):
+    async def invalidate_path(self, path, membership_changed=True, node_fresh=False):
         """Invalidate a path from the background task, never from a FUSE request handler."""
         timeouts_before = self.invalidation_timeouts
         inode = self.path_inode.get(path)
@@ -815,18 +820,19 @@ class SullaFiles(pyfuse3.Operations):
             except Exception: pass
         parent, name = os.path.split(path)
         parent_inode = self.path_inode.get(parent)
-        if parent_inode is not None and name:
+        if membership_changed and parent_inode is not None and name:
             try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
             except Exception: pass
         self._finish_invalidation_pass(timeouts_before)
-        self.directory_complete.discard(parent)
-        self.directory_etags.pop(parent, None)
+        if membership_changed:
+            self.directory_complete.discard(parent)
+            self.directory_etags.pop(parent, None)
         # The kernel will look the name up again. Keep the inode stable for in-flight FUSE ops;
         # _resolve refreshes this row from Files before returning it.
         for cached, cached_inode in tuple(self.path_inode.items()):
             if cached == path or cached.startswith(path + "/"):
                 node = self.nodes.get(cached_inode)
-                if node is not None: node["stale"] = True
+                if node is not None and not node_fresh: node["stale"] = True
 
     def consume_change_page(self, result):
         """Queue path events, reserving whole-tree invalidation for an explicit cursor reset."""
@@ -834,8 +840,21 @@ class SullaFiles(pyfuse3.Operations):
             self.pending_tree_reset = True
             return
         for change in result.get("changes", []):
-            for path in (change.get("path"), change.get("oldPath")):
-                if path: self.queue_invalidation(path)
+            path = change.get("path")
+            kind = change.get("kind")
+            inode = self.path_inode.get(path) if path else None
+            node = self.nodes.get(inode) if inode is not None else None
+            version = change.get("versionId")
+            size = change.get("size")
+            # Our create/PUT echo already updated local node metadata. Do not evict the
+            # kernel's valid dentry/page attrs; actor filtering would break other devices.
+            if kind in ("insert", "update") and node is not None and version and str(node.get("versionId") or node.get("current_version_id") or "") == str(version) and int(node.get("size") or 0) == int(size or 0):
+                continue
+            if path and kind in ("insert", "delete", "rename"):
+                self.directory_complete.discard(os.path.dirname(path))
+                self.directory_etags.pop(os.path.dirname(path), None)
+            for event_path in (path, change.get("oldPath")):
+                if event_path: self.queue_invalidation(event_path, membership_changed=kind in ("insert", "delete", "rename"))
 
     async def invalidate_tree(self):
         timeouts_before = self.invalidation_timeouts
@@ -889,8 +908,8 @@ class SullaFiles(pyfuse3.Operations):
                 await self.invalidate_tree()
             else:
                 for path in tuple(self.pending_invalidations):
-                    self.pending_invalidations.pop(path, None)
-                    await self.invalidate_path(path)
+                    invalidation = self.pending_invalidations.pop(path, {"membership_changed": True, "node_fresh": False})
+                    await self.invalidate_path(path, invalidation.get("membership_changed", True), invalidation.get("node_fresh", False))
             await trio.sleep(0.05)
 
     def _describe(self, describe, args):
@@ -1457,7 +1476,7 @@ class SullaFiles(pyfuse3.Operations):
         node.update({key: value for key, value in result.items() if key != "path"})
         node["size"] = handle["size"]
         node["versionId"], node["sourceHash"] = handle.get("versionId"), handle.get("sourceHash")
-        self.queue_invalidation(node.get("path", ""))
+        self.queue_invalidation(node.get("path", ""), membership_changed=False, node_fresh=True)
         self.snapshot_at = 0.0
         emit("file-committed", path=node.get("path"), fileId=handle.get("fileId"), bytes=handle["size"], actor=handle.get("actor"),
              merged=merged or None, metadata=bool(node.get("virtualMetadata")) or None, versionId=handle.get("versionId") or None)
@@ -1535,7 +1554,6 @@ class SullaFiles(pyfuse3.Operations):
         # The file was just created empty: open it from what we know instead of downloading it back.
         if len(self.handles) >= MAX_OPEN_HANDLES: raise pyfuse3.FUSEError(errno.EMFILE)
         info=await self._open_handle(inode,flags,ctx,b"",str(row.get("current_version_id") or row.get("versionId") or ""),EMPTY_SHA256)
-        self.queue_invalidation(path)
         return info,self._attrs(inode)
 
     @traced("rename", lambda s, a: {**s._child_info(a[0], a[1], a[-1]), "to": s._child_info(a[2], a[3])["path"]}, mutating=True)

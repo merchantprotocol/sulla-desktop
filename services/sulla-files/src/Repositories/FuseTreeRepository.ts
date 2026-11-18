@@ -22,42 +22,56 @@ export class FuseTreeRepository {
   async pruneExpired():Promise<void> {
     await this.db.query(`WITH expired_rows AS (SELECT ctid,collection_id,id FROM fuse_change_journal WHERE changed_at < now()-interval '10 minutes' ORDER BY id LIMIT 1000),
       expired AS (SELECT collection_id,MAX(id) AS through_id FROM expired_rows GROUP BY collection_id),
-      marked AS (INSERT INTO fuse_change_retention(collection_id,pruned_through) SELECT collection_id,through_id FROM expired
-        ON CONFLICT(collection_id) DO UPDATE SET pruned_through=GREATEST(fuse_change_retention.pruned_through,EXCLUDED.pruned_through) RETURNING collection_id)
+      marked AS (INSERT INTO fuse_change_retention(collection_id,pruned_through,pruned_xid)
+        SELECT e.collection_id,e.through_id,COALESCE((SELECT MAX(xid) FROM fuse_change_journal j WHERE j.collection_id=e.collection_id AND j.id<=e.through_id),pg_current_xact_id()) FROM expired e
+        ON CONFLICT(collection_id) DO UPDATE SET pruned_through=GREATEST(fuse_change_retention.pruned_through,EXCLUDED.pruned_through),
+          pruned_xid=GREATEST(fuse_change_retention.pruned_xid,EXCLUDED.pruned_xid) RETURNING collection_id)
       DELETE FROM fuse_change_journal j USING expired_rows x,marked m WHERE j.ctid=x.ctid AND m.collection_id=x.collection_id`);
   }
 
-  /** Bounded path changes for one authorized collection; cursors are journal ids, not global revisions. */
-  async changes(collectionId:string, since:string):Promise<{cursor:string; reset:boolean; more:boolean; changes:{path:string;oldPath:string|null;kind:string}[]}> {
+  /** Bounded path changes use a PostgreSQL snapshot so xid commit order cannot skip lower journal ids. */
+  async changes(collectionId:string, since:string):Promise<{cursor:string; reset:boolean; more:boolean; changes:any[]}> {
     // Polling adapters share one bounded prune attempt per process, not one DELETE per poll.
     if (Date.now() - this.lastPruneAt >= 30_000) {
       this.lastPruneAt = Date.now();
       await this.pruneExpired();
     }
-    // A sequence id is allocated at INSERT, not COMMIT. Exclude transactions that
-    // could still commit below a later id returned to this reader.
-    const visible = 'xid < pg_snapshot_xmin(pg_current_snapshot())';
-    const bounds = (await this.db.query(`SELECT COALESCE(MIN(j.id),0)::text AS oldest,COALESCE(MAX(j.id),0)::text AS newest,
-      COALESCE(r.pruned_through,0)::text AS pruned FROM fuse_change_retention r FULL JOIN fuse_change_journal j ON j.collection_id=r.collection_id
-      WHERE COALESCE(r.collection_id,j.collection_id)=$1 AND (j.id IS NULL OR j.${visible}) GROUP BY r.pruned_through`, [collectionId])).rows[0] ?? { oldest:'0',newest:'0',pruned:'0' };
-    const numericSince = /^\d+$/.test(since) ? BigInt(since) : null;
-    const valid = numericSince !== null && numericSince <= 9223372036854775807n;
-    const cursor = valid ? numericSince! : 0n;
-    const oldest = BigInt(bounds.oldest); const newest = BigInt(bounds.newest);
-    if (!valid || cursor < BigInt(bounds.pruned) || (oldest > 0n && cursor < oldest - 1n)) return { cursor: (newest > BigInt(bounds.pruned) ? newest : BigInt(bounds.pruned)).toString(), reset: true, more: false, changes: [] };
-    const rows = (await this.db.query(`SELECT id::text AS id,path,old_path AS "oldPath",kind FROM fuse_change_journal WHERE collection_id=$1 AND id>$2 AND ${visible} ORDER BY id LIMIT 1001`, [collectionId, since])).rows;
-    const more = rows.length > 1000; const page = more ? rows.slice(0,1000) : rows;
+    const legacy = /^\d+$/.test(since);
+    const valid = /^\d+:\d+:\d*(?:,\d+)*$/.test(since);
+    const snap = `pg_current_snapshot()::text`;
+    if (!valid || legacy) {
+      const current=String((await this.db.query(`SELECT ${snap} AS cursor`)).rows[0].cursor);
+      return { cursor:current, reset:true, more:false, changes:[] };
+    }
+    const rows=(await this.db.query(`WITH s AS MATERIALIZED (SELECT ${snap} AS cursor), r AS (
+      SELECT pruned_xid FROM fuse_change_retention WHERE collection_id=$1
+    ) SELECT s.cursor,r.pruned_xid::text AS "prunedXid",pg_snapshot_xmin($2::pg_snapshot)::text AS "cursorXmin",
+      j.path,j.old_path AS "oldPath",j.kind,j.current_version_id::text AS "versionId",j.size,j.id
+      FROM s LEFT JOIN r ON TRUE LEFT JOIN LATERAL (
+        SELECT id,path,old_path,kind,current_version_id,size FROM fuse_change_journal
+        WHERE collection_id=$1 AND xid >= pg_snapshot_xmin($2::pg_snapshot)
+          AND NOT pg_visible_in_snapshot(xid,$2::pg_snapshot) ORDER BY id LIMIT 1001
+      ) j ON TRUE`,[collectionId,since])).rows;
+    const state=rows[0];
+    const shouldReset=state.prunedXid && BigInt(state.prunedXid)>=BigInt(state.cursorXmin);
+    if(shouldReset) return {cursor:String(state.cursor),reset:true,more:false,changes:[]};
+    const changes=rows.filter((row:any)=>row.id!==null);
+    const more = changes.length > 1000; const page = more ? changes.slice(0,1000) : changes;
     // A single create can journal both insert and current-version update in one
     // transaction. Return one event per path in this page, with the latest kind.
-    const byPath = new Map<string, {path:string;oldPath:string|null;kind:string}>();
+    const byPath = new Map<string, any>();
     for (const { id: _id, ...change } of page as any[]) {
       const previous = byPath.get(change.path);
+      const membershipKind = ['insert','delete','rename'].includes(change.kind)
+        ? change.kind : previous?.membershipKind;
       byPath.set(change.path, {
         ...change,
         oldPath: change.oldPath ?? previous?.oldPath ?? null,
+        membershipKind,
+        kind: membershipKind ?? 'update',
       });
     }
-    return { cursor: page.at(-1)?.id ?? since, reset: false, more, changes: [...byPath.values()] };
+    return { cursor:String(state.cursor), reset:more, more:false, changes:more ? [] : [...byPath.values()].map(({membershipKind: _membershipKind, ...change}) => change) };
   }
 
   async homeCollectionId(userId:string):Promise<string> {

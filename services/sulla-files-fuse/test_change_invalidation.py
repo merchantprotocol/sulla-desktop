@@ -40,6 +40,89 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertEqual(set(self.ops.pending_invalidations), {"new.txt", "old.txt"})
         self.assertFalse(self.ops.pending_tree_reset)
 
+    # risk: stale attrs — self-echo must not invalidate a matching local version or directory listing.
+    def test_matching_self_echo_is_skipped(self):
+        inode = self.ops._node("folder/file.txt", False)
+        self.ops.nodes[inode].update({"versionId": "v1", "size": 7})
+        self.ops.directory_complete.add("folder")
+        self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": "update", "versionId": "v1", "size": 7}]})
+        self.assertEqual(self.ops.pending_invalidations, {})
+        self.assertIn("folder", self.ops.directory_complete)
+
+    # risk: stale attrs — update invalidates changed inode but keeps directory membership cache.
+    def test_update_does_not_discard_directory_complete(self):
+        self.ops._node("folder/file.txt", False)
+        self.ops.directory_complete.add("folder")
+        self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": "update", "versionId": "v2", "size": 8}]})
+        self.assertFalse(self.ops.pending_invalidations["folder/file.txt"]["membership_changed"])
+        self.assertIn("folder", self.ops.directory_complete)
+
+    # risk: namespace correctness — only membership-changing events evict directory listings.
+    def test_membership_events_discard_directory_complete(self):
+        for kind in ("insert", "delete", "rename"):
+            self.ops.directory_complete.add("folder")
+            self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": kind, "versionId": "v", "size": 1}]})
+            self.assertNotIn("folder", self.ops.directory_complete)
+            self.ops.pending_invalidations.clear()
+            self.ops.directory_complete.add("folder")
+
+    # risk: stale namespace — a later content event cannot downgrade an earlier membership invalidation.
+    def test_membership_invalidation_is_monotonic(self):
+        self.ops.queue_invalidation("folder/file.txt", membership_changed=True)
+        self.ops.queue_invalidation("folder/file.txt", membership_changed=False)
+        self.assertTrue(self.ops.pending_invalidations["folder/file.txt"]["membership_changed"])
+
+    # risk: stale attrs — a remote event cannot inherit the local-commit fresh-node exemption.
+    def test_remote_invalidation_drops_fresh_node_exemption(self):
+        self.ops.queue_invalidation("folder/file.txt", membership_changed=False, node_fresh=True)
+        self.ops.queue_invalidation("folder/file.txt", membership_changed=False)
+        self.assertFalse(self.ops.pending_invalidations["folder/file.txt"]["node_fresh"])
+
+    # risk: stale content — matching deletion/rename must not be mistaken for a self echo.
+    def test_matching_delete_and_rename_are_not_skipped(self):
+        inode = self.ops._node("folder/file.txt", False)
+        self.ops.nodes[inode].update({"versionId": "v1", "size": 7})
+        for kind in ("delete", "rename"):
+            self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": kind, "versionId": "v1", "size": 7}]})
+            self.assertIn("folder/file.txt", self.ops.pending_invalidations)
+            self.ops.pending_invalidations.clear()
+
+    # risk: cache coherence — local commit drops file pages but preserves fresh inode metadata and directory completeness.
+    def test_content_only_node_fresh_invalidation_preserves_directory_cache(self):
+        inode = self.ops._node("folder/file.txt", False)
+        self.ops.directory_complete.add("folder")
+        self.ops.queue_invalidation("folder/file.txt", membership_changed=False, node_fresh=True)
+        asyncio.run(self.ops.invalidate_path("folder/file.txt", membership_changed=False, node_fresh=True))
+        self.assertIn("folder", self.ops.directory_complete)
+        self.assertFalse(self.ops.nodes[inode].get("stale", False))
+        self.assertEqual(self.events, [("inode", inode, {"attr_only": False})])
+
+    # risk: stale page cache — a local commit must invalidate inode data without invalidating its dentry or fresh node.
+    def test_local_commit_queues_only_content_invalidation(self):
+        inode = self.ops._node("folder/file.txt", False)
+        node = self.ops.nodes[inode]
+        node.update({"id": "file-1", "versionId": "v1", "size": 0})
+        self.ops.directory_complete.add("folder")
+        spool = tempfile.TemporaryFile()
+        self.addCleanup(spool.close)
+        spool.write(b"fresh")
+        self.ops.handles[1] = {"inode": inode, "fileId": "file-1", "file": spool, "size": 5, "versionId": "v1",
+                               "sourceHash": "old", "dirty": True, "failedErrno": None, "actor": None}
+        self.ops._content_unchanged = lambda _handle: False
+        async def write(*_args): return {"versionId": "v2", "sourceHash": "new", "path": "file.txt"}, False
+        async def as_actor(_self, _actor, awaitable): return await awaitable
+        self.ops.api = types.SimpleNamespace(write=write)
+        self.ops._as_actor = types.MethodType(as_actor, self.ops)
+        asyncio.run(self.ops._commit(1))
+        queued = self.ops.pending_invalidations.pop("folder/file.txt")
+        self.assertFalse(queued["membership_changed"])
+        self.assertTrue(queued["node_fresh"])
+        asyncio.run(self.ops.invalidate_path("folder/file.txt", **queued))
+        self.assertIn("folder", self.ops.directory_complete)
+        self.assertFalse(node.get("stale", False))
+        self.assertEqual(self.events, [("inode", inode, {"attr_only": False})])
+
+
     # risk: namespace completeness — a cursor reset invalidates the full known tree.
     def test_change_page_reset_requests_tree_invalidation(self):
         self.ops.consume_change_page({"reset": True, "changes": []})
