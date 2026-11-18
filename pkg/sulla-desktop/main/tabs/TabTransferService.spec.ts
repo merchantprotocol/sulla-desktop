@@ -46,7 +46,9 @@ describe('TabTransferService', () => {
     const source = new FakeWindow(1, actions, { x: 0, y: 0, width: 800, height: 600 }, ipc);
     const target = new FakeWindow(2, actions, { x: 800, y: 0, width: 800, height: 600 }, ipc);
     const views = { ownsTab: () => true, markTransferring: (id: string, flag: boolean) => actions.push(`transferring:${ flag }`), moveViewToWindow: () => { actions.push('move-view'); return true; } } as any;
-    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 900, y: 100 }) } as any, () => source as any, () => [source, target] as any, () => target as any, views);
+    // Map by sender so the target's ready signal marks the target (not the source) as ready.
+    const agentWindowFor = (wc: Electron.WebContents) => (wc === target.webContents ? target : wc === source.webContents ? source : null);
+    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 900, y: 100 }) } as any, agentWindowFor as any, () => [source, target] as any, () => target as any, views);
     service.install();
     ipc.emit('tabs:transfer-ready', { sender: target.webContents });
     ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-1', descriptor: { id: 'tab-1', mode: 'chat' }, tabCount: 2 });
