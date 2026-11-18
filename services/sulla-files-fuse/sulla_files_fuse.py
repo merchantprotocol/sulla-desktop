@@ -228,8 +228,16 @@ class ContentReadCache:
             if hasher.hexdigest().lower() != digest.lower():
                 return
             target = os.path.join(self.directory, key + ".readcache")
+            # Forget the prior index entry without unlinking its path: replace() atomically
+            # installs the new complete file at that same pathname.
+            self.entries.pop(key, None); self.sizes.pop(key, None)
             os.replace(temporary, target)
-            self._remove(key)
+            try:
+                directory_fd = os.open(self.directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try: os.fsync(directory_fd)
+                finally: os.close(directory_fd)
+            except OSError:
+                pass
             self.entries[key] = target; self.sizes[key] = size
             self._evict(budget)
         finally:
@@ -688,6 +696,7 @@ class SullaFiles(pyfuse3.Operations):
         self.feed_healthy = False
         self.feed_revisions = {}
         self.mounted_collections = set()
+        self.feed_failures = 0
         self.pending_invalidations = OrderedDict()
         self.pending_tree_reset = False
         os.makedirs(SPOOL_DIR, exist_ok=True)
@@ -703,12 +712,12 @@ class SullaFiles(pyfuse3.Operations):
         inode = self.path_inode.get(path)
         if inode is not None:
             try: pyfuse3.invalidate_inode(inode, attr_only=False)
-            except (AttributeError, RuntimeError): pass
+            except Exception: pass
         parent, name = os.path.split(path)
         parent_inode = self.path_inode.get(parent)
         if parent_inode is not None and name:
             try: pyfuse3.invalidate_entry(parent_inode, os.fsencode(name))
-            except (AttributeError, RuntimeError): pass
+            except Exception: pass
         self.directory_complete.discard(parent)
         self.directory_etags.pop(parent, None)
         # The kernel will look the name up again. Keep the inode stable for in-flight FUSE ops;
@@ -727,7 +736,7 @@ class SullaFiles(pyfuse3.Operations):
             if parent_inode is None: continue
             for name in tuple(children):
                 try: pyfuse3.invalidate_entry(parent_inode, os.fsencode(name))
-                except (AttributeError, RuntimeError): pass
+                except Exception: pass
         self.directory_complete.clear()
         self.directory_etags.clear()
         for inode, node in tuple(self.nodes.items()):
@@ -755,12 +764,14 @@ class SullaFiles(pyfuse3.Operations):
                                     self.queue_invalidation(change["oldPath"])
                     self.feed_revisions[collection_id] = str(result.get("revision", since))
                 self.feed_healthy = bool(self.mounted_collections)
+                self.feed_failures = 0
                 await trio.sleep(CHANGE_POLL_SECONDS)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 self.feed_healthy = False
                 self.pending_tree_reset = True
+                self.feed_failures += 1
                 emit("change-feed-unhealthy", logging.WARNING, error=str(error))
-                await trio.sleep(min(30.0, CHANGE_POLL_SECONDS * 2))
+                await trio.sleep(min(30.0, CHANGE_POLL_SECONDS * (2 ** min(self.feed_failures, 5))))
 
     async def invalidation_worker(self):
         """Apply queued invalidations outside request handlers, independent of network delays."""
