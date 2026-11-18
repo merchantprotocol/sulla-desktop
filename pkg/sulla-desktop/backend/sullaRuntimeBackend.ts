@@ -1020,7 +1020,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           },
         );
         try {
-          await guard.assertCanLoad(missing.length);
+          await guard.assertCanLoad(missing, lock.images.filter(filter).length);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           firstRunTrace('vm', 'not enough disk space to load images', { message });

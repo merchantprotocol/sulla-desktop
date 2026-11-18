@@ -65,22 +65,36 @@ export interface ImageReference {
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
-/** Applies the first-install disk limit only when bundled images are missing. */
+const GIB = 1024 ** 3;
+
+/**
+ * Stops a load that would run the Mac out of disk. The space needed is sized
+ * from the images that are missing: each archive is written compressed and
+ * unpacked into layers, so twice the image bytes plus headroom. A fresh
+ * install (every bundled image missing) also keeps the flat minimum.
+ */
 export class BundledImagesDiskSpaceGuard {
   constructor(
     private readonly freeDiskBytes: () => Promise<number | undefined>,
     private readonly warnLowDisk: (freeBytes: number) => void,
-    private readonly blockBytes = 10 * 1024 ** 3,
-    private readonly warnBytes = 20 * 1024 ** 3,
+    private readonly freshInstallMinBytes = 10 * GIB,
+    private readonly warnBytes = 20 * GIB,
+    private readonly headroomBytes = 2 * GIB,
   ) {}
 
-  async assertCanLoad(missingCount: number): Promise<void> {
+  /** `missing` are the images that would be loaded; `totalImages` is how many the install bundles. */
+  async assertCanLoad(missing: readonly BundledImage[], totalImages: number): Promise<void> {
     const free = await this.freeDiskBytes();
 
     if (free === undefined || free >= this.warnBytes) return;
     this.warnLowDisk(free);
-    if (missingCount > 0 && free < this.blockBytes) {
-      throw new Error(`Your Mac has ${ (free / 1024 ** 3).toFixed(1) } GB free. Sulla needs at least 10 GB to finish setting up. Free up space, then try again.`);
+    if (missing.length === 0) return;
+    const isFreshInstall = missing.length === totalImages;
+    const sized = missing.reduce((sum, image) => sum + bundledImageSize(image) * 2, 0) + this.headroomBytes;
+    const required = isFreshInstall ? Math.max(sized, this.freshInstallMinBytes) : sized;
+
+    if (free < required) {
+      throw new Error(`Your Mac has ${ (free / GIB).toFixed(1) } GB free. Sulla needs ${ (required / GIB).toFixed(1) } GB to finish setting up. Free up space, then try again.`);
     }
   }
 }
