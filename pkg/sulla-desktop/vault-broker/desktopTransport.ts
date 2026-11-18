@@ -17,14 +17,18 @@ const APPROVAL_TOKEN_FILE = 'vault-approval-token.enc';
 const BROKER_SERVICE_ID = 'sulla-tools';
 const APPROVAL_SERVICE_ID = 'sulla-desktop-approval';
 const SESSION_PARTITION = 'sulla-vault-broker';
+const CONTROL_SESSION_PARTITION = 'sulla-vault-broker-control';
+const IDENTITY_TTL_MS = 60_000;
 
 /** Reads the OS-protected service identities the runtime writes when it starts the vault. */
 export class DesktopVaultIdentityRepository {
+  private readonly cache = new Map<string, { identity: VaultBrokerServiceIdentity; mtimeMs: number; expiresAt: number }>();
   // Resolved on each call so nothing touches Electron or the app home at construction.
   constructor(
     private readonly safeStorage: () => Electron.SafeStorage = () => Electron.safeStorage,
     private readonly appHome: () => string = () => paths.appHome,
     private readonly readFile: (filePath: string) => Promise<Buffer> = filePath => fs.readFile(filePath),
+    private readonly statFile: (filePath: string) => Promise<{ mtimeMs: number }> = filePath => fs.stat(filePath),
   ) {}
 
   /** Decrypt for the duration of one request; never persist plaintext identity. */
@@ -41,9 +45,10 @@ export class DesktopVaultIdentityRepository {
     if (!safeStorage.isEncryptionAvailable()) {
       throw new Error('OS-protected vault service identity is unavailable');
     }
-    let encrypted: Buffer;
+    const filePath = path.join(this.appHome(), fileName);
+    let mtimeMs: number;
     try {
-      encrypted = await this.readFile(path.join(this.appHome(), fileName));
+      mtimeMs = (await this.statFile(filePath)).mtimeMs;
     } catch (error) {
       // The runtime writes these identities when it starts the vault. Before that
       // (first launch, startup still running or failed) there is nothing to read.
@@ -52,20 +57,28 @@ export class DesktopVaultIdentityRepository {
       }
       throw error;
     }
+    const cached = this.cache.get(fileName);
+    if (cached && cached.mtimeMs === mtimeMs && cached.expiresAt > Date.now()) return cached.identity;
+    const encrypted = await this.readFile(filePath);
     const serviceToken = safeStorage.decryptString(encrypted);
     if (!serviceToken) throw new Error('Vault service identity is empty');
 
-    return { serviceId, serviceToken };
+    const identity = { serviceId, serviceToken };
+    this.cache.set(fileName, { identity, mtimeMs, expiresAt: Date.now() + IDENTITY_TTL_MS });
+    return identity;
   }
+
+  invalidate(): void { this.cache.clear(); }
 }
 
 /** Electron net transport pinned to the locally provisioned vault certificate. */
 export class DesktopVaultTransport {
   private pinnedSession: Promise<Electron.Session> | undefined;
+  private controlSession: Promise<Electron.Session> | undefined;
 
   constructor(
     private readonly identities: DesktopVaultIdentityRepository = new DesktopVaultIdentityRepository(),
-    private readonly sessionFactory: () => Electron.Session = () => Electron.session.fromPartition(SESSION_PARTITION, { cache: false }),
+    private readonly sessionFactory: (partition: string) => Electron.Session = partition => Electron.session.fromPartition(partition, { cache: false }),
     private readonly pinSession: (session: Electron.Session) => Promise<void> = async(session) => {
       // Loaded only in Electron main. Keeping this require lazy avoids importing
       // Electron-only TLS code when the same broker package starts in tools.
@@ -77,9 +90,19 @@ export class DesktopVaultTransport {
   ) {}
 
   readonly fetch: VaultBrokerFetch = async(input, init) => {
-    const session = await this.getPinnedSession();
+    const session = await this.getPinnedSession(true);
+    const response = await session.fetch(input, init);
+    if (response.status === 401 || response.status === 423) this.identities.invalidate();
+    return response;
+  };
 
-    return session.fetch(input, init);
+  /** Explicit route for any caller whose response body remains open as a stream. */
+  readonly fetchStream: VaultBrokerFetch = async(input, init) => {
+    const session = await this.getPinnedSession(false);
+
+    const response = await session.fetch(input, init);
+    if (response.status === 401 || response.status === 423) this.identities.invalidate();
+    return response;
   };
 
   loadBrokerIdentity(): Promise<VaultBrokerServiceIdentity> {
@@ -90,20 +113,21 @@ export class DesktopVaultTransport {
     return this.identities.loadApprovalIdentity();
   }
 
-  private getPinnedSession(): Promise<Electron.Session> {
-    this.pinnedSession ??= this.createPinnedSession().catch((error) => {
-      this.pinnedSession = undefined;
+  private getPinnedSession(control: boolean): Promise<Electron.Session> {
+    const slot = control ? 'controlSession' : 'pinnedSession';
+    this[slot] ??= this.createPinnedSession(control).catch((error) => {
+      this[slot] = undefined;
       throw error;
     });
 
-    return this.pinnedSession;
+    return this[slot]!;
   }
 
-  private async createPinnedSession(): Promise<Electron.Session> {
+  private async createPinnedSession(control: boolean): Promise<Electron.Session> {
     if (!Electron.safeStorage.isEncryptionAvailable()) {
       throw new Error('OS-protected vault broker identity is unavailable');
     }
-    const session = this.sessionFactory();
+    const session = this.sessionFactory(control ? CONTROL_SESSION_PARTITION : SESSION_PARTITION);
     await this.pinSession(session);
 
     return session;

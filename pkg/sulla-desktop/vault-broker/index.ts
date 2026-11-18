@@ -148,6 +148,8 @@ export class LocalVaultBrokerClient {
     endpoint: string,
     private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
     private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, init),
+    private readonly streamTransport: VaultBrokerFetch = transport,
+    private readonly invalidatePrincipal: () => void = () => {},
   ) {
     this.endpoint = assertEndpoint(endpoint);
     if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {
@@ -156,7 +158,8 @@ export class LocalVaultBrokerClient {
   }
 
   requestFor(ctx: ToolExecutionContext, request: Omit<BrokerExecuteRequest, 'claims'>): BrokerExecuteRequest {
-    return { ...request, claims: claimsFromContext(ctx) };
+    try { return { ...request, claims: claimsFromContext(ctx) }; }
+    catch (error) { this.observeError(error); throw error; }
   }
 
   async execute(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<BrokerExecuteResponse> {
@@ -219,7 +222,7 @@ export class LocalVaultBrokerClient {
 
   async executeStream(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
     const streamRequest = { ...request, responseType: request.responseType ?? 'stream' } as BrokerExecuteRequest;
-    const response = await this.send('/v1/broker/execute-stream', streamRequest, signal);
+    const response = await this.send('/v1/broker/execute-stream', streamRequest, signal, this.streamTransport);
     // Upstream provider errors are legitimate streamed responses. The vault
     // marks its own pre-header denials so callers can distinguish them without
     // consuming or buffering a provider response body.
@@ -245,7 +248,7 @@ export class LocalVaultBrokerClient {
   }
 
   async relayEvents(relayId: string, signal?: AbortSignal): Promise<Response> {
-    return this.request(`/v1/broker/relay/${ encodeURIComponent(relayId) }/events`, 'GET', undefined, signal);
+    return this.request(`/v1/broker/relay/${ encodeURIComponent(relayId) }/events`, 'GET', undefined, signal, this.streamTransport);
   }
 
   async * relayEventStream(relayId: string, signal?: AbortSignal): AsyncIterable<VaultRelayEvent> {
@@ -301,27 +304,53 @@ export class LocalVaultBrokerClient {
     method: string,
     body?: unknown,
     signal?: AbortSignal,
+    transport = this.transport,
   ): Promise<Response> {
-    const response = await this.transport(`${ this.endpoint }${ path }`, {
-      method,
-      headers: await this.serviceHeaders(body !== undefined),
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal,
-    });
-    if (!response.ok) await this.throwRelayResponse(response);
-    return response;
+    try {
+      const response = await transport(`${ this.endpoint }${ path }`, {
+        method,
+        headers: await this.serviceHeaders(body !== undefined),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal,
+      });
+      this.observeResponse(response);
+      if (!response.ok) await this.throwRelayResponse(response);
+      return response;
+    } catch (error) {
+      this.observeError(error);
+      throw error;
+    }
   }
 
-  private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
+  private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal, transport = this.transport): Promise<Response> {
     if (!request.claims?.sub || !request.claims.agent_id || !request.claims.pod_id) {
-      throw new VaultBrokerError('invalid_caller_identity', 'Vault broker request has incomplete caller claims', 401);
+      const error = new VaultBrokerError('invalid_caller_identity', 'Vault broker request has incomplete caller claims', 401);
+      this.observeError(error);
+      throw error;
     }
-    return this.transport(`${ this.endpoint }${ path }`, {
-      method:  'POST',
-      headers: await this.serviceHeaders(true),
-      body:    JSON.stringify(request),
-      signal,
-    });
+    try {
+      const response = await transport(`${ this.endpoint }${ path }`, {
+        method:  'POST',
+        headers: await this.serviceHeaders(true),
+        body:    JSON.stringify(request),
+        signal,
+      });
+      this.observeResponse(response);
+      return response;
+    } catch (error) {
+      this.observeError(error);
+      throw error;
+    }
+  }
+
+  private observeResponse(response: Response): void {
+    if (response.status === 401 || response.status === 423) this.invalidatePrincipal();
+  }
+
+  private observeError(error: unknown): void {
+    if (error instanceof VaultBrokerError && ['vault_locked', 'invalid_caller_identity'].includes(error.code)) {
+      this.invalidatePrincipal();
+    }
   }
 
   private async serviceHeaders(json: boolean): Promise<Record<string, string>> {
@@ -337,7 +366,9 @@ export class LocalVaultBrokerClient {
   }
 
   private async throwRelayResponse(response: Response): Promise<never> {
-    throw brokerError(await errorBody(response), response.status);
+    const error = brokerError(await errorBody(response), response.status);
+    this.observeError(error);
+    throw error;
   }
 
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
@@ -345,7 +376,9 @@ export class LocalVaultBrokerClient {
     if (response.status === 428 && body.error === 'approval_required' && body.operationId) {
       throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message);
     }
-    throw brokerError(body, response.status);
+    const error = brokerError(body, response.status);
+    this.observeError(error);
+    throw error;
   }
 }
 
