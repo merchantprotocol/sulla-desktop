@@ -570,6 +570,8 @@ export interface IpcMainInvokeEvents {
   'files-ui:download-file': (input: { fileId: string; versionId?: string; name: string }) => boolean;
   'files-ui:download-files': (items: { fileId: string; versionId?: string; name: string }[]) => { count: number; error?: string };
   'files-ui:media-url':     (input: { fileId: string; versionId?: string }) => string;
+  'files:preview:open': (input:{collectionId:string;fileId?:string;path?:string}) => {token:string;url:string};
+  'files:preview:revoke': (input:{token:string}) => void;
   'files-ui:pick-upload':   (destination?: string) => number;
   'files-ui:pick-upload-references': () => import('@pkg/main/sullaFilesChatImport').ChatFilesReference[] | import('@pkg/main/sullaFilesChatImport').PartialChatFilesImport;
   'files-ui:upload-paths': (input: { paths: string[]; destination?: string; collectionId?: string }) => number;
