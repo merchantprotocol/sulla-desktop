@@ -75,6 +75,12 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
+  'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
+  'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
+  'tabs:transfer-released': (transferId: string, tabId: string) => void;
+  'tabs:transfer-adopted': (transferId: string, tabId: string) => void;
+  'tabs:transfer-ready': () => void;
   'agent-window:open': () => void;
   'agent-window:close-self': () => void;
   /** Non-fatal renderer diagnostics sent to the main-process debug service. */
@@ -246,6 +252,7 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'chat:run-state': (channelId: string, threadId: string) => boolean;
   'use-case-recall:query': (text: string, options: Partial<import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallQueryOptions>) => import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallSuggestionResponse;
   'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
   'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
@@ -1279,6 +1286,10 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'tabs:release': (transferId: string, tabId: string) => void;
+  'tabs:release-finalize': (transferId: string, tabId: string) => void;
+  'tabs:adopt': (transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number, screenY?: number) => void;
+  'tabs:activate': (transferId: string, tabId: string) => void;
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;

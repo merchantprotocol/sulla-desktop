@@ -15,7 +15,7 @@ import { requestApplicationRestart } from '@pkg/main/restartCoordinator';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openDocker, openPreferences, openUrlInApp } from '@pkg/window';
-import { ensureAgentWindow, getActiveAgentWindow, isAgentWebContents, newAgentWindow } from '@pkg/window/agentWindows';
+import { ensureAgentWindow, getActiveAgentWindow, getAgentWindows, isAgentWebContents, newAgentWindow } from '@pkg/window/agentWindows';
 import { openProcessManager } from '@pkg/window/processManager';
 import { initSupportCenterIpc, openSupportCenter } from '@pkg/window/supportCenter';
 import { loopbackOrigin } from '@pkg/utils/instance';
@@ -609,11 +609,7 @@ function getHistoryMenu(): MenuItem {
         label:   'Clear Last Hour',
         click:   () => {
           const cutoff = new Date(Date.now() - 3_600_000).toISOString();
-          const existing = getActiveAgentWindow();
-
-          if (existing) {
-            sendWhenReady(existing, 'conversation-history:cleared', cutoff);
-          }
+          for (const existing of getAgentWindows()) sendWhenReady(existing, 'conversation-history:cleared', cutoff);
           // Also trigger main-process clear
           import('./conversationHistoryIpc').catch(() => {});
           mainEvents.emit('conversation-history:clear-request' as any, cutoff);
@@ -623,22 +619,14 @@ function getHistoryMenu(): MenuItem {
         label:   'Clear Today',
         click:   () => {
           const cutoff = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
-          const existing = getActiveAgentWindow();
-
-          if (existing) {
-            sendWhenReady(existing, 'conversation-history:cleared', cutoff);
-          }
+          for (const existing of getAgentWindows()) sendWhenReady(existing, 'conversation-history:cleared', cutoff);
           mainEvents.emit('conversation-history:clear-request' as any, cutoff);
         },
       },
       {
         label:   'Clear All History',
         click:   () => {
-          const existing = getActiveAgentWindow();
-
-          if (existing) {
-            sendWhenReady(existing, 'conversation-history:cleared', undefined);
-          }
+          for (const existing of getAgentWindows()) sendWhenReady(existing, 'conversation-history:cleared', undefined);
           mainEvents.emit('conversation-history:clear-request' as any, undefined);
         },
       },

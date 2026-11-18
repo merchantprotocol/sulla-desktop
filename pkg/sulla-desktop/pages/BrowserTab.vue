@@ -367,6 +367,8 @@
       <div class="flex-1 min-h-0 overflow-hidden">
         <FileEditorTab
           :file-path="getTab(props.tabId)?.url || ''"
+          :tab-id="props.tabId"
+          :transfer-state="getTab(props.tabId)?.transferState"
           :is-dark="isDark"
         />
       </div>

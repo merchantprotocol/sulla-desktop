@@ -16,7 +16,8 @@ import Electron, {
 import { WindowBoundsStore } from './WindowBoundsStore';
 import { AgentWindowPersistence } from './AgentWindowPersistence';
 import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
-import { agentWindowRegistry, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
+import { agentWindowRegistry, initialTabsQuery, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
+import { TabTransferService } from '@pkg/main/tabs/TabTransferService';
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
@@ -170,7 +171,7 @@ console.log('[window/index] URLs configured:', { webRoot, mainUrl });
 /**
  * Open the main window (Agent); if it is already open, focus it.
  */
-function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBounds?: AgentWindowOptions['bounds']) {
+function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBounds?: AgentWindowOptions['bounds'], initialTabs: AgentWindowOptions['initialTabs'] = 'restore') {
   console.log('[openMain] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
   const fullSize = screen.getPrimaryDisplay().size;
@@ -179,12 +180,14 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   const defaultWidth = Math.trunc(fullSize.width * 0.9);
   const defaultHeight = workArea.height;
   // Where the user left it last time, if that spot is still on a connected display.
-  const saved = requestedBounds ?? (windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : undefined);
+  const restoredMainBounds = windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : null;
+  const saved = requestedBounds ?? restoredMainBounds;
+  const persistedWindow = agentWindowPersistence.all().find(record => record.windowKey === windowKey);
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
   const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
-  const windowURL = name === 'main-agent' ? url : `${ url }&freshAgentTab=1`;
+  const windowURL = `${ url }${ initialTabsQuery(initialTabs) }`;
   const window = createWindow(
     name,
     windowURL,
@@ -220,8 +223,8 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   for (const event of ['move', 'resize', 'maximize', 'unmaximize'] as const) window.on(event, persistGeometry);
   window.on('close', () => { persistGeometry(); agentWindowPersistence.flush(); });
   if (mainBounds.track(window)) {
-    if (saved?.fullScreen) window.setFullScreen(true);
-    else if (saved?.maximized) window.maximize();
+    if (restoredMainBounds?.fullScreen) window.setFullScreen(true);
+    else if (persistedWindow?.maximized ?? restoredMainBounds?.maximized) window.maximize();
   }
 
   if (!Shortcuts.isRegistered(window)) {
@@ -337,7 +340,7 @@ export function restoreAgentWindows() {
   let first: BrowserWindow | undefined;
   for (const record of records) {
     const bounds = workAreas.some(area => record.bounds.x < area.x + area.width && record.bounds.x + record.bounds.width > area.x && record.bounds.y < area.y + area.height && record.bounds.y + record.bounds.height > area.y) ? record.bounds : undefined;
-    const win = openAgentWindow({ windowKey: record.windowKey, bounds, focus: false });
+    const win = openAgentWindow({ windowKey: record.windowKey, bounds, focus: false, initialTabs: 'restore' });
     if (record.maximized) win.maximize();
     first ??= win;
   }
@@ -345,7 +348,7 @@ export function restoreAgentWindows() {
   return first!;
 }
 export function ensureAgentWindow() { return agentWindowRegistry.ensureAgentWindow(createAgentWindow); }
-export function newAgentWindow() { return openAgentWindow(); }
+export function newAgentWindow() { return openAgentWindow({ initialTabs: 'fresh-chat' }); }
 
 export function openMain() { return agentWindowRegistry.getAgentWindows().length ? ensureAgentWindow() : restoreAgentWindows(); }
 
@@ -418,11 +421,19 @@ function sendToMain(payload: Record<string, unknown>): void {
 
 // Allow renderer processes to open URLs inside the app via IPC.
 if (process.type === 'browser') {
+  void import('./browserTabViewManager').then(({ BrowserTabViewManager }) => {
+    new TabTransferService(ipcMain, screen, agentWindowRegistry.agentWindowFor.bind(agentWindowRegistry), agentWindowRegistry.getAgentWindowsByFocusOrder.bind(agentWindowRegistry), openAgentWindow, BrowserTabViewManager.getInstance()).install();
+  }).catch(error => console.error('[TabTransfer] Could not initialize transfer service', error));
+  ipcMain.handle('chat:run-state', async(event, channelId: string, threadId: string) => {
+    if (!agentWindowRegistry.isAgentWebContents(event.sender) || !channelId || !threadId) return false;
+    const { getBackendGraphWebSocketService } = await import('@pkg/agent/services/BackendGraphWebSocketService');
+    return getBackendGraphWebSocketService().hasActiveRun(channelId, threadId);
+  });
   ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
   });
   ipcMain.on('agent-window:open', (event) => {
-    if (agentWindowRegistry.isAgentWebContents(event.sender)) openAgentWindow();
+    if (agentWindowRegistry.isAgentWebContents(event.sender)) openAgentWindow({ initialTabs: 'fresh-chat' });
   });
   ipcMain.on('agent-window:close-self', (event) => {
     const owner = agentWindowRegistry.agentWindowFor(event.sender);

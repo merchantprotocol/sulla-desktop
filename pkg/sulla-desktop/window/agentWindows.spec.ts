@@ -17,7 +17,7 @@ class FakeWindow {
   close(event: string) { this.listeners.get(event)?.forEach(fn => fn()); }
 }
 vi.mock('electron', () => ({ BrowserWindow: { fromId: (id: number) => windows.get(id) || null, fromWebContents: () => null } }));
-import { AgentWindowRegistry, setAgentWindowMapping } from './agentWindows';
+import { AgentWindowRegistry, initialTabsQuery, setAgentWindowMapping } from './agentWindows';
 
 describe('AgentWindowRegistry', () => {
   beforeEach(() => windows.clear());
@@ -47,5 +47,13 @@ describe('AgentWindowRegistry', () => {
     second.listeners.get('focus')?.forEach(fn => fn());
     main.close('closed');
     expect(mappings['main-agent']).toBe(second.id);
+  });
+});
+
+describe('initial agent-window tabs', () => {
+  it('keeps restored tabs, starts fresh-chat windows clean, and leaves adopt windows empty', () => {
+    expect(initialTabsQuery('restore')).toBe('');
+    expect(initialTabsQuery('fresh-chat')).toBe('&freshAgentTab=1');
+    expect(initialTabsQuery('adopt')).toBe('&adoptPending=1');
   });
 });
