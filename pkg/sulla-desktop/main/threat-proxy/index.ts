@@ -404,7 +404,7 @@ if [ "$state" = running ]; then
   else probe=1; fi
 fi
 cg=$(awk -F: '$1=="0"{print $3}' /proc/"$pid"/cgroup 2>/dev/null)
-base="/sys/fs/cgroup${cg}"
+base="/sys/fs/cgroup\${cg}"
 used=$(cat "$base/memory.current" 2>/dev/null || echo 0)
 limit=$(cat "$base/memory.max" 2>/dev/null || echo 0)
 ca=0; [ ! -s "${THREAT_PROXY_PUBLIC_DIR}/ca-bundle.pem" ] || ca=1
