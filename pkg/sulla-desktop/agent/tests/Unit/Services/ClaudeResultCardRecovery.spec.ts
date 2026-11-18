@@ -5,6 +5,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('electron', () => ({ default: { app: { getVersion: () => 'test' } } }));
+
 import { CliFaultError } from '../../../languagemodels/cliFaultRecovery';
 import { ClaudeCodeService } from '../../../languagemodels/ClaudeCodeService';
 
