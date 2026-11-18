@@ -235,6 +235,7 @@ export class ChatController {
     if (this.sendHandler) {
       this.staged.value = [];
       this.autoTitleFromFirstUserMessage(trimmed);
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('sulla:send-hop-controller', { detail: performance.now() }));
       this.sendHandler(trimmed || '(attached)', attachments, opts);
       return;
     }

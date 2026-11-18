@@ -195,6 +195,8 @@ export interface IpcMainEvents {
 
   // #region IPC Message Bus
   'message-bus:send': (channelId: string, message: any) => void;
+  /** Content-free renderer send timing. */
+  'send-hop:log': (payload: { threadId: string; messageCount: number; marks: Record<string, number> }) => void;
   // #endregion
 
   // #region Routine menu context (renderer → main)

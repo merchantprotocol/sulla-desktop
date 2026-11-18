@@ -66,6 +66,7 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.defaultPrevented) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    window.dispatchEvent(new CustomEvent('sulla:send-hop-keydown', { detail: performance.now() }));
     emit('send', model.value);
   }
 }
