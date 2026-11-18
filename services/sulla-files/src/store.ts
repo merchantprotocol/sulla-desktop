@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { constants, lstatSync } from 'node:fs';
-import { link, mkdir, open, readFile, rm } from 'node:fs/promises';
+import { link, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { TransactionScope } from './TransactionScope.js';
@@ -102,6 +102,25 @@ export class Store {
     } finally {
       if (ownsTemp) await rm(temp, { force: true });
     }
+  }
+
+  /** Preserve the invalid immutable object, then atomically publish verified replacement bytes. */
+  async quarantineAndReplace(collectionId:string, id:string, bytes:Uint8Array):Promise<{oldBlobRef:string; newBlobRef:string}> {
+    TransactionScope.assertOutside('a quarantined chunk replacement');
+    const target = this.path(collectionId, id);
+    const oldBlobRef = `${target}.quarantine-${Date.now()}-${randomUUID()}`;
+    const temp = `${target}.tmp-${process.pid}-${randomUUID()}`;
+    await mkdir(dirname(target), { recursive:true, mode:0o700 });
+    const handle = await open(temp, 'wx', 0o600);
+    try { await handle.writeFile(bytes); await handle.sync() } finally { await handle.close() }
+    try {
+      // Hard-link the old inode for audit retention, then atomically replace the live name.
+      // Existing manifests still resolve by chunk id to the live name; HMAC identity means
+      // their plaintext is exactly the replacement plaintext, despite the old ciphertext being bad.
+      await link(target, oldBlobRef);
+      await rename(temp, target);
+      return { oldBlobRef, newBlobRef:target };
+    } finally { await rm(temp, { force:true }) }
   }
 
   /** Version staging writes the immutable blob before DB commit and records cache residency in that commit. */

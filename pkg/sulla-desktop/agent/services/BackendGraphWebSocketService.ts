@@ -51,6 +51,8 @@ import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
 import { DesktopOrgMessengerFactory } from './DesktopOrgMessengerFactory';
 import { OrgMembershipDirectory, type OrgMembership } from './OrgMembershipDirectory';
 import { OrgMessengerFleet } from './OrgMessengerFleet';
+import type { OrgConversationStartRequest } from './OrgMessenger';
+import type { MessageEnvelope } from '@sulla/domain';
 import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 
@@ -314,6 +316,23 @@ export class BackendGraphWebSocketService {
   /** The target org's people and agent addresses, read from the org's own host. */
   loadOrgDirectory(org?: string): Promise<{ membership: OrgMembership; directory: { people: readonly unknown[] } }> {
     return this.orgMessengerFleet.loadDirectory(org);
+  }
+
+  /** Pending contact requests for the signed-in member in the target org (read-only). */
+  contactRequests(org?: string): Promise<readonly import('@sulla/domain').MessageEnvelope['data'][]> {
+    return this.orgMessengerFleet.contactRequests(org);
+  }
+
+  memberOrganizations(): Promise<readonly OrgMembership[]> {
+    return this.orgMessengerFleet.memberOrganizations();
+  }
+
+  loadOrgInboxMessages(org?: string): Promise<{ membership: OrgMembership; messages: readonly MessageEnvelope[] }> {
+    return this.orgMessengerFleet.loadInboxMessages(org);
+  }
+
+  startOrgConversation(request: OrgConversationStartRequest, org?: string): Promise<{ membership: OrgMembership; conversationId: string }> {
+    return this.orgMessengerFleet.startConversation(request, org);
   }
 
   /** LiveEvents wake hook for org messaging; polling every 60 s remains the fallback. */

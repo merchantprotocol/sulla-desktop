@@ -84,6 +84,7 @@ export function initSullaEvents(): void {
   initAgentsIpc();
   ipcControllers.modelRouting.register();
   ipcControllers.modelDefaults.register();
+  ipcControllers.orgConversations.register();
   initConversationHistoryIpc();
   initThreadShelfIpc();
   ipcControllers.bookmarks.register();

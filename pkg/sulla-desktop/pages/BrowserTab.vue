@@ -273,10 +273,10 @@
       </div>
     </template>
 
-    <!-- Secretary mode: continuous transcription with wake word -->
-    <template v-else-if="tabMode === 'secretary'">
+    <!-- Conversations is the org messaging area; legacy secretary mode routes here too. -->
+    <template v-else-if="tabMode === 'conversations' || tabMode === 'secretary'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <SecretaryMode
+        <Conversations
           :tab-id="props.tabId"
           @set-mode="onSetMode"
         />
@@ -407,7 +407,7 @@ import LabsPage from './LabsPage.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import DecidePage from './DecidePage.vue';
 import RoutinesHome from './RoutinesHome.vue';
-import SecretaryMode from './SecretaryMode.vue';
+import Conversations from './conversations/Conversations.vue';
 import VaultPage from './VaultPage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
@@ -439,7 +439,8 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   calendar:      'Calendar',
   integrations:  'Integrations',
   document:      'Document',
-  secretary:     'Secretary',
+  secretary:     'Conversations',
+  conversations: 'Conversations',
   vault:         'Password Manager',
   account:       'My Account',
   history:       'History',

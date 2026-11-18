@@ -160,6 +160,13 @@ export class OrgMessenger {
     return delivered;
   }
 
+  /** Pending contact requests addressed to the signed-in member in this org. Read-only; never resolves them. */
+  async listContactRequests(): Promise<readonly MessageEnvelope['data'][]> {
+    const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
+    const requests = await this.transport.contactRequests(orgId, userId);
+    return requests.map(request => request.data);
+  }
+
   async checkContactRequests(): Promise<void> {
     const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
     const requests = await this.transport.contactRequests(orgId, userId);
@@ -201,6 +208,31 @@ export class OrgMessenger {
     const directoryTransport = this.transport as Partial<OrgMessagingDirectory>;
     if (typeof directoryTransport.loadDirectory !== 'function') throw new Error('This organization host has no directory');
     return directoryTransport.loadDirectory();
+  }
+
+  /** Read only the signed-in member's inbox from this org; never advances the sync cursor. */
+  async loadInboxMessages(): Promise<readonly MessageEnvelope[]> {
+    const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
+    const messages: MessageEnvelope[] = [];
+    let since = 0;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+      const page = await this.transport.pull({ orgId, userId, since }, 50);
+      messages.push(...page.messages.filter(message => message.data.orgId === orgId));
+      if (page.next <= since || page.messages.length < 50) break;
+      since = page.next;
+    }
+    return messages;
+  }
+
+  async startConversation(request: OrgConversationStartRequest): Promise<{ conversationId: string }> {
+    if (request.participantUserIds.some(id => !id.trim()) || !request.participantUserIds.length) {
+      throw new Error('Conversation participants are required');
+    }
+    const starter = this.transport as OrgMessagingTransport & Partial<OrgConversationStarter>;
+    if (typeof starter.startConversation !== 'function') {
+      throw new Error('This organization host cannot start conversations');
+    }
+    return starter.startConversation({ ...request, participantUserIds: [...new Set(request.participantUserIds)], conversationId: request.conversationId.trim() });
   }
 
   private async loadDirectoryIfDue(): Promise<{ people: readonly unknown[] }> {

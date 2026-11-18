@@ -20,6 +20,7 @@ import { getIpcMainProxy } from '../ipcMain';
 import { MessageBusIpcController } from '../messageBusIpc';
 import { ModelDefaultsIpcController } from '../modelDefaultsIpc';
 import { ModelRoutingIpcController } from '../modelRoutingIpc';
+import { OrgConversationsIpcController } from '../orgConversationsIpc';
 import { LazyBundleMarketplace, SullaBundleIpcController } from '../sullaBundleEvents';
 import { SullaPatchIpcController } from '../sullaPatchEvents';
 import { SupportSessionCloudClient, SupportSessionIpcController } from '../supportSessionIpc';
@@ -64,6 +65,7 @@ export class MainIpcControllersProvider {
   readonly tabs:                 TabsIpcController;
   readonly modelRouting:         ModelRoutingIpcController;
   readonly modelDefaults:        ModelDefaultsIpcController;
+  readonly orgConversations:     OrgConversationsIpcController;
   readonly bookmarks:            BookmarksIpcController;
   readonly chatMessages:         ChatMessagesIpcController;
   readonly conversationMessages: ConversationMessagesIpcController;
@@ -106,6 +108,10 @@ export class MainIpcControllersProvider {
       broadcast:                broadcastToWindows,
     });
     this.modelDefaults = new ModelDefaultsIpcController(raw, { state: modelDefaultsState, set: setModelDefaults as any, reset: resetModelDefaults });
+    this.orgConversations = new OrgConversationsIpcController(raw, () => {
+      const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
+      return getBackendGraphWebSocketService();
+    });
     this.bookmarks = new BookmarksIpcController(proxy, {
       bookmarks:             bookmarkService as any,
       configureArtifactSync: () => configureChatArtifactBookmarkSync(getArtifactBookmarkSync()),

@@ -28,6 +28,7 @@ export class FilesRoutesFixture {
   readonly signingKey = Buffer.alloc(32, 7);
   readonly admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   pool!:pg.Pool;
+  store!:Store;
   collectionId = randomUUID();
   unpublishedCollectionId = randomUUID();
   /** The live config the app was built with (specs flip keyring.unlocked to exercise the ready gate). */
@@ -58,7 +59,8 @@ export class FilesRoutesFixture {
     }
     const manager = new LocalFilesManager(this.pool, config);
     manager.rootCollections.set('default', this.collectionId);
-    this.server = createServer(createApp(this.pool, config, manager, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, new Store(chunkRoot)));
+    this.store = new Store(chunkRoot);
+    this.server = createServer(createApp(this.pool, config, manager, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, this.store));
     await new Promise<void>(done => this.server!.listen(0, '127.0.0.1', done));
     const address = this.server.address(); if (!address || typeof address === 'string') throw new Error('test server did not bind');
     this.baseUrl = `http://127.0.0.1:${ address.port }`;

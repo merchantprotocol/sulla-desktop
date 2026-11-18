@@ -99,9 +99,10 @@ export class FileContentStreamer {
         const encrypted = await store.getBounded(file!.chunkCollectionId, chunk.id, crypto.maxEncryptedChunkBytes(chunk.size), chunk.storedSize);
         signal.throwIfAborted();
         let plain:Buffer;
+        console.info('[SullaFiles] chunk unwrap/decrypt', { collectionId:file!.chunkCollectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(keys.data) });
         try { plain = await crypto.decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, chunk.id, chunk.size) }
         catch (error) {
-          console.error('[SullaFiles] chunk key mismatch', { collectionId: file!.chunkCollectionId, chunkId: chunk.id });
+          console.error('[SullaFiles] chunk unwrap/decrypt failure', { collectionId: file!.chunkCollectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(keys.data), chunkId: chunk.id });
           throw new ChunkKeyMismatchError(file!.chunkCollectionId, chunk.id, error);
         }
         signal.throwIfAborted();
