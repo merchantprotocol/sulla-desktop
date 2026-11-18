@@ -1115,8 +1115,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             }
             emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
-              if (typeof item.message === 'string') errorMessage = item.message;
-              if (outcome.recordErrorEvent(item.message) === 'notice') log.info(`[CodexService] Codex notice (non-fatal): ${ String(item.message).slice(0, 200) }`);
+              if (outcome.recordErrorEvent(item.message) === 'notice') {
+                log.info(`[CodexService] Codex notice (non-fatal): ${ String(item.message).slice(0, 200) }`);
+              } else if (typeof item.message === 'string') {
+                errorMessage = item.message;
+              }
             }
             return;
           }
@@ -1135,8 +1138,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             return;
           }
           if (parsed.type === 'error') {
-            if (typeof parsed.message === 'string' && parsed.message) errorMessage = parsed.message;
-            if (outcome.recordErrorEvent(parsed.message) === 'notice') log.info(`[CodexService] Codex notice (non-fatal): ${ String(parsed.message).slice(0, 200) }`);
+            if (outcome.recordErrorEvent(parsed.message) === 'notice') {
+              log.info(`[CodexService] Codex notice (non-fatal): ${ String(parsed.message).slice(0, 200) }`);
+            } else if (typeof parsed.message === 'string' && parsed.message) {
+              errorMessage = parsed.message;
+            }
             return;
           }
         }
@@ -1180,8 +1186,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           break;
         case 'error':
-          if (typeof msg.message === 'string' && msg.message) errorMessage = msg.message;
-          if (outcome.recordErrorEvent(msg.message) === 'notice') log.info(`[CodexService] Codex notice (non-fatal): ${ String(msg.message).slice(0, 200) }`);
+          if (outcome.recordErrorEvent(msg.message) === 'notice') {
+            log.info(`[CodexService] Codex notice (non-fatal): ${ String(msg.message).slice(0, 200) }`);
+          } else if (typeof msg.message === 'string' && msg.message) {
+            errorMessage = msg.message;
+          }
           break;
         case 'stream_error':
           // Retryable — codex retries the model stream internally and the
