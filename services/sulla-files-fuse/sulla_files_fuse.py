@@ -83,7 +83,7 @@ INVALIDATION_TIMEOUT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_I
 READ_CACHE_MAX_BYTES = max(0, int(os.environ.get("SULLA_FILES_FUSE_READ_CACHE_MB", "512"))) * 1024 * 1024
 INVALIDATION_QUIET_SECONDS = 30.0
 CHANGE_POLL_SECONDS = 1.0
-FUSE_MOUNT_OPTIONS = {"fsname=sulla-files", "allow_other", "negative_timeout=0"}
+FUSE_MOUNT_OPTIONS = {"fsname=sulla-files", "allow_other"}
 TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
 SNAPSHOT_TTL_SECONDS = 10.0
@@ -685,7 +685,11 @@ class FilesApi:
 
 class _DiscardDirectoryReply:
     """Sink used to preload the root namespace without retaining FUSE reply state."""
+    def __init__(self):
+        self.names = []
+
     def __call__(self, token, name, attrs, offset):
+        self.names.append(name)
         return True
 
 
@@ -723,6 +727,9 @@ class SullaFiles(pyfuse3.Operations):
         self.read_cache_disabled = False
         self.initial_tree_loaded = False
         self.initial_tree_lock = trio.Lock()
+        self.initial_tree_attempted = False
+        self.initial_tree_error = None
+        self.initial_tree_timed_out = False
 
     def _cache(self):
         if self.read_cache is None and not self.read_cache_disabled:
@@ -906,10 +913,23 @@ class SullaFiles(pyfuse3.Operations):
             return
         with trio.move_on_after(STARTUP_TREE_WAIT_SECONDS) as timeout:
             async with self.initial_tree_lock:
-                if not self.initial_tree_loaded:
-                    await self._list_directory(pyfuse3.ROOT_INODE, self.nodes[pyfuse3.ROOT_INODE], 0, _DiscardDirectoryReply())
-        if timeout.cancelled_caught or not self.initial_tree_loaded:
-            raise pyfuse3.FUSEError(errno.EIO)
+                if not self.initial_tree_loaded and not self.initial_tree_attempted:
+                    self.initial_tree_attempted = True
+                    # Synthetic APIs used by operations that do not exercise directory
+                    # listing need only the lookup path; production FilesApi implements this.
+                    if not callable(getattr(self.api, "directory_page", None)):
+                        return
+                    try:
+                        await self._list_directory(pyfuse3.ROOT_INODE, self.nodes[pyfuse3.ROOT_INODE], 0, _DiscardDirectoryReply())
+                    except OSError as error:
+                        self.initial_tree_error = error
+                        emit("root-listing-failed", logging.ERROR, status=getattr(error, "status", None),
+                             errno=errno.errorcode.get(error.errno, "EIO"), error=str(error))
+        if timeout.cancelled_caught:
+            self.initial_tree_attempted = True
+            self.initial_tree_timed_out = True
+        # An unavailable root must not make Desktop's root probe restart the mount.
+        # The ordinary root readdir path below continues to answer from its last snapshot.
 
     def _touch_node(self, inode):
         node = self.nodes.get(inode)
@@ -937,7 +957,7 @@ class SullaFiles(pyfuse3.Operations):
         path = "/".join(filter(None, [parent["path"], name]))
         inode = self.path_inode.get(path)
         cached_node = self.nodes.get(inode) if inode is not None else None
-        if inode is not None and cached_node is not None and not cached_node.get("stale"):
+        if inode is not None and cached_node is not None and not cached_node.get("stale") and (parent_inode != pyfuse3.ROOT_INODE or cached_node.get("collectionId")):
             return inode
         collection_id = parent.get("collectionId")
         try:
@@ -1082,8 +1102,17 @@ class SullaFiles(pyfuse3.Operations):
         if not directory:
             raise pyfuse3.FUSEError(errno.ENOENT)
         try:
+            if fh == pyfuse3.ROOT_INODE and self.initial_tree_timed_out:
+                return
+            if fh == pyfuse3.ROOT_INODE and self.initial_tree_error is not None:
+                self.initial_tree_error = None
+                return
             await self._list_directory(fh, directory, start_id, token)
         except OSError as error:
+            if fh == pyfuse3.ROOT_INODE:
+                emit("root-listing-failed", logging.ERROR, status=getattr(error, "status", None),
+                     errno=errno.errorcode.get(error.errno, "EIO"), error=str(error))
+                return
             raise
 
     async def _list_directory(self, fh, directory, start_id, token):

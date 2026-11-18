@@ -57,6 +57,23 @@ class StartupWarmupTests(unittest.TestCase):
         asyncio.run(exercise())
         self.assertEqual(token.names, [b"QA", b"Projects"])
 
+    # risk: availability — a stalled startup fetch must not leave Desktop's root probe waiting forever.
+    def test_root_readdir_answers_empty_after_bounded_startup_wait(self):
+        adapter, pyfuse3 = load_adapter()
+        adapter.STARTUP_TREE_WAIT_SECONDS = 0.01
+        api = WarmupApi()
+        ops = adapter.SullaFiles(api)
+        token = types.SimpleNamespace(names=[])
+
+        async def exercise():
+            await ops.readdir(pyfuse3.ROOT_INODE, 0, token)
+            self.assertTrue(ops.initial_tree_timed_out)
+            await ops.readdir(pyfuse3.ROOT_INODE, 0, token)
+
+        asyncio.run(exercise())
+        self.assertEqual(token.names, [])
+        self.assertTrue(api.started.is_set())
+
     # risk: stale/missing data — an incomplete directory cannot grant a cached positive or negative timeout.
     def test_unhealthy_or_incomplete_directory_has_zero_entry_timeout(self):
         adapter, _ = load_adapter()
@@ -66,7 +83,7 @@ class StartupWarmupTests(unittest.TestCase):
         attrs = ops._attrs(inode)
         self.assertEqual(attrs.entry_timeout, 0.0)
         self.assertEqual(attrs.attr_timeout, 0.0)
-        self.assertIn("negative_timeout=0", adapter.FUSE_MOUNT_OPTIONS)
+        self.assertNotIn("negative_timeout=0", adapter.FUSE_MOUNT_OPTIONS)
 
 
 if __name__ == "__main__":
