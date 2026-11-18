@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import { RulesModel } from '@pkg/agent/database/models/RulesModel';
-import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { AgentToolActivityRepository } from '@pkg/agent/database/repositories/AgentToolActivityRepository';
 import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { SecuritySummary } from './types';
 
 const READ_TIMEOUT_MS = 3_000;
+const RECENT_ACTIVITY_LIMIT = 10;
 type DailyCounts = { scannedToday: number; blockedToday: number };
-type ActivityRow = { at: string; actor: string; action: string; target: string };
 
 async function boundedRead<T>(read: () => Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -42,19 +42,10 @@ export class SecurityRulesReader {
 
 /** Maps persisted agent tool-result messages to a content-free recent action list. */
 export class AgentActionsReader {
-  constructor(private readonly query: (sql: string, params?: unknown[]) => Promise<ActivityRow[]> = (sql, params) => postgresClient.query(sql, params), private readonly timeoutMs = READ_TIMEOUT_MS) {}
+  constructor(private readonly repository: AgentToolActivityRepository = new AgentToolActivityRepository(), private readonly timeoutMs = READ_TIMEOUT_MS) {}
   async read(): Promise<SecuritySummary['activity']> {
     try {
-      const rows = await boundedRead(() => this.query(`
-        SELECT created_at AS at,
-               COALESCE(NULLIF(meta->>'agentName', ''), NULLIF(meta->>'agent', ''), 'agent') AS actor,
-               COALESCE(NULLIF(tool_name, ''), 'tool call') AS action,
-               COALESCE(NULLIF(meta->>'toolTarget', ''), NULLIF(meta->>'toolCategory', ''), '') AS target
-        FROM conversation_messages
-        WHERE role = 'tool' AND deleted_at IS NULL
-        ORDER BY created_at DESC, seq DESC
-        LIMIT 10
-      `), this.timeoutMs);
+      const rows = await boundedRead(() => this.repository.recentToolActions(RECENT_ACTIVITY_LIMIT), this.timeoutMs);
       return rows.map(row => ({ at: new Date(row.at).toISOString(), actor: row.actor, action: row.action, target: row.target }));
     } catch { return null }
   }

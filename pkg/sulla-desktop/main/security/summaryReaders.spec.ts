@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 import type { DecisionRecord } from '@pkg/shared/decisions';
+import type { AgentToolActivityRepository } from '@pkg/agent/database/repositories/AgentToolActivityRepository';
 import { AgentActionsReader, PendingUseCaseApprovalsReader, SecurityRulesReader, ThreatDailyCountersReader } from './summaryReaders';
 
 const decision = (id: string, status: string, payload: Record<string, unknown>, expiresAt = Date.now() + 60_000) => ({
@@ -26,10 +27,10 @@ describe('Security summary readers', () => {
   });
 
   it('maps recent persisted tool actions without copying message content', async() => {
-    const query = vi.fn(async() => [{ at: '2026-11-18T10:00:00.000Z', actor: 'research-agent', action: 'files/read', target: 'files/read' }]);
-    expect(await new AgentActionsReader(query).read()).toEqual([{ at: '2026-11-18T10:00:00.000Z', actor: 'research-agent', action: 'files/read', target: 'files/read' }]);
-    expect(query.mock.calls[0][0]).toContain('LIMIT 10');
-    expect(await new AgentActionsReader(async() => { throw new Error('database unavailable') }).read()).toBeNull();
+    const recentToolActions = vi.fn(async() => [{ at: '2026-11-18T10:00:00.000Z', actor: 'research-agent', action: 'files/read', target: 'files/read' }]);
+    expect(await new AgentActionsReader({ recentToolActions } as unknown as AgentToolActivityRepository).read()).toEqual([{ at: '2026-11-18T10:00:00.000Z', actor: 'research-agent', action: 'files/read', target: 'files/read' }]);
+    expect(recentToolActions).toHaveBeenCalledWith(10);
+    expect(await new AgentActionsReader({ recentToolActions: async() => { throw new Error('database unavailable') } } as unknown as AgentToolActivityRepository).read()).toBeNull();
   });
 
   it('returns validated daily totals and null when counters are absent or invalid', async() => {
