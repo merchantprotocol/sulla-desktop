@@ -18,6 +18,7 @@ directory on the Sulla runtime data disk). Desktop writes config/proxy.json
 and blocklist/urlhaus.txt; the proxy owns mitm/ and cache/.
 """
 
+import functools
 import json
 import os
 import sqlite3
@@ -61,6 +62,30 @@ def log(component: str, level: str, msg: str, **fields: Any) -> None:
         sys.stdout.flush()
     except Exception:
         pass
+
+
+def fail_open_hook(fn):
+    """Keep addon failures from changing or aborting proxied traffic."""
+    @functools.wraps(fn)
+    def guarded(self, flow, *args, **kwargs):
+        try:
+            return fn(self, flow, *args, **kwargs)
+        except Exception as ex:
+            component = getattr(self, "log_component", self.__class__.__name__)
+            # Keep exception messages out of logs because external exceptions can
+            # include request data, but identify the affected flow when available.
+            request = getattr(flow, "request", None)
+            fields = {"reason": type(ex).__name__}
+            if request is not None:
+                fields.update(url=getattr(request, "pretty_url", None), host=getattr(request, "pretty_host", None))
+            response = getattr(flow, "response", None)
+            if fn.__name__ == "responseheaders" and response is not None:
+                response.stream = True
+            elif fn.__name__ == "requestheaders" and request is not None:
+                request.stream = True
+            log(component, "warn", "fail_open", **fields)
+            return None
+    return guarded
 
 
 def load_config(path: Optional[str] = None) -> Dict[str, Any]:

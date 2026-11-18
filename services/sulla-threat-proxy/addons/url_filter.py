@@ -27,7 +27,6 @@ import base64
 import json
 import os
 import threading
-import os
 import time
 import urllib.parse
 import urllib.request
@@ -42,6 +41,7 @@ from common import (
     FLAG_ERROR,
     FLAG_SUSPICIOUS,
     FLAG_UNKNOWN,
+    fail_open_hook,
     classify_verdict,
     ProxyConfig,
     get_cache,
@@ -89,6 +89,8 @@ class _TokenBucket:
 
 
 class URLFilter:
+    log_component = "url_filter"
+
     """mitmproxy addon. Runs on every request; decides block/pass."""
 
     def __init__(self, config: Optional[ProxyConfig] = None, cache=None) -> None:
@@ -170,9 +172,12 @@ class URLFilter:
             except FileNotFoundError:
                 hosts = set()
             except Exception as ex:
-                log("url_filter", "error", "URLhaus load failed; keeping current list", error=str(ex))
+                log("url_filter", "error", "URLhaus load failed; keeping current list", error=type(ex).__name__)
                 self._urlhaus_loaded_at = time.time()
-                return
+                if self._urlhaus_hosts:
+                    return
+                # No usable list exists yet; continue to the bundled fallback.
+                hosts = set()
 
             if not hosts:
                 try:
@@ -189,7 +194,7 @@ class URLFilter:
                     )
                     return
                 except Exception as ex:
-                    log("url_filter", "error", "URLhaus bundled default load failed", error=str(ex))
+                    log("url_filter", "error", "URLhaus bundled default load failed", error=type(ex).__name__)
                     self._urlhaus_hosts = set()
                     self._urlhaus_loaded_at = time.time()
                     return
@@ -256,7 +261,7 @@ class URLFilter:
                 return FLAG_BLOCK, f"safe_browsing:{kinds}"
             return FLAG_CLEAN, "safe_browsing:clean"
         except Exception as ex:
-            log("url_filter", "error", "Safe Browsing lookup failed", url=url, error=str(ex))
+            log("url_filter", "error", "Safe Browsing lookup failed", url=url, error=type(ex).__name__)
             return FLAG_ERROR, "safe_browsing:error"
 
     # ────────────────────────────────────────────────────────────────
@@ -293,7 +298,7 @@ class URLFilter:
             log("url_filter", "error", "VT HTTP error", url=url, code=ex.code)
             return FLAG_ERROR, f"vt:http_{ex.code}"
         except Exception as ex:
-            log("url_filter", "error", "VT lookup failed", url=url, error=str(ex))
+            log("url_filter", "error", "VT lookup failed", url=url, error=type(ex).__name__)
             return FLAG_ERROR, "vt:error"
 
     # ────────────────────────────────────────────────────────────────
@@ -376,13 +381,11 @@ class URLFilter:
                 names.append(name)
         return names
 
+    @fail_open_hook
     def requestheaders(self, flow: http.HTTPFlow) -> None:
         self._apply_config()
-        flow.metadata["sulla_url_checked"] = True
-        flow.metadata["sulla_block_verdict"] = None
-        flow.metadata["sulla_block_details"] = []
-        flow.metadata["sulla_block_url"] = flow.request.pretty_url
         if self.block_mode == "off":
+            flow.metadata["sulla_url_checked"] = True
             flow.request.stream = True
             return
         url = flow.request.pretty_url
@@ -390,6 +393,7 @@ class URLFilter:
         names = self.flow_names(flow)
 
         if names and all(is_allowlisted(name, self.user_allowlist) for name in names):
+            flow.metadata["sulla_url_checked"] = True
             flow.request.stream = True
             log("url_filter", "debug", "allowlisted", host=host, url=url)
             return
@@ -405,20 +409,34 @@ class URLFilter:
             details=details,
         )
 
+        flow.metadata["sulla_url_checked"] = True
+        flow.metadata["sulla_block_verdict"] = verdict if verdict == FLAG_BLOCK else None
+        flow.metadata["sulla_block_details"] = details if verdict == FLAG_BLOCK else []
+        flow.metadata["sulla_block_url"] = url
         if verdict == FLAG_BLOCK:
-            flow.metadata["sulla_block_verdict"] = FLAG_BLOCK
             flow.metadata["sulla_block_details"] = details
             if self.block_mode == "warn":
                 flow.request.headers["X-Sulla-Threat"] = "|".join(details)
                 flow.request.stream = True
                 return
-            # Blocking occurs in `request`, after the complete body has arrived.
-            # Clear mitmproxy's automatic stream_large_bodies choice so this flow
-            # does not open an upstream connection or forward any body bytes.
+            content_length = flow.request.headers.get("Content-Length", "")
+            try:
+                large_or_unknown = not content_length or int(content_length) > 64 * 1024
+            except (TypeError, ValueError):
+                large_or_unknown = True
+            if large_or_unknown:
+                # Mitmproxy 12.3.1 consumes request bodies before its request hook
+                # even when flow.response was assigned in requestheaders. Kill
+                # large/chunked uploads here, before any buffering or upstream.
+                flow.kill()
+                log("url_filter", "warn", "blocked upload killed", host=host, url=url, content_length=content_length or "unknown")
+                return
+            # Small blocked uploads are buffered locally, then receive 451 in request.
             flow.request.stream = False
             return
         flow.request.stream = True
 
+    @fail_open_hook
     def request(self, flow: http.HTTPFlow) -> None:
         # Compatibility safety-net for replay paths that bypass requestheaders.
         if flow.metadata.get("sulla_url_checked"):
@@ -426,6 +444,8 @@ class URLFilter:
                 self._emit_block(flow, flow.metadata.get("sulla_block_url", flow.request.pretty_url), flow.metadata.get("sulla_block_details", []))
             return
         self.requestheaders(flow)
+        if flow.metadata.get("sulla_block_verdict") == FLAG_BLOCK and self.block_mode == "block":
+            self._emit_block(flow, flow.metadata.get("sulla_block_url", flow.request.pretty_url), flow.metadata.get("sulla_block_details", []))
 
     def _emit_block(self, flow: http.HTTPFlow, url: str, details: List[str]) -> None:
         body = json.dumps(

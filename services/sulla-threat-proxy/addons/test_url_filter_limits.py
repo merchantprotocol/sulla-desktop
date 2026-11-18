@@ -59,6 +59,7 @@ class URLhausLimitTests(unittest.TestCase):
         instance._config_generation = -1
         instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
         flow = self.make_flow()
+        flow.request.headers["Content-Length"] = "1024"
         instance.requestheaders(flow)
         self.assertFalse(flow.request.stream)
         self.assertIsNone(flow.response)
@@ -78,6 +79,34 @@ class URLhausLimitTests(unittest.TestCase):
         self.assertEqual(flow.request.headers["X-Sulla-Threat"], "urlhaus:exact")
         instance.request(flow)
         self.assertIsNone(flow.response)
+
+    # risk: availability — a blocked large upload is killed before body buffering or upstream contact.
+    def test_blocked_large_upload_is_killed_at_headers(self):
+        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance.config = self.Config()
+        instance._config_generation = -1
+        instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
+        flow = self.make_flow()
+        flow.request.headers["Content-Length"] = "1048576"
+        flow.kill_called = False
+        flow.kill = lambda: setattr(flow, "kill_called", True)
+        instance.requestheaders(flow)
+        self.assertTrue(flow.kill_called)
+        self.assertIsNone(flow.response)
+        self.assertTrue(flow.request.stream)
+
+    # risk: availability — an internal reputation exception leaves the request unchanged.
+    def test_hook_exception_is_fail_open(self):
+        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance._apply_config = lambda: (_ for _ in ()).throw(RuntimeError("config failure"))
+        flow = self.make_flow()
+        before_stream = flow.request.stream
+        with patch.object(url_filter, "log") as logger:
+            instance.requestheaders(flow)
+        self.assertIsNone(flow.response)
+        self.assertEqual(flow.request.stream, before_stream)
+        self.assertEqual(flow.metadata, {})
+        logger.assert_called_with("url_filter", "warn", "fail_open", reason="RuntimeError", url="https://blocked.example/path", host="blocked.example")
 
 
 if __name__ == "__main__":
