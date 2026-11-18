@@ -741,6 +741,7 @@ class SullaFiles(pyfuse3.Operations):
         self.invalidation_caching_disabled = False
         self.feed_revisions = {}
         self.mounted_collections = set()
+        self.feed_ready_collections = set()
         self.feed_failures = 0
         self.pending_invalidations = OrderedDict()
         self.pending_tree_reset = False
@@ -806,6 +807,14 @@ class SullaFiles(pyfuse3.Operations):
                 self.invalidation_limiter = trio.CapacityLimiter(1)
                 self.invalidation_stuck_logged = False
             emit("invalidation-thread-stuck", logging.ERROR, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
+
+    def _set_feed_health(self, healthy):
+        healthy = bool(healthy)
+        if healthy == self.feed_healthy:
+            return
+        self.feed_healthy = healthy
+        emit("change-feed-health", logging.INFO if healthy else logging.WARNING,
+             healthy=healthy, collections=len(self.mounted_collections), failures=self.feed_failures)
 
     async def _run_invalidation(self, function, *args, **kwargs):
         """Keep potentially blocking FUSE reverse-invalidation off Trio's event-loop thread.
@@ -895,13 +904,23 @@ class SullaFiles(pyfuse3.Operations):
 
     async def follow_changes(self):
         """Long-lived background poller; never runs inside a FUSE request handler."""
+        started_logged = False
         while True:
-            self.recover_invalidation_health()
-            roots = [(node.get("collectionId"), path) for path, inode in tuple(self.path_inode.items())
-                     if (node := self.nodes.get(inode)) and node.get("collectionRoot") and node.get("collectionId")]
-            self.mounted_collections.update(collection_id for collection_id, _ in roots)
             try:
-                for collection_id in tuple(self.mounted_collections):
+                self.recover_invalidation_health()
+                # The personal collection occupies ROOT_INODE itself on a home-rooted
+                # mount; it is not a child marked collectionRoot. Track IDs represented
+                # by any live node, including that root, and drop IDs no longer mounted.
+                live_collections = {str(node["collectionId"]) for node in tuple(self.nodes.values())
+                                    if node.get("collectionId")}
+                self.mounted_collections = live_collections
+                self.feed_ready_collections.intersection_update(live_collections)
+                self.feed_revisions = {key: value for key, value in self.feed_revisions.items()
+                                       if key in live_collections}
+                if not started_logged and (self.initial_tree_loaded or self.initial_tree_timed_out or self.initial_tree_error):
+                    emit("change-feed-started", collections=len(live_collections))
+                    started_logged = True
+                for collection_id in tuple(live_collections):
                     since = self.feed_revisions.get(collection_id, "")
                     while True:
                         result = await self.api.changes(collection_id, since)
@@ -909,13 +928,16 @@ class SullaFiles(pyfuse3.Operations):
                         since = str(result.get("cursor", since))
                         self.feed_revisions[collection_id] = since
                         if not result.get("more"): break
-                self.feed_healthy = CHANGE_FEED_ENABLED and bool(self.mounted_collections)
+                    # A full page chain completed, so this collection has been polled.
+                    self.feed_ready_collections.add(collection_id)
+                self._set_feed_health(CHANGE_FEED_ENABLED and bool(live_collections))
                 self.feed_failures = 0
                 await trio.sleep(CHANGE_POLL_SECONDS)
-            except (OSError, ValueError, KeyError, TypeError) as error:
-                self.feed_healthy = False
+            except Exception as error:
                 self.feed_failures += 1
-                emit("change-feed-unhealthy", logging.WARNING, error=str(error))
+                self._set_feed_health(False)
+                emit("change-feed-unhealthy", logging.WARNING, error=type(error).__name__, detail=str(error),
+                     failures=self.feed_failures)
                 await trio.sleep(min(30.0, CHANGE_POLL_SECONDS * (2 ** min(self.feed_failures, 5))))
 
     async def invalidation_worker(self):
@@ -1116,7 +1138,9 @@ class SullaFiles(pyfuse3.Operations):
         attrs.st_atime_ns = attrs.st_mtime_ns = attrs.st_ctime_ns = timestamp
         attrs.generation = 0
         complete = os.path.dirname(node.get("path", "")) in self.directory_complete
-        timeout = ATTR_TIMEOUT_SECONDS if complete and CHANGE_FEED_ENABLED and getattr(self, "feed_healthy", False) and getattr(self, "invalidation_healthy", True) else 0.0
+        collection_id = node.get("collectionId")
+        feed_ready = collection_id is not None and collection_id in getattr(self, "feed_ready_collections", set())
+        timeout = ATTR_TIMEOUT_SECONDS if complete and CHANGE_FEED_ENABLED and feed_ready and getattr(self, "feed_healthy", False) and getattr(self, "invalidation_healthy", True) else 0.0
         attrs.entry_timeout = timeout
         attrs.attr_timeout = timeout
         return attrs

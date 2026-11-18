@@ -330,5 +330,59 @@ class ChangeInvalidationTests(unittest.TestCase):
         handle["file"].close()
 
 
+    # risk: missed remote changes — home-rooted mounts must poll the collection stored on ROOT_INODE.
+    def test_change_poller_registers_home_collection_root(self):
+        self.ops.initial_tree_loaded = True
+        self.ops.nodes[1]["collectionId"] = "home"
+        self.ops.nodes[1]["collectionRoot"] = False
+        calls = []
+        async def changes(collection_id, cursor):
+            calls.append((collection_id, cursor))
+            return {"cursor": "c1", "changes": [], "more": False}
+        async def stop_after_poll(_seconds):
+            raise asyncio.CancelledError()
+        self.adapter.trio.sleep = stop_after_poll
+        events = []
+        self.adapter.emit = lambda name, *_args, **fields: events.append((name, fields))
+        self.ops.api = types.SimpleNamespace(changes=changes)
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(self.ops.follow_changes())
+        self.assertEqual(calls, [("home", "")])
+        self.assertIn(("change-feed-started", {"collections": 1}), events)
+
+    # risk: change-feed liveness — a single unexpected poll exception must back off and retry, not end the task.
+    def test_change_poller_survives_unexpected_exception(self):
+        self.ops.nodes[1]["collectionId"] = "home"
+        calls = []
+        async def changes(collection_id, cursor):
+            calls.append(collection_id)
+            if len(calls) == 1:
+                raise RuntimeError("unexpected adapter failure")
+            return {"cursor": "c1", "changes": [], "more": False}
+        sleeps = []
+        async def stop_after_retry(seconds):
+            sleeps.append(seconds)
+            if len(sleeps) == 2:
+                raise asyncio.CancelledError()
+        events = []
+        self.adapter.trio.sleep = stop_after_retry
+        self.adapter.emit = lambda name, *_args, **fields: events.append((name, fields))
+        self.ops.api = types.SimpleNamespace(changes=changes)
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(self.ops.follow_changes())
+        self.assertEqual(calls, ["home", "home"])
+        self.assertTrue(any(name == "change-feed-unhealthy" for name, _ in events))
+        self.assertTrue(self.ops.feed_healthy)
+
+    # risk: stale metadata — a collection must have a successful poll before kernel positive caching is enabled.
+    def test_cache_stays_off_until_collection_poll_succeeds(self):
+        inode = self.ops._node("home/file.txt", False)
+        self.ops.nodes[inode].update({"collectionId": "home", "size": 9})
+        self.ops.directory_complete.add("home")
+        self.ops.feed_healthy = True
+        self.assertEqual(self.ops._attrs(inode).attr_timeout, 0.0)
+        self.ops.feed_ready_collections.add("home")
+        self.assertEqual(self.ops._attrs(inode).attr_timeout, self.adapter.ATTR_TIMEOUT_SECONDS)
+
 if __name__ == "__main__":
     unittest.main()
