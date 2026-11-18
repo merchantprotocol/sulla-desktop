@@ -68,6 +68,12 @@ class FilesSoak:
         self.root = self._get_run_root()
 
     def _personal_collection(self):
+        override = os.environ.get("SOAK_PARENT")
+        if override:
+            target = Path(override)
+            if not target.is_dir():
+                raise CheckFailure("SOAK_PARENT is not a directory")
+            return target
         if not MOUNT.is_dir():
             raise CheckFailure("Files mount is unavailable")
         entries = sorted((p for p in MOUNT.iterdir() if p.is_dir() and not p.name.startswith(".")), key=lambda p: p.name.casefold())
