@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PersonaAdapter } from './PersonaAdapter';
+
+// Electron's npm entry throws "failed to install correctly" outside Electron; PersonaAdapter's import chain reaches it.
+vi.mock('electron', () => {
+  const ipcRenderer = { invoke: vi.fn(), send: vi.fn(), on: vi.fn(), removeListener: vi.fn() };
+  return { ipcRenderer, default: { ipcRenderer } };
+});
 
 describe('PersonaAdapter send feedback reconciliation', () => {
   it('replaces matching optimistic bubbles in FIFO order before backend sync appends them', () => {

@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 // ChatMessageQueue.ts — Message queue for sequential processing with Windsurf-style UX
-import { ref, computed, toRaw } from 'vue';
+import { ref, computed, markRaw, toRaw } from 'vue';
 
 import type { PendingAttachment } from '../pages/agent/AgentComposer.vue';
 
@@ -45,7 +45,8 @@ export class ChatMessageQueue {
       id:        `queued_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       content,
       attachments,
-      metadata: metadata ? this.plainMetadata(metadata) as Record<string, unknown> : undefined,
+      // markRaw keeps the plain copy from being re-wrapped by the deep queue ref, so shift() returns cloneable data.
+      metadata: metadata ? markRaw(this.plainMetadata(metadata) as Record<string, unknown>) : undefined,
       timestamp: Date.now(),
     };
 
