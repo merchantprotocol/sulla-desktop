@@ -160,8 +160,11 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 const mainUrl = `${ webRoot }/agent.html`;
 /** The main window's last position and size, kept across restarts. */
 const mainBounds = new WindowBoundsStore(path.join(paths.config, 'main-window-bounds.json'));
-const agentWindowPersistence = new AgentWindowPersistence(path.join(paths.config, 'agent-windows.json'), path.join(paths.config, 'main-window-bounds.json'));
-app.on('before-quit', () => agentWindowPersistence.setQuitting());
+let agentWindowPersistence: AgentWindowPersistence | undefined;
+function getAgentWindowPersistence(): AgentWindowPersistence {
+  agentWindowPersistence ??= new AgentWindowPersistence(path.join(paths.config, 'agent-windows.json'), path.join(paths.config, 'main-window-bounds.json'));
+  return agentWindowPersistence;
+}
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -182,10 +185,10 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   // Where the user left it last time, if that spot is still on a connected display.
   const restoredMainBounds = windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : null;
   const saved = requestedBounds ?? restoredMainBounds;
-  const persistedWindow = agentWindowPersistence.all().find(record => record.windowKey === windowKey);
+  const persistedWindow = getAgentWindowPersistence().all().find(record => record.windowKey === windowKey);
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
-  const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
+  const knownKeys = getAgentWindowPersistence().all().map(record => record.windowKey);
   const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
   const windowURL = `${ url }${ initialTabsQuery(initialTabs) }`;
   const window = createWindow(
@@ -218,13 +221,13 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
 
   const persistGeometry = () => {
     const key = agentWindowRegistry.windowKeyOf(window);
-    if (key) agentWindowPersistence.update(key, window.getNormalBounds(), window.isMaximized());
+    if (key) getAgentWindowPersistence().update(key, window.getNormalBounds(), window.isMaximized());
   };
   window.on('move', persistGeometry);
   window.on('resize', persistGeometry);
   window.on('maximize', persistGeometry);
   window.on('unmaximize', persistGeometry);
-  window.on('close', () => { persistGeometry(); agentWindowPersistence.flush(); });
+  window.on('close', () => { persistGeometry(); getAgentWindowPersistence().flush(); });
   if (mainBounds.track(window)) {
     if (restoredMainBounds?.fullScreen) window.setFullScreen(true);
     else if (persistedWindow?.maximized ?? restoredMainBounds?.maximized) window.maximize();
@@ -313,7 +316,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
 
   window.on('closed', () => {
     const key = agentWindowRegistry.windowKeyOf(window);
-    if (key) agentWindowPersistence.remove(key);
+    if (key) getAgentWindowPersistence().remove(key);
     const remainingAgentWindows = agentWindowRegistry.getAgentWindows().filter(other => other.id !== window.id).length;
     const quit = shouldQuitOnAgentWindowClosed({
       closingViaLastTab:   windowsClosedByLastTab.delete(window.id),
@@ -337,7 +340,7 @@ setAgentWindowCreator(createAgentWindow);
 
 export function openAgentWindow(options: AgentWindowOptions = {}) { return agentWindowRegistry.openAgentWindow(createAgentWindow, options); }
 export function restoreAgentWindows() {
-  const records = agentWindowPersistence.all();
+  const records = getAgentWindowPersistence().all();
   if (!records.length) return ensureAgentWindow();
   const workAreas = screen.getAllDisplays().map(display => display.workArea);
   let first: BrowserWindow | undefined;
@@ -424,6 +427,7 @@ function sendToMain(payload: Record<string, unknown>): void {
 
 // Allow renderer processes to open URLs inside the app via IPC.
 if (process.type === 'browser') {
+  app.on('before-quit', () => getAgentWindowPersistence().setQuitting());
   void import('./browserTabViewManager').then(({ BrowserTabViewManager }) => {
     new TabTransferService(ipcMain, screen, agentWindowRegistry.agentWindowFor.bind(agentWindowRegistry), agentWindowRegistry.getAgentWindowsByFocusOrder.bind(agentWindowRegistry), openAgentWindow, BrowserTabViewManager.getInstance()).install();
   }).catch(error => console.error('[TabTransfer] Could not initialize transfer service', error));
