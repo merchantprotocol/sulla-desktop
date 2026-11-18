@@ -16,6 +16,7 @@ export interface ChatThreadStatePort {
   loadThreadState(id: string): Promise<unknown>;
   loadMessagesBefore(id: string, beforeMessageId: string, limit: number): Promise<any[]>;
   deleteThreadState(id: string): Promise<unknown>;
+  deleteMessages(threadId: string, messageIds: string[]): Promise<unknown>;
   getMessageCount(id: string): Promise<number>;
 }
 
@@ -75,6 +76,11 @@ export class ChatMessagesIpcController implements IpcController {
 
         return { success: false, error: String(err) };
       }
+    });
+
+    this.ipc.handle('chat-messages:delete-messages', async(_event, input: { threadId: string; messageIds: string[] }) => {
+      try { await store.deleteMessages(input.threadId, input.messageIds); return { success: true }; }
+      catch (err) { log.error('[ChatMessagesIpc] Failed to delete messages:', err); return { success: false, error: String(err) }; }
     });
 
     this.ipc.handle('chat-messages:message-count', async(_event, id: string) => {

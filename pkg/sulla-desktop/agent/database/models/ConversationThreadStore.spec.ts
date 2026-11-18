@@ -56,3 +56,19 @@ describe('ConversationThreadStore older-page reads', () => {
     expect(seen[1].params[2]).toBe(2);
   });
 });
+
+describe('ConversationThreadStore explicit message deletion', () => {
+  it('soft-deletes only the requested durable ids', async() => {
+    // risk: data accuracy — retry/regenerate must not resurrect discarded assistant turns
+    const calls: Array<{ text: string; params: any[] }> = [];
+    const db: Queryable = { query: async(text, params = []) => {
+      calls.push({ text, params });
+      if (text.includes('FROM conversation_history') && text.includes('LIMIT 1')) return { rows: [{ id: 'thread-a' }] };
+      return { rows: [] };
+    } };
+    const { deleteMessagesWith } = await import('./ConversationThreadStore');
+    await deleteMessagesWith(db, 'thread-a', ['answer-1']);
+    const deletion = calls.find(call => call.text.includes('UPDATE conversation_messages'));
+    expect(deletion?.params).toEqual(['thread-a', ['thread-a:answer-1']]);
+  });
+});

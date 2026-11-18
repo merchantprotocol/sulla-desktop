@@ -102,7 +102,9 @@ let loadingOlder = false;
 let historyExhausted = false;
 async function loadOlderOnScroll(): Promise<void> {
   const el = scroller.value;
-  if (!el || loadingOlder || historyExhausted || el.scrollTop >= 200) return;
+  if (!el) return;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) controller.releaseOlderPages();
+  if (loadingOlder || historyExhausted || el.scrollTop >= 200) return;
   const messages = controller.messages.value;
   const oldest = messages[0];
   if (!oldest) return;

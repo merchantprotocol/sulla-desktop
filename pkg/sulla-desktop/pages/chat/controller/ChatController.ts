@@ -202,7 +202,9 @@ export class ChatController {
    * existing watchers or be notified separately.
    */
   newChat(): void {
+    const oldThreadId = this.thread.value.id;
     const blank = this.fresh();
+    void import('@pkg/utils/ipcRenderer').then(({ ipcRenderer }) => ipcRenderer.invoke('chat-messages:delete', oldThreadId));
     this.thread.value = blank.thread;
     this.runState.value = blank.runState;
     this.queue.value = [];
@@ -375,6 +377,11 @@ export class ChatController {
     this.continueHandler = handlers.onContinue;
   }
 
+  private async deleteMessagesDurably(messageIds: MessageId[]): Promise<void> {
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
+    await ipcRenderer.invoke('chat-messages:delete-messages', { threadId: this.thread.value.id, messageIds: messageIds.map(String) });
+  }
+
   // ─── Message CRUD ───────────────────────────────────────────────
   private olderPagesLoaded = 0;
 
@@ -468,6 +475,7 @@ export class ChatController {
   }
 
   removeMessage(id: MessageId): void {
+    void this.deleteMessagesDurably([id]);
     this.thread.value = {
       ...this.thread.value,
       messages:  this.thread.value.messages.filter(m => m.id !== id),
@@ -492,6 +500,8 @@ export class ChatController {
     while (userIdx >= 0 && msgs[userIdx].kind !== 'user') userIdx--;
     if (userIdx < 0) return;
     const user = msgs[userIdx] as UserMessage;
+    const removedIds = msgs.slice(userIdx + 1).map(message => message.id);
+    if (removedIds.length) void this.deleteMessagesDurably(removedIds);
     this.thread.value = {
       ...this.thread.value,
       messages:  msgs.slice(0, userIdx + 1),

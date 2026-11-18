@@ -322,6 +322,15 @@ export async function deleteThreadStateWith(db: Queryable, idOrThreadId: string)
   await refreshHeader(db, headerId);
 }
 
+export async function deleteMessagesWith(db: Queryable, threadId: string, messageIds: string[]): Promise<void> {
+  if (!threadId || !messageIds.length) return;
+  const headerId = await resolveHeaderId(db, threadId);
+  if (!headerId) return;
+  const rowIds = messageIds.map(id => `${threadId}:${id}`);
+  await db.query(`UPDATE conversation_messages SET deleted_at = now(), updated_at = now() WHERE conversation_id = $1 AND id = ANY($2::text[]) AND deleted_at IS NULL`, [headerId, rowIds]);
+  await refreshHeader(db, headerId);
+}
+
 export async function getMessageCountWith(db: Queryable, idOrThreadId: string): Promise<number> {
   const headerId = await resolveHeaderId(db, idOrThreadId);
   if (!headerId) return 0;
@@ -374,6 +383,10 @@ export class ConversationThreadStore {
 
   static deleteThreadState(idOrThreadId: string): Promise<void> {
     return postgresClient.transaction(client => deleteThreadStateWith(client, idOrThreadId));
+  }
+
+  static deleteMessages(threadId: string, messageIds: string[]): Promise<void> {
+    return postgresClient.transaction(client => deleteMessagesWith(client, threadId, messageIds));
   }
 
   static getMessageCount(idOrThreadId: string): Promise<number> {
