@@ -131,7 +131,7 @@ export class TabTransferService {
   private waitForRendererReady(target: BrowserWindow): Promise<void> {
     if (this.readyWindows.has(target.id)) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.ipc.removeListener('tabs:transfer-ready', listener); reject(new Error('target renderer did not become ready')); }, 10000);
+      const timer = setTimeout(() => { this.ipc.removeListener('tabs:transfer-ready', listener); reject(new Error('target renderer did not become ready')); }, 30000);
       const listener = (event: IpcMainEvent) => {
         if (event.sender.id !== target.webContents.id) return;
         clearTimeout(timer);

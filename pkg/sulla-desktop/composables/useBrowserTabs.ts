@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { reactive, readonly, ref, watch } from 'vue';
+import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -863,3 +863,74 @@ export function closeTabByAssetId(assetId: string): boolean {
 
   return true;
 }
+
+export function applyTransferAdoption(adopt: (descriptor: BrowserTab) => unknown, descriptor: Record<string, unknown>, acknowledge: () => void): void {
+  if (!descriptor.id) return;
+  adopt(descriptor as BrowserTab);
+  acknowledge();
+}
+
+/** Insertion index for a tab dropped at screenX: the first tab whose midpoint is right of the drop, else append. */
+export function transferDropIndex(screenX: number | undefined, tabCount: number): number {
+  const tabEls = Array.from(document.querySelectorAll<HTMLElement>('.tab-item'));
+  if (tabEls.length === 0) return tabCount;
+  const localX = (screenX ?? window.screenX) - window.screenX;
+  for (let i = 0; i < tabEls.length; i++) {
+    const rect = tabEls[i].getBoundingClientRect();
+    if (localX < rect.left + rect.width / 2) return i;
+  }
+  return tabCount;
+}
+
+/** Adopt a dropped tab at its drop position. Works before the UI is mounted (no DOM tabs means append). */
+export function adoptTransferredTab(
+  store: Pick<ReturnType<typeof useBrowserTabs>, 'tabs' | 'adoptTab'>,
+  descriptor: BrowserTab,
+  transient: Record<string, unknown> | undefined,
+  screenX: number | undefined,
+): BrowserTab {
+  return store.adoptTab(descriptor, transferDropIndex(screenX, store.tabs.length), transient);
+}
+
+/**
+ * Release a tab leaving this window. If it is the active tab, first navigate to a neighbour,
+ * then release, then wait for Vue to flush so ChatPage unmounts and saves chat state before the
+ * target adopts the tab. The ack is sent only after that flush.
+ */
+export async function releaseTransferredTab(
+  store: Pick<ReturnType<typeof useBrowserTabs>, 'tabs' | 'releaseTab'>,
+  transferId: string,
+  tabId: string,
+  acknowledge: (transferId: string, tabId: string) => void,
+): Promise<void> {
+  const index = store.tabs.findIndex(tab => tab.id === tabId);
+  if (index < 0) return;
+  if (getPersistedActiveTabId() === tabId) {
+    const neighbour = store.tabs[index + 1] ?? store.tabs[index - 1];
+    if (neighbour) window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: neighbour.id } }));
+  }
+  if (!store.releaseTab(tabId)) return;
+  await nextTick();
+  acknowledge(transferId, tabId);
+}
+
+// Transfer IPC is registered as the store module evaluates, before AgentRouter mounts.
+// This lets a freshly-created window acknowledge adoption while its UI is still booting.
+const transferTabs = useBrowserTabs();
+ipcRenderer.on('tabs:release', (_event: unknown, transferId: string, tabId: string) => {
+  void releaseTransferredTab(transferTabs, transferId, tabId, (id, released) => ipcRenderer.send('tabs:transfer-released', id, released));
+});
+ipcRenderer.on('tabs:adopt', (_event: unknown, transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number) => {
+  const tabId = String(descriptor.id || '');
+  applyTransferAdoption(value => adoptTransferredTab(transferTabs, value, transient, screenX), descriptor, () => ipcRenderer.send('tabs:transfer-adopted', transferId, tabId));
+});
+ipcRenderer.on('tabs:activate', (_event: unknown, _transferId: string, tabId: string) => {
+  if (transferTabs.tabs.some(tab => tab.id === tabId)) {
+    persistActiveTabId(tabId);
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId } }));
+  }
+});
+ipcRenderer.on('tabs:release-finalize', () => {
+  if (transferTabs.tabs.length === 0) ipcRenderer.send('agent-window:close-self');
+});
+ipcRenderer.send('tabs:transfer-ready');
