@@ -73,4 +73,24 @@ describe('BrowserTabViewManager window ownership', () => {
     expect(manager.getFocusedTab(second)).toBe('second-tab');
     expect(() => manager.setFocusedTab('first-tab', undefined, undefined, second)).toThrow('not owned');
   });
+
+  it('destroys views when their owner closes but preserves views marked as transferring', () => {
+    // risk: losing a live tab during a cross-window handoff
+    const owner = ownerWindow(21);
+    const transferringOwner = ownerWindow(22);
+    const manager = Object.create(BrowserTabViewManager.prototype) as any;
+    manager.owners = new Map([['owned', owner], ['handoff', transferringOwner]]);
+    manager.transferringTabs = new Set(['handoff']);
+    manager.focusedTabIds = new Map([[owner.id, 'owned'], [transferringOwner.id, 'handoff']]);
+    manager.trackedOwnerWindowIds = new Set([owner.id, transferringOwner.id]);
+    manager.destroyView = vi.fn();
+
+    manager.destroyWindowViews(owner);
+    manager.destroyWindowViews(transferringOwner);
+
+    expect(manager.destroyView).toHaveBeenCalledTimes(1);
+    expect(manager.destroyView).toHaveBeenCalledWith('owned');
+    expect(manager.destroyView).not.toHaveBeenCalledWith('handoff');
+    expect(manager.focusedTabIds.has(owner.id)).toBe(false);
+  });
 });

@@ -16,7 +16,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
-import { getWindow, openUrlInApp } from '@pkg/window';
+import { getWindow, openUrlInApp, windowMapping } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 import { BrowserLoginVault } from '@pkg/window/browserLoginVault';
 
@@ -117,6 +117,17 @@ export class BrowserTabViewManager {
     owner.once('closed', () => this.destroyWindowViews(owner));
   }
 
+  private activeAgentWindow(): Electron.BrowserWindow | null {
+    const focused = Electron.BrowserWindow.getFocusedWindow();
+    if (focused && Object.entries(windowMapping).some(([name, id]) => id === focused.id && (name === 'main-agent' || name.startsWith('agent:')))) return focused;
+    return getWindow('main-agent') ?? null;
+  }
+
+  markTransferring(tabId: string, transferring: boolean): void {
+    if (transferring) this.transferringTabs.add(tabId);
+    else this.transferringTabs.delete(tabId);
+  }
+
   /** Check that a renderer is the registered owner of this tab. */
   ownsTab(tabId: string, owner: Electron.BrowserWindow): boolean {
     return this.ownerFor(tabId) === owner;
@@ -138,6 +149,8 @@ export class BrowserTabViewManager {
   private latestBounds = new Map<string, Electron.Rectangle>();
   /** A moved view remains parked until its new renderer supplies layout bounds. */
   private awaitingOwnerBounds = new Set<string>();
+  /** Views temporarily handed off to another window must survive source close. */
+  private transferringTabs = new Set<string>();
   /**
    * Placement last pushed to each native view ('focused' or the parked
    * rect). Lets reconcileVisibility skip views already where they belong,
@@ -268,9 +281,8 @@ export class BrowserTabViewManager {
       storePath = path.join(Electron.app.getPath('userData'), 'browser-site-permissions.json');
     } catch { /* tests / app not ready — keep decisions in memory */ }
 
-    let permissionParent: Electron.BrowserWindow | null = null;
     const policy = new BrowserPermissionPolicy(new SitePermissionStore(storePath), async(origin, description) => {
-      const parent = permissionParent && !permissionParent.isDestroyed() ? permissionParent : getWindow('main-agent');
+      const parent = this.activeAgentWindow();
       const options: Electron.MessageBoxOptions = {
         type:      'question',
         buttons:   ['Block', 'Allow'],
@@ -303,7 +315,7 @@ export class BrowserTabViewManager {
     });
     sess.setPermissionRequestHandler((wc, permission, callback, details) => {
       const origin = originOf((details as any)?.requestingUrl) ?? originOf(wc.getURL());
-      permissionParent = this.ownerFor([...this.views.keys()].find(id => this.views.get(id)?.webContents === wc) ?? '');
+      const permissionParent = this.ownerFor([...this.views.keys()].find(id => this.views.get(id)?.webContents === wc) ?? '');
 
       policy.request({ permission, origin, details: details as any, userVisible: isUserVisible(wc) })
         .then(callback, () => callback(false));
@@ -314,7 +326,7 @@ export class BrowserTabViewManager {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = getWindow('main-agent')): void {
+  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): void {
     // Idempotent: if the view already exists, just navigate (if URL changed)
     // and cache the new bounds. Actual attach/visibility state is driven
     // exclusively by `focusedTabId` via reconcileVisibility.
@@ -452,7 +464,7 @@ export class BrowserTabViewManager {
   }
 
   private destroyWindowViews(owner: Electron.BrowserWindow): void {
-    for (const [tabId, tabOwner] of [...this.owners]) if (tabOwner === owner) this.destroyView(tabId);
+    for (const [tabId, tabOwner] of [...this.owners]) if (tabOwner === owner && !this.transferringTabs.has(tabId)) this.destroyView(tabId);
     this.focusedTabIds.delete(owner.id);
     this.trackedOwnerWindowIds.delete(owner.id);
   }
@@ -545,7 +557,7 @@ export class BrowserTabViewManager {
    * comes up). Every caller — renderer, chrome-api, login overlay —
    * funnels through here. `reconcileVisibility` does the mechanical work.
    */
-  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number, ownerWindow: Electron.BrowserWindow | null = getWindow('main-agent')): void {
+  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): void {
     if (!ownerWindow || ownerWindow.isDestroyed()) return;
     if (tabId && !this.ownsTab(tabId, ownerWindow)) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
     const focusedTabId = this.focusedFor(ownerWindow);
@@ -579,7 +591,7 @@ export class BrowserTabViewManager {
     return () => this.viewCreatedListeners.delete(listener);
   }
 
-  getFocusedTab(ownerWindow: Electron.BrowserWindow | null = getWindow('main-agent')): string | null {
+  getFocusedTab(ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): string | null {
     return ownerWindow ? this.focusedFor(ownerWindow) : null;
   }
 
@@ -619,7 +631,7 @@ export class BrowserTabViewManager {
    */
   private reconcileVisibility(ownerWindow?: Electron.BrowserWindow): number {
     const windows = ownerWindow ? [ownerWindow] : [...new Set(this.owners.values())];
-    if (!windows.length && getWindow('main-agent')) windows.push(getWindow('main-agent')!);
+    if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
     let totalTouched = 0;
 
     // Park unfocused views just off-screen to the left: x = -(width + margin)
