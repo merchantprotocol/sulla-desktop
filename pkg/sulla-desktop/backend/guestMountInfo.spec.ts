@@ -41,14 +41,20 @@ describe('Files anchor mount classification', () => {
 
   it('accepts self-bind anchors when /mnt is not a separate mount', () => {
     // risk: availability — preserve the existing mount layout used by other VMs.
-    const entries = parseMountInfo('603 34 0:31 /mnt/sulla /mnt/sulla rw - tmpfs tmpfs rw');
+    const entries = parseMountInfo([
+      '1 0 0:1 / / rw - rootfs rootfs rw',
+      '603 1 0:31 /mnt/sulla /mnt/sulla rw - tmpfs tmpfs rw',
+    ].join('\n'));
 
     expect(classifyFilesAnchor(entries, '/mnt/sulla').state).toBe('anchor');
   });
 
   it('refuses a fresh tmpfs mounted at /mnt/sulla', () => {
     // risk: data safety — never mistake an unrelated mount for our self-bind anchor.
-    const entries = parseMountInfo('603 34 0:31 / /mnt/sulla rw - tmpfs tmpfs rw');
+    const entries = parseMountInfo([
+      '34 1 0:31 / /mnt rw - tmpfs tmpfs rw',
+      '603 34 0:31 / /mnt/sulla rw - tmpfs tmpfs rw',
+    ].join('\n'));
 
     expect(classifyFilesAnchor(entries, '/mnt/sulla').state).toBe('unexpected');
   });
