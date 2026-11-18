@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DesktopVaultIdentityRepository, DesktopVaultTransport } from './desktopTransport';
 
+// desktopTransport.ts imports Electron at module load; the specs inject their own session/safeStorage factories.
+vi.mock('electron', () => {
+  const app = { on: vi.fn(), isPackaged: false, getPath: vi.fn(() => '/tmp') };
+  const safeStorage = { isEncryptionAvailable: vi.fn(() => true), decryptString: vi.fn(), encryptString: vi.fn() };
+  const session = { fromPartition: vi.fn() };
+
+  return { default: { app, safeStorage, session }, app, safeStorage, session };
+});
+
 describe('DesktopVaultTransport sessions', () => {
   it('routes control and explicitly streaming requests to separately pinned sessions', async() => {
     // risk: availability — bounded control calls must not queue behind long-lived stream sockets.

@@ -1,6 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IntegrationService } from './IntegrationService';
 
+// IntegrationService pulls in the vault-broker transport, which imports Electron at module load.
+vi.mock('electron', () => {
+  const app = { on: vi.fn(), isPackaged: false, getPath: vi.fn(() => '/tmp') };
+  const safeStorage = { isEncryptionAvailable: vi.fn(() => true), decryptString: vi.fn(), encryptString: vi.fn() };
+  const session = { fromPartition: vi.fn() };
+
+  return { default: { app, safeStorage, session }, app, safeStorage, session };
+});
+vi.mock('@pkg/agent/database/models/IntegrationValueModel', () => ({ IntegrationValueModel: {} }));
+
 describe('IntegrationService active-account cache', () => {
   afterEach(() => vi.useRealTimers());
 
