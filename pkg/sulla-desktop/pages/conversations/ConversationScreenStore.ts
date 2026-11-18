@@ -15,6 +15,8 @@ export type AvatarTone = '' | 'm' | 'd' | 'p' | 'a';
 /** Presence dot class from the mockup. An empty value means online (the default green dot). */
 export type PresenceClass = 'online' | 'busy' | 'away' | 'offline';
 /** A member of the active org, from the directory IPC. Role is empty when the directory doesn't send one. */
+/** A pending invitation shown under the People list's Invited group. Only the email is shown; never a token or link. */
+export interface InvitedView { id: string; email: string; initials: string }
 export interface PersonView { id: string; name: string; firstName: string; initials: string; tone: AvatarTone; presence: string; presenceClass: PresenceClass; status: string; role: string; agentOnline: boolean; hasAgent: boolean; agentName: string }
 /** A projected conversation for the active org. `withId` is the other person in a direct or agent thread. */
 export interface ThreadView { id: string; kind: 'direct' | 'group' | 'agent_thread'; title: string; participantIds: string[]; latest: string; time: string; unread: number; withId: string }
@@ -35,6 +37,7 @@ export interface LiveSnapshot {
   /** The signed-in member (the YOU group). Null until the directory lists them. */
   me: PersonView | null;
   people: PersonView[];
+  invited?: InvitedView[];
   threads: ThreadView[];
   requests: RequestView[];
   bodies: Record<string, MessageView[]>;
@@ -85,6 +88,7 @@ export class ConversationScreenStore {
   relay(): RelayState { return this.snapshot?.relay ?? 'unknown'; }
   online(): boolean { return this.snapshot?.online ?? true; }
   people(): PersonView[] { return this.snapshot?.people ?? []; }
+  invited(): InvitedView[] { return this.snapshot?.invited ?? []; }
   requests(): RequestView[] { return this.snapshot?.requests ?? []; }
   threads(): ThreadView[] { return this.snapshot?.threads ?? []; }
   thread(id: string | null): ThreadView | undefined { return id ? this.threads().find(thread => thread.id === id) : undefined; }

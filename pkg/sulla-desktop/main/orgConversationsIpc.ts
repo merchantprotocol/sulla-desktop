@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { MessageEnvelope, ParticipantAddress } from '@sulla/domain';
+import { OrgMembershipsCloudClient } from './OrgMembershipsCloudClient';
 import type { IpcController, IpcRegistrar } from './ipc/IpcController';
+import { TeamInvitationsCloudClient } from './TeamInvitationsCloudClient';
 
 export interface OrgConversationsBackend {
   memberOrganizations(): Promise<readonly { orgId: string; name: string; slug?: string; memberCount: number }[]>;
@@ -17,7 +19,18 @@ export interface OrgConversationsBackend {
 
 /** Renderer bridge to the authenticated, org-pinned messaging fleet. */
 export class OrgConversationsIpcController implements IpcController {
-  constructor(private readonly ipc: IpcRegistrar, private readonly backend: () => OrgConversationsBackend) {}
+  constructor(
+    private readonly ipc: IpcRegistrar,
+    private readonly backend: () => OrgConversationsBackend,
+    private readonly memberships: Pick<OrgMembershipsCloudClient, 'list'> = new OrgMembershipsCloudClient(),
+    private readonly invitations: Pick<TeamInvitationsCloudClient, 'listPending'> = new TeamInvitationsCloudClient(),
+  ) {}
+
+  /** Org roles and invitations are keyed by the org id, which the backend resolves for the requested org. */
+  private async orgIdOf(org?: string): Promise<string> {
+    const { membership } = await this.backend().orgMessagingParticipant(org);
+    return membership.orgId;
+  }
 
   register(): void {
     this.ipc.handle('org-conversations:organizations', () => this.backend().memberOrganizations());
@@ -26,6 +39,8 @@ export class OrgConversationsIpcController implements IpcController {
       const result = await this.backend().loadOrgInboxMessages(org);
       return { membership: result.membership, messages: result.messages.map(message => message.data) };
     });
+    this.ipc.handle('org-conversations:memberships', async (_event, org?: string) => ({ memberships: await this.memberships.list(await this.orgIdOf(org)) }));
+    this.ipc.handle('org-conversations:invitations', async (_event, org?: string) => ({ invitations: await this.invitations.listPending(await this.orgIdOf(org)) }));
     this.ipc.handle('org-conversations:participant', (_event, org?: string) => this.backend().orgMessagingParticipant(org));
     this.ipc.handle('org-conversations:contact-requests', async (_event, org?: string) => ({ requests: await this.backend().contactRequests(org) }));
     this.ipc.handle('org-conversations:start', (_event, request: { orgId: string; participantUserIds: string[]; kind?: 'direct' | 'group' | 'agent_thread' }) => {

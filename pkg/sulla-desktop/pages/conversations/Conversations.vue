@@ -10,6 +10,7 @@ import SecretaryMode from '@pkg/pages/SecretaryMode.vue';
 import { ConversationProjection, type ConversationMessageData, type ConversationThreadProjection } from './ConversationProjection';
 import { CONV_STORE, ConversationScreenStore, type LiveSnapshot, type MessageView, type OrgView, type PersonView, type RequestView, type ThreadView } from './ConversationScreenStore';
 import { ConversationViewBuilder, type DirectoryPerson } from './ConversationViewBuilder';
+import { DirectoryPersonNormalizer } from './DirectoryPersonNormalizer';
 import ConvList from './components/ConvList.vue';
 import ConvNav from './components/ConvNav.vue';
 import ConvSide from './components/ConvSide.vue';
@@ -25,9 +26,11 @@ defineEmits<{ (event: 'set-mode', mode: string): void }>();
 // Data layer: org list, directory, inbox, participant, start and send, all through the existing IPC.
 const organizations = ref<Org[]>([]), activeOrg = ref(''), people = ref<Person[]>([]), messages = ref<MessageData[]>([]), localSent = ref<MessageData[]>([]);
 const contactRequests = ref<MessageData[]>([]);
+const invitedRaw = ref<{ id: string; email: string; expiresAt: string }[]>([]);
 const userId = ref(''), userName = ref(''), loading = ref(false), sending = ref(false), secretaryOpen = ref(false), error = ref('');
 const emptyConversations = ref<ConversationThreadProjection[]>([]);
 const projection = new ConversationProjection();
+const directoryNormalizer = new DirectoryPersonNormalizer();
 // The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
 const cloudStatus = ref<Record<string, any> | null>(null);
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
@@ -60,7 +63,7 @@ const snapshot = computed<LiveSnapshot | null>(() => {
     requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
   }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
-  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
+  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, invited: invitedRaw.value.map(entry => views.invitation(entry)), threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
 });
 
 function displayName(id: string): string {
@@ -70,16 +73,20 @@ function displayName(id: string): string {
 async function refresh(): Promise<void> {
   if (!activeOrg.value) return;
   const requestedOrg = activeOrg.value;
-  loading.value = true; error.value = ''; people.value = []; messages.value = []; contactRequests.value = []; emptyConversations.value = []; localSent.value = [];
+  loading.value = true; error.value = ''; people.value = []; invitedRaw.value = []; messages.value = []; contactRequests.value = []; emptyConversations.value = []; localSent.value = [];
   try {
-    const [directory, inbox, participant, contact] = await Promise.all([
+    const [directory, inbox, participant, contact, memberships, invitations] = await Promise.all([
       ipcRenderer.invoke('org-conversations:directory', activeOrg.value),
       ipcRenderer.invoke('org-conversations:inbox', activeOrg.value),
       ipcRenderer.invoke('org-conversations:participant', activeOrg.value),
       ipcRenderer.invoke('org-conversations:contact-requests', activeOrg.value),
+      // Roles and invitations are best-effort: a failed or forbidden read hides the pill or section instead of showing a wrong one.
+      ipcRenderer.invoke('org-conversations:memberships', activeOrg.value).catch(() => ({ memberships: [] })),
+      ipcRenderer.invoke('org-conversations:invitations', activeOrg.value).catch(() => ({ invitations: [] })),
     ]);
     if (activeOrg.value !== requestedOrg) return;
-    people.value = (directory.directory.people as Person[]).map((person: any) => ({ ...person, userId: person.userId ?? person.id, displayName: person.displayName ?? person.name ?? person.userId ?? person.id }));
+    people.value = directoryNormalizer.withRoles(directory.directory.people as Record<string, unknown>[], memberships.memberships ?? []) as Person[];
+    invitedRaw.value = (invitations.invitations ?? []) as { id: string; email: string; expiresAt: string }[];
     messages.value = inbox.messages as MessageData[];
     contactRequests.value = contact.requests as MessageData[];
     userId.value = participant.userId;

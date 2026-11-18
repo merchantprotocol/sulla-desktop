@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ConversationMessageData, ConversationThreadProjection } from './ConversationProjection';
-import type { AvatarTone, MessageView, PersonView, PresenceClass, RelayState, ThreadView } from './ConversationScreenStore';
+import type { AvatarTone, InvitedView, MessageView, PersonView, PresenceClass, RelayState, ThreadView } from './ConversationScreenStore';
 
 /** A directory entry as the org host sends it. Only userId and displayName are guaranteed. */
 export interface DirectoryPerson { userId: string; displayName: string; presence?: string; agentHostOnline?: boolean; agentName?: string; role?: string }
@@ -70,13 +70,19 @@ export class ConversationViewBuilder {
       tone: this.tone(entry.userId),
       presence: entry.presence ?? '',
       presenceClass,
-      status: entry.userId === this.userId && presenceClass === 'online' ? 'Available' : STATUS[presenceClass],
+      status: entry.presence ? STATUS[presenceClass] : entry.userId === this.userId ? 'Available' : entry.agentHostOnline ? 'Agent online' : 'Offline',
       role: typeof entry.role === 'string' ? entry.role.charAt(0).toUpperCase() + entry.role.slice(1) : '',
       agentOnline: !!entry.agentHostOnline,
       // The directory reports an agent host (online or not) or names the member's agent.
       hasAgent: typeof entry.agentHostOnline === 'boolean' || !!entry.agentName,
-      agentName: entry.agentName ?? '',
+      agentName: entry.agentName ?? (entry.userId === this.userId ? 'Your agent' : `${entry.displayName.split(/\s+/)[0]}'s agent`),
     };
+  }
+
+  /** An Invited row: the email is the only identity an invitation has, so the initials come from its local part. */
+  invitation(entry: { id: string; email: string }): InvitedView {
+    const local = entry.email.split('@')[0] ?? '';
+    return { id: entry.id, email: entry.email, initials: this.initials(local.replace(/[._-]+/g, ' ')) };
   }
 
   /** A stable org chip gradient, so an org keeps its colour in the nav, the switcher and the composer. */
