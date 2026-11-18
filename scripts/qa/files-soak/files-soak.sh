@@ -39,6 +39,7 @@ import re
 import shutil
 import signal
 import subprocess
+import threading
 import sys
 import time
 from pathlib import Path
@@ -359,8 +360,8 @@ class FilesSoak:
         folder.mkdir(exist_ok=True)
         success_log = STATE_DIR / "crash-success.log"
         success_log.touch(exist_ok=True)
-        stop_event = multiprocessing.Event()
-        writer = multiprocessing.Process(target=self._crash_writer, args=(str(folder), str(success_log), stop_event), daemon=True)
+        stop_event = threading.Event()
+        writer = threading.Thread(target=self._crash_writer, args=(str(folder), str(success_log), stop_event), daemon=True)
         writer.start()
         time.sleep(2)
         self._restart_action("restart-files-container", ["docker", "restart", "--time", "10", "sulla_files"], 40)
