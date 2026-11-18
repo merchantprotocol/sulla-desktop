@@ -12,22 +12,39 @@ class MemoryChunkStore {
   async storedSize(_collection:string, id:string) { return this.chunks.get(id)?.byteLength }
   async getBounded(_collection:string, id:string) { return this.chunks.get(id)! }
   async put(_collection:string, id:string, bytes:Uint8Array) { this.chunks.set(id, Buffer.from(bytes)) }
+  readonly quarantined:Uint8Array[] = [];
+  async quarantineAndReplace(_collection:string,id:string,bytes:Uint8Array) {
+    this.quarantined.push(Buffer.from(this.chunks.get(id)!)); this.chunks.set(id,Buffer.from(bytes));
+    return {oldBlobRef:'old-ref',newBlobRef:'new-ref'};
+  }
 }
 
 describe('VersionContentStager dedupe verification', () => {
-  it('rejects a same-id blob whose AEAD/content identity does not verify under the current keys', async() => {
-    // risk: data integrity — never create a version that silently reuses ciphertext unreadable by the collection key.
+  it('quarantines an invalid same-id blob, audits it, and restores readable identical content', async() => {
+    // risk: data integrity — preserve corrupt bytes while making identical content readable again.
     const collectionId = 'collection'; const data = Buffer.alloc(32, 1); const dedup = Buffer.alloc(32, 2);
-    const store = new MemoryChunkStore(); const stager = new VersionContentStager(
-      { keys: async() => ({ data, dedup }) }, store,
-      { chunkId, encryptChunk, decryptAndVerifyChunk },
+    const store = new MemoryChunkStore(); const audits:any[]=[]; const stager = new VersionContentStager(
+      { keys: async() => ({ data:Buffer.from(data), dedup:Buffer.from(dedup) }), keysFresh:async() => ({ data:Buffer.from(data), dedup:Buffer.from(dedup) }) }, store,
+      { chunkId, encryptChunk, encryptChunkForCollection:(plain,key,id,active,collection) => defaultChunkCrypto.encryptChunkForCollection(plain,key,id,active,collection), decryptAndVerifyChunk },
+      undefined, async event => { audits.push(event) },
     );
     const bytes = Buffer.from('deterministic plaintext');
     const id = chunkId(bytes, dedup);
     store.chunks.set(id, Buffer.from('not-valid-ciphertext'));
-    await expect(stager.stage(collectionId, bytes)).rejects.toMatchObject({
-      status: 422, code: 'chunk_key_mismatch', collectionId, chunkId: id,
-    } satisfies Partial<ChunkKeyMismatchError>);
+    await stager.stage(collectionId, bytes);
+    expect(store.quarantined).toHaveLength(1);
+    expect(Buffer.from(store.quarantined[0]).toString()).toBe('not-valid-ciphertext');
+    expect(audits).toEqual([{collectionId,chunkId:id,oldBlobRef:'old-ref',newBlobRef:'new-ref',reason:'decrypt_verify_failed'}]);
+    expect(await decryptAndVerifyChunk(store.chunks.get(id)!,data,dedup,id,bytes.length)).toEqual(bytes);
+  });
+
+  it('dedupes healthy chunks without rewriting them', async() => {
+    // risk: data integrity — avoid replacing valid immutable ciphertext on an ordinary repeat upload.
+    const collectionId='collection'; const data=Buffer.alloc(32,1); const dedup=Buffer.alloc(32,2); const store=new MemoryChunkStore();
+    const stager=new VersionContentStager({keys:async()=>({data,dedup})},store,{chunkId,encryptChunk,decryptAndVerifyChunk});
+    const bytes=Buffer.from('healthy'); const id=chunkId(bytes,dedup); store.chunks.set(id,await encryptChunk(bytes,data,id));
+    const before=Buffer.from(store.chunks.get(id)!); await stager.stage(collectionId,bytes);
+    expect(store.quarantined).toHaveLength(0); expect(store.chunks.get(id)).toEqual(before);
   });
 });
 
@@ -44,6 +61,17 @@ describe('VersionContentStager active-key assertion', () => {
     );
     await expect(stager.stage('collection', bytes)).rejects.toMatchObject({ status:503, code:'collection_key_unavailable' });
     expect(store.chunks.size).toBe(0);
+  });
+  it('does not quarantine or touch a corrupt blob when the stager key is stale', async() => {
+    // risk: data integrity — a stale key must not replace a good current-key object or create a quarantine audit.
+    const stale={data:Buffer.alloc(32,1),dedup:Buffer.alloc(32,2)}; const active={data:Buffer.alloc(32,3),dedup:Buffer.alloc(32,2)};
+    const store=new MemoryChunkStore(); const bytes=Buffer.from('stale-cache regression'); const id=chunkId(bytes,stale.dedup);
+    store.chunks.set(id,Buffer.from('preserve this blob')); const before=Buffer.from(store.chunks.get(id)!); let audits=0;
+    const stager=new VersionContentStager({keys:async()=>({data:Buffer.from(stale.data),dedup:Buffer.from(stale.dedup)}),keysFresh:async()=>({data:Buffer.from(active.data),dedup:Buffer.from(active.dedup)})},store,
+      {chunkId,encryptChunk,encryptChunkForCollection:(plain,key,chunkId,activeKey,collection) => defaultChunkCrypto.encryptChunkForCollection(plain,key,chunkId,activeKey,collection),decryptAndVerifyChunk},
+      undefined,async()=>{audits++});
+    await expect(stager.stage('collection',bytes)).rejects.toMatchObject({status:503,code:'collection_key_unavailable'});
+    expect(store.quarantined).toHaveLength(0); expect(audits).toBe(0); expect(store.chunks.get(id)).toEqual(before);
   });
   it('stores a chunk when cached and freshly resolved collection keys match', async() => {
     // risk: data integrity — confirms correct collection key writes still pass the guard and are decryptable.

@@ -43,7 +43,7 @@ export interface StreamedUpload {
 }
 
 type StreamInput = Pick<StreamingUploadInput, 'uploadId' | 'collectionId' | 'expectedBytes' | 'maxBytes' | 'body' | 'intentDb'>;
-type ChunkStore = Pick<Store, 'put' | 'getBounded'>;
+type ChunkStore = Pick<Store, 'put' | 'getBounded'> & Partial<Pick<Store,'quarantineAndReplace'>>;
 
 /**
  * Streams an upload into encrypted chunks (phase 1, no transaction) and commits its metadata
@@ -84,7 +84,13 @@ export class StreamingUploadService {
         const published = await store.put(input.collectionId, id, encrypted);
         if (!published) {
           const winner = await store.getBounded(input.collectionId, id, maxStoredBytes, encrypted.byteLength);
-          await this.crypto.decryptAndVerifyChunk(winner, dataKey, dedupKey, id, plain.byteLength);
+          try { await this.crypto.decryptAndVerifyChunk(winner, dataKey, dedupKey, id, plain.byteLength) }
+          catch (error) {
+            if (!store.quarantineAndReplace) throw error;
+            const refs=await store.quarantineAndReplace(input.collectionId,id,encrypted);
+            await input.intentDb.query('INSERT INTO file_chunk_quarantine(collection_id,chunk_id,old_blob_ref,new_blob_ref,reason) VALUES($1,$2,$3,$4,$5)',
+              [input.collectionId,id,refs.oldBlobRef,refs.newBlobRef,'decrypt_verify_failed']);
+          }
         }
       });
       chunks.push({ id, size: plain.byteLength, storedSize: encrypted.byteLength });

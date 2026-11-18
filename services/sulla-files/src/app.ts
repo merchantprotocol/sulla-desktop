@@ -232,7 +232,9 @@ export class FilesApplication {
   private routeServices(app:express.Express, core:FilesCore):FilesRouteServices {
     const { db, config, manager } = this.dependencies;
     const { store, transactions } = core;
-    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id), keysFresh: id => config.keyring!.keysFresh(id), invalidate: id => config.keyring!.invalidate(id) }, store, { chunkId, encryptChunk, encryptChunkForCollection: (plain, key, id, active, collectionId) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, active, collectionId), decryptAndVerifyChunk }, core.metrics);
+    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id), keysFresh: id => config.keyring!.keysFresh(id), invalidate: id => config.keyring!.invalidate(id) }, store, { chunkId, encryptChunk, encryptChunkForCollection: (plain, key, id, active, collectionId) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, active, collectionId), decryptAndVerifyChunk }, core.metrics,
+      event => db.query('INSERT INTO file_chunk_quarantine(collection_id,chunk_id,old_blob_ref,new_blob_ref,reason) VALUES($1,$2,$3,$4,$5)',
+        [event.collectionId,event.chunkId,event.oldBlobRef,event.newBlobRef,event.reason]).then(() => undefined));
     const accessGate = new FilesAccessGate(db);
     const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db), core.metrics);
     const managers = new LocalManagerGate(config, manager);
