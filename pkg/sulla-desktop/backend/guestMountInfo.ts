@@ -163,6 +163,9 @@ export function describeMountEntry(entry?: MountInfoEntry): string {
 
 type GuestExec = Pick<VMExecutor, 'execCommand'>;
 
+/** Executors already warned about a shared anchor peer group, so the warning logs once per VM session. */
+const warnedSharedPeerGroupExecs = new WeakSet<GuestExec>();
+
 /** Read and classify the guest Files path. Throws when mountinfo cannot be read. */
 export async function probeFilesAnchor(exec: GuestExec, path: string = SULLA_FILES_GUEST_MOUNT_PATH): Promise<FilesAnchorClassification> {
   const text = await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo');
@@ -202,13 +205,18 @@ export async function prepareSullaFilesGuestAnchor(exec: GuestExec, path:string 
     parent = await probeFilesAnchor(exec, SULLA_FILES_GUEST_PARENT_PATH);
   }
   if (parent.state !== 'anchor') throw new Error(`Refusing to reuse unexpected Files parent mount (${ describeMountEntry(parent.entry) })`);
-  // Give the anchor a fresh peer group when it was just self-bound, or when it still sits in its
-  // parent's group (see anchorSharesParentPeerGroup). Otherwise the rshared below is a no-op on
-  // an anchor that already has its own group, so nothing is re-peered and running consumers keep
-  // their rslave binds. This only does real work at VM start, before containers bind the anchor.
-  const mountInfo = parseMountInfo(await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo'));
-  if (justBound || anchorSharesParentPeerGroup(mountInfo, SULLA_FILES_GUEST_PARENT_PATH)) {
+  // Re-peer ONLY an anchor that this call just self-bound (it joined /mnt's peer group on bind).
+  // Never re-peer a live anchor: a running adapter's bind stays in the old group, so moving the
+  // anchor to a new group would make later FUSE mounts miss it. An anchor that already exists in
+  // its parent's group (VM booted by an older Desktop) keeps that group until the next VM boot.
+  if (justBound) {
     await exec.execCommand({ root: true }, 'mount', '--make-private', SULLA_FILES_GUEST_PARENT_PATH);
+  } else {
+    const mountInfo = parseMountInfo(await exec.execCommand({ root: true, capture: true }, 'cat', '/proc/self/mountinfo'));
+    if (anchorSharesParentPeerGroup(mountInfo, SULLA_FILES_GUEST_PARENT_PATH) && !warnedSharedPeerGroupExecs.has(exec)) {
+      warnedSharedPeerGroupExecs.add(exec);
+      console.warn(`[files] ${ SULLA_FILES_GUEST_PARENT_PATH } shares the /mnt peer group; the duplicate FUSE layer will clear on the next VM boot`);
+    }
   }
   await exec.execCommand({ root: true }, 'mount', '--make-rshared', SULLA_FILES_GUEST_PARENT_PATH);
   const probe = await probeFilesAnchor(exec, path);

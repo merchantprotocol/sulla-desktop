@@ -115,8 +115,9 @@ describe('Files anchor peer group (duplicate FUSE layer fix)', () => {
     expect(anchorSharesParentPeerGroup(entries, '/mnt/sulla')).toBe(false);
   });
 
-  it('re-peers an existing anchor that is in the /mnt peer group', async() => {
-    // risk: availability — the duplicate FUSE layer comes from the anchor and /mnt sharing one group.
+  it('does not re-peer a live anchor that still shares the /mnt peer group, and warns once', async() => {
+    // risk: availability — re-peering a live anchor strands the running adapter's next FUSE mount in the old group.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const guest = fakeGuest([
       ROOT_LINE,
       MNT_LINE,
@@ -124,10 +125,14 @@ describe('Files anchor peer group (duplicate FUSE layer fix)', () => {
     ]);
 
     await expect(prepareSullaFilesGuestAnchor(guest.exec)).resolves.toBe('anchor');
+    await expect(prepareSullaFilesGuestAnchor(guest.exec)).resolves.toBe('anchor');
     expect(mountCommands(guest.commands)).toEqual([
-      ['mount', '--make-private', '/mnt/sulla'],
+      ['mount', '--make-rshared', '/mnt/sulla'],
       ['mount', '--make-rshared', '/mnt/sulla'],
     ]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('next VM boot');
+    warn.mockRestore();
   });
 
   it('issues no re-peer when the anchor already has its own peer group', async() => {
