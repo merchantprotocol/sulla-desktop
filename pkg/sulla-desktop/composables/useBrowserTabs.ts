@@ -864,6 +864,12 @@ export function closeTabByAssetId(assetId: string): boolean {
   return true;
 }
 
+export function applyTransferAdoption(adopt: (descriptor: BrowserTab) => unknown, descriptor: Record<string, unknown>, acknowledge: () => void): void {
+  if (!descriptor.id) return;
+  adopt(descriptor as BrowserTab);
+  acknowledge();
+}
+
 // Transfer IPC is registered as the store module evaluates, before AgentRouter mounts.
 // This lets a freshly-created window acknowledge adoption while its UI is still booting.
 const transferTabs = useBrowserTabs();
@@ -873,9 +879,7 @@ ipcRenderer.on('tabs:release', (_event: unknown, transferId: string, tabId: stri
 });
 ipcRenderer.on('tabs:adopt', (_event: unknown, transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>) => {
   const tabId = String(descriptor.id || '');
-  if (!tabId) return;
-  transferTabs.adoptTab(descriptor as BrowserTab, undefined, transient);
-  ipcRenderer.send('tabs:transfer-adopted', transferId, tabId);
+  applyTransferAdoption(value => transferTabs.adoptTab(value, undefined, transient), descriptor, () => ipcRenderer.send('tabs:transfer-adopted', transferId, tabId));
 });
 ipcRenderer.on('tabs:activate', (_event: unknown, _transferId: string, tabId: string) => {
   if (transferTabs.tabs.some(tab => tab.id === tabId)) {

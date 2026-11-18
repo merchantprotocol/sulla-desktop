@@ -31,6 +31,10 @@ export interface Shortcut {
   key:       string | number;
 }
 
+export function matchesShortcutModifiers(input: Pick<Electron.Input, 'meta' | 'control' | 'shift' | 'alt'>, shortcut: Shortcut): boolean {
+  return Boolean(input.meta) === Boolean(shortcut.meta) && Boolean(input.control) === Boolean(shortcut.control) && Boolean(input.shift) === Boolean(shortcut.shift) && Boolean(input.alt) === Boolean(shortcut.alt);
+}
+
 interface ShortcutExt extends Shortcut {
   callback: () => void;
 }
@@ -60,18 +64,12 @@ class WindowShortcuts {
   private inputCallback = (event: Electron.Event, input: Electron.Input) => {
     const key = Shortcut.key(input);
 
-    if (this.shortcuts[key] && this.matchesModifiers(input, this.shortcuts[key])) {
+    if (this.shortcuts[key] && matchesShortcutModifiers(input, this.shortcuts[key])) {
       this.shortcuts[key].callback();
       event.preventDefault();
     }
   };
 
-  private matchesModifiers(input: Electron.Input, shortcut: Shortcut): boolean {
-    return Boolean(input.meta) === Boolean(shortcut.meta) &&
-      Boolean(input.control) === Boolean(shortcut.control) &&
-      Boolean(input.shift) === Boolean(shortcut.shift) &&
-      Boolean(input.alt) === Boolean(shortcut.alt);
-  }
 
   get shortcutsList() {
     return Object.values(this.shortcuts);

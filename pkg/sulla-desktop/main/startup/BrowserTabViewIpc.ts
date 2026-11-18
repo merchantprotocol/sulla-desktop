@@ -7,6 +7,12 @@ import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 
+export function focusTabForOwner(setFocused: () => void, tabId: string | null, owner: Electron.BrowserWindow, currentOwner: Electron.BrowserWindow | null): void {
+  if (tabId && !currentOwner) return;
+  if (currentOwner && currentOwner !== owner) throw new Error('Browser tab is not owned by this window');
+  setFocused();
+}
+
 /** WebContentsView-backed browser tabs: create, navigate, bounds, focus and script execution. */
 export class BrowserTabViewIpc implements MainProcessIpcStep {
   readonly name = 'browser-tab-views';
@@ -88,11 +94,9 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
     ipc.handle('browser-tab-view:focus', async(event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => {
       const owner = ownerWindow(event);
       const tabOwner = tabId ? tabViewManager.getOwnerWindow(tabId) : null;
-      if (tabId && !tabOwner) return;
-      if (tabOwner && tabOwner !== owner) throw new Error(`Browser tab \"${ tabId }\" is not owned by this window`);
       const clearOwner = clearOnlyIfFocusedTabId ? tabViewManager.getOwnerWindow(clearOnlyIfFocusedTabId) : null;
       if (clearOwner && clearOwner !== owner) throw new Error('Browser tab is not owned by this window');
-      tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId, sentAt, owner);
+      focusTabForOwner(() => tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId, sentAt, owner), tabId, owner, tabOwner);
     });
 
     // A chrome text field (chat composer, address bar) lost focus without any
