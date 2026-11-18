@@ -9,7 +9,8 @@ import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { getSettings } from '@pkg/config/settingsImpl';
 import { getDesktopVaultClient } from '@pkg/agent/services/DesktopVaultClient';
 import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
-import { getSettings as getThreatSettings, getStatus as getThreatStatus, getTrafficLog } from '@pkg/main/threat-proxy';
+import { getDailyCounters, getSettings as getThreatSettings, getStatus as getThreatStatus, getTrafficLog } from '@pkg/main/threat-proxy';
+import { AgentActionsReader, PendingUseCaseApprovalsReader, SecurityRulesReader, ThreatDailyCountersReader } from './summaryReaders';
 import type { CheckId, CheckStatus, SecurityCheckReport, SecurityCheckResult, SecuritySummary } from './types';
 
 const runFile = promisify(execFile);
@@ -33,6 +34,10 @@ export class SecurityCheck {
 /** Main-process security diagnostics and summary. Source-absent summary rows deliberately remain null. */
 export class SecurityCheckService {
   private lastReport: SecurityCheckReport | null = null;
+  private readonly approvalsReader = new PendingUseCaseApprovalsReader();
+  private readonly rulesReader = new SecurityRulesReader();
+  private readonly activityReader = new AgentActionsReader();
+  private readonly threatCountersReader = new ThreatDailyCountersReader(getDailyCounters);
   constructor(private readonly progress: (result: SecurityCheckResult) => void = () => undefined) {}
 
   async runChecks(): Promise<SecurityCheckReport> {
@@ -57,8 +62,8 @@ export class SecurityCheckService {
     return platform === 'darwin' && packaged ? undefined : 'not_checked';
   }
 
-  static threatSummary(enabled: boolean, unavailable: boolean, entries: Record<string, any>[], today: string): SecuritySummary['threat'] {
-    if (!enabled || unavailable) return null;
+  static threatSummary(enabled: boolean, entries: Record<string, any>[], today: string): SecuritySummary['threat'] {
+    if (!enabled) return null;
     const todayRows = entries.filter(row => typeof row.ts === 'string' && row.ts.slice(0, 10) === today);
     const blocked = todayRows.filter(row => row.verdict === 'blocked' || row.verdict === 'block');
     // Traffic log is a bounded tail, not an authoritative full-day aggregate.
@@ -67,20 +72,22 @@ export class SecurityCheckService {
   }
 
   async summary(): Promise<SecuritySummary> {
-    const [locked, threatSettings, threatStatus, traffic] = await Promise.all([
+    const [locked, threatSettings, threatStatus, traffic, approvals, rules, activity, dailyCounts] = await Promise.all([
       Promise.resolve(getVaultKeyService().isUnlocked()).then(unlocked => !unlocked).catch(() => null),
       getThreatSettings().catch(() => null), Promise.resolve(getThreatStatus()), getTrafficLog({ limit: 500 }).catch(() => null),
+      this.approvalsReader.read(), this.rulesReader.read(), this.activityReader.read(), this.threatCountersReader.read(),
     ]);
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     const rows = traffic?.error ? [] : traffic?.entries ?? [];
-    const threat = SecurityCheckService.threatSummary(Boolean(threatSettings?.trafficLogEnabled), Boolean(traffic?.error), rows, today);
+    const threat = SecurityCheckService.threatSummary(Boolean(threatSettings?.enabled), rows, today);
+    if (threat && dailyCounts) { threat.scannedToday = dailyCounts.scannedToday; threat.blockedToday = dailyCounts.blockedToday; }
     let vault: SecuritySummary['vault'] = null;
     if (locked !== null) {
       const configured = await SullaSettingsModel.getSetting('vault.autoLockMinutes', null).catch(() => null);
       vault = { locked, autoLockMinutes: Number.isFinite(Number(configured)) && configured !== null ? Number(configured) : null };
     }
-    return { lastReport: this.lastReport, vault, threat: threatStatus ? threat : null, approvals: null, rules: null, activity: null };
+    return { lastReport: this.lastReport, vault, threat: threatStatus ? threat : null, approvals, rules, activity };
   }
 
   private checks(): SecurityCheck[] {
