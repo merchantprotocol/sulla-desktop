@@ -277,7 +277,6 @@ function getFileMenu(): MenuItem {
       },
       {
         label:       'New Browser Tab',
-        accelerator: 'CmdOrCtrl+T',
         click:       () => sendAgentCommand('new-browser-tab'),
       },
       { type: 'separator' },

@@ -74,7 +74,10 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
     });
 
     ipc.handle('browser-tab-view:set-bounds', async(event: Electron.IpcMainInvokeEvent, tabId: string, bounds: Electron.Rectangle) => {
-      const owner = assertOwner(event, tabId);
+      const owner = ownerWindow(event);
+      const currentOwner = tabViewManager.getOwnerWindow(tabId);
+      if (!currentOwner) return;
+      if (currentOwner !== owner) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
       tabViewManager.setBounds(tabId, bounds, owner);
     });
 
@@ -84,8 +87,9 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
     // events from the previously visible tab cannot hide the newly active tab.
     ipc.handle('browser-tab-view:focus', async(event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => {
       const owner = ownerWindow(event);
-      if (tabId) assertOwner(event, tabId);
-      if (clearOnlyIfFocusedTabId && !tabViewManager.ownsTab(clearOnlyIfFocusedTabId, owner)) throw new Error('Browser tab is not owned by this window');
+      if (tabId && tabViewManager.getOwnerWindow(tabId)) assertOwner(event, tabId);
+      const clearOwner = clearOnlyIfFocusedTabId ? tabViewManager.getOwnerWindow(clearOnlyIfFocusedTabId) : null;
+      if (clearOwner && clearOwner !== owner) throw new Error('Browser tab is not owned by this window');
       tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId, sentAt, owner);
     });
 
