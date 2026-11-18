@@ -7,6 +7,7 @@
 // Bridges messages between the renderer and main process via Electron IPC.
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { toRaw } from 'vue';
 
 import type { WebSocketMessage, WebSocketMessageHandler } from './WebSocketClientService';
 
@@ -25,6 +26,29 @@ function generateUUID(): string {
     .map(b => b.toString(16).padStart(2, '0'))
     .join('')
     .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
+}
+
+/** Convert renderer data (including Vue proxies) into structured-clone-safe data. */
+export function sanitizeIpcPayload<T>(value: T): T {
+  const seen = new WeakMap<object, object>();
+  const visit = (input: unknown): unknown => {
+    if (input === null || typeof input === 'string' || typeof input === 'number' || typeof input === 'boolean') return input;
+    if (typeof input === 'bigint') return input.toString();
+    if (typeof input !== 'object') return undefined;
+    const raw = toRaw(input as object);
+    if (raw instanceof Uint8Array) return raw;
+    if (raw instanceof Date) return new Date(raw.getTime());
+    const existing = seen.get(raw);
+    if (existing) return existing;
+    const result: any = Array.isArray(raw) ? [] : {};
+    seen.set(raw, result);
+    for (const key of Object.keys(raw)) {
+      const cleaned = visit((raw as any)[key]);
+      if (cleaned !== undefined) result[key] = cleaned;
+    }
+    return result;
+  };
+  return visit(value) as T;
 }
 
 export class IpcMessageBusRenderer {
@@ -97,7 +121,14 @@ export class IpcMessageBusRenderer {
     // and broadcasts back to all subscribed renderers (including this one).
     // Do NOT dispatch locally here — the broadcast handles delivery to
     // avoid double-delivery.
-    (ipcRenderer as any).send('message-bus:send', connectionId, fullMsg);
+    const safeMessage = sanitizeIpcPayload(fullMsg);
+    try {
+      (ipcRenderer as any).send('message-bus:send', connectionId, safeMessage);
+    } catch (error) {
+      const messageType = safeMessage?.type ?? 'unknown';
+      console.error(`[IpcMessageBusRenderer] IPC send failed channel="${ connectionId }" type="${ messageType }":`, error);
+      throw error;
+    }
     return true;
   }
 
