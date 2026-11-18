@@ -8,7 +8,7 @@
 # stop, restart and kill Files services. Standard library only; no installs.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PHASES="bulk append ops crash load cloud restart-propagation outage handles token-empty lock-contention latency staleness eio-capture env-info fuse-identity integrity summary before-after-summary api-write all cleanup"
+PHASES="bulk append ops crash load cloud restart-propagation outage outage-b handles token-empty lock-contention latency staleness eio-capture env-info fuse-identity integrity summary before-after-summary api-write all cleanup"
 if [[ $# -lt 1 ]]; then
   echo "usage: files-soak.sh <$(echo $PHASES | tr ' ' '|')> [--with-app-restart] [phase arguments]" >&2
   exit 2
@@ -122,7 +122,14 @@ STATE_DIR = Path.home() / "sulla-twodev" / "soak"
 RESULTS = STATE_DIR / "results.jsonl"
 STATE = STATE_DIR / "state.json"
 LEDGER = STATE_DIR / "ledger.jsonl"
-EIO_LOG = STATE_DIR / "eio-events.jsonl"
+EIO_LOG = STATE_DIR / "eio-events.jsonl"  # append-only; cleanup never deletes it
+OUTAGE_B_VARIANTS = ("paused", "stopped")
+# Per-process EIO bookkeeping. Every EIO (any phase, any thread) goes through record_eio().
+EIO_CONTEXT = {"run": "", "root": "", "phase": ""}
+EIO_COUNTS = collections.Counter()  # EIO events per phase in this process
+EIO_LOCK = threading.Lock()
+EIO_CAPTURE_CAP = 500  # adapter-log captures per process; later EIOs are logged without them
+EIO_CAPTURES = [0]
 COMMAND_TIMEOUT = 20
 FILE_TIMEOUT = 45
 CRASH_FILE_BYTES = 64 * 1024
@@ -399,6 +406,44 @@ def pct(values, p):
     return round(ordered[index], 2)
 
 
+def adapter_log_near(when):
+    """The `files-request` lines the FUSE adapter logged within 5 s of `when`, from docker logs (last 10, shortened)."""
+    since = datetime.datetime.fromtimestamp(max(0.0, when - 5), datetime.timezone.utc).isoformat()
+    try:
+        proc = subprocess.run(["docker", "logs", "-t", "--since", since, CONTAINER_FUSE], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return ["docker logs failed: %s" % type(exc).__name__]
+    lines = []
+    for line in proc.stdout.splitlines():
+        stamp, _sep, body = line.partition(" ")
+        moment = parse_rfc3339(stamp)
+        if moment is None or abs(moment - when) > 5 or "files-request" not in body:
+            continue
+        lines.append(body[:300])
+    return lines[-10:]
+
+
+def record_eio(error, op):
+    """Append one line to eio-events.jsonl for an EIO: time, phase, path, op, errno and the adapter's files-request lines."""
+    if getattr(error, "errno", None) != errno.EIO or not EIO_CONTEXT["root"]:
+        return
+    when = time.time()
+    with EIO_LOCK:
+        EIO_COUNTS[EIO_CONTEXT["phase"]] += 1
+        capture = EIO_CAPTURES[0] < EIO_CAPTURE_CAP
+        EIO_CAPTURES[0] += 1
+    adapter = adapter_log_near(when) if capture else ["not captured: per-process capture cap reached"]
+    row = {"run": EIO_CONTEXT["run"], "root": EIO_CONTEXT["root"], "t": round(when, 3),
+           "time": datetime.datetime.fromtimestamp(when, datetime.timezone.utc).isoformat(),
+           "phase": EIO_CONTEXT["phase"], "path": str(getattr(error, "filename", None) or ""), "op": op,
+           "errno": "EIO", "adapter_log": adapter}
+    line = json.dumps(row, sort_keys=True, separators=(",", ":"))
+    with EIO_LOCK:
+        with EIO_LOG.open("a", encoding="utf-8") as log:
+            log.write(line + "\n")
+
+
 def parse_rfc3339(text):
     match = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)", text)
     if not match:
@@ -454,6 +499,7 @@ class ChurnWriter(threading.Thread):
                     record["ok"] = True
                     break
                 except OSError as exc:
+                    record_eio(exc, "write")
                     key = err_key(exc)
                     record["errors"][key] += 1
                     self.ops.append((attempt_started, (time.monotonic() - attempt_started) * 1000, False, key))
@@ -500,6 +546,7 @@ class PlainWriter(threading.Thread):
                 self.attempts.append({"started": tick, "ms": (time.monotonic() - tick) * 1000, "ok": True, "errno": "", "name": name})
                 self.rows.append((name, hashlib.sha256(data).hexdigest()))
             except OSError as exc:
+                record_eio(exc, "write")
                 self.attempts.append({"started": tick, "ms": (time.monotonic() - tick) * 1000, "ok": False, "errno": err_key(exc), "name": name})
             finally:
                 self.inflight = None
@@ -518,6 +565,7 @@ class FilesSoak:
         self.errors = collections.Counter()
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         self.root = self._get_run_root()
+        EIO_CONTEXT.update(run=self.run_id, root=str(self.root), phase=phase)
 
     # ----- layout and state -------------------------------------------------------------
 
@@ -595,8 +643,11 @@ class FilesSoak:
             except OSError:
                 pass
             return {"rc": None, "hung": True, "ms": (time.monotonic() - started) * 1000, "out": b"", "err": "timeout"}
+        error_text = short_err(err.decode("utf-8", "replace"))
+        if proc.returncode and error_text == os.strerror(errno.EIO):
+            record_eio(OSError(errno.EIO, error_text, next((str(arg) for arg in argv if str(MOUNT) in str(arg)), "")), "probe")
         return {"rc": proc.returncode, "hung": False, "ms": (time.monotonic() - started) * 1000,
-                "out": out, "err": short_err(err.decode("utf-8", "replace"))}
+                "out": out, "err": error_text}
 
     def _ctr(self, name, script, *args, timeout=OP_BOUND_S):
         return self._probe(["docker", "exec", name, "sh", "-c", script, "sh", *args], timeout=timeout)
@@ -654,8 +705,24 @@ class FilesSoak:
         raise CheckFailure("%s not running and healthy within %ds" % (name, cap))
 
     def ensure_files_running(self):
+        # Restore trap: a paused hold is released first (a no-op error when not paused), then a stopped container is started.
+        self._docker(["unpause", CONTAINER_FILES], 30)
         if not self._container_running(CONTAINER_FILES):
             self._docker(["start", CONTAINER_FILES], 90)
+
+    def files_state(self):
+        """Docker's view of sulla_files: status, start/finish times and restart count. Desktop's heal shows up here."""
+        result = self._docker(["inspect", "-f", "{{.State.Status}}|{{.State.StartedAt}}|{{.State.FinishedAt}}|{{.RestartCount}}", CONTAINER_FILES], 15)
+        parts = result.stdout.strip().split("|")
+        if result.returncode != 0 or len(parts) != 4:
+            return {"status": "missing", "started_at": "", "finished_at": "", "restarts": None, "at": round(time.time(), 2)}
+        return {"status": parts[0], "started_at": parts[1], "finished_at": parts[2],
+                "restarts": int(parts[3]) if parts[3].isdigit() else None, "at": round(time.time(), 2)}
+
+    @staticmethod
+    def _down_seconds(finished_at, started_at):
+        stopped, started = parse_rfc3339(finished_at or ""), parse_rfc3339(started_at or "")
+        return round(started - stopped, 2) if stopped and started and started >= stopped else None
 
     def _soak_image(self):
         """First local image that really provides sh and sleep (the probe runs the tools, so a missing one is caught here)."""
@@ -717,14 +784,15 @@ class FilesSoak:
             metrics, evidence = result if isinstance(result, tuple) else ({}, result)
             self.emit(name, True, evidence, started, metrics)
         except Exception as exc:  # A failed operation is evidence; continue with the remaining checks.
+            if isinstance(exc, OSError):
+                record_eio(exc, "check")
             self.emit(name, False, "%s: %s" % (type(exc).__name__, str(exc)[:180]), started)
 
-    def note_error(self, exc):
+    def note_error(self, exc, op="op"):
         key = err_key(exc) if isinstance(exc, OSError) else type(exc).__name__
         self.errors[key] += 1
-        if getattr(exc, "errno", None) == errno.EIO:
-            with EIO_LOG.open("a", encoding="utf-8") as log:
-                log.write(json.dumps({"run": self.run_id, "root": str(self.root), "t": time.time()}) + "\n")
+        if isinstance(exc, OSError):
+            record_eio(exc, op)
         return err_name(exc)
 
     def ledger_add(self, rows):
@@ -755,7 +823,7 @@ class FilesSoak:
                     return "missing"
                 return "ok" if self._sha(path) == expected else "mismatch"
             except OSError as exc:
-                self.note_error(exc)
+                self.note_error(exc, "read")
                 return "error:" + err_key(exc)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         futures = [executor.submit(verify, row) for row in rows]
@@ -1095,14 +1163,17 @@ class FilesSoak:
             a_from = time.monotonic()
             stopped = self._docker(["stop", "-t", "10", CONTAINER_FILES], 90)
             down_from = time.monotonic()
+            a_stop = self.files_state()
             for index, writer in enumerate(writers):
                 time.sleep(max(0.0, down_from + OUTAGE_A_S * index / len(writers) - time.monotonic()))
                 writer.start()
             time.sleep(max(0.0, down_from + OUTAGE_A_S - time.monotonic()))
+            a_window_end = self.files_state()  # before the restart: Desktop's heal would show here as a new StartedAt
             self._docker(["start", CONTAINER_FILES], 90)
             up_at = time.monotonic()
             ready_s = self._wait_container_ready(CONTAINER_FILES, 240)
             a_to = time.monotonic()
+            a_up = self.files_state()
             time.sleep(PLAIN_POST_S)
             drain_deadline = time.monotonic() + OP_BOUND_S
             while time.monotonic() < drain_deadline and any(w.pending is not None for w in writers):
@@ -1133,52 +1204,28 @@ class FilesSoak:
                                               "errno": dict(collections.Counter(row["errno"] for row in rows_in if not row["ok"])),
                                               "max_ms": round(max((row["ms"] for row in rows_in), default=0), 1)}
             plain_inflight_s = None if plain.inflight is None else round(time.monotonic() - plain.inflight, 1)
-            a_metrics = {"stop_rc": stopped.returncode, "down_s": OUTAGE_A_S, "writes_started": len(a_records), "writes_ok": len(a_ok),
+            a_valid = a_window_end["status"] == "exited" and a_window_end["started_at"] == a_stop["started_at"]
+            a_prefix = "" if a_valid else "INVALID (Files was not held down for the window; Desktop restarted it) "
+            a_down_s = self._down_seconds(a_stop["finished_at"], a_up["started_at"])
+            a_metrics = {"stop_rc": stopped.returncode, "down_s": OUTAGE_A_S, "actual_down_s": a_down_s, "valid": a_valid,
+                         "state_after_stop": a_stop, "state_window_end": a_window_end, "state_after_ready": a_up,
+                         "writes_started": len(a_records), "writes_ok": len(a_ok),
                          "writes_failed": len(a_failed), "attempt_errors": dict(a_errors), "p50_ms": pct(durations, 0.5),
                          "p95_ms": pct(durations, 0.95), "max_ms": round(max(durations, default=0), 1), "ready_s": ready_s,
                          "verified": a_counts.get("ok", 0), "mismatch": a_counts.get("mismatch", 0), "missing": a_counts.get("missing", 0),
                          "unverified": a_counts.get("unverified_timeout", 0), "retrying_writers": len(writers),
                          "plain_by_phase": plain_by_phase, "plain_inflight_s": plain_inflight_s, "plain_attempts": plain_attempts}
-            a_pass = (stopped.returncode == 0 and len(a_records) > 0 and not a_failed and a_counts.get("ok", 0) == len(a_ok)
+            a_pass = (a_valid and stopped.returncode == 0 and len(a_records) > 0 and not a_failed and a_counts.get("ok", 0) == len(a_ok)
                       and not a_counts.get("mismatch") and not a_counts.get("missing") and not a_counts.get("unverified_timeout"))
             self.emit("outage-a-restart", a_pass,
-                      "down=%ds retrying_writers=%d started=%d ok=%d failed=%d verified=%d/%d attempt_errors=%s plain=%s" %
-                      (OUTAGE_A_S, len(writers), len(a_records), len(a_ok), len(a_failed), a_counts.get("ok", 0), len(a_ok),
+                      "%sdown=%ds actual_down=%ss retrying_writers=%d started=%d ok=%d failed=%d verified=%d/%d attempt_errors=%s plain=%s" %
+                      (a_prefix, OUTAGE_A_S, a_down_s, len(writers), len(a_records), len(a_ok), len(a_failed), a_counts.get("ok", 0), len(a_ok),
                        json.dumps(dict(a_errors), sort_keys=True), json.dumps(plain_by_phase, sort_keys=True)),
                       a_from, a_metrics)
 
-            # Sub-test B: Files down OUTAGE_B_S seconds (>90 s). Probes must fail cleanly with errnos, never hang past OP_BOUND_S.
-            self._docker(["stop", "-t", "10", CONTAINER_FILES], 90)
-            b_started = time.monotonic()
-            while time.monotonic() - b_started < OUTAGE_B_S:
-                tick = time.monotonic()
-                probes.append(self._probe(["sh", "-c", 'printf %s "$2" > "$1"', "sh", str(folder / "probe.txt"), "x"], OP_BOUND_S))
-                time.sleep(max(0.0, 10 - (time.monotonic() - tick)))
-            b_hung = [p for p in probes if p["hung"]]
-            b_max = max((p["ms"] for p in probes), default=0)
-            b_errors = dict(collections.Counter(p["err"] for p in probes if p["rc"] not in (0, None)))
-            b_unclean = sorted(e for e in b_errors if errno_of_text(e) is None)
-            b_ok_while_down = sum(1 for p in probes if p["rc"] == 0)
-            b_pass = bool(probes) and not b_hung and b_max <= (OP_BOUND_S + SLACK_S) * 1000 and not b_unclean
-            b_metrics = {"down_s": OUTAGE_B_S, "probes": len(probes), "hung": len(b_hung), "max_ms": round(b_max, 1),
-                         "errors": b_errors, "unclean_errors": b_unclean, "ok_while_down": b_ok_while_down, "bound_s": OP_BOUND_S}
-            self.emit("outage-b-stop", b_pass,
-                      "down=%ds probes=%d hung=%d max_ms=%.0f ok_while_down=%d errnos=%s unclean=%s" %
-                      (OUTAGE_B_S, len(probes), len(b_hung), b_max, b_ok_while_down, json.dumps(sorted(errno_of_text(e) or e for e in b_errors)), b_unclean),
-                      b_started, b_metrics)
-
-            # Recovery: start Files and prove a fresh write+read works.
-            self._docker(["start", CONTAINER_FILES], 90)
-            recovery_ready = self._wait_container_ready(CONTAINER_FILES, 240)
-            payload = "recovery-" + self.run_id
-            rec_path = folder / "recovery.txt"
-            write = self._probe(["sh", "-c", 'printf %s "$2" > "$1"', "sh", str(rec_path), payload])
-            read = self._probe(["sh", "-c", 'cat "$1"', "sh", str(rec_path)])
-            recovered = write["rc"] == 0 and read["rc"] == 0 and read["out"].decode("utf-8", "replace") == payload
-            self.emit("outage-recovery", recovered, "ready_s=%s write_err=%s read_err=%s" % (recovery_ready, write["err"] or "none", read["err"] or "none"),
-                      time.monotonic(), {"ready_s": recovery_ready, "write_ms": round(write["ms"], 1), "read_ms": round(read["ms"], 1)})
-            if recovered:
-                self.ledger_add([("outage/recovery.txt", hashlib.sha256(payload.encode()).hexdigest())])
+            # Sub-test B: Files held down OUTAGE_B_S seconds (variant: paused = requests hang, stopped = requests refused).
+            self.outage_b_window(self.outage_b_variant())
+            self.outage_recovery()
         except Exception as exc:
             self.emit("outage", False, "%s: %s" % (type(exc).__name__, str(exc)[:200]), time.monotonic())
         finally:
@@ -1201,6 +1248,96 @@ class FilesSoak:
                                                                                          counts.get("missing", 0), counts.get("unverified_timeout", 0)),
                   time.monotonic(), {"successful_writes": len(rows), "verified": counts.get("ok", 0), "mismatch": counts.get("mismatch", 0),
                                      "missing": counts.get("missing", 0), "unverified": counts.get("unverified_timeout", 0)})
+
+    def outage_b_variant(self):
+        variant = self.extra_args[0] if self.extra_args else "paused"
+        if variant not in OUTAGE_B_VARIANTS:
+            raise CheckFailure("outage-b variant must be one of %s, got %s" % ("/".join(OUTAGE_B_VARIANTS), variant))
+        return variant
+
+    def outage_b(self):
+        """Phase `outage-b [paused|stopped]`: Files held down on its own (no writers), then recovered."""
+        self.outage_b_window(self.outage_b_variant())
+        self.outage_recovery()
+
+    def outage_b_window(self, variant):
+        """Hold Files down for OUTAGE_B_S with `variant`, probing every 10 s, and check docker's state the whole time.
+
+        paused:  `docker pause` (the Files process is frozen; requests hang until the adapter's deadline, then EIO).
+                 Desktop's heal does not act on it: the watcher counts a paused container as present and healthy,
+                 and reconcile starts only a missing or non-running one (sullaContainerHealth.ts, ManagedContainerHealthWatcher.ts).
+        stopped: `docker stop` (requests are refused). Desktop's watcher calls an exited container missing within about a
+                 minute and reconcile starts it again, so this variant can be INVALID by design; the state samples prove it.
+        The window is valid only if Files stayed in the expected state with the same StartedAt and RestartCount for the whole window.
+        """
+        folder = self.root / "outage"
+        folder.mkdir(exist_ok=True)
+        check = "outage-b-" + variant
+        expected = "paused" if variant == "paused" else "exited"
+        started = time.monotonic()
+        before = self.files_state()
+        samples = []
+        probes = []
+        held = window_end = None
+        try:
+            if variant == "paused":
+                self._docker(["pause", CONTAINER_FILES], 90)
+            else:
+                self._docker(["stop", "-t", "10", CONTAINER_FILES], 90)
+            b_started = time.monotonic()
+            held = self.files_state()
+            while time.monotonic() - b_started < OUTAGE_B_S:
+                tick = time.monotonic()
+                probes.append(self._probe(["sh", "-c", 'printf %s "$2" > "$1"', "sh", str(folder / "probe.txt"), "x"], OP_BOUND_S))
+                samples.append(self.files_state())
+                time.sleep(max(0.0, 10 - (time.monotonic() - tick)))
+            window_end = self.files_state()
+        finally:
+            self.ensure_files_running()  # restore trap: unpauses first, then starts a stopped container
+        after = self.files_state()
+        states = [s for s in samples + [window_end] if s is not None]
+        first_back = next((round(s["at"] - held["at"], 1) for s in states if held and s["status"] != expected), None)
+        valid = bool(held) and held["status"] == expected and first_back is None and all(
+            s["status"] == expected and s["started_at"] == held["started_at"] and s["restarts"] == held["restarts"] for s in states)
+        hung = [p for p in probes if p["hung"]]
+        b_max = max((p["ms"] for p in probes), default=0)
+        b_errors = dict(collections.Counter(p["err"] for p in probes if p["rc"] not in (0, None)))
+        b_unclean = sorted(e for e in b_errors if errno_of_text(e) is None)
+        b_ok_while_down = sum(1 for p in probes if p["rc"] == 0)
+        passed = (valid and bool(probes) and not hung and b_max <= (OP_BOUND_S + SLACK_S) * 1000 and not b_unclean and b_ok_while_down == 0)
+        if valid:
+            prefix = ""
+        elif first_back is not None:
+            prefix = "INVALID (Files was not held %s for the window: seen back at +%ss) " % (expected, first_back)
+        else:
+            prefix = "INVALID (Files StartedAt or RestartCount changed inside the window) "
+        metrics = {"variant": variant, "down_s": OUTAGE_B_S, "valid": valid, "probes": len(probes), "hung": len(hung),
+                   "max_ms": round(b_max, 1), "errors": b_errors, "unclean_errors": b_unclean, "ok_while_down": b_ok_while_down,
+                   "bound_s": OP_BOUND_S, "first_back_s": first_back, "state_before": before, "state_held": held,
+                   "state_window_end": window_end, "state_after_restore": after, "samples": len(samples)}
+        self.emit(check, passed,
+                  "%sdown=%ds probes=%d hung=%d max_ms=%.0f ok_while_down=%d errnos=%s unclean=%s state_end=%s restored=%s" %
+                  (prefix, OUTAGE_B_S, len(probes), len(hung), b_max, b_ok_while_down,
+                   json.dumps(sorted(errno_of_text(e) or e for e in b_errors)), b_unclean,
+                   (window_end or {}).get("status"), after["status"]),
+                  started, metrics)
+        return metrics
+
+    def outage_recovery(self):
+        """Start Files and prove a fresh write and read work."""
+        folder = self.root / "outage"
+        folder.mkdir(exist_ok=True)
+        self._docker(["start", CONTAINER_FILES], 90)
+        recovery_ready = self._wait_container_ready(CONTAINER_FILES, 240)
+        payload = "recovery-" + self.run_id
+        rec_path = folder / "recovery.txt"
+        write = self._probe(["sh", "-c", 'printf %s "$2" > "$1"', "sh", str(rec_path), payload])
+        read = self._probe(["sh", "-c", 'cat "$1"', "sh", str(rec_path)])
+        recovered = write["rc"] == 0 and read["rc"] == 0 and read["out"].decode("utf-8", "replace") == payload
+        self.emit("outage-recovery", recovered, "ready_s=%s write_err=%s read_err=%s" % (recovery_ready, write["err"] or "none", read["err"] or "none"),
+                  time.monotonic(), {"ready_s": recovery_ready, "write_ms": round(write["ms"], 1), "read_ms": round(read["ms"], 1)})
+        if recovered:
+            self.ledger_add([("outage/recovery.txt", hashlib.sha256(payload.encode()).hexdigest())])
 
     @staticmethod
     def _outage_phase(when, down_from, up_at):
@@ -1234,7 +1371,7 @@ class FilesSoak:
                 if handle.read() != payload:
                     raise CheckFailure("read-back mismatch while holding handles")
             except OSError as exc:
-                vm_errors[self.note_error(exc)] += 1
+                vm_errors[self.note_error(exc, "vm-open")] += 1
         metrics["vm_open_ok"] = len(held)
         for handle in held:
             handle.close()
@@ -1406,10 +1543,12 @@ class FilesSoak:
                     os.stat(path)
                     samples.append((time.perf_counter() - tick) * 1000)
                 except OSError as exc:
-                    errors[self.note_error(exc)] += 1
+                    errors[self.note_error(exc, "stat")] += 1
             return samples
 
-        idle = stat_pass(files) + stat_pass(files)
+        cold = stat_pass(files)  # first pass: the adapter's caches are cold for these paths
+        warm = stat_pass(files)  # second pass: same paths, now warm
+        idle = cold + warm  # combined, reported only as an extra field
         stop = threading.Event()
         load_errors = collections.Counter()
 
@@ -1424,7 +1563,7 @@ class FilesSoak:
                         previous.unlink()
                     previous = path
                 except OSError as exc:
-                    load_errors[self.note_error(exc)] += 1
+                    load_errors[self.note_error(exc, "write")] += 1
                 index += 1
 
         loader = threading.Thread(target=load, daemon=True)
@@ -1451,13 +1590,16 @@ class FilesSoak:
                 tick = time.perf_counter()
                 path.read_bytes()
                 repeat_reads.append((time.perf_counter() - tick) * 1000)
-        metrics = {"files": len(files), "stat_idle_p50_ms": pct(idle, 0.5), "stat_idle_p95_ms": pct(idle, 0.95), "stat_idle_p99_ms": pct(idle, 0.99),
+        metrics = {"files": len(files), "stat_idle_cold_p50_ms": pct(cold, 0.5), "stat_idle_cold_p95_ms": pct(cold, 0.95),
+                   "stat_idle_warm_p50_ms": pct(warm, 0.5), "stat_idle_warm_p95_ms": pct(warm, 0.95),
+                   "stat_idle_combined_p50_ms": pct(idle, 0.5), "stat_idle_combined_p95_ms": pct(idle, 0.95), "stat_idle_p99_ms": pct(idle, 0.99),
                    "stat_load_p50_ms": pct(loaded, 0.5), "stat_load_p95_ms": pct(loaded, 0.95), "stat_load_p99_ms": pct(loaded, 0.99),
                    "read_first_p50_ms": pct(first_reads, 0.5), "read_repeat_p50_ms": pct(repeat_reads, 0.5),
                    "errors": dict(errors), "load_errors": dict(load_errors)}
         passed = not errors and not load_errors and (metrics["stat_load_p95_ms"] or 0) <= LATENCY_P95_MS
-        self.emit("latency-stat-lookup", passed, "idle p50=%s p95=%s p99=%s load p50=%s p95=%s p99=%s read first=%s repeat=%s" %
-                  (metrics["stat_idle_p50_ms"], metrics["stat_idle_p95_ms"], metrics["stat_idle_p99_ms"], metrics["stat_load_p50_ms"],
+        self.emit("latency-stat-lookup", passed, "idle cold p50=%s p95=%s warm p50=%s p95=%s load p50=%s p95=%s p99=%s read first=%s repeat=%s" %
+                  (metrics["stat_idle_cold_p50_ms"], metrics["stat_idle_cold_p95_ms"], metrics["stat_idle_warm_p50_ms"], metrics["stat_idle_warm_p95_ms"],
+                   metrics["stat_load_p50_ms"],
                    metrics["stat_load_p95_ms"], metrics["stat_load_p99_ms"], metrics["read_first_p50_ms"], metrics["read_repeat_p50_ms"]),
                   started, metrics)
 
@@ -1592,18 +1734,22 @@ class FilesSoak:
                   "new_visible_s=%s modify_visible_s=%s bound_s=%.1f stale_after_window=%d" % (new_visible, modified_visible, bound, stale_after_window),
                   started, metrics)
 
-    def eio_events(self):
+    def eio_rows(self):
+        """Every EIO line recorded for this soak root (eio-events.jsonl is kept across runs and cleanup)."""
         if not EIO_LOG.is_file():
             return []
-        events = []
+        rows = []
         for line in EIO_LOG.read_text(encoding="utf-8").splitlines():
             try:
                 row = json.loads(line)
             except ValueError:
                 continue
             if row.get("root") == str(self.root) and isinstance(row.get("t"), (int, float)):
-                events.append(float(row["t"]))
-        return sorted(events)
+                rows.append(row)
+        return sorted(rows, key=lambda row: row["t"])
+
+    def eio_events(self):
+        return [float(row["t"]) for row in self.eio_rows()]
 
     @staticmethod
     def _summarize_log_line(container, body):
@@ -1651,8 +1797,13 @@ class FilesSoak:
                     matched_lines += 1
                     matched[self._summarize_log_line(container, body)] += 1
         top = [{"key": key, "count": count} for key, count in matched.most_common(10)]
-        metrics = {"eio_events": len(events), "matched_lines": matched_lines, "top_status_codes": top, "logs_readable": read_ok}
-        self.emit("eio-capture", read_ok, "eio_events=%d matched_log_lines=%d top=%s" % (len(events), matched_lines, json.dumps(top)), started, metrics)
+        rows = self.eio_rows()
+        by_phase = collections.Counter("%s/%s" % (row.get("phase"), row.get("op")) for row in rows)
+        captured = sum(len(row.get("adapter_log") or []) for row in rows)
+        metrics = {"eio_events": len(events), "by_phase_op": dict(by_phase), "adapter_lines_captured_live": captured,
+                   "matched_lines": matched_lines, "top_status_codes": top, "logs_readable": read_ok}
+        self.emit("eio-capture", read_ok, "eio_events=%d by_phase_op=%s adapter_lines_live=%d matched_log_lines=%d top=%s" %
+                  (len(events), json.dumps(dict(by_phase), sort_keys=True), captured, matched_lines, json.dumps(top)), started, metrics)
 
     def env_info(self):
         started = time.monotonic()
@@ -1734,11 +1885,13 @@ class FilesSoak:
             return
         counts = self._verify_rows(self.root, rows, cap=900)
         verified = counts.get("ok", 0)
-        self.emit("integrity-mount", verified == len(rows) and not counts.get("unverified_timeout"),
-                  "ledger=%d verified=%d mismatch=%d missing=%d unverified=%d" % (len(rows), verified, counts.get("mismatch", 0),
-                                                                                  counts.get("missing", 0), counts.get("unverified_timeout", 0)),
+        eio = EIO_COUNTS[self.phase]  # every EIO this phase saw, from any thread; eio-events.jsonl has the detail
+        self.emit("integrity-mount", verified == len(rows) and not counts.get("unverified_timeout") and eio == 0,
+                  "ledger=%d verified=%d mismatch=%d missing=%d unverified=%d eio=%d" % (len(rows), verified, counts.get("mismatch", 0),
+                                                                                         counts.get("missing", 0), counts.get("unverified_timeout", 0), eio),
                   started, {"ledger_rows": len(rows), "verified": verified, "mismatch": counts.get("mismatch", 0),
-                            "missing": counts.get("missing", 0), "errors": {k: v for k, v in counts.items() if k.startswith("error")}})
+                            "missing": counts.get("missing", 0), "eio": eio, "errors": {k: v for k, v in counts.items() if k.startswith("error")}})
+        self.emit("integrity-eio", eio == 0, "EIO events during integrity=%d (eio-events.jsonl phase=integrity)" % eio, started, {"eio": eio})
         started = time.monotonic()
         if not rows or API_SAMPLE == 0:
             return
@@ -1752,9 +1905,9 @@ class FilesSoak:
         items = [["/".join(filter(None, [base, rel])), sha] for rel, sha in sample]
         verdict = self._fuse_api({"action": "verify", "collectionId": collection_id, "items": items})
         counts = verdict.get("counts", {})
-        passed = counts.get("matched", 0) == len(items)
-        self.emit("integrity-api", passed, "sample=%d matched=%d mismatch=%d unresolved=%d" %
-                  (len(items), counts.get("matched", 0), counts.get("mismatch", 0), counts.get("unresolved", 0)),
+        passed = counts.get("matched", 0) == len(items) and EIO_COUNTS[self.phase] == 0
+        self.emit("integrity-api", passed, "sample=%d matched=%d mismatch=%d unresolved=%d eio=%d" %
+                  (len(items), counts.get("matched", 0), counts.get("mismatch", 0), counts.get("unresolved", 0), EIO_COUNTS[self.phase]),
                   started, {"sample": len(items), **counts})
 
     def summary(self):
@@ -1801,26 +1954,29 @@ class FilesSoak:
         handles = metrics("handles-100-concurrent")
         vm_errors = handles.get("vm_errors") or {}
         outage_a = metrics("outage-a-restart")
-        outage_b = metrics("outage-b-stop")
+        outage_b = metrics("outage-b-paused") or metrics("outage-b-stopped") or metrics("outage-b-stop")
         restart = metrics("restart-propagation")
         summary = {
             "run": label,
             "checks": len(rows),
             "failed": sorted(r.get("check") for r in latest.values() if not r.get("pass")),
-            "stat": pick(metrics("latency-stat-lookup"), ["stat_idle_p50_ms", "stat_idle_p95_ms", "stat_load_p50_ms", "stat_load_p95_ms",
+            "stat": pick(metrics("latency-stat-lookup"), ["stat_idle_cold_p50_ms", "stat_idle_cold_p95_ms", "stat_idle_warm_p50_ms", "stat_idle_warm_p95_ms",
+                                                          "stat_load_p50_ms", "stat_load_p95_ms",
                                                           "read_first_p50_ms", "read_repeat_p50_ms"]),
             "lock": {"per_op": {kind: pick(lock.get(kind) or {}, ["p50_ms", "p95_ms"]) for kind in ("create", "mv-over-existing", "mkdir", "rmdir")},
                      "eio": lock.get("eio"), "hung_threads": lock.get("hung_threads"), "pass": passed("lock-contention")},
             "handles": {"pass": passed("handles-100-concurrent"), "vm_ok": handles.get("vm_open_ok"),
                         "vm_emfile": sum(v for k, v in vm_errors.items() if k.startswith("EMFILE")),
                         "containers_opened_100": [c.get("opened_100") for c in handles.get("containers") or []]},
-            "outage": {"a": {**pick(outage_a, ["writes_started", "writes_ok", "writes_failed", "down_s", "p95_ms", "max_ms", "ready_s"]), "pass": passed("outage-a-restart")},
-                       "b": {**pick(outage_b, ["down_s", "probes", "hung", "max_ms", "unclean_errors"]), "pass": passed("outage-b-stop")}},
+            "outage": {"a": {**pick(outage_a, ["writes_started", "writes_ok", "writes_failed", "down_s", "actual_down_s", "p95_ms", "max_ms", "ready_s", "valid"]), "pass": passed("outage-a-restart")},
+                       "b": {**pick(outage_b, ["variant", "down_s", "valid", "probes", "hung", "max_ms", "unclean_errors", "ok_while_down"]),
+                             "pass": passed("outage-b-paused") or passed("outage-b-stopped") or passed("outage-b-stop")}},
             "restart_propagation": {**pick(restart, ["mount_recovery_s", "post_ls_errno", "post_write_errno"]), "pass": passed("restart-propagation")},
             "staleness": {**pick(metrics("staleness-visibility-and-invalidation"), ["new_visible_s", "modify_visible_s", "stale_reads_after_window"]),
                           "pass": passed("staleness-visibility-and-invalidation")},
             "integrity": {"mount": pick(metrics("integrity-mount"), ["ledger_rows", "verified", "mismatch", "missing"]),
-                          "api": pick(metrics("integrity-api"), ["sample", "matched", "mismatch", "unresolved"])},
+                          "api": pick(metrics("integrity-api"), ["sample", "matched", "mismatch", "unresolved"]),
+                          "eio": pick(metrics("integrity-mount"), ["eio"]).get("eio")},
         }
         print(json.dumps(summary, sort_keys=True, separators=(",", ":")), flush=True)
 
@@ -1845,7 +2001,7 @@ class FilesSoak:
         if root.parent != parent or not root.name.startswith("files-soak-"):
             raise CheckFailure("refusing cleanup outside the selected soak folder")
         shutil.rmtree(root)
-        for path in (STATE, STATE_DIR / "manifest.jsonl", STATE_DIR / "crash-success.log", LEDGER, EIO_LOG):
+        for path in (STATE, STATE_DIR / "manifest.jsonl", STATE_DIR / "crash-success.log", LEDGER):  # eio-events.jsonl is kept
             try:
                 path.unlink()
             except FileNotFoundError:
@@ -1882,9 +2038,12 @@ class FilesSoak:
                 self.phase = phase
                 if phase not in ("fuse-identity", "env-info", "eio-capture", "summary", "cleanup"):
                     self.ensure_mount_ready(phase)
+                EIO_CONTEXT["phase"] = phase
                 try:
                     getattr(self, phase.replace("-", "_"))()
                 except Exception as exc:
+                    if isinstance(exc, OSError):
+                        record_eio(exc, "phase")
                     self.emit(phase + "-phase", False, "%s: %s" % (type(exc).__name__, str(exc)[:180]), time.monotonic())
                 finally:
                     if phase not in ("fuse-identity", "env-info", "eio-capture", "integrity", "summary"):
@@ -1895,7 +2054,7 @@ class FilesSoak:
 
 
 def main():
-    phases = {"bulk", "append", "ops", "crash", "load", "cloud", "restart-propagation", "outage", "handles", "token-empty",
+    phases = {"bulk", "append", "ops", "crash", "load", "cloud", "restart-propagation", "outage", "outage-b", "handles", "token-empty",
               "lock-contention", "latency", "staleness", "eio-capture", "env-info", "fuse-identity", "integrity", "summary",
               "before-after-summary", "api-write", "all", "cleanup"}
     if len(sys.argv) < 3 or sys.argv[1] not in phases:
