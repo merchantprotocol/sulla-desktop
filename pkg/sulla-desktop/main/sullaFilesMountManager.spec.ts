@@ -24,10 +24,12 @@ const VALID_TOKEN = 't'.repeat(64);
 /** A guest whose secret writes stay open until `finish()` is called. */
 class FakeGuestWriter {
   readonly writes:string[] = [];
+  readonly commands:string[] = [];
   private pending:(() => void)[] = [];
 
   readonly executor = {
-    spawn: vi.fn(() => {
+    spawn: vi.fn((_options:unknown, ...command:string[]) => {
+      this.commands.push(command.join(' '));
       const child = new EventEmitter() as EventEmitter & { stdin:{ end:(data:string) => void } };
       child.stdin = { end: (data:string) => { this.writes.push(data); this.pending.push(() => child.emit('exit', 0)) } };
       return child;
@@ -118,6 +120,10 @@ describe('SullaFilesMountCredentialService token custody', () => {
     await settling;
     expect(settled).toBe(true);
     expect(guest.writes[0]).toBe(`${ VALID_TOKEN }\n`);
+    const command = guest.commands[0];
+    expect(command).toContain('fsync');
+    expect(command).toContain('mv -f');
+    expect(command).toContain('.new');
   });
 
   it('refuses to write a token into a guest that was torn down while credentials were fetched', async() => {

@@ -52,9 +52,10 @@ def load_adapter():
     pyfuse3.FUSEError = FUSEError
     pyfuse3.readdir_reply = Reply()
     trio = types.ModuleType("trio")
-    async def run_sync(function, *args):
+    async def run_sync(function, *args, **_kwargs):
         return await asyncio.to_thread(function, *args)
     trio.to_thread = types.SimpleNamespace(run_sync=run_sync)
+    trio.CapacityLimiter = lambda _limit: object()
     yaml = types.ModuleType("yaml")
     urllib3 = types.ModuleType("urllib3")
     urllib3.PoolManager = lambda **_kwargs: types.SimpleNamespace(request=None)

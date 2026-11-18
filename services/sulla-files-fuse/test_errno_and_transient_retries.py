@@ -92,7 +92,7 @@ class TransientRetryTests(unittest.TestCase):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             if len(calls) == 1:
                 raise failure(errno.EIO, 500, {"error": "Client has encountered a connection error and is not queryable"})
@@ -107,9 +107,12 @@ class TransientRetryTests(unittest.TestCase):
     # risk: unbounded retry loops wedge a mount thread forever; a persistent outage must surface as EIO.
     def test_persistent_server_failure_surfaces_eio_after_bounded_retries(self):
         api = self.adapter.FilesApi("http://files", "/unused")
+        api.max_wait_seconds = 0.5
+        now = [0.0]
+        self.adapter.time = types.SimpleNamespace(monotonic=lambda: now[0], sleep=lambda delay: (self.sleeps.append(delay), now.__setitem__(0, now[0] + delay)))
         calls = []
 
-        def send(*_args):
+        def send(*_args, **_kwargs):
             calls.append(1)
             raise failure(errno.EIO, 503)
 
@@ -117,15 +120,15 @@ class TransientRetryTests(unittest.TestCase):
         with self.assertRaises(OSError) as caught:
             api._request("/v1/fuse/files/f/content", "PUT", b"data")
         self.assertEqual(caught.exception.errno, errno.EIO)
-        self.assertEqual(len(calls), self.adapter.MAX_TRANSIENT_RETRIES + 1)
-        self.assertLess(sum(self.sleeps), 5.0)
+        self.assertGreater(len(calls), self.adapter.MAX_TRANSIENT_RETRIES)
+        self.assertGreaterEqual(now[0], 0.5)
 
     # risk: duplicate files — a create whose reply was lost must not fail or create twice on retry.
     def test_create_replay_after_lost_reply_returns_the_empty_file_it_made(self):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append((method, path.split("?", 1)[0]))
             if method == "POST" and len(calls) == 1:
                 raise failure(errno.EIO, None, transient=True)
@@ -144,7 +147,7 @@ class TransientRetryTests(unittest.TestCase):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             raise failure(errno.EEXIST, 409, {"error": "A file already occupies Stress/a.txt"})
 
@@ -159,7 +162,7 @@ class TransientRetryTests(unittest.TestCase):
         api = self.adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             if method == "POST" and len(calls) == 1:
                 raise failure(errno.EIO, 503)

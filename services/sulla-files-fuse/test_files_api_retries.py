@@ -3,19 +3,101 @@
 import errno
 import json
 import unittest
+import types
+import time
+import asyncio
 from unittest.mock import patch
 
 from test_directory_paging import load_adapter
 
 
 class FilesApiRetryTests(unittest.TestCase):
+    # risk: data integrity — a temporary Files outage must recover within the configured write window.
+    def test_bounded_wait_succeeds_when_service_returns_before_deadline(self):
+        adapter, _ = load_adapter()
+        clock = [0.0]
+        adapter.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda delay: clock.__setitem__(0, clock[0] + delay))
+        api = adapter.FilesApi("http://files", "/unused")
+        api.max_wait_seconds = 3
+        calls = []
+
+        def send(*_args, **_kwargs):
+            calls.append(1)
+            if len(calls) < 3:
+                error = OSError(errno.EIO, "offline")
+                error.status = 503
+                raise error
+            return 200, {}, b"ok"
+
+        api._send = send
+        self.assertEqual(api._request("/v1/fuse/entry")[2], b"ok")
+
+    # risk: bounded availability — a lost Files service must become a clean EIO rather than hang.
+    def test_bounded_wait_stops_after_configured_window(self):
+        adapter, _ = load_adapter()
+        clock = [0.0]
+        adapter.MAX_WAIT_SECONDS = 1
+        adapter.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda delay: clock.__setitem__(0, clock[0] + delay))
+        api = adapter.FilesApi("http://files", "/unused")
+
+        def send(*_args, **_kwargs):
+            error = OSError(errno.EIO, "offline")
+            error.status = 503
+            raise error
+
+        api._send = send
+        with self.assertRaises(OSError) as caught:
+            api._request("/v1/fuse/entry")
+        self.assertEqual(caught.exception.errno, errno.EIO)
+        self.assertGreaterEqual(clock[0], 1)
+
+    # risk: authentication availability — a partially-written empty token must be re-read, not fail immediately.
+    def test_empty_token_retries_until_token_is_populated(self):
+        adapter, _ = load_adapter()
+        api = adapter.FilesApi("http://files", "/unused")
+        tokens = iter((b"", b"fresh-token"))
+        api._token = lambda: next(tokens)
+        calls = []
+
+        def send_with_empty(*_args, **_kwargs):
+            token = api._token()
+            if not token:
+                error = OSError(errno.EACCES, "empty")
+                error.transient_auth = True
+                calls.append("empty")
+                raise error
+            calls.append("fresh")
+            return 200, {}, b"ok"
+        api._send = send_with_empty
+        with unittest.mock.patch.object(adapter.time, "sleep"):
+            self.assertEqual(api._request("/v1/fuse/entry")[2], b"ok")
+        self.assertEqual(calls, ["empty", "fresh"])
+
+    # risk: availability under concurrency — open spools are disk-backed and thousands of handles must not hit EMFILE at 32.
+    def test_configured_handle_cap_exceeds_legacy_limit(self):
+        adapter, _ = load_adapter()
+        self.assertGreater(adapter.MAX_OPEN_HANDLES, 32)
+
+    # risk: availability during an outage — Files work must use its own Trio thread limiter, not consume local-op capacity.
+    def test_network_request_uses_dedicated_limiter(self):
+        adapter, _ = load_adapter()
+        api = adapter.FilesApi("http://files", "/unused")
+        observed = []
+        async def run_sync(function, *args, **kwargs):
+            observed.append(kwargs.get("limiter"))
+            return function(*args)
+        adapter.trio.to_thread.run_sync = run_sync
+        api._request = lambda *_args: (200, {}, b'{"path":"a"}')
+        asyncio.run(api.entry(None, "a"))
+        self.assertEqual(observed, [api.network_limiter])
+
     # risk: authentication availability — a just-rotated capability must not make a user write fail.
     def test_retries_401_after_rereading_rotated_token_until_request_succeeds(self):
         adapter, _ = load_adapter()
         api = adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(1)
             if len(calls) < 3:
                 error = OSError(errno.EACCES, "unauthorized")
@@ -59,7 +141,7 @@ class FilesApiRetryTests(unittest.TestCase):
         api = adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(path, method, body, headers):
+        def send(path, method, body, headers, **_kwargs):
             calls.append(method)
             if len(calls) < 3:
                 error = OSError(errno.EPERM, "busy")
@@ -78,7 +160,7 @@ class FilesApiRetryTests(unittest.TestCase):
         api = adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(*_args):
+        def send(*_args, **_kwargs):
             calls.append(1)
             if len(calls) == 1:
                 error = OSError(errno.EIO, "gateway")
@@ -96,7 +178,7 @@ class FilesApiRetryTests(unittest.TestCase):
         api = adapter.FilesApi("http://files", "/unused")
         calls = []
 
-        def send(*_args):
+        def send(*_args, **_kwargs):
             calls.append(1)
             error = OSError(errno.EIO, "offline")
             error.transient = True
@@ -114,7 +196,7 @@ class FilesApiRetryTests(unittest.TestCase):
         entries = []
         adapter.emit = lambda event, level, **fields: entries.append((event, fields))
 
-        def send(*_args):
+        def send(*_args, **_kwargs):
             error = OSError(errno.EIO, "private response body")
             error.status = 403
             error.detail = {"code": "TEMPORARY", "error": "private response body"}

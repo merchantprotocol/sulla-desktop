@@ -43,7 +43,7 @@ fail() {
 emit entrypoint-start ",\"pid\":$$,\"mountPath\":\"$mount_path\",\"tokenFile\":\"$token_file\",\"tokenWaitSeconds\":$token_wait"
 
 waited=0
-while [ ! -f "$token_file" ]; do
+while [ ! -s "$token_file" ]; do
   if [ "$waited" -ge "$token_wait" ]; then
     dir=$(dirname "$token_file")
     if [ -d "$dir" ]; then dir_state=present; entries=$(ls -A "$dir" 2>/dev/null | wc -l | tr -d ' '); else dir_state=missing; entries=0; fi
@@ -57,6 +57,8 @@ while [ ! -f "$token_file" ]; do
   sleep 1
   waited=$((waited + 1))
 done
+# pyfuse3 does not act on FUSE_INTERRUPT; callers must rely on bounded network
+# waits (SULLA_FILES_FUSE_MAX_WAIT_S) and terminate a blocked process if needed.
 emit token-present ",\"waitedSeconds\":$waited"
 status starting
 
