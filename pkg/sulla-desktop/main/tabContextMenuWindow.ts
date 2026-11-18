@@ -23,7 +23,7 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
-import { getWindow } from '@pkg/window';
+import { getActiveAgentWindow, isAgentWebContents } from '@pkg/window/agentWindows';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
@@ -43,6 +43,9 @@ async function getTheme(): Promise<string> {
 
 /** Tab data forwarded back to the renderer with the selected action. */
 let pendingTabData: Record<string, unknown> | null = null;
+
+/** The agent window that opened this popup; the selected action goes back to it. */
+let openerWindow: BrowserWindow | null = null;
 
 const MENU_WIDTH = 260;
 const MENU_ITEM_HEIGHT = 31;   // 7px padding top+bottom + ~17px content
@@ -67,6 +70,7 @@ async function onShow(
   const { screenX, screenY, items, tabData } = payload;
 
   pendingTabData = tabData;
+  openerWindow = isAgentWebContents(_event.sender) ? BrowserWindow.fromWebContents(_event.sender) : null;
 
   // Detect theme for proper styling
   const themeId = await getTheme();
@@ -147,11 +151,17 @@ async function onShow(
   console.log('[TabContextMenu] Opened popup');
 }
 
+/** Window the popup should reply to: its opener if still alive, else the active agent window. */
+function openerTarget(): BrowserWindow | null {
+  if (openerWindow && !openerWindow.isDestroyed()) return openerWindow;
+  return getActiveAgentWindow();
+}
+
 function onAction(_event: Electron.IpcMainEvent, action: string): void {
   console.log(`[TabContextMenu] Action: ${ action }`);
 
   // Forward the selected action + original tab data back to the renderer
-  const mainWindow = getWindow('main-agent') ?? getWindow('main');
+  const mainWindow = openerTarget();
 
   if (mainWindow && !mainWindow.isDestroyed() && pendingTabData) {
     mainWindow.webContents.send('tab-context-menu:selected', action, pendingTabData);
@@ -171,4 +181,5 @@ function _close(): void {
     win.hide();
   }
   pendingTabData = null;
+  openerWindow = null;
 }

@@ -33,6 +33,7 @@ import Logging from '@pkg/utils/logging';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
 import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl, type OpenAICompatibleProviderId } from '@pkg/agent/languagemodels/openAICompatibleProviders';
 import * as window from '@pkg/window';
+import { isAgentWebContents } from '@pkg/window/agentWindows';
 
 const console = Logging.background;
 
@@ -313,7 +314,7 @@ async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values
 
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   const sender = BrowserWindow.fromWebContents(event.sender);
-  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
+  if (sender !== window.getWindow('first-run') && !isAgentWebContents(event.sender)) {
     throw new Error('AI connection is only available from a trusted Sulla window');
   }
 }

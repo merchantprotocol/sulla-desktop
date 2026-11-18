@@ -6,7 +6,7 @@
 import { BaseTool, ToolResponse } from '../base';
 
 import { getSecretaryModeState } from '@pkg/main/secretaryModeState';
-import { getWindow } from '@pkg/window';
+import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 
 /*
   sulla secretary/stop — end the active Secretary Mode session.
@@ -48,7 +48,7 @@ export class SecretaryStopWorker extends BaseTool {
 }
 
 function sendToAgentWindow(payload: Record<string, unknown>): boolean {
-  const agentWindow = getWindow('main-agent');
+  const agentWindow = getActiveAgentWindow();
 
   if (!agentWindow) return false;
 

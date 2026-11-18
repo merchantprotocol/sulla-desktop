@@ -20,7 +20,7 @@ import { getWebSocketClientService } from './WebSocketClientService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { getJob, type AgentJob } from '../tools/agents/jobRegistry';
 
-import { getWindow } from '@pkg/window';
+import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 
 const READINESS_TIMEOUT_MS = 10_000;
 const readinessWaiters = new Map<string, { threadId: string; finish: (ready: boolean) => void }>();
@@ -66,7 +66,7 @@ export async function getAgentTabThreadSnapshot(contractId: string, threadId: st
 }
 
 function sendAgentCommand(payload: Record<string, unknown>): boolean {
-  const agentWindow = getWindow('main-agent');
+  const agentWindow = getActiveAgentWindow();
   if (!agentWindow) return false;
   const dispatch = () => agentWindow.webContents.send('agent-command', payload);
   if (agentWindow.webContents.isLoading()) agentWindow.webContents.once('did-finish-load', dispatch);
