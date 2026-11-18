@@ -32,7 +32,7 @@
             <span v-if="readOnly" class="property readonly">Read only</span>
           </div>
         </template>
-        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" :on-navigate="requestFileNavigation" :on-open-external="openExternal" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
+        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" :on-navigate="requestFileNavigation" :on-open-external="openExternal" :can-back="props.canBack" :can-forward="props.canForward" :on-navigate-history="navigateHistory" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
         <div v-if="slashOpen" ref="insertMenu" class="slash-menu" role="menu" tabindex="-1" aria-label="Insert block" @keydown="navigateMenu" :style="{left:`${menuPoint.x}px`,top:`${menuPoint.y}px`}">
           <section v-for="section in menuSections" :key="section.label"><h2>{{ section.label }}</h2><button v-for="entry in section.entries" :key="entry.label" type="button" role="menuitem" :disabled="entry.disabled" @click="insertMarkdown(entry.text)"><span v-html="entry.icon" /><div><b>{{ entry.label }}</b><small>{{ entry.description }}</small></div></button></section>
         </div>
@@ -80,8 +80,8 @@ function onPageWidthStorage(event:StorageEvent){if(event.key===PAGE_WIDTH_KEY&&e
 function onWindowResize(){pageWidth.value=clampPageWidth(Number(localStorage.getItem(PAGE_WIDTH_KEY))||DEFAULT_PAGE_WIDTH)}
 onMounted(()=>{window.addEventListener('storage',onPageWidthStorage);window.addEventListener('resize',onWindowResize)});
 onBeforeUnmount(()=>{window.removeEventListener('storage',onPageWidthStorage);window.removeEventListener('resize',onWindowResize)});
-const props=defineProps<{ dataSource:FilesDataSource; item:FilesItem; collectionId?:string; files?:FilesItem[] }>();
-const emit=defineEmits<{ back:[]; saved:[item:FilesItem]; navigate:[href:string]; openExternal:[href:string] }>();
+const props=defineProps<{ dataSource:FilesDataSource; item:FilesItem; collectionId?:string; files?:FilesItem[]; canBack?:boolean; canForward?:boolean }>();
+const emit=defineEmits<{ back:[]; saved:[item:FilesItem]; navigate:[href:string]; openExternal:[href:string]; navigateHistory:[direction:'back'|'forward'] }>();
 // Yjs objects must never be wrapped in Vue proxies.
 const liveBinding=shallowRef<EditorCollaboration|null>(null);
 const liveState=ref<'live'|'syncing'|'offline'|null>(null),peers=ref<{id:string;name:string;kind:string}[]>([]);
@@ -108,6 +108,7 @@ async function loadCollection(){const snapshot=await props.dataSource.load();if(
 function htmlBack(){emit('back')}
 function requestFileNavigation(href:string){emit('navigate',href)}
 function openExternal(href:string){emit('openExternal',href)}
+function navigateHistory(direction:'back'|'forward'){emit('navigateHistory',direction)}
 function htmlHistory(){void toggleDrawer('history')}
 async function renameHtml(name:string){const suffix=extension.value;titleDraft.value=name.endsWith(suffix)?name.slice(0,-suffix.length):name;editingTitle.value=true;await commitTitle()}
 async function editTitle(){if(readOnly.value||renaming.value)return;renameError.value='';titleDraft.value=title.value;editingTitle.value=true;await nextTick();titleInput.value?.focus();titleInput.value?.select()}
