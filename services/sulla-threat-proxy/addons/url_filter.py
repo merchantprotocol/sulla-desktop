@@ -412,9 +412,10 @@ class URLFilter:
                 flow.request.headers["X-Sulla-Threat"] = "|".join(details)
                 flow.request.stream = True
                 return
-            # Blocking occurs in `request`, after the complete body has arrived but
-            # before connection_strategy=lazy opens an upstream connection.
-            # Do not enable streaming for a blocked request.
+            # Blocking occurs in `request`, after the complete body has arrived.
+            # Clear mitmproxy's automatic stream_large_bodies choice so this flow
+            # does not open an upstream connection or forward any body bytes.
+            flow.request.stream = False
             return
         flow.request.stream = True
 
