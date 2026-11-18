@@ -65,6 +65,7 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
+import { filesGuestBindsForAnchor } from '@pkg/backend/guestMountInfo';
 import { egressEnforced } from '@pkg/main/threat-proxy';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
@@ -246,7 +247,7 @@ export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'ins
  * a shared or slave mount, so without the anchor the agent starts without it.
  */
 export function sullaFilesGuestBinds(available = getSullaFilesMountManager().guestMountAvailable()): string[] {
-  return available ? ['/mnt/sulla-files:/mnt/sulla-files:rslave'] : [];
+  return filesGuestBindsForAnchor(available);
 }
 
 function safeName(value: string): string {

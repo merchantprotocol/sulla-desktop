@@ -22,12 +22,19 @@ export class SullaFilesDeadMountRecoveryService {
     const state = await this.statState();
     if (state !== 'ENOTCONN' && state !== 'TIMEOUT') return;
 
-    await this.executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-uz', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
-    const afterFuse = await this.statState();
-    if (afterFuse === 'ENOTCONN' || afterFuse === 'TIMEOUT') {
-      await this.executor.execCommand({ root: true, expectFailure: true }, 'umount', '-l', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
+    // Mountinfo classification is not reliable for a hung mount (and may not
+    // match the adapter subtype), so always retain the unconditional detach
+    // path. Repeat it because shared-parent propagation can stack stale layers.
+    const maxLayers = 8;
+    let verified = state;
+    for (let layer = 0; layer < maxLayers && (verified === 'ENOTCONN' || verified === 'TIMEOUT'); layer++) {
+      await this.executor.execCommand({ root: true, expectFailure: true }, 'fusermount3', '-uz', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
+      verified = await this.statState();
+      if (verified === 'ENOTCONN' || verified === 'TIMEOUT') {
+        await this.executor.execCommand({ root: true, expectFailure: true }, 'umount', '-l', SULLA_FILES_GUEST_MOUNT_PATH).catch(() => undefined);
+        verified = await this.statState();
+      }
     }
-    const verified = await this.statState();
     if (verified === 'ENOTCONN' || verified === 'TIMEOUT') throw new Error(`The dead Files mount still reports ${ verified } after lazy unmount`);
   }
 

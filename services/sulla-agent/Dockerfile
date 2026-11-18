@@ -16,6 +16,10 @@ RUN useradd --create-home --uid 10001 --shell /bin/bash sulla \
       /run/secrets/sulla-agent /run/sulla-bootstrap /run/sulla-control /run/sulla-control/inbox \
  && chmod 0700 /run/secrets/sulla-agent /run/sulla-bootstrap /run/sulla-control /run/sulla-control/inbox
 
+# Legacy Files consumers continue using this path while the mount itself is
+# propagated through the stable parent bind at /mnt/sulla.
+RUN install -d -m 0755 /mnt/sulla && ln -s /mnt/sulla/files /mnt/sulla-files
+
 COPY --chmod=0755 resources/darwin/bin/sulla /usr/local/libexec/sulla-remote
 COPY --chmod=0755 services/sulla-agent/secret-env.sh /usr/local/libexec/sulla-secret-env.sh
 COPY --chmod=0755 services/sulla-agent/sulla-wrapper.sh /usr/local/bin/sulla

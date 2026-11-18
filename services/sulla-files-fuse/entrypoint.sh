@@ -7,7 +7,7 @@
 set -eu
 
 token_file=${SULLA_FILES_FUSE_TOKEN_FILE:-/run/sulla-files-fuse/token}
-mount_path=${SULLA_FILES_FUSE_MOUNT_PATH:-/mnt/sulla-files}
+mount_path=${SULLA_FILES_FUSE_MOUNT_PATH:-/mnt/sulla/files}
 # Desktop reads this (docker exec cat) to tell a slow-but-progressing adapter from a dead one.
 status_file=${SULLA_FILES_FUSE_STATUS_FILE:-/tmp/sulla-files-fuse-status.json}
 # Desktop writes the capability only after Files unlocks (and migrations finish),
@@ -41,6 +41,10 @@ fail() {
 }
 
 emit entrypoint-start ",\"pid\":$$,\"mountPath\":\"$mount_path\",\"tokenFile\":\"$token_file\",\"tokenWaitSeconds\":$token_wait"
+
+# The shared /mnt/sulla parent is only the propagation anchor. Never mount or
+# detach FUSE there: the adapter owns the replaceable child mount exclusively.
+[ "$mount_path" = /mnt/sulla/files ] || fail invalid-mount-path ",\"mountPath\":\"$mount_path\",\"expected\":\"/mnt/sulla/files\""
 
 waited=0
 while [ ! -s "$token_file" ]; do

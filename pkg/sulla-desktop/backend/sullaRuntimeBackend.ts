@@ -73,7 +73,7 @@ import mainEvents from '@pkg/main/mainEvents';
 import { refreshVaultPinnedSessions } from '@pkg/main/vaultTls';
 import { refreshFilesPinnedSessions } from '@pkg/main/sullaFilesTls';
 import {
-  SULLA_FILES_GUEST_MOUNT_PATH, prepareSullaFilesGuestAnchorDraining,
+  SULLA_FILES_GUEST_MOUNT_PATH, SULLA_FILES_GUEST_PARENT_PATH, SULLA_FILES_GUEST_FUSE_BIND, prepareSullaFilesGuestAnchorDraining,
 } from '@pkg/backend/guestMountInfo';
 import { getSullaFilesBackups } from '@pkg/main/sullaFilesBackups';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
@@ -1328,7 +1328,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       },
       extra_hosts: ['host.docker.internal:host-gateway'],
       ports: [`127.0.0.1:${ hostPort(30122) }:8788`],
-      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla-files:/mnt/sulla-files:rslave'],
+      volumes: ['/var/run/docker.sock:/var/run/docker.sock', '/mnt/sulla:/mnt/sulla:rslave'],
       restart: 'unless-stopped',
       mem_limit: '384m',
       healthcheck: { test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8788/healthz'], interval: '5s', timeout: '3s', retries: 10 },
@@ -1538,14 +1538,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         environment: {
           SULLA_FILES_FUSE_URL:             'https://sulla_files:8792',
           SULLA_FILES_FUSE_TOKEN_FILE:      '/run/sulla-files-fuse/token',
-          SULLA_FILES_FUSE_MOUNT_PATH:       '/mnt/sulla-files',
+          SULLA_FILES_FUSE_MOUNT_PATH:       '/mnt/sulla/files',
           SULLA_FILES_FUSE_SPOOL:            '/var/spool/sulla-files-fuse',
           SSL_CERT_FILE:                     '/run/sulla-files-ca/tls.crt',
         },
         volumes: [
           '/var/lib/sulla/files-fuse:/run/sulla-files-fuse:ro',
           '/proc:/host/proc:ro',
-          '/mnt/sulla-files:/mnt/sulla-files:rshared',
+          SULLA_FILES_GUEST_FUSE_BIND,
           // Disk-backed spool for open-file buffers; /tmp is RAM and counts against mem_limit.
           'sulla-files-fuse-spool:/var/spool/sulla-files-fuse',
           filesTlsBind(true),
@@ -1647,7 +1647,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.#lastFilesGuestMountFailure = undefined;
       getSullaFilesMountManager().reportGuestPreparation();
       // The workflow manager image cannot ask Desktop; this marker tells it
-      // the anchor exists so its runners may bind /mnt/sulla-files.
+      // the shared parent exists so its runners may bind /mnt/sulla.
       const workflowManager = compose.services?.workflow_manager;
 
       if (workflowManager) workflowManager.environment = { ...workflowManager.environment, SULLA_FILES_GUEST_MOUNT: '1' };
@@ -1665,7 +1665,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         service.volumes = service.volumes.filter((volume: any) => {
           const source = typeof volume === 'string' ? volume.split(':')[0] : volume?.source;
 
-          return source !== SULLA_FILES_GUEST_MOUNT_PATH;
+          return source !== SULLA_FILES_GUEST_PARENT_PATH;
         });
       }
 
@@ -1677,7 +1677,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    * Runtime recovery for the Files guest mount, called by the mount manager's
    * retry loop. Re-runs the same idempotent preparation by regenerating the
    * compose file (which restores the adapter service and the consumers'
-   * /mnt/sulla-files binds once the anchor exists), then brings
+   * /mnt/sulla parent binds once the anchor exists), then brings
    * workflow_manager up to that definition. The mount manager itself starts
    * sulla_files_fuse. Throws when preparation still fails.
    */
