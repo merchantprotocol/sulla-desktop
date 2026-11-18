@@ -23,6 +23,7 @@ import { providerSessionStore } from './providerSessionStore';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
+import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { CodexTurnOutcome } from './codexTurnOutcome';
@@ -637,6 +638,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     let lastSetupMark = runPhaseStart;
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
+    // Each container owns one provider bridge, so pod id scopes bridge
+    // activity to this container without letting unrelated agents keep us alive.
+    const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -921,6 +925,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       const STALL_CHECK_MS = 30 * 1_000;
       let lastStreamActivityAt = Date.now();
       let stalled = false;
+      let lastWatchdogDeferralAt = 0;
       let stallTimer: NodeJS.Timeout | null = null;
       const stopStallWatchdog = () => {
         if (stallTimer) {
@@ -931,6 +936,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       const startStallWatchdog = () => {
         lastStreamActivityAt = Date.now();
         stallTimer = setInterval(() => {
+          const upstreamActivityAt = providerBridgeActivity.lastActivityAt(providerBridgePodId);
+          if (upstreamActivityAt > lastStreamActivityAt) {
+            lastStreamActivityAt = upstreamActivityAt;
+            if (Date.now() - lastWatchdogDeferralAt >= 60_000) {
+              lastWatchdogDeferralAt = Date.now();
+              log.info(`[CodexService] Stall watchdog deferred: provider bridge active (convId=${ convId })`);
+            }
+          }
           const silentMs = Date.now() - lastStreamActivityAt;
           if (activeToolItems.size > 0) {
             const tools = [...activeToolItems.values()];
