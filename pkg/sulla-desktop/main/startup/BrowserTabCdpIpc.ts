@@ -4,6 +4,7 @@
 
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import Logging from '@pkg/utils/logging';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 
@@ -60,6 +61,8 @@ export class BrowserTabCdpIpc implements MainProcessIpcStep {
         const viewWc = mgr.getWebContents(tabId);
 
         if (!viewWc) return false;
+        const owner = agentWindowFromSender(event.sender);
+        if (!owner || !mgr.ownsTab(tabId, owner)) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
         mgr.wakeView(tabId);
         wc = viewWc;
       } else {
@@ -125,6 +128,8 @@ export class BrowserTabCdpIpc implements MainProcessIpcStep {
         const viewWc = mgr.getWebContents(tabId);
 
         if (!viewWc) return null;
+        const owner = agentWindowFromSender(event.sender);
+        if (!owner || !mgr.ownsTab(tabId, owner)) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
         mgr.wakeView(tabId);
         wc = viewWc;
       } else {
@@ -180,6 +185,8 @@ export class BrowserTabCdpIpc implements MainProcessIpcStep {
         const viewWc = mgr.getWebContents(tabId);
 
         if (!viewWc) return false;
+        const owner = agentWindowFromSender(event.sender);
+        if (!owner || !mgr.ownsTab(tabId, owner)) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
         mgr.wakeView(tabId);
         wc = viewWc;
       } else {

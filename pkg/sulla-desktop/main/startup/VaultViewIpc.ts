@@ -7,6 +7,7 @@ import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycle
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 import { VaultIpcInputPolicy } from './VaultIpcInputPolicy';
 import { VaultStatusMonitor } from './VaultStatusMonitor';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 /** Vault status polling, metadata-only integration bridges and the isolated vault view. */
 export class VaultViewIpc implements MainProcessIpcStep {
@@ -83,17 +84,17 @@ export class VaultViewIpc implements MainProcessIpcStep {
       bounds: Electron.Rectangle,
       hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean; connect?: unknown },
     ) => {
-      const parentWindow = window.getWindow('main-agent');
-      if (!parentWindow || event.sender !== parentWindow.webContents || event.senderFrame !== parentWindow.webContents.mainFrame) throw new Error('Untrusted vault view caller');
+      const parentWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!parentWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
       const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
       const ownerId = typeof hint?.ownerId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(hint.ownerId) ? hint.ownerId : undefined;
       if (!ownerId) throw new Error('Invalid vault view owner');
-      const reservation = vaultViewManager.reserve(ownerId);
+      const reservation = vaultViewManager.reserve(parentWindow, ownerId);
       try {
         await getServiceLifecycleManager().waitUntilStarted('vault');
       } catch (error) {
         if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
-        vaultViewManager.hide(ownerId);
+        vaultViewManager.hide(ownerId, parentWindow);
         throw error;
       }
       if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
@@ -128,22 +129,22 @@ export class VaultViewIpc implements MainProcessIpcStep {
         target.pathname = '/vault/popup.html';
         if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
       }
-      const opened = await vaultViewManager.show(reservation, target.toString(), bounds);
+      const opened = await vaultViewManager.show(reservation, parentWindow, target.toString(), bounds);
       if (!opened) return { state: 'cancelled' };
       vaultStatus.startPolling();
       return { state: 'opened', expiresAt: humanSession.expiresAt };
     });
 
     ipc.handle('vault:view-bounds', async(event: Electron.IpcMainInvokeEvent, ownerId: string, bounds: Electron.Rectangle) => {
-      const trusted = window.getWindow('main-agent')?.webContents === event.sender;
-      if (!trusted) throw new Error('Untrusted vault view caller');
-      vaultViewManager.setBounds(ownerId, bounds);
+      const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
+      vaultViewManager.setBounds(ownerId, bounds, senderWindow);
     });
 
     ipc.handle('vault:view-hide', async(event: Electron.IpcMainInvokeEvent, ownerId: string) => {
-      const trusted = window.getWindow('main-agent')?.webContents === event.sender;
-      if (!trusted) throw new Error('Untrusted vault view caller');
-      vaultViewManager.hide(ownerId);
+      const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
+      vaultViewManager.hide(ownerId, senderWindow);
       vaultStatus.viewHidden();
     });
   }

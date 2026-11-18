@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { WindowLookup } from './MainProcessIpcContext';
+import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
 
 /** Minimal shape of an Electron invoke event the trust checks read. */
 export interface IpcCallerEvent {
@@ -31,14 +32,18 @@ export class VaultIpcInputPolicy {
 
   requireTrustedVaultRenderer(event: IpcCallerEvent): void {
     const mainWindow = this.window.getWindow('main-agent');
-    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    const sender = event.sender as Electron.WebContents | undefined;
+    const trusted = !!sender && (isAgentWindowSender(sender) || sender === mainWindow?.webContents);
+    if (!trusted || event.senderFrame !== sender?.mainFrame) {
       throw new Error('Untrusted vault metadata caller');
     }
   }
 
   requireTrustedAccountsRenderer(event: IpcCallerEvent): void {
     const mainWindow = this.window.getWindow('main-agent');
-    if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow?.webContents.mainFrame) {
+    const sender = event.sender as Electron.WebContents | undefined;
+    const trusted = !!sender && (isAgentWindowSender(sender) || sender === mainWindow?.webContents);
+    if (!trusted || event.senderFrame !== sender?.mainFrame) {
       throw new Error('Untrusted Accounts caller');
     }
   }
