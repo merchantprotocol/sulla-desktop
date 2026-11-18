@@ -24,6 +24,23 @@ describe('Files wait metrics', () => {
     expect(timings.snapshot()).toMatchObject({ count: 4, maxMs: 1000, p95Ms: 3, windowSamples: 3 });
   });
 
+  // risk: misattributed latency — txn, audit and route timings land in their own windows, so the create trace can split them.
+  it('records transaction, audit and FUSE route timings into their own windows', () => {
+    const logged:Record<string, unknown>[] = [];
+    const metrics = new FilesMetrics({ slowWaitMs: 500, window: 4, warn: (_message, fields) => logged.push(fields) });
+    metrics.observeTxn(12);
+    metrics.observeTxn(30);
+    metrics.observeAudit(4);
+    metrics.observeFuseRoute(90);
+    const snapshot = metrics.snapshot();
+    expect(snapshot.txn).toMatchObject({ count: 2, totalMs: 42, maxMs: 30, windowSamples: 2 });
+    expect(snapshot.audit).toMatchObject({ count: 1, totalMs: 4, windowSamples: 1 });
+    expect(snapshot.fuseRoute).toMatchObject({ count: 1, totalMs: 90, maxMs: 90 });
+    expect(snapshot.poolWait.count).toBe(0);
+    // risk: log volume — txn/audit/route timings are numbers only and never write a slow-wait line on their own.
+    expect(logged).toEqual([]);
+  });
+
   // risk: silent stalls — a single wait over the threshold gets its own log line; a fast one does not.
   it('logs one line for a stage wait over the threshold and none under it', () => {
     const logged:Record<string, unknown>[] = [];

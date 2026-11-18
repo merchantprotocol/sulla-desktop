@@ -15,6 +15,7 @@ import type { FilesAccessGate, RequestWithIdentity } from '../Http/FilesAccessGa
 import { HttpError } from '../Http/HttpError.js';
 import type { LocalManagerGate } from '../Http/LocalManagerGate.js';
 import type { RequestAuditLog } from '../Http/RequestAuditLog.js';
+import type { FilesMetrics } from '../FilesMetrics.js';
 import type { FuseWriteRepository } from '../Repositories/FuseWriteRepository.js';
 import type { AutomergeTextStore } from '../Services/AutomergeTextStore.js';
 import type { LiveTextCoordinator } from '../Services/LiveTextCoordinator.js';
@@ -47,6 +48,7 @@ export class FuseContentRoutes {
     private readonly live:LiveTextCoordinator,
     private readonly audit:RequestAuditLog,
     private readonly contentReadFailures:ContentReadFailureLog,
+    private readonly metrics?:FilesMetrics,
   ) {}
 
   register(app:express.Express):void {
@@ -124,6 +126,7 @@ export class FuseContentRoutes {
       } catch(error) { next(error) }
     });
     app.put('/v1/fuse/files/:id/content', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
+      const routeStarted = performance.now();
       const match = request.header('if-match')?.match(/^"([0-9a-f-]+)"$/i)?.[1];
       const sourceHash = request.header('x-sulla-source-hash');
       if (!match || !sourceHash || !/^[0-9a-f]{64}$/i.test(sourceHash)) throw new HttpError(428, 'If-Match version and X-Sulla-Source-Hash are required');
@@ -132,9 +135,11 @@ export class FuseContentRoutes {
       const result = written.result;
       if(written.merged) response.setHeader('X-Sulla-Merged','1');
       response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',written.sourceHash);
+      this.metrics?.observeFuseRoute(performance.now() - routeStarted);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:written.sourceHash,mtimeMs:Date.now()});
     } catch (error) { next(error) } });
     app.post('/v1/fuse/files/:id/replace',async(request:RequestWithIdentity,response,next)=>{ try {
+      const routeStarted = performance.now();
       const actor=this.access.identity(request); const sourceFileId=String(request.body.sourceFileId??'');
       if(!sourceFileId) throw new HttpError(400,'sourceFileId is required');
       if(sourceFileId===request.params.id) throw new HttpError(400,'replacement source must differ from target');
@@ -165,6 +170,7 @@ export class FuseContentRoutes {
         return result;
       });
       if(saved.document)this.live.adopt(request,target.id,saved.document);
+      this.metrics?.observeFuseRoute(performance.now() - routeStarted);
       const nextHash=staged.sourceHash;
       if(saved.merged) response.setHeader('X-Sulla-Merged','1'); response.setHeader('ETag',`"${result.current_version_id}"`); response.setHeader('X-Sulla-Source-Hash',nextHash);
       response.json({id:result.id,collectionId:result.collection_id,path:result.path,mime:result.mime,size:result.size,versionId:result.current_version_id,sourceHash:nextHash,mtimeMs:Date.now()});
