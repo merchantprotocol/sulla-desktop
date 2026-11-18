@@ -1,71 +1,31 @@
-# Threat-proxy load and soak harness
+# Threat-proxy OOM load harness
 
-This harness measures a disposable Sulla threat-proxy container under bounded
-and sustained HTTP load. It never looks up, stops, or modifies containers named
-`sulla_*`. **Never aim it at the live `sulla_threat_proxy` or any live user
-traffic.** Use an isolated QA machine and a disposable proxy image.
+Disposable, isolated Docker test harness for `services/sulla-threat-proxy`. Never point it at live user traffic or `sulla_threat_proxy`. Requires Docker only on the host; helper image uses `python:3.13-slim`, pins `websockets==15.0.1` and `cryptography==46.0.3`, and runs Python syntax/summary work inside containers. The proxy is capped at 512 MiB with production hardening. `--state-root DIR` (default `${TMPDIR:-/tmp}`) controls temporary proxy state; `--results DIR` selects retained CSV/JSON/Markdown outputs. Every run samples every 2 seconds during load and for 30 seconds afterward (`SETTLE=30` overrides it), then prints one `SUMMARY ...` line including peak, steady and settled MiB, OOM/alive, client errors and security status. Each run removes only its own named containers/network/helper image and temporary state. `--keep` retains resources for debugging.
 
-## Requirements and outputs
+The origin offers HTTP on 8080, WebSocket on 8081, and HTTPS on 8443. HTTPS uses a fresh self-signed `*.test` certificate; only the disposable proxy entrypoint copy gets `--set ssl_insecure=true`, so production files are untouched. `--https` on client scenarios sends requests through CONNECT and trusts the proxy's generated CA. The proxy receives `/etc/hosts` entries for `host-N.test` names; `many_hosts` is capped at 2000 (default) to keep Docker argument size bounded and exercises SNI certificate generation/cache churn.
 
-Requires Docker Engine/CLI and the proxy image under test. The helper image is
-built from the included Python 3.13 slim Dockerfile (multi-architecture base).
-The script creates an isolated `tproxy-oom-<runid>` network, a private state
-directory, one proxy (512 MiB cap and production hardening), an origin and a
-client. It removes those exact containers, the network, helper image and state
-directory at exit. `--keep` retains those resources for debugging; clean them
-up manually by their printed run ID. Results are retained in
-`./tproxy-oom-results-<runid>/` (CSV samples every 2 seconds, inspect JSON,
-client JSON and summary JSON/Markdown).
+WebSockets use `websockets==15.0.1` client HTTP-proxy support (`proxy=http://proxy:8890`) and the standard ws:// handshake through the proxy, no CONNECT. Each socket receives `--msg-kb` (default 64) payloads at `--rate` messages/second for `--minutes`; summary records received messages and connection errors.
 
-The origin and client are standard-library Python. Both stream response bodies
-in 64 KiB chunks and discard them. Client request concurrency and body sizes
-are configurable; use small values for smoke checks. `--keep` is optional and
-precedes the image argument.
+## Commands
 
-## Scenarios
-
-All commands accept `IMAGE` followed by scenario and options. Defaults are
-deliberately moderate except `soak` (2 hours).
-
-| Scenario | Default / controls | Typical runtime |
-|---|---|---|
-| `big_download` | 100 MB; `--sizes 10000000,100000000,1000000000,2000000000`; HTML and octet-stream, both length modes | data-size dependent |
-| `big_upload` | 100 MB; `--size N --concurrency N` | data-size dependent |
-| `concurrent` | 20 simultaneous 100 MB HTML streams; `--size N --concurrency N` | data-size dependent |
-| `llm_prompts` | 20 JSON POSTs of 10 MiB; `--mb N --concurrency N` | typically minutes |
-| `sse_long` | 20 streams for 1 minute; `--minutes N --concurrency N` | requested duration |
-| `websockets` | currently reports unsupported scenario errors; stdlib origin does not implement WebSocket | immediate |
-| `gzip_bomb` | 20 compressed responses, each decompressing to 100 MB; `--decoded N --concurrency N` | data-size dependent |
-| `many_hosts` | 20 distinct HTTP Host values; `--concurrency N` | seconds to minutes |
-| `blocked_url_check` | asserts blocked host returns HTTP 451 | seconds |
-| `injection_check` | asserts prompt-injection response header | seconds |
-| `soak` | weighted repeating mix for 7200 seconds; `--duration SECONDS` | requested duration |
-
-Example baseline runs against an image ref (replace the placeholder with the
-tag or registry digest being measured):
+Set `IMAGE` to the disposable proxy image under test, then run any scenario:
 
 ```sh
 IMAGE='ghcr.io/merchantprotocol/sulla-threat-proxy:TAG'
-scripts/qa/threat-proxy/run.sh "$IMAGE" big_download --sizes 10000000
-scripts/qa/threat-proxy/run.sh "$IMAGE" blocked_url_check
-scripts/qa/threat-proxy/run.sh "$IMAGE" concurrent --size 12000000 --concurrency 200
+scripts/qa/threat-proxy/run.sh "$IMAGE" concurrent --size 15000000 --concurrency 12
+scripts/qa/threat-proxy/run.sh "$IMAGE" concurrent --size 5000000 --ctype text/markdown --concurrency 20
+scripts/qa/threat-proxy/run.sh "$IMAGE" gzip_bomb --decoded 1000000000 --concurrency 1
 scripts/qa/threat-proxy/run.sh "$IMAGE" llm_prompts --mb 10 --concurrency 50
+scripts/qa/threat-proxy/run.sh "$IMAGE" big_download --sizes 2000000000
+scripts/qa/threat-proxy/run.sh "$IMAGE" big_upload --size 1000000000
+scripts/qa/threat-proxy/run.sh "$IMAGE" sse_long --minutes 10 --concurrency 50
+scripts/qa/threat-proxy/run.sh "$IMAGE" websockets --minutes 10 --concurrency 100
+scripts/qa/threat-proxy/run.sh "$IMAGE" many_hosts --https --hosts 2000
+scripts/qa/threat-proxy/run.sh "$IMAGE" blocked_url_check
+scripts/qa/threat-proxy/run.sh "$IMAGE" injection_check
 scripts/qa/threat-proxy/run.sh "$IMAGE" soak --duration 7200
 ```
 
-Run each invocation independently to get a CSV and summary per scenario. Check
-the summary's cgroup peak and steady-state MiB, OOMKilled/restart state, client
-errors and security results. Keep local machine and Docker memory headroom in
-mind: intentionally high connection counts can affect the machine running the
-harness too.
+`--https` is available for `concurrent`, `big_download`, `big_upload`, `gzip_bomb`, `llm_prompts`, `many_hosts`, `sse_long`, and `injection_check`. `concurrent` accepts `--ctype` (default `text/html`), `--chunked 0|1|mixed` (default mixed), `--size`, `--concurrency` and `--rounds` (default 1). Use reduced sizes/counts for a smoke run. Large baselines intentionally consume substantial network and host resources.
 
-## Known limits
-
-The checked-in proxy entrypoint has no extra-args hook, and this harness does
-not alter production code to add one. Consequently current scenarios exercise
-the proxy's regular HTTP mode; the HTTPS origin/certificate-verification-bypass
-path, WebSocket protocol workload, truly streaming large JSON POST bodies, and
-TLS SNI/certificate-cache stress are not implemented yet. `many_hosts` exercises
-distinct HTTP host values, not SNI. `gzip_bomb` emits concatenated gzip members
-to bound origin memory; not every client/proxy version handles concatenated
-members identically. Validate that aspect before interpreting those readings.
+Results include per-sample `samples.csv`, `proxy-inspect.json`, `client-<scenario>.json`, `results.json` and `summary.md`. Peak is cgroup `memory.peak`; steady is median of the final quarter of load samples; settled is median post-load idle samples. Security is `pass` only when checks ran and all passed; otherwise `fail` or `n/a`.

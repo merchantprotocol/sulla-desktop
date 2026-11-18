@@ -23,7 +23,12 @@ class RunSummary:
         currents = [n for n in currents if n is not None]
         peaks = [self.mib(r.get("memory_peak")) for r in rows]
         peaks = [n for n in peaks if n is not None]
-        steady = statistics.median(currents[max(0, int(len(currents)*.75)):]) if currents else None
+        load_currents = [self.mib(r.get("memory_current")) for r in rows if r.get("phase") == "load"]
+        load_currents = [n for n in load_currents if n is not None]
+        steady = statistics.median(load_currents[max(0, int(len(load_currents)*.75)):]) if load_currents else None
+        settled_rows = [self.mib(r.get("memory_current")) for r in rows if r.get("phase") == "settled"]
+        settled_rows = [n for n in settled_rows if n is not None]
+        settled = statistics.median(settled_rows) if settled_rows else None
         try:
             info = json.load(open(self.inspect))[0]
             state = info.get("State", {})
@@ -33,7 +38,7 @@ class RunSummary:
         try: client = json.load(open(self.client))
         except (OSError, ValueError): client = {"errors": None, "security": {}}
         result = {"scenario":self.scenario,"samples":len(rows),"peak_mib":max(peaks) if peaks else (max(currents) if currents else None),
-                  "steady_state_mib":steady,"oom_killed":oom,"proxy_alive_after":alive,"restart_count":restarts,
+                  "steady_state_mib":steady,"settled_state_mib":settled,"oom_killed":oom,"proxy_alive_after":alive,"restart_count":restarts,
                   "exit_code":exit_code,"client_errors":client.get("errors"),"security_checks":client.get("security", {})}
         return result
 

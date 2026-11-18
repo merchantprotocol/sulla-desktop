@@ -7,6 +7,14 @@ import json
 import os
 import random
 import threading
+import asyncio
+import websockets
+import ssl
+from datetime import datetime, timedelta, timezone
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -75,8 +83,7 @@ class OriginHandler(BaseHTTPRequestHandler):
             rate = max(.001, float(q.get("rate", ["1"])[0]))
             while time.monotonic() < end:
                 self.wfile.write(b"data: token\n\n"); self.wfile.flush(); time.sleep(rate)
-        elif u.path == "/ws":
-            self.send_error(501, "Use the websocket scenario's raw handshake client")
+
         else: self.send_error(404)
 
     def do_POST(self):
@@ -103,5 +110,37 @@ class OriginHandler(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header("Content-Length", "0"); self.end_headers()
 
 
+async def websocket_handler(ws):
+    q = parse_qs(urlsplit(ws.request.path).query)
+    size = min(1024 * max(1, int(q.get("msg_kb", ["64"])[0])), 1024 * 1024)
+    rate = max(0.001, float(q.get("rate", ["1"])[0]))
+    end = time.monotonic() + min(120, float(q.get("minutes", ["1"])[0])) * 60
+    payload = "x" * size
+    while time.monotonic() < end:
+        await ws.send(payload)
+        await asyncio.sleep(1 / rate)
+
+
+def serve_tls():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "origin")])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key()).serial_number(x509.random_serial_number()).not_valid_before(datetime.now(timezone.utc)).not_valid_after(datetime.now(timezone.utc)+timedelta(days=1)).add_extension(x509.SubjectAlternativeName([x509.DNSName("origin"), x509.DNSName("*.test")]), critical=False).sign(key, hashes.SHA256()))
+    key_path, cert_path = "/tmp/origin-key.pem", "/tmp/origin-cert.pem"
+    with open(key_path, "wb") as f: f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+    with open(cert_path, "wb") as f: f.write(cert.public_bytes(serialization.Encoding.PEM))
+    server = ThreadingHTTPServer(("0.0.0.0", 8443), OriginHandler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert_path, key_path)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+
+
+def serve_websockets():
+    async def run():
+        async with websockets.serve(websocket_handler, "0.0.0.0", 8081, max_size=None):
+            await asyncio.Future()
+    asyncio.run(run())
+
 if __name__ == "__main__":
+    threading.Thread(target=serve_websockets, daemon=True).start()
+    threading.Thread(target=serve_tls, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", 8080), OriginHandler).serve_forever()
