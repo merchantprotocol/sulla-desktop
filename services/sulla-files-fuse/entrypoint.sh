@@ -92,7 +92,7 @@ clear_stale_fuse_layers() {
   while top_is_fuse; do
     [ "$layers" -ge 8 ] && fail stale-mount-stuck ",\"layers\":$layers"
     emit stale-mount-detected ",\"layer\":$layers,\"fsType\":\"${top%% *}\""
-    fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || fail stale-mount-unremovable ",\"layer\":$layers"
+    fusermount3 -uz "$mount_path" 2>/dev/null || umount -n -l "$mount_path" 2>/dev/null || fail stale-mount-unremovable ",\"layer\":$layers"
     layers=$((layers + 1))
   done
 }
@@ -121,10 +121,10 @@ sentinel_skipped() {
 }
 sentinel_cleanup_stage() {
   if mountpoint -q "$sentinel_stage/s" 2>/dev/null; then
-    umount "$sentinel_stage/s" 2>/dev/null || sentinel_skipped stage-child-cleanup-failed "$sentinel_stage/s"
+    umount -n "$sentinel_stage/s" 2>/dev/null || sentinel_skipped stage-child-cleanup-failed "$sentinel_stage/s"
   fi
   if mountpoint -q "$sentinel_stage" 2>/dev/null; then
-    umount "$sentinel_stage" 2>/dev/null || sentinel_skipped stage-cleanup-failed "$sentinel_stage"
+    umount -n "$sentinel_stage" 2>/dev/null || sentinel_skipped stage-cleanup-failed "$sentinel_stage"
   fi
 }
 
@@ -137,30 +137,35 @@ else
     sentinel_skipped marker-create-failed "$mount_path"
   elif ! mkdir -p "$sentinel_stage"; then
     sentinel_skipped stage-dir-failed "$sentinel_stage"
-  elif mountpoint -q "$sentinel_stage" && { ! umount "$sentinel_stage"; }; then
+  elif mountpoint -q "$sentinel_stage" && { ! umount -n "$sentinel_stage"; }; then
     sentinel_skipped stage-cleanup-failed "$sentinel_stage"
-  elif ! mount -t tmpfs -o size=64k,mode=0700 sentinel-stage "$sentinel_stage"; then
+  elif ! mount -n -t tmpfs -o size=64k,mode=0700 sentinel-stage "$sentinel_stage"; then
     sentinel_skipped stage-mount-failed "$sentinel_stage"
-  elif ! mount --make-private "$sentinel_stage"; then
+  elif ! mount -n --make-private "$sentinel_stage"; then
     sentinel_skipped stage-private-failed "$sentinel_stage"
     sentinel_cleanup_stage
   elif ! mkdir "$sentinel_stage/s"; then
     sentinel_skipped stage-child-failed "$sentinel_stage/s"
     sentinel_cleanup_stage
-  elif ! mount --bind "$mount_path" "$sentinel_stage/s"; then
+  elif ! mount -n --bind "$mount_path" "$sentinel_stage/s"; then
     sentinel_skipped bind-failed "$mount_path"
     sentinel_cleanup_stage
-  elif ! mount -o remount,bind,ro "$sentinel_stage/s"; then
+  elif ! mount -n -o remount,bind,ro "$sentinel_stage/s"; then
     sentinel_skipped remount-readonly-failed "$mount_path"
     sentinel_cleanup_stage
-  elif ! mount --make-private "$sentinel_stage/s"; then
+  elif ! mount -n --make-private "$sentinel_stage/s"; then
     sentinel_skipped bind-private-failed "$mount_path"
     sentinel_cleanup_stage
-  elif ! mount --move "$sentinel_stage/s" "$mount_path"; then
-    sentinel_skipped move-failed "$mount_path"
+  elif mount -n --move "$sentinel_stage/s" "$mount_path"; then
+    emit sentinel-installed ",\"mount\":\"$mount_path\""
+    sentinel_cleanup_stage
+  elif top_is_readonly_nonfuse; then
+    # MS_MOVE can succeed in the kernel even when mount exits non-zero because
+    # util-linux could not update /etc/mtab. Mountinfo is the authoritative state.
+    emit sentinel-installed ",\"mount\":\"$mount_path\""
     sentinel_cleanup_stage
   else
-    emit sentinel-installed ",\"mount\":\"$mount_path\""
+    sentinel_skipped move-failed "$mount_path"
     sentinel_cleanup_stage
   fi
 fi
