@@ -455,6 +455,7 @@ export class PersonaAdapter {
     this.htmlArtifacts.clear();
     this.staticWorkflowArtifacts.clear();
     this.persistentArtifacts.clear();
+    this.seen.clear();
     this.ci.dispose();
   }
 

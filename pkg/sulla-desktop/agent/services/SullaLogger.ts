@@ -32,7 +32,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import util from 'node:util';
 
-import { autoTitleAfterMessages, type TitleMessage } from './ConversationTitleService';
+import { autoTitleAfterMessages } from './ConversationTitleService';
+import { TitleMessageBuffer } from './TitleMessageBuffer';
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { resolveSullaLogsDir } from '../utils/sullaPaths';
 
@@ -383,17 +384,15 @@ class SullaLogger extends EventEmitter {
   private readonly dir:            string;
   private readonly indexPath:      string;
   private readonly indexJsonlPath: string;
-  /** Maps conversationId → resolved log file path (set on start). */
-  private filePaths = new Map<string, string>();
-  /** Maps conversationId → resolved JSONL file path (set on start). */
-  private jsonlPaths = new Map<string, string>();
-
+  /** Maps conversationId to the channel-qualified path until that conversation ends. */
+  private readonly filePaths = new Map<string, string>();
+  private readonly jsonlPaths = new Map<string, string>();
   // ── Activity throttle: track last DB update per conversationId ──
   private lastActivityUpdate = new Map<string, number>();
   private static readonly ACTIVITY_THROTTLE_MS = 30_000; // 30 seconds
 
   // ── Message accumulator for auto-title generation ──
-  private messageBuffer = new Map<string, TitleMessage[]>();
+  private readonly messageBuffer = new TitleMessageBuffer();
 
   // ── Topic log cache (static, shared across all callers) ──
   private static topics = new Map<string, TopicLog>();
@@ -433,7 +432,6 @@ class SullaLogger extends EventEmitter {
   private resolveFilePath(conversationId: string, channel?: string): string {
     const cached = this.filePaths.get(conversationId);
     if (cached) return cached;
-
     const safeId = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
     let filename: string;
     if (channel) {
@@ -450,7 +448,6 @@ class SullaLogger extends EventEmitter {
   private resolveJsonlPath(conversationId: string): string {
     const cached = this.jsonlPaths.get(conversationId);
     if (cached) return cached;
-
     const safeId = conversationId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
     const filePath = path.join(this.dir, `conv_${ safeId }.jsonl`);
     this.jsonlPaths.set(conversationId, filePath);
@@ -562,6 +559,9 @@ class SullaLogger extends EventEmitter {
       status,
       ...(error ? { error } : {}),
     });
+    this.lastActivityUpdate.delete(conversationId);
+    this.filePaths.delete(conversationId);
+    this.jsonlPaths.delete(conversationId);
   }
 
   logNodeEvent(conversationId: string, type: string, nodeId: string, nodeLabel: string, data?: Record<string, unknown>): void {
@@ -602,6 +602,9 @@ class SullaLogger extends EventEmitter {
       status,
       ...data,
     });
+    this.lastActivityUpdate.delete(conversationId);
+    this.filePaths.delete(conversationId);
+    this.jsonlPaths.delete(conversationId);
   }
 
   logMessage(conversationId: string, role: 'user' | 'assistant' | 'system', content: string): void {
@@ -614,16 +617,11 @@ class SullaLogger extends EventEmitter {
 
     // Accumulate messages for auto-title generation
     if (role === 'user' || role === 'assistant') {
-      let buffer = this.messageBuffer.get(conversationId);
-
-      if (!buffer) {
-        buffer = [];
-        this.messageBuffer.set(conversationId, buffer);
-      }
-      buffer.push({ role, content });
+      const buffer = this.messageBuffer.append(conversationId, { role, content });
 
       // Trigger auto-title after threshold (fire-and-forget)
       autoTitleAfterMessages(conversationId, buffer)
+        .then(done => { if (done) this.messageBuffer.delete(conversationId); })
         .catch(err => globalThis.console.error('[SullaLogger] Auto-title failed:', err));
     }
   }

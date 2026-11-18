@@ -202,10 +202,8 @@ export class ChatController {
    * existing watchers or be notified separately.
    */
   newChat(): void {
-    const oldThreadId = this.thread.value.id;
     const blank = this.fresh();
     this.olderPagesLoaded = 0;
-    void import('@pkg/utils/ipcRenderer').then(({ ipcRenderer }) => ipcRenderer.invoke('chat-messages:delete', oldThreadId));
     this.thread.value = blank.thread;
     this.runState.value = blank.runState;
     this.queue.value = [];
