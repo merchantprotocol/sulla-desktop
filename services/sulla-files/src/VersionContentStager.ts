@@ -61,16 +61,15 @@ export class VersionContentStager {
   private async stageContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
     TransactionScope.assertOutside('staging version content (key lookup, encrypt, fsync)');
     const { data, dedup } = await this.keyring.keys(collectionId);
+    let active:{data:Uint8Array; dedup:Uint8Array} | undefined;
     try {
     if (this.keyring.keysFresh) {
-      const active = await this.keyring.keysFresh(collectionId);
-      try {
-        if (!defaultChunkCrypto.keysMatch(data, active.data) || !defaultChunkCrypto.keysMatch(dedup, active.dedup)) {
-          console.error('[SullaFiles] collection key mismatch before chunk staging', { collectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(data), activeKeyFingerprint:defaultChunkCrypto.keyFingerprint(active.data) });
-          this.keyring.invalidate?.(collectionId);
-          throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
-        }
-      } finally { active.data.fill(0); active.dedup.fill(0) }
+      active = await this.keyring.keysFresh(collectionId);
+      if (!defaultChunkCrypto.keysMatch(data, active.data) || !defaultChunkCrypto.keysMatch(dedup, active.dedup)) {
+        console.error('[SullaFiles] collection key mismatch before chunk staging', { collectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(data), activeKeyFingerprint:defaultChunkCrypto.keyFingerprint(active.data) });
+        this.keyring.invalidate?.(collectionId);
+        throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+      }
     }
     const chunkIds:string[] = []; const chunks = new Map<string, { id:string; size:number; storedSize:number }>();
     for (let offset = 0; offset < Math.max(1, bytes.length); offset += VERSION_CHUNK_BYTES) {
@@ -88,12 +87,10 @@ export class VersionContentStager {
       }
       let encrypted:Uint8Array;
       if (this.keyring.keysFresh && this.crypto.encryptChunkForCollection) {
-        let active:{data:Uint8Array; dedup:Uint8Array} | undefined;
         try {
-          active = await this.keyring.keysFresh(collectionId);
-          if (this.crypto.chunkId(plain, active.dedup) !== id) {
+          if (!active || this.crypto.chunkId(plain, active.dedup) !== id) {
             const usedFingerprint = defaultChunkCrypto.keyFingerprint(dedup);
-            const activeFingerprint = defaultChunkCrypto.keyFingerprint(active.dedup);
+            const activeFingerprint = active ? defaultChunkCrypto.keyFingerprint(active.dedup) : 'unavailable';
             console.error('[SullaFiles] collection dedup key mismatch at chunk encryption', { collectionId, keyVersion:null, keyFingerprint:usedFingerprint, activeKeyFingerprint:activeFingerprint });
             this.keyring.invalidate?.(collectionId);
             throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
@@ -102,7 +99,7 @@ export class VersionContentStager {
         } catch (error) {
           if ((error as any)?.code === 'collection_key_unavailable') this.keyring.invalidate?.(collectionId);
           throw error;
-        } finally { active?.data.fill(0); active?.dedup.fill(0) }
+        }
       } else encrypted = await this.crypto.encryptChunk(plain, data, id);
       const writeStarted = performance.now();
       await (this.store.putStaged ?? this.store.put).call(this.store, collectionId, id, encrypted);
@@ -114,6 +111,6 @@ export class VersionContentStager {
       manifestHash: createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: bytes.length })).digest('hex'),
       sourceHash: createHash('sha256').update(bytes).digest('hex'),
     };
-    } finally { data.fill(0); dedup.fill(0) }
+    } finally { active?.data.fill(0); active?.dedup.fill(0); data.fill(0); dedup.fill(0) }
   }
 }

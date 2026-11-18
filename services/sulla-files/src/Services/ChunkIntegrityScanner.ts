@@ -70,7 +70,7 @@ type ChunkCheck =
 
 /** Keys the scanner needs from the keyring. Keys come from the keyring cache and are never zeroed here. */
 type KeySource = Pick<FilesKeyring, 'keys'>;
-type ChunkDecryptor = Pick<ChunkCrypto, 'maxEncryptedChunkBytes' | 'decrypt' | 'chunkId'>;
+type ChunkDecryptor = Pick<ChunkCrypto, 'maxEncryptedChunkBytes' | 'decrypt' | 'chunkId' | 'opensWithZeroKeyForDiagnosis'>;
 
 function aadFor(chunkId:string):string { return `sulla:file-chunk:v1:${ chunkId }` }
 
@@ -109,7 +109,7 @@ class KeyOpenProbe {
       if (!keys) continue;
       if (await this.opens(envelope, keys.data, chunkId)) return { collectionId: other, keyFingerprint: ChunkIntegrityScanner.fingerprint(keys.data) };
     }
-    return await this.opens(envelope, new Uint8Array(32), chunkId) ? ZERO_KEY_OPENER : null;
+    return await this.crypto.opensWithZeroKeyForDiagnosis(envelope, aadFor(chunkId)) ? ZERO_KEY_OPENER : null;
   }
 
   private async opens(envelope:Envelope, dataKey:Uint8Array, chunkId:string):Promise<boolean> {

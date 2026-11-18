@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import sodium from 'libsodium-wrappers-sumo';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ChunkCrypto, chunkId, encryptChunk } from '../src/crypto.js';
 import { FilesRequestPipeline } from '../src/Http/FilesRequestPipeline.js';
@@ -190,7 +191,13 @@ describe('chunk failure stages and key diagnosis (read-only)', () => {
     // Sealed under an all-zero data key: diagnose must report "zero-key", not a collection.
     const zeroSealed = Buffer.from('zero key body');
     zeroId = chunkId(zeroSealed, keysA.dedup);
-    await writeChunk(collectionA, zeroId, await encryptChunk(zeroSealed, zeroDataKey, zeroId), zeroSealed.length);
+    // Build a regression fixture with the actual AEAD primitive: production ChunkCrypto.encrypt
+    // correctly refuses zero keys, while the diagnostic must still identify legacy zero-key blobs.
+    await sodium.ready;
+    const zeroNonce = Buffer.alloc(24, 0x17);
+    const zeroCiphertext = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(zeroSealed, Buffer.from(`sulla:file-chunk:v1:${ zeroId }`), null, zeroNonce, zeroDataKey);
+    const zeroEnvelope = Buffer.from(JSON.stringify({ version:1, algorithm:'xchacha20-poly1305', nonce:zeroNonce.toString('base64url'), ciphertext:Buffer.from(zeroCiphertext).toString('base64url') }));
+    await writeChunk(collectionA, zeroId, zeroEnvelope, zeroSealed.length);
 
     notEnvelopeId = chunkId(Buffer.from('not an envelope'), keysA.dedup);
     await writeChunk(collectionA, notEnvelopeId, Buffer.from('not an envelope {'), 8);

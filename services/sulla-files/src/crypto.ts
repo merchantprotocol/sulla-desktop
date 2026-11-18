@@ -56,6 +56,16 @@ export class ChunkCrypto {
     return this.aead.crypto_aead_xchacha20poly1305_ietf_decrypt(null, this.bytes(value.ciphertext), Buffer.from(context), this.bytes(value.nonce), key);
   }
 
+  /** Diagnostic-only probe for identifying ciphertext sealed with a zeroized key. Never returns plaintext. */
+  async opensWithZeroKeyForDiagnosis(value:Envelope, context:string):Promise<boolean> {
+    await this.aead.ready;
+    try {
+      const plaintext = this.aead.crypto_aead_xchacha20poly1305_ietf_decrypt(null, this.bytes(value.ciphertext), Buffer.from(context), this.bytes(value.nonce), new Uint8Array(32));
+      plaintext.fill(0);
+      return true;
+    } catch { return false }
+  }
+
   chunkId(value:Uint8Array, key:Uint8Array):string { return createHmac('sha256', key).update(value).digest('hex') }
 
   /** Non-reversible operational identifier; never log key material. */

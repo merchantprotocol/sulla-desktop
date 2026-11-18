@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { chunkId, defaultChunkCrypto, decryptAndVerifyChunk, encryptChunk } from '../src/crypto.js';
-import { ChunkKeyMismatchError, VersionContentStager } from '../src/VersionContentStager.js';
+import { ChunkKeyMismatchError, VERSION_CHUNK_BYTES, VersionContentStager } from '../src/VersionContentStager.js';
 
 class MemoryChunkStore {
   readonly chunks = new Map<string, Uint8Array>();
@@ -56,6 +56,25 @@ describe('VersionContentStager active-key assertion', () => {
     expect(store.chunks.size).toBe(1);
     const id = chunkId(bytes, keys.dedup);
     await expect(decryptAndVerifyChunk(store.chunks.get(id)!, keys.data, keys.dedup, id, bytes.length)).resolves.toEqual(bytes);
+  });
+  it('resolves fresh keys once for a multi-chunk stage and uses the same proof for each encrypted chunk', async() => {
+    // risk: data integrity — each chunk must be guarded without repeated key unwraps or a weaker per-chunk check.
+    const keys = { data:Buffer.alloc(32, 0x31), dedup:Buffer.alloc(32, 0x32) };
+    let freshCalls = 0;
+    const store = new MemoryChunkStore();
+    const stager = new VersionContentStager({
+      keys:async() => ({ data:Buffer.from(keys.data), dedup:Buffer.from(keys.dedup) }),
+      keysFresh:async() => { freshCalls += 1; return { data:Buffer.from(keys.data), dedup:Buffer.from(keys.dedup) } },
+    }, store, {
+      chunkId, encryptChunk,
+      encryptChunkForCollection:(plain, key, id, current, collection) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, current, collection),
+      decryptAndVerifyChunk,
+    });
+    const content = Buffer.alloc(VERSION_CHUNK_BYTES + 1, 0x42);
+    const staged = await stager.stage('collection', content);
+    expect(staged.chunks).toHaveLength(2);
+    expect(store.chunks.size).toBe(2);
+    expect(freshCalls).toBe(1);
   });
 });
 
