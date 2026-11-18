@@ -10,7 +10,7 @@ import { getSettings } from '@pkg/config/settingsImpl';
 import { getDesktopVaultClient } from '@pkg/agent/services/DesktopVaultClient';
 import { getVaultKeyService } from '@pkg/agent/services/VaultKeyService';
 import { getSettings as getThreatSettings, getStatus as getThreatStatus, getTrafficLog } from '@pkg/main/threat-proxy';
-import type { CheckId, SecurityCheckReport, SecurityCheckResult, SecuritySummary } from './types';
+import type { CheckId, CheckStatus, SecurityCheckReport, SecurityCheckResult, SecuritySummary } from './types';
 
 const runFile = promisify(execFile);
 const CHECK_TIMEOUT_MS = 5_000;
@@ -53,7 +53,9 @@ export class SecurityCheckService {
     return { startedAt, finishedAt, checks, score: { on: scored.filter(result => result.status === 'pass').length, total: scored.length } };
   }
 
-  static signatureApplicable(platform: string, packaged: boolean): boolean { return platform === 'darwin' && packaged }
+  static signatureStatus(platform: string, packaged: boolean): CheckStatus | undefined {
+    return platform === 'darwin' && packaged ? undefined : 'not_checked';
+  }
 
   static threatSummary(enabled: boolean, unavailable: boolean, entries: Record<string, any>[], today: string): SecuritySummary['threat'] {
     if (!enabled || unavailable) return null;
@@ -113,7 +115,8 @@ export class SecurityCheckService {
       }),
       check('hostAccess', async() => { const enabled = getSettings().application.hostAccess === true; return { id:'hostAccess', label:LABELS.hostAccess, status:enabled?'warn':'pass', detail:enabled?'Host access is enabled':'Host access is disabled' } }),
       check('signature', async() => {
-        if (!SecurityCheckService.signatureApplicable(process.platform, app.isPackaged)) return { id:'signature', label:LABELS.signature, status:'not_checked', detail:'Code signature verification is only available for packaged macOS apps' };
+        const notChecked = SecurityCheckService.signatureStatus(process.platform, app.isPackaged);
+        if (notChecked) return { id:'signature', label:LABELS.signature, status:notChecked, detail:'Code signature verification is only available for packaged macOS apps' };
         const bundle = path.resolve(app.getPath('exe'), '..', '..', '..');
         await runFile('codesign', ['--verify', '--deep', '--strict', bundle], { timeout: CHECK_TIMEOUT_MS });
         return { id:'signature', label:LABELS.signature, status:'pass', detail:'App code signature verified' };

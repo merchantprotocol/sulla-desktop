@@ -18,10 +18,10 @@ describe('SecurityCheckService contract', () => {
     await expect(check.run()).resolves.toMatchObject({ id:'runtime', status:'fail', detail:'Check timed out' });
   });
 
-  it('skips signature verification except on packaged macOS', () => {
-    expect(SecurityCheckService.signatureApplicable('darwin', true)).toBe(true);
-    expect(SecurityCheckService.signatureApplicable('darwin', false)).toBe(false);
-    expect(SecurityCheckService.signatureApplicable('linux', true)).toBe(false);
+  it('returns not_checked for signature verification outside packaged macOS', () => {
+    expect(SecurityCheckService.signatureStatus('darwin', true)).toBeUndefined();
+    expect(SecurityCheckService.signatureStatus('darwin', false)).toBe('not_checked');
+    expect(SecurityCheckService.signatureStatus('linux', true)).toBe('not_checked');
   });
 
   it('returns null threat totals when logging is disabled or unavailable', () => {
