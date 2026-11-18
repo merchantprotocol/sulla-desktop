@@ -265,7 +265,6 @@ function getFileMenu(): MenuItem {
     submenu: [
       {
         label:       'New Agent Tab',
-        accelerator: 'CmdOrCtrl+N',
         click:       () => sendAgentCommand('new-chat-tab'),
       },
       {
