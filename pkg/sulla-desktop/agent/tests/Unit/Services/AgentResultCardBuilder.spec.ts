@@ -64,6 +64,16 @@ describe('the finished-agent card', () => {
     }
   });
 
+  // risk: a failed background-card classification enters the CLI recovery loop instead of falling back
+  it('makes one classifier attempt before using the plain card', async() => {
+    const model = vi.fn().mockRejectedValue(new Error('CLI unavailable'));
+
+    const [item] = (await new AgentResultCardBuilder(model).build(job, [result])).items;
+
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(item).toMatchObject({ purpose: 'other', verdict: 'Done' });
+  });
+
   // risk: the card silently fell back to plain in the live app and nobody could tell why
   it('logs why a card fell back to plain, and logs a successful classification', async() => {
     const lines: string[] = [];

@@ -327,6 +327,8 @@ export abstract class BaseLanguageModel {
       temperature?:      number;
       signal?:           AbortSignal;
       timeoutSeconds?:   number;
+      /** Background-only CLI calls may opt out of internal process recovery. */
+      disableCliRecovery?: boolean;
       tools?:            any;
       conversationId?:   string;
       nodeName?:         string;
@@ -449,6 +451,8 @@ export abstract class BaseLanguageModel {
       temperature?:      number;
       signal?:           AbortSignal;
       timeoutSeconds?:   number;
+      /** Background-only CLI calls may opt out of internal process recovery. */
+      disableCliRecovery?: boolean;
       tools?:            any;
       conversationId?:   string;
       nodeName?:         string;
