@@ -4,7 +4,7 @@
   SPDX-License-Identifier: GPL-2.0-or-later
 -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useConvStore } from '../useConvStore';
 import type { ListSegment, PersonView, ThreadView } from '../ConversationScreenStore';
 import ConvAvatar from './ConvAvatar.vue';
@@ -52,6 +52,13 @@ function presOf(person: PersonView | undefined): string { return person ? person
 function toggle(personId: string): void {
   picked.value = picked.value.includes(personId) ? picked.value.filter(id => id !== personId) : [...picked.value, personId];
 }
+// Leaving People ends pick mode, so the next visit starts on the normal list.
+watch(() => store.s.listTab, tab => { if (tab !== 'people') { picking.value = false; picked.value = []; } });
+/** New: pick people for a conversation. From the thread lists it opens People in pick mode. */
+function startNew(): void {
+  if (store.s.listTab !== 'people') { store.setListTab('people'); picking.value = true; return; }
+  picking.value = !picking.value;
+}
 function createGroup(): void {
   store.createGroup(picked.value);
   picked.value = [];
@@ -62,7 +69,7 @@ function createGroup(): void {
 <template>
   <section class="list">
     <div class="list-top">
-      <h2>{{ title }}<button v-if="store.s.listTab === 'people'" class="btn sm" :disabled="!store.people().length" @click="picking = !picking"><ConvIcon :name="picking ? 'x' : 'plus'" />{{ picking ? 'Cancel' : 'New' }}</button></h2>
+      <h2>{{ title }}<button class="btn sm" :disabled="!store.people().length" @click="startNew"><ConvIcon :name="picking && store.s.listTab === 'people' ? 'x' : 'plus'" />{{ picking && store.s.listTab === 'people' ? 'Cancel' : 'New' }}</button></h2>
       <label class="search"><ConvIcon name="search" /><input ref="searchInput" v-model="query" :placeholder="`Search ${store.org().name || 'conversations'}`" /><kbd>&#8984;K</kbd></label>
       <div v-if="store.s.listTab === 'threads'" class="seg" role="tablist" aria-label="Filter conversations"><button v-for="segment in segments" :key="segment.id" role="tab" :aria-selected="store.s.segment === segment.id" :class="{ on: store.s.segment === segment.id }" @click="store.setSegment(segment.id)">{{ segment.label }}</button></div>
     </div>
