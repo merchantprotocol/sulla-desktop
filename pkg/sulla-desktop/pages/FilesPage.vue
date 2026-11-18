@@ -25,7 +25,7 @@ const props = defineProps<{ tabId: string; navigation?: FilesNavigationPayload }
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 const dataSource = new DesktopFilesDataSource();
 
-function openEditor(item:FilesItem, collectionId?:string, initialMode?:'editing'|'preview'):void {
-  openDocumentTab({ fileId: item.id, path: item.path, collectionId, initialMode: initialMode ?? 'preview' });
+function openEditor(item:FilesItem, collectionId?:string):void {
+  openDocumentTab({ fileId: item.id, path: item.path, collectionId });
 }
 </script>

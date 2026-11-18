@@ -10,7 +10,6 @@
     :data-source="dataSource"
     :collection-id="documentFile.collectionId"
     :item="item"
-    :initial-mode="documentFile.initialMode || 'preview'"
     :files="[item]"
     @back="backToFiles"
     @navigate="navigateFile"

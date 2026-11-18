@@ -14,7 +14,7 @@ export interface FilesBrowserProps { dataSource: FilesDataSource; tabId: string;
 /** The public emits of FilesBrowser.vue, as the typed emit function the component receives. */
 export interface FilesBrowserEmit {
   (event:'navigation-consumed'):void;
-  (event:'open-editor', item:FilesItem, collectionId?:string, initialMode?:'editing'|'preview'):void;
+  (event:'open-editor', item:FilesItem, collectionId?:string):void;
 }
 
 export type FilesBrowserSection = 'files' | 'shared' | 'sharedByMe' | 'recent' | 'starred' | 'agent' | 'trash';

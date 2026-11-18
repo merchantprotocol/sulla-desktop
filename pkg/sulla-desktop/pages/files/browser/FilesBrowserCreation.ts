@@ -75,7 +75,7 @@ export class FilesBrowserCreation {
     // Like Google Drive: a new document opens straight into the editor.
     const file = created && supportsDocumentEditor(path) ? this.browser.location.activeFiles.value.find(item => item.path === path) : undefined;
 
-    if (file) state.emit('open-editor', file, state.snapshot.value?.collection.id, 'editing');
+    if (file) state.emit('open-editor', file, state.snapshot.value?.collection.id);
   };
 
   readonly toggleNewMenu = async():Promise<void> => {
