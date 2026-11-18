@@ -54,6 +54,24 @@ describe('ConversationViewBuilder', () => {
     expect(builder.person(people[2])).toMatchObject({ presenceClass: 'offline', status: 'Offline' });
   });
 
+  it('marks a member as having an agent only when the directory reports an agent host or names their agent', () => {
+    // risk: data accuracy; the side panel must not invent an agent card for someone without an agent
+    expect(builder.person(people[1])).toMatchObject({ hasAgent: true, agentOnline: false });
+    expect(builder.person(people[2])).toMatchObject({ hasAgent: false, agentName: '' });
+    expect(builder.person({ userId: 'u-four', displayName: 'Mary Somerville', agentName: 'Research agent' })).toMatchObject({ hasAgent: true, agentName: 'Research agent' });
+  });
+
+  it('reads the relay card state from the cloud connection channel and the network', () => {
+    // risk: data accuracy; the nav must never say Connected while the relay link is down or the Mac is offline
+    expect(builder.relayState({ signedIn: true, channel: { state: 'connected' } }, true)).toBe('connected');
+    expect(builder.relayState({ signedIn: true, channel: { state: 'connected' } }, false)).toBe('offline');
+    expect(builder.relayState({ signedIn: true, channel: { state: 'connecting' } }, true)).toBe('connecting');
+    expect(builder.relayState({ signedIn: true, channel: { state: 'error' } }, true)).toBe('offline');
+    expect(builder.relayState({ signedIn: false, channel: { state: 'connected' } }, true)).toBe('offline');
+    expect(builder.relayState({ signedIn: true, channel: null }, true)).toBe('unknown');
+    expect(builder.relayState(null, true)).toBe('unknown');
+  });
+
   it('prefixes your own previews with You and names the sender in groups', () => {
     // risk: data accuracy; the list preview must say who wrote the last message
     expect(builder.preview(message({ from: { userId: 'u-me' } }), 'direct')).toBe('You: hello');

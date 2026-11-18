@@ -71,6 +71,14 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
+const CONVERSATION_CONTAINER_SWITCH_WAIT_MS = 10 * 60_000;
+
+class ConversationContainerBusyError extends Error {
+  constructor() {
+    super('A conversation container is still in use by another channel.');
+    this.name = 'ConversationContainerBusyError';
+  }
+}
 
 /**
  * Folder key for a conversation container's workspace and provider homes.
@@ -125,6 +133,22 @@ export class BackendGraphWebSocketService {
     idleTimer: ReturnType<typeof setTimeout>;
   }>();
   private conversationContainerStarts = new Map<string, Promise<import('./AgentContainerLauncher').AgentContainerLifecycle>>();
+
+  private hasActiveRunOnAnotherChannel(channelId: string, threadId: string): boolean {
+    const currentKey = this.abortKey(channelId, threadId);
+    return [...this.activeAborts.keys()].some(key => key !== currentKey && key.endsWith(`|${ threadId }`));
+  }
+
+  private async waitForOtherChannelRun(channelId: string, threadId: string): Promise<void> {
+    const deadline = Date.now() + CONVERSATION_CONTAINER_SWITCH_WAIT_MS;
+    while (this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
+      if (Date.now() >= deadline) {
+        const { AgentLaunchError } = await import('./AgentContainerLauncher');
+        throw new AgentLaunchError('This conversation is still busy with another agent\'s turn. Send your message again when it finishes.', true);
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
 
   private abortKey(channelId: string, threadId: string): string {
     return `${ channelId }|${ threadId }`;
@@ -468,14 +492,36 @@ export class BackendGraphWebSocketService {
     state: AgentGraphState,
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
     const key = threadId;
-    const starting = this.conversationContainerStarts.get(key);
-    if (starting) return starting;
-    const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
-    this.conversationContainerStarts.set(key, start);
-    try {
-      return await start;
-    } finally {
-      if (this.conversationContainerStarts.get(key) === start) this.conversationContainerStarts.delete(key);
+    const agentId = String((state.metadata as any).agentId ?? state.metadata.wsChannel ?? '');
+    for (;;) {
+      const existing = this.conversationContainers.get(key);
+      if (existing && !existing.lifecycle.closed && existing.agentId !== agentId && this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
+        // Do not kill or lend another agent's lifecycle to a parallel channel turn.
+        // Wait outside the creation lock so the existing run can still reacquire its container.
+        await this.waitForOtherChannelRun(channelId, threadId);
+        continue;
+      }
+      const starting = this.conversationContainerStarts.get(key);
+      if (starting) {
+        // A cross-agent replacement may be waiting for another channel's active turn.
+        // Let that turn keep using its own lifecycle while the new agent waits.
+        if (existing && !existing.lifecycle.closed && existing.agentId === agentId &&
+            [...this.activeAborts.keys()].some(activeKey => activeKey.endsWith(`|${ threadId }`))) {
+          return existing.lifecycle;
+        }
+        await starting.catch(() => undefined);
+        continue;
+      }
+      const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
+      this.conversationContainerStarts.set(key, start);
+      try {
+        return await start;
+      } catch (error) {
+        if (error instanceof ConversationContainerBusyError) continue;
+        throw error;
+      } finally {
+        if (this.conversationContainerStarts.get(key) === start) this.conversationContainerStarts.delete(key);
+      }
     }
   }
 
@@ -503,6 +549,9 @@ export class BackendGraphWebSocketService {
       return existing.lifecycle;
     }
     if (existing) {
+      if (existing.agentId !== agentId && this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
+        throw new ConversationContainerBusyError();
+      }
       clearTimeout(existing.idleTimer);
       await existing.lifecycle.close(existing.agentId === agentId ? 'provider-or-model-switch' : 'agent-switch', 'BackendGraphWebSocketService.conversationContainer')
         .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));

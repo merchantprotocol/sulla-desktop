@@ -51,4 +51,5 @@ exec mitmdump \
   --set stream_large_bodies=4m \
   --set flow_detail=0 \
   -s "$addons/url_filter.py" \
-  -s "$addons/prompt_injection.py"
+  -s "$addons/prompt_injection.py" \
+  -s "$addons/memory_hygiene.py"

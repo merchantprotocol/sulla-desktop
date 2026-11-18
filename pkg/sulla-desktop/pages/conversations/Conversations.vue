@@ -28,6 +28,9 @@ const contactRequests = ref<MessageData[]>([]);
 const userId = ref(''), userName = ref(''), loading = ref(false), sending = ref(false), secretaryOpen = ref(false), error = ref('');
 const emptyConversations = ref<ConversationThreadProjection[]>([]);
 const projection = new ConversationProjection();
+// The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
+const cloudStatus = ref<Record<string, any> | null>(null);
+const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
 
 const store = new ConversationScreenStore();
 provide(CONV_STORE, store);
@@ -42,7 +45,7 @@ const threads = computed<ConversationThreadProjection[]>(() => {
 const snapshot = computed<LiveSnapshot | null>(() => {
   if (!activeOrg.value) return null;
   const views = new ConversationViewBuilder(people.value, userId.value);
-  const orgs: OrgView[] = organizations.value.map(org => ({ id: org.orgId, name: org.name, initials: initials(org.name), memberCount: org.memberCount }));
+  const orgs: OrgView[] = organizations.value.map(org => ({ id: org.orgId, name: org.name, initials: initials(org.name), memberCount: org.memberCount, gradient: views.orgGradient(org.orgId) }));
   const self = people.value.find(person => person.userId === userId.value);
   const memberViews: PersonView[] = people.value.filter(person => person.userId !== userId.value).map(person => views.person(person));
   const threadViews: ThreadView[] = threads.value.map(thread => views.thread(thread));
@@ -55,7 +58,7 @@ const snapshot = computed<LiveSnapshot | null>(() => {
     requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
   }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
-  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, threads: threadViews, requests, bodies };
+  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
 });
 
 function displayName(id: string): string {
@@ -163,12 +166,23 @@ store.directHandler = personId => void openDirect(personId);
 store.groupHandler = personIds => void createGroup(personIds);
 store.secretaryHandler = () => openSecretaryModal();
 
+const onCloudStatus = (_event: unknown, status: Record<string, any>): void => { cloudStatus.value = status; };
+const goOnline = (): void => { online.value = true; };
+const goOffline = (): void => { online.value = false; };
+
 onMounted(() => {
   void initialize();
   window.addEventListener('sulla:open-conversations-secretary', openSecretary);
+  window.addEventListener('online', goOnline);
+  window.addEventListener('offline', goOffline);
+  ipcRenderer.on('sulla-cloud-connection:status-changed', onCloudStatus);
+  ipcRenderer.invoke('sulla-cloud-connection:get-status').then(status => { cloudStatus.value = status; }).catch(() => undefined);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('sulla:open-conversations-secretary', openSecretary);
+  window.removeEventListener('online', goOnline);
+  window.removeEventListener('offline', goOffline);
+  ipcRenderer.removeListener('sulla-cloud-connection:status-changed', onCloudStatus);
   store.dispose();
 });
 </script>

@@ -8,6 +8,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
+import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
 import {
   getProviderExecutionTransport,
   requireBrokeredContainerAuth,
@@ -48,6 +49,31 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
+
+function redactClaudeDiagnostic(value: unknown, messages: ChatMessage[]): string {
+  const raw = value instanceof Error ? value.message : String(value ?? '');
+  const promptText = messages.flatMap(message => typeof message.content === 'string'
+    ? [message.content]
+    : message.content.map(block => block.type === 'text' ? block.text : '')).filter(text => text.trim().length >= 8);
+  if (promptText.some(text => raw.includes(text.trim()))) return '[omitted: stderr echoed prompt content]';
+
+  return redactLLMFailureMessage(value).slice(0, 200);
+}
+
+function logClaudeRetry(error: CliFaultError, attempt: number, messages: ChatMessage[]): void {
+  let cause: any = error.cause;
+  let diagnosticCause: any = error;
+  let exitCode: number | null | undefined;
+  let errorClass = error.name;
+  for (let depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
+    diagnosticCause = cause;
+    errorClass = errorClass === error.name ? cause.name || errorClass : errorClass;
+    if (typeof cause.exitCode === 'number' || cause.exitCode === null) exitCode = cause.exitCode;
+  }
+  const diagnostic = redactClaudeDiagnostic(diagnosticCause, messages);
+  const kind = classifyLLMFailure(error).kind;
+  log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt }; error=${ errorClass }; fault=${ error.kind }; recovery=${ kind }; exitCode=${ exitCode ?? 'unknown' }; stderr=${ JSON.stringify(diagnostic) })`);
+}
 // Dedicated perf-timing log (~/Library/Logs/sulla-desktop/perf.log). All
 // latency instrumentation routes here via the Logging facility (NOT console.log,
 // which never lands in a readable file) so timing is greppable in one place.
@@ -456,7 +482,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), {}, options, false, turn), {
       signal:   options.signal,
       canRetry: () => true,
-      onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
+      maxAttempts: options.disableCliRecovery ? 1 : undefined,
+      onRetry:  (error, attempt) => logClaudeRetry(error, attempt, messages),
     });
   }
 
@@ -511,7 +538,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const result = await runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options, false, turn), {
         signal:   options.signal,
         canRetry: () => !toolStarted,
-        onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
+        maxAttempts: options.disableCliRecovery ? 1 : undefined,
+        onRetry:  (error, attempt) => logClaudeRetry(error, attempt, messages),
       });
       if (streamedText) result.text = streamedText;
       const response: NormalizedResponse = {
@@ -1911,6 +1939,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
           if (code !== 0) {
             const msg = errorMessage || stderrBuffer.trim().slice(-200) || `claude exited with code ${ code }`;
+            log.warn(`[ClaudeCodeService] runClaude exited nonzero (exitCode=${ code }; stderr=${ JSON.stringify(redactClaudeDiagnostic(stderrBuffer.trim(), messages)) })`);
             const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
             await handleClaudeAuthFailure(typedFailure);
             const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);

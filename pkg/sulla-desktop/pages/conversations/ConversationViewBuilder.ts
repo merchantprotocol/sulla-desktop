@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ConversationMessageData, ConversationThreadProjection } from './ConversationProjection';
-import type { AvatarTone, MessageView, PersonView, PresenceClass, ThreadView } from './ConversationScreenStore';
+import type { AvatarTone, MessageView, PersonView, PresenceClass, RelayState, ThreadView } from './ConversationScreenStore';
 
 /** A directory entry as the org host sends it. Only userId and displayName are guaranteed. */
 export interface DirectoryPerson { userId: string; displayName: string; presence?: string; agentHostOnline?: boolean; agentName?: string; role?: string }
 
 const TONES: AvatarTone[] = ['', 'm', 'p', 'd'];
+/** Org chip gradients from the mockup's organization switcher, picked per org id. */
+const ORG_GRADIENTS = ['#3a7fa0,#1a2332', '#e0a458,#b26f05', '#b7a7e0,#6b4fbf', '#8a94a3,#5b6778'];
 const DAYS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -71,7 +73,32 @@ export class ConversationViewBuilder {
       status: entry.userId === this.userId && presenceClass === 'online' ? 'Available' : STATUS[presenceClass],
       role: typeof entry.role === 'string' ? entry.role.charAt(0).toUpperCase() + entry.role.slice(1) : '',
       agentOnline: !!entry.agentHostOnline,
+      // The directory reports an agent host (online or not) or names the member's agent.
+      hasAgent: typeof entry.agentHostOnline === 'boolean' || !!entry.agentName,
+      agentName: entry.agentName ?? '',
     };
+  }
+
+  /** A stable org chip gradient, so an org keeps its colour in the nav, the switcher and the composer. */
+  orgGradient(orgId: string): string {
+    let hash = 0;
+    for (const char of orgId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return `linear-gradient(135deg,${ORG_GRADIENTS[hash % ORG_GRADIENTS.length]})`;
+  }
+
+  /**
+   * The nav status card. `status` is the Settings → Sulla Cloud connection status (its `channel` is the
+   * desktop's secure link to the Sulla Cloud relay). No status read yet, or no channel, means `unknown`.
+   */
+  relayState(status: { signedIn?: boolean; channel?: { state?: string } | null } | null, online: boolean): RelayState {
+    if (!online) return 'offline';
+    if (!status) return 'unknown';
+    if (!status.signedIn) return 'offline';
+    const state = status.channel?.state;
+    if (state === 'connected') return 'connected';
+    if (state === 'connecting') return 'connecting';
+    if (state === 'error' || state === 'stopped') return 'offline';
+    return 'unknown';
   }
 
   thread(thread: ConversationThreadProjection): ThreadView {
