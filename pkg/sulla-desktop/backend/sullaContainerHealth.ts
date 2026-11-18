@@ -141,7 +141,11 @@ export class ContainerHealPlanner {
       }
 
       const managedBy = row.managedBy ?? 'compose';
-      const maxAttempts = 1 + MAX_AUTO_RECREATES;
+      // A running Files FUSE adapter owns a live bind mount that every consumer uses; rm+create
+      // would break it. Restart it once, then leave it for mount-manager recovery/manual repair.
+      // An adapter with no live process (created, restarting, exited) has no mount to lose.
+      const runningAdapter = row.service === FILES_ADAPTER_SERVICE && row.state === 'running';
+      const maxAttempts = runningAdapter ? 1 : 1 + MAX_AUTO_RECREATES;
       const base = { container: row.container, service: row.service, reason, managedBy, maxAttempts };
 
       if (current.restarts + current.recreates >= maxAttempts) {
@@ -154,7 +158,9 @@ export class ContainerHealPlanner {
       }
       // A container that never started, or that Docker is already restarting in a loop,
       // gains nothing from another restart: rebuild it. Otherwise restart once first.
-      const kind: HealKind = stuckCreated || row.state === 'restarting' || current.restarts > 0 ? 'recreate' : 'restart';
+      const kind: HealKind = runningAdapter || !(stuckCreated || row.state === 'restarting' || current.restarts > 0)
+        ? 'restart'
+        : 'recreate';
 
       if (kind === 'restart') current.restarts += 1;
       else current.recreates += 1;
