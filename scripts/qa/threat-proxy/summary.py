@@ -51,7 +51,7 @@ class RunSummary:
               "|---|---:|---:|:---:|:---:|---:|---|\n"
               f"| {self.scenario} | {result['peak_mib']} | {result['steady_state_mib']} | {result['oom_killed']} | {result['proxy_alive_after']} | {result['client_errors']} | {check_text} |\n\n"
               "* Median of the last 25% of sampler readings. Memory figures are cgroup bytes converted to MiB; blank when unavailable.\n")
-        with open(os.path.splitext(out)[0].replace("results", "summary")+".md", "w") as f: f.write(md)
+        with open(os.path.join(os.path.dirname(out), "summary.md"), "w") as f: f.write(md)
         print(md, end="")
 
 
