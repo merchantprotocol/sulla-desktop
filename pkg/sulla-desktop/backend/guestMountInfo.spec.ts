@@ -47,6 +47,30 @@ describe('Files mount layer draining', () => {
     expect(layers).toBe(0);
     expect(execCommand.mock.calls.filter(call => call[1] === 'umount')).toHaveLength(2);
   });
+
+  it('drains FUSE above the read-only tmpfs sentinel but preserves the sentinel', async() => {
+    // risk: data safety — writes during adapter restart must not land in the writable tmpfs anchor.
+    let fuseLayers = 1;
+    const execCommand = vi.fn(async(_options:unknown, ...args:string[]) => {
+      if (args[0] === 'cat') {
+        return [
+          '34 1 0:31 / /mnt rw,nosuid,nodev - tmpfs tmpfs rw,mode=755',
+          '603 34 0:31 /sulla /mnt/sulla rw,nosuid,nodev shared:1 - tmpfs tmpfs rw,mode=755',
+          '604 603 0:31 /sulla/files /mnt/sulla/files ro,nosuid,nodev shared:1 - tmpfs tmpfs rw,mode=755',
+          ...(fuseLayers ? ['605 604 0:32 / /mnt/sulla/files rw - fuse sulla-files rw'] : []),
+        ].join('\n');
+      }
+      if (args[0] === 'umount') fuseLayers--;
+      return '';
+    });
+
+    const drained = await drainFilesAdapterLayers({ execCommand } as any, '/mnt/sulla/files');
+    const remaining = parseMountInfo(await execCommand({ root: true }, 'cat', '/proc/self/mountinfo'));
+
+    expect(drained).toBe(1);
+    expect(classifyFilesAnchor(remaining, '/mnt/sulla/files').state).toBe('anchor');
+    expect(execCommand.mock.calls.filter(call => call[1] === 'umount')).toHaveLength(1);
+  });
 });
 
 

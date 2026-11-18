@@ -25,7 +25,7 @@ status() {
 
 # Topmost mount at the path: "<fstype> <optional fields>" (mountinfo lists mounts in mount order).
 top_mount() {
-  awk -v path="$mount_path" '$5 == path { opt = ""; for (i = 7; $i != "-"; i++) opt = opt " " $i; fs = $(i + 1) } END { if (fs != "") print fs opt }' /proc/self/mountinfo
+  awk -v path="$mount_path" '$5 == path { opt = $6; for (i = 7; $i != "-"; i++) opt = opt " " $i; fs = $(i + 1) } END { if (fs != "") print fs " " opt }' /proc/self/mountinfo
 }
 
 top_is_fuse() {
@@ -50,9 +50,10 @@ containing_mount() {
 }
 
 fail() {
+  code=${3:-1}
   emit "$1" "$2"
   status failed ",\"reason\":\"$1\"$2"
-  exit 1
+  exit "$code"
 }
 
 emit entrypoint-start ",\"pid\":$$,\"mountPath\":\"$mount_path\",\"tokenFile\":\"$token_file\",\"tokenWaitSeconds\":$token_wait"
@@ -91,7 +92,7 @@ clear_stale_fuse_layers() {
   while top_is_fuse; do
     [ "$layers" -ge 8 ] && fail stale-mount-stuck ",\"layers\":$layers"
     emit stale-mount-detected ",\"layer\":$layers,\"fsType\":\"${top%% *}\""
-    fusermount3 -uz "$mount_path" 2>/dev/null || umount -l "$mount_path" 2>/dev/null || fail stale-mount-unremovable ",\"layer\":$layers"
+    fusermount3 -uz "$mount_path" 2>/dev/null || umount -n -l "$mount_path" 2>/dev/null || fail stale-mount-unremovable ",\"layer\":$layers"
     layers=$((layers + 1))
   done
 }
@@ -102,6 +103,72 @@ clear_stale_fuse_layers
 # Create it only after stale FUSE layers are gone: stat on a dead layer fails
 # with ENOTCONN, which would make mkdir -p abort the restart it should recover.
 [ -d "$mount_path" ] || mkdir -p "$mount_path" || fail mountpoint-missing ",\"mount\":\"$mount_path\""
+
+# Leave a read-only sentinel mount underneath FUSE. If the adapter dies, shared
+# containers see this marker instead of an apparently empty writable tmpfs dir.
+# Reuse the existing bind on restart; stacking bind mounts would make teardown
+# ambiguous and could leave the sentinel writable after enough restarts.
+top_is_readonly_nonfuse() {
+  top=$(top_mount)
+  case "${top%% *}" in fuse|fuse.*) return 1 ;; esac
+  case " $top " in *" ro"*) return 0 ;; esac
+  return 1
+}
+
+sentinel_stage=/tmp/sulla-files-sentinel
+sentinel_skipped() {
+  emit sentinel-skipped ",\"code\":\"$1\",\"stage\":\"$sentinel_stage\",\"detail\":\"${2:-}\""
+}
+sentinel_cleanup_stage() {
+  if mountpoint -q "$sentinel_stage/s" 2>/dev/null; then
+    umount -n "$sentinel_stage/s" 2>/dev/null || sentinel_skipped stage-child-cleanup-failed "$sentinel_stage/s"
+  fi
+  if mountpoint -q "$sentinel_stage" 2>/dev/null; then
+    umount -n "$sentinel_stage" 2>/dev/null || sentinel_skipped stage-cleanup-failed "$sentinel_stage"
+  fi
+}
+
+if top_is_readonly_nonfuse; then
+  emit sentinel-reused ",\"mount\":\"$mount_path\""
+else
+  # The marker remains useful even if the optional RO sentinel cannot be mounted.
+  # Do not prevent FUSE from starting: an absent marker is preferable to no Files mount.
+  if ! : > "$mount_path/SULLA-FILES-NOT-MOUNTED"; then
+    sentinel_skipped marker-create-failed "$mount_path"
+  elif ! mkdir -p "$sentinel_stage"; then
+    sentinel_skipped stage-dir-failed "$sentinel_stage"
+  elif mountpoint -q "$sentinel_stage" && { ! umount -n "$sentinel_stage"; }; then
+    sentinel_skipped stage-cleanup-failed "$sentinel_stage"
+  elif ! mount -n -t tmpfs -o size=64k,mode=0700 sentinel-stage "$sentinel_stage"; then
+    sentinel_skipped stage-mount-failed "$sentinel_stage"
+  elif ! mount -n --make-private "$sentinel_stage"; then
+    sentinel_skipped stage-private-failed "$sentinel_stage"
+    sentinel_cleanup_stage
+  elif ! mkdir "$sentinel_stage/s"; then
+    sentinel_skipped stage-child-failed "$sentinel_stage/s"
+    sentinel_cleanup_stage
+  elif ! mount -n --bind "$mount_path" "$sentinel_stage/s"; then
+    sentinel_skipped bind-failed "$mount_path"
+    sentinel_cleanup_stage
+  elif ! mount -n -o remount,bind,ro "$sentinel_stage/s"; then
+    sentinel_skipped remount-readonly-failed "$mount_path"
+    sentinel_cleanup_stage
+  elif ! mount -n --make-private "$sentinel_stage/s"; then
+    sentinel_skipped bind-private-failed "$mount_path"
+    sentinel_cleanup_stage
+  elif mount -n --move "$sentinel_stage/s" "$mount_path"; then
+    emit sentinel-installed ",\"mount\":\"$mount_path\""
+    sentinel_cleanup_stage
+  elif top_is_readonly_nonfuse; then
+    # MS_MOVE can succeed in the kernel even when mount exits non-zero because
+    # util-linux could not update /etc/mtab. Mountinfo is the authoritative state.
+    emit sentinel-installed ",\"mount\":\"$mount_path\""
+    sentinel_cleanup_stage
+  else
+    sentinel_skipped move-failed "$mount_path"
+    sentinel_cleanup_stage
+  fi
+fi
 
 anchor=$(containing_mount /proc/self/mountinfo "$mount_path")
 anchor_mount=${anchor%% *}
