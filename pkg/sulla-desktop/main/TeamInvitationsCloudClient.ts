@@ -2,7 +2,14 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cloudRequest } from './cloud/cloudFetch';
+import type { cloudRequest } from './cloud/cloudFetch';
+
+/** Loads cloudFetch on first call, so importing this client never pulls in the Cloud transport. */
+class LazyCloudRequester {
+  async request(...args: Parameters<typeof cloudRequest>): Promise<Response> {
+    return (await import('./cloud/cloudFetch')).cloudRequest(...args);
+  }
+}
 
 /** A pending invitation as the People list shows it. Never carries a token or an invite link. */
 export interface PendingInvitation { id: string; email: string; expiresAt: string }
@@ -16,7 +23,7 @@ interface InvitationWire { id?: unknown; email?: unknown; status?: unknown; expi
  */
 export class TeamInvitationsCloudClient {
   constructor(
-    private readonly request: typeof cloudRequest = cloudRequest,
+    private readonly request: typeof cloudRequest = (...args) => new LazyCloudRequester().request(...args),
     private readonly now: () => Date = () => new Date(),
   ) {}
 
