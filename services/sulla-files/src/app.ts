@@ -34,6 +34,7 @@ import { registerCloudSyncRoutes } from './cloudSync/routes.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import type pg from 'pg';
 import { VersionContentStager } from './VersionContentStager.js';
+import { FilesMetrics } from './FilesMetrics.js';
 import { LocalManagerGate } from './Http/LocalManagerGate.js';
 import { VersionWriter } from './Services/VersionWriter.js';
 import { VersionWriteRepository } from './Repositories/VersionWriteRepository.js';
@@ -143,6 +144,7 @@ export interface FilesApplicationDependencies {
 interface FilesCore {
   store:Store;
   ready:() => boolean;
+  metrics:FilesMetrics;
   transactions:TransactionRunner;
   databaseFailures:DatabaseFailureClassifier;
   contentReadFailures:ContentReadFailureLog;
@@ -202,7 +204,8 @@ export class FilesApplication {
     const ready = () => filesLifecycle ? filesLifecycle.ready : Boolean(config.keyring?.unlocked);
     app.locals.catalogSync = new CatalogSyncService(db, config, ready);
     app.locals.desktopRequests = new DesktopRequestSyncService(db, config, store, shares);
-    return { store, ready, shares, transactions: new TransactionRunner(db), databaseFailures: new DatabaseFailureClassifier(),
+    const metrics = new FilesMetrics();
+    return { store, ready, shares, metrics, transactions: new TransactionRunner(db, undefined, undefined, undefined, undefined, undefined, metrics), databaseFailures: new DatabaseFailureClassifier(),
       contentReadFailures: new ContentReadFailureLog(), filesFeed: new CollectionFilesFeed(db, FILE_COLUMNS_SQL) };
   }
 
@@ -227,7 +230,7 @@ export class FilesApplication {
   private routeServices(app:express.Express, core:FilesCore):FilesRouteServices {
     const { db, config, manager } = this.dependencies;
     const { store, transactions } = core;
-    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk });
+    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }, core.metrics);
     const accessGate = new FilesAccessGate(db);
     const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db));
     const managers = new LocalManagerGate(config, manager);
@@ -266,7 +269,7 @@ export class FilesApplication {
     services.originalReveal.register(app);
     if (residency) registerResidencyRoutes(app, residency, async(request, fileId) => { await accessGate.requireFile(request as RequestWithIdentity, fileId, 'edit') });
     new LiveTextRoutes(accessGate, services.liveText).register(app);
-    new HealthRoutes(config, core.ready, new DatabaseHealthRepository(db), filesLifecycle).register(app);
+    new HealthRoutes(config, core.ready, new DatabaseHealthRepository(db), filesLifecycle, core.metrics).register(app);
   }
 
   /** Desktop personal backups; the scheduler and runtime queue are started and stopped by the process. */

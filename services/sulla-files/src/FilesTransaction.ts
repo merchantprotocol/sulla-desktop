@@ -7,6 +7,7 @@ import type pg from 'pg';
 
 import { TransactionScope } from './TransactionScope.js';
 import { TransactionControlRepository } from './Repositories/TransactionControlRepository.js';
+import type { FilesMetrics } from './FilesMetrics.js';
 
 /**
  * A request failed because its database connection was lost (Postgres terminated it, the
@@ -88,12 +89,15 @@ export class TransactionRunner {
     private readonly slowMs = 1_000,
     private readonly control = new TransactionControlRepository(),
     private readonly durability = new TransactionDurabilityPolicy(),
+    private readonly metrics?:FilesMetrics,
   ) {}
 
   async run<T>(name:string, work:(client:pg.PoolClient) => Promise<T>):Promise<T> {
     TransactionScope.assertOutside('starting a nested transaction');
     let client:pg.PoolClient;
+    const waitStarted = performance.now();
     try { client = await this.db.connect() } catch (error) { throw this.translate(error, false) }
+    finally { this.metrics?.observePoolWait(performance.now() - waitStarted) }
     let began = 0; let committing = false;
     try {
       await this.control.begin(client); began = Date.now();
