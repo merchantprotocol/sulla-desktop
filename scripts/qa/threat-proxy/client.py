@@ -4,6 +4,7 @@
 import argparse
 import asyncio
 import json
+import http.client
 import os
 import socket
 import ssl
@@ -12,6 +13,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from concurrent.futures import ThreadPoolExecutor
 
 # Socket timeout for one SSE read. The origin emits an event every `rate` seconds, so a read
@@ -28,6 +30,9 @@ class ProxyClient:
         self.messages_received = 0
         self.streams_completed = 0
         self.security = {}
+        self.requests_completed = 0
+        self._churn_lock = threading.Lock()
+        self._next_request = 0.0
 
     def _opener(self):
         # A fresh opener per request means its own proxy connection: nothing is pooled or shared between requests.
@@ -118,9 +123,56 @@ class ProxyClient:
         with ThreadPoolExecutor(max_workers=count) as pool:
             await asyncio.gather(*(loop.run_in_executor(pool, self.fire, scenario, i, barrier) for i in range(count)))
 
+
+    def churn_worker(self, worker_id, deadline):
+        a = self.args
+        connection = None
+        sequence = 0
+        while True:
+            with self._churn_lock:
+                now = time.monotonic()
+                if now >= deadline: break
+                slot = max(now, self._next_request)
+                self._next_request = slot + (1.0 / a.rate if a.rate > 0 else 0)
+            delay = slot - time.monotonic()
+            if delay > 0:
+                if time.monotonic() + delay >= deadline: break
+                time.sleep(delay)
+            if time.monotonic() >= deadline: break
+            host = "origin" if a.sni_mode == "same" else f"host-{(worker_id + sequence) % a.hosts}.test"
+            try:
+                if connection is None:
+                    proxy_url = urlsplit(self.proxy)
+                    connection = http.client.HTTPSConnection(proxy_url.hostname, proxy_url.port or 8890, context=ssl.create_default_context(cafile=self.ca), timeout=30)
+                    connection.set_tunnel(host, 8443)
+                connection.request("GET", f"/bytes?n={a.size}&ctype=application/octet-stream", headers={"Host": host})
+                response = connection.getresponse()
+                while response.read(65536): pass
+                if response.status != 200: raise OSError(f"origin returned HTTP {response.status}")
+                self.requests_completed += 1
+                sequence += 1
+                if not a.keepalive:
+                    connection.close(); connection = None
+            except Exception as exc:
+                self.errors += 1
+                if connection:
+                    connection.close(); connection = None
+                print(f"connection churn request failed ({type(exc).__name__}): {exc}", file=sys.stderr)
+        if connection: connection.close()
+
+    def run_conn_churn(self):
+        a = self.args
+        if a.hosts < 1: raise ValueError("--hosts must be at least 1")
+        deadline = time.monotonic() + a.minutes * 60
+        with ThreadPoolExecutor(max_workers=a.concurrency) as pool:
+            futures = [pool.submit(self.churn_worker, i, deadline) for i in range(a.concurrency)]
+            for future in futures: future.result()
+
     async def run_case(self, scenario):
         a = self.args
-        if scenario == "big_download":
+        if scenario == "conn_churn":
+            await asyncio.to_thread(self.run_conn_churn)
+        elif scenario == "big_download":
             scheme = "https" if a.https else "http"; port = 8443 if a.https else 8080
             for size in a.sizes:
                 for ctype in ("text/html", "application/octet-stream"):
@@ -177,13 +229,15 @@ async def main():
     p.add_argument("--origin", default="http://origin:8080")
     p.add_argument("--ca", default="/state/public/ca-bundle.pem")
     p.add_argument("--sizes", type=lambda x: [int(v) for v in x.split(",")], default=[100_000_000])
-    p.add_argument("--size", type=int, default=100_000_000)
+    p.add_argument("--size", type=int, default=None)
     p.add_argument("--ctype", default="text/html")
     p.add_argument("--chunked", choices=("0", "1", "mixed"), default="mixed")
     p.add_argument("--rounds", type=int, default=1)
     p.add_argument("--hosts", type=int, default=2000)
     p.add_argument("--msg-kb", type=int, default=64)
-    p.add_argument("--rate", type=float, default=1.0)
+    p.add_argument("--rate", type=float, default=None)
+    p.add_argument("--sni-mode", choices=("same", "unique"), default="same")
+    p.add_argument("--keepalive", action="store_true")
     p.add_argument("--https", action="store_true")
     p.add_argument("--concurrency", type=int, default=20)
     p.add_argument("--mb", type=int, default=10)
@@ -194,6 +248,10 @@ async def main():
     p.add_argument("--origin-port", type=int, default=8080)
     p.add_argument("--output", default="/results/client.json")
     a = p.parse_args()
+    if a.size is None: a.size = 200_000 if a.scenario == "conn_churn" else 100_000_000
+    if a.rate is None: a.rate = 20.0 if a.scenario == "conn_churn" else 1.0
+    if a.scenario == "conn_churn" and (a.minutes < 1 or a.concurrency < 1 or a.size < 0 or a.rate < 0):
+        p.error("conn_churn requires positive minutes/concurrency and nonnegative size/rate")
     c = ProxyClient(a.proxy, a.ca, a.origin, a)
     start = time.monotonic()
     if a.scenario == "soak":
@@ -203,6 +261,6 @@ async def main():
     else:
         for _ in range(max(1, a.rounds)): await c.run_case(a.scenario)
     os.makedirs(os.path.dirname(a.output), exist_ok=True)
-    with open(a.output, "w") as f: json.dump({"scenario":a.scenario,"errors":c.errors,"client_errors":c.errors,"streams_completed":c.streams_completed,"security":c.security,"messages_received":c.messages_received,"duration_seconds":time.monotonic()-start},f)
+    with open(a.output, "w") as f: json.dump({"scenario":a.scenario,"errors":c.errors,"client_errors":c.errors,"streams_completed":c.streams_completed,"security":c.security,"messages_received":c.messages_received,"requests_completed":c.requests_completed,"duration_seconds":time.monotonic()-start},f)
 
 if __name__ == "__main__": asyncio.run(main())

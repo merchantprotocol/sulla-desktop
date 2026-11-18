@@ -26,4 +26,16 @@ describe('Files capability clock skew', () => {
     const now = 1_800_000_000;
     expect(() => verifyCapabilityToken(tokenIssuedAt(now + 600), key, now)).toThrow(/clock skew exceeds 300s/);
   });
+
+  it('accepts an expired timestamp within the bounded host/guest skew window', () => {
+    // risk: authentication availability — a guest clock ahead by 70 seconds must not deny a fresh 5-minute capability.
+    const now = 1_800_000_000;
+    expect(verifyCapabilityToken(tokenIssuedAt(now - 973), key, now).sub).toBe('test-user');
+  });
+
+  it('still rejects capabilities expired beyond the bounded skew window', () => {
+    // risk: authentication integrity — clock tolerance must not turn an expired capability into a long-lived credential.
+    const now = 1_800_000_000;
+    expect(() => verifyCapabilityToken(tokenIssuedAt(now - 1_201), key, now)).toThrow(/clock skew exceeds 300s/);
+  });
 });

@@ -12,7 +12,7 @@
 export type PreferencesSectionId =
   'general' | 'appearance' |
   'models' | 'personality' | 'heartbeat' | 'voice' | 'workflows' | 'extensions' |
-  'account' | 'files' | 'privacy' | 'threat' |
+  'account' | 'files' | 'security' | 'threat' |
   'docker' |
   'advanced';
 
@@ -52,7 +52,7 @@ export const PREFERENCES_NAV: PreferencesNavGroup[] = [
     items: [
       { id: 'account', icon: 'user', label: 'Account & Cloud' },
       { id: 'files', icon: 'folder', label: 'Files & backups' },
-      { id: 'privacy', icon: 'shield', label: 'Privacy & security' },
+      { id: 'security', icon: 'shield', label: 'Security' },
       { id: 'threat', icon: 'scan', label: 'Threat Protection' },
     ],
   },
@@ -93,6 +93,8 @@ const LEGACY_SECTION_NAMES: Record<string, PreferencesSectionId> = {
   cloud:                'account',
   troubleshooting:      'advanced',
   diagnostics:          'advanced',
+  privacy:              'security',
+  'privacy & security': 'security',
 };
 
 /** Turn a section id, label or legacy window/tab name into a section id. */

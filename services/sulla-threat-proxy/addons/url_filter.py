@@ -36,6 +36,7 @@ from mitmproxy import http
 
 from common import (
     BLOCKLIST_DIR,
+    DailyCounters,
     FLAG_BLOCK,
     FLAG_CLEAN,
     FLAG_ERROR,
@@ -102,6 +103,7 @@ class URLFilter:
     def __init__(self, config: Optional[ProxyConfig] = None, cache=None) -> None:
         self.config = config or ProxyConfig()
         self.cache = cache or get_cache()
+        self.daily_counters = DailyCounters()
         self.sb_bucket = _TokenBucket(SAFE_BROWSING_BUDGET_PER_MINUTE)
         self.vt_bucket = _TokenBucket(VT_BUDGET_PER_MINUTE)
         self._urlhaus_hosts: Set[str] = set()
@@ -122,6 +124,10 @@ class URLFilter:
             allowlist_size=len(self.user_allowlist),
             urlhaus_hosts=len(self._urlhaus_hosts),
         )
+
+    def done(self) -> None:
+        """Persist any buffered request counters when mitmproxy shuts down."""
+        self.daily_counters.flush()
 
     def _apply_config(self) -> None:
         """Pick up new settings / API keys when Desktop rewrites the config file."""
@@ -424,6 +430,7 @@ class URLFilter:
             return
 
         verdict, details = self._scan(url, host, names)
+        self.daily_counters.increment(blocked=verdict == FLAG_BLOCK and self.block_mode == "block")
         log(
             "url_filter",
             "info",

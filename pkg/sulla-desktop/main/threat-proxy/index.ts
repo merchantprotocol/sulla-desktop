@@ -28,13 +28,14 @@ import https from 'https';
 import path from 'path';
 import readline from 'readline';
 import { URL } from 'url';
+import { ThreatProxyDailyCounters } from '../security/ThreatProxyDailyCounters';
 
 import { BrowserWindow, ipcMain } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { VMExecutor } from '@pkg/backend/backend';
 import {
-  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER, THREAT_PROXY_PUBLIC_DIR, THREAT_PROXY_TRAFFIC_LOG_PATH, type EgressPolicyState,
+  egressPolicyCommand, installStagedFileCommand, THREAT_PROXY_BLOCKLIST_PATH, THREAT_PROXY_CONFIG_PATH, THREAT_PROXY_CONTAINER, THREAT_PROXY_PUBLIC_DIR, THREAT_PROXY_TRAFFIC_LOG_PATH, THREAT_PROXY_STATE_DIR, type EgressPolicyState,
 } from '@pkg/backend/threatProxyEgress';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -705,6 +706,19 @@ export async function shutdown(): Promise<void> {
     refreshTimer = null;
   }
   initialized = false;
+}
+
+export { ThreatDailyCounters } from '../security/ThreatProxyDailyCounters';
+/** Sum persisted UTC-hour buckets within the host's local calendar day. */
+export async function getDailyCounters(): Promise<ThreatDailyCounters | null> {
+  if (!guest) return null;
+  try {
+    const counterPath = `${ THREAT_PROXY_STATE_DIR }/daily-counters.json`;
+    const output = await guest.execCommand({ root: true, capture: true }, 'sh', '-c', 'cat -- "$1"', 'daily-counters', counterPath);
+    const parsed = JSON.parse(output) as { hours?: unknown };
+    if (!parsed.hours || typeof parsed.hours !== 'object' || Array.isArray(parsed.hours)) return null;
+    return ThreatProxyDailyCounters.sumLocalDay(parsed.hours as Record<string, unknown>);
+  } catch { return null }
 }
 
 export interface TrafficLogRequest { limit?: number; verdict?: string; search?: string }
