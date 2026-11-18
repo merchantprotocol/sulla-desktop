@@ -14,9 +14,8 @@ import mainEvents from '@pkg/main/mainEvents';
 import { requestApplicationRestart } from '@pkg/main/restartCoordinator';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
-import {
-  openDocker, openMain, openPreferences, getWindow, openUrlInApp,
-} from '@pkg/window';
+import { openDocker, openPreferences, openUrlInApp } from '@pkg/window';
+import { ensureAgentWindow, getActiveAgentWindow, isAgentWebContents, newAgentWindow } from '@pkg/window/agentWindows';
 import { openProcessManager } from '@pkg/window/processManager';
 import { initSupportCenterIpc, openSupportCenter } from '@pkg/window/supportCenter';
 import { loopbackOrigin } from '@pkg/utils/instance';
@@ -34,19 +33,41 @@ type RoutineContext =
   | { mode: 'template'; slug: string; name: string }
   | null;
 
-let currentRoutineContext: RoutineContext = null;
+/** Routine context per agent window, keyed by BrowserWindow id. */
+const routineContextByWindow = new Map<number, RoutineContext>();
+
+/** The routine context of the focused (or last-focused) agent window. */
+function focusedRoutineContext(): RoutineContext {
+  const win = getActiveAgentWindow();
+
+  return win ? (routineContextByWindow.get(win.id) ?? null) : null;
+}
 
 /** Set by the app-state IPC listener (registered below). */
-function setRoutineContext(ctx: RoutineContext): void {
-  currentRoutineContext = ctx;
+function setRoutineContext(win: BrowserWindow, ctx: RoutineContext): void {
+  if (!routineContextByWindow.has(win.id)) {
+    win.once('closed', () => {
+      routineContextByWindow.delete(win.id);
+      refreshApplicationMenu();
+    });
+  }
+  routineContextByWindow.set(win.id, ctx);
   rebuildMenu();
 }
 
 // Listen for context updates from the renderer. Renderers send this
 // fire-and-forget whenever the visible surface changes (navigate into
 // the editor, open a template, return to the routines home, etc.).
-ipcMain.on('app-state:set-routine-context', (_event, ctx: RoutineContext) => {
-  setRoutineContext(ctx && typeof ctx === 'object' ? ctx : null);
+ipcMain.on('app-state:set-routine-context', (event, ctx: RoutineContext) => {
+  if (!isAgentWebContents(event.sender)) {
+    return;
+  }
+  const win = BrowserWindow.fromWebContents(event.sender);
+
+  if (!win) {
+    return;
+  }
+  setRoutineContext(win, ctx && typeof ctx === 'object' ? ctx : null);
 });
 
 /** Broadcast vault state changes to renderer windows. */
@@ -68,6 +89,10 @@ export default function buildApplicationMenu(): void {
 
   Menu.setApplicationMenu(menu);
 
+  // Focus decides which window the File menu acts on (routine context, targets),
+  // so re-derive the menu whenever a different window takes focus.
+  Electron.app.on('browser-window-focus', () => refreshApplicationMenu());
+
   // Set up event listeners for dynamic menu updates
   // Rebuild history menu when history changes
   mainEvents.on('conversation-history:changed' as any, () => {
@@ -80,6 +105,11 @@ export default function buildApplicationMenu(): void {
   refreshExtensions();
   mainEvents.on('extensions/changed' as any, () => refreshExtensions());
   mainEvents.on('settings-update' as any, () => refreshExtensions());
+}
+
+/** Rebuild the menu structure without re-querying history (cheap, used on focus changes). */
+function refreshApplicationMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(getApplicationMenu()));
 }
 
 function rebuildMenu(): void {
@@ -120,22 +150,7 @@ function restartApplication(): void {
  * Opens the main window first if it isn't already visible.
  */
 function navigateAgent(routePath: string): void {
-  openMain();
-  const existing = getWindow('main-agent');
-
-  if (existing) {
-    sendWhenReady(existing, 'route', { path: routePath });
-  } else {
-    const poll = setInterval(() => {
-      const window = getWindow('main-agent');
-
-      if (window) {
-        clearInterval(poll);
-        sendWhenReady(window, 'route', { path: routePath });
-      }
-    }, 50);
-    setTimeout(() => clearInterval(poll), 5000);
-  }
+  sendWhenReady(ensureAgentWindow(), 'route', { path: routePath });
 }
 
 /**
@@ -155,22 +170,7 @@ function sendWhenReady(window: Electron.BrowserWindow, channel: string, data: un
  * Send a command to the Agent window renderer (e.g. to create tabs).
  */
 export function sendAgentCommand(command: string, payload?: Record<string, unknown>): void {
-  openMain();
-  const existing = getWindow('main-agent');
-
-  if (existing) {
-    sendWhenReady(existing, 'agent-command', { command, ...payload });
-  } else {
-    const poll = setInterval(() => {
-      const window = getWindow('main-agent');
-
-      if (window) {
-        clearInterval(poll);
-        sendWhenReady(window, 'agent-command', { command, ...payload });
-      }
-    }, 50);
-    setTimeout(() => clearInterval(poll), 5000);
-  }
+  sendWhenReady(ensureAgentWindow(), 'agent-command', { command, ...payload });
 }
 
 // ── Dynamic extension data for menu ──
@@ -264,9 +264,16 @@ function getFileMenu(): MenuItem {
     label:   '&File',
     submenu: [
       {
-        label:       'New Chat Tab',
+        label:       'New Agent Tab',
         accelerator: 'CmdOrCtrl+N',
         click:       () => sendAgentCommand('new-chat-tab'),
+      },
+      {
+        label:       'New Agent Window',
+        accelerator: 'CmdOrCtrl+Shift+N',
+        click:       () => {
+          newAgentWindow();
+        },
       },
       {
         label:       'New Browser Tab',
@@ -274,11 +281,6 @@ function getFileMenu(): MenuItem {
         click:       () => sendAgentCommand('new-browser-tab'),
       },
       { type: 'separator' },
-      {
-        label:       'Open Sulla Agent',
-        accelerator: 'CmdOrCtrl+1',
-        click:       () => sendAgentCommand('open-tab', { mode: 'chat' }),
-      },
       {
         label:       'Open Integrations',
         accelerator: 'CmdOrCtrl+2',
@@ -305,10 +307,12 @@ function getFileMenu(): MenuItem {
           {
             label:       'Export Current Workflow…',
             accelerator: 'CmdOrCtrl+Shift+E',
-            enabled:     currentRoutineContext?.mode === 'routine',
+            enabled:     focusedRoutineContext()?.mode === 'routine',
             click:       () => {
-              if (currentRoutineContext?.mode === 'routine') {
-                sendAgentCommand('routines:export', { id: currentRoutineContext.id });
+              const ctx = focusedRoutineContext();
+
+              if (ctx?.mode === 'routine') {
+                sendAgentCommand('routines:export', { id: ctx.id });
               }
             },
           },
@@ -507,36 +511,14 @@ function historyEntryLabel(entry: ConversationHistoryRecord): string {
  */
 function historyEntryClick(entry: ConversationHistoryRecord): () => void {
   return () => {
-    const existing = getWindow('main-agent');
-
-    if (existing) {
-      sendWhenReady(existing, 'conversation-history:navigate', {
-        id:        entry.id,
-        type:      entry.type,
-        url:       entry.url,
-        title:     entry.title,
-        tab_id:    entry.tab_id,
-        thread_id: entry.thread_id,
-      });
-    } else {
-      openMain();
-      const poll = setInterval(() => {
-        const window = getWindow('main-agent');
-
-        if (window) {
-          clearInterval(poll);
-          sendWhenReady(window, 'conversation-history:navigate', {
-            id:        entry.id,
-            type:      entry.type,
-            url:       entry.url,
-            title:     entry.title,
-            tab_id:    entry.tab_id,
-            thread_id: entry.thread_id,
-          });
-        }
-      }, 50);
-      setTimeout(() => clearInterval(poll), 5000);
-    }
+    sendWhenReady(ensureAgentWindow(), 'conversation-history:navigate', {
+      id:        entry.id,
+      type:      entry.type,
+      url:       entry.url,
+      title:     entry.title,
+      tab_id:    entry.tab_id,
+      thread_id: entry.thread_id,
+    });
   };
 }
 
@@ -566,22 +548,14 @@ function getHistoryMenu(): MenuItem {
     {
       label:       'Show All History',
       accelerator: 'CmdOrCtrl+Y',
-      click:       () => {
-        const existing = getWindow('main-agent');
-
-        if (existing) {
-          sendWhenReady(existing, 'conversation-history:show-all', undefined);
-        } else {
-          openMain();
-        }
-      },
+      click:       () => sendWhenReady(ensureAgentWindow(), 'conversation-history:show-all', undefined),
     },
     { type: 'separator' },
     {
       label:       'Reopen Last Closed Tab',
       accelerator: 'CmdOrCtrl+Shift+T',
       click:       () => {
-        const existing = getWindow('main-agent');
+        const existing = getActiveAgentWindow();
 
         if (existing) {
           sendWhenReady(existing, 'conversation-history:restore-last-closed', undefined);
@@ -635,7 +609,7 @@ function getHistoryMenu(): MenuItem {
         label:   'Clear Last Hour',
         click:   () => {
           const cutoff = new Date(Date.now() - 3_600_000).toISOString();
-          const existing = getWindow('main-agent');
+          const existing = getActiveAgentWindow();
 
           if (existing) {
             sendWhenReady(existing, 'conversation-history:cleared', cutoff);
@@ -649,7 +623,7 @@ function getHistoryMenu(): MenuItem {
         label:   'Clear Today',
         click:   () => {
           const cutoff = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
-          const existing = getWindow('main-agent');
+          const existing = getActiveAgentWindow();
 
           if (existing) {
             sendWhenReady(existing, 'conversation-history:cleared', cutoff);
@@ -660,7 +634,7 @@ function getHistoryMenu(): MenuItem {
       {
         label:   'Clear All History',
         click:   () => {
-          const existing = getWindow('main-agent');
+          const existing = getActiveAgentWindow();
 
           if (existing) {
             sendWhenReady(existing, 'conversation-history:cleared', undefined);
@@ -784,9 +758,16 @@ function getWindowsApplicationMenu(): MenuItem[] {
       label:   '&File',
       submenu: [
         {
-          label:       'New &Chat Tab',
+          label:       'New &Agent Tab',
           accelerator: 'CmdOrCtrl+N',
           click:       () => sendAgentCommand('new-chat-tab'),
+        },
+        {
+          label:       'New Agent &Window',
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click:       () => {
+            newAgentWindow();
+          },
         },
         {
           label:       'New &Browser Tab',
@@ -794,10 +775,6 @@ function getWindowsApplicationMenu(): MenuItem[] {
           click:       () => sendAgentCommand('new-browser-tab'),
         },
         { type: 'separator' },
-        {
-          label: 'Open Sulla Agent',
-          click: () => sendAgentCommand('open-tab', { mode: 'chat' }),
-        },
         {
           label: 'Open Integrations',
           click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),

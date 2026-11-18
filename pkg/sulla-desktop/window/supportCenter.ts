@@ -14,6 +14,7 @@ import { SupportStateStore, type SupportAttachment, type SupportState } from '@p
 import { remoteSupportService } from '@pkg/main/supportRemote';
 import { registerGuestSupport, supportCloudRequest, supportWhoAmI } from '@pkg/main/support/supportCloud';
 import paths from '@pkg/utils/paths';
+import { isAgentWebContents } from '@pkg/window/agentWindows';
 
 let registered = false;
 const windowApi = (): any => require('@pkg/window');
@@ -108,8 +109,7 @@ async function uploadLogAttachment(): Promise<any> {
 function registerHandlers() {
   if (registered) { return } registered = true;
   ipcMain.on('support:open-remote', (event) => {
-    const { getWindow }=windowApi(); const main = getWindow('main-agent') ?? getWindow('main');
-    if (event.sender === main?.webContents) openSupportCenter('remote');
+    if (isAgentWebContents(event.sender)) openSupportCenter('remote');
   });
   ipcMain.handle('support:state', (event) => { authorize(event); return store().read() });
   ipcMain.handle('support:cloud-status', async(event) => { authorize(event); try { return { ...await supportWhoAmI(), reachable:true } } catch(error:any) { if(error?.status===401)return { enrolled:false,guest:false,reachable:true }; return { enrolled:false,guest:false,reachable:false,error:"Can't reach Sulla support right now" } } });
@@ -184,7 +184,7 @@ function registerHandlers() {
 export function initSupportCenterIpc() {
   if (ipcMain.listenerCount('support:open') > 0) return;
   ipcMain.on('support:open', (event, section: unknown) => {
-    const trusted = ['first-run', 'main-agent'].some(name => event.sender === windowApi().getWindow(name as any)?.webContents);
+    const trusted = isAgentWebContents(event.sender) || event.sender === windowApi().getWindow('first-run')?.webContents;
     if (trusted) openSupportCenter(typeof section === 'string' ? section : 'home');
   });
 }

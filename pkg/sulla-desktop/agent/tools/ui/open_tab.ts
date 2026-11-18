@@ -5,7 +5,8 @@
 
 import { BaseTool, ToolResponse } from '../base';
 
-import { getWindow, openDocker, openPreferences } from '@pkg/window';
+import { openDocker, openPreferences } from '@pkg/window';
+import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 
 /**
  * UI Open Tab — bridge between the agent and the renderer's `agent-command`
@@ -14,7 +15,7 @@ import { getWindow, openDocker, openPreferences } from '@pkg/window';
  *
  * The renderer's `onAgentCommand` handler in pages/AgentRouter.vue already
  * accepts `{ command: 'open-tab', mode }` and `{ command: 'open-url', url }`
- * shapes — this tool just dispatches them to the main-agent window.
+ * shapes — this tool just dispatches them to the focused Sulla agent window.
  *
  * For extension web UIs (Twenty CRM, etc.), prefer `browser/tab` with the
  * extension's URL — those aren't built-in modes.
@@ -115,7 +116,7 @@ export class UiOpenTabWorker extends BaseTool {
 }
 
 function sendToAgentWindow(payload: Record<string, unknown>): boolean {
-  const agentWindow = getWindow('main-agent');
+  const agentWindow = getActiveAgentWindow();
   if (!agentWindow) return false;
 
   const dispatch = () => agentWindow.webContents.send('agent-command', payload);

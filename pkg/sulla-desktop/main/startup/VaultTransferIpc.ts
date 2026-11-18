@@ -20,10 +20,10 @@ export class VaultTransferIpc implements MainProcessIpcStep {
     const policy = new VaultIpcInputPolicy(window);
 
     // ── Vault: export & import ─────────────────────────────────────────────────
-    const { dialog } = await import('electron');
+    const { dialog, BrowserWindow } = await import('electron');
     const fsPromises = await import('fs/promises');
 
-    ipc.handle('vault:export', async(_event: Electron.IpcMainInvokeEvent, data: { encrypted: boolean }) => {
+    ipc.handle('vault:export', async(event: Electron.IpcMainInvokeEvent, data: { encrypted: boolean }) => {
       policy.denyLegacyVaultIpc();
       try {
         const { getIntegrationService: getIS } = await import('@pkg/agent/services/IntegrationService');
@@ -69,8 +69,8 @@ export class VaultTransferIpc implements MainProcessIpcStep {
           defaultName = `sulla-vault-export-${ new Date().toISOString().slice(0, 10) }.json`;
         }
 
-        const mainWindow = window.getWindow('main-agent');
-        const result = await dialog.showSaveDialog(mainWindow!, {
+        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        const result = await dialog.showSaveDialog(senderWindow!, {
           title:       data.encrypted ? 'Export Encrypted Vault Backup' : 'Export Vault (Plain Text)',
           defaultPath: defaultName,
           filters:     data.encrypted
