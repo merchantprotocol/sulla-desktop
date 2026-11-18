@@ -148,6 +148,7 @@ export class LocalVaultBrokerClient {
     endpoint: string,
     private readonly identity: VaultBrokerServiceIdentity | VaultBrokerIdentityProvider,
     private readonly transport: VaultBrokerFetch = (input, init) => fetch(input, init),
+    private readonly streamTransport: VaultBrokerFetch = transport,
   ) {
     this.endpoint = assertEndpoint(endpoint);
     if (typeof identity !== 'function' && (!identity.serviceId || !identity.serviceToken)) {
@@ -219,7 +220,7 @@ export class LocalVaultBrokerClient {
 
   async executeStream(request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
     const streamRequest = { ...request, responseType: request.responseType ?? 'stream' } as BrokerExecuteRequest;
-    const response = await this.send('/v1/broker/execute-stream', streamRequest, signal);
+    const response = await this.send('/v1/broker/execute-stream', streamRequest, signal, this.streamTransport);
     // Upstream provider errors are legitimate streamed responses. The vault
     // marks its own pre-header denials so callers can distinguish them without
     // consuming or buffering a provider response body.
@@ -312,11 +313,11 @@ export class LocalVaultBrokerClient {
     return response;
   }
 
-  private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal): Promise<Response> {
+  private async send(path: string, request: BrokerExecuteRequest, signal?: AbortSignal, transport = this.transport): Promise<Response> {
     if (!request.claims?.sub || !request.claims.agent_id || !request.claims.pod_id) {
       throw new VaultBrokerError('invalid_caller_identity', 'Vault broker request has incomplete caller claims', 401);
     }
-    return this.transport(`${ this.endpoint }${ path }`, {
+    return transport(`${ this.endpoint }${ path }`, {
       method:  'POST',
       headers: await this.serviceHeaders(true),
       body:    JSON.stringify(request),

@@ -23,6 +23,8 @@ export interface VaultBrokerIdentityContextInput {
 export class VaultBrokerServiceProvider {
   private configuredBroker: LocalVaultBrokerClient | null | undefined;
   private configuredApproval: LocalVaultApprovalClient | null | undefined;
+  private principalId: string | undefined;
+  private principalPromise: Promise<string> | undefined;
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -48,6 +50,7 @@ export class VaultBrokerServiceProvider {
         DESKTOP_VAULT_ENDPOINT,
         identity,
         (input, init) => import('./desktopTransport').then(runtime => runtime.desktopVaultFetch(input, init)),
+        (input, init) => import('./desktopTransport').then(runtime => runtime.desktopVaultTransport.fetchStream(input, init)),
       );
     } else this.configuredBroker = null;
     return this.configuredBroker;
@@ -68,6 +71,18 @@ export class VaultBrokerServiceProvider {
   }
 
   async getLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
+    if (this.principalId) return this.principalId;
+    if (this.principalPromise) return this.principalPromise;
+    this.principalPromise = this.loadLocalVaultPrincipalId(signal);
+    try { return this.principalId = await this.principalPromise; }
+    catch (error) {
+      const e = error as { status?: number; code?: string };
+      if (e.status === 401 || e.status === 423 || e.code === 'vault_locked') this.principalId = undefined;
+      throw error;
+    } finally { this.principalPromise = undefined; }
+  }
+
+  private async loadLocalVaultPrincipalId(signal?: AbortSignal): Promise<string> {
     const status = await this.requireConfiguredCredentialBroker().status(signal);
     if (!status.unlocked) throw new VaultBrokerError('vault_locked', 'Vault is locked', 423);
     if (typeof status.principalId !== 'string' || !UUID_PATTERN.test(status.principalId)) {
