@@ -21,7 +21,7 @@ import type { LiveTextCoordinator } from '../Services/LiveTextCoordinator.js';
 import type { TextVersionMerger } from '../Services/TextVersionMerger.js';
 import type { VersionWriter } from '../Services/VersionWriter.js';
 import type { Store } from '../store.js';
-import { lockStoredNamespace } from '../storedNamespace.js';
+import { lockStoredNamespace, lockStoredNamespacePaths } from '../storedNamespace.js';
 import { commitStreamedUpload, streamUploadChunks } from '../streamingUpload.js';
 import { beginUploadIntent, completeUploadIntent } from '../uploadCleanup.js';
 
@@ -151,9 +151,11 @@ export class FuseContentRoutes {
       });
       const staged=await this.versions.stage(target.collection_id,saved.bytes);
       const result=await this.transactions.run('fuse-replace',async client=>{
-        await lockStoredNamespace(client,target.collection_id);
+        // The collection stays shared (only broad renames/moves exclude it); the target and source
+        // paths are locked exclusively, so creates elsewhere in the collection run in parallel.
+        await lockStoredNamespacePaths(client,target.collection_id,[target.path,source.path]);
         const lockedTarget=await this.access.requireFile(request,target.id,'edit',client); const lockedSource=await this.access.requireFile(request,source.id,'edit',client);
-        if(lockedTarget.current_version_id!==target.current_version_id||lockedTarget.path!==target.path||lockedSource.current_version_id!==source.current_version_id||lockedSource.deleted_at)
+        if(lockedTarget.current_version_id!==target.current_version_id||lockedTarget.path!==target.path||lockedSource.current_version_id!==source.current_version_id||lockedSource.path!==source.path||lockedSource.deleted_at)
           throw new HttpError(409,'Files changed concurrently or are busy; retry the replace');
         const result=await this.versions.insert(client,{collectionId:target.collection_id,fileId:target.id,path:target.path,mime:source.mime,bytes:saved.bytes,staged,
           actor,createdByType:actor.agentId?'agent':'agent-run',createdById:actor.agentId??actor.jobId??actor.userId,message:'Replaced through the Files mount',baseVersionId:target.current_version_id});

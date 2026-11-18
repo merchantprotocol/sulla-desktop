@@ -142,7 +142,10 @@ export class FuseFileRoutes {
       const collectionId=String(request.query.collectionId??''); const folderPath=cleanPath(String(request.query.path??''),false);
       this.access.identity(request); await this.access.requirePath(request,collectionId,folderPath,'edit');
       await this.transactions.run('fuse-rmdir', async client => {
-        await lockStoredNamespace(client,collectionId);
+        // Scoped to the folder: its slot is exclusive, so a create inside it (which holds the slot
+        // shared as an ancestor) waits for this transaction or runs wholly before it. The emptiness
+        // check below therefore sees every committed child, and no file can land under a removed folder.
+        await lockStoredNamespace(client,collectionId,folderPath);
         if(await this.writes.folderHasLiveFiles(client,collectionId,folderPath)) throw new HttpError(409,'folder is not empty');
         await this.writes.deleteFolderTree(client,collectionId,folderPath);
       });

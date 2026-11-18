@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 
+import type { FilesMetrics } from './FilesMetrics.js';
 import { TransactionScope } from './TransactionScope.js';
 
 export const VERSION_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -38,9 +39,16 @@ export interface StagerCrypto {
  * only an unreferenced content-addressed blob; it can never become a half-written version.
  */
 export class VersionContentStager {
-  constructor(private readonly keyring:StagerKeyring, private readonly store:StagerChunkStore, private readonly crypto:StagerCrypto) {}
+  constructor(private readonly keyring:StagerKeyring, private readonly store:StagerChunkStore, private readonly crypto:StagerCrypto,
+    private readonly metrics?:FilesMetrics) {}
 
   async stage(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
+    const started = performance.now();
+    try { return await this.stageContent(collectionId, bytes) }
+    finally { this.metrics?.observeStage(performance.now() - started) }
+  }
+
+  private async stageContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
     TransactionScope.assertOutside('staging version content (key lookup, encrypt, fsync)');
     const { data, dedup } = await this.keyring.keys(collectionId);
     const chunkIds:string[] = []; const chunks = new Map<string, { id:string; size:number; storedSize:number }>();
@@ -51,7 +59,9 @@ export class VersionContentStager {
       const existing = await this.store.storedSize(collectionId, id);
       if (existing !== undefined) { chunks.set(id, { id, size: plain.length, storedSize: existing }); continue }
       const encrypted = await this.crypto.encryptChunk(plain, data, id);
+      const writeStarted = performance.now();
       await (this.store.putStaged ?? this.store.put).call(this.store, collectionId, id, encrypted);
+      this.metrics?.observeChunkWrite(performance.now() - writeStarted);
       chunks.set(id, { id, size: plain.length, storedSize: encrypted.length });
     }
     return {

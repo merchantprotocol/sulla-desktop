@@ -52,6 +52,16 @@ export class StoredNamespaceGuard {
     await this.repository.lockScope(client, collectionId, scopedPath);
   }
 
+  /**
+   * Scoped locks for several paths in one transaction (a replace touches its target and its source).
+   * The paths are sorted and de-duplicated so every transaction takes the same keys in the same
+   * order: two crossed replaces (a over b, b over a) then queue on the first shared key instead of
+   * each holding one exclusive slot the other waits for.
+   */
+  async lockPaths(client:pg.PoolClient, rawCollectionId:string, scopedPaths:string[]):Promise<void> {
+    for (const path of [...new Set(scopedPaths)].sort()) await this.lock(client, rawCollectionId, path);
+  }
+
   async assertFilePath(client:pg.PoolClient, collectionId:string, path:string, sameFileId?:string):Promise<void> {
     const occupied = await this.repository.findFileConflict(client, collectionId, path, StoredNamespaceGuard.parentPaths(path), sameFileId);
     if (occupied !== undefined) throw new StoredNamespaceConflict(`A file already occupies ${ occupied }, so ${ path } cannot be stored there.`);
