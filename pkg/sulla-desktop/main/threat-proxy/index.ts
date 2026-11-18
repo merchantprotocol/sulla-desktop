@@ -28,6 +28,7 @@ import https from 'https';
 import path from 'path';
 import readline from 'readline';
 import { URL } from 'url';
+import { ThreatProxyDailyCounters } from '../security/ThreatProxyDailyCounters';
 
 import { BrowserWindow, ipcMain } from 'electron';
 
@@ -707,17 +708,16 @@ export async function shutdown(): Promise<void> {
   initialized = false;
 }
 
-export interface ThreatDailyCounters { scannedToday: number; blockedToday: number }
-/** Reads the addon's persisted UTC-day counters; older images deliberately report no source. */
+export { ThreatDailyCounters } from '../security/ThreatProxyDailyCounters';
+/** Sum persisted UTC-hour buckets within the host's local calendar day. */
 export async function getDailyCounters(): Promise<ThreatDailyCounters | null> {
   if (!guest) return null;
   try {
     const counterPath = `${ THREAT_PROXY_STATE_DIR }/daily-counters.json`;
     const output = await guest.execCommand({ root: true, capture: true }, 'sh', '-c', 'cat -- "$1"', 'daily-counters', counterPath);
-    const parsed = JSON.parse(output) as { date?: unknown; scanned?: unknown; blocked?: unknown };
-    const today = new Date().toISOString().slice(0, 10);
-    if (parsed.date !== today || !Number.isSafeInteger(parsed.scanned) || (parsed.scanned as number) < 0 || !Number.isSafeInteger(parsed.blocked) || (parsed.blocked as number) < 0) return null;
-    return { scannedToday: parsed.scanned as number, blockedToday: parsed.blocked as number };
+    const parsed = JSON.parse(output) as { hours?: unknown };
+    if (!parsed.hours || typeof parsed.hours !== 'object' || Array.isArray(parsed.hours)) return null;
+    return ThreatProxyDailyCounters.sumLocalDay(parsed.hours as Record<string, unknown>);
   } catch { return null }
 }
 

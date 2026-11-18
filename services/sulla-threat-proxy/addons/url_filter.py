@@ -125,6 +125,10 @@ class URLFilter:
             urlhaus_hosts=len(self._urlhaus_hosts),
         )
 
+    def done(self) -> None:
+        """Persist any buffered request counters when mitmproxy shuts down."""
+        self.daily_counters.flush()
+
     def _apply_config(self) -> None:
         """Pick up new settings / API keys when Desktop rewrites the config file."""
         self.config.refresh()

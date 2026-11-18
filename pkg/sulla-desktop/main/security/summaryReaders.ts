@@ -49,7 +49,7 @@ export class AgentActionsReader {
         SELECT created_at AS at,
                COALESCE(NULLIF(meta->>'agentName', ''), NULLIF(meta->>'agent', ''), 'agent') AS actor,
                COALESCE(NULLIF(tool_name, ''), 'tool call') AS action,
-               COALESCE(NULLIF(tool_name, ''), 'tool call') AS target
+               COALESCE(NULLIF(meta->>'toolTarget', ''), NULLIF(meta->>'toolCategory', ''), '') AS target
         FROM conversation_messages
         WHERE role = 'tool' AND deleted_at IS NULL
         ORDER BY created_at DESC, seq DESC
