@@ -23,8 +23,8 @@ COPY packages/vault-crypto/tsconfig.json ./packages/vault-crypto/tsconfig.json
 COPY packages/vault-crypto/src ./packages/vault-crypto/src
 RUN cd packages/vault-crypto && npm run build
 WORKDIR /app/services/sulla-files
-COPY services/sulla-files/package.json ./
-RUN npm install --ignore-scripts
+COPY services/sulla-files/package*.json ./
+RUN npm ci --ignore-scripts
 COPY services/sulla-files/tsconfig.json ./
 COPY services/sulla-files/vite.config.ts ./
 COPY services/sulla-files/src ./src
