@@ -204,6 +204,7 @@ export class ChatController {
   newChat(): void {
     const oldThreadId = this.thread.value.id;
     const blank = this.fresh();
+    this.olderPagesLoaded = 0;
     void import('@pkg/utils/ipcRenderer').then(({ ipcRenderer }) => ipcRenderer.invoke('chat-messages:delete', oldThreadId));
     this.thread.value = blank.thread;
     this.runState.value = blank.runState;
@@ -378,8 +379,9 @@ export class ChatController {
   }
 
   private async deleteMessagesDurably(messageIds: MessageId[]): Promise<void> {
+    const threadId = this.thread.value.id;
     const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
-    await ipcRenderer.invoke('chat-messages:delete-messages', { threadId: this.thread.value.id, messageIds: messageIds.map(String) });
+    await ipcRenderer.invoke('chat-messages:delete-messages', { threadId, messageIds: messageIds.map(String) });
   }
 
   // ─── Message CRUD ───────────────────────────────────────────────
@@ -387,7 +389,11 @@ export class ChatController {
 
   prependOlder(messages: Message[]): void {
     const ids = new Set(this.thread.value.messages.map(message => message.id));
-    const older = messages.filter(message => !ids.has(message.id));
+    const older = messages.filter(message => {
+      if (ids.has(message.id)) return false;
+      ids.add(message.id);
+      return true;
+    });
     if (!older.length) return;
     this.olderPagesLoaded++;
     this.thread.value = { ...this.thread.value, messages: [...older, ...this.thread.value.messages], updatedAt: Date.now() };
