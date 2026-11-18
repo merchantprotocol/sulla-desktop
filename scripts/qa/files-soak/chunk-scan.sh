@@ -10,11 +10,12 @@
 #
 #   chunk-scan.sh [--diagnose] [collectionId] [limit]
 #
-#   --diagnose    optional; for each AEAD failure, report which other collection's data key opens it (ids and key fingerprints only, at most 50 chunks)
+#   --diagnose    optional; for each AEAD failure, report which other collection's data key opens it (ids and key fingerprints only, at most 50 chunks per page)
 #   collectionId  optional UUID; scan only that collection
-#   limit         optional 1..100000; chunks scanned per collection (default 10000)
+#   limit         optional positive integer; chunks per page per collection (default 2000, server clamps to 10000)
 #
-# Output: the JSON report from GET /v1/local/chunk-integrity/scan, printed as-is.
+# The endpoint is paged. This script loops pages (cursor = last chunk id) until every collection reports no nextCursor,
+# then prints ONE merged report with the same shape as GET /v1/local/chunk-integrity/scan, plus `pages`.
 #
 # Environment (optional):
 #   SOAK_FILES_CONTAINER   Files container (default sulla_files)
@@ -38,6 +39,7 @@ if [[ -n "$LIMIT" && ! "$LIMIT" =~ ^[1-9][0-9]*$ ]]; then
   echo "limit must be a positive integer" >&2
   exit 2
 fi
+if [[ -z "$LIMIT" ]]; then LIMIT=2000; fi
 
 # Runs inside sulla_files. The local token never leaves that container; only the HTTP status and the report are printed.
 SCAN_PROBE='
@@ -62,23 +64,78 @@ req.setTimeout(600000, () => { req.destroy(); console.log(JSON.stringify({ error
 req.end();
 '
 
-QUERY=""
-if [[ -n "$COLLECTION_ID" ]]; then QUERY="collectionId=$COLLECTION_ID"; fi
-if [[ -n "$LIMIT" ]]; then QUERY="${QUERY:+$QUERY&}limit=$LIMIT"; fi
-if [[ -n "$DIAGNOSE" ]]; then QUERY="${QUERY:+$QUERY&}diagnose=1"; fi
-[[ -n "$QUERY" ]] && QUERY="?$QUERY"
-
-WRAPPER="$(docker exec -e SCAN_QUERY="$QUERY" "$CONTAINER_FILES" node -e "$SCAN_PROBE" 2>/dev/null | grep '^{' | tail -n 1 || true)"
-if [[ -z "$WRAPPER" ]]; then
-  echo "chunk scan unavailable: no response from $CONTAINER_FILES" >&2
-  exit 1
-fi
-
+# Page loop runs in python: one `docker exec` per page, each page is the same node probe as before. Ids and counts only.
 python3 -I -c '
-import json, sys
-wrapper = json.loads(sys.argv[1])
-if wrapper.get("error") or wrapper.get("status") != 200:
-    sys.stderr.write("chunk scan failed: %s\n" % (wrapper.get("error") or wrapper.get("status")))
-    sys.exit(1)
-print(json.dumps(json.loads(wrapper["body"]), indent=2, sort_keys=True))
-' "$WRAPPER"
+import json, subprocess, sys
+container, probe, collection_id, limit, diagnose = sys.argv[1:6]
+TIMEOUT = 700
+MAX_PAGES = 100000
+
+def fetch(query):
+    try:
+        out = subprocess.run(["docker", "exec", "-e", "SCAN_QUERY=" + query, container, "node", "-e", probe],
+                             capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("chunk scan unavailable: page timed out\n"); sys.exit(1)
+    line = next((ln for ln in out.stdout.splitlines() if ln.startswith("{")), "")
+    if not line:
+        sys.stderr.write("chunk scan unavailable: no response from %s\n" % container); sys.exit(1)
+    wrapper = json.loads(line)
+    if wrapper.get("error") or wrapper.get("status") != 200:
+        sys.stderr.write("chunk scan failed: %s\n" % (wrapper.get("error") or wrapper.get("status"))); sys.exit(1)
+    return json.loads(wrapper["body"])
+
+def base_query(extra):
+    params = []
+    if collection_id: params.append("collectionId=" + collection_id)
+    params.append("limit=" + limit)
+    if diagnose: params.append("diagnose=1")
+    params.extend(extra)
+    return "?" + "&".join(params)
+
+merged = {}   # collectionId -> merged collection entry (ids and counts only)
+pages = 0
+first = fetch(base_query([]))
+pages += 1
+for entry in first["collections"]:
+    merged[entry["collectionId"]] = entry
+pending = [c["collectionId"] for c in first["collections"] if c.get("nextCursor")]
+for cid in pending:
+    entry = merged[cid]
+    while entry.get("nextCursor"):
+        cursor = entry["nextCursor"]
+        if pages >= MAX_PAGES:
+            sys.stderr.write("chunk scan stopped: page limit reached\n"); sys.exit(1)
+        page = fetch("?" + "&".join(["collectionId=" + cid, "cursor=" + cursor, "limit=" + limit] + (["diagnose=1"] if diagnose else [])))
+        pages += 1
+        got = next((c for c in page["collections"] if c["collectionId"] == cid), None)
+        if got is None:
+            sys.stderr.write("chunk scan failed: collection missing from a later page\n"); sys.exit(1)
+        if got["chunksScanned"] == 0 and got.get("nextCursor") == cursor:
+            sys.stderr.write("chunk scan failed: cursor did not advance\n"); sys.exit(1)
+        entry["chunksScanned"] += got["chunksScanned"]
+        for key in ("undecryptable", "failures", "missingBlob"):
+            entry[key].extend(got[key])
+        entry["errors"] += got["errors"]
+        entry["nextCursor"] = got.get("nextCursor")
+
+collections = [merged[c["collectionId"]] for c in first["collections"]]
+for entry in collections:
+    entry["undecryptable"].sort()
+    entry["failures"].sort(key=lambda f: f["chunkId"])
+    entry["missingBlob"].sort()
+report = {
+    "scannedAt": first["scannedAt"],
+    "limit": first.get("limit"),
+    "pages": pages,
+    "collections": collections,
+    "totals": {
+        "collections": len(collections),
+        "chunksScanned": sum(c["chunksScanned"] for c in collections),
+        "undecryptable": sum(len(c["undecryptable"]) for c in collections),
+        "missingBlob": sum(len(c["missingBlob"]) for c in collections),
+        "errors": sum(c["errors"] for c in collections),
+    },
+}
+print(json.dumps(report, indent=2, sort_keys=True))
+' "$CONTAINER_FILES" "$SCAN_PROBE" "$COLLECTION_ID" "$LIMIT" "${DIAGNOSE:-}"
