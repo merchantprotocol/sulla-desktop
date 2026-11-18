@@ -136,12 +136,51 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertEqual(attrs.attr_timeout, 0.0)
         self.assertEqual(attrs.entry_timeout, 0.0)
 
-    # risk: stale namespace — a reset invalidates every known inode and removes cached rows.
-    def test_reset_invalidates_whole_known_tree(self):
+    # risk: stale namespace — reset avoids kernel-call storms and forces fresh listings before caching.
+    def test_reset_marks_tree_stale_without_kernel_invalidations(self):
         child = self.ops._node("folder", True)
+        self.ops.nodes[child]["stale"] = False
+        self.ops.directory_complete.add("folder")
         asyncio.run(self.ops.invalidate_tree())
-        self.assertTrue(any(event[:2] == ("inode", child) for event in self.events))
+        self.assertEqual(self.events, [])
+        self.assertFalse(self.ops.directory_complete)
         self.assertTrue(self.ops.nodes[child]["stale"])
+        self.assertEqual(self.ops._attrs(child).attr_timeout, 0.0)
+
+    # risk: stale namespace — queue overflow collapses arbitrary events into one bounded full reset.
+    def test_queue_overflow_collapses_to_tree_reset(self):
+        self.adapter.MAX_PENDING_INVALIDATIONS = 2
+        for path in ("a", "b", "c", "d"):
+            self.ops.queue_invalidation(path)
+        self.assertEqual(len(self.ops.pending_invalidations), 0)
+        self.assertTrue(self.ops.pending_tree_reset)
+
+    # risk: stale namespace availability — a stuck call retires its limiter so the next event runs.
+    def test_stuck_invalidation_rotates_limiter_and_later_event_runs(self):
+        self.adapter.INVALIDATION_TIMEOUT_SECONDS = 0.01
+        stuck_limiter = types.SimpleNamespace(borrowed_tokens=1)
+        self.ops.invalidation_limiter = stuck_limiter
+        self.pyfuse3.invalidate_inode = lambda *_args, **_kwargs: time.sleep(0.1)
+        self.ops._node("stuck.txt", False)
+        asyncio.run(self.ops.invalidate_path("stuck.txt"))
+        fresh_limiter = self.ops.invalidation_limiter
+        self.assertIsNot(fresh_limiter, stuck_limiter)
+        self.assertEqual(self.ops.abandoned_invalidation_threads, 1)
+        self.pyfuse3.invalidate_inode = lambda inode, **kwargs: self.events.append(("inode", inode, kwargs))
+        self.ops._node("later.txt", False)
+        asyncio.run(self.ops.invalidate_path("later.txt"))
+        self.assertIn(("inode", self.ops.path_inode["later.txt"], {"attr_only": False}), self.events)
+
+    # risk: stale namespace — repeated abandoned workers permanently disable positive cache timeouts.
+    def test_abandoned_thread_cap_disables_caching(self):
+        for _ in range(self.adapter.MAX_ABANDONED_INVALIDATION_THREADS):
+            # Each timeout models a newly rotated worker that also becomes stuck.
+            self.ops.invalidation_limiter = types.SimpleNamespace(borrowed_tokens=1)
+            self.ops.invalidation_stuck_logged = False
+            self.ops._record_invalidation_timeout()
+        self.assertTrue(self.ops.invalidation_caching_disabled)
+        self.ops._finish_invalidation_pass(self.ops.invalidation_timeouts)
+        self.assertFalse(self.ops.invalidation_healthy)
 
     # risk: FUSE deadlock — reverse invalidation runs on its dedicated cancellable worker, not Trio's request loop.
     def test_blocked_kernel_invalidation_does_not_block_concurrent_request(self):
