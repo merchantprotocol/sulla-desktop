@@ -37,6 +37,18 @@ if ! docker inspect -f '{{.State.Running}}' "$proxy" 2>/dev/null | grep -q true;
   docker inspect "$proxy" >&2 2>/dev/null || true
   exit 1
 fi
+# Running is not ready: mitmproxy still has to load addons and bind the listener.
+ready=0
+while [ "$startup" -lt 45 ]; do
+  if docker exec "$proxy" python3 -c 'import socket; socket.create_connection(("127.0.0.1", 8890), 1).close()' >/dev/null 2>&1; then ready=1; break; fi
+  sleep 1; startup=$((startup+1))
+done
+if [ "$ready" -ne 1 ]; then
+  echo "Threat proxy did not become ready on port 8890; logs follow:" >&2
+  docker logs "$proxy" >&2 2>&1 || true
+  docker inspect "$proxy" >&2 2>/dev/null || true
+  exit 1
+fi
 printf 'scenario,timestamp,stats_mem,stats_limit,memory_current,memory_peak,oom,oom_kill,vmrss,vmhwm,phase\n' > "$results/samples.csv"
 docker run -d --name "$client" --network "$network" --user 0 -v "$state/public:/state/public:ro" -v "$results:/results" "$helper" client.py --scenario "$scenario" --proxy http://proxy:8890 --origin http://origin:8080 --ca /state/public/ca-bundle.pem --output "/results/client-$scenario.json" "$@" >/dev/null
 sample() { phase=$1; stats=$(docker stats --no-stream --format '{{.MemUsage}}' "$proxy" 2>/dev/null || echo unavailable); current=$(docker exec "$proxy" cat /sys/fs/cgroup/memory.current 2>/dev/null || echo ''); peak=$(docker exec "$proxy" cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo ''); events=$(docker exec "$proxy" cat /sys/fs/cgroup/memory.events 2>/dev/null || echo ''); oom=$(printf '%s\n' "$events" | awk '$1=="oom"{print $2}'); oomkill=$(printf '%s\n' "$events" | awk '$1=="oom_kill"{print $2}'); rss=$(docker exec "$proxy" awk '/VmRSS:/{print $2}' /proc/1/status 2>/dev/null || echo ''); hwm=$(docker exec "$proxy" awk '/VmHWM:/{print $2}' /proc/1/status 2>/dev/null || echo ''); printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$scenario" "$(date -u +%FT%TZ)" "$stats" '' "$current" "$peak" "$oom" "$oomkill" "$rss" "$hwm" "$phase" >> "$results/samples.csv"; }
