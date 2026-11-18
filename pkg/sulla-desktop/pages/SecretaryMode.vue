@@ -341,7 +341,7 @@ import {
 } from '@pkg/controllers/SecretaryModeController';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-const props = defineProps<{ tabId: string }>();
+const props = defineProps<{ tabId: string; conversationId?: string }>();
 const emit = defineEmits<{ 'set-mode': [mode: BrowserTabMode] }>();
 
 const { updateTab } = useBrowserTabs();
@@ -610,10 +610,12 @@ async function saveNotes(): Promise<void> {
       fileName: meetingNotesFileName(sessionStartedAt.value),
       markdown,
       path:     savedNotesPath.value,
+      conversationId: props.conversationId,
     });
 
     if (!result?.ok) throw new Error(result?.error || 'unknown error');
     savedNotesPath.value = result.path ?? null;
+    if (props.conversationId && result.path) window.dispatchEvent(new CustomEvent('sulla:secretary-notes-saved', { detail: { conversationId: props.conversationId, path: result.path } }));
     notesSaveFailed.value = false;
     notesStatus.value = `Notes saved to ${ result.path }`;
   } catch (err) {

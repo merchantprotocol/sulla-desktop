@@ -263,7 +263,7 @@ const activeTabMode = computed(() => {
   if (!match) return undefined;
   const active = browserTabs.find(t => t.id === match[1]);
 
-  return active?.mode;
+  return active?.mode === 'secretary' ? 'conversations' : active?.mode;
 });
 
 // Which ModeRail icon a Workflows / Use Cases tab lights up, from the
@@ -376,7 +376,7 @@ function onModeRailSelect(mode: string, subTab?: string) {
   // active one — rail clicks should behave like "open a new <mode> tab".
   const url = mode === 'browser' ? 'https://www.google.com' : 'about:blank';
   const studioSection = isStudioSection(subTab) ? subTab : undefined;
-  const tab = createTab(url, { mode: mode as any, studioSection });
+  const tab = createTab(url, { mode: (mode === 'secretary' ? 'conversations' : mode) as any, studioSection });
 
   router.push(`/Browser/${ tab.id }`);
 }
@@ -537,7 +537,7 @@ function onAgentCommand(_event: any, args: any) {
     break;
   }
   case 'new-secretary-tab': {
-    const tab = createTab('about:blank', { mode: 'secretary' });
+    const tab = createTab('about:blank', { mode: 'conversations' });
 
     router.push(`/Browser/${ tab.id }`);
     break;
@@ -547,12 +547,12 @@ function onAgentCommand(_event: any, args: any) {
     // fresh one. Either way, fire a window event after the tab has
     // mounted so SecretaryMode.vue's listener can trigger startSession()
     // without the user clicking START. See agent/tools/secretary/start.ts.
-    const existing = browserTabs.find(t => t.mode === 'secretary');
-    const targetTab = existing ?? createTab('about:blank', { mode: 'secretary' });
+    const existing = browserTabs.find(t => t.mode === 'conversations' || t.mode === 'secretary');
+    const targetTab = existing ?? createTab('about:blank', { mode: 'conversations' });
 
     router.push(`/Browser/${ targetTab.id }`);
     setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('sulla:secretary-start', {
+      window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', {
         detail: { tabId: targetTab.id },
       }));
     }, existing ? 0 : 80);
@@ -567,7 +567,8 @@ function onAgentCommand(_event: any, args: any) {
   }
   case 'open-tab': {
     // `packages` is the user-facing name of the `marketplace` view.
-    const mode = args.mode === 'packages' ? 'marketplace' : args.mode;
+    const requestedMode = args.mode === 'packages' ? 'marketplace' : args.mode;
+    const mode = requestedMode === 'secretary' ? 'conversations' : requestedMode;
     // My Account moved into Preferences › Account & Cloud.
     if (mode === 'account') {
       openSingleTab('preferences', 'account');
@@ -588,6 +589,7 @@ function onAgentCommand(_event: any, args: any) {
     const tab = createTab('about:blank', { mode: mode || 'welcome', filesNavigation, studioSection });
 
     router.push(`/Browser/${ tab.id }`);
+    if (requestedMode === 'secretary') setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', { detail: { tabId: tab.id } })), 80);
     break;
   }
   case 'open-files-item': {

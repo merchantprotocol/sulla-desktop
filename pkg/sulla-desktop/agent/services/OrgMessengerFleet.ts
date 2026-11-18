@@ -138,6 +138,23 @@ export class OrgMessengerFleet {
     return { membership, directory: await (await this.reachableMessenger(membership)).loadDirectory() };
   }
 
+  /** Member-scoped inbox projection used by the Conversations renderer. */
+  async loadInboxMessages(requestedOrg?: string): Promise<{ membership: OrgMembership; messages: readonly MessageEnvelope[] }> {
+    const membership = await this.resolveOrg(requestedOrg);
+    return { membership, messages: await (await this.reachableMessenger(membership)).loadInboxMessages() };
+  }
+
+  /** Refreshes and returns only the signed-in user's current member organizations. */
+  async memberOrganizations(): Promise<readonly OrgMembership[]> {
+    return this.directory.refresh();
+  }
+
+  async startConversation(request: { conversationId: string; kind: 'direct' | 'group' | 'agent_thread'; participantUserIds: readonly string[] }, requestedOrg?: string): Promise<{ membership: OrgMembership; conversationId: string }> {
+    const membership = await this.resolveOrg(requestedOrg);
+    const result = await (await this.reachableMessenger(membership)).startConversation(request);
+    return { membership, conversationId: result.conversationId };
+  }
+
   /** Sends through the target org's own messenger and outbox. The envelope must be authored for that org. */
   async send(envelope: MessageEnvelope, requestedOrg?: string): Promise<void> {
     const membership = await this.resolveOrg(requestedOrg);
