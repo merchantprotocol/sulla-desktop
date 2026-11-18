@@ -24,6 +24,7 @@
       <div class="menu-sep" role="separator" />
       <button v-if="section !== 'trash' && !actionTarget.folder && dataSource.capabilities.nativeReveal && dataSource.revealFile" role="menuitem" type="button" @click="runTargetAction('reveal')">Reveal in folder</button>
       <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('reference')">Copy file reference</button>
+      <button v-if="section !== 'trash' && !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('add-bookmark')">Add to Bookmarks</button>
       <button v-if="section !== 'trash' || !actionTarget.folder" role="menuitem" type="button" @click="runTargetAction('details')">Details</button>
       <button v-if="section !== 'trash' && canShareEntry(actionTarget)" role="menuitem" type="button" @click="runTargetAction('share')">Share</button>
       <div class="menu-sep" role="separator" />

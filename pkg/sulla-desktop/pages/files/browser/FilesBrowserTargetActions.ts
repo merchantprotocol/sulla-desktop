@@ -3,15 +3,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import { supportsDocumentEditor } from '../editor/editorTypes';
 import { FilesBrowserState } from './FilesBrowserState';
+import { FilesFileBookmarker } from './FilesFileBookmarker';
 
 import type { FilesBrowserController } from './FilesBrowserController';
 import type { FilesTargetAction } from './FilesBrowserTypes';
 
 /** Runs the row action menu's choice against the row it was opened on. */
 export class FilesBrowserTargetActions {
-  constructor(private readonly browser:FilesBrowserController) {}
+  constructor(
+    private readonly browser:FilesBrowserController,
+    private readonly bookmarker:FilesFileBookmarker = new FilesFileBookmarker({ create: input => ipcRenderer.invoke('bookmarks:create', input) }),
+  ) {}
 
   readonly runTargetAction = async(action:FilesTargetAction):Promise<void> => {
     const browser = this.browser; const state = browser.state; const source = state.props.dataSource;
@@ -31,6 +37,7 @@ export class FilesBrowserTargetActions {
       return;
     }
     if (action === 'reference') { try { const params = new URLSearchParams({ version: target.currentVersionId, path: target.path, name: target.name }); await navigator.clipboard.writeText(`sulla-file://${ target.id }?${ params }`) } catch (cause) { state.operationError.value = FilesBrowserState.messageOf(cause) } return }
+    if (action === 'add-bookmark') { try { await this.bookmarker.addFile({ id: target.id, path: target.path, name: target.name }) } catch (cause) { state.operationError.value = FilesBrowserState.messageOf(cause) } return }
     if (action === 'details') { await browser.dialogs.showDetails(target); return }
     if (action === 'share') {
       if (target.folder && state.snapshot.value) state.shareTarget.value = { id: target.id, name: target.name, folder: true, path: target.path, collectionId: state.snapshot.value.collection.id, orgId: state.snapshot.value.collection.orgId, ownerUserId: state.snapshot.value.collection.ownerUserId };

@@ -17,6 +17,7 @@ import { BrowserWindow } from 'electron';
 
 import { BrowserBookmarkModel, MAX_FAVICON_BYTES, normalizeBookmarkUrl, type BookmarkRecord } from '@pkg/agent/database/models/BrowserBookmarkModel';
 import { getBrowserSession } from '@pkg/main/browserTabs/browserSession';
+import { SullaFileBookmarkLink } from '@pkg/shared/sullaFileBookmark';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -127,7 +128,8 @@ export async function fetchFaviconDataUrl(iconUrl: string, fetcher: (url: string
 }
 
 async function captureFavicon(bookmarkId: string, pageUrl: string, tabId?: string): Promise<void> {
-  if (pageUrl.startsWith('sulla-artifact:')) return;
+  // Inert references have no website to take an icon from: sulla-artifact: and sulla-file: (Files document, file icon).
+  if (pageUrl.startsWith('sulla-artifact:') || SullaFileBookmarkLink.isSullaFileUrl(pageUrl)) return;
   const candidates: string[] = [];
   // Lazy import — the view manager pulls in window code that must not load
   // while sullaEvents is being initialised (same reason sulla.ts defers it).
@@ -197,7 +199,7 @@ export const bookmarkService = {
     broadcastBookmarksChanged();
     bookmarkEvents.emit('created', record);
 
-    if (record.kind === 'bookmark' && record.url && !record.url.startsWith('sulla-artifact:')) {
+    if (record.kind === 'bookmark' && record.url && !record.url.startsWith('sulla-artifact:') && !SullaFileBookmarkLink.isSullaFileUrl(record.url)) {
       captureFavicon(record.id, record.url, input.tabId)
         .catch(err => console.warn('[Bookmarks] favicon capture failed:', err));
     }
@@ -220,7 +222,7 @@ export const bookmarkService = {
     if (record.url && before.url && normalizeBookmarkUrl(before.url) !== record.url &&
         new URL(before.url).origin !== new URL(record.url).origin) {
       await BrowserBookmarkModel.update(id, { favicon: null });
-      if (!record.url.startsWith('sulla-artifact:')) captureFavicon(id, record.url).catch(() => {});
+      if (!record.url.startsWith('sulla-artifact:') && !SullaFileBookmarkLink.isSullaFileUrl(record.url)) captureFavicon(id, record.url).catch(() => {});
     }
 
     return record;
