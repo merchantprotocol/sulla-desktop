@@ -20,6 +20,7 @@ class FakeWebContents {
 }
 
 class FakeWindow {
+  closedListeners: Array<() => void> = [];
   id: number;
   bounds: Electron.Rectangle;
   isFocused = () => false;
@@ -37,9 +38,22 @@ class FakeWindow {
   }
   getBounds() { return this.bounds; }
   setBounds(bounds: Electron.Rectangle) { this.bounds = bounds; this.actions.push('move-window'); }
+  once(channel: string, listener: () => void) { if (channel === 'closed') this.closedListeners.push(listener); return this; }
+  close() { for (const listener of this.closedListeners.splice(0)) listener(); }
 }
 
 describe('TabTransferService', () => {
+  it('forgets renderer readiness when a window closes', () => {
+    // risk: stale BrowserWindow ids prevent a replacement window from awaiting renderer readiness
+    const ipc = new FakeIpc(); const actions: string[] = [];
+    const win = new FakeWindow(44, actions, undefined, ipc);
+    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 0, y: 0 }) } as any, () => win as any, () => [win] as any, () => win as any, {} as any);
+    service.install();
+    ipc.emit('tabs:transfer-ready', { sender: win.webContents });
+    expect((service as any).readyWindows.has(win.id)).toBe(true);
+    win.close();
+    expect((service as any).readyWindows.has(win.id)).toBe(false);
+  });
   it('releases before adopting, then moves the existing native view and finalizes an empty source', async() => {
     // risk: chat state and native browser-session continuity during cross-window transfer
     const ipc = new FakeIpc(); const actions: string[] = [];

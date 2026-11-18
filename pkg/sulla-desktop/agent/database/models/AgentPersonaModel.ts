@@ -13,6 +13,7 @@ import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/ser
 import { personaLogger as console } from '@pkg/agent/utils/agentLogger';
 
 import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
+import { MessageWindow } from '@pkg/pages/chat/messages/MessageWindow';
 
 export type PersonaTemplateId =
   | 'terminal'
@@ -527,6 +528,8 @@ export class AgentPersonaService {
   }
 
   private markMessagesChanged(): void {
+    const bounded = new MessageWindow().trim(this.messages);
+    if (bounded.length !== this.messages.length) this.messages.splice(0, this.messages.length, ...bounded);
     this.messagesRevision.value++;
   }
 
