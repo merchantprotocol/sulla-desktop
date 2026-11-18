@@ -104,6 +104,7 @@ log = logging.getLogger("sulla-files-fuse")
 request_actor = contextvars.ContextVar("request_actor", default=None)
 # Per-op accumulator ([ms]) of Files request time inside the current kernel op; _request adds to it.
 op_files_ms = contextvars.ContextVar("op_files_ms", default=None)
+op_deadline = contextvars.ContextVar("op_deadline", default=None)
 # Requests slower than this are logged at INFO even when DEBUG is off.
 SLOW_REQUEST_SECONDS = float(os.environ.get("SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS", "1.0"))
 HEARTBEAT_SECONDS = float(os.environ.get("SULLA_FILES_FUSE_HEARTBEAT_SECONDS", "60"))
@@ -287,9 +288,11 @@ def traced(operation, describe=None, mutating=False):
         @functools.wraps(function)
         async def wrapper(self, *args):
             token = op_files_ms.set([0.0])
+            deadline_token = op_deadline.set(time.monotonic() + MAX_WAIT_SECONDS)
             try:
                 return await _run_traced(self, function, operation, describe, mutating, args)
             finally:
+                op_deadline.reset(deadline_token)
                 op_files_ms.reset(token)
         return wrapper
     return decorate
@@ -451,11 +454,15 @@ class FilesApi:
         raised after an ambiguous attempt carries `after_retry=True` so callers can reconcile.
         """
         started = time.monotonic()
-        deadline = started + self.max_wait_seconds
+        request_deadline = started + self.max_wait_seconds
+        operation_deadline = op_deadline.get()
+        deadline = min(request_deadline, operation_deadline) if operation_deadline is not None else request_deadline
         stats["requests"] += 1
         outcome = {"status": None, "bytes": 0, "error": None}
         repeatable = method in IDEMPOTENT_RETRY_METHODS if idempotent is None else idempotent
         try:
+            if started >= deadline:
+                raise OSError(errno.EIO, "Files operation deadline exhausted")
             attempt = 0
             transient_attempts = 0
             auth_retry_started = None
@@ -1271,8 +1278,18 @@ class SullaFiles(pyfuse3.Operations):
                     try:
                         current_entry = await entry(node["collectionId"], node["filesPath"])
                     except Exception as error:
-                        # Revalidation is an optimization. If it is unavailable, the
-                        # normal read-by-id path below still fetches the complete file.
+                        # Never start another Files request with a fresh budget after a
+                        # transient revalidation exhausts this kernel operation's budget.
+                        if isinstance(error, OSError) and (
+                            getattr(error, "transient", False)
+                            or getattr(error, "transient_auth", False)
+                            or getattr(error, "status", None) == 401
+                            or getattr(error, "status", None) in TRANSIENT_STATUSES
+                            or error.errno == errno.EIO
+                        ):
+                            emit("read-revalidation-failed", logging.WARNING, error=str(error))
+                            raise
+                        # Non-transient revalidation failures retain the prior read-by-id fallback.
                         emit("read-revalidation-failed", logging.WARNING, error=str(error))
                 if current_entry is not None:
                     fresh_version = str(current_entry.get("versionId") or current_entry.get("current_version_id") or "")
