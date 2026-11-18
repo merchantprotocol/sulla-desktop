@@ -28,7 +28,7 @@ import https from 'https';
 import path from 'path';
 import readline from 'readline';
 import { URL } from 'url';
-import { ThreatProxyDailyCounters } from '../security/ThreatProxyDailyCounters';
+import { ThreatProxyDailyCounters, type ThreatDailyCounters } from '../security/ThreatProxyDailyCounters';
 
 import { BrowserWindow, ipcMain } from 'electron';
 
