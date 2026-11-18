@@ -3,44 +3,204 @@
      SPDX-License-Identifier: GPL-2.0-or-later -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import PrefCard from '../PrefCard.vue'; import PrefRow from '../PrefRow.vue'; import PrefToggle from '../PrefToggle.vue'; import PrefMore from '../PrefMore.vue';
+import PrefCard from '../PrefCard.vue';
+import PrefRow from '../PrefRow.vue';
+import PrefToggle from '../PrefToggle.vue';
+import PrefMore from '../PrefMore.vue';
 import { useThreatProtection, validThreatHost } from '@pkg/composables/preferences/useThreatProtection';
 import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { ThreatProtectionLogic } from '@pkg/composables/preferences/threatProtectionLogic';
+
 const logic = new ThreatProtectionLogic();
-const t = useThreatProtection(); const newHost = ref(''); const root = ref<HTMLElement>(); const advanced = ref(false);
-const hosts = computed(() => t.settings.value.allowlist.split(',').map(x => x.trim()).filter(Boolean));
-const labels: Record<string,string> = { running:'Running', 'failing-open':'Failing open', off:'Off', starting:'Starting', standby:'Standing by' };
+const t = useThreatProtection();
+const newHost = ref('');
+const root = ref<HTMLElement>();
+const logCard = ref<HTMLElement>();
+const hosts = computed(() => logic.allowlist(t.settings.value.allowlist));
+const labels: Record<string, string> = {
+  running: 'Running', 'failing-open': 'Failing open', off: 'Off', starting: 'Starting', standby: 'Standing by',
+};
 const statusLabel = computed(() => labels[String(t.status.value.state)] ?? 'Standing by');
-const neutralStatus = computed(() => t.status.value.state === 'off' || t.status.value.state === 'standby' || !labels[String(t.status.value.state)]);
-const verdicts: Record<string,string> = { allowed:'Allowed', blocked:'Blocked', warned:'Warned', injection:'Injection flagged', failopen:'Failed open' };
+const neutralStatus = computed(() => !['running', 'failing-open', 'starting'].includes(String(t.status.value.state)));
+const verdicts: Record<string, string> = {
+  allowed: 'Allowed', blocked: 'Blocked', warned: 'Warned', injection: 'Injection flagged', failed_open: 'Failed open',
+};
+const last24 = computed(() => logic.countLast24Hours(t.summaryEntries.value, Date.now()));
+const summary = computed(() => {
+  const failCount = t.status.value.failOpenTransitions24h ?? 0;
+  const parts = [];
+  if (t.settings.value.trafficLogEnabled) {
+    parts.push(`${last24.value.blocked} blocked URLs`, `${last24.value.injection} injection warnings`);
+  }
+  parts.push(`${failCount} fail-open ${failCount === 1 ? 'event' : 'events'}`);
+  return `Last 24 hours · ${parts.join(' · ')}`;
+});
 function updateHosts(values: string[]) { void t.save({ allowlist: values.join(',') }); }
-function addHost() { const host = newHost.value.trim().toLowerCase(); if (!validThreatHost(host) || hosts.value.includes(host)) return; updateHosts([...hosts.value, host]); newHost.value = ''; }
-function setMb(key: 'scanMaxBytes'|'scanBufferMaxBytes', value: string) { void t.save({ [key]: logic.megabytesToBytes(Number(value)) }); }
+function addHost() {
+  const host = newHost.value.trim().toLowerCase();
+  if (!validThreatHost(host) || hosts.value.includes(host)) return;
+  updateHosts([...hosts.value, host]);
+  newHost.value = '';
+}
+function setMb(key: 'scanMaxBytes' | 'scanBufferMaxBytes', value: string) {
+  void t.save({ [key]: logic.megabytesToBytes(Number(value)) });
+}
+function setMode(key: 'blockMode' | 'injectionMode', value: string) {
+  void t.save({ [key]: value } as Pick<import('@pkg/composables/preferences/useThreatProtection').ThreatSettings, typeof key>);
+}
+function showLogs() {
+  const card = logCard.value;
+  if (!card) return;
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!t.settings.value.trafficLogEnabled) void t.setLog({ trafficLogEnabled: true });
+}
 let observer: IntersectionObserver | undefined;
-onMounted(() => { observer = new IntersectionObserver(([entry]) => t.setVisible(entry.isIntersecting)); if (root.value) observer.observe(root.value); }); onBeforeUnmount(() => observer?.disconnect());
-async function clear() { if (window.confirm('Clear the traffic log? This cannot be undone.')) await t.clearLog(); }
+onMounted(() => {
+  observer = new IntersectionObserver(([entry]) => t.setVisible(entry.isIntersecting));
+  if (root.value) observer.observe(root.value);
+});
+onBeforeUnmount(() => observer?.disconnect());
+async function clear() {
+  if (window.confirm('Clear the traffic log? This cannot be undone.')) await t.clearLog();
+}
 </script>
 <template>
- <div ref="root">
-  <div class="ph"><div><h1>Threat Protection</h1><p>Inspect agent web traffic for malicious URLs and prompt injection.</p></div></div>
-  <PrefCard title="Protection" :off="!t.settings.value.enabled" :subtitle="undefined">
-   <template #actions><span class="k"><span class="dot" :class="{warn:t.status.value.state==='failing-open',off:neutralStatus}"/>{{ statusLabel }}</span></template>
-   <div v-if="t.status.value.state==='failing-open'" class="alert warn"><b>Failing open</b><span>{{ t.status.value.reason || 'Agents keep working while protection is unavailable.' }}</span></div>
-   <PrefRow title="Threat Protection" subtitle="Inspects agent web traffic for malicious URLs and prompt injection. When off, agent traffic goes direct."><PrefToggle :model-value="t.settings.value.enabled" label="Threat Protection" @update:model-value="t.save({enabled:$event})"/></PrefRow>
-   <PrefRow title="If protection is unavailable" subtitle="Agents keep working while it restarts."><span class="muted">Agent traffic goes direct (fail open)</span></PrefRow>
-  </PrefCard>
-  <PrefCard title="Link protection" subtitle="Choose what happens when agents encounter known-bad links.">
-   <PrefRow title="Known-bad links" subtitle="Known-bad links are stopped before an agent opens them."><div class="seg"><button v-for="v in ['block','warn','off']" :key="v" :class="{on:t.settings.value.blockMode===v}" @click="t.save({blockMode:v as any})">{{v==='block'?'Block':v==='warn'?'Warn':'Off'}}</button></div></PrefRow>
-   <p class="note">{{t.settings.value.blockMode==='block'?'Known-bad links are stopped before an agent opens them.':t.settings.value.blockMode==='warn'?'Known-bad links open, and the agent is told they’re risky.':'Links aren’t checked.'}}</p>
-   <PrefRow title="Prompt injection" subtitle="Detect instructions hidden in web pages."><div class="seg"><button v-for="v in ['warn','redact','off']" :key="v" :class="{on:t.settings.value.injectionMode===v}" @click="t.save({injectionMode:v as any})">{{v==='warn'?'Warn':v==='redact'?'Redact':'Off'}}</button></div></PrefRow>
-   <p class="note">{{t.settings.value.injectionMode==='warn'?'Pages that try to give agents orders are flagged to the agent.':t.settings.value.injectionMode==='redact'?'Those orders are removed from the page before the agent reads it.':'Pages aren’t scanned for hidden orders.'}}</p>
-  </PrefCard>
-  <PrefCard title="Advanced"><PrefMore label="Advanced settings" :open="advanced" @click="advanced=!advanced"><PrefRow title="Maximum page size to scan"><input type="number" min="1" max="16" :value="t.settings.value.scanMaxBytes/1048576" @change="setMb('scanMaxBytes',($event.target as HTMLInputElement).value)"><span>MB</span></PrefRow><PrefRow title="Maximum buffered response"><input type="number" min="1" max="64" :value="t.settings.value.scanBufferMaxBytes/1048576" @change="setMb('scanBufferMaxBytes',($event.target as HTMLInputElement).value)"><span>MB</span></PrefRow><PrefRow title="Pause scanning above memory pressure"><input type="number" min="1" max="100" :value="t.settings.value.memoryPressurePercent" @change="t.save({memoryPressurePercent:Number(($event.target as HTMLInputElement).value)})"><span>%</span></PrefRow><div class="lst"><div v-for="host in hosts" :key="host"><code>{{host}}</code><button @click="updateHosts(hosts.filter(x=>x!==host))">Remove</button></div><div><input v-model="newHost" placeholder="example.com" @keydown.enter="addHost"><button :disabled="!validThreatHost(newHost)" @click="addHost">Add</button></div></div></PrefMore></PrefCard>
-  <PrefCard title="Reputation sources"><PrefRow title="Google Safe Browsing" subtitle="Checks URLs against Google’s list of unsafe sites."><span class="k"><span class="dot" :class="{off:!t.keyStatus.value.safeBrowsing}"/>{{t.keyStatus.value.safeBrowsing?'Connected':'Not connected'}}</span></PrefRow><PrefRow title="VirusTotal" subtitle="Link scans from many security vendors."><span class="k"><span class="dot" :class="{off:!t.keyStatus.value.virusTotal}"/>{{t.keyStatus.value.virusTotal?'Connected':'Not connected'}}</span></PrefRow><button class="link" @click="openMainTab('integrations')">Manage in Integrations</button></PrefCard>
-  <PrefCard title="Traffic log" subtitle="Metadata only: never bodies, cookies, credentials or query values." ><template #actions><button class="btn" @click="clear">Clear log</button></template><PrefRow title="Record traffic log" subtitle="Off by default. Nothing is recorded while it’s off."><PrefToggle :model-value="t.settings.value.trafficLogEnabled" label="Record traffic log" @update:model-value="t.setLog({trafficLogEnabled:$event})"/></PrefRow><PrefRow title="Keep entries for" subtitle="Stored on this Mac with a size cap. Old entries are deleted automatically."><select :value="t.settings.value.trafficLogRetentionMinutes" @change="t.setLog({trafficLogRetentionMinutes:Number(($event.target as HTMLSelectElement).value)})"><option :value="15">15 minutes</option><option :value="30">30 minutes</option><option :value="60">1 hour</option><option :value="360">6 hours</option><option :value="1440">24 hours</option></select></PrefRow><div v-if="t.settings.value.trafficLogEnabled" class="log-tools"><input v-model="t.search.value" type="search" placeholder="Search host, path or agent" @input="t.refreshLog()"><select v-model="t.verdict.value" @change="t.refreshLog()"><option value="">All verdicts</option><option v-for="v in ['allowed','blocked','warned','injection','failopen']" :key="v" :value="v">{{verdicts[v]}}</option></select><div class="log"><div class="head"><span>Time</span><span>Agent / container</span><span>Method</span><span>Host + path</span><span>Status</span><span>Size</span><span>Verdict</span></div><div v-for="(e,i) in t.entries.value" :key="i"><span>{{new Date(e.ts).toLocaleTimeString()}}</span><span>{{e.agent||e.container||'—'}}</span><span>{{e.method}}</span><span>{{e.host}}{{e.path}}</span><span>{{e.status||'—'}}</span><span>{{e.size||'—'}}</span><span class="pill">{{verdicts[e.verdict]||e.verdict}}</span></div><p v-if="!t.entries.value.length">No traffic recorded yet.</p></div></div><p v-else class="note">Traffic logging is off. Turn on Record traffic log to see agent requests here.</p></PrefCard>
- </div>
+  <div ref="root" class="sulla-prefs">
+    <div class="ph">
+      <div>
+        <h1>Threat Protection</h1>
+        <p>Checks the web traffic your agents send and receive.</p>
+      </div>
+    </div>
+    <PrefCard title="Protection">
+      <template #actions>
+        <span class="k"><span class="dot" :class="{ warn: t.status.value.state === 'failing-open', off: neutralStatus }" />{{ statusLabel }}</span>
+      </template>
+      <div v-if="t.status.value.state === 'failing-open'" class="alert warn">
+        <span class="pi" aria-hidden="true">!</span>
+        <div class="x">
+          <b>Failing open</b>
+          <span>{{ t.status.value.reason || 'Proxy restarting' }} — traffic going direct since {{ t.status.value.since ? new Date(t.status.value.since).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'unknown' }}</span>
+        </div>
+        <div class="r"><button type="button" class="btn sm" @click="showLogs">Show logs</button></div>
+      </div>
+      <PrefRow title="Threat Protection" subtitle="Inspects agent web traffic for malicious URLs and prompt injection. When off, agent traffic goes direct.">
+        <PrefToggle :model-value="t.settings.value.enabled" label="Threat Protection" @update:model-value="t.save({ enabled: $event })" />
+      </PrefRow>
+      <PrefRow title="If protection is unavailable" subtitle="Agents keep working while it restarts.">
+        <span class="muted">Agent traffic goes direct (fail open)</span>
+      </PrefRow>
+      <p class="note">{{ summary }}</p>
+    </PrefCard>
+    <PrefCard title="What to check" :off="!t.settings.value.enabled">
+      <PrefRow title="Malicious URL blocking">
+        <div class="seg">
+          <button type="button" :class="{ on: t.settings.value.blockMode === 'block' }" @click="setMode('blockMode', 'block')">Block</button>
+          <button type="button" :class="{ on: t.settings.value.blockMode === 'warn' }" @click="setMode('blockMode', 'warn')">Warn only</button>
+          <button type="button" :class="{ on: t.settings.value.blockMode === 'off' }" @click="setMode('blockMode', 'off')">Off</button>
+        </div>
+      </PrefRow>
+      <PrefRow title="Prompt-injection scanning">
+        <div class="seg">
+          <button type="button" :class="{ on: t.settings.value.injectionMode === 'warn' }" @click="setMode('injectionMode', 'warn')">Warn</button>
+          <button type="button" :class="{ on: t.settings.value.injectionMode === 'redact' }" @click="setMode('injectionMode', 'redact')">Redact</button>
+          <button type="button" :class="{ on: t.settings.value.injectionMode === 'off' }" @click="setMode('injectionMode', 'off')">Off</button>
+        </div>
+      </PrefRow>
+      <PrefMore label="Advanced">
+        <PrefRow title="Max inspected body size" subtitle="Larger pages and downloads pass through without a scan.">
+          <input class="inp sm" type="number" :value="t.settings.value.scanMaxBytes / 1048576" aria-label="Max inspected body size in MB" @change="setMb('scanMaxBytes', ($event.target as HTMLInputElement).value)"><span class="dimc">MB</span>
+        </PrefRow>
+        <PrefRow title="Buffer budget" subtitle="Most memory used to hold pages while they’re being scanned.">
+          <input class="inp sm" type="number" :value="t.settings.value.bufferBudgetMb" aria-label="Buffer budget in MB" @change="t.save({ bufferBudgetMb: Number(($event.target as HTMLInputElement).value) })"><span class="dimc">MB</span>
+        </PrefRow>
+        <PrefRow title="Memory guard threshold" subtitle="Above this memory use, scanning pauses and traffic goes direct.">
+          <input class="inp sm" type="number" :value="t.settings.value.memoryPressurePercent" aria-label="Memory guard threshold in percent" @change="t.save({ memoryPressurePercent: Number(($event.target as HTMLInputElement).value) })"><span class="dimc">%</span>
+        </PrefRow>
+      </PrefMore>
+    </PrefCard>
+    <PrefCard title="Allowlist" subtitle="These hosts skip inspection. Local and private addresses always skip it." :off="!t.settings.value.enabled">
+      <PrefRow layout="col">
+        <div class="lst">
+          <div v-for="host in hosts" :key="host">
+            <code class="mono">{{ host }}</code>
+            <span class="r"><button type="button" class="btn sm ghost" @click="updateHosts(hosts.filter(value => value !== host))">Remove</button></span>
+          </div>
+          <div v-if="!hosts.length" class="empty-row">No hosts. Everything is inspected.</div>
+          <div>
+            <input v-model="newHost" class="inp wide mono" placeholder="example.com" aria-label="Host to allow" @keydown.enter="addHost">
+            <span class="r"><button type="button" class="btn sm" :disabled="!validThreatHost(newHost)" @click="addHost">Add</button></span>
+          </div>
+        </div>
+      </PrefRow>
+    </PrefCard>
+    <PrefCard title="Reputation services" subtitle="Extra link checks. Their keys are kept in Integrations.">
+      <template #actions><button type="button" class="link" @click="openMainTab('integrations')">Manage in Integrations</button></template>
+      <PrefRow title="Google Safe Browsing" subtitle="Google’s list of unsafe sites."><span class="k"><span class="dot" :class="{ off: !t.keyStatus.value.safeBrowsing }" />{{ t.keyStatus.value.safeBrowsing ? 'Connected' : 'Not connected' }}</span></PrefRow>
+      <PrefRow title="VirusTotal" subtitle="Link scans from many security vendors."><span class="k"><span class="dot" :class="{ off: !t.keyStatus.value.virusTotal }" />{{ t.keyStatus.value.virusTotal ? 'Connected' : 'Not connected' }}</span></PrefRow>
+    </PrefCard>
+    <div ref="logCard">
+    <PrefCard title="Traffic log" subtitle="Metadata only: never bodies, cookies, credentials or query values.">
+      <template #actions><button type="button" class="btn sm" @click="clear">Clear log</button></template>
+      <PrefRow title="Record traffic log" subtitle="Off by default. Nothing is recorded while it’s off.">
+        <PrefToggle :model-value="t.settings.value.trafficLogEnabled" label="Record traffic log" @update:model-value="t.setLog({ trafficLogEnabled: $event })" />
+      </PrefRow>
+      <PrefRow title="Keep entries for" subtitle="Stored on this Mac with a size cap. Old entries are deleted automatically.">
+        <select class="sel" :value="t.settings.value.trafficLogRetentionMinutes" aria-label="Keep entries for" @change="t.setLog({ trafficLogRetentionMinutes: Number(($event.target as HTMLSelectElement).value) })">
+          <option :value="15">15 minutes</option><option :value="30">30 minutes</option><option :value="60">1 hour</option><option :value="360">6 hours</option><option :value="1440">24 hours</option>
+        </select>
+      </PrefRow>
+      <PrefRow layout="col">
+        <div class="mk-tools">
+          <input v-model="t.search.value" class="inp" type="search" placeholder="Search host, path or agent" aria-label="Search traffic log" @input="t.refreshLog()">
+          <select v-model="t.verdict.value" class="sel" aria-label="Filter by verdict" @change="t.refreshLog()">
+            <option value="">All verdicts</option><option value="allowed">Allowed</option><option value="blocked">Blocked</option><option value="warned">Warned</option><option value="injection">Injection flagged</option><option value="failed_open">Failed open</option>
+          </select>
+        </div>
+        <div class="lst mk-log">
+          <div class="mk-h">
+            <span>Time</span>
+            <span>Agent / container</span>
+            <span>Method</span>
+            <span>Host + path</span>
+            <span class="mk-num">Status</span>
+            <span class="mk-num">Size</span>
+            <span>Verdict</span>
+          </div>
+          <div v-if="!t.settings.value.trafficLogEnabled" class="empty-row">Traffic logging is off. Turn on Record traffic log to see agent requests here.</div>
+          <template v-else>
+            <div v-for="(entry, index) in t.entries.value" :key="index">
+              <span class="mono dimc">{{ new Date(entry.ts).toLocaleTimeString() }}</span>
+              <span class="mk-path">{{ entry.agent || entry.container || '—' }}</span>
+              <span class="mono">{{ entry.method }}</span>
+              <span class="mono mk-path" :title="entry.host + entry.path">{{ entry.host }}{{ entry.path }}</span>
+              <span class="mono mk-num">{{ entry.status || '—' }}</span>
+              <span class="mk-num dimc">{{ typeof entry.bytes === 'number' ? logic.formatBytes(entry.bytes) : entry.size ?? '—' }}</span>
+              <span class="mk-v" :class="entry.verdict">{{ verdicts[entry.verdict] || entry.verdict }}</span>
+            </div>
+            <div v-if="!t.entries.value.length" class="empty-row">No traffic recorded yet.</div>
+          </template>
+        </div>
+      </PrefRow>
+    </PrefCard>
+    </div>
+  </div>
 </template>
 <style scoped>
-.ph{margin-bottom:22px}.seg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}.seg button{padding:7px 12px;border:0;background:transparent;color:var(--text-secondary)}.seg button.on{background:var(--accent);color:var(--text-on-accent)}.note,.muted{color:var(--text-muted);font-size:12px}.alert{display:flex;gap:12px;padding:12px;background:var(--bg-warning);color:var(--text-warning)}.k{display:inline-flex;align-items:center;gap:7px}.dot{width:8px;height:8px;border-radius:50%;background:var(--success)}.dot.warn{background:var(--warning)}.dot.off{background:var(--text-muted)}.lst{border:1px solid var(--border);margin:10px 0}.lst>div{display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid var(--border-muted)}input,select{padding:7px;border:1px solid var(--border);background:var(--bg-input);color:var(--text-primary)}.link,.btn,.lst button{color:var(--text-link);background:transparent;border:0;cursor:pointer}.log{overflow:auto}.log>div{display:grid;grid-template-columns:95px 130px 65px minmax(190px,1fr) 55px 70px 110px;gap:8px;padding:8px;border-bottom:1px solid var(--border-muted);font-size:12px}.head{font-weight:600;background:var(--bg-surface-alt)}.pill{color:var(--text-success)}.log-tools{display:flex;gap:8px;flex-wrap:wrap}.log-tools input{flex:1}.log p{text-align:center;color:var(--text-muted);padding:20px}
+.ph { margin-bottom: 22px; }
+.mk-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mk-tools .inp { flex: 1; min-width: 160px; width: auto; }
+.mk-tools .sel { min-width: 160px; }
+.mk-log { overflow-x: auto; }
+.mk-log > div { display: grid; grid-template-columns: 62px 128px 52px minmax(160px, 1fr) 44px 58px 118px; gap: 10px; padding: 7px 12px; font-size: 12px; align-items: center; min-width: 690px; }
+.mk-log > div.mk-h { color: var(--dim); font-size: 11px; font-weight: 600; background: color-mix(in srgb, var(--paper-2) 55%, transparent); }
+.mk-log .mono { font-size: 11.5px; }
+.mk-log .mk-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-log .mk-num { text-align: right; }
+.mk-v { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; justify-self: start; }
+.mk-v.allowed { background: var(--ok-soft); color: var(--ok); }
+.mk-v.blocked { background: var(--bad-soft); color: var(--bad); }
+.mk-v.warned { background: var(--warn-soft); color: var(--warn); }
+.mk-v.injection { background: var(--accent-soft); color: var(--accent-2); }
+.mk-v.failed_open { background: var(--idle-soft); color: var(--muted); }
 </style>
