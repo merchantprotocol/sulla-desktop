@@ -10,6 +10,7 @@ export interface ConversationMessageData {
   from: { userId: string; agentId?: string | null };
   to: { userId: string; agentId?: string | null }[];
   body: { text: string; refs?: unknown[] };
+  control?: { action: string; reason?: string };
   createdAt: string;
   hostSeq?: number;
 }

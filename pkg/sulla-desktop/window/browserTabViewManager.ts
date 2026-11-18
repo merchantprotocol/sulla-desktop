@@ -16,7 +16,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
 import { usesContainerVaultAuthority } from '@pkg/vault-broker';
-import { getWindow, openUrlInApp } from '@pkg/window';
+import { getWindow, openUrlInApp, windowMapping } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 import { BrowserLoginVault } from '@pkg/window/browserLoginVault';
 
@@ -86,6 +86,9 @@ export class BrowserTabViewManager {
   private static instance: BrowserTabViewManager | undefined;
 
   private views = new Map<string, WebContentsView>();
+  /** The BrowserWindow whose contentView currently owns each native tab view. */
+  private owners = new Map<string, Electron.BrowserWindow>();
+  private trackedOwnerWindowIds = new Set<number>();
   /**
    * SINGLE SOURCE OF TRUTH: the tabId of the view currently focused by the
    * user, or `null` when no browser tab should be visible (chat mode, login
@@ -97,7 +100,46 @@ export class BrowserTabViewManager {
    * `setFocusedTab`. ChromeApiService does the same for programmatic
    * tab activation.
    */
-  private focusedTabId:    string | null = null;
+  private focusedTabIds = new Map<number, string>();
+
+  private focusedFor(owner: Electron.BrowserWindow): string | null {
+    return this.focusedTabIds.get(owner.id) ?? null;
+  }
+
+  private ownerFor(tabId: string): Electron.BrowserWindow | null {
+    const owner = this.owners.get(tabId);
+    return owner && !owner.isDestroyed() ? owner : null;
+  }
+
+  private trackOwnerWindow(owner: Electron.BrowserWindow): void {
+    if (this.trackedOwnerWindowIds.has(owner.id)) return;
+    this.trackedOwnerWindowIds.add(owner.id);
+    owner.once('closed', () => this.destroyWindowViews(owner));
+  }
+
+  private activeAgentWindow(): Electron.BrowserWindow | null {
+    const focused = Electron.BrowserWindow.getFocusedWindow();
+    if (focused && Object.entries(windowMapping).some(([name, id]) => id === focused.id && (name === 'main-agent' || name.startsWith('agent:')))) return focused;
+    return getWindow('main-agent') ?? null;
+  }
+
+  markTransferring(tabId: string, transferring: boolean): void {
+    if (transferring) this.transferringTabs.add(tabId);
+    else this.transferringTabs.delete(tabId);
+  }
+
+  isTransferring(tabId: string): boolean { return this.transferringTabs.has(tabId); }
+
+  /** Check that a renderer is the registered owner of this tab. */
+  ownsTab(tabId: string, owner: Electron.BrowserWindow): boolean {
+    return this.ownerFor(tabId) === owner;
+  }
+
+  getOwnerWindow(tabId: string): Electron.BrowserWindow | null { return this.ownerFor(tabId) }
+
+  private windowForSender(sender: Electron.WebContents): Electron.BrowserWindow | null {
+    try { return Electron.BrowserWindow.fromWebContents(sender) ?? null } catch { return null }
+  }
   /**
    * Latest bounds the renderer has reported for each tab. Always current —
    * the renderer's ResizeObserver updates this continuously regardless of
@@ -107,6 +149,10 @@ export class BrowserTabViewManager {
    * view without a flash of stale coordinates.
    */
   private latestBounds = new Map<string, Electron.Rectangle>();
+  /** A moved view remains parked until its new renderer supplies layout bounds. */
+  private awaitingOwnerBounds = new Set<string>();
+  /** Views temporarily handed off to another window must survive source close. */
+  private transferringTabs = new Set<string>();
   /**
    * Placement last pushed to each native view ('focused' or the parked
    * rect). Lets reconcileVisibility skip views already where they belong,
@@ -238,7 +284,7 @@ export class BrowserTabViewManager {
     } catch { /* tests / app not ready — keep decisions in memory */ }
 
     const policy = new BrowserPermissionPolicy(new SitePermissionStore(storePath), async(origin, description) => {
-      const parent = getWindow('main-agent');
+      const parent = this.activeAgentWindow();
       const options: Electron.MessageBoxOptions = {
         type:      'question',
         buttons:   ['Block', 'Allow'],
@@ -255,7 +301,9 @@ export class BrowserTabViewManager {
     });
 
     const isUserVisible = (wc: Electron.WebContents): boolean => {
-      if (this.focusedTabId && this.views.get(this.focusedTabId)?.webContents === wc) return true;
+      const tabId = [...this.views].find(([, view]) => view.webContents === wc)?.[0];
+      const owner = tabId ? this.ownerFor(tabId) : null;
+      if (tabId && owner && this.focusedFor(owner) === tabId) return true;
       // Popup windows (OAuth, "sized" window.open) are real, visible windows.
       try {
         return !!Electron.BrowserWindow.fromWebContents(wc);
@@ -269,6 +317,7 @@ export class BrowserTabViewManager {
     });
     sess.setPermissionRequestHandler((wc, permission, callback, details) => {
       const origin = originOf((details as any)?.requestingUrl) ?? originOf(wc.getURL());
+      const permissionParent = this.ownerFor([...this.views.keys()].find(id => this.views.get(id)?.webContents === wc) ?? '');
 
       policy.request({ permission, origin, details: details as any, userVisible: isUserVisible(wc) })
         .then(callback, () => callback(false));
@@ -279,23 +328,24 @@ export class BrowserTabViewManager {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  createView(tabId: string, url: string, bounds: Electron.Rectangle): void {
+  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): void {
     // Idempotent: if the view already exists, just navigate (if URL changed)
     // and cache the new bounds. Actual attach/visibility state is driven
     // exclusively by `focusedTabId` via reconcileVisibility.
     const existing = this.views.get(tabId);
     if (existing) {
+      if (ownerWindow && this.owners.get(tabId) !== ownerWindow) throw new Error(`Browser tab "${ tabId }" is owned by another window`);
       if (existing.webContents.getURL() !== url) {
         existing.webContents.loadURL(url).catch(() => {});
       }
       this.latestBounds.set(tabId, bounds);
-      if (this.focusedTabId === tabId) {
+      if (this.owners.get(tabId) && this.focusedFor(this.owners.get(tabId)!) === tabId) {
         existing.setBounds(bounds);
       }
       return;
     }
 
-    const mainWindow = getWindow('main-agent');
+    const mainWindow = ownerWindow;
 
     if (!mainWindow) {
       throw new Error('[BrowserTabView] Cannot create view — main window not found');
@@ -336,6 +386,7 @@ export class BrowserTabViewManager {
 
     view.setBounds(bounds);
     this.views.set(tabId, view);
+    this.owners.set(tabId, mainWindow);
     this.latestBounds.set(tabId, bounds);
     this.viewHealth.set(tabId, this.newViewHealth());
     this.lastActiveAt.set(tabId, Date.now());
@@ -352,7 +403,8 @@ export class BrowserTabViewManager {
     });
 
     // Wire up event listeners that forward state to the renderer
-    this.attachListeners(tabId, view, mainWindow);
+    this.attachListeners(tabId, view);
+    this.trackOwnerWindow(mainWindow);
     for (const listener of this.viewCreatedListeners) {
       try {
         listener(tabId, view.webContents);
@@ -382,7 +434,7 @@ export class BrowserTabViewManager {
       return;
     }
 
-    const mainWindow = getWindow('main-agent');
+    const mainWindow = this.ownerFor(tabId);
 
     if (mainWindow) {
       try {
@@ -393,15 +445,17 @@ export class BrowserTabViewManager {
     this.stopRetry(tabId);
     (view.webContents as any).close?.();
     this.views.delete(tabId);
+    this.owners.delete(tabId);
     this.viewHealth.delete(tabId);
     this.latestBounds.delete(tabId);
+    this.awaitingOwnerBounds.delete(tabId);
     this.failedUrls.delete(tabId);
     this.lastActiveAt.delete(tabId);
     this.sleepingTabs.delete(tabId);
     this.faviconUrls.delete(tabId);
     this.clearPendingCredentials(tabId);
-    if (this.focusedTabId === tabId) {
-      this.focusedTabId = null;
+    if (mainWindow && this.focusedFor(mainWindow) === tabId) {
+      this.focusedTabIds.delete(mainWindow.id);
       // No reconcile needed — the view is gone; detach already happened above.
     }
     if (this.views.size === 0 && this.healthMonitor) {
@@ -409,6 +463,40 @@ export class BrowserTabViewManager {
       this.healthMonitor = null;
     }
     console.log(`[BrowserTabView] Destroyed view tabId=${ tabId }`);
+  }
+
+  private destroyWindowViews(owner: Electron.BrowserWindow): void {
+    for (const [tabId, tabOwner] of [...this.owners]) if (tabOwner === owner && !this.transferringTabs.has(tabId)) this.destroyView(tabId);
+    this.focusedTabIds.delete(owner.id);
+    this.trackedOwnerWindowIds.delete(owner.id);
+  }
+
+  /** Move the existing native view without replacing its WebContents or navigation state. */
+  moveViewToWindow(tabId: string, targetWin: Electron.BrowserWindow, options: { focus?: boolean } = {}): boolean {
+    const view = this.views.get(tabId);
+    const oldOwner = this.ownerFor(tabId);
+    if (!view || !oldOwner || targetWin.isDestroyed()) return false;
+    if (oldOwner === targetWin) {
+      if (options.focus) this.setFocusedTab(tabId, undefined, undefined, targetWin);
+      return true;
+    }
+    try { oldOwner.contentView.removeChildView(view) } catch { /* detached already */ }
+    targetWin.contentView.addChildView(view);
+    this.trackOwnerWindow(targetWin);
+    this.owners.set(tabId, targetWin);
+    this.awaitingOwnerBounds.add(tabId);
+    this.appliedPlacement.delete(view);
+    const previousFocus = this.focusedFor(oldOwner);
+    if (previousFocus === tabId) {
+      this.focusedTabIds.delete(oldOwner.id);
+    }
+    if (options.focus) this.focusedTabIds.set(targetWin.id, tabId);
+    const bounds = this.latestBounds.get(tabId);
+    const width = Math.max(bounds?.width ?? 1280, 1);
+    view.setBounds({ x: -(width + 100), y: bounds?.y ?? 0, width, height: Math.max(bounds?.height ?? 800, 1) });
+    this.reconcileVisibility(oldOwner);
+    this.reconcileVisibility(targetWin);
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -452,12 +540,15 @@ export class BrowserTabViewManager {
    * bounds get pushed to the native view; unfocused tabs have no
    * on-screen presence to position.
    */
-  setBounds(tabId: string, bounds: Electron.Rectangle): void {
+  setBounds(tabId: string, bounds: Electron.Rectangle, ownerWindow?: Electron.BrowserWindow): void {
     const view = this.views.get(tabId);
     if (!view) return;
+    const owner = this.ownerFor(tabId);
+    if (ownerWindow && owner !== ownerWindow) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
     this.latestBounds.set(tabId, bounds);
-    if (this.focusedTabId === tabId) {
-      view.setBounds(bounds);
+    this.awaitingOwnerBounds.delete(tabId);
+    if (owner && this.focusedFor(owner) === tabId) {
+      this.reconcileVisibility(owner);
     }
   }
 
@@ -468,18 +559,22 @@ export class BrowserTabViewManager {
    * comes up). Every caller — renderer, chrome-api, login overlay —
    * funnels through here. `reconcileVisibility` does the mechanical work.
    */
-  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number): void {
-    if (tabId === null && clearOnlyIfFocusedTabId && this.focusedTabId !== clearOnlyIfFocusedTabId) {
-      console.log(`[BrowserTabView] ignored stale focus clear from ${ clearOnlyIfFocusedTabId }; focused=${ this.focusedTabId ?? '(none)' }`);
+  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): void {
+    if (!ownerWindow || ownerWindow.isDestroyed()) return;
+    if (tabId && !this.ownsTab(tabId, ownerWindow)) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
+    const focusedTabId = this.focusedFor(ownerWindow);
+    if (tabId === null && clearOnlyIfFocusedTabId && focusedTabId !== clearOnlyIfFocusedTabId) {
+      console.log(`[BrowserTabView] ignored stale focus clear from ${ clearOnlyIfFocusedTabId }; focused=${ focusedTabId ?? '(none)' }`);
       return;
     }
-    if (this.focusedTabId === tabId) return;
-    console.log(`[BrowserTabView] setFocusedTab ${ this.focusedTabId ?? '(none)' } → ${ tabId ?? '(none)' }`);
-    if (this.focusedTabId) this.lastActiveAt.set(this.focusedTabId, Date.now());
-    this.focusedTabId = tabId;
+    if (focusedTabId === tabId) return;
+    console.log(`[BrowserTabView] setFocusedTab ${ focusedTabId ?? '(none)' } → ${ tabId ?? '(none)' } window=${ ownerWindow.id }`);
+    if (focusedTabId) this.lastActiveAt.set(focusedTabId, Date.now());
+    if (tabId) this.focusedTabIds.set(ownerWindow.id, tabId);
+    else this.focusedTabIds.delete(ownerWindow.id);
     if (tabId) this.viewHealth.set(tabId, this.newViewHealth());
     const started = Date.now();
-    const touched = this.reconcileVisibility();
+    const touched = this.reconcileVisibility(ownerWindow);
     // ipcWaitMs = renderer send → main handling. A high value means the main
     // process event loop was busy (agent streams etc.), not the view swap.
     const ipcWait = sentAt ? `${ started - sentAt }` : 'n/a';
@@ -498,8 +593,8 @@ export class BrowserTabViewManager {
     return () => this.viewCreatedListeners.delete(listener);
   }
 
-  getFocusedTab(): string | null {
-    return this.focusedTabId;
+  getFocusedTab(ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): string | null {
+    return ownerWindow ? this.focusedFor(ownerWindow) : null;
   }
 
   /**
@@ -510,8 +605,8 @@ export class BrowserTabViewManager {
    * Returns true when the renderer may refocus its field.
    */
   reclaimChromeFocus(mainWebContents: Electron.WebContents, recentInputMs = 1_500): boolean {
-    const mainWindow = getWindow('main-agent');
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents !== mainWebContents) return false;
+    const mainWindow = this.windowForSender(mainWebContents);
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
     if (!mainWindow.isFocused()) return false;
     if (Date.now() - this.lastPageUserInputAt < recentInputMs) return false;
     if (!mainWebContents.isFocused()) mainWebContents.focus();
@@ -536,9 +631,10 @@ export class BrowserTabViewManager {
    * This is the ONLY place in the codebase that mutates
    * contentView.addChildView / removeChildView / setBounds for tab views.
    */
-  private reconcileVisibility(): number {
-    const mainWindow = getWindow('main-agent');
-    if (!mainWindow) return 0;
+  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow): number {
+    const windows = ownerWindow ? [ownerWindow] : [...new Set(this.owners.values())];
+    if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
+    let totalTouched = 0;
 
     // Park unfocused views just off-screen to the left: x = -(width + margin)
     // so the right edge sits PARK_MARGIN pixels past the viewport's left edge.
@@ -549,10 +645,14 @@ export class BrowserTabViewManager {
     // buffer zone; -100_000 kills tile generation and capturePage returns
     // empty NativeImages indefinitely.
     const PARK_MARGIN = 100;
+    for (const mainWindow of windows) {
+    if (mainWindow.isDestroyed()) continue;
+    const focusedTabId = this.focusedFor(mainWindow);
     let touched = 0;
 
     for (const [tabId, view] of this.views) {
-      if (tabId === this.focusedTabId) {
+      if (this.owners.get(tabId) !== mainWindow) continue;
+      if (tabId === focusedTabId && !this.awaitingOwnerBounds.has(tabId)) {
         // Explicitly clear any native hidden state before attaching/promoting
         // the focused view. Parked views remain drawable off-screen for agent
         // capture, while focused pages report visibilityState=visible.
@@ -601,7 +701,9 @@ export class BrowserTabViewManager {
       }
     }
 
-    return touched;
+    totalTouched += touched;
+    }
+    return totalTouched;
   }
 
   // ---------------------------------------------------------------------------
@@ -630,7 +732,7 @@ export class BrowserTabViewManager {
 
     this.healthMonitor = setInterval(() => {
       this.sleepIdleViews();
-      this.probeFocusedView().catch((err) => {
+      for (const owner of new Set(this.owners.values())) this.probeFocusedView(owner).catch((err) => {
         console.warn('[BrowserTabView] focused-view health probe failed:', err);
       });
     }, BrowserTabViewManager.HEALTH_PROBE_INTERVAL_MS);
@@ -658,7 +760,8 @@ export class BrowserTabViewManager {
    */
   sleepIdleViews(now = Date.now()): void {
     for (const [tabId, view] of this.views) {
-      if (tabId === this.focusedTabId || this.sleepingTabs.has(tabId)) continue;
+      const owner = this.ownerFor(tabId);
+      if ((owner && tabId === this.focusedFor(owner)) || this.sleepingTabs.has(tabId)) continue;
       const wc = view.webContents;
       try {
         if (wc.isDestroyed() || wc.isLoading() || wc.isCurrentlyAudible()) continue;
@@ -706,8 +809,8 @@ export class BrowserTabViewManager {
    * compositor wedge. Probe only the visible, settled view to avoid waking
    * every parked tab or treating navigation as a failure.
    */
-  private async probeFocusedView(): Promise<void> {
-    const tabId = this.focusedTabId;
+  private async probeFocusedView(window: Electron.BrowserWindow): Promise<void> {
+    const tabId = this.focusedFor(window);
     if (!tabId) return;
 
     const view = this.views.get(tabId);
@@ -721,7 +824,7 @@ export class BrowserTabViewManager {
 
     // Nothing is on screen to be wedged while the window is hidden or
     // minimized — skip the GPU readback entirely.
-    const mainWindow = getWindow('main-agent');
+    const mainWindow = window;
     if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized()) return;
 
     // The wedge signal is "no compositor frame" (empty NativeImage), which a
@@ -744,7 +847,7 @@ export class BrowserTabViewManager {
         )),
       ]);
 
-      if (this.views.get(tabId) !== view || this.focusedTabId !== tabId) return;
+      if (this.views.get(tabId) !== view || !mainWindow || this.focusedFor(mainWindow) !== tabId) return;
 
       if (image.isEmpty()) {
         await this.recordCaptureFailure(tabId, 'empty NativeImage');
@@ -752,7 +855,7 @@ export class BrowserTabViewManager {
         health.captureFailures = 0;
       }
     } catch (err) {
-      if (this.views.get(tabId) !== view || this.focusedTabId !== tabId) return;
+      if (this.views.get(tabId) !== view || !mainWindow || this.focusedFor(mainWindow) !== tabId) return;
       const reason = err instanceof Error ? err.message : String(err);
 
       await this.recordCaptureFailure(tabId, reason);
@@ -773,7 +876,8 @@ export class BrowserTabViewManager {
   }
 
   private handleScrollHeartbeat(tabId: string, moved: boolean): void {
-    if (tabId !== this.focusedTabId) return;
+    const owner = this.ownerFor(tabId);
+    if (!owner || tabId !== this.focusedFor(owner)) return;
 
     const health = this.viewHealth.get(tabId);
     if (!health || health.recovering) return;
@@ -796,9 +900,9 @@ export class BrowserTabViewManager {
   private async recoverWedgedView(tabId: string, reason: string): Promise<void> {
     const health = this.viewHealth.get(tabId);
     const view = this.views.get(tabId);
-    const mainWindow = getWindow('main-agent');
+    const mainWindow = this.ownerFor(tabId);
 
-    if (!health || !view || !mainWindow || tabId !== this.focusedTabId) return;
+    if (!health || !view || !mainWindow || tabId !== this.focusedFor(mainWindow)) return;
     if (health.recovering || Date.now() - health.lastRecoveryAt < BrowserTabViewManager.RECOVERY_COOLDOWN_MS) return;
 
     health.recovering = true;
@@ -812,7 +916,7 @@ export class BrowserTabViewManager {
       mainWindow.contentView.removeChildView(view);
       await new Promise(resolve => setTimeout(resolve, 50));
 
-      if (this.views.get(tabId) !== view || this.focusedTabId !== tabId) return;
+      if (this.views.get(tabId) !== view || this.focusedFor(mainWindow) !== tabId) return;
 
       const bounds = this.latestBounds.get(tabId);
       if (shouldRecreate) {
@@ -1307,7 +1411,7 @@ export class BrowserTabViewManager {
    * has no opener to postMessage the credential back to, so accounts.google.com
    * bounces through /restart → /signin/oauth → /accountchooser forever.
    */
-  private buildWindowOpenHandler(mainWindow: Electron.BrowserWindow) {
+  private buildWindowOpenHandler() {
     return (details: Electron.HandlerDetails): Electron.WindowOpenHandlerResponse => {
       if (this.isPopupRequest(details)) {
         return {
@@ -1364,12 +1468,12 @@ export class BrowserTabViewManager {
    * same window-open policy, console forwarding, and a guard so a popup can
    * never outlive the app window it belongs to.
    */
-  private configurePopupWindow(popup: Electron.BrowserWindow, url: string, mainWindow: Electron.BrowserWindow): void {
+  private configurePopupWindow(popup: Electron.BrowserWindow, url: string, ownerForPopup: () => Electron.BrowserWindow | null): void {
     console.log(`[BrowserTabView] popup window opened url=${ url }`);
 
-    popup.webContents.setWindowOpenHandler(this.buildWindowOpenHandler(mainWindow));
+    popup.webContents.setWindowOpenHandler(this.buildWindowOpenHandler());
     popup.webContents.on('did-create-window', (nested, details) => {
-      this.configurePopupWindow(nested, details.url, mainWindow);
+      if (ownerForPopup()) this.configurePopupWindow(nested, details.url, ownerForPopup);
     });
 
     popup.webContents.on('console-message', (event) => {
@@ -1382,22 +1486,29 @@ export class BrowserTabViewManager {
       }
     };
 
-    mainWindow.once('closed', closePopup);
-    popup.once('closed', () => mainWindow.removeListener('closed', closePopup));
+    const bindOwnerClose = () => {
+      const owner = ownerForPopup();
+      if (!owner) { closePopup(); return }
+      owner.once('closed', closePopup);
+      popup.once('closed', () => owner.removeListener('closed', closePopup));
+    };
+    bindOwnerClose();
 
     popup.once('ready-to-show', () => popup.focus());
   }
 
-  private attachListeners(tabId: string, view: WebContentsView, mainWindow: Electron.BrowserWindow): void {
+  private attachListeners(tabId: string, view: WebContentsView): void {
     const wc = view.webContents;
+    const currentOwner = () => this.ownerFor(tabId);
 
-    wc.setWindowOpenHandler(this.buildWindowOpenHandler(mainWindow));
+    wc.setWindowOpenHandler(this.buildWindowOpenHandler());
 
     // A real popup keeps `window.opener` alive; that channel is how federated
     // sign-in hands the credential back. Wire the new window into the same
     // session/handlers the tab views use so nested popups behave too.
     wc.on('did-create-window', (popup, details) => {
-      this.configurePopupWindow(popup, details.url, mainWindow);
+      const owner = currentOwner();
+      if (owner) this.configurePopupWindow(popup, details.url, currentOwner);
     });
 
     const sendState = () => {
@@ -1420,7 +1531,8 @@ export class BrowserTabViewManager {
       // Still send the full navigation state to the main window for the
       // address bar chrome (handles back/forward state which is not in
       // the registry shape).
-      safeSend(mainWindow.webContents, 'browser-tab-view:state-update', {
+      const owner = currentOwner();
+      if (owner) safeSend(owner.webContents, 'browser-tab-view:state-update', {
         tabId,
         url:          displayUrl,
         title:        wc.getTitle(),
@@ -1455,7 +1567,8 @@ export class BrowserTabViewManager {
       this.lastPageUserInputAt = now;
       if (now - lastUserInputAt < 1_000) return;
       lastUserInputAt = now;
-      safeSend(mainWindow.webContents, 'browser-tab-view:user-input', { tabId });
+      const owner = currentOwner();
+      if (owner) safeSend(owner.webContents, 'browser-tab-view:user-input', { tabId });
     });
 
     // Inject a Shadow DOM context menu directly into the web page.
@@ -1467,7 +1580,8 @@ export class BrowserTabViewManager {
     let contextMenuArmedUntil = 0;
 
     wc.on('context-menu', (_event, params) => {
-      if (mainWindow.isDestroyed()) return;
+      const owner = currentOwner();
+      if (!owner || owner.isDestroyed()) return;
       contextMenuArmedUntil = Date.now() + CONTEXT_MENU_ARM_MS;
 
       const ctx = {
@@ -1558,7 +1672,8 @@ export class BrowserTabViewManager {
         case 'ai-translate':
         case 'ai-explain-page':
         case 'ai-screenshot':
-          safeSend(mainWindow.webContents, 'browser-context-menu:ai-action', { tabId, action, ...data });
+          const owner = currentOwner();
+          if (owner) safeSend(owner.webContents, 'browser-context-menu:ai-action', { tabId, action, ...data });
           break;
 
         default:

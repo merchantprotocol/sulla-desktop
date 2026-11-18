@@ -825,6 +825,13 @@ export class ChatController {
     }
   }
 
+  /** Restore renderer-local running UI after a live thread moves to another window. */
+  restoreActiveRun(): void {
+    if (this.isRunning.value) return;
+    const lastMessage = this.thread.value.messages.at(-1);
+    this.transitionRun({ type: 'stream', messageId: lastMessage?.id ?? newMessageId() });
+  }
+
   // ─── Serialization / hydration ──────────────────────────────────
   serialize(): ThreadState {
     const state: ThreadState = {

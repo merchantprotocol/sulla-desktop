@@ -9,6 +9,7 @@
  */
 
 import { vaultHealthMonitor, type VaultFailureKind, type VaultHealthMonitor } from '@pkg/vault-broker/vaultHealth';
+import { VaultUnreachable } from './failures';
 
 export interface VaultGate {
   /** Vault cause recorded by the provider bridge at or after `since` (ms epoch). */
@@ -62,6 +63,19 @@ export class VaultAvailabilityGate implements VaultGate {
     }
 
     return false;
+  }
+}
+
+/** Wait for a transient vault outage, then replay only the caller's same operation once. */
+export class VaultUnreachableRecovery {
+  constructor(private readonly gate: VaultGate = new VaultAvailabilityGate()) {}
+
+  async replayPrimary<T>(failure: VaultUnreachable, replay: () => Promise<T>, signal?: AbortSignal, unsafeToReplay = false): Promise<T> {
+    if (unsafeToReplay) throw failure;
+    if (!await this.gate.waitUntilAvailable(signal)) throw failure;
+    if (signal?.aborted) throw signal.reason ?? new Error('Operation aborted');
+
+    return replay();
   }
 }
 

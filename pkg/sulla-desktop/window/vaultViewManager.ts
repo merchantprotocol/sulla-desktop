@@ -10,7 +10,6 @@ import Electron, { WebContentsView } from 'electron';
 import { VaultPermissionPolicy } from './vaultPermissionPolicy';
 
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
-import { getWindow } from '@pkg/window';
 
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 // The vault page's "Integrations" side-menu link; intercepted here, never loaded.
@@ -22,7 +21,18 @@ const permissionPolicy = new VaultPermissionPolicy(VAULT_ORIGIN);
 
 export interface VaultViewReservation {
   ownerId:    string;
+  windowId:   number;
   generation: number;
+}
+
+interface VaultWindowState {
+  view: WebContentsView | null;
+  attached: boolean;
+  isolatedSession: Electron.Session | null;
+  ownerId: string | null;
+  attachedOwnerId: string | null;
+  generation: number;
+  window: Electron.BrowserWindow;
 }
 
 interface CreatedVaultView {
@@ -32,99 +42,119 @@ interface CreatedVaultView {
 
 /** Dedicated human-only vault view. It is never registered as a browser tab. */
 export class VaultViewManager {
-  private view: WebContentsView | null = null;
-  private attached = false;
-  private isolatedSession: Electron.Session | null = null;
-  private ownerId: string | null = null;
-  private attachedOwnerId: string | null = null;
-  private generation = 0;
+  private readonly windows = new Map<number, VaultWindowState>();
 
-  reserve(ownerId: string): VaultViewReservation {
+  private stateFor(window: Electron.BrowserWindow): VaultWindowState {
+    let state = this.windows.get(window.id);
+    if (!state) {
+      state = { view: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window };
+      this.windows.set(window.id, state);
+      window.once('closed', () => { this.destroyWindow(window.id) });
+    }
+    return state;
+  }
+
+  reserve(window: Electron.BrowserWindow, ownerId: string): VaultViewReservation {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(ownerId)) throw new Error('Invalid vault view owner');
-    this.ownerId = ownerId;
-    this.generation += 1;
-    this.releaseAttachedView();
-    return { ownerId, generation: this.generation };
+    const state = this.stateFor(window);
+    state.ownerId = ownerId;
+    state.generation += 1;
+    this.releaseAttachedView(state);
+    return { ownerId, windowId: window.id, generation: state.generation };
   }
 
   isCurrent(reservation: VaultViewReservation): boolean {
-    return this.ownerId === reservation.ownerId && this.generation === reservation.generation;
+    const state = this.windows.get(reservation.windowId);
+    return !!state && state.ownerId === reservation.ownerId && state.generation === reservation.generation;
   }
 
   hasActiveOwner(): boolean {
-    return this.ownerId !== null;
+    return [...this.windows.values()].some(state => state.ownerId !== null);
   }
 
-  async show(reservation: VaultViewReservation, url: string, bounds: Electron.Rectangle): Promise<boolean> {
+  async show(reservation: VaultViewReservation, window: Electron.BrowserWindow, url: string, bounds: Electron.Rectangle): Promise<boolean> {
     if (!this.isCurrent(reservation)) return false;
     const target = this.validateUrl(url);
-    const mainWindow = getWindow('main-agent');
-    if (!mainWindow) throw new Error('Vault parent window is unavailable');
-    const created = await this.createView();
+    const state = this.windows.get(reservation.windowId);
+    if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
+    const created = await this.createView(window);
     if (!this.isCurrent(reservation)) {
       this.discardCreatedView(created);
       return false;
     }
     const { view } = created;
-    this.view = view;
-    this.isolatedSession = created.session;
-    this.attachedOwnerId = reservation.ownerId;
+    state.view = view;
+    state.isolatedSession = created.session;
+    state.attachedOwnerId = reservation.ownerId;
     view.setBounds(this.validateBounds(bounds));
-    mainWindow.contentView.addChildView(view);
-    this.attached = true;
+    window.contentView.addChildView(view);
+    state.attached = true;
     // Defense in depth for ordinary OS capture paths. The stronger guarantee
     // is that this view is absent from every browser/agent automation registry.
-    mainWindow.setContentProtection(true);
+    window.setContentProtection(true);
     try {
       await view.webContents.loadURL(target.toString());
     } catch (error) {
       if (!this.isCurrent(reservation)) return false;
-      this.hide(reservation.ownerId);
+      this.hide(reservation.ownerId, window);
       throw error;
     }
     return this.isCurrent(reservation);
   }
 
-  setBounds(ownerId: string, bounds: Electron.Rectangle): void {
-    if (this.attachedOwnerId !== ownerId) return;
-    this.view?.setBounds(this.validateBounds(bounds));
+  setBounds(ownerId: string, bounds: Electron.Rectangle, window: Electron.BrowserWindow): void {
+    const state = this.windows.get(window.id);
+    if (state?.attachedOwnerId !== ownerId) return;
+    state.view?.setBounds(this.validateBounds(bounds));
   }
 
-  hide(ownerId: string): boolean {
+  hide(ownerId: string, window: Electron.BrowserWindow): boolean {
+    const state = this.windows.get(window.id);
+    if (!state) return false;
     let released = false;
-    if (this.ownerId === ownerId) {
-      this.ownerId = null;
-      this.generation += 1;
+    if (state.ownerId === ownerId) {
+      state.ownerId = null;
+      state.generation += 1;
       released = true;
     }
-    if (this.attachedOwnerId === ownerId) {
-      this.releaseAttachedView();
+    if (state.attachedOwnerId === ownerId) {
+      this.releaseAttachedView(state);
       released = true;
     }
     return released;
   }
 
-  private releaseAttachedView(): void {
-    const mainWindow = getWindow('main-agent');
-    if (mainWindow && this.view && this.attached) mainWindow.contentView.removeChildView(this.view);
-    this.attached = false;
-    mainWindow?.setContentProtection(false);
-    if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.close();
-    this.view = null;
-    void this.isolatedSession?.clearStorageData();
-    this.isolatedSession = null;
-    this.attachedOwnerId = null;
+  private releaseAttachedView(state: VaultWindowState): void {
+    if (!state.window.isDestroyed() && state.view && state.attached) state.window.contentView.removeChildView(state.view);
+    state.attached = false;
+    if (!state.window.isDestroyed()) state.window.setContentProtection(false);
+    if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();
+    state.view = null;
+    void state.isolatedSession?.clearStorageData();
+    state.isolatedSession = null;
+    state.attachedOwnerId = null;
   }
 
   destroy(): void {
-    this.ownerId = null;
-    this.generation += 1;
-    this.releaseAttachedView();
+    for (const state of this.windows.values()) {
+      state.ownerId = null;
+      state.generation += 1;
+      this.releaseAttachedView(state);
+    }
   }
 
-  owns(webContents: Electron.WebContents): boolean { return this.view?.webContents === webContents }
+  private destroyWindow(windowId: number): void {
+    const state = this.windows.get(windowId);
+    if (!state) return;
+    state.ownerId = null;
+    state.generation += 1;
+    this.releaseAttachedView(state);
+    this.windows.delete(windowId);
+  }
 
-  private async createView(): Promise<CreatedVaultView> {
+  owns(webContents: Electron.WebContents): boolean { return [...this.windows.values()].some(state => state.view?.webContents === webContents) }
+
+  private async createView(window: Electron.BrowserWindow): Promise<CreatedVaultView> {
     // Never reuse a partition: hide() clears the old one asynchronously, and a
     // rapid reopen must not let that cleanup erase the new human session.
     const isolatedSession = Electron.session.fromPartition(`sulla-vault-human-${ process.pid }-${ randomUUID() }`, { cache: false });
@@ -164,13 +194,13 @@ export class VaultViewManager {
         const target = new URL(url);
         if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_INTEGRATIONS_PATH) {
           event.preventDefault();
-          getWindow('main-agent')?.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' });
+          if (!window.isDestroyed()) window.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' });
         } else if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_CONNECTED_PATH) {
           event.preventDefault();
           const integrationId = target.searchParams.get('integration') ?? '';
           const accountId = target.searchParams.get('account') ?? '';
           if (SAFE_ID.test(integrationId) && SAFE_ID.test(accountId)) {
-            getWindow('main-agent')?.webContents.send('agent-command', { command: 'vault-integration-saved', integrationId, accountId });
+            if (!window.isDestroyed()) window.webContents.send('agent-command', { command: 'vault-integration-saved', integrationId, accountId });
           }
         } else if (target.origin !== VAULT_ORIGIN) {
           event.preventDefault();

@@ -90,6 +90,7 @@ const CPUS = process.env.SULLA_AGENT_CPUS ?? '2';
  */
 const AGENT_OOM_SCORE_ADJ = 500;
 const LEASE_MS = 15 * 60_000;
+const liveAgentContainerNames = new Set<string>();
 
 /**
  * Boot brings sulla-tools up after Desktop is usable, so agents wait for it
@@ -401,7 +402,7 @@ export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRunti
   }
 }
 
-async function removeAgentContainer(
+export async function removeAgentContainer(
   runtime: ContainerRuntimeDriver,
   id: string,
   name: string,
@@ -409,7 +410,48 @@ async function removeAgentContainer(
   caller: string,
 ): Promise<void> {
   log.info(`[AgentContainer] remove name=${ safeName(name) } reason=${ safeName(reason) } caller=${ safeName(caller) }`);
-  await runtime.remove(id);
+  try {
+    await runtime.remove(id);
+  } finally {
+    liveAgentContainerNames.delete(name);
+  }
+}
+
+export async function createAgentContainer(runtime: ContainerRuntimeDriver, spec: ContainerSpec): Promise<string> {
+  try {
+    const id = await runtime.create(spec);
+    liveAgentContainerNames.add(spec.name);
+    return id;
+  } catch (error) {
+    const message = (error as Error)?.message ?? String(error);
+    if (!/conflict|already in use/i.test(message)) throw error;
+    const trackedAsLive = liveAgentContainerNames.has(spec.name);
+    let existing: any;
+    try {
+      existing = await runtime.inspect(spec.name);
+    } catch (inspectError) {
+      const inspectMessage = (inspectError as Error)?.message ?? String(inspectError);
+      if (!/not found|no such (container|object)|does not exist/i.test(inspectMessage)) {
+        throw new AgentLaunchError('Sulla could not safely replace a stale assistant container. Please retry.', true, message);
+      }
+    }
+    const isStopped = existing && existing.State?.Running === false && existing.State?.Restarting !== true;
+    if (trackedAsLive && !isStopped && existing) {
+      throw new AgentLaunchError('This chat is already using its assistant container. Please retry in a moment.', true, 'container name is owned by a live lifecycle');
+    }
+    if (existing && existing.Config?.Labels?.['com.sulla.workload'] !== 'agent') {
+      throw new AgentLaunchError('Sulla could not safely replace the conflicting assistant container.', false, 'container name is owned by another workload');
+    }
+    try {
+      if (existing) await runtime.remove(existing.Id ?? spec.name, true);
+      liveAgentContainerNames.delete(spec.name);
+      const id = await runtime.create(spec);
+      liveAgentContainerNames.add(spec.name);
+      return id;
+    } catch (retryError) {
+      throw new AgentLaunchError('Sulla could not start the assistant container because its previous instance is still being removed. Please retry.', true, (retryError as Error)?.message ?? String(retryError));
+    }
+  }
 }
 
 /** Rewrite a Desktop URL through the hostname-only agent relay. */
@@ -1332,7 +1374,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...sullaFilesGuestBinds(),
       ...egress.binds,
     ];
-    containerId = await phase('create', () => runtime.create({
+    containerId = await phase('create', () => createAgentContainer(runtime, {
       name:   containerName,
       image,
       labels: {

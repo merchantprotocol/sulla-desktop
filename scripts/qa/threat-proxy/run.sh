@@ -6,7 +6,7 @@ keep=0; state_root=${TMPDIR:-/tmp}; results_arg=
 while [ "$#" -gt 0 ]; do case "$1" in --keep) keep=1; shift;; --state-root) [ "$#" -ge 2 ] || usage; state_root=$2; shift 2;; --results) [ "$#" -ge 2 ] || usage; results_arg=$2; shift 2;; *) break;; esac; done
 [ "$#" -ge 2 ] || usage
 image=$1; scenario=$2; shift 2
-case "$scenario" in big_download|big_upload|concurrent|llm_prompts|sse_long|websockets|gzip_bomb|many_hosts|blocked_url_check|injection_check|soak) ;; *) usage ;; esac
+case "$scenario" in big_download|big_upload|concurrent|llm_prompts|sse_long|websockets|gzip_bomb|many_hosts|conn_churn|blocked_url_check|injection_check|soak) ;; *) usage ;; esac
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 127; }
 runid="$(date +%s)-$$"; network="tproxy-oom-$runid"; proxy="tproxy-oom-$runid-proxy"; origin="tproxy-oom-$runid-origin"; client="tproxy-oom-$runid-client"
 mkdir -p "$state_root"; state=$(mktemp -d "$state_root/tproxy-oom-$runid.XXXXXX"); results=${results_arg:-"$(pwd)/tproxy-oom-results-$runid"}; mkdir -p "$state/mitm" "$state/cache" "$state/public" "$state/config" "$state/blocklist" "$results"; chmod 0777 "$state" "$state/mitm" "$state/cache" "$state/public" "$state/config" "$state/blocklist" "$results"
@@ -15,14 +15,18 @@ cleanup() { if [ "$keep" -eq 1 ]; then echo "Kept resources: network=$network st
 trap cleanup EXIT HUP INT TERM
 docker build -t "tproxy-oom-harness:$runid" "$(dirname "$0")"; helper="tproxy-oom-harness:$runid"; docker network create "$network" >/dev/null
 docker run -d --name "$origin" --network "$network" --network-alias origin --network-alias 02teste.cc "$helper" origin.py >/dev/null
-hosts=2000; [ "$scenario" = many_hosts ] || [ "$scenario" = soak ] || hosts=0; prev=; for arg in "$@"; do if [ "$prev" = --hosts ]; then hosts=$arg; prev=; continue; fi; [ "$arg" = --hosts ] && prev=--hosts; done
+hosts=2000; [ "$scenario" = many_hosts ] || [ "$scenario" = conn_churn ] || [ "$scenario" = soak ] || hosts=0; prev=; for arg in "$@"; do if [ "$prev" = --hosts ]; then hosts=$arg; prev=; continue; fi; [ "$arg" = --hosts ] && prev=--hosts; done
 case "$hosts" in *[!0-9]*|"") echo "--hosts must be numeric" >&2; exit 2;; esac
 [ "$hosts" -le 2000 ] || { echo "--hosts cap is 2000" >&2; exit 2; }
 origin_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$origin"); host_args="--add-host=02teste.cc:$origin_ip"; i=0
 while [ "$i" -lt "$hosts" ]; do host_args="$host_args --add-host=host-$i.test:$origin_ip"; i=$((i+1)); done
 # Run actual entrypoint logic copied from source, adding only the harness-only upstream verification override.
-repo_entry="$repo_root/services/sulla-threat-proxy/entrypoint.sh"; sed '/^[[:space:]]*--set connection_strategy=lazy/a\  --set ssl_insecure=true \\' "$repo_entry" > "$state/entrypoint.sh"; chmod 0755 "$state/entrypoint.sh"
-docker run -d --name "$proxy" --network "$network" --network-alias proxy --user 10010:10010 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges:true --memory 512m --memory-swap 512m -e SULLA_PROXY_MODE=regular -e SULLA_PROXY_STATE_DIR=/var/lib/sulla-threat-proxy -v "$state/entrypoint.sh:/harness-entrypoint.sh:ro" -v "$state/mitm:/var/lib/sulla-threat-proxy/mitm" -v "$state/cache:/var/lib/sulla-threat-proxy/cache" -v "$state/public:/var/lib/sulla-threat-proxy/public" -v "$state/config:/var/lib/sulla-threat-proxy/config:ro" -v "$state/blocklist:/var/lib/sulla-threat-proxy/blocklist:ro" $host_args --entrypoint /bin/sh "$image" /harness-entrypoint.sh >/dev/null
+repo_entry="$repo_root/services/sulla-threat-proxy/entrypoint.sh"; awk -v memdiag="${MEMDIAG:-0}" '
+/--set connection_strategy=lazy/ { print; print "  --set ssl_insecure=true " sprintf("%c", 92); next }
+/prompt_injection.py/ && memdiag == "1" { print "  -s /harness-memdiag.py " sprintf("%c", 92) }
+{ print }' "$repo_entry" > "$state/entrypoint.sh"; chmod 0755 "$state/entrypoint.sh"
+memdiag_mount="-v $repo_root/scripts/qa/threat-proxy/memdiag.py:/harness-memdiag.py:ro"; memdiag_env=; if [ "${MEMDIAG:-0}" = 1 ]; then memdiag_env="-e MEMDIAG=1"; fi
+docker run -d --name "$proxy" --network "$network" --network-alias proxy --user 10010:10010 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges:true --memory 512m --memory-swap 512m -e SULLA_PROXY_MODE=regular -e SULLA_PROXY_STATE_DIR=/var/lib/sulla-threat-proxy -v "$state/entrypoint.sh:/harness-entrypoint.sh:ro" -v "$state/mitm:/var/lib/sulla-threat-proxy/mitm" -v "$state/cache:/var/lib/sulla-threat-proxy/cache" -v "$state/public:/var/lib/sulla-threat-proxy/public" -v "$state/config:/var/lib/sulla-threat-proxy/config:ro" -v "$state/blocklist:/var/lib/sulla-threat-proxy/blocklist:ro" $memdiag_mount $memdiag_env $host_args --entrypoint /bin/sh "$image" /harness-entrypoint.sh >/dev/null
 # Fail early with the proxy startup diagnostics instead of running clients against a dead container.
 startup=0
 while [ "$startup" -lt 15 ]; do
@@ -56,7 +60,7 @@ while docker inspect -f '{{.State.Running}}' "$client" 2>/dev/null | grep -q tru
 client_exit=$(docker wait "$client" 2>/dev/null || echo 1); docker logs "$client" > "$results/client.log" 2>&1 || true; i=0; while [ "$i" -lt "${SETTLE:-30}" ]; do sample settled; sleep 2; i=$((i+2)); done
 docker inspect "$proxy" > "$results/proxy-inspect.json" 2>/dev/null || true
 docker logs "$proxy" > "$results/proxy.log" 2>&1 || true
-docker run --rm --user 0 -v "$results:/results" "$helper" summary.py --samples /results/samples.csv --inspect /results/proxy-inspect.json --client "/results/client-$scenario.json" --scenario "$scenario" --output /results/results.json >/dev/null
+docker run --rm --user 0 -v "$results:/results" "$helper" summary.py --samples /results/samples.csv --inspect /results/proxy-inspect.json --client "/results/client-$scenario.json" --scenario "$scenario" --proxy-log /results/proxy.log --output /results/results.json >/dev/null
 cat "$results/summary.md"
 python_cmd='import json,sys; d=json.load(open(sys.argv[1])); print("SUMMARY %s peak_mib=%s steady_mib=%s settled_mib=%s oom=%s alive=%s client_errors=%s security=%s"%(d["scenario"],d["peak_mib"],d["steady_state_mib"],d.get("settled_state_mib"),d["oom_killed"],d["proxy_alive_after"],d["client_errors"],"pass" if d["security_checks"] and all(d["security_checks"].values()) else ("fail" if d["security_checks"] else "n/a")))'
 docker run --rm --user 0 -v "$results:/results" "$helper" -c "$python_cmd" /results/results.json

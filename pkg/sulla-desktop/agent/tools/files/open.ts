@@ -9,7 +9,7 @@ import { ipcMain } from 'electron';
 
 import { FilesTool } from './common';
 
-import { getWindow } from '@pkg/window';
+import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 
 import type { ToolResponse } from '../base';
 
@@ -58,7 +58,7 @@ export class FilesOpenWorker extends FilesTool {
       resolvedPath = record.file.path;
     }
 
-    const agentWindow = getWindow('main-agent');
+    const agentWindow = getActiveAgentWindow();
     if (!agentWindow) throw new Error('Main Sulla Desktop window is not available yet');
     const requestId = randomUUID();
     const replyChannel = `agent-command-result:${ requestId }`;

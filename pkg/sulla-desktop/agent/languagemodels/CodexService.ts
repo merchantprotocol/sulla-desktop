@@ -23,8 +23,10 @@ import { providerSessionStore } from './providerSessionStore';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
+import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
+import { CodexTurnOutcome } from './codexTurnOutcome';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import { resolveCodexExecutionAuth, type CodexExecutionAuth } from './codexExecutionAuth';
@@ -636,6 +638,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     let lastSetupMark = runPhaseStart;
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
+    // Each container owns one provider bridge, so pod id scopes bridge
+    // activity to this container without letting unrelated agents keep us alive.
+    const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -843,7 +848,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       let sawDelta = false;
       let capturedSessionId: string | undefined = existingSession;
       let codexPid: number | undefined;
-      let errored = false;
+      const outcome = new CodexTurnOutcome();
       let errorMessage = '';
       let lastUsage: any = null;
       let sawTerminalResult = false;
@@ -920,6 +925,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       const STALL_CHECK_MS = 30 * 1_000;
       let lastStreamActivityAt = Date.now();
       let stalled = false;
+      let lastWatchdogDeferralAt = 0;
       let stallTimer: NodeJS.Timeout | null = null;
       const stopStallWatchdog = () => {
         if (stallTimer) {
@@ -930,6 +936,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       const startStallWatchdog = () => {
         lastStreamActivityAt = Date.now();
         stallTimer = setInterval(() => {
+          const upstreamActivityAt = providerBridgeActivity.lastActivityAt(providerBridgePodId);
+          if (upstreamActivityAt > lastStreamActivityAt) {
+            lastStreamActivityAt = upstreamActivityAt;
+            if (Date.now() - lastWatchdogDeferralAt >= 60_000) {
+              lastWatchdogDeferralAt = Date.now();
+              log.info(`[CodexService] Stall watchdog deferred: provider bridge active (convId=${ convId })`);
+            }
+          }
           const silentMs = Date.now() - lastStreamActivityAt;
           if (activeToolItems.size > 0) {
             const tools = [...activeToolItems.values()];
@@ -1114,27 +1128,34 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             }
             emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
-              errored = true;
-              if (typeof item.message === 'string') errorMessage = item.message;
+              if (outcome.recordErrorEvent(item.message) === 'notice') {
+                log.info(`[CodexService] Codex notice (non-fatal): ${ String(item.message).slice(0, 200) }`);
+              } else if (typeof item.message === 'string') {
+                errorMessage = item.message;
+              }
             }
             return;
           }
           if (parsed.type === 'turn.completed') {
             sawTerminalResult = true;
+            outcome.recordCompletion();
             // Recorded once on close — codex can emit several usage events
             // per run (one per model call) and each carries cumulative totals.
             lastUsage = parsed.usage;
             return;
           }
           if (parsed.type === 'turn.failed') {
-            errored = true;
+            outcome.recordTurnFailed();
             const msg = parsed.error?.message;
             if (typeof msg === 'string' && msg) errorMessage = msg;
             return;
           }
           if (parsed.type === 'error') {
-            errored = true;
-            if (typeof parsed.message === 'string' && parsed.message) errorMessage = parsed.message;
+            if (outcome.recordErrorEvent(parsed.message) === 'notice') {
+              log.info(`[CodexService] Codex notice (non-fatal): ${ String(parsed.message).slice(0, 200) }`);
+            } else if (typeof parsed.message === 'string' && parsed.message) {
+              errorMessage = parsed.message;
+            }
             return;
           }
         }
@@ -1172,13 +1193,17 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           break;
         case 'task_complete':
           sawTerminalResult = true;
+          outcome.recordCompletion();
           if (typeof msg.last_agent_message === 'string' && !textCollected.trim()) {
             appendAgentMessage(msg.last_agent_message);
           }
           break;
         case 'error':
-          errored = true;
-          if (typeof msg.message === 'string' && msg.message) errorMessage = msg.message;
+          if (outcome.recordErrorEvent(msg.message) === 'notice') {
+            log.info(`[CodexService] Codex notice (non-fatal): ${ String(msg.message).slice(0, 200) }`);
+          } else if (typeof msg.message === 'string' && msg.message) {
+            errorMessage = msg.message;
+          }
           break;
         case 'stream_error':
           // Retryable — codex retries the model stream internally and the
@@ -1326,7 +1351,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // sulla-runtime's SSH-mux noise ("mux_client_request_session ... Broken
         // pipe") lands in stderr and must not wipe a valid thread.
         const resumeFailed = existingSession && !retryWithoutSession && !sawToolExecution &&
-          (errored || code !== 0) &&
+          (outcome.fatal || code !== 0) &&
           /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)|recorded with model .* resuming with/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
@@ -1341,7 +1366,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           this.setSession(convId, capturedSessionId).catch(() => {});
         }
 
-        if (errored) {
+        if (outcome.fatal) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
           log.warn(`[CodexService] runCodex errored: ${ msg.slice(0, 200) }`);
           const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });

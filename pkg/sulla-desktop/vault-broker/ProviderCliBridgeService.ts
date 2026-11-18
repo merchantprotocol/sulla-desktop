@@ -12,6 +12,7 @@ import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
 import { vaultHealthMonitor, VaultHealthMonitor } from './vaultHealth';
 import type { ToolExecutionContext } from './index';
 import type { ProviderCliBridgeOptions, ProviderCliBridgeLease, ProviderCliBridgeIdentity, ProviderCliOpaqueConfig } from './providerCliBridge';
+import { providerBridgeActivity } from './ProviderBridgeActivity';
 
 const console = globalThis.console;
 const RETRY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
@@ -207,6 +208,7 @@ export class ProviderCliBridgeService {
         responseType: 'stream',
       }), requestAbort.signal);
       upstreamHeadersMs = performance.now() - upstreamStartedAt;
+      providerBridgeActivity.mark(identity.context.pod_id);
       status = upstream.status;
       if (upstream.status === 423) vaultHealthMonitor.record('locked'); else vaultHealthMonitor.recordSuccess();
       if (upstream.status >= 400) {
@@ -224,6 +226,7 @@ export class ProviderCliBridgeService {
           for (;;) {
             const { done, value } = await reader.read();
             if (done || response.destroyed) break;
+            providerBridgeActivity.mark(identity.context.pod_id);
             if (!firstChunkMs) firstChunkMs = performance.now() - startedAt;
             if (!response.write(value)) {
               await new Promise<void>(resolve => {

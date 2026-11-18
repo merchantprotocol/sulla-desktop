@@ -20,13 +20,16 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
 import Logging from '@pkg/utils/logging';
-import { getWindow } from '@pkg/window';
+import { getActiveAgentWindow, isAgentWebContents } from '@pkg/window/agentWindows';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 
 const console = Logging.background;
 
 let win: BrowserWindow | null = null;
+
+/** The agent window that opened this popup; actions are sent back to it. */
+let openerWindow: BrowserWindow | null = null;
 let showGuard = false;  // prevents spurious blur during initial show
 
 const MENU_WIDTH = 200;
@@ -55,10 +58,11 @@ function _showAndFocus(): void {
 }
 
 function onShow(
-  _event: Electron.IpcMainEvent,
+  event: Electron.IpcMainEvent,
   payload: { screenX: number; screenY: number; buttonWidth?: number; buttonHeight?: number; theme?: string },
 ): void {
   const { screenX, screenY, theme = DEFAULT_THEME_ID } = payload;
+  openerWindow = isAgentWebContents(event.sender) ? BrowserWindow.fromWebContents(event.sender) : null;
   const isDark = !theme.includes('light');
 
   console.log('[MoreMenu] onShow', { screenX, screenY, existingWindow: !!win, theme });
@@ -142,6 +146,12 @@ function onShow(
   console.log('[MoreMenu] Created popup window, loading:', htmlPath);
 }
 
+/** Window the popup should reply to: its opener if still alive, else the active agent window. */
+function openerTarget(): BrowserWindow | null {
+  if (openerWindow && !openerWindow.isDestroyed()) return openerWindow;
+  return getActiveAgentWindow();
+}
+
 function onAction(
   _event: Electron.IpcMainEvent,
   action: string,
@@ -149,7 +159,7 @@ function onAction(
 ): void {
   console.log(`[MoreMenu] Action: ${ action }`);
 
-  const mainWindow = getWindow('main-agent') ?? getWindow('main');
+  const mainWindow = openerTarget();
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('more-menu:selected', action, extra ?? null);
@@ -163,7 +173,7 @@ function onRequestHistory(
   data?: { currentWidth?: number },
 ): void {
   // Ask the renderer for history entries, then forward them to the popup
-  const mainWindow = getWindow('main-agent') ?? getWindow('main');
+  const mainWindow = openerTarget();
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     // Store current popup position for later repositioning

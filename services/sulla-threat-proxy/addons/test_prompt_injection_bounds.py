@@ -209,7 +209,7 @@ class BoundedDecoderTests(unittest.TestCase):
         scanner = prompt_injection.PromptInjectionScanner.__new__(prompt_injection.PromptInjectionScanner)
         fake_libc = SimpleNamespace(malloc_trim=Mock())
         reservations = {"trim-a": (0, 1024 * 1024), "trim-b": (0, 1024 * 1024)}
-        with patch.object(prompt_injection, "_RESERVATIONS", reservations), patch.object(prompt_injection, "_RESERVATION_BYTES", 2 * 1024 * 1024), patch.object(prompt_injection, "_LIBC", None), patch.object(prompt_injection, "_LIBC_LOADED", False), patch.object(prompt_injection, "_TRIMMED_AT", 0), patch.object(prompt_injection.ctypes, "CDLL", return_value=fake_libc) as load_libc, patch.object(prompt_injection.time, "monotonic", return_value=100):
+        with patch.object(prompt_injection, "_RESERVATIONS", reservations), patch.object(prompt_injection, "_RESERVATION_BYTES", 2 * 1024 * 1024), patch.object(common, "_LIBC", None), patch.object(common, "_LIBC_LOADED", False), patch.object(common, "_TRIMMED_AT", 0), patch.object(common.ctypes, "CDLL", return_value=fake_libc) as load_libc, patch.object(common.time, "monotonic", return_value=100):
             scanner._release(SimpleNamespace(id="trim-a"))
             scanner._release(SimpleNamespace(id="trim-b"))
         load_libc.assert_called_once_with("libc.so.6")

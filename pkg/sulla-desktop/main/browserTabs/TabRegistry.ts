@@ -117,7 +117,7 @@ class TabRegistryImpl {
   }
 
   /** Open or update a tab. Re-entrant: same assetId + URL is a no-op. */
-  open(input: { assetId: string; url: string; title?: string; origin?: 'user' | 'agent'; owner?: TabOwner }): TabRecord {
+  open(input: { assetId: string; url: string; title?: string; origin?: 'user' | 'agent'; owner?: TabOwner; ownerWindow?: Electron.BrowserWindow }): TabRecord {
     const reserved = this.owners.get(input.assetId);
     if (reserved && !this.sameOwner(reserved, input.owner)) {
       throw this.ownershipError(input.assetId);
@@ -147,7 +147,7 @@ class TabRegistryImpl {
     // Default to 1280×800 so window.innerWidth/innerHeight are non-zero and
     // screenshots + getBoundingClientRect() work immediately. The UI overrides
     // these bounds via setBounds() when it actually displays the tab.
-    BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 1280, height: 800 });
+    BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 1280, height: 800 }, input.ownerWindow);
 
     const record: TabRecord = {
       assetId:        input.assetId,

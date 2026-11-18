@@ -25,9 +25,8 @@ import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
 import { isFirstRunTestInstance } from '@pkg/utils/instance';
-import {
-  openMain, send, openDocker, openPreferences, getWindow, openUrlInApp,
-} from '@pkg/window';
+import { send, openDocker, openPreferences, openUrlInApp } from '@pkg/window';
+import { ensureAgentWindow } from '@pkg/window/agentWindows';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -58,7 +57,7 @@ export class Tray {
       icon:  path.join(paths.resources, 'icons', 'logo-tray-Template@2x.png'),
       type:  'normal',
       click() {
-        openMain();
+        ensureAgentWindow();
       },
     },
     {
@@ -67,8 +66,7 @@ export class Tray {
       icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
       type:  'normal',
       click() {
-        openMain();
-        const agentWindow = getWindow('main-agent');
+        const agentWindow = ensureAgentWindow();
 
         if (agentWindow) {
           const sendCommand = () => agentWindow.webContents.send('agent-command', { command: 'new-secretary-tab' });

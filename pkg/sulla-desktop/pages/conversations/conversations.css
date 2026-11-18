@@ -138,6 +138,9 @@
 .cv-root .person-agent .avatar .pres{width:7px;height:7px;border-width:1.5px;right:-2px;bottom:-2px}
 .cv-root .row .acts{display:none;gap:4px}
 .cv-root .row:hover .acts{display:flex}
+/* App guard: the global grid .row (assets/styles/global/_columns.scss) adds ::before/::after table boxes that would become flex items here. */
+.cv-root .row::before,.cv-root .row::after{content:none;display:none}
+.cv-root .row .pick{flex:none;margin:11px 0 0}
 .cv-root .main{min-width:0;min-height:0;display:flex;flex-direction:column}
 .cv-root .top{display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--line);background:var(--top-bg);backdrop-filter:blur(10px);min-height:57px}
 .cv-root .top .ttl{min-width:0}

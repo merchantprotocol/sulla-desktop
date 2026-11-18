@@ -19,6 +19,8 @@ and blocklist/urlhaus.txt; the proxy owns mitm/ and cache/.
 """
 
 import functools
+import calendar
+import ctypes
 import json
 import os
 import sqlite3
@@ -42,6 +44,33 @@ FLAG_BLOCK = "block"
 FLAG_SUSPICIOUS = "suspicious"
 FLAG_UNKNOWN = "unknown"
 FLAG_ERROR = "error"
+
+_TRIM_LOCK = threading.Lock()
+_TRIMMED_AT = 0.0
+_LIBC = None
+_LIBC_LOADED = False
+
+
+def trim_heap(min_interval_s: float = 1.0) -> None:
+    """Ask glibc to release free heap pages, at most once per interval."""
+    global _LIBC, _LIBC_LOADED, _TRIMMED_AT
+    now = time.monotonic()
+    with _TRIM_LOCK:
+        if now - _TRIMMED_AT < min_interval_s:
+            return
+        _TRIMMED_AT = now
+        try:
+            if not _LIBC_LOADED:
+                try:
+                    _LIBC = ctypes.CDLL("libc.so.6")
+                except OSError:
+                    _LIBC = False
+                _LIBC_LOADED = True
+            if not _LIBC:
+                return
+            _LIBC.malloc_trim(0)
+        except (OSError, AttributeError):
+            pass
 
 
 def log(component: str, level: str, msg: str, **fields: Any) -> None:
@@ -207,6 +236,66 @@ def classify_verdict(flags: Iterable[str]) -> str:
     if FLAG_CLEAN in flags_set:
         return FLAG_CLEAN
     return FLAG_UNKNOWN
+
+
+class DailyCounters:
+    """Thread-safe hourly counters, persisted no more than once per interval."""
+
+    def __init__(self, path: Optional[str] = None, clock=time.time, flush_interval: float = 5.0) -> None:
+        self.path = path or os.path.join(STATE_DIR, "daily-counters.json")
+        self.clock, self.flush_interval = clock, flush_interval
+        self._lock = threading.Lock()
+        self._last_flush = clock()
+        self._dirty = False
+        self._buckets: Dict[str, Dict[str, int]] = {}
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                stored = json.load(fh)
+            buckets = stored.get("hours") if isinstance(stored, dict) else None
+            if isinstance(buckets, dict):
+                for hour, counts in buckets.items():
+                    if (isinstance(hour, str) and len(hour) == 13 and isinstance(counts, dict)
+                        and all(isinstance(counts.get(key), int) and not isinstance(counts.get(key), bool) and counts[key] >= 0 for key in ("scanned", "blocked"))):
+                        self._buckets[hour] = {"scanned": counts["scanned"], "blocked": counts["blocked"]}
+        except (OSError, ValueError, TypeError):
+            pass
+        self._prune(self._hour(self.clock()))
+
+    @staticmethod
+    def _hour(now: float) -> str:
+        return time.strftime("%Y-%m-%dT%H", time.gmtime(now))
+
+    def _prune(self, current_hour: str) -> None:
+        cutoff = calendar.timegm(time.strptime(current_hour, "%Y-%m-%dT%H")) - 48 * 3600
+        oldest = time.strftime("%Y-%m-%dT%H", time.gmtime(cutoff))
+        self._buckets = {hour: counts for hour, counts in self._buckets.items() if hour >= oldest and hour <= current_hour}
+
+    def _flush_locked(self) -> None:
+        if not self._dirty: return
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        temporary = self.path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as fh:
+            json.dump({"hours": self._buckets}, fh, separators=(",", ":"))
+            fh.flush(); os.fsync(fh.fileno())
+        os.replace(temporary, self.path)
+        self._dirty = False
+
+    def flush(self, force: bool = True) -> None:
+        with self._lock:
+            if force: self._flush_locked()
+
+    def increment(self, blocked: bool = False, now: Optional[float] = None) -> Dict[str, Any]:
+        timestamp = self.clock() if now is None else now
+        hour = self._hour(timestamp)
+        with self._lock:
+            self._prune(hour)
+            current = self._buckets.setdefault(hour, {"scanned": 0, "blocked": 0})
+            current["scanned"] += 1
+            if blocked: current["blocked"] += 1
+            self._dirty = True
+            if self.clock() - self._last_flush >= self.flush_interval:
+                self._flush_locked(); self._last_flush = self.clock()
+            return {"hour": hour, **current}
 
 
 class VerdictCache:

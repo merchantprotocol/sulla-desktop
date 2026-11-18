@@ -33,6 +33,7 @@ const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const AI_PROVIDERS = new Set(['anthropic', 'claude', 'openai', 'codex', 'google', 'gemini', 'xai', 'grok', 'ollama', 'local']);
 const windowApi = (): any => require('@pkg/window');
+const agentWindowsApi = (): any => require('@pkg/window/agentWindows');
 const updateApi = (): any => require('@pkg/main/update/UpdateManager').supportUpdateApi;
 
 type Runtime = Pick<VMBackend, 'state' | 'memory' | 'executor' | 'start' | 'stop'>;
@@ -538,13 +539,11 @@ export const remoteSupportService = new RemoteSupportService();
 export function configureRemoteSupportRuntime(runtime: Runtime) { remoteSupportService.configureRuntime(runtime) }
 export function startRemoteSupport() {
   ipcMain.handle('support:remote-banner-state', event => {
-    const main = windowApi().getWindow('main-agent') ?? windowApi().getWindow('main');
-    if (event.sender !== main?.webContents) throw new Error('Support status is only available from the main Sulla window.');
+    if (!agentWindowsApi().isAgentWebContents(event.sender)) throw new Error('Support status is only available from the main Sulla window.');
     return remoteSupportService.state().remote;
   });
   ipcMain.handle('support:remote-banner-end', event => {
-    const main = windowApi().getWindow('main-agent') ?? windowApi().getWindow('main');
-    if (event.sender !== main?.webContents) throw new Error('Support access can only be ended from the main Sulla window.');
+    if (!agentWindowsApi().isAgentWebContents(event.sender)) throw new Error('Support access can only be ended from the main Sulla window.');
     return remoteSupportService.end();
   });
   ipcMain.handle('support:remote-channel-status', () => remoteSupportService.channelStatus());

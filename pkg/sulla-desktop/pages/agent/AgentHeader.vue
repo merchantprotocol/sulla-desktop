@@ -606,9 +606,9 @@ function queueTabPeek(event: MouseEvent, tab: HeaderTab) {
 {
   const tab = ensureOneTab();
 
-  if (route.path === '/Chat' || route.path === '/') {
+  if (tab && (route.path === '/Chat' || route.path === '/')) {
     router.replace(`/Browser/${ tab.id }`);
-  } else if (route.path.startsWith('/Browser/')) {
+  } else if (tab && route.path.startsWith('/Browser/')) {
     // If reloading on a /Browser/:id route, verify the tab still exists.
     // Tabs are persisted to localStorage so this normally matches, but if
     // the tab was cleaned up or storage was cleared, fall back to a new tab.
@@ -813,6 +813,7 @@ onMounted(() => {
     if (initial) engineState.value = initial;
   } catch { /* main not ready; the next state event fills it in */ }
   window.addEventListener('keydown', handleKeyboardShortcuts);
+  window.addEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 
   // Point the module-level IPC bridges at THIS instance's handlers.
@@ -842,6 +843,7 @@ onUnmounted(() => {
   ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
   hideTabPeek();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
+  window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
   _unmountIpcListeners();
 
@@ -1179,9 +1181,18 @@ interface DragState {
   startX:       number;
   pointerId:    number;
   tabEl:        HTMLElement;
+  startY:       number;
+  tabId:        string;
+  detached:     boolean;
 }
 
 const dragState = ref<DragState | null>(null);
+const transferSnapshots = ref<Record<string, Record<string, unknown>>>({});
+function onTransferSnapshot(event: Event) {
+  const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+  const tabId = String(detail?.tabId || '');
+  if (tabId) transferSnapshots.value = { ...transferSnapshots.value, [tabId]: detail };
+}
 const DRAG_DEADZONE = 5;
 
 function onPointerDown(e: PointerEvent, index: number) {
@@ -1200,8 +1211,11 @@ function onPointerDown(e: PointerEvent, index: number) {
     originIndex:  index,
     currentIndex: index,
     startX:       e.clientX,
+    startY:       e.clientY,
     pointerId:    e.pointerId,
     tabEl,
+    tabId:        orderedTabs.value[index]?.browserId || '',
+    detached:     false,
   };
 
   dragState.value = state;
@@ -1218,6 +1232,19 @@ function onPointerDown(e: PointerEvent, index: number) {
       // Prevent the router-link navigation when dragging
       tabEl.style.pointerEvents = 'none';
     }
+
+    const stateNow = dragState.value;
+    if (!stateNow) return;
+    const detached = me.clientY < -30 || me.clientY > window.innerHeight + 30 || me.clientX < 0 || me.clientX > window.innerWidth || Math.abs(me.clientY - stateNow.startY) > 30;
+    if (detached && !stateNow.detached && stateNow.tabId) {
+      const descriptor = getTab(stateNow.tabId);
+      if (descriptor) {
+        stateNow.detached = true;
+        window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
+        ipcRenderer.send('tabs:drag-start', { tabId: descriptor.id, descriptor: { ...descriptor }, tabCount: browserTabs.length });
+      }
+    }
+    if (stateNow.detached) return;
 
     const container = getScrollEl();
     if (!container) return;
@@ -1265,6 +1292,10 @@ function onPointerDown(e: PointerEvent, index: number) {
     const wasDragging = dragState.value?.active ?? false;
     const draggedEl = dragState.value?.tabEl ?? tabEl;
     dragState.value = null;
+    if (state.detached) {
+      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: state.tabId } }));
+        ipcRenderer.send('tabs:drag-end', { tabId: state.tabId, screenX: ue.screenX, screenY: ue.screenY, transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) } });
+    }
     // Always clear both references — belt-and-suspenders so a stale
     // pointerEvents:none never leaves the bar frozen.
     draggedEl.style.pointerEvents = '';
@@ -1307,6 +1338,7 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   items.push('closeOther', 'closeRight');
   items.push('---');
   items.push('duplicate');
+  items.push('moveNewWindow');
   items.push('---');
   items.push('moveStart', 'moveEnd');
   if (tab.browserId) {
@@ -1435,6 +1467,15 @@ function handleTabContextMenuAction(
       router.push(tabRoute);
     }
     break;
+
+  case 'moveNewWindow': {
+    const descriptor = browserId ? getTab(browserId) : undefined;
+    if (descriptor) {
+      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
+      ipcRenderer.send('tabs:move-to-new-window', { tabId: browserId, descriptor: { ...descriptor }, tabCount: browserTabs.length, transient: { ...transferSnapshots.value[browserId!], pinned: isTabPinned(`browser-${ browserId }`) } });
+    }
+    break;
+  }
 
   case 'moveStart': {
     if (!headerTab || index < 0) break;

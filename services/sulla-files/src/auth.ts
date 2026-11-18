@@ -28,8 +28,12 @@ export function verifyCapabilityToken(token:string | undefined, key:string | Buf
   const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as CapabilityClaims;
   if (!Number.isFinite(toleranceSeconds) || toleranceSeconds < 0 || toleranceSeconds > 300) throw new RangeError('clock tolerance must be between 0 and 300 seconds');
   if (claims.v !== 1 || claims.aud !== 'sulla-tools' || !Number.isFinite(claims.exp) || !claims.sub) throw new Error('Invalid capability claims');
-  if (claims.exp + 60 < nowSeconds) {
-    const reason = `Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds 60s tolerance`;
+  // The runtime VM can resume with its guest wall clock ahead of the host
+  // that issued this capability. Bound expiry grace to the same 5-minute
+  // skew window used for future iat; signed exp remains authoritative beyond
+  // that window (and Files capabilities themselves live for only five minutes).
+  if (claims.exp + toleranceSeconds < nowSeconds) {
+    const reason = `Capability expired ${Math.ceil(nowSeconds - claims.exp)}s ago; clock skew exceeds ${toleranceSeconds}s tolerance`;
     console.warn(`[auth] Files capability rejected: ${reason}`);
     throw new Error(reason);
   }

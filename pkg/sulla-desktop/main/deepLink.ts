@@ -36,7 +36,7 @@ import { getSullaFilesClient } from '@pkg/main/sullaFilesClient';
 import { getSullaFilesLinkService, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import Logging from '@pkg/utils/logging';
-import * as window from '@pkg/window';
+import { ensureAgentWindow, getActiveAgentWindow, getAgentWindows } from '@pkg/window/agentWindows';
 
 const console = Logging.background;
 const filesClient = getSullaFilesClient();
@@ -79,9 +79,9 @@ export function handleDeepLink(rawUrl: string): void {
   // immediately when already ready, making this a no-op later.
   Electron.app.whenReady().then(() => {
     try {
-      window.openMain();
+      ensureAgentWindow();
     } catch (err) {
-      console.error('[deep-link] openMain failed:', err);
+      console.error('[deep-link] ensureAgentWindow failed:', err);
     }
     dispatchWhenReady(rawUrl).catch(err => console.error('[deep-link] dispatch failed:', err));
   }).catch((err) => {
@@ -105,14 +105,10 @@ async function dispatchWhenReady(rawUrl: string): Promise<void> {
 }
 
 function pickReadyWindow(): Electron.BrowserWindow | null {
-  // Prefer the main-agent window — it's the one that hosts the
-  // marketplace tab and AgentRouter listeners. Other windows (dialogs,
-  // prefs) can't handle our agent-command stream.
-  const main = window.getWindow('main-agent');
-  if (main && !main.isDestroyed() && !main.webContents.isLoading()) {
-    return main;
-  }
-  return null;
+  // Prefer the focused (or last-focused) agent window, then any other agent
+  // window. Dialogs and prefs windows can't handle our agent-command stream.
+  const candidates = [getActiveAgentWindow(), ...getAgentWindows()];
+  return candidates.find((win): win is Electron.BrowserWindow => !!win && !win.isDestroyed() && !win.webContents.isLoading()) ?? null;
 }
 
 function dispatch(target: Electron.BrowserWindow, rawUrl: string): void {

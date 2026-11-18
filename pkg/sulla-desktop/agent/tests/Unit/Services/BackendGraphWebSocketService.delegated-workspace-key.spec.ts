@@ -33,6 +33,7 @@ async function containerKeyFor(channelId: string, threadId: string, state: any):
   const service = Object.create(BackendGraphWebSocketService.prototype);
   service.conversationContainers = new Map();
   service.activeAborts = new Map();
+  service.conversationContainerStarts = new Map();
   await service.conversationContainer(channelId, threadId, 'codex', state);
   for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
   return createAgentContainerLifecycle.mock.calls.at(-1)![0].persistenceKey;
@@ -75,5 +76,119 @@ describe('conversation container persistence key after a parked delegated wake',
   it('keeps the channel-scoped key for an ordinary chat thread', async() => {
     // risk: existing chat workspaces move to a new folder and appear empty
     expect(await containerKeyFor('sulla-desktop', 'chat-thread', chatState('chat-thread'))).toBe('conversation:sulla-desktop:chat-thread');
+  });
+
+  it('shares one lifecycle for a thread dispatched on multiple channels', async() => {
+    // risk: a second channel creates a duplicate named Docker container and fails every turn
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map();
+  service.conversationContainerStarts = new Map();
+    const state = chatState('shared-thread');
+    const [first, second] = await Promise.all([
+      service.conversationContainer('desktop', 'shared-thread', 'codex', state),
+      service.conversationContainer('mobile-relay', 'shared-thread', 'codex', state),
+    ]);
+    expect(first).toBe(second);
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(1);
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
+  });
+
+  it('does not hand a concurrent different agent the lifecycle being created for the first agent', async() => {
+    // risk: an agent receives another agent's capability token and Files actor
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map();
+    let finishFirst!: (lifecycle: any) => void;
+    const firstLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    const secondLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    createAgentContainerLifecycle.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }) as any)
+      .mockImplementationOnce(async() => secondLifecycle as any);
+    const firstState = chatState('agent-race-thread');
+    const first = service.conversationContainer('desktop', 'agent-race-thread', 'codex', firstState);
+    const secondState = chatState('agent-race-thread');
+    secondState.metadata.agentId = 'different-agent';
+    const second = service.conversationContainer('mobile-relay', 'agent-race-thread', 'claude', secondState);
+    // conversationContainer awaits a dynamic import before it creates the lifecycle, so wait for the create call to run
+    await vi.waitFor(() => expect(typeof finishFirst).toBe('function'));
+    finishFirst(firstLifecycle);
+    await expect(first).resolves.toBe(firstLifecycle);
+    await expect(second).resolves.toBe(secondLifecycle);
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(2);
+    expect(service.conversationContainers.get('agent-race-thread').agentId).toBe('different-agent');
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
+  });
+
+  it('closes and removes the idle desktop agent lifecycle before mobile-relay creates its own', async() => {
+    // risk: a different agent collides with the idle thread container or inherits its capability
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map();
+    const events: string[] = [];
+    const oldLifecycle = { closed: false, close: vi.fn(async() => { events.push('old-removed'); }) };
+    const mobileLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    createAgentContainerLifecycle.mockImplementationOnce(async() => { events.push('desktop-created'); return oldLifecycle as any; })
+      .mockImplementationOnce(async() => { events.push('mobile-created'); return mobileLifecycle as any; });
+    await service.conversationContainer('sulla-desktop', 'mobile-thread', 'codex', chatState('mobile-thread'));
+    const mobileState = chatState('mobile-thread');
+    mobileState.metadata.agentId = 'mobile-relay';
+    await service.conversationContainer('mobile-relay', 'mobile-thread', 'codex', mobileState);
+    expect(oldLifecycle.close).toHaveBeenCalledWith('agent-switch', 'BackendGraphWebSocketService.conversationContainer');
+    expect(events).toEqual(['desktop-created', 'old-removed', 'mobile-created']);
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(2);
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
+  });
+
+  it('waits for an active desktop turn before replacing its lifecycle for mobile-relay', async() => {
+    // risk: switching agent containers while another channel is running kills or lends its lifecycle
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map([['sulla-desktop|active-thread', {}]]);
+    const oldLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    const mobileLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    createAgentContainerLifecycle.mockImplementationOnce(async() => oldLifecycle as any)
+      .mockImplementationOnce(async() => mobileLifecycle as any);
+    await service.conversationContainer('sulla-desktop', 'active-thread', 'codex', chatState('active-thread'));
+    const mobileState = chatState('active-thread');
+    mobileState.metadata.agentId = 'mobile-relay';
+    let finished = false;
+    const replacement = service.conversationContainer('mobile-relay', 'active-thread', 'codex', mobileState).then((value: any) => {
+      finished = true;
+      return value;
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(finished).toBe(false);
+    expect(oldLifecycle.close).not.toHaveBeenCalled();
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(1);
+    service.activeAborts.delete('sulla-desktop|active-thread');
+    await expect(replacement).resolves.toBe(mobileLifecycle);
+    expect(oldLifecycle.close).toHaveBeenCalledTimes(1);
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(2);
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
+  });
+
+  it('does not close or recreate an in-use lifecycle for a same-agent provider switch', async() => {
+    // risk: a provider fallback kills the existing run container while another turn holds it
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map([['desktop|provider-switch-thread', {}]]);
+    const state = chatState('provider-switch-thread');
+    await service.conversationContainer('desktop', 'provider-switch-thread', 'codex', state);
+    const existing = service.conversationContainers.get('provider-switch-thread').lifecycle;
+    await service.conversationContainer('desktop', 'provider-switch-thread', 'claude', state);
+    expect(service.conversationContainers.get('provider-switch-thread').lifecycle).toBe(existing);
+    expect(existing.close).not.toHaveBeenCalled();
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(1);
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
   });
 });

@@ -11,8 +11,11 @@ import type { ChunkIntegrityRepository, ScannedChunkRow } from '../Repositories/
 import type { CollectionKeys, FilesKeyring } from '../keyring.js';
 import type { Store } from '../store.js';
 
-const DEFAULT_LIMIT = 10_000;
-const MAX_LIMIT = 100_000;
+/** Chunks scanned per page (per collection). A 100k-chunk collection takes 50 pages at the default. */
+const DEFAULT_LIMIT = 2_000;
+const MAX_LIMIT = 10_000;
+/** Chunk ids are lowercase SHA-256 HMAC hex (see ChunkCrypto.chunkId). Cursors must match this shape. */
+const CHUNK_ID_PATTERN = /^[0-9a-f]{64}$/;
 const DEFAULT_CONCURRENCY = 4;
 const BATCH_SIZE = 200;
 const FINGERPRINT_CONTEXT = 'sulla-files-key-fingerprint';
@@ -27,7 +30,14 @@ export class ChunkIntegrityQueryError extends Error {}
 /** Marker for a chunk that an all-zero 32-byte data key opens. Cached key buffers can be zeroed in place, so this is a distinct case. */
 export const ZERO_KEY_OPENER = 'zero-key';
 
-export interface ChunkIntegrityScanOptions { collectionId?:string; limit?:number; diagnose?:boolean }
+export interface ChunkIntegrityScanOptions {
+  collectionId?:string;
+  /** Last chunk id of the previous page. The next page starts after it. Requires collectionId. */
+  cursor?:string;
+  /** Chunks scanned in this page per collection. Clamped to 1..MAX_LIMIT. */
+  limit?:number;
+  diagnose?:boolean;
+}
 
 /** Where a chunk fails. `envelope_parse`: the stored blob is not a valid envelope. `aead`: the data key or AAD does not open it. `decompress`: zstd fails or exceeds the cap. `size_mismatch`: plaintext length differs from the row size. `identity_mismatch`: HMAC(dedup key, plaintext) differs from the id. */
 export type ChunkFailureStage = 'envelope_parse' | 'aead' | 'decompress' | 'size_mismatch' | 'identity_mismatch';
@@ -56,12 +66,17 @@ export interface CollectionChunkIntegrity {
   missingBlob:string[];
   /** Chunks that could not be read for another reason (I/O, size bounds). Not decryption failures. */
   errors:number;
+  /** Pass as `cursor` with the same collectionId to get the next page. Null when the collection ended inside this page. A page that ends exactly on the last chunk still returns a cursor, and the following call returns an empty page with null. */
+  nextCursor:string | null;
 }
 
 export interface ChunkIntegrityScanReport {
   scannedAt:string;
   collections:CollectionChunkIntegrity[];
+  /** Counts for this page only. Sum across pages to get the running total for a collection. */
   totals:{ collections:number; chunksScanned:number; undecryptable:number; missingBlob:number; errors:number };
+  /** The limit actually applied after clamping. */
+  limit:number;
 }
 
 type ChunkCheck =
@@ -158,10 +173,15 @@ export class ChunkIntegrityScanner {
       if (typeof query.collectionId !== 'string' || !UUID_PATTERN.test(query.collectionId)) throw new ChunkIntegrityQueryError('collectionId must be a UUID');
       options.collectionId = query.collectionId;
     }
+    if (query.cursor !== undefined) {
+      if (options.collectionId === undefined) throw new ChunkIntegrityQueryError('cursor requires collectionId');
+      if (typeof query.cursor !== 'string' || !CHUNK_ID_PATTERN.test(query.cursor)) throw new ChunkIntegrityQueryError('cursor must be a chunk id');
+      options.cursor = query.cursor;
+    }
     if (query.limit !== undefined) {
-      const limit = typeof query.limit === 'string' && /^[1-9][0-9]*$/.test(query.limit) ? Number(query.limit) : NaN;
-      if (!Number.isSafeInteger(limit) || limit > MAX_LIMIT) throw new ChunkIntegrityQueryError(`limit must be an integer from 1 to ${ MAX_LIMIT }`);
-      options.limit = limit;
+      if (typeof query.limit !== 'string' || !/^[0-9]+$/.test(query.limit) || Number(query.limit) < 1) throw new ChunkIntegrityQueryError('limit must be a positive integer');
+      // Oversized values are clamped rather than rejected, so a client can always ask for "as many as allowed".
+      options.limit = Math.min(Number(query.limit), MAX_LIMIT);
     }
     if (query.diagnose !== undefined) {
       if (query.diagnose !== '1' && query.diagnose !== '0') throw new ChunkIntegrityQueryError('diagnose must be 1 or 0');
@@ -170,16 +190,21 @@ export class ChunkIntegrityScanner {
     return options;
   }
 
-  /** `limit` caps the chunks scanned per collection. `diagnose` adds the cross-collection key probe for aead failures. */
+  /**
+   * One page of the scan. `limit` caps the chunks scanned per collection in this page, and `cursor` resumes after the
+   * last chunk id of the previous page (keyset paging on chunk id, so pages neither repeat nor skip chunks).
+   * `diagnose` adds the cross-collection key probe for aead failures, capped per page.
+   */
   async scan(options:ChunkIntegrityScanOptions = {}):Promise<ChunkIntegrityScanReport> {
-    const limit = options.limit ?? DEFAULT_LIMIT;
+    const limit = ChunkIntegrityScanner.clampLimit(options.limit);
     const probe = options.diagnose ? new KeyOpenProbe(this.repository, this.keyring, this.crypto) : undefined;
     const collections:CollectionChunkIntegrity[] = [];
     for (const collectionId of await this.repository.collectionIds(options.collectionId)) {
-      collections.push(await this.scanCollection(collectionId, limit, probe));
+      collections.push(await this.scanCollection(collectionId, limit, probe, options.cursor ?? ''));
     }
     return {
       scannedAt: this.now().toISOString(),
+      limit,
       collections,
       totals: {
         collections: collections.length,
@@ -191,19 +216,25 @@ export class ChunkIntegrityScanner {
     };
   }
 
+  /** Undefined or non-finite becomes the default; anything else is clamped into 1..MAX_LIMIT. */
+  static clampLimit(limit?:number):number {
+    if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_LIMIT;
+    return Math.min(Math.max(Math.floor(limit), 1), MAX_LIMIT);
+  }
+
   static fingerprint(dataKey:Uint8Array):string {
     return createHmac('sha256', dataKey).update(FINGERPRINT_CONTEXT).digest('hex').slice(0, 8);
   }
 
-  private async scanCollection(collectionId:string, limit:number, probe?:KeyOpenProbe):Promise<CollectionChunkIntegrity> {
-    const result:CollectionChunkIntegrity = { collectionId, keyFingerprint: null, chunksScanned: 0, undecryptable: [], failures: [], missingBlob: [], errors: 0 };
+  private async scanCollection(collectionId:string, limit:number, probe:KeyOpenProbe | undefined, cursor:string):Promise<CollectionChunkIntegrity> {
+    const result:CollectionChunkIntegrity = { collectionId, keyFingerprint: null, chunksScanned: 0, undecryptable: [], failures: [], missingBlob: [], errors: 0, nextCursor: null };
     let keys:CollectionKeys;
     try { keys = await this.keyring.keys(collectionId) } catch {
       result.errors = 1;
       return result;
     }
     result.keyFingerprint = ChunkIntegrityScanner.fingerprint(keys.data);
-    let afterId = '';
+    let afterId = cursor;
     while (result.chunksScanned < limit) {
       const pageSize = Math.min(BATCH_SIZE, limit - result.chunksScanned);
       const page = await this.repository.chunkPage(collectionId, afterId, pageSize);
@@ -225,6 +256,8 @@ export class ChunkIntegrityScanner {
       }
       if (page.length < pageSize) break;
     }
+    // Page budget spent while rows may remain: resume after the last id scanned. A short final batch means the collection is done.
+    if (result.chunksScanned >= limit) result.nextCursor = afterId;
     result.undecryptable.sort();
     result.failures.sort((a, b) => (a.chunkId < b.chunkId ? -1 : a.chunkId > b.chunkId ? 1 : 0));
     result.missingBlob.sort();
