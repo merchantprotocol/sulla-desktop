@@ -591,6 +591,7 @@ export function useBrowserTabs() {
       // Record closure in conversation history
       closeTabInHistory(id);
       const removed = tabs[idx];
+      if (removed.mode === 'chat') window.dispatchEvent(new CustomEvent('sulla:chat-tab-closed', { detail: { tabId: id } }));
       if (previewTabId.value === id) previewTabId.value = null;
 
       // Save to closed-tab history (skip blank/welcome tabs)
