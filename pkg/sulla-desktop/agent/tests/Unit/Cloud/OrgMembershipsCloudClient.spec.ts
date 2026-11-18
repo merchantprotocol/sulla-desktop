@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { OrgMembershipsCloudClient } from './OrgMembershipsCloudClient';
+import { OrgMembershipsCloudClient } from '../../../../main/OrgMembershipsCloudClient';
 
 describe('OrgMembershipsCloudClient', () => {
   it('reads memberships for the org id, encoded into the path, and returns the roster', async () => {

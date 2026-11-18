@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { TeamInvitationsCloudClient } from './TeamInvitationsCloudClient';
+import { TeamInvitationsCloudClient } from '../../../../main/TeamInvitationsCloudClient';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
 const FUTURE = '2026-11-25T12:00:00Z';
