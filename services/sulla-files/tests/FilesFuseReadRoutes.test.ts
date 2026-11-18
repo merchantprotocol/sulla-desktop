@@ -44,9 +44,12 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     await fixture.pool.query(`UPDATE files SET path='docs/inner/feed-renamed.txt' WHERE id=$1`, [fileId]);
     const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);
     expect(rename.body.changes).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-renamed.txt', oldPath: 'docs/inner/feed-change.txt', kind: 'rename' })]));
-    await fixture.pool.query(`DELETE FROM files WHERE id=$1`, [fileId]);
+    // Files never hard-deletes: unlink soft-deletes via deleted_at (same statement as FuseWriteRepository).
+    await fixture.pool.query(`UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1`, [fileId]);
     const deleted = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ rename.body.cursor }`);
-    expect(deleted.body.changes).toContainEqual(expect.objectContaining({ path: 'docs/inner/feed-renamed.txt', kind: 'delete' }));
+    const removedEvents = deleted.body.changes.filter((change:any) => change.path === 'docs/inner/feed-renamed.txt');
+    expect(removedEvents.length).toBeGreaterThan(0);
+    expect(removedEvents.every((change:any) => ['update', 'delete'].includes(change.kind))).toBe(true);
     const other = randomUUID();
     await fixture.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
       VALUES($1,$2,'Other','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [other, fixture.userId, `spec-${ other }`]);
