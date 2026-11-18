@@ -1264,6 +1264,9 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.EISDIR)
         if len(self.handles) >= MAX_OPEN_HANDLES:
             raise pyfuse3.FUSEError(errno.EMFILE)
+        # Bound before the branch: the final return reads both names for every node, including virtual metadata.
+        truncating = bool(flags & os.O_TRUNC)
+        prior_size = None
         try:
             if node.get("virtualMetadata"):
                 current = await self._get_folder_metadata(node["collectionId"], node["filesPath"])
@@ -1298,19 +1301,23 @@ class SullaFiles(pyfuse3.Operations):
                         node.pop("pageCacheVersion", None)
                         node["versionId"] = fresh_version
                         node["size"] = int(current_entry.get("size") or 0)
+                # O_TRUNC discards the old bytes, so the download is skipped entirely. A version whose
+                # chunk the collection key can't decrypt must stay overwritable: the spool starts empty.
+                if truncating:
+                    prior_size = int(node["size"]) if "size" in node else -1  # -1: unknown, treat as content
                 temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
                 try:
                     version_id = str(node.get("versionId") or node.get("current_version_id") or "")
                     source_hash = str(node.get("sourceHash") or "")
                     cache = self._cache() if current_entry is not None else None
                     cache_hit = False
-                    if cache is not None:
+                    if cache is not None and not truncating:
                         try:
                             cache_hit = callable(getattr(cache, "get", None)) and cache.get(
                                 version_id, source_hash, int(node.get("size", 0)), temporary)
                         except Exception as error:
                             emit("read-cache-read-failed", logging.WARNING, error=str(error))
-                    if not cache_hit:
+                    if not cache_hit and not truncating:
                         version_id, source_hash = await self.api.read_to_file(node["id"], temporary)
                         try:
                             cache = self._cache()
@@ -1325,9 +1332,9 @@ class SullaFiles(pyfuse3.Operations):
                 data = None
         except OSError as error:
             raise pyfuse3.FUSEError(error.errno) from error
-        return await self._open_handle(inode, flags, ctx, data, version_id, source_hash, current if node.get("virtualMetadata") else None, temporary if not node.get("virtualMetadata") else None)
+        return await self._open_handle(inode, flags, ctx, data, version_id, source_hash, current if node.get("virtualMetadata") else None, temporary if not node.get("virtualMetadata") else None, prior_size if truncating and not node.get("virtualMetadata") else None)
 
-    async def _open_handle(self, inode, flags, ctx, data, version_id, source_hash, metadata=None, temporary=None):
+    async def _open_handle(self, inode, flags, ctx, data, version_id, source_hash, metadata=None, temporary=None, prior_size=None):
         node = self.nodes[inode]
         handle = self.next_handle
         self.next_handle += 1
@@ -1342,7 +1349,9 @@ class SullaFiles(pyfuse3.Operations):
             "actor": await self._actor(ctx),
         }
         if flags & os.O_TRUNC:
-            had_content = self.handles[handle]["size"] > 0
+            # prior_size is set when the open skipped the download: the spool is empty, so the file's
+            # real size comes from the node (-1 = unknown, which counts as content and commits).
+            had_content = (self.handles[handle]["size"] if prior_size is None else prior_size) != 0
             os.ftruncate(temporary.fileno(), 0)
             self.handles[handle]["size"] = 0
             # Truncating a file that is already empty changes nothing. Marking it dirty made every

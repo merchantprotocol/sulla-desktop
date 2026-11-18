@@ -35,6 +35,7 @@ const VALID_MODES = new Set([
   'routines',
   'history',
   'secretary',
+  'conversations',
   'document',
   'browser',
   'welcome',

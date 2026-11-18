@@ -6,6 +6,7 @@
 // Characterizes the Files API write routes moved out of app.ts (FileWriteRoutes, FileContentWriteRoutes with
 // FileWriteRepository and VersionRestoreRepository) on the real app and a real Postgres.
 import { randomUUID } from 'node:crypto';
+import { stat, writeFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { databaseUrl, FilesRoutesFixture } from './FilesAppFixture.js';
@@ -72,6 +73,19 @@ describe.skipIf(!databaseUrl)('Files API write routes (real app, real Postgres)'
     expect(await importFile('')).toMatchObject({ status: 409, body: { error: 'A file or folder already exists at that Files path.' } });
     expect(await importFile('&conflict=keep-both')).toMatchObject({ status: 201, body: { path: 'crud/import (1).txt', conflict_resolution: 'kept-both' } });
     expect(await fixture.request(`/v1/files/import?collectionId=${ fixture.collectionId }&path=crud/upload.txt/child.txt`, 'PUT', { body: Buffer.from('x') })).toMatchObject({ status: 409, body: { error: 'A file already occupies crud/upload.txt, so crud/upload.txt/child.txt cannot be stored there.' } });
+  });
+
+  it('fully overwrites a current version even when its old chunk cannot decrypt', async() => {
+    // risk: recoverability — a truncating upload must not need to read corrupt prior content.
+    const upload = (query:string, body:string) => fixture.request(`/v1/files/upload?collectionId=${ fixture.collectionId }&${ query }`, 'PUT', { body: Buffer.from(body), headers: { 'content-type':'text/plain' } });
+    const first=await upload('path=crud/corrupt-overwrite.txt','old bytes'); const version=(await row(first.body.id)).current_version_id;
+    const chunks=(await fixture.pool.query('SELECT c.id FROM chunks c JOIN file_versions v ON v.chunk_collection_id=c.collection_id JOIN manifests m ON m.hash=v.manifest_hash WHERE v.id=$1', [version])).rows;
+    const blobPath=fixture.store.path(fixture.collectionId,chunks[0].id); await writeFile(blobPath,Buffer.alloc((await stat(blobPath)).size));
+    expect((await upload(`path=crud/corrupt-overwrite.txt&baseVersionId=${version}`,'replacement bytes')).status).toBe(201);
+    const audit=(await fixture.pool.query('SELECT old_blob_ref,new_blob_ref,reason FROM file_chunk_quarantine WHERE collection_id=$1 AND chunk_id=$2', [fixture.collectionId,chunks[0].id])).rows[0];
+    expect(audit).toMatchObject({new_blob_ref:fixture.store.path(fixture.collectionId,chunks[0].id),reason:'decrypt_verify_failed'});
+    expect((await stat(audit.old_blob_ref)).isFile()).toBe(true);
+    expect(await read(first.body.id)).toBe('replacement bytes');
   });
 
   it('trashes a file and restores an older version as a new current version', async() => {

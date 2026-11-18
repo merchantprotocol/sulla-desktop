@@ -8,7 +8,7 @@ import express from 'express';
 
 import { FileAuditWriter } from './fileAudit.js';
 
-import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
+import { chunkId, defaultChunkCrypto, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { ContentReadFailureLog } from './ContentReadFailureLog.js';
 import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { loadFileContent } from './preview.js';
@@ -68,6 +68,8 @@ import { OriginalRevealRoutes } from './routes/OriginalRevealRoutes.js';
 import { CollectionSyncRoutes } from './routes/CollectionSyncRoutes.js';
 import { OrgCollectionRoutes } from './routes/OrgCollectionRoutes.js';
 import { OrgCollectionEnrollment } from './Services/OrgCollectionEnrollment.js';
+import { ChunkIntegrityQueryError, ChunkIntegrityScanner } from './Services/ChunkIntegrityScanner.js';
+import { ChunkIntegrityRepository } from './Repositories/ChunkIntegrityRepository.js';
 import { OrgCollectionEnrollmentRepository } from './Repositories/OrgCollectionEnrollmentRepository.js';
 import { CollectionSyncRepository } from './Repositories/CollectionSyncRepository.js';
 import { TrashRoutes, type OperationAccessFactory } from './routes/TrashRoutes.js';
@@ -230,7 +232,9 @@ export class FilesApplication {
   private routeServices(app:express.Express, core:FilesCore):FilesRouteServices {
     const { db, config, manager } = this.dependencies;
     const { store, transactions } = core;
-    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk, decryptAndVerifyChunk }, core.metrics);
+    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id), keysFresh: id => config.keyring!.keysFresh(id), invalidate: id => config.keyring!.invalidate(id) }, store, { chunkId, encryptChunk, encryptChunkForCollection: (plain, key, id, active, collectionId) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, active, collectionId), decryptAndVerifyChunk }, core.metrics,
+      event => db.query('INSERT INTO file_chunk_quarantine(collection_id,chunk_id,old_blob_ref,new_blob_ref,reason) VALUES($1,$2,$3,$4,$5)',
+        [event.collectionId,event.chunkId,event.oldBlobRef,event.newBlobRef,event.reason]).then(() => undefined));
     const accessGate = new FilesAccessGate(db);
     const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db), core.metrics);
     const managers = new LocalManagerGate(config, manager);
@@ -302,6 +306,15 @@ export class FilesApplication {
     new FileResolveRoutes(accessGate, fileLocator).register(app);
     new LocalRootRoutes(manager).register(app);
     new LocalMaintenanceRoutes(db, config, store, transactions, new ScratchMaintenanceRepository(), manager).register(app);
+    // Read-only: lists chunk ids that do not decrypt under the collection key. Under /v1/local/*, so the local token guard applies.
+    app.get('/v1/local/chunk-integrity/scan', async(request, response, next) => { try {
+      if (!config.keyring) return response.status(503).json({ error:'Files keyring is unavailable' });
+      const options = ChunkIntegrityScanner.parseOptions(request.query);
+      response.json(await new ChunkIntegrityScanner(new ChunkIntegrityRepository(db), store, config.keyring).scan(options));
+    } catch (error) {
+      if (error instanceof ChunkIntegrityQueryError) return response.status(400).json({ error:error.message });
+      next(error);
+    } });
 
     new SearchRoutes(new SearchScopeRepository(db), search).register(app);
     new StarRoutes(accessGate, new StarRepository(db)).register(app);

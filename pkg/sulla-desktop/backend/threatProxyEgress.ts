@@ -18,7 +18,7 @@
  *     └─ anything else forwarded off the bridge
  *          filter FORWARD ─▶ DOCKER-USER ─▶ SULLA-EGRESS-FWD
  *            private destinations, DNS: allowed
- *            TCP 80/443 that escaped the redirect: reset (fail closed)
+ *            TCP 80/443 that escaped the redirect: reset in enforced mode, accepted in direct fail-open mode
  *            all other UDP (QUIC included): rejected
  *            other TCP ports: allowed (not scanned)
  *
@@ -41,6 +41,7 @@ export const THREAT_PROXY_STATE_DIR = '/mnt/data/var/lib/sulla/threat-proxy';
 export const THREAT_PROXY_CONTAINER_STATE_DIR = '/var/lib/sulla-threat-proxy';
 export const THREAT_PROXY_CONFIG_PATH = `${ THREAT_PROXY_STATE_DIR }/config/proxy.json`;
 export const THREAT_PROXY_BLOCKLIST_PATH = `${ THREAT_PROXY_STATE_DIR }/blocklist/urlhaus.txt`;
+export const THREAT_PROXY_TRAFFIC_LOG_PATH = `${ THREAT_PROXY_STATE_DIR }/log/traffic.jsonl`;
 /** Public CA material only; the private key stays in `mitm/`. */
 export const THREAT_PROXY_PUBLIC_DIR = `${ THREAT_PROXY_STATE_DIR }/public`;
 export const AGENT_CA_MOUNT = '/run/sulla-threat-proxy-ca';
@@ -57,7 +58,9 @@ export const EGRESS_CHAINS = {
 } as const;
 
 /** Rules for `iptables-restore --noflush`: declaring a chain flushes it, and each table commits atomically. */
-export function renderEgressRestore(bridge = AGENT_BRIDGE, port = THREAT_PROXY_PORT): string {
+export type EgressPolicyState = 'enforced' | 'direct' | 'off';
+
+export function renderEgressRestore(state: EgressPolicyState = 'enforced', bridge = AGENT_BRIDGE, port = THREAT_PROXY_PORT): string {
   const { nat, filter, input } = EGRESS_CHAINS;
   const unscanned = (chain: string) => UNSCANNED_DESTINATIONS.map(cidr => `-A ${ chain } -d ${ cidr } -j RETURN`);
 
@@ -65,7 +68,7 @@ export function renderEgressRestore(bridge = AGENT_BRIDGE, port = THREAT_PROXY_P
     '*nat',
     `:${ nat } - [0:0]`,
     ...unscanned(nat),
-    `-A ${ nat } -p tcp -m multiport --dports 80,443 -j REDIRECT --to-ports ${ port }`,
+    ...(state === 'enforced' ? [`-A ${ nat } -p tcp -m multiport --dports 80,443 -j REDIRECT --to-ports ${ port }`] : []),
     'COMMIT',
     '*filter',
     `:${ filter } - [0:0]`,
@@ -73,7 +76,9 @@ export function renderEgressRestore(bridge = AGENT_BRIDGE, port = THREAT_PROXY_P
     ...unscanned(filter),
     `-A ${ filter } -p udp --dport 53 -j RETURN`,
     `-A ${ filter } -p tcp --dport 53 -j RETURN`,
-    `-A ${ filter } -p tcp -m multiport --dports 80,443 -j REJECT --reject-with tcp-reset`,
+    state === 'direct'
+      ? `-A ${ filter } -p tcp -m multiport --dports 80,443 -j ACCEPT`
+      : `-A ${ filter } -p tcp -m multiport --dports 80,443 -j REJECT --reject-with tcp-reset`,
     `-A ${ filter } -p udp -j REJECT --reject-with icmp-port-unreachable`,
     `-A ${ input } -i lo -j RETURN`,
     `-A ${ input } -i ${ bridge } -m conntrack --ctstate DNAT -j RETURN`,
@@ -89,10 +94,11 @@ export function renderEgressRestore(bridge = AGENT_BRIDGE, port = THREAT_PROXY_P
  * enforce off it removes jumps and chains. Safe to run on every boot, after a
  * Docker restart and before every agent launch.
  */
-export function egressPolicyScript(enforce: boolean, bridge = AGENT_BRIDGE, port = THREAT_PROXY_PORT): string {
+export function egressPolicyScript(state: EgressPolicyState | boolean, bridge = AGENT_BRIDGE, port = THREAT_PROXY_PORT): string {
+  const policy: EgressPolicyState = state === true ? 'enforced' : state === false ? 'off' : state;
   const { nat, filter, input } = EGRESS_CHAINS;
 
-  if (!enforce) {
+  if (policy === 'off') {
     return `set -eu
 while iptables -t nat -D PREROUTING -i ${ bridge } -j ${ nat } 2>/dev/null; do :; done
 for fwd in DOCKER-USER FORWARD; do
@@ -129,8 +135,10 @@ fi
 }
 
 /** argv that applies (or removes) the egress policy in the guest, as root. */
-export function egressPolicyCommand(enforce: boolean): string[] {
-  return ['sh', '-c', egressPolicyScript(enforce), 'sulla-egress', renderEgressRestore()];
+export function egressPolicyCommand(state: EgressPolicyState | boolean): string[] {
+  const policy: EgressPolicyState = state === true ? 'enforced' : state === false ? 'off' : state;
+
+  return ['sh', '-c', egressPolicyScript(policy), 'sulla-egress', renderEgressRestore(policy)];
 }
 
 /**
@@ -171,12 +179,12 @@ export function connectServiceNetworkCommand(network: string, container: string)
 /** Creates the state directories with the owners and modes the proxy expects. Runs as root in the guest. */
 export const PROVISION_THREAT_PROXY_STATE_SCRIPT = `set -eu
 root=$1; uid=$2
-for path in "$root" "$root/mitm" "$root/cache" "$root/config" "$root/blocklist" "$root/public"; do
+for path in "$root" "$root/mitm" "$root/cache" "$root/config" "$root/blocklist" "$root/public" "$root/log"; do
   [ ! -L "$path" ] || { echo "threat proxy state path must not be a symlink: $path" >&2; exit 1; }
 done
 install -d -m 0755 -o 0 -g 0 "$root"
 chown 0:0 "$root"; chmod 0755 "$root"
-for dir in mitm cache config; do
+for dir in mitm cache config log; do
   install -d -m 0700 -o "$uid" -g "$uid" "$root/$dir"
   chown "$uid:$uid" "$root/$dir"; chmod 0700 "$root/$dir"
 done
@@ -217,7 +225,7 @@ export function threatProxyComposeService(image: Record<string, unknown>): Recor
     },
     volumes: [
       bind('mitm', false), bind('cache', false), bind('public', false),
-      bind('config', true), bind('blocklist', true),
+      bind('config', true), bind('blocklist', true), bind('log', false),
     ],
     read_only:    true,
     tmpfs:        ['/tmp'],
@@ -245,18 +253,18 @@ export function threatProxyComposeService(image: Record<string, unknown>): Recor
  * Provider CLIs start through `docker exec`, which inherits container env but
  * not anything the entrypoint exports, so this must be container env.
  */
-export function agentCaTrust(): { bind: string; env: Record<string, string> } {
+export function agentCaTrust(caPresent = true): { bind?: string; env: Record<string, string> } {
   const bundle = `${ AGENT_CA_MOUNT }/ca-bundle.pem`;
 
   return {
-    bind: `${ THREAT_PROXY_PUBLIC_DIR }:${ AGENT_CA_MOUNT }:ro`,
-    env:  {
+    ...(caPresent ? { bind: `${ THREAT_PROXY_PUBLIC_DIR }:${ AGENT_CA_MOUNT }:ro` } : {}),
+    env:  caPresent ? {
       NODE_EXTRA_CA_CERTS: `${ AGENT_CA_MOUNT }/ca.crt`,
       SSL_CERT_FILE:       bundle,
       REQUESTS_CA_BUNDLE:  bundle,
       CURL_CA_BUNDLE:      bundle,
       GIT_SSL_CAINFO:      bundle,
       PIP_CERT:            bundle,
-    },
+    } : {},
   };
 }

@@ -120,6 +120,25 @@ function agentPost(): MessageEnvelope {
 }
 
 describe('OrgMessenger', () => {
+  it('loads participant inbox pages without advancing the sync cursor', async () => {
+    // risk: data accuracy and duplicate/missing inbox rows caused by UI reads consuming sync state
+    const state = new MemoryState(); const delivered: string[] = [];
+    class PagedTransport extends TestTransport {
+      readonly cursors: number[] = [];
+      async pull(cursor: InboxCursor, _limit: number) {
+        this.cursors.push(cursor.since);
+        if (cursor.since === 0) return { messages: Array.from({ length: 50 }, (_, index) => message(`page-${index + 1}`, index + 1)), next: 50 };
+        return { messages: [message('page-51', 51)], next: 51 };
+      }
+    }
+    const transport = new PagedTransport();
+    const result = await messenger(transport, state, delivered).loadInboxMessages();
+
+    expect(result).toHaveLength(51);
+    expect(transport.cursors).toEqual([0, 50]);
+    expect(state.cursors.size).toBe(0);
+  });
+
   it('starts a direct conversation before first send and uses the host-reused pair id', async () => {
     // risk: first contact cannot start or messages target a nonexistent conversation
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
