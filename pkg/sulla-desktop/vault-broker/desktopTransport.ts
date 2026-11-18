@@ -11,6 +11,7 @@ import { Agent, fetch as undiciFetch } from 'undici';
 
 import Electron from 'electron';
 
+import { loopbackOrigin } from '@pkg/utils/instance';
 import paths from '@pkg/utils/paths';
 
 import type { VaultBrokerFetch, VaultBrokerServiceIdentity } from './index';
@@ -116,8 +117,10 @@ export class DesktopVaultTransport {
       console.info(`[vault-broker] stream transport: ${useElectron ? 'electron' : 'node-pinned'}`);
     }
     if (!useElectron) {
+      // Resolved per call: configureInstancePorts() remaps the vault port on offset instances.
+      // Comparing full origins keeps https + loopback-only enforcement and the exact port.
       const target = new URL(input);
-      if (target.protocol !== 'https:' || target.hostname !== '127.0.0.1' || target.port !== '30135') {
+      if (target.origin !== loopbackOrigin('https', 30135)) {
         throw new Error('Vault stream transport only accepts the local vault origin');
       }
       const response = await this.nodeFetch(input, {

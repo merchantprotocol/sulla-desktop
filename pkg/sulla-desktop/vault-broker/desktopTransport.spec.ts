@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { loopbackOrigin } from '@pkg/utils/instance';
 import { DesktopVaultIdentityRepository, DesktopVaultTransport } from './desktopTransport';
+
+// Default: no port offset. Individual specs remap it to simulate an offset instance.
+vi.mock('@pkg/utils/instance', () => ({
+  loopbackOrigin: vi.fn((protocol: string, basePort: number) => `${ protocol }://127.0.0.1:${ basePort }`),
+}));
 
 // desktopTransport.ts imports Electron at module load; the specs inject their own session/safeStorage factories.
 vi.mock('electron', () => {
@@ -39,6 +45,21 @@ describe('DesktopVaultTransport sessions', () => {
     expect(await transport.fetchStream('https://127.0.0.1:30135/stream', { signal: controller.signal })).toBe(nodeResponse);
     expect(nodeFetch).toHaveBeenCalledTimes(1);
     expect(sessionFactory).not.toHaveBeenCalled();
+  });
+
+  it('accepts the remapped vault origin on offset instances and refuses the unmapped port', async() => {
+    // risk: availability — on offset instances every model/MCP/relay stream targets the remapped vault port; refusing it breaks all agents. risk: permissions — a different port must still be refused.
+    const nodeFetch = vi.fn(async() => new Response('stream'));
+    const transport = new DesktopVaultTransport({} as never, () => ({ fetch: vi.fn() }) as never, async() => {}, nodeFetch as never, () => ({ close: vi.fn() } as never));
+    const defaultOrigin = (protocol: string, basePort: number) => `${ protocol }://127.0.0.1:${ basePort }`;
+    vi.mocked(loopbackOrigin).mockImplementation((protocol: string, basePort: number) => `${ protocol }://127.0.0.1:${ basePort + 20 }`);
+    try {
+      expect(await transport.fetchStream('https://127.0.0.1:30155/stream')).toBeDefined();
+      await expect(transport.fetchStream('https://127.0.0.1:30135/stream')).rejects.toThrow('Vault stream transport only accepts the local vault origin');
+      expect(nodeFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.mocked(loopbackOrigin).mockImplementation(defaultOrigin);
+    }
   });
 
   it('routes streams to Electron when the transport kill switch is set', async() => {
