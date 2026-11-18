@@ -21,7 +21,7 @@ import { SULLA_FILES_FUSE_HEALTHCHECK, SULLA_FILES_HEALTHCHECK } from './sullaFi
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import {
-  bundledImageLockError, bundledImagesDir, currentBundledImageLock, ensureBundledImages, pinComposeImages, sullaRuntimeGuestDocker, useBundledImages,
+  bundledImageLockError, bundledImagesDir, BundledImagesDiskSpaceGuard, currentBundledImageLock, ensureBundledImages, pinComposeImages, sullaRuntimeGuestDocker, useBundledImages,
 } from './bundledImages';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 import { composeImageFields, resolveSullaServiceImage, shouldRefreshSullaServiceImage } from './sullaServiceImages';
@@ -128,7 +128,6 @@ function logStartupPhase(phase: string, startedAt: number, details = ''): void {
 }
 
 /** Below this much free space on the Mac a fresh install stops; below the warning level it only warns. */
-const DISK_BLOCK_BYTES = 10 * 1024 ** 3;
 const DISK_WARN_BYTES = 20 * 1024 ** 3;
 
 function formatGB(bytes: number): string {
@@ -675,10 +674,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     if (freeBytes !== undefined && freeBytes < DISK_WARN_BYTES) {
       firstRunTrace('vm', 'low disk space', { freeBytes, disk: dataDisk.source });
-      if (freeBytes < DISK_BLOCK_BYTES && dataDisk.source === 'blank') {
-        throw new SullaRuntimeBootError('disk-space',
-          `Your Mac has ${ formatGB(freeBytes) } free. Sulla needs at least 10 GB. Free up space, then try again.`);
-      }
       console.warn(`[sulla-runtime] only ${ formatGB(freeBytes) } free on the Mac`);
       this.progressTracker.numeric(`Your Mac is low on disk space (${ formatGB(freeBytes) } free)`, 2, 100);
     }
@@ -857,6 +852,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
             generation !== this.#managedServicesGeneration) {
           throw error;
         }
+        if (error instanceof SullaRuntimeBootError && error.reason === 'disk-space') {
+          await this.setState(State.ERROR);
+          mainEvents.emit('sulla-managed-services-failed');
+          return;
+        }
         firstRunTrace('services', 'core services failed; retrying', { attempt: attempt + 1, error });
         if (attempt >= 3 && !reportedFailure) {
           reportedFailure = true;
@@ -1003,12 +1003,31 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
     if (!lock || !imagesDir) return;
     // A full Mac fails `docker load` partway with an error that names nothing.
-    if (reportProgress) await this.assertDiskSpaceForImages();
+    // Check only after the loader identifies missing images; existing installs
+    // must be allowed to start even when they have little free space.
     const result = await ensureBundledImages({
       lock,
       imagesDir,
       docker:     sullaRuntimeGuestDocker(paths.sullaRuntime),
       filter,
+      beforeLoad: async(missing) => {
+        const guard = new BundledImagesDiskSpaceGuard(
+          () => this.freeDiskBytes(),
+          free => {
+            console.warn(`[sulla-runtime] only ${ formatGB(free) } free on the Mac`);
+            firstRunTrace('vm', 'low disk space', { freeBytes: free });
+            if (reportProgress) this.progressTracker.numeric(`Your Mac is low on disk space (${ formatGB(free) } free)`, 2, 100);
+          },
+        );
+        try {
+          await guard.assertCanLoad(missing, lock.images.filter(filter).length);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          firstRunTrace('vm', 'not enough disk space to load images', { message });
+          mainEvents.emit('sulla-backend-start-failed', { reason: 'disk-space', message });
+          throw new SullaRuntimeBootError('disk-space', message);
+        }
+      },
       onProgress: reportProgress
         ? (done, total, image) => this.progressTracker.numeric(`Loading bundled image ${ image.name }`, done, total)
         : undefined,
@@ -1041,18 +1060,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
       return undefined;
     }
-  }
-
-  /** Before loading images: under 10 GB free stops with a clear reason. */
-  private async assertDiskSpaceForImages(): Promise<void> {
-    const free = await this.freeDiskBytes();
-
-    if (free === undefined || free >= DISK_BLOCK_BYTES) return;
-    const message = `Your Mac has ${ formatGB(free) } free. Sulla needs at least 10 GB to finish setting up. Free up space, then try again.`;
-
-    firstRunTrace('vm', 'not enough disk space to load images', { freeBytes: free });
-    mainEvents.emit('sulla-backend-start-failed', { reason: 'disk-space', message });
-    throw new Error(message);
   }
 
   /**
