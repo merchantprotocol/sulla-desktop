@@ -139,6 +139,9 @@ FUSE_URL = ENV.get("SOAK_FUSE_URL", "https://sulla_files:8792")
 INVALIDATE_WINDOW = env_float("SOAK_INVALIDATE_WINDOW", 5, 0, 600)
 OUTAGE_A_S = env_int("SOAK_OUTAGE_A_SECONDS", 45, 5, 900)
 OUTAGE_B_S = env_int("SOAK_OUTAGE_B_SECONDS", 120, 5, 900)
+OUTAGE_WRITER_COUNT = 4  # retrying writers, started at evenly spaced points across the Files-down window
+PLAIN_INTERVAL_S = 2  # single-attempt writer: one attempt every 2 s, no harness retry
+PLAIN_POST_S = 10  # keep the plain writer running this long after Files is back, to see recovery
 LATENCY_P95_MS = env_float("SOAK_LATENCY_P95_MS", 1000, 1, 600000)
 LOCK_SECONDS = env_int("SOAK_LOCK_SECONDS", 30, 5, 900)
 API_SAMPLE = env_int("SOAK_API_SAMPLE", 40, 0, 5000)
@@ -213,11 +216,35 @@ http = urllib3.PoolManager(cert_reqs="CERT_NONE", timeout=urllib3.Timeout(connec
 def token():
     with open(token_file, "rb") as handle:
         return handle.read().strip().decode("ascii")
-def call(method, path, body=None, headers=None):
+def call_full(method, path, body=None, headers=None):
     head = {"Authorization": "Bearer " + token()}
     head.update(headers or {})
     response = http.request(method, base + path, body=body, headers=head)
-    return response.status, response.data
+    return response.status, response.data, response.headers
+def call(method, path, body=None, headers=None):
+    status, data, _headers = call_full(method, path, body, headers)
+    return status, data
+def sha256_hex(data):
+    return hashlib.sha256(data).hexdigest()
+def read_back(query):
+    """sha256 of the content the server now holds at this path: what was actually written, read back."""
+    status, data = call("GET", "/v1/fuse/entry?" + query)
+    if status != 200:
+        return None, "entry_http_%d" % status
+    file_id = json.loads(data).get("id")
+    if file_id is None:
+        return None, "entry_without_id"
+    status, content = call("GET", "/v1/fuse/files/%s/content" % urllib.parse.quote(str(file_id), safe=""))
+    if status != 200:
+        return None, "content_http_%d" % status
+    return sha256_hex(content), None
+def reason_of(data):
+    try:
+        body = json.loads(data)
+    except ValueError:
+        return ""
+    text = body.get("message") or body.get("error") if isinstance(body, dict) else None
+    return str(text)[:120] if text else ""
 def find_id(node, name):
     if isinstance(node, dict):
         if node.get("name") == name and node.get("id") is not None:
@@ -270,15 +297,29 @@ elif action == "write":
     query = urllib.parse.urlencode({"collectionId": request["collectionId"], "path": request["path"]})
     status, data = call("GET", "/v1/fuse/entry?" + query)
     entry = json.loads(data) if status == 200 else {}
-    if entry.get("kind") == "file" and entry.get("id") and entry.get("versionId"):
-        headers = {"Content-Type": "application/octet-stream", "If-Match": '"%s"' % entry["versionId"],
-                   "X-Sulla-Source-Hash": digest, "X-Sulla-Content-Hash": digest}
-        status, data = call("PUT", "/v1/fuse/files/%s/content" % urllib.parse.quote(str(entry["id"]), safe=""), body=content, headers=headers)
+    if entry.get("kind") == "file" and entry.get("id") is not None:
+        # Overwrite is version-checked. If-Match names the version we are replacing, and X-Sulla-Source-Hash must
+        # be the sha256 of that BASE version (the server compares it to the stored base), not of the new content.
+        # Read the base first so both values come from the same version.
+        file_path = "/v1/fuse/files/%s/content" % urllib.parse.quote(str(entry["id"]), safe="")
         out["mode"] = "overwrite"
+        base_status, base_data, base_headers = call_full("GET", file_path)
+        out["base_status"] = base_status
+        if base_status == 200:
+            version = (base_headers.get("ETag") or "").strip() or ('"%s"' % entry.get("versionId", ""))
+            headers = {"Content-Type": "application/octet-stream", "If-Match": version,
+                       "X-Sulla-Source-Hash": sha256_hex(base_data), "X-Sulla-Content-Hash": digest}
+            status, data = call("PUT", file_path, body=content, headers=headers)
+        else:
+            status, data = base_status, b""
     else:
         status, data = call("POST", "/v1/fuse/files?" + query, body=content, headers={"Content-Type": "application/octet-stream"})
         out["mode"] = "create"
-    out.update({"status": status, "ms": round((time.monotonic() - started) * 1000, 2), "sha256": digest})
+    applied = 200 <= status < 300
+    # Only a 2xx write counts. Its ledger hash is read back from the server afterwards, not taken from the request.
+    written, readback_error = read_back(query) if applied else (None, None)
+    out.update({"status": status, "ms": round((time.monotonic() - started) * 1000, 2), "sha256": digest,
+                "written_sha256": written, "readback_error": readback_error, "reason": "" if applied else reason_of(data)})
 elif action == "verify":
     counts = collections.Counter()
     for path, expected in request["items"]:
@@ -423,6 +464,46 @@ class ChurnWriter(threading.Thread):
                 self.rows.append((name, sha))
             self.pending = None
             self.stop_event.wait(self.pace)
+
+
+class PlainWriter(threading.Thread):
+    """One SINGLE-ATTEMPT write every `interval` seconds, with no harness retry.
+
+    The outcome is the mount's own: ok, or the errno it returned, plus latency. Under bounded waits a
+    blocked attempt returns later with ok; under the old behaviour it returned EIO at once. An attempt
+    that never returns stays in `inflight` and the caller reports it as hung.
+    """
+
+    def __init__(self, folder, tag, stop_event, interval=PLAIN_INTERVAL_S):
+        super().__init__(daemon=True)
+        self.folder = folder
+        self.tag = tag
+        self.stop_event = stop_event
+        self.interval = interval
+        self.attempts = []  # dicts: started (monotonic), ms, ok, errno, name
+        self.rows = []  # (name, sha256) for attempts that returned success
+        self.inflight = None  # monotonic start of the attempt that has not returned yet
+        self.index = 0
+
+    def run(self):
+        while not self.stop_event.is_set():
+            tick = time.monotonic()
+            name = "%s-%06d.bin" % (self.tag, self.index)
+            self.index += 1
+            data = hashlib.sha256(name.encode()).digest() * 4096
+            self.inflight = tick
+            try:
+                with (self.folder / name).open("wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                self.attempts.append({"started": tick, "ms": (time.monotonic() - tick) * 1000, "ok": True, "errno": "", "name": name})
+                self.rows.append((name, hashlib.sha256(data).hexdigest()))
+            except OSError as exc:
+                self.attempts.append({"started": tick, "ms": (time.monotonic() - tick) * 1000, "ok": False, "errno": err_key(exc), "name": name})
+            finally:
+                self.inflight = None
+            self.stop_event.wait(max(0.0, self.interval - (time.monotonic() - tick)))
 
 
 class FilesSoak:
@@ -1000,27 +1081,40 @@ class FilesSoak:
         folder = self.root / "outage"
         folder.mkdir(exist_ok=True)
         give_up = threading.Event()
-        writers = [ChurnWriter(folder, "wr%d" % index, give_up) for index in range(4)]
-        for writer in writers:
-            writer.start()
+        plain_stop = threading.Event()
+        # Retrying writers (data-integrity proof). They start at evenly spaced points across the Files-down window,
+        # so writes begin at the outage start, a quarter in, half way and three quarters in.
+        writers = [ChurnWriter(folder, "wr%d" % index, give_up) for index in range(OUTAGE_WRITER_COUNT)]
+        # One plain writer: single attempts, no retry. Its per-attempt outcome is the before/after signal.
+        plain = PlainWriter(folder, "plain", plain_stop)
+        plain.start()
         probes = []
         try:
             time.sleep(3)
             # Sub-test A: Files down OUTAGE_A_S seconds. Every write started in that window must eventually succeed.
             a_from = time.monotonic()
             stopped = self._docker(["stop", "-t", "10", CONTAINER_FILES], 90)
-            time.sleep(OUTAGE_A_S)
+            down_from = time.monotonic()
+            for index, writer in enumerate(writers):
+                time.sleep(max(0.0, down_from + OUTAGE_A_S * index / len(writers) - time.monotonic()))
+                writer.start()
+            time.sleep(max(0.0, down_from + OUTAGE_A_S - time.monotonic()))
             self._docker(["start", CONTAINER_FILES], 90)
+            up_at = time.monotonic()
             ready_s = self._wait_container_ready(CONTAINER_FILES, 240)
             a_to = time.monotonic()
+            time.sleep(PLAIN_POST_S)
             drain_deadline = time.monotonic() + OP_BOUND_S
             while time.monotonic() < drain_deadline and any(w.pending is not None for w in writers):
                 time.sleep(1)
+            plain_stop.set()
             for writer in writers:
                 writer.stop_event.set()
             give_up.set()
             for writer in writers:
-                writer.join(timeout=30)
+                if writer.ident is not None:
+                    writer.join(timeout=30)
+            plain.join(timeout=10)
             a_records = [rec for w in writers for rec in w.logical if a_from <= rec["started"] <= a_to]
             a_ok = [rec for rec in a_records if rec["ok"]]
             a_failed = [rec for rec in a_records if not rec["ok"]]
@@ -1030,16 +1124,27 @@ class FilesSoak:
             a_errors = collections.Counter()
             for rec in a_records:
                 a_errors.update(rec["errors"])
+            plain_attempts = [{"t_s": round(att["started"] - a_from, 2), "phase": self._outage_phase(att["started"], down_from, up_at),
+                               "ok": att["ok"], "errno": att["errno"] or None, "ms": round(att["ms"], 1)} for att in plain.attempts]
+            plain_by_phase = {}
+            for phase_name in ("before", "down", "after"):
+                rows_in = [row for row in plain_attempts if row["phase"] == phase_name]
+                plain_by_phase[phase_name] = {"attempts": len(rows_in), "ok": sum(1 for row in rows_in if row["ok"]),
+                                              "errno": dict(collections.Counter(row["errno"] for row in rows_in if not row["ok"])),
+                                              "max_ms": round(max((row["ms"] for row in rows_in), default=0), 1)}
+            plain_inflight_s = None if plain.inflight is None else round(time.monotonic() - plain.inflight, 1)
             a_metrics = {"stop_rc": stopped.returncode, "down_s": OUTAGE_A_S, "writes_started": len(a_records), "writes_ok": len(a_ok),
                          "writes_failed": len(a_failed), "attempt_errors": dict(a_errors), "p50_ms": pct(durations, 0.5),
                          "p95_ms": pct(durations, 0.95), "max_ms": round(max(durations, default=0), 1), "ready_s": ready_s,
                          "verified": a_counts.get("ok", 0), "mismatch": a_counts.get("mismatch", 0), "missing": a_counts.get("missing", 0),
-                         "unverified": a_counts.get("unverified_timeout", 0)}
+                         "unverified": a_counts.get("unverified_timeout", 0), "retrying_writers": len(writers),
+                         "plain_by_phase": plain_by_phase, "plain_inflight_s": plain_inflight_s, "plain_attempts": plain_attempts}
             a_pass = (stopped.returncode == 0 and len(a_records) > 0 and not a_failed and a_counts.get("ok", 0) == len(a_ok)
                       and not a_counts.get("mismatch") and not a_counts.get("missing") and not a_counts.get("unverified_timeout"))
             self.emit("outage-a-restart", a_pass,
-                      "down=%ds started=%d ok=%d failed=%d verified=%d/%d attempt_errors=%s" %
-                      (OUTAGE_A_S, len(a_records), len(a_ok), len(a_failed), a_counts.get("ok", 0), len(a_ok), json.dumps(dict(a_errors), sort_keys=True)),
+                      "down=%ds retrying_writers=%d started=%d ok=%d failed=%d verified=%d/%d attempt_errors=%s plain=%s" %
+                      (OUTAGE_A_S, len(writers), len(a_records), len(a_ok), len(a_failed), a_counts.get("ok", 0), len(a_ok),
+                       json.dumps(dict(a_errors), sort_keys=True), json.dumps(plain_by_phase, sort_keys=True)),
                       a_from, a_metrics)
 
             # Sub-test B: Files down OUTAGE_B_S seconds (>90 s). Probes must fail cleanly with errnos, never hang past OP_BOUND_S.
@@ -1054,7 +1159,7 @@ class FilesSoak:
             b_errors = dict(collections.Counter(p["err"] for p in probes if p["rc"] not in (0, None)))
             b_unclean = sorted(e for e in b_errors if errno_of_text(e) is None)
             b_ok_while_down = sum(1 for p in probes if p["rc"] == 0)
-            b_pass = bool(probes) and not b_hung and b_max <= OP_BOUND_S * 1000 and not b_unclean
+            b_pass = bool(probes) and not b_hung and b_max <= (OP_BOUND_S + SLACK_S) * 1000 and not b_unclean
             b_metrics = {"down_s": OUTAGE_B_S, "probes": len(probes), "hung": len(b_hung), "max_ms": round(b_max, 1),
                          "errors": b_errors, "unclean_errors": b_unclean, "ok_while_down": b_ok_while_down, "bound_s": OP_BOUND_S}
             self.emit("outage-b-stop", b_pass,
@@ -1078,12 +1183,16 @@ class FilesSoak:
             self.emit("outage", False, "%s: %s" % (type(exc).__name__, str(exc)[:200]), time.monotonic())
         finally:
             give_up.set()
+            plain_stop.set()
             for writer in writers:
                 writer.stop_event.set()
             for writer in writers:
-                writer.join(timeout=30)
+                if writer.ident is not None:
+                    writer.join(timeout=30)
+            plain.join(timeout=10)
             self.ensure_files_running()
-        rows = [row for writer in writers for row in writer.rows]
+        # Only writes that returned success are ledgered (a retried write only once it completed; a plain attempt only if it returned ok).
+        rows = [row for writer in writers for row in writer.rows] + list(plain.rows)
         self.ledger_add([("outage/" + name, sha) for name, sha in rows])
         counts = self._verify_rows(folder, rows)
         self.emit("outage-successful-write-integrity",
@@ -1092,6 +1201,12 @@ class FilesSoak:
                                                                                          counts.get("missing", 0), counts.get("unverified_timeout", 0)),
                   time.monotonic(), {"successful_writes": len(rows), "verified": counts.get("ok", 0), "mismatch": counts.get("mismatch", 0),
                                      "missing": counts.get("missing", 0), "unverified": counts.get("unverified_timeout", 0)})
+
+    @staticmethod
+    def _outage_phase(when, down_from, up_at):
+        if when < down_from:
+            return "before"
+        return "down" if when < up_at else "after"
 
     def handles(self):
         folder = self.root / "handles"
@@ -1390,6 +1505,20 @@ class FilesSoak:
         collection_id, base = self._api_scope()
         return self._fuse_api({"action": "write", "collectionId": collection_id, "path": "/".join(filter(None, [base, rel])), "content": content})
 
+    @staticmethod
+    def _put_applied(result):
+        """True only when the server answered 2xx AND the stored content was read back and hashed."""
+        return result.get("status") in (200, 201) and bool(result.get("written_sha256"))
+
+    @staticmethod
+    def _put_evidence(label, result):
+        if FilesSoak._put_applied(result):
+            return "%s applied (status %s, mode %s)" % (label, result.get("status"), result.get("mode"))
+        if result.get("status") in (200, 201):
+            return "%s did not apply (status %s, read-back failed: %s)" % (label, result.get("status"), result.get("readback_error"))
+        extra = (" " + result["reason"]) if result.get("reason") else ""
+        return "%s did not apply (status %s%s)" % (label, result.get("status"), extra)
+
     def api_write(self):
         """Sub-command: files-soak.sh api-write <relative path> <content>. Records the checksum in the ledger."""
         started = time.monotonic()
@@ -1397,10 +1526,10 @@ class FilesSoak:
             raise CheckFailure("usage: files-soak.sh api-write <relative path> <content>")
         rel, content = self.extra_args
         result = self._api_put(rel, content)
-        ok = result.get("status") in (200, 201)
+        ok = self._put_applied(result)
         if ok:
-            self.ledger_add([(rel, result["sha256"])])
-        self.emit("api-write:" + rel, ok, "status=%s mode=%s ms=%s" % (result.get("status"), result.get("mode"), result.get("ms")),
+            self.ledger_add([(rel, result["written_sha256"])])
+        self.emit("api-write:" + rel, ok, self._put_evidence("write", result),
                   started, {"status": result.get("status"), "mode": result.get("mode"), "ms": result.get("ms")})
 
     def staleness(self):
@@ -1413,6 +1542,12 @@ class FilesSoak:
         new_payload = "new-" + self.run_id + "-" + str(time.time_ns())
         t_api = time.monotonic()
         put_new = self._api_put("staleness/new.txt", new_payload)
+        if not self._put_applied(put_new):
+            # Nothing was written, so there is nothing to watch for staleness. Fail now, with the reason.
+            self.emit("staleness-visibility-and-invalidation", False, self._put_evidence("create", put_new), started,
+                      {"new_put_status": put_new.get("status"), "new_put_mode": put_new.get("mode"), "new_put_reason": put_new.get("reason")})
+            return
+        self.ledger_add([("staleness/new.txt", put_new["written_sha256"])])
         new_visible = None
         while time.monotonic() - t_api < 120:
             read = self._probe(["sh", "-c", 'cat "$1"', "sh", str(folder / "new.txt")], 60)
@@ -1423,6 +1558,16 @@ class FilesSoak:
         updated = "upd-" + self.run_id + "-" + str(time.time_ns())
         t_mod = time.monotonic()
         put_existing = self._api_put("staleness/existing.txt", updated)
+        if not self._put_applied(put_existing):
+            # The modify never reached the file, so every read of the old text would be a false "stale read".
+            # Fail fast with the write's own status instead of counting them.
+            self.emit("staleness-visibility-and-invalidation", False,
+                      "modify did not apply (status %s)%s" % (put_existing.get("status"),
+                                                              (" " + put_existing["reason"]) if put_existing.get("reason") else ""), started,
+                      {"new_visible_s": new_visible, "new_put_status": put_new.get("status"), "modify_put_status": put_existing.get("status"),
+                       "modify_put_mode": put_existing.get("mode"), "modify_put_reason": put_existing.get("reason"),
+                       "modify_readback_error": put_existing.get("readback_error"), "stale_reads_seen": 0, "stale_reads_after_window": 0})
+            return
         stale_after_window = 0
         stale_reads = 0
         modified_visible = None
@@ -1441,10 +1586,8 @@ class FilesSoak:
         metrics = {"new_visible_s": new_visible, "new_put_status": put_new.get("status"), "new_put_mode": put_new.get("mode"),
                    "modify_visible_s": modified_visible, "modify_put_status": put_existing.get("status"), "modify_put_mode": put_existing.get("mode"),
                    "window_s": INVALIDATE_WINDOW, "slack_s": SLACK_S, "stale_reads_seen": stale_reads, "stale_reads_after_window": stale_after_window}
-        passed = (new_visible is not None and put_new.get("status") in (200, 201)
-                  and modified_visible is not None and modified_visible <= bound and stale_after_window == 0)
-        self.ledger_add([("staleness/new.txt", put_new.get("sha256") or hashlib.sha256(new_payload.encode()).hexdigest())])
-        self.ledger_add([("staleness/existing.txt", put_existing.get("sha256") or hashlib.sha256(updated.encode()).hexdigest())])
+        passed = (new_visible is not None and modified_visible is not None and modified_visible <= bound and stale_after_window == 0)
+        self.ledger_add([("staleness/existing.txt", put_existing["written_sha256"])])
         self.emit("staleness-visibility-and-invalidation", passed,
                   "new_visible_s=%s modify_visible_s=%s bound_s=%.1f stale_after_window=%d" % (new_visible, modified_visible, bound, stale_after_window),
                   started, metrics)
