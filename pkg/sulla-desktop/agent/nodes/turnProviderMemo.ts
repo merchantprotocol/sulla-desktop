@@ -22,6 +22,10 @@ export class TurnProviderMemo {
     const userMessage = [...state.messages].reverse().find(message => message.role === 'user');
     this.turns.set(state, { userMessage, provider, candidates: [...candidates] });
   }
+
+  clear(state: BaseThreadState): void {
+    this.turns.delete(state);
+  }
 }
 
 export const turnProviderMemo = new TurnProviderMemo();

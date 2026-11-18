@@ -28,6 +28,16 @@ describe('turn-scoped agent routing memo', () => {
     expect(memo.get(thread)).toBeUndefined();
   });
 
+  it('forgets the memoized provider for the same user message after clear', () => {
+    // risk: a failed provider stays first for later tool-loop iterations, skipping health-ordered re-resolution
+    const memo = new TurnProviderMemo();
+    const thread = state();
+    memo.set(thread, { getProviderName: () => 'anthropic' } as any, [{ provider: 'anthropic', model: 'claude' }]);
+    expect(memo.get(thread)).toBeDefined();
+    memo.clear(thread);
+    expect(memo.get(thread)).toBeUndefined();
+  });
+
   it('deduplicates the agent definition read across a turn and refreshes on the next message', async () => {
     // risk: repeated database reads saturate the shared PostgreSQL pool during graph fan-out
     const memo = new TurnAgentDefinitionMemo<{ model_choice: string }>();

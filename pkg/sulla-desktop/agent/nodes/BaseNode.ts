@@ -39,6 +39,7 @@ import type { StreamContext } from '../controllers/Extractor';
 import { turnAgentDefinitionMemo } from './turnAgentDefinitionMemo';
 import { turnProviderResolver } from './TurnProviderResolver';
 import { TurnOutputCounter } from '../services/TurnOutputCounter';
+import { turnProviderMemo } from './turnProviderMemo';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -1272,6 +1273,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (isContainerLifecycleLost(err)) throw err;
       // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
       if ((err as any)?.unsafeToFallback) throw err;
+      // The failed provider must not stay first for later tool-loop iterations in this turn; re-resolve with health ordering.
+      turnProviderMemo.clear(state);
 
       const candidates = new ModelRecoveryPolicy().candidates(this.routingCandidates, {
         provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '',
