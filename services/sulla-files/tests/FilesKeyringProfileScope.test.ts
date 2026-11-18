@@ -9,6 +9,20 @@ import { FilesKeyring } from '../src/keyring.js';
 type Internals = { master: Buffer; cache: Map<string, { data: Uint8Array; dedup: Uint8Array }> };
 
 describe('FilesKeyring profile scope', () => {
+  it('returns independent key buffers and close only zeroizes the private cache', async() => {
+    // risk: data integrity — lock/restart must not mutate key bytes already held by an in-flight writer.
+    const keyring = new FilesKeyring({} as never);
+    const internals = keyring as unknown as Internals;
+    internals.master = Buffer.alloc(32, 1);
+    const cached = { data:Buffer.alloc(32, 0x31), dedup:Buffer.alloc(32, 0x32) };
+    internals.cache.set(`profile_unscoped\u0000col-1`, cached);
+    const first = await keyring.keys('col-1'); const second = await keyring.keys('col-1');
+    expect(first.data).not.toBe(second.data); expect(first.dedup).not.toBe(second.dedup);
+    keyring.close();
+    expect(first.data.every(byte => byte === 0x31)).toBe(true);
+    expect(first.dedup.every(byte => byte === 0x32)).toBe(true);
+  });
+
   it('zeroizes cached collection keys for one profile and keeps the other', () => {
     // risk: key lifecycle — sign-out of one account must erase only that account's collection keys.
     let active = 'profile_a';

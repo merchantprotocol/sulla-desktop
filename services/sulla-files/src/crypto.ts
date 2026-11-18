@@ -42,6 +42,7 @@ export class ChunkCrypto {
   }
 
   async encrypt(value:Uint8Array, key:Uint8Array, context:string):Promise<Envelope> {
+    this.assertNonZeroKey(key);
     await this.aead.ready;
     const nonce = this.nonces(24);
     const ciphertext = this.aead.crypto_aead_xchacha20poly1305_ietf_encrypt(value, Buffer.from(context), null, nonce, key);
@@ -50,6 +51,7 @@ export class ChunkCrypto {
   }
 
   async decrypt(value:Envelope, key:Uint8Array, context:string):Promise<Uint8Array> {
+    this.assertNonZeroKey(key, true);
     await this.aead.ready;
     return this.aead.crypto_aead_xchacha20poly1305_ietf_decrypt(null, this.bytes(value.ciphertext), Buffer.from(context), this.bytes(value.nonce), key);
   }
@@ -75,6 +77,7 @@ export class ChunkCrypto {
   }
 
   async encryptChunk(value:Uint8Array, key:Uint8Array, id:string):Promise<Buffer> {
+    this.assertNonZeroKey(key);
     const compressed = (zlib as any).zstdCompressSync(Buffer.from(value), { level: 3 }) as Buffer;
     return Buffer.from(JSON.stringify(await this.encrypt(compressed, key, `sulla:file-chunk:v1:${ id }`)));
   }
@@ -91,6 +94,14 @@ export class ChunkCrypto {
     const plain = await this.decryptChunk(value, dataKey, id, expectedPlainBytes);
     if (this.chunkId(plain, dedupKey) !== id) throw new Error(`Decrypted chunk identity mismatch for ${ id }`);
     return plain;
+  }
+
+  private assertNonZeroKey(key:Uint8Array, programmingError = false):void {
+    const zero = Buffer.alloc(key.byteLength);
+    if (key.byteLength !== 32 || timingSafeEqual(Buffer.from(key), zero)) {
+      if (programmingError) throw new Error('All-zero key passed to Files decryption');
+      throw Object.assign(new Error('Collection key is unavailable'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+    }
   }
 
   private b64(value:Uint8Array):string { return Buffer.from(value).toString('base64url') }

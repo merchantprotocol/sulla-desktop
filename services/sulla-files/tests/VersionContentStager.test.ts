@@ -49,12 +49,43 @@ describe('VersionContentStager active-key assertion', () => {
     // risk: data integrity — confirms correct collection key writes still pass the guard and are decryptable.
     const keys = { data:Buffer.alloc(32, 4), dedup:Buffer.alloc(32, 5) };
     const store = new MemoryChunkStore(); const stager = new VersionContentStager(
-      { keys:async() => keys, keysFresh:async() => ({ data:Buffer.from(keys.data), dedup:Buffer.from(keys.dedup) }) }, store,
+      { keys:async() => ({ data:Buffer.from(keys.data), dedup:Buffer.from(keys.dedup) }), keysFresh:async() => ({ data:Buffer.from(keys.data), dedup:Buffer.from(keys.dedup) }) }, store,
       { chunkId, encryptChunk, encryptChunkForCollection:(plain, key, id, current, collection) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, current, collection), decryptAndVerifyChunk },
     );
     await stager.stage('collection', bytes);
     expect(store.chunks.size).toBe(1);
     const id = chunkId(bytes, keys.dedup);
     await expect(decryptAndVerifyChunk(store.chunks.get(id)!, keys.data, keys.dedup, id, bytes.length)).resolves.toEqual(bytes);
+  });
+});
+
+
+describe('chunk encryption key guard', () => {
+  it('refuses an all-zero collection key with a retriable unavailable error', async() => {
+    // risk: data integrity — a lock race must not persist ciphertext encrypted with zeroized key material.
+    await expect(encryptChunk(Buffer.from('secret fixture'), Buffer.alloc(32), 'chunk-id'))
+      .rejects.toMatchObject({ status:503, code:'collection_key_unavailable', retryAfter:1 });
+  });
+});
+
+
+describe('VersionContentStager key-lifecycle race', () => {
+  it('never stores a chunk when close zeroizes a cached key during store I/O', async() => {
+    // risk: data integrity — service lock/restart during an awaited blob lookup cannot commit zero-key ciphertext.
+    const cached = { data:Buffer.alloc(32, 0x41), dedup:Buffer.alloc(32, 0x42) };
+    const active = { data:Buffer.from(cached.data), dedup:Buffer.from(cached.dedup) };
+    let closed = false;
+    const keyring = {
+      keys:async() => cached,
+      keysFresh:async() => ({ data:Buffer.from(active.data), dedup:Buffer.from(active.dedup) }),
+      invalidate:() => undefined,
+    };
+    const store = new MemoryChunkStore();
+    store.storedSize = async() => { cached.data.fill(0); cached.dedup.fill(0); closed = true; return undefined };
+    const stager = new VersionContentStager(keyring, store,
+      { chunkId, encryptChunk, encryptChunkForCollection:(plain, key, id, current, collection) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, current, collection), decryptAndVerifyChunk });
+    await expect(stager.stage('collection', Buffer.from('race fixture')))
+      .rejects.toMatchObject({ status:503, code:'collection_key_unavailable' });
+    expect(closed).toBe(true); expect(store.chunks.size).toBe(0);
   });
 });

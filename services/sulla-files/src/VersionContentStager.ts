@@ -61,6 +61,7 @@ export class VersionContentStager {
   private async stageContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
     TransactionScope.assertOutside('staging version content (key lookup, encrypt, fsync)');
     const { data, dedup } = await this.keyring.keys(collectionId);
+    try {
     if (this.keyring.keysFresh) {
       const active = await this.keyring.keysFresh(collectionId);
       try {
@@ -113,5 +114,6 @@ export class VersionContentStager {
       manifestHash: createHash('sha256').update(JSON.stringify({ ids: chunkIds, size: bytes.length })).digest('hex'),
       sourceHash: createHash('sha256').update(bytes).digest('hex'),
     };
+    } finally { data.fill(0); dedup.fill(0) }
   }
 }
