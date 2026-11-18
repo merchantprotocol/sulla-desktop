@@ -70,7 +70,9 @@ IDEMPOTENT_RETRY_METHODS = ("DELETE", "GET", "HEAD", "PUT")
 MAX_CONFLICT_RETRIES = 3
 # A lost Files database connection, a restart or a saturated VM answers 5xx or times out.
 # These failures are retried until the configured request deadline (MAX_WAIT_SECONDS) before clients see EIO.
-TRANSIENT_STATUSES = (500, 502, 503, 504)
+# 408 (request timeout) and 429 (rate limited) are transient too; a 429 is retry-safe for every method
+# because Files rejected it before doing any work (see the retry gate in _request).
+TRANSIENT_STATUSES = (408, 429, 500, 502, 503, 504)
 MAX_WAIT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_MAX_WAIT_S", "75")))
 STARTUP_TREE_WAIT_SECONDS = min(MAX_WAIT_SECONDS, max(0.1, float(os.environ.get("SULLA_FILES_FUSE_STARTUP_WAIT_S", "30"))))
 NETWORK_THREAD_LIMIT = max(1, int(os.environ.get("SULLA_FILES_FUSE_NETWORK_THREADS", "64")))
@@ -472,9 +474,11 @@ class FilesApi:
                     transient_status = getattr(error, "status", None) in TRANSIENT_STATUSES
                     # A connect-phase failure (not_sent) never reached Files, so every method may retry it.
                     not_sent = getattr(error, "not_sent", False)
-                    if (transient_transport or transient_status) and (repeatable or not_sent) and time.monotonic() < deadline:
+                    # A 429 is rejected before Files processes it, so it is retry-safe for every method like a connect-phase failure.
+                    rejected_before_processing = not_sent or getattr(error, "status", None) == 429
+                    if (transient_transport or transient_status) and (repeatable or rejected_before_processing) and time.monotonic() < deadline:
                         transient_attempts += 1
-                        ambiguous_attempts = ambiguous_attempts or not not_sent
+                        ambiguous_attempts = ambiguous_attempts or not rejected_before_processing
                         retry_after = getattr(error, "retry_after", None)
                         delay = max(0, retry_after) if retry_after is not None else min(5.0, 0.1 * (2 ** min(transient_attempts - 1, 6)))
                         time.sleep(min(max(0, deadline - time.monotonic()), delay + random.uniform(0, 0.05)))

@@ -47,6 +47,7 @@ class ErrnoTableTests(unittest.TestCase):
             (409, {"error": "Files mount version changed"}, errno.EPERM),
             (413, {}, errno.EFBIG), (423, {}, errno.EROFS), (409, {"code": "FILE_LOCKED"}, errno.EROFS),
             (500, {}, errno.EIO), (503, {"code": "FILES_DB_RETRYABLE"}, errno.EIO),
+            (408, {}, errno.EIO), (429, {}, errno.EIO),
         )
         for status, detail, expected in cases:
             api = adapter.FilesApi("http://files", "/unused")
@@ -124,6 +125,51 @@ class TransientRetryTests(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 2)
         self.assertLess(max(calls), 0.5)
         self.assertAlmostEqual(now[0], 0.5, places=6)
+
+    # risk: agent-visible EIO — a Files rate limit (429) or request timeout (408) failed the user's read or write at once.
+    def test_429_backs_off_for_retry_after_and_retries_a_create(self):
+        api = self.adapter.FilesApi("http://files", "/unused")
+        calls = []
+
+        def send(path, method, body, headers, **_kwargs):
+            calls.append(method)
+            if len(calls) == 1:
+                rate_limited = failure(errno.EIO, 429, {"error": "Too many requests"})
+                rate_limited.retry_after = 2.0
+                raise rate_limited
+            return 200, {}, b'{"versionId":"v1"}'
+
+        api._send = send
+        self.assertEqual(api._request("/v1/fuse/files", "POST", b"", idempotent=False)[0], 200)
+        self.assertEqual(calls, ["POST", "POST"])
+        # Retry-After is honoured: the first wait is at least the 2 s Files asked for (plus at most the 0.05 s jitter).
+        self.assertTrue(any(2.0 <= delay < 2.1 for delay in self.sleeps), self.sleeps)
+
+    # risk: data integrity — a 408 may mean the request reached Files, so a non-repeatable create must not replay it.
+    def test_408_retries_a_read_but_does_not_replay_a_create(self):
+        api = self.adapter.FilesApi("http://files", "/unused")
+        calls = []
+
+        def send(path, method, body, headers, **_kwargs):
+            calls.append(method)
+            if len(calls) == 1 and method == "GET":
+                raise failure(errno.EIO, 408)
+            return 200, {}, b'{"kind":"file"}'
+
+        api._send = send
+        self.assertEqual(api._request("/v1/fuse/entry?path=a.txt", "GET")[0], 200)
+        self.assertEqual(calls, ["GET", "GET"])
+
+        calls.clear()
+
+        def create_send(path, method, body, headers, **_kwargs):
+            calls.append(method)
+            raise failure(errno.EIO, 408)
+
+        api._send = create_send
+        with self.assertRaises(OSError):
+            api._request("/v1/fuse/files", "POST", b"", idempotent=False)
+        self.assertEqual(calls, ["POST"])
 
     def _outage_api(self, max_wait, refused_until, error_factory):
         """An FilesApi whose connections are refused (or fail with `error_factory`) until a fake clock reaches `refused_until`."""
