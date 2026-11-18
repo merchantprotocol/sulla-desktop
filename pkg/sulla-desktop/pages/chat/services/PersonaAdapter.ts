@@ -343,9 +343,14 @@ export class PersonaAdapter {
   }
 
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
+    // Optimistically expose the thinking state before awaiting the readiness IPC.
+    const sendStartedAt = Date.now();
+    const optimisticRunMessageId = newMessageId();
+    this.controller.transitionRun({ type: 'send', messageId: optimisticRunMessageId, at: sendStartedAt });
     const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
     if (!aiStatus.loading && !aiStatus.connected) {
+      this.controller.transitionRun({ type: 'idle' });
       const createdAt = Date.now();
       this.controller.appendMessage({
         id:        asMessageId(`no-ai-user-${ createdAt }`),

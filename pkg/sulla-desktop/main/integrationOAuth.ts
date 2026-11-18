@@ -27,6 +27,7 @@ import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
 import { flushPendingCredentials, pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { FirstRunAiConnectionStatusCache } from '@pkg/main/FirstRunAiConnectionStatusCache';
 import { classifyIntegrationSaveFailure, integrationSaveFailureMessage } from '@pkg/main/integrationSaveFailure';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -558,8 +559,7 @@ export function initIntegrationOAuthEvents(): void {
     return { success: true, models };
   });
 
-  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
-    assertFirstRunOrMainSender(event);
+  const aiConnectionStatusCache = new FirstRunAiConnectionStatusCache(async() => {
     const aiProviderIds = new Set([
       'claude-code', 'codex',
       ...Object.values(integrations).filter(integration => integration.category === 'AI Infrastructure').map(integration => integration.id),
@@ -574,5 +574,12 @@ export function initIntegrationOAuthEvents(): void {
     } catch {
       return { pending, connected: pending.length > 0, loading: true };
     }
+  });
+  // Integration account mutations arrive on this existing renderer→main event.
+  ipcMainProxy.on('integration-value-changed' as any, () => aiConnectionStatusCache.invalidate());
+
+  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent) => {
+    assertFirstRunOrMainSender(event);
+    return aiConnectionStatusCache.get();
   });
 }
