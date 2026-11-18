@@ -220,7 +220,10 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
     const key = agentWindowRegistry.windowKeyOf(window);
     if (key) agentWindowPersistence.update(key, window.getNormalBounds(), window.isMaximized());
   };
-  for (const event of ['move', 'resize', 'maximize', 'unmaximize'] as const) window.on(event, persistGeometry);
+  window.on('move', persistGeometry);
+  window.on('resize', persistGeometry);
+  window.on('maximize', persistGeometry);
+  window.on('unmaximize', persistGeometry);
   window.on('close', () => { persistGeometry(); agentWindowPersistence.flush(); });
   if (mainBounds.track(window)) {
     if (restoredMainBounds?.fullScreen) window.setFullScreen(true);
