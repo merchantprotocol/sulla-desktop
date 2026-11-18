@@ -5,11 +5,15 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// The tool's protected-settings guard pulls in Desktop main-process modules; the
+// write path under test doesn't depend on it.
+vi.mock('@pkg/main/cloud/cloudSettings', () => ({ isProtectedSetting: () => false }));
+
 // In-memory stand-in for SullaSettingsModel. It stores json/array values as a
 // JSON string and parses them back on read, like the real model does.
 const store = new Map<string, { raw: string; cast?: string }>();
 
-vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({
+vi.mock('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: {
     get: vi.fn(async (property: string, fallback: any = null) => {
       const entry = store.get(property);
@@ -25,7 +29,7 @@ vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({
 
 vi.mock('@pkg/main/cloud/cloudSettings', () => ({ isProtectedSetting: () => false }));
 
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 
 import { SettingsSetWorker } from './set';
 
