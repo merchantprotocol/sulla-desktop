@@ -47,6 +47,8 @@ export abstract class DesktopFilesIpcCommands {
     return filesDetail(result);
   }
   mediaUrl(fileId:string, versionId?:string):Promise<string> { return this.ipc.invoke('files-ui:media-url', { fileId, versionId }) }
+  openHtmlPreview(collectionId:string,fileId:string):Promise<{token:string;url:string}> { return this.ipc.invoke('files:preview:open', { collectionId,fileId }) }
+  async revokeHtmlPreview(token:string):Promise<void> { await this.ipc.invoke('files:preview:revoke', { token }) }
 
   async chooseNativeSource():Promise<boolean> { return Boolean(await this.ipc.invoke('files-experiment:pick-native-source')) }
   listNativeSources():Promise<{ fileId:string; name:string; state:string; lastError?:string; recovery:Record<string, unknown> }[]> { return this.ipc.invoke('files-experiment:list-native-sources') }

@@ -332,6 +332,7 @@
     const $ = id => host.querySelector(`#${id}`);
     const frame = $('frame');
     let src = String(options.source ?? '');
+    let savedSource = String(options.savedSource ?? options.source ?? '');
     // Source editors (the textarea, CodeMirror) hand text back with "\n" line
     // endings. Patch only the span that actually changed back into the
     // original bytes, so CRLF (or mixed) line endings elsewhere are untouched.
@@ -464,7 +465,14 @@
       }
       const policy = previewPolicy(editing, options.canRunScripts);
       frame.setAttribute('sandbox', policy.sandbox);
-      frame.srcdoc = injectDocument(src, policy.run, options.assetBaseUrl);
+      const useSavedUrl = policy.run && options.previewUrl && src === savedSource;
+      if (useSavedUrl) {
+        frame.removeAttribute('srcdoc');
+        frame.src = options.previewUrl;
+      } else {
+        frame.removeAttribute('src');
+        frame.srcdoc = injectDocument(src, policy.run, options.assetBaseUrl);
+      }
       const badge = host.querySelector('.shb-wb-url b');
       if (badge) badge.textContent = policy.run ? 'Scripts running · sandboxed' : 'Preview · scripts don’t run here';
     }
@@ -2223,6 +2231,8 @@
         renderCode();
         render();
       },
+      setSavedSource(value) { savedSource = String(value ?? ''); render(); },
+      setPreviewUrl(value) { options.previewUrl = String(value ?? ''); render(); },
       setSaveState(value) {
         const save = $('save');
         save.classList.toggle('dirty', value !== 'saved');

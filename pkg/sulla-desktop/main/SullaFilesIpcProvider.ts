@@ -10,6 +10,7 @@ import { SullaFilesIpcMediaService } from './SullaFilesIpcMediaService';
 import { SullaFilesIpcNativeSourceHandlers } from './SullaFilesIpcNativeSourceHandlers';
 import { SullaFilesIpcOpenedCopyService } from './SullaFilesIpcOpenedCopyService';
 import { SullaFilesIpcOperationHandlers } from './SullaFilesIpcOperationHandlers';
+import { SullaFilesIpcPreviewService } from './SullaFilesIpcPreviewService';
 import { SullaFilesIpcOriginalRevealService } from './SullaFilesIpcOriginalRevealService';
 import { SullaFilesIpcReferenceHandlers } from './SullaFilesIpcReferenceHandlers';
 import { SullaFilesIpcSettingsHandlers } from './SullaFilesIpcSettingsHandlers';
@@ -55,6 +56,7 @@ export class SullaFilesIpcProvider {
     const api = new SullaFilesIpcApi(client);
     const upload = new SullaFilesIpcUploadService(client);
     const media = new SullaFilesIpcMediaService(protocol, client);
+    const preview = new SullaFilesIpcPreviewService(protocol, api);
     this.deps.registerUseCaseSuggestions(watcher);
     void services.fileProvider().start();
     desktop.onceWillQuit(() => { void services.fileProvider().stop() });
@@ -64,6 +66,7 @@ export class SullaFilesIpcProvider {
     browse.registerFeed(ipc);
     operations.registerOperations(ipc);
     try { media.initialize() } catch (error) { logger.error('Files media protocol failed to initialize:', error) }
+    try { preview.initialize() } catch (error) { logger.error('Files HTML preview protocol failed to initialize:', error) }
     const mountManager = services.mountManager();
     mountManager.on('changed', status => desktop.broadcast('files-ui:native-runtime-changed', status));
     ipc.handle('files-ui:native-runtime', () => mountManager.status());
@@ -77,6 +80,7 @@ export class SullaFilesIpcProvider {
     const uploads = new SullaFilesIpcUploadHandlers(api, upload, media, desktop, logger);
 
     browse.register(ipc);
+    preview.register(ipc);
     new SullaFilesIpcLiveHandlers(api).register(rawIpc);
     operations.register(ipc);
     sharing.register(ipc);

@@ -229,6 +229,7 @@ if (process.platform === 'linux') {
 Electron.protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { secure: true, standard: true } },
   { scheme: 'sulla-files-media', privileges: { secure: true, standard: true, supportFetchAPI: true } },
+  { scheme: 'sulla-files-preview', privileges: { secure: true, standard: true, supportFetchAPI: true } },
 ]);
 
 process.on('unhandledRejection', (reason: any, promise: any) => {

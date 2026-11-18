@@ -80,6 +80,8 @@ export interface FilesDataSource {
   saveContent(request:FilesSaveRequest):Promise<FilesSaveSuccess>;
   detail(fileId:string):Promise<FilesDetail>;
   mediaUrl(fileId:string, versionId?:string):Promise<string>;
+  openHtmlPreview?(collectionId:string,fileId:string):Promise<{token:string;url:string}>;
+  revokeHtmlPreview?(token:string):Promise<void>;
   search(query:string): Promise<{ files:FilesItem[]; coverage:FilesIndexCoverage }>;
   reindex(fileId:string):Promise<void>;
   setPaused(paused:boolean): Promise<FilesSnapshot['status']>;
