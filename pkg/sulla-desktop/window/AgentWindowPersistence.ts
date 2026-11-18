@@ -26,7 +26,8 @@ export class AgentWindowPersistence {
     if (old) Object.assign(old, { bounds, maximized }); else this.records.push({ windowKey: key, bounds, maximized });
     this.schedule();
   }
-  remove(key: string): void { if (!this.quitting) { this.records = this.records.filter(record => record.windowKey !== key); this.write(); } }
+  flush(): void { clearTimeout(this.timer); this.write(); }
+  remove(key: string): void { if (!this.quitting) { this.records = this.records.filter(record => record.windowKey !== key); this.flush(); } }
   private schedule(): void { clearTimeout(this.timer); this.timer = setTimeout(() => this.write(), 350); }
   private write(): void {
     try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); const tmp = `${this.file}.tmp`; fs.writeFileSync(tmp, JSON.stringify(this.records)); fs.renameSync(tmp, this.file); } catch { /* best-effort geometry persistence */ }

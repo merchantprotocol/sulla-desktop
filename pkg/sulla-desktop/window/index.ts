@@ -217,7 +217,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
     if (key) agentWindowPersistence.update(key, window.getNormalBounds(), window.isMaximized());
   };
   for (const event of ['move', 'resize', 'maximize', 'unmaximize'] as const) window.on(event, persistGeometry);
-  window.on('close', persistGeometry);
+  window.on('close', () => { persistGeometry(); agentWindowPersistence.flush(); });
   if (mainBounds.track(window)) {
     if (saved?.fullScreen) window.setFullScreen(true);
     else if (saved?.maximized) window.maximize();
