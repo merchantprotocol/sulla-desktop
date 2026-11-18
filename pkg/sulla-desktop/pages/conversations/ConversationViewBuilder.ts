@@ -71,6 +71,8 @@ export class ConversationViewBuilder {
 
   person(entry: DirectoryPerson): PersonView {
     const presenceClass = this.presenceClass(entry.presence);
+    // The directory reports an agent host (online or not) or names the member's agent.
+    const hasAgent = typeof entry.agentHostOnline === 'boolean' || !!entry.agentName;
     return {
       id: entry.userId,
       name: entry.displayName,
@@ -82,9 +84,8 @@ export class ConversationViewBuilder {
       status: this.statusLine(entry, presenceClass),
       role: typeof entry.role === 'string' ? entry.role.charAt(0).toUpperCase() + entry.role.slice(1) : '',
       agentOnline: !!entry.agentHostOnline,
-      // The directory reports an agent host (online or not) or names the member's agent.
-      hasAgent: typeof entry.agentHostOnline === 'boolean' || !!entry.agentName,
-      agentName: entry.agentName ?? (entry.userId === this.userId ? 'Your agent' : `${entry.displayName.split(/\s+/)[0]}'s agent`),
+      hasAgent,
+      agentName: hasAgent ? (entry.agentName ?? (entry.userId === this.userId ? 'Your agent' : `${entry.displayName.split(/\s+/)[0]}'s agent`)) : '',
     };
   }
 
