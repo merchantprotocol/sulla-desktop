@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ["SULLA_PROXY_NO_AUTOLOAD"] = "1"
@@ -39,6 +40,44 @@ class URLhausLimitTests(unittest.TestCase):
                 handle.writelines(f"host{i}.example\n" for i in range(1_000_001))
             with self.assertRaisesRegex(ValueError, "1,000,000"):
                 url_filter.URLFilter.__new__(url_filter.URLFilter)._read_urlhaus_file(path)
+
+    class Config:
+        generation = 1
+        def refresh(self):
+            pass
+        def get(self, key, default=None):
+            return {"blockMode": "block", "allowlist": []}.get(key, default)
+
+    def make_flow(self):
+        request = SimpleNamespace(pretty_url="https://blocked.example/path", pretty_host="blocked.example", host="blocked.example", headers={}, stream=True)
+        return SimpleNamespace(request=request, response=None, metadata={}, server_conn=None, client_conn=None)
+
+    # risk: URL blocking — blocked requests must not be streamed upstream and get 451.
+    def test_block_verdict_is_applied_without_request_streaming(self):
+        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance.config = self.Config()
+        instance._config_generation = -1
+        instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
+        flow = self.make_flow()
+        instance.requestheaders(flow)
+        self.assertFalse(flow.request.stream)
+        self.assertIsNone(flow.response)
+        instance.request(flow)
+        self.assertEqual(flow.response.status_code, 451)
+
+    # risk: policy delivery — warn mode keeps streaming and annotates the outbound request.
+    def test_warn_verdict_adds_header_and_keeps_streaming(self):
+        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance.config = self.Config()
+        instance.config.get = lambda key, default=None: {"blockMode": "warn", "allowlist": []}.get(key, default)
+        instance._config_generation = -1
+        instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
+        flow = self.make_flow()
+        instance.requestheaders(flow)
+        self.assertTrue(flow.request.stream)
+        self.assertEqual(flow.request.headers["X-Sulla-Threat"], "urlhaus:exact")
+        instance.request(flow)
+        self.assertIsNone(flow.response)
 
 
 if __name__ == "__main__":
