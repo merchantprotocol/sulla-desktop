@@ -12,7 +12,9 @@ import type {
 import type { AgentJob, AgentJobResult, AgentJobTask } from '../../tools/agents/jobRegistry';
 
 /** Sends one prompt to a small model and returns its raw text, or null. */
-export type ResultClassifierModel = (system: string, user: string, signal: AbortSignal) => Promise<string | null>;
+export type ResultClassifierModel = ((system: string, user: string, signal: AbortSignal) => Promise<string | null>) & {
+  timeoutMs?: () => Promise<number>;
+};
 
 /** Where the builder reports whether the model step worked; the card itself never fails. */
 export interface ResultCardLog { info(message: string): void; warn(message: string): void }
@@ -114,14 +116,15 @@ export class AgentResultCardBuilder {
     if (!this.model) return { fallback: 'no model configured' };
     if (!items.some(item => item.report)) return { fallback: 'empty report' };
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeoutMs = await this.model.timeoutMs?.() ?? this.timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const user = items.map((item, index) => `### index ${ index } · ${ item.label } [${ item.status }]\n${ item.report.slice(0, REPORT_LIMIT) }`).join('\n\n');
       const raw = await Promise.race([
         this.model(SYSTEM, user, controller.signal),
         new Promise<null>(resolve => controller.signal.addEventListener('abort', () => resolve(null), { once: true })),
       ]);
-      if (controller.signal.aborted && !raw) return { fallback: `timed out at ${ this.timeoutMs }ms` };
+      if (controller.signal.aborted && !raw) return { fallback: `timed out at ${ timeoutMs }ms` };
       if (!raw) return { fallback: 'model returned nothing' };
       const parsed = this.parse(raw);
       if (!parsed) return { fallback: `unreadable reply: ${ JSON.stringify(raw.slice(0, 80)) }` };
@@ -216,8 +219,15 @@ export const subconsciousResultModel: ResultClassifierModel = async(system, user
     ? await (await import('../../languagemodels/providerBroker')).issueServiceProviderExecutionContext('agent-result-card', providerId, accountId, signal)
     : undefined;
   const response = await llm.chat([{ role: 'system', content: system }, { role: 'user', content: user }], {
-    maxTokens: 1200, temperature: 0, format: 'json', signal, timeoutSeconds: 5, conversationId: 'agent-result-card', executionContext,
+    maxTokens: 1200, temperature: 0, format: 'json', signal, timeoutSeconds: llm.managesOwnLoop() ? 30 : 5, disableCliRecovery: true, conversationId: 'agent-result-card', executionContext,
   });
 
   return response?.content ?? null;
+};
+
+subconsciousResultModel.timeoutMs = async() => {
+  const { getSubconsciousService } = await import('../../languagemodels/index');
+  const llm = await getSubconsciousService();
+
+  return llm?.managesOwnLoop() ? 30_000 : 5_000;
 };

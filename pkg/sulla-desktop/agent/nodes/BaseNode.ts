@@ -17,8 +17,9 @@ import { issueProviderExecutionContext } from '../languagemodels/providerBroker'
 import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
 import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
-import { ProviderFailure } from '../languagemodels/failures';
+import { findVaultFailure, ProviderFailure, VaultUnreachable } from '../languagemodels/failures';
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
+import { VaultUnreachableRecovery } from '../languagemodels/vaultGate';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
@@ -1255,6 +1256,32 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (isContainerLifecycleLost(err)) throw err;
       // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
       if ((err as any)?.unsafeToFallback) throw err;
+      const vaultFailure = findVaultFailure(err);
+      if (vaultFailure instanceof VaultUnreachable) {
+        // A vault outage is not a provider failure: replay this same primary exactly once,
+        // and never route the request to another provider if the replay fails.
+        let replay: NormalizedResponse | null;
+        try {
+          replay = await new VaultUnreachableRecovery().replayPrimary(vaultFailure, () => this.callLLMStreaming(state, messages, {
+            maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
+            signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
+            profileId: (state.metadata as any).profileId,
+          }, nodeRunContext, this.llm), abortSignal);
+        } catch (replayError) {
+          throwIfAborted(abortSignal);
+          throw replayError;
+        }
+        if (!replay || (!replay.content?.trim() && !replay.metadata.tool_calls?.length)) {
+          throw new Error(`LLM returned empty response (provider=${ this.llm.getProviderName() }, model=${ this.llm.getModel() })`);
+        }
+        if (chatMode === 'text') controller.processNonVoiceSpeak(replay, controller.buildContext(state));
+        this.appendResponse(state, replay.content, replay.metadata.rawProviderContent);
+        this.dispatchTokenInfoToAgentPersona(state, replay);
+        await extensionHooks.runAction('after_model_response', { response: replay, model: this.llm.getModel(), threadId: state.metadata.threadId });
+        await modelRouter.markSuccess(this.routingCandidates[0]?.provider || this.llm.getProviderName());
+
+        return replay;
+      }
       // The failed provider must not stay first for later tool-loop iterations in this turn; re-resolve with health ordering.
       turnProviderMemo.clear(state);
 
