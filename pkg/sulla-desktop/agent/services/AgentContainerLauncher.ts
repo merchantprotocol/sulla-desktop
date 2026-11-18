@@ -11,6 +11,7 @@ import Electron from 'electron';
 import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
+import { agentEgressLabels, prepareAgentEgress as prepareAgentEgressWith, type AgentEgress } from './agentEgress';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime, type AgentContainerRuntimeBinding, type AgentContainerRuntimeSupervisor } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
@@ -58,7 +59,7 @@ import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import {
-  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
+  AGENT_NETWORK, connectServiceNetworkCommand, ensureAgentNetworkCommand,
 } from '@pkg/backend/threatProxyEgress';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
@@ -623,38 +624,16 @@ export async function repairHostRelay(): Promise<void> {
   await ensureHostRelay(image);
 }
 
-/** Proxy startup is optional; agent creation must remain available during outages. */
-const THREAT_PROXY_START_BUDGET_MS = 5_000;
-
-/**
- * Re-apply the agent egress policy before every launch (a Docker or guest
- * restart drops nothing permanent, but this keeps the guarantee local to the
- * launch) and return CA trust only when the bundle exists. CA-less agents are
- * labeled so the watcher holds the policy in direct mode until they exit.
- */
-async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string>; caPresent: boolean }> {
-  await guestExec(ensureAgentNetworkCommand());
-  const enabled = await egressEnforced();
-  if (!enabled) { await applyCurrentEgressPolicy('off'); return { binds: [], env: {}, caPresent: false }; }
-  // Preserve already enforced traffic; direct is only a recovery/startup fallback.
-  const alreadyEnforced = await import('@pkg/main/threat-proxy').then(({ getStatus }) => getStatus().state === 'running');
-  if (!alreadyEnforced) {
-    await applyCurrentEgressPolicy('direct');
-    void Promise.race([
-      ensureOnDemandService('threat_proxy'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('proxy startup budget exceeded')), THREAT_PROXY_START_BUDGET_MS)),
-    ]).catch(error => log.warn('[AgentContainer] threat proxy is unavailable; continuing direct', error));
-  }
-  const deadline = Date.now() + THREAT_PROXY_START_BUDGET_MS;
-  while (!alreadyEnforced && Date.now() < deadline && !await threatProxyCaPresent()) await new Promise(resolve => setTimeout(resolve, 250));
-  const caPresent = await threatProxyCaPresent();
-  if (!caPresent) { await applyCurrentEgressPolicy('direct'); return { binds: [], env: {}, caPresent: false }; }
-  const trust = agentCaTrust();
-  return { binds: trust.bind ? [trust.bind] : [], env: trust.env, caPresent: true };
-}
-
-function threatProxyCaPresent(): Promise<boolean> {
-  return guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false);
+/** Launch-time egress policy; the logic lives in ./agentEgress so it can be tested without the launcher. */
+function prepareAgentEgress(): Promise<AgentEgress> {
+  return prepareAgentEgressWith({
+    guestExec,
+    egressEnforced,
+    proxyRunning:            () => import('@pkg/main/threat-proxy').then(({ getStatus }) => getStatus().state === 'running'),
+    applyCurrentEgressPolicy,
+    startProxy:              () => ensureOnDemandService('threat_proxy'),
+    warn:                    (message, error) => log.warn(message, error),
+  });
 }
 
 /** Proxy readiness is never a prerequisite for chat: launch uses direct mode until healthy. */
@@ -1354,7 +1333,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       image,
       labels: {
         'com.sulla.workload':       'agent',
-        'sulla.threat-proxy.ca':   egress.caPresent ? 'present' : 'absent',
+        ...agentEgressLabels(egress),
         'com.sulla.agent-id':       agentId,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
@@ -1719,7 +1698,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       image,
       labels: {
         'com.sulla.workload':       'agent',
-        'sulla.threat-proxy.ca':   egress.caPresent ? 'present' : 'absent',
+        ...agentEgressLabels(egress),
         'com.sulla.agent-id':       metadata.agentId ?? run.state.metadata.wsChannel,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
