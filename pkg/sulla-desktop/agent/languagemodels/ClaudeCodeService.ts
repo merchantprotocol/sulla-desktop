@@ -513,6 +513,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       profileId?:      string;
       usageEventId?:   string;
       state?:          BaseThreadState | any;
+      /** Background-only CLI calls may opt out of internal process recovery. */
+      disableCliRecovery?: boolean;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();

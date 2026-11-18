@@ -1209,6 +1209,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const previousRunContext = this.currentNodeRunContext;
     this.currentNodeRunContext = nodeRunContext;
     const primaryAttemptEpoch = modelRouter.attemptToken?.(this.routingCandidates[0]?.provider || this.llm.getProviderName());
+    // Hoisted so the VaultUnreachable replay in the catch can use the same controller and mode.
+    const controller = this.getChatController();
+    let chatMode: ChatMode = 'text';
     try {
       // Primary attempt
       state.metadata.hadToolCalls = false;
@@ -1218,8 +1221,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // The controller's extractors will handle prompt enrichment and response parsing.
       const inputSource = (state.metadata as any).inputSource ?? '';
       const voiceMode = (state.metadata as any).voiceMode ?? '';
-      const controller = this.getChatController();
-      let chatMode: ChatMode = 'text';
       // 'voice' is what the chat surfaces send for spoken turns; 'microphone' is the
       // sensory/relay spelling. Both mean the user is talking — answer in voice mode.
       if (inputSource === 'microphone' || inputSource === 'voice') {
@@ -1284,7 +1285,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
             signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
             profileId: (state.metadata as any).profileId,
-          }, nodeRunContext, this.llm), abortSignal);
+          }, nodeRunContext, this.llm ?? undefined), abortSignal);
         } catch (replayError) {
           throwIfAborted(abortSignal);
           throw replayError;
