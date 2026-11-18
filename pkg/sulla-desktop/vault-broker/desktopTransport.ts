@@ -5,6 +5,9 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import tls from 'node:tls';
+
+import { Agent, fetch as undiciFetch } from 'undici';
 
 import Electron from 'electron';
 
@@ -75,6 +78,10 @@ export class DesktopVaultIdentityRepository {
 export class DesktopVaultTransport {
   private pinnedSession: Promise<Electron.Session> | undefined;
   private controlSession: Promise<Electron.Session> | undefined;
+  private nodeStreamDispatcher: Agent | undefined;
+  private loggedStreamTransport = false;
+  private readonly nodeFetch: typeof undiciFetch;
+  private readonly dispatcherFactory: () => Agent;
 
   constructor(
     private readonly identities: DesktopVaultIdentityRepository = new DesktopVaultIdentityRepository(),
@@ -87,7 +94,12 @@ export class DesktopVaultTransport {
       };
       await configureVaultPinnedSession(session);
     },
-  ) {}
+    nodeFetch: typeof undiciFetch = undiciFetch,
+    dispatcherFactory?: () => Agent,
+  ) {
+    this.nodeFetch = nodeFetch;
+    this.dispatcherFactory = dispatcherFactory ?? (() => this.createNodeStreamDispatcher());
+  }
 
   readonly fetch: VaultBrokerFetch = async(input, init) => {
     const session = await this.getPinnedSession(true);
@@ -98,12 +110,64 @@ export class DesktopVaultTransport {
 
   /** Explicit route for any caller whose response body remains open as a stream. */
   readonly fetchStream: VaultBrokerFetch = async(input, init) => {
+    const useElectron = process.env.SULLA_VAULT_STREAM_TRANSPORT === 'electron';
+    if (!this.loggedStreamTransport) {
+      this.loggedStreamTransport = true;
+      console.info(`[vault-broker] stream transport: ${useElectron ? 'electron' : 'node-pinned'}`);
+    }
+    if (!useElectron) {
+      const target = new URL(input);
+      if (target.protocol !== 'https:' || target.hostname !== '127.0.0.1' || target.port !== '30135') {
+        throw new Error('Vault stream transport only accepts the local vault origin');
+      }
+      const response = await this.nodeFetch(input, {
+        ...init,
+        dispatcher: this.nodeStreamDispatcher ??= this.dispatcherFactory(),
+      } as never);
+      if (response.status === 401 || response.status === 423) this.identities.invalidate();
+      return response as unknown as Response;
+    }
     const session = await this.getPinnedSession(false);
 
     const response = await session.fetch(input, init);
     if (response.status === 401 || response.status === 423) this.identities.invalidate();
     return response;
   };
+
+  private createNodeStreamDispatcher(): Agent {
+    return new Agent({
+      connections: 64,
+      connect: (options, callback) => {
+        const socket = tls.connect({ ...options, host: options.hostname, rejectUnauthorized: false });
+        let settled = false;
+        const finish = (error: Error | null, connected?: tls.TLSSocket) => {
+          if (settled) return;
+          settled = true;
+          callback(error, connected);
+        };
+        socket.once('error', error => finish(error, null));
+        socket.once('secureConnect', () => {
+          void (async() => {
+            const certificate = socket.getPeerCertificate(true);
+            const raw = certificate.raw;
+            const hostname = typeof options.hostname === 'string' ? options.hostname : '';
+            const pem = raw ? `-----BEGIN CERTIFICATE-----\n${raw.toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----` : '';
+            const { vaultTlsPins } = require('@pkg/main/vaultTls') as typeof import('@pkg/main/vaultTls');
+            if (!pem || !await vaultTlsPins.verifyPeer(hostname, pem)) {
+              socket.destroy();
+              finish(new Error('Vault TLS certificate pin verification failed'), null);
+              return;
+            }
+            finish(null, socket);
+          })().catch((error) => {
+            socket.destroy();
+            finish(error as Error, null);
+          });
+        });
+        return socket;
+      },
+    });
+  }
 
   loadBrokerIdentity(): Promise<VaultBrokerServiceIdentity> {
     return this.identities.loadBrokerIdentity();
