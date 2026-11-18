@@ -52,10 +52,28 @@ def load_adapter():
     pyfuse3.FUSEError = FUSEError
     pyfuse3.readdir_reply = Reply()
     trio = types.ModuleType("trio")
-    async def run_sync(function, *args, **_kwargs):
-        return await asyncio.to_thread(function, *args)
+    async def run_sync(function, *args, **kwargs):
+        limiter = kwargs.pop("limiter", None)
+        cancellable = kwargs.pop("cancellable", None)
+        trio.run_sync_calls.append((limiter, cancellable))
+        return await asyncio.to_thread(function, *args, **kwargs)
     trio.to_thread = types.SimpleNamespace(run_sync=run_sync)
+    trio.run_sync_calls = []
     trio.CapacityLimiter = lambda _limit: object()
+    class MoveOnAfter:
+        def __init__(self, seconds): self.seconds, self.cancelled_caught = seconds, False
+        def __enter__(self):
+            self.task = asyncio.current_task()
+            self.handle = asyncio.get_running_loop().call_later(self.seconds, self.task.cancel)
+            return self
+        def __exit__(self, exc_type, _exc, _tb):
+            self.handle.cancel()
+            if exc_type is asyncio.CancelledError:
+                self.cancelled_caught = True
+                self.task.uncancel()
+                return True
+            return False
+    trio.move_on_after = MoveOnAfter
     yaml = types.ModuleType("yaml")
     urllib3 = types.ModuleType("urllib3")
     urllib3.PoolManager = lambda **_kwargs: types.SimpleNamespace(request=None)
