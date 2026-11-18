@@ -6,14 +6,16 @@ import { reactive } from 'vue';
 
 export const CONV_STORE = Symbol('conversations-screen-store');
 
-/** One row in the org switcher. Comes from the org conversations IPC. */
-export interface OrgView { id: string; name: string; initials: string; memberCount: number }
+/** One row in the org switcher, from the org conversations IPC. `gradient` is the org chip background. */
+export interface OrgView { id: string; name: string; initials: string; memberCount: number; gradient: string }
+/** The Sulla Cloud relay link behind the nav's status card. `unknown` hides the card (no status read yet). */
+export type RelayState = 'connected' | 'connecting' | 'offline' | 'unknown';
 /** Avatar gradient tone from the mockup: '' (blue), m (amber), d (violet), p (green), a (you). */
 export type AvatarTone = '' | 'm' | 'd' | 'p' | 'a';
 /** Presence dot class from the mockup. An empty value means online (the default green dot). */
 export type PresenceClass = 'online' | 'busy' | 'away' | 'offline';
 /** A member of the active org, from the directory IPC. Role is empty when the directory doesn't send one. */
-export interface PersonView { id: string; name: string; firstName: string; initials: string; tone: AvatarTone; presence: string; presenceClass: PresenceClass; status: string; role: string; agentOnline: boolean }
+export interface PersonView { id: string; name: string; firstName: string; initials: string; tone: AvatarTone; presence: string; presenceClass: PresenceClass; status: string; role: string; agentOnline: boolean; hasAgent: boolean; agentName: string }
 /** A projected conversation for the active org. `withId` is the other person in a direct or agent thread. */
 export interface ThreadView { id: string; kind: 'direct' | 'group' | 'agent_thread'; title: string; participantIds: string[]; latest: string; time: string; unread: number; withId: string }
 /** A pending contact request (read-only). Accepting or declining is not wired yet. */
@@ -36,13 +38,21 @@ export interface LiveSnapshot {
   threads: ThreadView[];
   requests: RequestView[];
   bodies: Record<string, MessageView[]>;
+  relay: RelayState;
+  /** False while the browser reports no network (navigator.onLine). */
+  online: boolean;
 }
 
 export type ListTab = 'threads' | 'people' | 'agents' | 'notes' | 'followed';
+/** The All / People / Agents / Unread segmented filter above the Conversations list. */
+export type ListSegment = 'all' | 'people' | 'agents' | 'unread';
 
 export interface ConvState {
   org: string;
   listTab: ListTab;
+  /** Search box text. Filters the visible people and threads client-side. */
+  query: string;
+  segment: ListSegment;
   thread: string | null;
   orgMenu: boolean;
   infoOpen: boolean;
@@ -53,7 +63,7 @@ export interface ConvState {
  * root builds from the org conversations IPC. With no snapshot the screens show their empty states.
  */
 export class ConversationScreenStore {
-  readonly s = reactive<ConvState>({ org: '', listTab: 'threads', thread: null, orgMenu: false, infoOpen: false });
+  readonly s = reactive<ConvState>({ org: '', listTab: 'threads', query: '', segment: 'all', thread: null, orgMenu: false, infoOpen: false });
   private snapshot: LiveSnapshot | null = null;
 
   /** Root hooks: send a message, switch the active org, open a direct conversation, open Secretary Mode. */
@@ -70,8 +80,10 @@ export class ConversationScreenStore {
   }
 
   orgs(): OrgView[] { return this.snapshot?.orgs ?? []; }
-  org(): OrgView { return this.orgs().find(org => org.id === this.s.org) ?? { id: '', name: '', initials: '', memberCount: 0 }; }
+  org(): OrgView { return this.orgs().find(org => org.id === this.s.org) ?? { id: '', name: '', initials: '', memberCount: 0, gradient: '' }; }
   me(): PersonView | null { return this.snapshot?.me ?? null; }
+  relay(): RelayState { return this.snapshot?.relay ?? 'unknown'; }
+  online(): boolean { return this.snapshot?.online ?? true; }
   people(): PersonView[] { return this.snapshot?.people ?? []; }
   requests(): RequestView[] { return this.snapshot?.requests ?? []; }
   threads(): ThreadView[] { return this.snapshot?.threads ?? []; }
@@ -84,6 +96,48 @@ export class ConversationScreenStore {
     if (this.s.listTab === 'agents') return this.threads().filter(thread => thread.kind === 'agent_thread');
     return this.threads();
   }
+
+  /** The list rows: the tab's threads, narrowed by the segmented filter (Conversations tab only) and the search text. */
+  visibleThreads(): ThreadView[] {
+    const term = this.term();
+    const segment = this.s.listTab === 'threads' ? this.s.segment : 'all';
+    return this.threadsForTab().filter(thread => {
+      if (segment === 'people' && thread.kind === 'agent_thread') return false;
+      if (segment === 'agents' && thread.kind !== 'agent_thread') return false;
+      if (segment === 'unread' && !this.isUnread(thread)) return false;
+      return !term || thread.title.toLowerCase().includes(term) || thread.latest.toLowerCase().includes(term);
+    });
+  }
+
+  /** Members matching the search text by name. */
+  visiblePeople(): PersonView[] {
+    const term = this.term();
+    return this.people().filter(person => !term || person.name.toLowerCase().includes(term));
+  }
+
+  /** The signed-in member when the search text matches them, otherwise null. */
+  visibleMe(): PersonView | null {
+    const me = this.me(), term = this.term();
+    return me && (!term || me.name.toLowerCase().includes(term)) ? me : null;
+  }
+
+  /** A thread counts as unread while it has unread messages and isn't the open one. */
+  isUnread(thread: ThreadView): boolean { return thread.unread > 0 && this.s.thread !== thread.id; }
+
+  /**
+   * The left-nav count badges. Null means "no badge": the value is zero or there is no data source.
+   * All conversations counts unread messages (hot badge), People the org's member count, Agent threads the agent threads.
+   */
+  navCounts(): Record<'threads' | 'people' | 'agents', number | null> {
+    const unread = this.threads().reduce((total, thread) => total + (this.isUnread(thread) ? thread.unread : 0), 0);
+    const agents = this.threads().filter(thread => thread.kind === 'agent_thread').length;
+    const members = this.org().memberCount;
+    return { threads: unread || null, people: members || null, agents: agents || null };
+  }
+
+  setQuery(query: string): void { this.s.query = query; }
+  setSegment(segment: ListSegment): void { this.s.segment = segment; }
+  private term(): string { return this.s.query.trim().toLowerCase(); }
 
   openThread(id: string): void {
     this.s.thread = id;
