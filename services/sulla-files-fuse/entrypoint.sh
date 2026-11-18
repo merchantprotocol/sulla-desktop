@@ -96,9 +96,12 @@ clear_stale_fuse_layers() {
   done
 }
 
-# This directory lives on the guest bind and may not exist in a read-only image.
-mkdir -p "$mount_path"
 clear_stale_fuse_layers
+
+# This directory lives on the guest bind and may not exist in a read-only image.
+# Create it only after stale FUSE layers are gone: stat on a dead layer fails
+# with ENOTCONN, which would make mkdir -p abort the restart it should recover.
+[ -d "$mount_path" ] || mkdir -p "$mount_path" || fail mountpoint-missing ",\"mount\":\"$mount_path\""
 
 anchor=$(containing_mount /proc/self/mountinfo "$mount_path")
 anchor_mount=${anchor%% *}
