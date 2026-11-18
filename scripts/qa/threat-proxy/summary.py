@@ -9,8 +9,31 @@ import statistics
 
 
 class RunSummary:
-    def __init__(self, samples, inspect, client, scenario):
-        self.samples, self.inspect, self.client, self.scenario = samples, inspect, client, scenario
+    def __init__(self, samples, inspect, client, scenario, proxy_log=None):
+        self.samples, self.inspect, self.client, self.scenario, self.proxy_log = samples, inspect, client, scenario, proxy_log
+
+    def memdiag_report(self):
+        records = []
+        if not self.proxy_log:
+            return None
+        try:
+            with open(self.proxy_log) as log:
+                for line in log:
+                    marker = line.find("MEMDIAG ")
+                    if marker >= 0:
+                        try: records.append(json.loads(line[marker + 8:]))
+                        except ValueError: pass
+        except OSError:
+            return None
+        if not records:
+            return None
+        growth = {}
+        first_sizes = {item["line"]: item["size"] for item in records[0].get("top", [])}
+        last_sizes = {item["line"]: item["size"] for item in records[-1].get("top", [])}
+        for line, size in last_sizes.items():
+            growth[line] = size - first_sizes.get(line, 0)
+        largest = sorted(growth.items(), key=lambda pair: pair[1], reverse=True)[:3]
+        return len(records), records[0], records[-1], largest
 
     @staticmethod
     def mib(value):
@@ -51,10 +74,19 @@ class RunSummary:
               "|---|---:|---:|:---:|:---:|---:|---|\n"
               f"| {self.scenario} | {result['peak_mib']} | {result['steady_state_mib']} | {result['oom_killed']} | {result['proxy_alive_after']} | {result['client_errors']} | {check_text} |\n\n"
               "* Median of the last 25% of sampler readings. Memory figures are cgroup bytes converted to MiB; blank when unavailable.\n")
+        diag = self.memdiag_report()
+        if diag:
+            sample_count, first, last, growing = diag
+            md += "\n### Memory diagnostics (MEMDIAG)\n\n"
+            md += f"- Samples: {sample_count}; first tracemalloc current/peak: {first.get('tracemalloc_current')} / {first.get('tracemalloc_peak')} bytes; last: {last.get('tracemalloc_current')} / {last.get('tracemalloc_peak')} bytes.\n"
+            md += f"- Done() RSS before gc/trim: {last.get('rss_before_gc_trim_kib')} KiB; after: {last.get('rss_after_gc_trim_kib')} KiB; delta: {last.get('rss_trim_delta_kib')} KiB.\n"
+            md += "- First sample JSON: `" + json.dumps(first, separators=(",", ":")) + "`\n"
+            md += "- Last sample JSON: `" + json.dumps(last, separators=(",", ":")) + "`\n"
+            md += "- Three largest tracemalloc line growths (bytes): " + (", ".join(f"`{line}` +{size}" for line, size in growing) or "none") + "\n"
         with open(os.path.join(os.path.dirname(out), "summary.md"), "w") as f: f.write(md)
         print(md, end="")
 
 
 if __name__ == "__main__":
-    p=argparse.ArgumentParser(); p.add_argument("--samples",required=True); p.add_argument("--inspect",required=True); p.add_argument("--client",required=True); p.add_argument("--scenario",required=True); p.add_argument("--output",required=True)
-    a=p.parse_args(); RunSummary(a.samples,a.inspect,a.client,a.scenario).write(a.output)
+    p=argparse.ArgumentParser(); p.add_argument("--samples",required=True); p.add_argument("--inspect",required=True); p.add_argument("--client",required=True); p.add_argument("--scenario",required=True); p.add_argument("--proxy-log"); p.add_argument("--output",required=True)
+    a=p.parse_args(); RunSummary(a.samples,a.inspect,a.client,a.scenario,a.proxy_log).write(a.output)
