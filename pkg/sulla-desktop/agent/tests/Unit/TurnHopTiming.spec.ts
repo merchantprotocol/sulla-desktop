@@ -55,7 +55,11 @@ describe('TurnHopTiming', () => {
     TurnHopTiming.mark(state, 'AgentNode.normalizedChat.end');
     TurnHopTiming.firstEvent(state, 'first.text');
     TurnHopTiming.emitProviderStart(state, 'codex', 1);
-    expect(perfLog).toHaveBeenCalledTimes(1);
+    // firstEvent always logs its own event line; the second emit must log nothing
+    expect(perfLog).toHaveBeenCalledTimes(2);
+    expect(String(perfLog.mock.calls[1][0]).startsWith('[TurnHop] threadId=thread-stale event=first.text')).toBe(true);
+    const marksLines = perfLog.mock.calls.filter(([line]) => String(line).includes('marks='));
+    expect(marksLines).toHaveLength(1);
 
     vi.setSystemTime(2_000);
     TurnHopTiming.begin(state, 2_000);
