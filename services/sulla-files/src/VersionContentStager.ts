@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { createHash } from 'node:crypto';
+import { defaultChunkCrypto } from './crypto.js';
 
 import type { FilesMetrics } from './FilesMetrics.js';
 import { TransactionScope } from './TransactionScope.js';
@@ -22,7 +23,7 @@ export interface StagedVersionContent {
   readonly sourceHash:string;
 }
 
-export interface StagerKeyring { keys(collectionId:string):Promise<{ data:Uint8Array; dedup:Uint8Array }> }
+export interface StagerKeyring { keys(collectionId:string):Promise<{ data:Uint8Array; dedup:Uint8Array }>; keysFresh?(collectionId:string):Promise<{ data:Uint8Array; dedup:Uint8Array }>; invalidate?(collectionId:string):void }
 export interface StagerChunkStore {
   storedSize(collectionId:string, id:string):Promise<number | undefined>;
   getBounded?(collectionId:string, id:string, maxBytes:number, expectedBytes:number):Promise<Uint8Array>;
@@ -32,6 +33,7 @@ export interface StagerChunkStore {
 export interface StagerCrypto {
   chunkId(plain:Uint8Array, dedupKey:Uint8Array):string;
   encryptChunk(plain:Uint8Array, dataKey:Uint8Array, id:string):Promise<Uint8Array>;
+  encryptChunkForCollection?(plain:Uint8Array, dataKey:Uint8Array, id:string, activeDataKey:Uint8Array, collectionId:string):Promise<Uint8Array>;
   decryptAndVerifyChunk?(value:Uint8Array, dataKey:Uint8Array, dedupKey:Uint8Array, id:string, expectedPlainBytes:number):Promise<Uint8Array>;
 }
 
@@ -59,6 +61,16 @@ export class VersionContentStager {
   private async stageContent(collectionId:string, bytes:Buffer):Promise<StagedVersionContent> {
     TransactionScope.assertOutside('staging version content (key lookup, encrypt, fsync)');
     const { data, dedup } = await this.keyring.keys(collectionId);
+    if (this.keyring.keysFresh) {
+      const active = await this.keyring.keysFresh(collectionId);
+      try {
+        if (!defaultChunkCrypto.keysMatch(data, active.data) || !defaultChunkCrypto.keysMatch(dedup, active.dedup)) {
+          console.error('[SullaFiles] collection key mismatch before chunk staging', { collectionId, keyVersion:null, keyFingerprint:defaultChunkCrypto.keyFingerprint(data), activeKeyFingerprint:defaultChunkCrypto.keyFingerprint(active.data) });
+          this.keyring.invalidate?.(collectionId);
+          throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+        }
+      } finally { active.data.fill(0); active.dedup.fill(0) }
+    }
     const chunkIds:string[] = []; const chunks = new Map<string, { id:string; size:number; storedSize:number }>();
     for (let offset = 0; offset < Math.max(1, bytes.length); offset += VERSION_CHUNK_BYTES) {
       const plain = bytes.subarray(offset, Math.min(bytes.length, offset + VERSION_CHUNK_BYTES));
@@ -73,7 +85,24 @@ export class VersionContentStager {
         } catch { throw new ChunkKeyMismatchError(collectionId, id) }
         chunks.set(id, { id, size: plain.length, storedSize: existing }); continue;
       }
-      const encrypted = await this.crypto.encryptChunk(plain, data, id);
+      let encrypted:Uint8Array;
+      if (this.keyring.keysFresh && this.crypto.encryptChunkForCollection) {
+        let active:{data:Uint8Array; dedup:Uint8Array} | undefined;
+        try {
+          active = await this.keyring.keysFresh(collectionId);
+          if (this.crypto.chunkId(plain, active.dedup) !== id) {
+            const usedFingerprint = defaultChunkCrypto.keyFingerprint(dedup);
+            const activeFingerprint = defaultChunkCrypto.keyFingerprint(active.dedup);
+            console.error('[SullaFiles] collection dedup key mismatch at chunk encryption', { collectionId, keyVersion:null, keyFingerprint:usedFingerprint, activeKeyFingerprint:activeFingerprint });
+            this.keyring.invalidate?.(collectionId);
+            throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+          }
+          encrypted = await this.crypto.encryptChunkForCollection(plain, data, id, active.data, collectionId);
+        } catch (error) {
+          if ((error as any)?.code === 'collection_key_unavailable') this.keyring.invalidate?.(collectionId);
+          throw error;
+        } finally { active?.data.fill(0); active?.dedup.fill(0) }
+      } else encrypted = await this.crypto.encryptChunk(plain, data, id);
       const writeStarted = performance.now();
       await (this.store.putStaged ?? this.store.put).call(this.store, collectionId, id, encrypted);
       this.metrics?.observeChunkWrite(performance.now() - writeStarted);

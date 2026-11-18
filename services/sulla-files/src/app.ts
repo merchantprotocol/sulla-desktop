@@ -8,7 +8,7 @@ import express from 'express';
 
 import { FileAuditWriter } from './fileAudit.js';
 
-import { chunkId, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
+import { chunkId, defaultChunkCrypto, decryptAndVerifyChunk, encryptChunk } from './crypto.js';
 import { ContentReadFailureLog } from './ContentReadFailureLog.js';
 import { ManifestChunkRegistry } from './ManifestChunkRegistry.js';
 import { loadFileContent } from './preview.js';
@@ -232,7 +232,7 @@ export class FilesApplication {
   private routeServices(app:express.Express, core:FilesCore):FilesRouteServices {
     const { db, config, manager } = this.dependencies;
     const { store, transactions } = core;
-    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk, decryptAndVerifyChunk }, core.metrics);
+    const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id), keysFresh: id => config.keyring!.keysFresh(id), invalidate: id => config.keyring!.invalidate(id) }, store, { chunkId, encryptChunk, encryptChunkForCollection: (plain, key, id, active, collectionId) => defaultChunkCrypto.encryptChunkForCollection(plain, key, id, active, collectionId), decryptAndVerifyChunk }, core.metrics);
     const accessGate = new FilesAccessGate(db);
     const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db), core.metrics);
     const managers = new LocalManagerGate(config, manager);

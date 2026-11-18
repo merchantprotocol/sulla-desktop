@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import * as zlib from 'node:zlib';
 
 import sodium from 'libsodium-wrappers-sumo';
@@ -55,6 +55,24 @@ export class ChunkCrypto {
   }
 
   chunkId(value:Uint8Array, key:Uint8Array):string { return createHmac('sha256', key).update(value).digest('hex') }
+
+  /** Non-reversible operational identifier; never log key material. */
+  keyFingerprint(key:Uint8Array):string { return createHmac('sha256', key).update('sulla-files-key-fingerprint').digest('hex').slice(0, 8) }
+  keysMatch(left:Uint8Array, right:Uint8Array):boolean { return left.byteLength === right.byteLength && timingSafeEqual(Buffer.from(left), Buffer.from(right)) }
+
+  async encryptChunkForCollection(value:Uint8Array, key:Uint8Array, id:string, activeKey:Uint8Array, collectionId:string):Promise<Buffer> {
+    const used = this.keyFingerprint(key); const active = this.keyFingerprint(activeKey);
+    console.info('[SullaFiles] chunk encrypt stage', { collectionId, keyVersion:null, keyFingerprint:used });
+    if (!this.keysMatch(key, activeKey)) {
+      console.error('[SullaFiles] collection key mismatch at chunk encryption', { collectionId, keyVersion:null, keyFingerprint:used, activeKeyFingerprint:active });
+      throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+    }
+    const encrypted = await this.encryptChunk(value, key, id);
+    // Bounded per-chunk (4 MiB max) verification before any blob is committed.
+    const verified = await this.decryptChunk(encrypted, activeKey, id, value.length);
+    if (!Buffer.from(verified).equals(Buffer.from(value))) throw new Error('New chunk encryption verification failed');
+    return encrypted;
+  }
 
   async encryptChunk(value:Uint8Array, key:Uint8Array, id:string):Promise<Buffer> {
     const compressed = (zlib as any).zstdCompressSync(Buffer.from(value), { level: 3 }) as Buffer;

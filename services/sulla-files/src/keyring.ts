@@ -140,6 +140,26 @@ export class FilesKeyring {
     } finally { master.fill(0) }
   }
 
+  /** Resolve directly from persisted wrapped keys, deliberately bypassing every in-memory cache. */
+  async keysFresh(id:string):Promise<CollectionKeys> {
+    if (!this.master) throw Object.assign(new Error('Files is locked'), { status:503 });
+    const epoch = this.epoch; const profile = this.profileOf(); const profileEpoch = this.profileEpoch(profile);
+    const master = Buffer.from(this.master);
+    try {
+      const row = await this.collectionKeys.findWrappedKeys(id, this.db);
+      if (!row) throw Object.assign(new Error('Collection key unavailable'), { status:503, code:'collection_key_unavailable' });
+      const keys = await this.unwrap(id, row.data_key, row.dedup_key, master);
+      if (epoch !== this.epoch || profileEpoch !== this.profileEpoch(profile)) { keys.data.fill(0); keys.dedup.fill(0); throw new Error('Files key scope changed during resolution') }
+      return keys;
+    } finally { master.fill(0) }
+  }
+
+  invalidate(id:string):void {
+    const cacheKey = this.cacheKey(this.profileOf(), id); const keys = this.cache.get(cacheKey);
+    if (!keys) return;
+    keys.data.fill(0); keys.dedup.fill(0); this.cache.delete(cacheKey);
+  }
+
   async create(id:string, client:pg.PoolClient):Promise<{ data: Envelope; dedup: Envelope }> {
     if (!this.master) throw new Error('Files is locked');
     const epoch = this.epoch; const master = Buffer.from(this.master);
