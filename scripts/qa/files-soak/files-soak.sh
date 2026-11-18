@@ -354,24 +354,22 @@ print(json.dumps(out))
 # Runs inside sulla_files (node). The local token comes from the container env and is never printed:
 # only the HTTP status and the JSON body of GET /v1/local/files-metrics leave the container.
 METRICS_PROBE = r'''
-const https = require('https'), http = require('http');
+const https = require('https'), fs = require('fs');
 const token = process.env.SULLA_FILES_LOCAL_TOKEN || '';
 const port = process.env.SULLA_FILES_PORT || '8792';
 if (!token) { console.log(JSON.stringify({ error: 'no_local_token' })); process.exit(0); }
-function get(client, options) {
-  return new Promise(resolve => {
-    const req = client.request(options, res => { let body = ''; res.on('data', c => body += c); res.on('end', () => resolve({ status: res.statusCode, body })); });
-    req.on('error', e => resolve({ error: e.code || e.name }));
-    req.setTimeout(10000, () => { req.destroy(); resolve({ error: 'timeout' }); });
-    req.end();
-  });
-}
-const options = { host: '127.0.0.1', port, path: '/v1/local/files-metrics', method: 'GET', headers: { 'x-sulla-files-token': token }, rejectUnauthorized: false };
-(async () => {
-  let result = await get(https, options);
-  if (result.error) result = await get(http, options);
-  console.log(JSON.stringify(result));
-})();
+// sulla_files serves HTTPS only. Pin its own certificate when it covers 127.0.0.1 (IP SAN);
+// otherwise skip verification, which is safe only because the host is hardcoded to loopback.
+let tls = { rejectUnauthorized: false };
+try {
+  const pem = fs.readFileSync(process.env.SULLA_FILES_TLS_CERTIFICATE_PATH || process.env.SULLA_FILES_TLS_CA_FILE);
+  if (new (require('crypto').X509Certificate)(pem).checkIP('127.0.0.1')) tls = { ca: pem };
+} catch (e) { /* no readable cert: keep the loopback-only fallback */ }
+const options = { host: '127.0.0.1', port, path: '/v1/local/files-metrics', method: 'GET', headers: { 'x-sulla-files-token': token }, ...tls };
+const req = https.request(options, res => { let body = ''; res.on('data', c => body += c); res.on('end', () => console.log(JSON.stringify({ status: res.statusCode, body }))); });
+req.on('error', e => console.log(JSON.stringify({ error: e.code || e.name })));
+req.setTimeout(10000, () => { req.destroy(); console.log(JSON.stringify({ error: 'timeout' })); });
+req.end();
 '''
 
 

@@ -48,11 +48,19 @@ QA_DIR="$MOUNT/QA/create-trace-$LABEL"
 # Runs inside sulla_files. The local token never leaves that container; only the HTTP status and the
 # metrics JSON (numbers only) are printed.
 METRICS_PROBE='
-const http = require("http");
+const https = require("https");
+const fs = require("fs");
 const token = process.env.SULLA_FILES_LOCAL_TOKEN || "";
 const port = process.env.SULLA_FILES_PORT || "8792";
 if (!token) { console.log(JSON.stringify({ error: "no_local_token" })); process.exit(0); }
-const req = http.request({ host: "127.0.0.1", port, path: "/v1/local/files-metrics", method: "GET", headers: { "x-sulla-files-token": token } }, res => {
+// sulla_files serves HTTPS only. Pin its own certificate when it covers 127.0.0.1 (IP SAN);
+// otherwise skip verification, which is safe only because the host is hardcoded to loopback.
+let tls = { rejectUnauthorized: false };
+try {
+  const pem = fs.readFileSync(process.env.SULLA_FILES_TLS_CERTIFICATE_PATH || process.env.SULLA_FILES_TLS_CA_FILE);
+  if (new (require("crypto").X509Certificate)(pem).checkIP("127.0.0.1")) tls = { ca: pem };
+} catch (e) { /* no readable cert: keep the loopback-only fallback */ }
+const req = https.request({ host: "127.0.0.1", port, path: "/v1/local/files-metrics", method: "GET", headers: { "x-sulla-files-token": token }, ...tls }, res => {
   let body = ""; res.on("data", c => body += c); res.on("end", () => console.log(JSON.stringify({ status: res.statusCode, body })));
 });
 req.on("error", e => console.log(JSON.stringify({ error: e.code || e.name })));

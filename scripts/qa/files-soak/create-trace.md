@@ -23,7 +23,7 @@ Each `run` writes `metrics-before.json`, `metrics-after.json` (numbers only, rea
 - **Adapter vs Files split.** Each adapter op line has `ms` (kernel op total) and `files_ms` (sum of Files request time inside it). Adapter time is `ms - files_ms`. The summary prints both at p50 and p95.
 - **Server side.** `files.txn`, `files.audit`, `files.fuseRoute`, `files.stage`, `files.chunkWrite` and `files.poolWait` in `summary.json` give the mean per interval (delta total ÷ delta count). The p50/p95 in the endpoint are over the most recent 512 samples only, so use the means from deltas for the run. `maxLifetimeMs` is since process start.
 - **Statements and commits per create.** `pg-count.json` gives statements, commits, rollbacks and begins in the `oneCreate` window, with the `baselineIdle10s` window beside it for background noise. Expect about 1 BEGIN and 1 COMMIT per Files request, so 2 per `cp`. More than that means something else is committing too.
-- **Release lines.** The adapter logs `release` (the write-release, where the PUT happens) at DEBUG only. Without DEBUG the summary has no `release` split and says so. Turning DEBUG on means changing the adapter's environment, which recreates the container, so get the manager's approval first.
+- **Release (PUT) split needs DEBUG.** The adapter logs `release` (the write-release, where the PUT to `/v1/fuse/files/:id/content` happens) at DEBUG only. Without DEBUG the `release` split is absent and the summary says so, so a trace run without DEBUG only covers the create side. Turning DEBUG on changes the adapter's environment, which recreates the container, so get the manager's approval first.
 
 ## Reverting
 
