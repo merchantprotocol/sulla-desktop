@@ -40,6 +40,32 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertEqual(set(self.ops.pending_invalidations), {"new.txt", "old.txt"})
         self.assertFalse(self.ops.pending_tree_reset)
 
+    # risk: stale attrs — self-echo must not invalidate a matching local version or directory listing.
+    def test_matching_self_echo_is_skipped(self):
+        inode = self.ops._node("folder/file.txt", False)
+        self.ops.nodes[inode].update({"versionId": "v1", "size": 7})
+        self.ops.directory_complete.add("folder")
+        self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": "update", "versionId": "v1", "size": 7}]})
+        self.assertEqual(self.ops.pending_invalidations, {})
+        self.assertIn("folder", self.ops.directory_complete)
+
+    # risk: stale attrs — update invalidates changed inode but keeps directory membership cache.
+    def test_update_does_not_discard_directory_complete(self):
+        self.ops._node("folder/file.txt", False)
+        self.ops.directory_complete.add("folder")
+        self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": "update", "versionId": "v2", "size": 8}]})
+        self.assertFalse(self.ops.pending_invalidations["folder/file.txt"])
+        self.assertIn("folder", self.ops.directory_complete)
+
+    # risk: namespace correctness — only membership-changing events evict directory listings.
+    def test_membership_events_discard_directory_complete(self):
+        for kind in ("insert", "delete", "rename"):
+            self.ops.directory_complete.add("folder")
+            self.ops.consume_change_page({"reset": False, "changes": [{"path": "folder/file.txt", "kind": kind, "versionId": "v", "size": 1}]})
+            self.assertNotIn("folder", self.ops.directory_complete)
+            self.ops.pending_invalidations.clear()
+            self.ops.directory_complete.add("folder")
+
     # risk: namespace completeness — a cursor reset invalidates the full known tree.
     def test_change_page_reset_requests_tree_invalidation(self):
         self.ops.consume_change_page({"reset": True, "changes": []})

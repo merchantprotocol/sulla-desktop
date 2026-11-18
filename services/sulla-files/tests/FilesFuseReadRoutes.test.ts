@@ -39,7 +39,7 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
     const createEvents = changed.body.changes.filter((change:any) => change.path === 'docs/inner/feed-change.txt');
     expect(changed.body.reset).toBe(false);
-    expect(createEvents).toEqual([expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'update' })]);
+    expect(createEvents).toEqual([expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'insert', versionId: expect.any(String), size: expect.anything() })]);
     const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='docs/inner/feed-change.txt'`, [fixture.collectionId])).rows[0].id;
     await fixture.pool.query(`UPDATE files SET path='docs/inner/feed-renamed.txt' WHERE id=$1`, [fileId]);
     const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);
@@ -49,7 +49,7 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     const deleted = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ rename.body.cursor }`);
     const removedEvents = deleted.body.changes.filter((change:any) => change.path === 'docs/inner/feed-renamed.txt');
     expect(removedEvents.length).toBeGreaterThan(0);
-    expect(removedEvents.every((change:any) => ['update', 'delete'].includes(change.kind))).toBe(true);
+    expect(removedEvents.every((change:any) => change.kind === 'delete')).toBe(true);
     const other = randomUUID();
     await fixture.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
       VALUES($1,$2,'Other','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [other, fixture.userId, `spec-${ other }`]);
@@ -67,7 +67,14 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     expect((await fixture.request('/v1/fuse/changes?collectionId=00000000-0000-0000-0000-000000000000')).status).toBe(404);
   });
 
-  it('does not advance past a lower journal id still owned by an open transaction', async() => {
+  it('safely resets a legacy numeric adapter cursor', async() => {
+    // risk: missed invalidation — old images send BIGSERIAL cursors, never reinterpret as snapshots.
+    const response=await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=999`);
+    expect(response.status).toBe(200); expect(response.body.reset).toBe(true);
+    expect(response.body.cursor).toMatch(/^\d+:\d+:\d*(?:,\d+)*$/);
+  });
+
+  it('does not skip a lower journal id when xids commit out of allocation order', async() => {
     // risk: missed invalidation — BIGSERIAL allocation order is not transaction commit order.
     const baseline = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }`);
     const held = await fixture.pool.connect();
@@ -77,6 +84,7 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
       await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind) VALUES($1,'docs/inner/fast-commit.txt','insert')`, [fixture.collectionId]);
       const whileOpen = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ baseline.body.cursor }`);
       expect(whileOpen.body.changes.map((row:any) => row.path)).not.toContain('docs/inner/slow-commit.txt');
+      expect(whileOpen.body.changes.map((row:any) => row.path)).toContain('docs/inner/fast-commit.txt');
       await held.query('COMMIT');
       const afterCommit = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ whileOpen.body.cursor }`);
       expect(afterCommit.body.changes.map((row:any) => row.path)).toContain('docs/inner/slow-commit.txt');

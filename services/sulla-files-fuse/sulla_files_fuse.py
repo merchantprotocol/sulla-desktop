@@ -730,10 +730,10 @@ class SullaFiles(pyfuse3.Operations):
                 emit("read-cache-disabled", logging.WARNING, error=str(error))
         return self.read_cache
 
-    def queue_invalidation(self, path):
+    def queue_invalidation(self, path, membership_changed=True):
         """Queue request-handler mutations; pyfuse3 invalidation runs only in the background poller."""
         if CHANGE_FEED_ENABLED and path:
-            self.pending_invalidations[path] = None
+            self.pending_invalidations[path] = membership_changed
 
     def _invalidation_thread_busy(self):
         # A cancelled (abandoned) to_thread call keeps its CapacityLimiter token until the kernel call returns.
@@ -779,7 +779,7 @@ class SullaFiles(pyfuse3.Operations):
         if time.monotonic() - self.invalidation_timed_out_at >= INVALIDATION_QUIET_SECONDS:
             self.invalidation_healthy = True
 
-    async def invalidate_path(self, path):
+    async def invalidate_path(self, path, membership_changed=True):
         """Invalidate a path from the background task, never from a FUSE request handler."""
         timeouts_before = self.invalidation_timeouts
         inode = self.path_inode.get(path)
@@ -792,8 +792,9 @@ class SullaFiles(pyfuse3.Operations):
             try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
             except Exception: pass
         self._finish_invalidation_pass(timeouts_before)
-        self.directory_complete.discard(parent)
-        self.directory_etags.pop(parent, None)
+        if membership_changed:
+            self.directory_complete.discard(parent)
+            self.directory_etags.pop(parent, None)
         # The kernel will look the name up again. Keep the inode stable for in-flight FUSE ops;
         # _resolve refreshes this row from Files before returning it.
         for cached, cached_inode in tuple(self.path_inode.items()):
@@ -807,8 +808,21 @@ class SullaFiles(pyfuse3.Operations):
             self.pending_tree_reset = True
             return
         for change in result.get("changes", []):
-            for path in (change.get("path"), change.get("oldPath")):
-                if path: self.queue_invalidation(path)
+            path = change.get("path")
+            kind = change.get("kind")
+            inode = self.path_inode.get(path) if path else None
+            node = self.nodes.get(inode) if inode is not None else None
+            version = change.get("versionId")
+            size = change.get("size")
+            # Our create/PUT echo already updated local node metadata. Do not evict the
+            # kernel's valid dentry/page attrs; actor filtering would break other devices.
+            if node is not None and version and str(node.get("versionId") or node.get("current_version_id") or "") == str(version) and int(node.get("size") or 0) == int(size or 0):
+                continue
+            if path and kind in ("insert", "delete", "rename"):
+                self.directory_complete.discard(os.path.dirname(path))
+                self.directory_etags.pop(os.path.dirname(path), None)
+            for event_path in (path, change.get("oldPath")):
+                if event_path: self.queue_invalidation(event_path, membership_changed=kind in ("insert", "delete", "rename"))
 
     async def invalidate_tree(self):
         timeouts_before = self.invalidation_timeouts
@@ -862,8 +876,8 @@ class SullaFiles(pyfuse3.Operations):
                 await self.invalidate_tree()
             else:
                 for path in tuple(self.pending_invalidations):
-                    self.pending_invalidations.pop(path, None)
-                    await self.invalidate_path(path)
+                    membership_changed = self.pending_invalidations.pop(path, True)
+                    await self.invalidate_path(path, membership_changed)
             await trio.sleep(0.05)
 
     def _describe(self, describe, args):
