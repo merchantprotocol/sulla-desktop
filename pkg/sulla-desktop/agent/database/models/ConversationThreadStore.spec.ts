@@ -39,3 +39,20 @@ describe('ConversationThreadStore bounded-window persistence', () => {
     expect(db.messages.has('thread-a:new')).toBe(true);
   });
 });
+
+describe('ConversationThreadStore older-page reads', () => {
+  it('returns a bounded page before the anchor in ascending position order', async() => {
+    // risk: data accuracy — scroll-up must show the exact immediately preceding transcript slice
+    const seen: any[] = [];
+    const db: Queryable = { query: async(text, params = []) => {
+      seen.push({ text, params });
+      if (text.includes('SELECT position')) return { rows: [{ position: 5 }] };
+      if (text.includes('SELECT payload')) return { rows: [{ payload: { id: 'm4' } }, { payload: { id: 'm3' } }] };
+      return { rows: [{ id: 'thread-a' }] };
+    } };
+    const { loadMessagesBeforeWith } = await import('./ConversationThreadStore');
+    const rows = await loadMessagesBeforeWith(db, 'thread-a', 'm5', 2);
+    expect(rows.map(row => row.id)).toEqual(['m3', 'm4']);
+    expect(seen[1].params[2]).toBe(2);
+  });
+});

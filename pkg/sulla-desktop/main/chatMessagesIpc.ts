@@ -14,6 +14,7 @@ import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 export interface ChatThreadStatePort {
   saveThreadState(id: string, state: any): Promise<unknown>;
   loadThreadState(id: string): Promise<unknown>;
+  loadMessagesBefore(id: string, beforeMessageId: string, limit: number): Promise<any[]>;
   deleteThreadState(id: string): Promise<unknown>;
   getMessageCount(id: string): Promise<number>;
 }
@@ -51,6 +52,16 @@ export class ChatMessagesIpcController implements IpcController {
         log.error('[ChatMessagesIpc] Failed to load thread state:', err);
 
         return { success: false, error: String(err) };
+      }
+    });
+
+    this.ipc.handle('chat-messages:load-before', async(_event, input: { threadId: string; beforeMessageId: string; limit?: number }) => {
+      try {
+        const messages = await store.loadMessagesBefore(input.threadId, input.beforeMessageId, input.limit ?? 50);
+        return { success: true, data: messages };
+      } catch (err) {
+        log.error('[ChatMessagesIpc] Failed to load older messages:', err);
+        return { success: false, error: String(err), data: [] };
       }
     });
 

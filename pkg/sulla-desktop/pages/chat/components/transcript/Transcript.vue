@@ -60,7 +60,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
@@ -97,8 +98,31 @@ function onJump(event: Event): void {
   const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
   if (messageId) jumper.jump(transcriptEntries.value, String(messageId), matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
-onMounted(() => window.addEventListener('chat:jump-to-message', onJump));
-onBeforeUnmount(() => window.removeEventListener('chat:jump-to-message', onJump));
+let loadingOlder = false;
+let historyExhausted = false;
+async function loadOlderOnScroll(): Promise<void> {
+  const el = scroller.value;
+  if (!el || loadingOlder || historyExhausted || el.scrollTop >= 200) return;
+  const messages = controller.messages.value;
+  const oldest = messages[0];
+  if (!oldest) return;
+  loadingOlder = true;
+  try {
+    const count = await ipcRenderer.invoke('chat-messages:message-count', controller.thread.value.id);
+    if (!count.success || count.count <= messages.length) { historyExhausted = true; return; }
+    const prevHeight = el.scrollHeight;
+    const prevTop = el.scrollTop;
+    const page = await ipcRenderer.invoke('chat-messages:load-before', { threadId: controller.thread.value.id, beforeMessageId: oldest.id, limit: 50 });
+    if (!page.success) return;
+    const older = page.data ?? [];
+    controller.prependOlder(older);
+    if (older.length < 50) historyExhausted = true;
+    await nextTick();
+    el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+  } finally { loadingOlder = false; }
+}
+onMounted(() => { window.addEventListener('chat:jump-to-message', onJump); scroller.value?.addEventListener('scroll', loadOlderOnScroll, { passive: true }); });
+onBeforeUnmount(() => { window.removeEventListener('chat:jump-to-message', onJump); scroller.value?.removeEventListener('scroll', loadOlderOnScroll); });
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
 const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));

@@ -301,6 +301,16 @@ export async function loadThreadStateWith(db: Queryable, idOrThreadId: string): 
   return { ...state, thread: { ...(state.thread ?? {} as any), messages } };
 }
 
+export async function loadMessagesBeforeWith(db: Queryable, idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
+  const headerId = await resolveHeaderId(db, idOrThreadId);
+  if (!headerId || !beforeMessageId) return [];
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit) || 50));
+  const anchor = await db.query(`SELECT position FROM conversation_messages WHERE conversation_id = $1 AND id = $2 AND deleted_at IS NULL`, [headerId, `${idOrThreadId}:${beforeMessageId}`]);
+  if (!anchor.rows[0]) return [];
+  const result = await db.query(`SELECT payload FROM conversation_messages WHERE conversation_id = $1 AND position < $2 AND deleted_at IS NULL AND payload IS NOT NULL ORDER BY position DESC, seq DESC LIMIT $3`, [headerId, anchor.rows[0].position, safeLimit]);
+  return result.rows.reverse().map(row => row.payload);
+}
+
 export async function deleteThreadStateWith(db: Queryable, idOrThreadId: string): Promise<void> {
   const headerId = await resolveHeaderId(db, idOrThreadId);
   if (!headerId) return;
@@ -356,6 +366,10 @@ export class ConversationThreadStore {
 
   static loadThreadState(idOrThreadId: string): Promise<ChatThreadState | null> {
     return postgresClient.transaction(client => loadThreadStateWith(client, idOrThreadId));
+  }
+
+  static loadMessagesBefore(idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
+    return postgresClient.transaction(client => loadMessagesBeforeWith(client, idOrThreadId, beforeMessageId, limit));
   }
 
   static deleteThreadState(idOrThreadId: string): Promise<void> {

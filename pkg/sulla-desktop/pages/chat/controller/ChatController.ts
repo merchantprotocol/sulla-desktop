@@ -376,9 +376,26 @@ export class ChatController {
   }
 
   // ─── Message CRUD ───────────────────────────────────────────────
+  private olderPagesLoaded = 0;
+
+  prependOlder(messages: Message[]): void {
+    const ids = new Set(this.thread.value.messages.map(message => message.id));
+    const older = messages.filter(message => !ids.has(message.id));
+    if (!older.length) return;
+    this.olderPagesLoaded++;
+    this.thread.value = { ...this.thread.value, messages: [...older, ...this.thread.value.messages], updatedAt: Date.now() };
+  }
+
+  releaseOlderPages(): void {
+    if (!this.olderPagesLoaded) return;
+    this.olderPagesLoaded = 0;
+    const messages = new MessageWindow().trim(this.thread.value.messages);
+    this.thread.value = { ...this.thread.value, messages };
+  }
+
   appendMessage(m: Message): void {
     m = this.stampAuthor(m);
-    const messages = new MessageWindow().trim([...this.thread.value.messages, m]);
+    const messages = this.olderPagesLoaded ? [...this.thread.value.messages, m] : new MessageWindow().trim([...this.thread.value.messages, m]);
     this.thread.value = {
       ...this.thread.value,
       messages,
