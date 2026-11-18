@@ -60,6 +60,12 @@ VT_ENDPOINT = "https://www.virustotal.com/api/v3/urls/{id}"
 # How often to refresh URLhaus blocklist from disk (it's updated externally).
 URLHAUS_RELOAD_SECS = 300
 
+# Largest blocked request body we buffer locally to answer with 451. Bigger or
+# unframed uploads are killed at the headers so the proxy never holds them.
+MAX_BUFFERED_BLOCKED_BODY_BYTES = 64 * 1024
+# Methods that carry no body when they have no Content-Length or Transfer-Encoding.
+BODILESS_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 # External API budgets — enforced with a simple token bucket.
 # Safe Browsing free tier: 10k/day ≈ 6.9/min. We cap at 6/min to stay well under.
 SAFE_BROWSING_BUDGET_PER_MINUTE = 6
@@ -381,6 +387,25 @@ class URLFilter:
                 names.append(name)
         return names
 
+    @staticmethod
+    def _blocked_body_is_small(request) -> bool:
+        """True when a blocked request may be buffered locally and answered with 451.
+
+        Chunked or otherwise framed bodies, bodies over the cap and bodies of
+        unknown length are not small. A request with no framing headers has no
+        body only for bodiless methods (HTTP/2 POST can carry DATA frames with no
+        Content-Length), so those are killed, not buffered.
+        """
+        if request.headers.get("Transfer-Encoding", ""):
+            return False
+        content_length = request.headers.get("Content-Length", "")
+        if content_length:
+            try:
+                return 0 <= int(content_length) <= MAX_BUFFERED_BLOCKED_BODY_BYTES
+            except (TypeError, ValueError):
+                return False
+        return str(getattr(request, "method", "")).upper() in BODILESS_METHODS
+
     @fail_open_hook
     def requestheaders(self, flow: http.HTTPFlow) -> None:
         self._apply_config()
@@ -420,11 +445,7 @@ class URLFilter:
                 flow.request.stream = True
                 return
             content_length = flow.request.headers.get("Content-Length", "")
-            try:
-                large_or_unknown = not content_length or int(content_length) > 64 * 1024
-            except (TypeError, ValueError):
-                large_or_unknown = True
-            if large_or_unknown:
+            if not self._blocked_body_is_small(flow.request):
                 # Mitmproxy 12.3.1 consumes request bodies before its request hook
                 # even when flow.response was assigned in requestheaders. Kill
                 # large/chunked uploads here, before any buffering or upstream.

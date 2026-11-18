@@ -49,9 +49,70 @@ class URLhausLimitTests(unittest.TestCase):
         def get(self, key, default=None):
             return {"blockMode": "block", "allowlist": []}.get(key, default)
 
-    def make_flow(self):
-        request = SimpleNamespace(pretty_url="https://blocked.example/path", pretty_host="blocked.example", host="blocked.example", headers={}, stream=True)
-        return SimpleNamespace(request=request, response=None, metadata={}, server_conn=None, client_conn=None)
+    def make_flow(self, method="GET"):
+        request = SimpleNamespace(pretty_url="https://blocked.example/path", pretty_host="blocked.example", host="blocked.example", method=method, headers={}, stream=True)
+        flow = SimpleNamespace(request=request, response=None, metadata={}, server_conn=None, client_conn=None)
+        flow.kill_called = False
+        flow.kill = lambda: setattr(flow, "kill_called", True)
+        return flow
+
+    def make_blocking_instance(self):
+        instance = url_filter.URLFilter.__new__(url_filter.URLFilter)
+        instance.config = self.Config()
+        instance._config_generation = -1
+        instance._scan = lambda _url, _host, _names: (url_filter.FLAG_BLOCK, ["urlhaus:exact"])
+        return instance
+
+    # risk: URL blocking — a bodiless blocked GET (no Content-Length) gets the 451 explanation, not a reset.
+    def test_blocked_bodiless_get_is_answered_with_451_not_killed(self):
+        instance = self.make_blocking_instance()
+        flow = self.make_flow(method="GET")
+        instance.requestheaders(flow)
+        self.assertFalse(flow.kill_called)
+        self.assertFalse(flow.request.stream)
+        self.assertIsNone(flow.response)
+        instance.request(flow)
+        self.assertFalse(flow.kill_called)
+        self.assertEqual(flow.response.status_code, 451)
+
+    # risk: availability — chunked uploads have unknown length and are killed before buffering.
+    def test_blocked_chunked_post_is_killed(self):
+        instance = self.make_blocking_instance()
+        flow = self.make_flow(method="POST")
+        flow.request.headers["Transfer-Encoding"] = "chunked"
+        instance.requestheaders(flow)
+        self.assertTrue(flow.kill_called)
+        self.assertIsNone(flow.response)
+        self.assertTrue(flow.request.stream)
+
+    # risk: availability — a blocked upload over 64 KiB is killed, never buffered.
+    def test_blocked_post_over_cap_is_killed(self):
+        instance = self.make_blocking_instance()
+        flow = self.make_flow(method="POST")
+        flow.request.headers["Content-Length"] = "1048576"
+        instance.requestheaders(flow)
+        self.assertTrue(flow.kill_called)
+        self.assertIsNone(flow.response)
+        self.assertTrue(flow.request.stream)
+
+    # risk: policy delivery — a small blocked upload is buffered and receives 451.
+    def test_blocked_small_post_gets_451(self):
+        instance = self.make_blocking_instance()
+        flow = self.make_flow(method="POST")
+        flow.request.headers["Content-Length"] = str(10 * 1024)
+        instance.requestheaders(flow)
+        self.assertFalse(flow.kill_called)
+        self.assertFalse(flow.request.stream)
+        instance.request(flow)
+        self.assertEqual(flow.response.status_code, 451)
+
+    # risk: availability — an unframed POST may carry an HTTP/2 body, so it is killed rather than buffered.
+    def test_blocked_unframed_post_is_killed(self):
+        instance = self.make_blocking_instance()
+        flow = self.make_flow(method="POST")
+        instance.requestheaders(flow)
+        self.assertTrue(flow.kill_called)
+        self.assertIsNone(flow.response)
 
     # risk: URL blocking — blocked requests must not be streamed upstream and get 451.
     def test_block_verdict_is_applied_without_request_streaming(self):
