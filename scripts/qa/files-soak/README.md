@@ -1,19 +1,73 @@
-# Files durability soak
+# Files durability soak and kill-test harness
 
-`files-soak.sh` is a self-contained, standard-library-only QA harness for the Sulla Desktop Linux VM. Run it **inside the VM**, where `/mnt/sulla-files` is mounted and Docker manages the Files services. It does not SSH or call the Mac host. The soak folder is created below the detected personal collection (`Files`, `Personal`, `My Files`, or an unambiguous non-organization root); organization collections are excluded. Bulk data is about 225 MB on average and at most 300 MB, well below the iMac's 1.5 GB test-data budget.
+`files-soak.sh` is a self-contained, standard-library-only QA harness for the Sulla Desktop Linux VM. Run it **inside the VM** as root, where Docker manages the Files services. It does not SSH or call the Mac host. It supersedes the earlier soak PR #2599 and is the measurement + kill-test harness for the Files FUSE reliability epic (see `Projects/` plan, step 0). The soak folder is created below the detected personal collection (`Files`, `Personal`, `My Files`, or an unambiguous non-organization root); organization collections are excluded.
 
 ```sh
 cd /path/to/scripts/qa/files-soak
-./files-soak.sh all
-# Optional, only works when host macOS tools are exposed in this environment:
-./files-soak.sh crash --with-app-restart
-# Keep the default 30 minutes, or set a shorter/longer duration:
-SOAK_MINUTES=2 ./files-soak.sh load
-./files-soak.sh cleanup
+./files-soak.sh fuse-identity            # container id/created/startedAt/image (compare before and after a regen)
+./files-soak.sh restart-propagation      # ENOTCONN check: fresh ls/read/write in a container that survived an adapter restart
+./files-soak.sh outage                   # Files stop 45 s, then stop 120 s with bounded probes; recovery
+./files-soak.sh handles                  # 100 concurrent open files in the VM and two test containers
+SOAK_TOKEN_TEST=1 ./files-soak.sh token-empty   # opt-in: empties the adapter token for a bounded window, then restores it
+./files-soak.sh lock-contention          # creates, mv-over-existing, mkdir/rmdir in one collection
+./files-soak.sh latency                  # stat p50/p95/p99 over ~500 files, idle and under write load
+./files-soak.sh staleness                # API write -> mount visibility, and invalidation window
+./files-soak.sh integrity                # every ledger write checksum-verified via mount, plus an API sample
+./files-soak.sh eio-capture              # Files and adapter log status/code lines within ±2 s of each EIO
+./files-soak.sh env-info                 # images, digests, migrations 067/068, Files metrics probe
+./files-soak.sh all                      # full sequence (< ~25 min, < 500 MB of QA data)
+./files-soak.sh summary                  # compact table for the latest run
+./files-soak.sh cleanup                  # removes the soak folder and test containers, separately
 ```
 
-Supported phases: `bulk`, `append`, `ops`, `crash`, `load`, `cloud`, `all`, and `cleanup`. `all` runs every test phase but never removes its data. Cleanup is deliberately separate. Checks print one JSON line each and append the same line to `~/sulla-twodev/soak/results.jsonl`; the script prints a short summary after the JSON lines. On any individual failure it records the failure and continues, then exits nonzero if a check failed. It never logs file contents, credentials, or host user data; evidence consists of check names, counts, hashes and bounded error descriptions.
+Legacy phases remain: `bulk`, `append`, `ops`, `crash`, `load`, `cloud`. `all` does not run `load` unless `SOAK_MINUTES` is set (the 30-minute default would blow the budget). `--with-app-restart` is opt-in for `crash`.
 
-`bulk` writes 2,000 1–8 KiB files and 15 10–20 MiB files, then compares SHA-256 digests. `append` uses eight processes and single `O_APPEND` record writes. `ops` checks truncate/rewrite/rename/move/delete; trash and historical restore are reported as skipped because there is no stable guest-side API contract for them. `crash` writes uniquely named, checksummed files while restarting `sulla_files` and killing the FUSE daemon child, waits up to 300 seconds for `ls`, and reports missing/corrupt successful writes as DATA LOSS. App restart is opt-in; the VM normally cannot access host `osascript`/`open`. `load` defaults to 30 minutes, probes every 10 seconds, and counts mount drops plus matching supervisor restart lines appended during the run. `cloud` is skipped: Files exposes cloud heads internally and `sync_state` through listing, but the latter is hydration/conflict state rather than a supported per-file cloud-commit status API.
+## Output
 
-Implementation evidence: `pkg/sulla-desktop/backend/sullaRuntimeBackend.ts:1519-1527` names the FUSE container `sulla_files_fuse` and Files service URL `https://sulla_files:8792`; `pkg/sulla-desktop/main/SullaFilesMountAdapterService.ts:83-84,113-121` addresses that container. `services/sulla-files-fuse/entrypoint.sh:86-103` starts the adapter daemon as `python3 /usr/local/libexec/sulla-files-fuse.py` and supervises its exit; killing that child is the daemon-level test. `pkg/sulla-desktop/backend/sullaRuntime/ManagedContainerHealthWatcher.ts:78-81` logs healing actions; `pkg/sulla-desktop/backend/sullaContainerHealth.ts:80-86` formats the unhealthy/restarting log line. The File listing's `sync_state` is assembled in `services/sulla-files/src/Repositories/FileListingRepository.ts:21` from conflict and hydration states.
+Every check prints one JSON line and appends it to `~/sulla-twodev/soak/results.jsonl`:
+
+```json
+{"check":"outage-b-stop","pass":true,"metrics":{"down_s":120,"hung":0,"max_ms":10002.1,"probes":13},"evidence":"...","ms":...,"phase":"outage","run":"20261118T..."}
+```
+
+`evidence` carries counts, errno text and status/code tokens only. The harness never prints tokens, file contents or user-data paths. Errors are shortened to the OS errno text (for example `Transport endpoint is not connected`).
+
+## Layout detection and overrides
+
+| Layout | Mount seen by the VM | Test-container bind |
+| --- | --- | --- |
+| Current | `/mnt/sulla-files` | `/mnt/sulla-files:/mnt/sulla-files:rslave` |
+| Future | `/mnt/sulla/files` (FUSE on the anchor's parent) | `/mnt/sulla:/mnt/sulla:rslave` |
+
+The mount is `/mnt/sulla/files` when that path is a real mountpoint, otherwise `/mnt/sulla-files`. Overrides: `SOAK_MOUNT`, `SOAK_BIND_SPEC` (`src:dst:propagation`), `SOAK_FILES_CONTAINER` (default `sulla_files`), `SOAK_FUSE_CONTAINER` (`sulla_files_fuse`), `SOAK_PG_CONTAINER` / `SOAK_PG_USER` / `SOAK_PG_DB` (`sulla_postgres`, `sulla`, `sulla`), `SOAK_FUSE_TOKEN_FILE` (`/run/sulla-files-fuse/token`), `SOAK_FUSE_URL` (`https://sulla_files:8792`), `SOAK_TEST_IMAGE` (defaults to `alpine:*`, `busybox:*`, or the FUSE image).
+
+Other knobs: `SOAK_INVALIDATE_WINDOW` (5 s), `SOAK_OUTAGE_A_SECONDS` (45), `SOAK_OUTAGE_B_SECONDS` (120), `SOAK_LOCK_SECONDS` (30), `SOAK_LATENCY_P95_MS` (1000), `SOAK_LATENCY_LOAD_SECONDS` (20), `SOAK_API_SAMPLE` (40), `SOAK_TOKEN_SECONDS` (20), `SOAK_DESKTOP_VERSION` (for `env-info`), `SOAK_RUN` (run id, summary selector).
+
+## What each phase proves
+
+- **restart-propagation** (acceptance 1): starts a throwaway `fusesoak-<ts>` container with no restart policy, bound the way agent containers bind Files, writes, runs `docker restart sulla_files_fuse`, waits for the VM mount, then does a new ls/write/read in the **same** container. It fails with the errno text if the mount stays dead for that container (`ENOTCONN`). This is the bind-layout check from the review: the fix to bind the anchor's parent should make it pass.
+- **outage** (acceptance 2): four checksummed writers run through the mount. Sub-test A stops `sulla_files` for 45 s, restarts it and reports per-op success, failure, latency. Sub-test B stops it for 120 s with probes bounded at 150 s; a probe still running at 150 s counts as a hang. Recovery is a fresh write+read. Every successful write is checksum-verified afterward. A `finally` always restarts `sulla_files`.
+- **handles** (acceptance 2): opens 100 files in the VM and in two test containers, holds them, writes and reads, then closes. The adapter cap (`MAX_OPEN_HANDLES = 32`) shows up here as EMFILE. Pass means all 100 open in every place.
+- **token-empty** (acceptance 2, opt-in): backs up the token inside the FUSE container (`*.soak-bak`, never printed), empties it, restarts the adapter, waits, counts EACCES and retry log lines, then restores in a `finally`. Pass requires the restore and mount recovery within 120 s. Skipped by default and in `all`.
+- **lock-contention** (acceptance 3): in one collection, runs creators, mv-over-existing movers and mkdir/rmdir loops in parallel for `SOAK_LOCK_SECONDS`. Counts EIO separately from other errors and reports latency per op kind.
+- **latency** (acceptance 5): 500 files stat'd idle and under a 10 MiB write load; read first vs repeat p50 on 20 files.
+- **staleness** (acceptance 5): writes a new file and then modifies an existing one through the Files upload API from inside `sulla_files_fuse` (token stays there), then polls through the mount. Pass requires visibility within window + slack and no stale reads after the window.
+- **eio-capture** (acceptance 2): for every EIO the harness saw, pulls `docker logs -t --since` from `sulla_files` and `sulla_files_fuse` and counts status/code fields within ±2 s. Paths are dropped.
+- **env-info**: container images, image IDs, repo digests, Desktop version (set `SOAK_DESKTOP_VERSION`; unknown otherwise), migrations 067/068 in `files_schema_migrations`, and a probe of `/internal/metrics` and `/metrics` for pool-wait and fsync names. The probe skips gracefully when there is none.
+- **fuse-identity** (acceptance 4): prints the adapter's id, created, `State.StartedAt`, image, image ID and restart count. Run it before and after a Desktop compose regeneration and compare.
+- **integrity** (acceptance 11): every ledger row written by any phase is checksum-verified through the mount. A sample is verified through the Files API (via the in-container helper, token never leaves the container). Crash-phase writes are checksum-checked in the `crash` phase and added to the ledger for this integrity pass.
+
+## Phases from before (unchanged behaviour)
+
+`bulk` writes 2,000 1–8 KiB files and 15 10–20 MiB files and compares SHA-256 digests. `append` uses eight processes and single `O_APPEND` record writes. `ops` checks truncate/rewrite/rename/move/delete; trash and historical restore are reported as skipped because there is no stable guest-side API contract for them. `crash` restarts `sulla_files` and kills the FUSE daemon child while writing checksummed files, and reports missing or corrupt successful writes as DATA LOSS. `load` probes every 10 seconds for `SOAK_MINUTES` (default 30). `cloud` is skipped: there is no supported guest-side per-file cloud-commit status.
+
+## Safety
+
+- Test containers carry the label `sulla-soak=1`, use `sleep 1800`, and have no restart policy. `all` and each phase remove them in a `finally`, and `cleanup` removes any leftovers with that label.
+- Only the per-run `files-soak-<stamp>` folder under the personal collection is written. `cleanup` refuses anything else.
+- Kill tests (`restart-propagation`, `outage`, `crash`, `token-empty`) restart Files or the adapter. Run them on a VM where that is acceptable.
+- Budget: `all` writes about 300 MB of QA data (bulk 225 MB, plus latency, outage, lock and staleness data). It takes about 20 to 25 minutes on a healthy VM.
+
+## Notes
+
+This branch was checked with `bash -n` and `py_compile` only. It has not been run against a live Desktop; the manager runs it on the iMac before and after the fixes.
