@@ -23,6 +23,7 @@
 // that changes; a failed live lookup never substitutes hardcoded model ids.
 
 import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver';
+import { SingleFlightTtlCache } from './SingleFlightTtlCache';
 import Logging from '@pkg/utils/logging';
 
 const log = Logging.background;
@@ -61,11 +62,10 @@ const AUTO_SENTINEL: ClaudeCatalogModel = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-let cache: { at: number; models: ClaudeCatalogModel[] } | null = null;
-let inFlight: Promise<ClaudeCatalogModel[]> | null = null;
+const catalogCache = new SingleFlightTtlCache<ClaudeCatalogModel[]>(CACHE_TTL_MS);
 
 export function clearClaudeModelCatalogCache(): void {
-  cache = null;
+  catalogCache.clear();
 }
 
 interface RawAnthropicModel {
@@ -133,12 +133,11 @@ async function fetchBrokeredModels(): Promise<ClaudeCatalogModel[] | null> {
  *   "refresh models" actions; the picker's routine reads hit the cache).
  */
 export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<ClaudeCatalogModel[]> {
-  if (!opts?.force && cache && (Date.now() - cache.at) < CACHE_TTL_MS) {
-    return cache.models;
+  if (!opts?.force) {
+    const cached = catalogCache.fresh();
+    if (cached !== undefined) return cached;
   }
-  if (inFlight) return inFlight;
-  inFlight = loadClaudeCodeModels().finally(() => { inFlight = null; });
-  return inFlight;
+  return catalogCache.join(loadClaudeCodeModels);
 }
 
 async function loadClaudeCodeModels(): Promise<ClaudeCatalogModel[]> {
@@ -170,7 +169,7 @@ async function loadClaudeCodeModels(): Promise<ClaudeCatalogModel[]> {
   const efforts = dynamic ? await claudeEffortLevels() : [];
   const models = [AUTO_SENTINEL, ...(dynamic ?? []).map(m => (efforts.length ? { ...m, efforts } : m))];
   if (dynamic) {
-    cache = { at: Date.now(), models };
+    catalogCache.store(models);
     log.log(`[claudeModelCatalog] Loaded ${ models.length - 1 } claude models from live catalog`);
   } else {
     log.warn('[claudeModelCatalog] Live model discovery failed — returning Auto only');

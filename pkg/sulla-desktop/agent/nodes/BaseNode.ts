@@ -40,6 +40,7 @@ import { turnAgentDefinitionMemo } from './turnAgentDefinitionMemo';
 import { turnProviderResolver } from './TurnProviderResolver';
 import { TurnOutputCounter } from '../services/TurnOutputCounter';
 import { turnProviderMemo } from './turnProviderMemo';
+import { templateSnapshotCache } from './TemplateSnapshotCache';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -51,25 +52,6 @@ import Logging from '@pkg/utils/logging';
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 const perf = Logging.perf;
-const templateSnapshot = new Map<string, { value: string; at: number; flight?: Promise<string> }>();
-
-async function cachedTemplateSnapshot(key: string, load: () => Promise<string>): Promise<string> {
-  const current = templateSnapshot.get(key);
-  if (current && Date.now() - current.at < 60_000) return current.value;
-  if (current?.value) {
-    if (!current.flight) {
-      current.flight = load().then(value => { templateSnapshot.set(key, { value, at: Date.now() }); return value; })
-        .catch(() => current.value).finally(() => { const latest = templateSnapshot.get(key); if (latest) latest.flight = undefined; });
-    }
-    return current.value;
-  }
-  if (current?.flight) return current.flight;
-  const entry = { value: '', at: 0, flight: undefined as Promise<string> | undefined };
-  entry.flight = load().then(value => { templateSnapshot.set(key, { value, at: Date.now() }); return value; })
-    .finally(() => { const latest = templateSnapshot.get(key); if (latest) latest.flight = undefined; });
-  templateSnapshot.set(key, entry);
-  return entry.flight;
-}
 
 export const JSON_ONLY_RESPONSE_INSTRUCTIONS = `When you respond it will be parsed as JSON and ONLY the following object will be read.
 Any text outside this exact structure will break downstream parsing.\nRespond ONLY with this valid JSON — nothing before, nothing after, no fences, no commentary:`;
@@ -305,7 +287,7 @@ export async function getTemplateVariables(threadId = 'unknown'): Promise<Record
   let folderMap = '';
   const folderMapStarted = Date.now();
   try {
-    folderMap = await cachedTemplateSnapshot('filesFolderMap', async () => {
+    folderMap = await templateSnapshotCache.get('filesFolderMap', async () => {
     const { filesContainerJson } = await import('../files/containerClient');
     const folders=await filesContainerJson<Array<{collectionName:string;path:string;description:string;namingHint?:string;needsDescription?:boolean}>>('/v1/folders/map?limit=38',{});
     if (folders.length) return `## Folder map
@@ -323,7 +305,7 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
     const { getExtensionService } = await import('../services/ExtensionService');
     const svc = getExtensionService();
     await measure('extensionsInitialize', svc.initialize());
-    const installed = await measure('extensions', cachedTemplateSnapshot('installedExtensions', async () => {
+    const installed = await measure('extensions', templateSnapshotCache.get('installedExtensions', async () => {
       const rows = await svc.fetchInstalledExtensions();
       return JSON.stringify(rows);
     }).then(value => JSON.parse(value)));

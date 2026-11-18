@@ -8,6 +8,7 @@ import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery'
 import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelCatalogReport, type ModelClass, type RoutingModelInfo, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
 import { PROVIDER_FACTORIES } from './index';
 import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
+import { LiveProviderSnapshot, type LiveProviderMap } from './LiveProviderSnapshot';
 
 export interface ModelCandidate { provider: string; model: string; effort?: string }
 export type EditableState = EditableRoutingState;
@@ -149,13 +150,10 @@ export class ModelRouter {
   private loadedHealth = false;
   private listeners = new Set<() => void>();
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
-  private liveSnapshot: Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }> | null = null;
-  private liveSnapshotAt = 0;
-  private liveSnapshotFlight: Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>> | null = null;
-  private liveSnapshotGeneration = 0;
+  private readonly liveSnapshot = new LiveProviderSnapshot(() => this.loadLiveProviders());
   private providerListenerAttached = false;
 
-  invalidateLiveProviders(): void { this.liveSnapshotAt = 0; this.liveSnapshot = null; this.liveSnapshotGeneration++; this.liveSnapshotFlight = null; }
+  invalidateLiveProviders(): void { this.liveSnapshot.invalidate(); }
 
   onStatusChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private emit(): void { for (const listener of this.listeners) listener() }
@@ -266,32 +264,11 @@ export class ModelRouter {
   /** True while the provider is backed off. Backed-off providers are still routed, just after the healthy ones. */
   async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }
 
-  private async liveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>> {
-    if (this.liveSnapshot && Date.now() - this.liveSnapshotAt < 30_000) return this.liveSnapshot;
-    if (this.liveSnapshot && !this.liveSnapshotFlight) {
-      void this.refreshLiveProviders().catch(() => undefined);
-      return this.liveSnapshot;
-    }
-    if (this.liveSnapshotFlight) return this.liveSnapshotFlight;
-    return this.refreshLiveProviders();
+  private liveProviders(): Promise<LiveProviderMap> {
+    return this.liveSnapshot.get();
   }
 
-  private refreshLiveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>> {
-    if (this.liveSnapshotFlight) return this.liveSnapshotFlight;
-    const generation = this.liveSnapshotGeneration;
-    let flight: Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>>;
-    flight = this.loadLiveProviders().then(snapshot => {
-      if (generation === this.liveSnapshotGeneration) {
-        this.liveSnapshot = snapshot;
-        this.liveSnapshotAt = Date.now();
-      }
-      return snapshot;
-    }).finally(() => { if (this.liveSnapshotFlight === flight) this.liveSnapshotFlight = null; });
-    this.liveSnapshotFlight = flight;
-    return flight;
-  }
-
-  private async loadLiveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>> {
+  private async loadLiveProviders(): Promise<LiveProviderMap> {
     const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
     if (!this.providerListenerAttached && mps?.onChange) {
       this.providerListenerAttached = true;

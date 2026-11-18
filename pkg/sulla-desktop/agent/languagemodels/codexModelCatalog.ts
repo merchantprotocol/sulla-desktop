@@ -20,6 +20,7 @@
 
 import { runCommand } from '../tools/util/CommandRunner';
 import { ensureCodexAuthFile } from '../util/codexAuthFile';
+import { SingleFlightTtlCache } from './SingleFlightTtlCache';
 
 import Logging from '@pkg/utils/logging';
 
@@ -43,11 +44,10 @@ const AUTO_SENTINEL: CodexCatalogModel = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-let cache: { at: number; models: CodexCatalogModel[] } | null = null;
-let inFlight: Promise<CodexCatalogModel[]> | null = null;
+const catalogCache = new SingleFlightTtlCache<CodexCatalogModel[]>(CACHE_TTL_MS);
 
 export function clearCodexModelCatalogCache(): void {
-  cache = null;
+  catalogCache.clear();
 }
 
 interface RawCodexModel {
@@ -70,12 +70,11 @@ interface RawCodexModel {
  *   "refresh models" actions; the picker's routine reads hit the cache).
  */
 export async function listCodexModels(opts?: { force?: boolean }): Promise<CodexCatalogModel[]> {
-  if (!opts?.force && cache && (Date.now() - cache.at) < CACHE_TTL_MS) {
-    return cache.models;
+  if (!opts?.force) {
+    const cached = catalogCache.fresh();
+    if (cached !== undefined) return cached;
   }
-  if (inFlight) return inFlight;
-  inFlight = loadCodexModels().finally(() => { inFlight = null; });
-  return inFlight;
+  return catalogCache.join(loadCodexModels);
 }
 
 async function loadCodexModels(): Promise<CodexCatalogModel[]> {
@@ -125,7 +124,7 @@ async function loadCodexModels(): Promise<CodexCatalogModel[]> {
       }));
 
     const models = [AUTO_SENTINEL, ...dynamic];
-    cache = { at: Date.now(), models };
+    catalogCache.store(models);
     log.log(`[codexModelCatalog] Loaded ${ dynamic.length } visible codex models from live catalog`);
     return models;
   } catch (err) {
