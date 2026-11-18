@@ -197,8 +197,14 @@
       value = head ? value.slice(0, head.index + head[0].length) + tag + value.slice(head.index + head[0].length) :
         tag + value;
     }
-    // Run mode needs no extra meta: the sandbox (no allow-top-navigation, no
-    // allow-same-origin) is what keeps the page away from the app.
+    if (run) {
+      // The opaque-origin frame can only request navigation; the host validates
+      // the exact frame WindowProxy before acting on a message.
+      const bridge = `<script>(function(){document.addEventListener('click',function(event){var link=event.target&&event.target.closest&&event.target.closest('a[href]');if(!link)return;var href=link.getAttribute('href')||'';if(href.charAt(0)==='#')return;if(/^https?:\/\//i.test(href)){event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'external',href:href},'*');return}if(/^(mailto:|tel:)/i.test(href))return;if(/^[a-z][a-z\\d+.-]*:/i.test(href)||href.slice(0,2)==='//')return;event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'relative',href:href},'*')},true)})()<\/script>`;
+      const head = /<head(?:\s[^>]*)?>/i.exec(value);
+      value = head ? value.slice(0, head.index + head[0].length) + bridge + value.slice(head.index + head[0].length) : bridge + value;
+    }
+    // No allow-top-navigation and no allow-same-origin keeps the page away from the app.
     return value;
   }
 
@@ -282,8 +288,8 @@
   <div class="shb-wb-drag" id="drag"></div>
   <div class="shb-dv-stage" id="stage">
     <div class="shb-wb-chrome">
-      <button class="shb-wb-ib" disabled title="Back"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
-      <button class="shb-wb-ib" disabled title="Forward"><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
+      <button class="shb-wb-ib" id="pBack" title="Back (⌘[)" aria-label="Back" ${options.canBack ? '' : 'disabled'}><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <button class="shb-wb-ib" id="pForward" title="Forward (⌘])" aria-label="Forward" ${options.canForward ? '' : 'disabled'}><svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
       <button class="shb-wb-ib" id="pReload" title="Reload (⌘R)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
       <div class="shb-wb-url"><svg viewBox="0 0 24 24" style="width:12px;height:12px"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="pUrl" class="shb-wb-path" title=""><bdi dir="ltr"></bdi></span><button class="shb-wb-url-copy" id="pCopy" title="Copy path" aria-label="Copy path"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v1"/></svg></button><span class="shb-wb-sp"></span><b>Scripts running · sandboxed</b></div>
       ${options.onOpenInBrowser ? '<button class="shb-wb-ib" id="pOpen" title="Open in a Sulla browser tab"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>' : ''}
@@ -462,13 +468,33 @@
       const badge = host.querySelector('.shb-wb-url b');
       if (badge) badge.textContent = policy.run ? 'Scripts running · sandboxed' : 'Preview · scripts don’t run here';
     }
-    addEventListener('message', e => {
-      if (e.data && e.data.sullaPreviewLink != null) {
-        const h = e.data.sullaPreviewLink;
-        toast(h === '#' || !h ? 'Link intercepted: href="#" goes nowhere' : 'Link intercepted: ' + h +
-          ' is not a file in this folder')
+    const onFrameMessage = e => {
+      if (e.source !== frame.contentWindow || !e.data) return;
+      if (e.data.sullaPreviewLink != null) {
+        const href = e.data.sullaPreviewLink;
+        toast(href === '#' || !href ? 'Link intercepted: href="#" goes nowhere' : 'Link intercepted: ' + href + ' is not a file in this folder');
+        return;
       }
-    });
+      if (e.data.type !== 'sulla-files-nav') return;
+      if (e.data.kind === 'relative' && typeof options.onNavigate === 'function' && typeof e.data.href === 'string') options.onNavigate(e.data.href);
+      if (e.data.kind === 'external' && typeof options.onOpenExternal === 'function' && typeof e.data.href === 'string' && /^https?:\/\//i.test(e.data.href)) options.onOpenExternal(e.data.href);
+    };
+    addEventListener('message', onFrameMessage);
+    let canBackState = Boolean(options.canBack), canForwardState = Boolean(options.canForward);
+    const setNavigationState = (canBack, canForward) => {
+      canBackState = Boolean(canBack); canForwardState = Boolean(canForward);
+      const back = $('pBack'), forward = $('pForward');
+      if (back) back.disabled = !canBack;
+      if (forward) forward.disabled = !canForward;
+    };
+    const onHistoryKey = event => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      const target = event.target;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (event.key === '[' && canBackState && options.onNavigateHistory) { event.preventDefault(); options.onNavigateHistory('back'); }
+      if (event.key === ']' && canForwardState && options.onNavigateHistory) { event.preventDefault(); options.onNavigateHistory('forward'); }
+    };
+    rootEl.addEventListener('keydown', onHistoryKey);
 
     function setEditing(on) {
       on = Boolean(on && !options.readOnly);
@@ -2177,6 +2203,8 @@
 
     if (options.onRename) $('fname').addEventListener('change', event => options.onRename(event.target.value));
     if ($('back')) $('back').onclick = () => options.onBack();
+    if ($('pBack')) $('pBack').onclick = () => options.onNavigateHistory?.('back');
+    if ($('pForward')) $('pForward').onclick = () => options.onNavigateHistory?.('forward');
 
     if (!options.onAskSulla) {
       host.querySelectorAll('[data-a=ai], #askGo').forEach(el => {
@@ -2206,6 +2234,7 @@
           conflict: 'Conflict'
         })[value] || value;
       },
+      setNavigationState,
       setFilePath(path) {
         filePath = new FilePathPresenter({filePath: path, fileName: fileName()}).resolve();
         $('pUrl').firstElementChild.textContent = filePath; $('pUrl').title = filePath;
@@ -2221,6 +2250,8 @@
         $('editTog').disabled = options.readOnly;
       },
       destroy() {
+        removeEventListener('message', onFrameMessage);
+        rootEl.removeEventListener('keydown', onHistoryKey);
         externalSourceEditor?.destroy();
         host.innerHTML = '';
       },
