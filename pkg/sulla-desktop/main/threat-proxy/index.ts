@@ -360,7 +360,7 @@ export function getStatus(): ThreatProxyStatus {
 function transition(state: EgressPolicyState, reason: string): void {
   if (effectivePolicy === state && statusReason === reason) return;
   const from = effectivePolicy; effectivePolicy = state; statusReason = reason; statusSince = new Date().toISOString(); lastTransition = statusSince;
-  if (state === 'direct' && from !== 'direct' && reason !== 'idle' && reason !== 'health_check_pending' && reason !== 'disabled' && reason !== 'agent_without_ca') failOpenTransitions.push(Date.now());
+  if (state === 'direct' && from !== 'direct' && reason !== 'idle' && reason !== 'health_check_pending' && reason !== 'disabled') failOpenTransitions.push(Date.now());
   console.warn('[threat-proxy] egress policy transition', JSON.stringify({ from, to: state, reason, at: lastTransition }));
   for (const win of BrowserWindow.getAllWindows()) { if (!win.isDestroyed()) win.webContents.send('threat-proxy:status-changed', getStatus()); }
 }
@@ -420,7 +420,7 @@ async function checkProxyHealthNow(): Promise<void> {
     if (!settings.enabled) { healthyProbes = failedProbes = 0; transition('off', 'disabled'); await applyWatcherPolicy(executor, 'off'); return; }
     const data = await executor.execCommand({ root: true, capture: true }, 'sh', '-c', WATCHER_PROBE_SCRIPT, 'threat-proxy-watch', THREAT_PROXY_CONTAINER);
     const [state, health, oom, restarting, probe, usedRaw, limitRaw, ca, missingAgent, runningAgents] = data.trim().split('|');
-    if (Number(runningAgents) === 0 && state !== 'running') { healthyProbes = failedProbes = 0; transition('direct', 'idle'); await applyWatcherPolicy(executor, 'direct'); return; }
+    if (Number(runningAgents) === 0) { healthyProbes = failedProbes = 0; transition('direct', 'idle'); await applyWatcherPolicy(executor, 'direct'); return; }
     if (missingAgent === '1') { healthyProbes = 0; transition('direct', 'agent_without_ca'); await applyWatcherPolicy(executor, 'direct'); return; }
     const used = Number(usedRaw), limit = Number(limitRaw);
     if (state !== 'running' || health !== 'healthy' || oom === 'true' || restarting === 'true') { healthyProbes = failedProbes = 0; transition('direct', `proxy_${state}_${health}_oom_${oom}_restarting_${restarting}`); await applyWatcherPolicy(executor, 'direct'); return; }
