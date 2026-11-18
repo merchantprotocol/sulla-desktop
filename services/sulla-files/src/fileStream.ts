@@ -22,6 +22,15 @@ export class FileContentIntegrityError extends Error {
   constructor(readonly integrityClass:'manifest_geometry_invalid' | 'chunk_row_missing' | 'chunk_metadata_invalid' | 'manifest_size_mismatch', message:string, readonly chunkId?:string) { super(message) }
 }
 
+/** A persisted chunk failed its AEAD or content-address check; callers must not retry it as a transient outage. */
+export class ChunkKeyMismatchError extends Error {
+  readonly status = 422;
+  readonly code = 'chunk_key_mismatch';
+  constructor(readonly collectionId:string, readonly chunkId:string, cause?:unknown) {
+    super(`Stored chunk cannot be decrypted with its collection key: ${ chunkId }`, { cause });
+  }
+}
+
 export class RangeNotSatisfiableError extends Error {
   readonly status = 416;
   constructor(readonly size:number) { super('Requested range is not satisfiable') }
@@ -89,7 +98,12 @@ export class FileContentStreamer {
         signal.throwIfAborted();
         const encrypted = await store.getBounded(file!.chunkCollectionId, chunk.id, crypto.maxEncryptedChunkBytes(chunk.size), chunk.storedSize);
         signal.throwIfAborted();
-        const plain = await crypto.decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, chunk.id, chunk.size);
+        let plain:Buffer;
+        try { plain = await crypto.decryptAndVerifyChunk(encrypted, keys.data, keys.dedup, chunk.id, chunk.size) }
+        catch (error) {
+          console.error('[SullaFiles] chunk key mismatch', { collectionId: file!.chunkCollectionId, chunkId: chunk.id });
+          throw new ChunkKeyMismatchError(file!.chunkCollectionId, chunk.id, error);
+        }
         signal.throwIfAborted();
         const from = Math.max(0, start - chunk.start);
         const to = Math.min(chunk.size, end - chunk.start + 1);

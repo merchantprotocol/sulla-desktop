@@ -25,12 +25,20 @@ export interface StagedVersionContent {
 export interface StagerKeyring { keys(collectionId:string):Promise<{ data:Uint8Array; dedup:Uint8Array }> }
 export interface StagerChunkStore {
   storedSize(collectionId:string, id:string):Promise<number | undefined>;
+  getBounded?(collectionId:string, id:string, maxBytes:number, expectedBytes:number):Promise<Uint8Array>;
   put(collectionId:string, id:string, bytes:Uint8Array):Promise<unknown>;
   putStaged?(collectionId:string, id:string, bytes:Uint8Array):Promise<unknown>;
 }
 export interface StagerCrypto {
   chunkId(plain:Uint8Array, dedupKey:Uint8Array):string;
   encryptChunk(plain:Uint8Array, dataKey:Uint8Array, id:string):Promise<Uint8Array>;
+  decryptAndVerifyChunk?(value:Uint8Array, dataKey:Uint8Array, dedupKey:Uint8Array, id:string, expectedPlainBytes:number):Promise<Uint8Array>;
+}
+
+export class ChunkKeyMismatchError extends Error {
+  readonly status = 422;
+  readonly code = 'chunk_key_mismatch';
+  constructor(readonly collectionId:string, readonly chunkId:string) { super(`Stored chunk cannot be decrypted with collection key: ${chunkId}`) }
 }
 
 /**
@@ -57,7 +65,14 @@ export class VersionContentStager {
       const id = this.crypto.chunkId(plain, dedup); chunkIds.push(id);
       if (chunks.has(id)) continue;
       const existing = await this.store.storedSize(collectionId, id);
-      if (existing !== undefined) { chunks.set(id, { id, size: plain.length, storedSize: existing }); continue }
+      if (existing !== undefined) {
+        if (!this.store.getBounded || !this.crypto.decryptAndVerifyChunk) throw new Error('Chunk dedupe requires ciphertext verification support');
+        const ciphertext = await this.store.getBounded(collectionId, id, existing, existing);
+        try {
+          await this.crypto.decryptAndVerifyChunk(ciphertext, data, dedup, id, plain.length);
+        } catch { throw new ChunkKeyMismatchError(collectionId, id) }
+        chunks.set(id, { id, size: plain.length, storedSize: existing }); continue;
+      }
       const encrypted = await this.crypto.encryptChunk(plain, data, id);
       const writeStarted = performance.now();
       await (this.store.putStaged ?? this.store.put).call(this.store, collectionId, id, encrypted);

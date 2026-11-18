@@ -37,7 +37,7 @@ export class FilesErrorHandlers {
   private readonly final = (error:any, _request:any, response:any, _next:any) => {
     const status = error.status ?? (error.code === '23505' ? 409 : error.code === '55000' ? 423 : 500);
     if (status >= 500) FilesErrorHandlers.logServerFailure(status, error, _request);
-    return response.status(status).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error', ...((error.status === 423 || error.code === '55000') ? {code:'FILE_LOCKED'} : error.code === 'EROFS' ? {code:'EROFS'} : error.code === 'FILE_OFFLINE' ? {code:'FILE_OFFLINE'} : {}), ...(error.conflictPath ? { conflictPath: error.conflictPath } : {}) });
+    return response.status(status).json({ error: _request.path.startsWith('/v1/bootstrap/') || error.type === 'entity.parse.failed' ? 'Invalid request' : error.message ?? 'server error', ...((error.status === 423 || error.code === '55000') ? {code:'FILE_LOCKED'} : error.code === 'EROFS' ? {code:'EROFS'} : error.code === 'FILE_OFFLINE' ? {code:'FILE_OFFLINE'} : error.code === 'chunk_key_mismatch' ? {code:'chunk_key_mismatch'} : {}), ...(error.conflictPath ? { conflictPath: error.conflictPath } : {}) });
   };
 
   /**
