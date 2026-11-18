@@ -34,6 +34,21 @@ top_is_fuse() {
   return 1
 }
 
+# Find the non-FUSE mount that anchors mount_path. Mountinfo is ordered by
+# mount creation, so replace equal mount-point matches to retain the top stack entry.
+containing_mount() {
+  awk -v path="$2" '
+    $5 != "" && ($5 == "/" || path == $5 || index(path, $5 "/") == 1) {
+      opt = ""; for (i = 7; $i != "-" && i <= NF; i++) opt = opt " " $i
+      fs = $(i + 1)
+      if (fs !~ /^fuse(\.|$)/ && length($5) >= best) {
+        best = length($5); result = $5 " " fs opt
+      }
+    }
+    END { if (result != "") print result }
+  ' "$1"
+}
+
 fail() {
   emit "$1" "$2"
   status failed ",\"reason\":\"$1\"$2"
@@ -81,12 +96,16 @@ clear_stale_fuse_layers() {
   done
 }
 
+# This directory lives on the guest bind and may not exist in a read-only image.
+mkdir -p "$mount_path"
 clear_stale_fuse_layers
 
-top=$(top_mount)
-case " $top " in
-  *" shared:"*) emit anchor-shared ",\"mount\":\"$top\"" ;;
-  *) fail anchor-not-shared ",\"mount\":\"${top:-none}\",\"hint\":\"mount $mount_path from the guest with :rshared over a shared anchor\"" ;;
+anchor=$(containing_mount /proc/self/mountinfo "$mount_path")
+anchor_mount=${anchor%% *}
+anchor_fs=$(printf '%s\n' "$anchor" | awk '{print $2}')
+case " $anchor " in
+  *" shared:"*) emit anchor-shared ",\"mount\":\"$anchor_mount\",\"fsType\":\"$anchor_fs\"" ;;
+  *) fail anchor-not-shared ",\"mount\":\"${anchor_mount:-none}\",\"fsType\":\"${anchor_fs:-none}\",\"hint\":\"mount $mount_path from the guest with :rshared over a shared anchor\"" ;;
 esac
 
 stopping=0
