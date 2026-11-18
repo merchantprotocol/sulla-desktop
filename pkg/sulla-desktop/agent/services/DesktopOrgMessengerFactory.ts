@@ -4,7 +4,7 @@
 
 import type { AgentInbox } from './AgentInbox';
 import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClient';
-import { CloudOrgMessagingTransport, PinnedOrgCloudSession } from './CloudOrgMessagingTransport';
+import { CloudOrgMessagingTransport, PinnedOrgCloudSession, type OrgCloudRequester } from './CloudOrgMessagingTransport';
 import type { OrgHosting } from './OrgHostingResolver';
 import type { OrgMembership } from './OrgMembershipDirectory';
 import { OrgMessenger, type OrgContactRequestPrompter, type OrgConversationHaltHandler, type OrgInboxTargetResolver, type OrgMessagingSession } from './OrgMessenger';
@@ -22,11 +22,12 @@ export class DesktopOrgMessengerFactory implements OrgMessengerFactory {
     private readonly targetResolver: OrgInboxTargetResolver,
     private readonly contactPrompter: OrgContactRequestPrompter,
     private readonly haltHandler?: OrgConversationHaltHandler,
+    private readonly cloudRequester: OrgCloudRequester = (method, path, options) => import('@pkg/main/cloud/cloudFetch').then(({ cloudRequest }) => cloudRequest(method, path, options)),
   ) {}
 
   create(membership: OrgMembership, session: OrgMessagingSession, hosting: OrgHosting): OrgMessenger {
     const http = new SullaCloudHttpClient(undefined, hosting.baseUrl);
-    const transport = new CloudOrgMessagingTransport(http, new PinnedOrgCloudSession(membership.orgId, hosting.credentials), undefined, hosting.kind);
+    const transport = new CloudOrgMessagingTransport(http, new PinnedOrgCloudSession(membership.orgId, hosting.credentials), undefined, hosting.kind, this.cloudRequester);
     return new OrgMessenger(transport, session, this.state, this.inbox, this.targetResolver, this.contactPrompter, this.haltHandler);
   }
 }

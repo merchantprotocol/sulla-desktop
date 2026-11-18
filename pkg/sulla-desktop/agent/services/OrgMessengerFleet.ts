@@ -110,14 +110,17 @@ export class OrgMessengerFleet {
   async resolveOrg(requested?: string): Promise<OrgMembership> {
     if (requested?.trim()) return this.directory.require(requested);
     const activeOrgId = await this.identity.activeOrgId();
-    if (!activeOrgId) throw new Error('Organization messaging requires an active organization session');
-    try {
-      return await this.directory.require(activeOrgId);
-    } catch (error) {
-      if (error instanceof OrgMembershipRequiredError) throw error;
-      // Cloud membership list unreachable: the active org is still the human's own selection.
-      return { orgId: activeOrgId, name: activeOrgId, memberCount: 0 };
+    if (activeOrgId) {
+      try { return await this.directory.require(activeOrgId); }
+      catch (error) {
+        if (!(error instanceof OrgMembershipRequiredError)) throw error;
+      }
     }
+    // The legacy active contractor id can be the user id, not a member team.
+    // Resolve the default strictly from Cloud's membership list instead.
+    const memberships = this.directory.list();
+    if (memberships.length) return memberships[0];
+    throw new OrgMembershipRequiredError(activeOrgId);
   }
 
   /**

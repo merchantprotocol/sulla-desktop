@@ -5,7 +5,7 @@
 import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClient';
 import type { OrgMembership } from './OrgMembershipDirectory';
 
-/** The bearer and the user id one org's transport authenticates with on its host. */
+/** A Server-host bearer and host-local user id; Cloud requests use cloudRequest's vault broker instead. */
 export interface OrgHostCredentials {
   accessToken(): Promise<string>;
   /** The caller's id on that host: the Cloud user id, or the Server provider's subject. */
@@ -50,9 +50,9 @@ export interface OrgHostingLogger {
   warn(message: string): void;
 }
 
-/** Cloud sign-in: the Sulla Cloud access token and user id. */
+/** Cloud identity: the user id; Cloud authorization stays with cloudRequest's vault broker. */
 export class CloudOrgHostCredentials implements OrgHostCredentials {
-  async accessToken(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentAccessToken(); }
+  async accessToken(): Promise<string> { return ''; }
   async userId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentUserId(); }
 }
 

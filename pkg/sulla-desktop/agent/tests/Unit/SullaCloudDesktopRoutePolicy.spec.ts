@@ -87,6 +87,31 @@ describe('Sulla Cloud desktop route policy', () => {
     }
   });
 
+  it('allows only the organization membership and messaging routes used by Desktop', () => {
+    const allowed: Array<[string, string]> = [
+      ['GET', '/cloud-dashboard/v1/organizations'],
+      ['GET', '/orgs/team-1/inbox'], ['GET', '/orgs/team-1/directory'], ['GET', '/orgs/team-1/contact-requests'],
+      ['POST', '/orgs/team-1/conversations'],
+      ['POST', '/orgs/team-1/conversations/convo-1/messages'], ['POST', '/orgs/team-1/conversations/convo-1/control'],
+      ['POST', '/orgs/team-1/conversations/convo-1/agent-messages'],
+      ['POST', '/orgs/team-1/contact-requests/person-1/resolve'], ['POST', '/orgs/team-1/agent-host-lease'],
+    ];
+    for (const [method, route] of allowed) {
+      expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
+    }
+  });
+
+  it('denies organization route near-misses and wrong methods', () => {
+    const denied: Array<[string, string]> = [
+      ['POST', '/orgs/x/inbox'], ['GET', '/orgs/x/conversations'], ['POST', '/orgs/x/../admin'],
+      ['POST', '/orgs/x/conversations/y/delete'], ['GET', '/cloud-dashboard/v1/devices'],
+      ['GET', '/orgs/x/conversations/y/messages'], ['POST', '/orgs/x/contact-requests/y/resolve/extra'],
+    ];
+    for (const [method, route] of denied) {
+      expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(false);
+    }
+  });
+
   it('checks every static cloudRequest method/path and inventories every dynamic callsite', () => {
     const dynamicCallSites: string[] = [];
     let scanned = 0;

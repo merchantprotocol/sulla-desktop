@@ -7,13 +7,22 @@ import { SullaCloudHttpClient } from '@pkg/main/cloud/account/SullaCloudHttpClie
 import type { OrgConversationStartRequest } from './OrgMessenger';
 
 export interface OrgCloudSession {
+  /** Server bearer for Server-hosted orgs; Cloud credentials are supplied by cloudRequest's vault broker. */
   accessToken(): Promise<string>;
   orgId(): Promise<string>;
   userId(): Promise<string>;
 }
 
+export type OrgCloudRequester = (method: string, path: string, options?: { headers?: Record<string, string>; body?: BodyInit | null }) => Promise<Response>;
+
+class DesktopOrgCloudRequester {
+  async request(method: string, path: string, options?: { headers?: Record<string, string>; body?: BodyInit | null }): Promise<Response> {
+    return (await import('@pkg/main/cloud/cloudFetch')).cloudRequest(method, path, options);
+  }
+}
+
 export class DesktopOrgCloudSession implements OrgCloudSession {
-  async accessToken(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentAccessToken(); }
+  async accessToken(): Promise<string> { return ''; }
   async orgId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getActiveContractorId(); }
   async userId(): Promise<string> { return (await import('@pkg/main/sullaCloudAuth')).getCurrentUserId(); }
 }
@@ -43,18 +52,47 @@ export class CloudOrgMessagingTransport implements OrgMessagingTransport {
     private readonly session: OrgCloudSession = new DesktopOrgCloudSession(),
     private readonly pollIntervalMs = 60_000,
     readonly hosting: 'cloud' | 'server' = 'cloud',
+    private readonly cloudRequester: OrgCloudRequester = (method, path, options) => new DesktopOrgCloudRequester().request(method, path, options),
+    private readonly retryDelayMs = 500,
   ) {}
 
+  /** Cloud requests retry once, after a delay, only when the request throws (no HTTP response). Non-OK responses are returned as-is. */
+  private async sendCloud(method: string, path: string, options: { headers: Record<string, string>; body?: BodyInit | null }): Promise<Response> {
+    const attempts = 2;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        return await this.cloudRequester(method, path, options);
+      } catch (error) {
+        lastError = error;
+        if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, this.retryDelayMs));
+      }
+    }
+    throw lastError;
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const [orgId, token] = await Promise.all([this.session.orgId(), this.session.accessToken()]);
-    if (!orgId || !token) throw new Error(`An active Sulla ${ this.hostName() } organization session is required`);
-    const headers = new Headers(init.headers);
-    headers.set('Authorization', `Bearer ${token}`);
-    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const response = await this.http.send(`/orgs/${encodeURIComponent(orgId)}${path}`, {
-      ...init,
-      headers,
-    }, true);
+    const orgId = await this.session.orgId();
+    if (!orgId) throw new Error(`An active Sulla ${ this.hostName() } organization session is required`);
+    const requestPath = `/orgs/${encodeURIComponent(orgId)}${path}`;
+    let response: Response;
+    if (this.hosting === 'cloud') {
+      const incoming = new Headers(init.headers);
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      for (const name of ['Content-Type', 'Accept']) {
+        const value = incoming.get(name);
+        if (value) headers[name] = value;
+      }
+      if (init.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+      response = await this.sendCloud(String(init.method ?? 'GET'), requestPath, { headers, body: init.body });
+    } else {
+      const token = await this.session.accessToken();
+      if (!token) throw new Error(`An active Sulla ${ this.hostName() } organization session is required`);
+      const headers = new Headers(init.headers);
+      headers.set('Authorization', `Bearer ${token}`);
+      if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      response = await this.http.send(requestPath, { ...init, headers }, true);
+    }
     if (!response.ok) throw new Error(`${ this.hostName() } org messaging request failed (${response.status})`);
     return await response.json() as T;
   }

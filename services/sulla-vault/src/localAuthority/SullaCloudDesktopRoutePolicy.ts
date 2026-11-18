@@ -72,6 +72,12 @@ export class SullaCloudDesktopRoutePolicy {
     [/^\/marketplace\/submit-manifest$/, ['POST']],
     [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}$/, ['GET', 'DELETE']],
     [/^\/marketplace\/templates\/[A-Za-z0-9._~-]{1,200}\/bundle$/, ['PUT']],
+    [/^\/cloud-dashboard\/v1\/organizations$/, ['GET']],
+    [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/(?:inbox|directory|contact-requests)$/, ['GET']],
+    [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/conversations$/, ['POST']],
+    [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/conversations\/[A-Za-z0-9._~-]{1,200}\/(?:messages|control|agent-messages)$/, ['POST']],
+    [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/contact-requests\/[A-Za-z0-9._~-]{1,200}\/resolve$/, ['POST']],
+    [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/agent-host-lease$/, ['POST']],
   ];
 
   static allowsByoUsageCloudRequest(method: string, path: string): boolean {
