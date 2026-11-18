@@ -88,6 +88,10 @@ export class ExtensionService {
   private cachedMarketplace:        MarketplaceEntry[] | undefined;
   private marketplaceCacheExpires = 0;
   private inFlightMarketplaceFetch: Promise<MarketplaceEntry[]> | undefined;
+  private initializeFlight: Promise<void> | undefined;
+  private installedExtensionsCache: InstalledExtension[] | undefined;
+  private installedExtensionsCacheAt = 0;
+  private installedExtensionsFlight: Promise<InstalledExtension[]> | undefined;
 
   constructor() {
     // Constructor doesn't load, call initialize() later
@@ -95,27 +99,31 @@ export class ExtensionService {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializeFlight) return this.initializeFlight;
 
-    console.log('[ExtensionService] Initializing...');
-
-    try {
-      await this.loadExtensionsFromAPI();
-
-      console.log(`[ExtensionService] Loaded ${ this.extensionsMetadata.length } extensions`);
-    } catch (err) {
-      console.error('[ExtensionService] Initialization failed:', err);
-    }
-
-    this.initialized = true;
+    this.initializeFlight = (async () => {
+      console.log('[ExtensionService] Initializing...');
+      try {
+        await this.loadExtensionsFromAPI();
+        console.log(`[ExtensionService] Loaded ${ this.extensionsMetadata.length } extensions`);
+      } catch (err) { console.error('[ExtensionService] Initialization failed:', err); }
+      this.initialized = true;
+    })().finally(() => { this.initializeFlight = undefined; });
+    return this.initializeFlight;
   }
 
   private async loadExtensionsFromAPI(): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 3_000);
       const response = await fetch(`${ this.backendUrl }/v1/extensions`, {
         headers: this.getRequestHeaders(),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
+        clearTimeout(timeout);
         console.error(`[ExtensionService] Failed to fetch extensions: ${ response.status }`);
         return;
       }
@@ -125,6 +133,7 @@ export class ExtensionService {
         metadata: ExtensionMetadata,
         labels:   Record<string, string>
       }> = await response.json();
+      clearTimeout(timeout);
 
       this.extensionsMetadata = Object.entries(extensionsData).map(([key, ext]) => (
         { ...ext.metadata, id: key } as LocalExtensionMetadata
@@ -142,6 +151,7 @@ export class ExtensionService {
         }
       }
     } catch (error) {
+      if (timeout) clearTimeout(timeout);
       console.error('[ExtensionService] Failed to load extensions from API:', error);
     }
 
@@ -225,17 +235,43 @@ export class ExtensionService {
   }
 
   async fetchInstalledExtensions(): Promise<InstalledExtension[]> {
+    if (this.installedExtensionsCache && Date.now() - this.installedExtensionsCacheAt < 60_000) return this.installedExtensionsCache;
+    if (this.installedExtensionsCache) {
+      if (!this.installedExtensionsFlight) void this.refreshInstalledExtensions().catch(() => undefined);
+      return this.installedExtensionsCache;
+    }
+    return this.refreshInstalledExtensions();
+  }
+
+  private refreshInstalledExtensions(): Promise<InstalledExtension[]> {
+    if (this.installedExtensionsFlight) return this.installedExtensionsFlight;
+    this.installedExtensionsFlight = this.loadInstalledExtensions().then(result => {
+      // Empty is a valid result; retain it as the last-known-good snapshot too.
+      this.installedExtensionsCache = result;
+      this.installedExtensionsCacheAt = Date.now();
+      return result;
+    }).finally(() => { this.installedExtensionsFlight = undefined; });
+    return this.installedExtensionsFlight;
+  }
+
+  private async loadInstalledExtensions(): Promise<InstalledExtension[]> {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 3_000);
       const response = await fetch(`${ this.backendUrl }/v1/extensions`, {
         headers: this.getRequestHeaders(),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
+        clearTimeout(timeout);
         console.error(`[ExtensionService] Failed to fetch installed extensions: ${ response.status }`);
         return [];
       }
 
       const data: Record<string, { version: string; metadata: ExtensionMetadata; labels: Record<string, string>; extraUrls?: { label: string; url: string }[]; status?: 'running' | 'stopped' }> = await response.json();
+      clearTimeout(timeout);
       const marketplace = await this.fetchMarketplaceData();
 
       return Object.entries(data).map(([id, ext]) => {
@@ -261,8 +297,9 @@ export class ExtensionService {
         };
       });
     } catch (error) {
+      if (timeout) clearTimeout(timeout);
       console.error('[ExtensionService] Failed to fetch installed extensions:', error);
-      return [];
+      return this.installedExtensionsCache || [];
     }
   }
 
