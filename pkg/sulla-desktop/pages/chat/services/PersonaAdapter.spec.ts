@@ -39,4 +39,24 @@ describe('PersonaAdapter send feedback reconciliation', () => {
     expect(adapter.hasNewAssistantText(history, history.length)).toBe(false);
     expect(adapter.hasNewAssistantText([...history, { id: 'new', role: 'assistant', kind: 'streaming', content: 'new token' }], history.length)).toBe(true);
   });
+
+  it('removes the optimistic bubble and shows the no-AI notice when disconnected', () => {
+    // risk: availability — a failed connection must not leave a false delivered bubble.
+    const adapter = Object.create(PersonaAdapter.prototype) as any;
+    const messages: any[] = [{ id: 'optimistic', kind: 'user', text: 'hello' }];
+    adapter.controller = {
+      removeMessage: (id: string) => { const index = messages.findIndex(message => message.id === id); if (index >= 0) messages.splice(index, 1); },
+      transitionRun: () => {},
+      appendMessage: (message: object) => messages.push(message),
+      persistThread: () => {},
+    };
+    adapter.optimisticUserMessages = new Map([['hello', ['optimistic']]]);
+
+    adapter.showDisconnectedFeedback('optimistic', 'hello', 'hello', []);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ kind: 'user', text: 'hello' });
+    expect(messages[1]).toMatchObject({ kind: 'notice', action: { kind: 'connect' } });
+    expect(adapter.optimisticUserMessages.size).toBe(0);
+  });
 });

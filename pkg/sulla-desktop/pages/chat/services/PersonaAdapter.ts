@@ -386,27 +386,7 @@ export class PersonaAdapter {
     const aiStatus = await statusPromise;
     hopMarks.connectionStatusResolved = performance.now() - hopOrigin;
     if (!aiStatus.loading && !aiStatus.connected) {
-      this.controller.removeMessage(optimisticRunMessageId);
-      const queuedIds = this.optimisticUserMessages.get(optimisticText)?.filter(id => id !== optimisticRunMessageId) ?? [];
-      if (queuedIds.length) this.optimisticUserMessages.set(optimisticText, queuedIds);
-      else this.optimisticUserMessages.delete(optimisticText);
-      this.controller.transitionRun({ type: 'idle' });
-      const createdAt = Date.now();
-      this.controller.appendMessage({
-        id:        asMessageId(`no-ai-user-${ createdAt }`),
-        kind:      'user',
-        text:      text.trim() || '(attached)',
-        attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
-        createdAt,
-      });
-      this.controller.appendMessage({
-        id:        asMessageId(`no-ai-notice-${ createdAt }`),
-        kind:      'notice',
-        text:      'Connect an AI model to start chatting',
-        action:    { label: 'Connect', kind: 'connect' },
-        createdAt: createdAt + 1,
-      });
-      this.controller.persistThread();
+      this.showDisconnectedFeedback(optimisticRunMessageId, optimisticText, text, attachments);
       this.writeSendHop(this.controller.thread.value.id, hopMarks);
       return;
     }
@@ -454,6 +434,30 @@ export class PersonaAdapter {
     // send() into a rejection.
     await this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
       console.warn('[PersonaAdapter] artifact load failed:', err));
+  }
+
+  private showDisconnectedFeedback(optimisticId: MessageId, optimisticText: string, text: string, attachments: Attachment[]): void {
+    this.controller.removeMessage(optimisticId);
+    const queuedIds = this.optimisticUserMessages.get(optimisticText)?.filter(id => id !== optimisticId) ?? [];
+    if (queuedIds.length) this.optimisticUserMessages.set(optimisticText, queuedIds);
+    else this.optimisticUserMessages.delete(optimisticText);
+    this.controller.transitionRun({ type: 'idle' });
+    const createdAt = Date.now();
+    this.controller.appendMessage({
+      id:        asMessageId(`no-ai-user-${ createdAt }`),
+      kind:      'user',
+      text:      text.trim() || '(attached)',
+      attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
+      createdAt,
+    });
+    this.controller.appendMessage({
+      id:        asMessageId(`no-ai-notice-${ createdAt }`),
+      kind:      'notice',
+      text:      'Connect an AI model to start chatting',
+      action:    { label: 'Connect', kind: 'connect' },
+      createdAt: createdAt + 1,
+    });
+    this.controller.persistThread();
   }
 
   private agentTextForVoice(text: string, identity: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): string {
