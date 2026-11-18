@@ -124,3 +124,56 @@ describe('routing honors rules and the never-use list', () => {
     expect(await router().resolve('agents', { mode: 'pin', provider: 'codex', model: 'gpt-6.1-sol' })).toEqual([{ provider: 'codex', model: 'gpt-6.1-sol' }]);
   });
 });
+
+describe('live provider snapshots', () => {
+  const liveState: EditableState = {
+    agentsList: [], subconsciousList: [],
+    classes: { frontier: [], standard: [], fast: [], coding: [], local: [] },
+    followProviderOrder: { frontier: true, standard: true, fast: true, coding: true, local: true }, neverUse: [],
+  };
+  beforeEach(() => {
+    vi.spyOn(SullaSettingsModel, 'get').mockImplementation((key: string, fallback: any) => Promise.resolve(key === 'modelRouting' ? structuredClone(liveState) : fallback));
+    vi.spyOn(SullaSettingsModel, 'set').mockResolvedValue(undefined as never);
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it('shares one cold provider-discovery request across concurrent callers', async () => {
+    // risk: concurrent graph turns duplicate provider/vault/catalog discovery and delay first model calls
+    const getAvailableProviders = vi.fn(async () => [{ id: 'codex', connected: true }]);
+    const router = new ModelRouter(() => ({ getAvailableProviders, getModelsForProvider: async () => codex }));
+    await Promise.all([router.providerInfo(), router.providerInfo(), router.providerInfo()]);
+    expect(getAvailableProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it('expires snapshots after the short TTL and invalidates them after routing settings writes', async () => {
+    // risk: stale connection/model routing remains active after settings or provider changes
+    vi.useFakeTimers();
+    const getAvailableProviders = vi.fn(async () => [{ id: 'codex', connected: true }]);
+    const router = new ModelRouter(() => ({ getAvailableProviders, getModelsForProvider: async () => codex }));
+    await router.providerInfo();
+    await router.providerInfo();
+    expect(getAvailableProviders).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_001);
+    await router.providerInfo();
+    expect(getAvailableProviders).toHaveBeenCalledTimes(2);
+    await router.set({ agentsList: [] });
+    await router.providerInfo();
+    expect(getAvailableProviders).toHaveBeenCalledTimes(3);
+  });
+
+  it('serves the last snapshot while an expired snapshot refreshes in the background', async () => {
+    // risk: a slow discovery network call stalls a user turn instead of using the last safe route snapshot
+    vi.useFakeTimers();
+    let release!: (rows: any[]) => void;
+    const getAvailableProviders = vi.fn()
+      .mockResolvedValueOnce([{ id: 'codex', connected: true }])
+      .mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const router = new ModelRouter(() => ({ getAvailableProviders, getModelsForProvider: async () => codex }));
+    const original = await router.providerInfo();
+    await vi.advanceTimersByTimeAsync(30_001);
+    const duringRefresh = await router.providerInfo();
+    expect(duringRefresh).toEqual(original);
+    expect(getAvailableProviders).toHaveBeenCalledTimes(2);
+    release([{ id: 'codex', connected: false }]);
+  });
+});

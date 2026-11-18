@@ -44,6 +44,7 @@ const AUTO_SENTINEL: CodexCatalogModel = {
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: { at: number; models: CodexCatalogModel[] } | null = null;
+let inFlight: Promise<CodexCatalogModel[]> | null = null;
 
 export function clearCodexModelCatalogCache(): void {
   cache = null;
@@ -72,6 +73,12 @@ export async function listCodexModels(opts?: { force?: boolean }): Promise<Codex
   if (!opts?.force && cache && (Date.now() - cache.at) < CACHE_TTL_MS) {
     return cache.models;
   }
+  if (inFlight) return inFlight;
+  inFlight = loadCodexModels().finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function loadCodexModels(): Promise<CodexCatalogModel[]> {
 
   // Inject the vault OAuth credentials into ~/.codex/auth.json before asking
   // the CLI for its catalog. This is the "call codex through Sulla" step — a

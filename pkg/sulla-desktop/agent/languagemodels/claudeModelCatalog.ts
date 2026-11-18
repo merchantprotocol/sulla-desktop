@@ -62,6 +62,7 @@ const AUTO_SENTINEL: ClaudeCatalogModel = {
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: { at: number; models: ClaudeCatalogModel[] } | null = null;
+let inFlight: Promise<ClaudeCatalogModel[]> | null = null;
 
 export function clearClaudeModelCatalogCache(): void {
   cache = null;
@@ -135,6 +136,12 @@ export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<
   if (!opts?.force && cache && (Date.now() - cache.at) < CACHE_TTL_MS) {
     return cache.models;
   }
+  if (inFlight) return inFlight;
+  inFlight = loadClaudeCodeModels().finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+async function loadClaudeCodeModels(): Promise<ClaudeCatalogModel[]> {
 
   const credential = await claudeCredentialResolver.resolve();
   let dynamic: ClaudeCatalogModel[] | null;
