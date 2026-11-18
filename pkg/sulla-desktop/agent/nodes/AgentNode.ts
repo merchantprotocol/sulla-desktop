@@ -64,6 +64,9 @@ export class AgentNode extends BaseNode {
     const startTime = Date.now();
     const turnReceivedAt = Date.now();
     (state.metadata as any).__turnReceivedAt = turnReceivedAt;
+    // Only a fresh user turn starts a new timing record; tool-call loop iterations append to nothing.
+    const isFreshTurn = ((state.metadata as any).consecutiveSameNode ?? 0) === 0;
+    if (isFreshTurn) TurnHopTiming.begin(state, turnReceivedAt);
     TurnHopTiming.mark(state, 'AgentNode.execute.entry');
     const preModelPhases: Record<string, number> = {};
     const phaseStart = () => Date.now();
