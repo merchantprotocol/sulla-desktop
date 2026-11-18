@@ -8,8 +8,9 @@
 # Lists chunk ids that the collection's current key cannot decrypt, and chunk ids with no blob. Ids and counts only.
 # It never writes to the database or the blob store, and it never prints plaintext or keys.
 #
-#   chunk-scan.sh [collectionId] [limit]
+#   chunk-scan.sh [--diagnose] [collectionId] [limit]
 #
+#   --diagnose    optional; for each AEAD failure, report which other collection's data key opens it (ids and key fingerprints only, at most 50 chunks)
 #   collectionId  optional UUID; scan only that collection
 #   limit         optional 1..100000; chunks scanned per collection (default 10000)
 #
@@ -21,8 +22,13 @@
 set -euo pipefail
 
 CONTAINER_FILES="${SOAK_FILES_CONTAINER:-sulla_files}"
-COLLECTION_ID="${1:-}"
-LIMIT="${2:-}"
+DIAGNOSE=""
+POSITIONAL=()
+for arg in "$@"; do
+  if [[ "$arg" == "--diagnose" ]]; then DIAGNOSE=1; else POSITIONAL+=("$arg"); fi
+done
+COLLECTION_ID="${POSITIONAL[0]:-}"
+LIMIT="${POSITIONAL[1]:-}"
 
 if [[ -n "$COLLECTION_ID" && ! "$COLLECTION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
   echo "collectionId must be a UUID" >&2
@@ -59,6 +65,7 @@ req.end();
 QUERY=""
 if [[ -n "$COLLECTION_ID" ]]; then QUERY="collectionId=$COLLECTION_ID"; fi
 if [[ -n "$LIMIT" ]]; then QUERY="${QUERY:+$QUERY&}limit=$LIMIT"; fi
+if [[ -n "$DIAGNOSE" ]]; then QUERY="${QUERY:+$QUERY&}diagnose=1"; fi
 [[ -n "$QUERY" ]] && QUERY="?$QUERY"
 
 WRAPPER="$(docker exec -e SCAN_QUERY="$QUERY" "$CONTAINER_FILES" node -e "$SCAN_PROBE" 2>/dev/null | grep '^{' | tail -n 1 || true)"
