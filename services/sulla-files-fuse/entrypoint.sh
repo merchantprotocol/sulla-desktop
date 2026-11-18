@@ -50,9 +50,10 @@ containing_mount() {
 }
 
 fail() {
+  code=${3:-1}
   emit "$1" "$2"
   status failed ",\"reason\":\"$1\"$2"
-  exit 1
+  exit "$code"
 }
 
 emit entrypoint-start ",\"pid\":$$,\"mountPath\":\"$mount_path\",\"tokenFile\":\"$token_file\",\"tokenWaitSeconds\":$token_wait"
@@ -114,10 +115,35 @@ top_is_readonly_nonfuse() {
   return 1
 }
 
+sentinel_stage=/run/sulla-files-sentinel
 if ! top_is_readonly_nonfuse; then
-  : > "$mount_path/SULLA-FILES-NOT-MOUNTED" || fail marker-create-failed ",\"mount\":\"$mount_path\""
-  mount --bind "$mount_path" "$mount_path" || fail sentinel-bind-failed ",\"mount\":\"$mount_path\""
-  mount -o remount,bind,ro "$mount_path" || fail sentinel-remount-failed ",\"mount\":\"$mount_path\""
+  # The read-only flag is per mount, not a propagation attribute. A direct
+  # remount at mount_path propagates writable copies before its ro flag applies.
+  # Build the RO bind on a private mount, then MS_MOVE it into the shared tree
+  # so every propagated copy (including rslave agents) is RO from first sight.
+  : > "$mount_path/SULLA-FILES-NOT-MOUNTED" || fail marker-create-failed ",\"mount\":\"$mount_path\"" 20
+  mkdir -p "$sentinel_stage" || fail sentinel-stage-dir-failed ",\"stage\":\"$sentinel_stage\"" 21
+  if mountpoint -q "$sentinel_stage"; then
+    if mountpoint -q "$sentinel_stage/s"; then
+      umount "$sentinel_stage/s" || fail sentinel-stage-child-cleanup-failed ",\"stage\":\"$sentinel_stage/s\"" 22
+    fi
+    umount "$sentinel_stage" || fail sentinel-stage-cleanup-failed ",\"stage\":\"$sentinel_stage\"" 23
+  fi
+  mount -t tmpfs -o size=64k,mode=0700 sentinel-stage "$sentinel_stage" || fail sentinel-stage-mount-failed ",\"stage\":\"$sentinel_stage\"" 24
+  mount --make-private "$sentinel_stage" || fail sentinel-stage-private-failed ",\"stage\":\"$sentinel_stage\"" 25
+  mkdir "$sentinel_stage/s" || fail sentinel-stage-child-failed ",\"stage\":\"$sentinel_stage/s\"" 26
+  mount --bind "$mount_path" "$sentinel_stage/s" || fail sentinel-bind-failed ",\"mount\":\"$mount_path\"" 27
+  mount -o remount,bind,ro "$sentinel_stage/s" || fail sentinel-remount-failed ",\"mount\":\"$mount_path\"" 28
+  mount --make-private "$sentinel_stage/s" || fail sentinel-private-failed ",\"mount\":\"$mount_path\"" 29
+  mount --move "$sentinel_stage/s" "$mount_path" || fail sentinel-move-failed ",\"mount\":\"$mount_path\"" 30
+fi
+# The moved bind no longer lives under the staging tmpfs. Remove that temporary
+# mount both after a successful move and after an idempotent RO-layer reuse.
+if mountpoint -q "$sentinel_stage"; then
+  if mountpoint -q "$sentinel_stage/s"; then
+    umount "$sentinel_stage/s" || fail sentinel-stage-child-cleanup-failed ",\"stage\":\"$sentinel_stage/s\"" 31
+  fi
+  umount "$sentinel_stage" || fail sentinel-stage-cleanup-failed ",\"stage\":\"$sentinel_stage\"" 32
 fi
 
 anchor=$(containing_mount /proc/self/mountinfo "$mount_path")
