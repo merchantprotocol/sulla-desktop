@@ -12,6 +12,8 @@ import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel } from '../languagemodels';
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
+import { ApprovalService } from './ApprovalService';
+import { ThreadGraphCache } from './ThreadGraphCache';
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
 import { FULL_AGENT_TOOL_NAMES } from '../tools/fullAgentTools';
@@ -25,10 +27,12 @@ export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 // Back-compat re-export
 export type { AgentGraphState as OverlordThreadState } from '../nodes/Graph';
 
-const registry = new Map<string, {
-  graph: Graph<any>;
-  state: BaseThreadState;
-}>();
+const approvalService = ApprovalService.getInstance();
+const registry = new ThreadGraphCache(
+  saveThreadState,
+  state => approvalService.pendingCount() > 0 || approvalService.pendingQuestionCount() > 0
+    || Boolean((state.metadata as any)?.waitingForUser),
+);
 
 // ============================================================================
 // SUBCONSCIOUS MIDDLEWARE — TOOL ASSIGNMENTS
