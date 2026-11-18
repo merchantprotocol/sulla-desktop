@@ -9,6 +9,6 @@ const emit = defineEmits<{ (event: 'go'): void }>();
 <template><PrefCard title="File encryption" subtitle="Sulla Files, on this Mac and in the cloud.">
   <PrefRow title="Stored file contents encrypted" subtitle="AES-256-GCM, for every file you keep in Sulla Files."><span class="status">On</span></PrefRow>
   <PrefRow v-if="vault" title="Cloud copies open only after you unlock your vault" :subtitle="vault?.locked ? 'Unlock your vault to open cloud copies.' : 'Your vault is unlocked, so cloud copies are readable right now.'" />
-  <PrefRow title="Version history and audit trail" subtitle="Every change is versioned and shows who made it — restore anything."><button type="button" class="security-link" @click="emit('go')">Open Files history →</button></PrefRow>
+  <PrefRow title="Version history and audit trail" subtitle="Every change is versioned and shows who made it — restore anything."><button type="button" class="security-link" @click="emit('go')">Open Files to view version history →</button></PrefRow>
 </PrefCard></template>
 <style scoped>.security-link { color:var(--text-link); border:0; background:transparent; cursor:pointer; } .status { color:var(--success); }</style>

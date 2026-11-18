@@ -12,6 +12,7 @@ import ApprovalsCard from './security/ApprovalsCard.vue';
 import ActivityCard from './security/ActivityCard.vue';
 import ProtectedAreasCard from './security/ProtectedAreasCard.vue';
 import { useSecurity } from '@pkg/composables/preferences/useSecurity';
+import { openMainTab } from '@pkg/composables/preferences/openInMain';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
 import { useThreatProtection } from '@pkg/composables/preferences/useThreatProtection';
 import { SecurityReportLogic } from './security/securityReportLogic';
@@ -35,6 +36,7 @@ const checkTargets: Record<CheckId, string> = {
 };
 const checkedAt = computed(() => report.value?.finishedAt ? new Date(report.value.finishedAt).toLocaleString() : '');
 function scrollTo(id: CheckId) { document.getElementById(checkTargets[id])?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+function openFiles() { openMainTab('files'); }
 async function copyReport() {
   if (!report.value) return;
   try {
@@ -61,9 +63,9 @@ async function copyReport() {
     <SandboxCard :runtime="checks.find(check => check.id === 'runtime')" :containers="checks.find(check => check.id === 'containers')" :host-access="hostAccess" :locked="isLocked('application.hostAccess')" @update:host-access="set('application.hostAccess', $event)" />
     <ThreatProtectionCard :threat="summary?.threat ?? null" :status="threatStatus" @go="emit('go', 'threat')" />
     <VaultCard id="security-vault" :vault="summary?.vault ?? null" :busy="security.locking.value" @lock="security.lockVault()" />
-    <FileEncryptionCard id="security-files" :vault="summary?.vault ?? null" @go="emit('go', 'files')" />
+    <FileEncryptionCard id="security-files" :vault="summary?.vault ?? null" @go="openFiles" />
     <ApprovalsCard :approvals="summary?.approvals ?? null" :rules="summary?.rules ?? null" />
-    <ActivityCard :activity="summary?.activity ?? null" @go="emit('go', 'files')" />
+    <ActivityCard :activity="summary?.activity ?? null" @go="openFiles" />
     <ProtectedAreasCard :vault="summary?.vault ?? null" />
     <PrefCard title="Usage data"><PrefRow title="Share anonymous usage statistics" subtitle="Never includes your files, chats or passwords."><PrefToggle :model-value="get('application.telemetry.enabled')" :disabled="isLocked('application.telemetry.enabled')" label="Share anonymous usage statistics" @update:model-value="set('application.telemetry.enabled', $event)" /></PrefRow></PrefCard>
   </div>
