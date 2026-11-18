@@ -12,6 +12,62 @@ from test_directory_paging import load_adapter
 
 
 class FilesApiRetryTests(unittest.TestCase):
+    # risk: availability — sequential Files calls within one kernel op cannot multiply its outage timeout.
+    def test_create_then_put_chain_shares_operation_deadline(self):
+        adapter, _ = load_adapter()
+        clock = [0.0]
+        adapter.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda delay: clock.__setitem__(0, clock[0] + delay))
+        api = adapter.FilesApi("http://files", "/unused")
+        api.max_wait_seconds = 1
+        calls = []
+        def send(path, method, body, headers, sink=None, timeout_seconds=None):
+            # Models the real per-attempt bound: urllib3 Timeout(total=remaining) caps each attempt at its budget.
+            calls.append(1)
+            attempt_cost = min(0.6, timeout_seconds) if timeout_seconds is not None else 0.6
+            clock[0] += attempt_cost
+            if len(calls) == 1:
+                return 201, {}, b"created"
+            # Budget consumed mid-attempt: the transport gives up with a timeout-style transient error.
+            error = OSError(errno.EIO, "offline (timed out)")
+            error.status = 503
+            raise error
+        api._send = send
+        token = adapter.op_deadline.set(1.0)
+        try:
+            self.assertEqual(api._request("/create", "POST", b"")[2], b"created")
+            with self.assertRaises(OSError) as caught:
+                api._request("/content")
+            self.assertEqual(caught.exception.errno, errno.EIO)
+            self.assertEqual(len(calls), 2)  # retry is cut off at the operation deadline
+            self.assertLessEqual(clock[0], 1.05)
+        finally:
+            adapter.op_deadline.reset(token)
+
+    # risk: availability — background feed polling remains request-bounded, not tied to a kernel op.
+    def test_request_outside_kernel_op_ignores_operation_deadline(self):
+        adapter, _ = load_adapter()
+        clock = [0.0]
+        adapter.time = types.SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda delay: clock.__setitem__(0, clock[0] + delay))
+        api = adapter.FilesApi("http://files", "/unused")
+        api.max_wait_seconds = 1
+        calls = []
+        def send(*_args, **_kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                clock[0] += 0.6
+                error = OSError(errno.EIO, "offline")
+                error.status = 503
+                raise error
+            return 200, {}, b"ok"
+        api._send = send
+        token = adapter.op_deadline.set(-1.0)
+        try:
+            # A feed poller is outside a traced operation, so it has no op context.
+            adapter.op_deadline.set(None)
+            self.assertEqual(api._request("/changes")[2], b"ok")
+        finally:
+            adapter.op_deadline.reset(token)
+
     # risk: data integrity — a temporary Files outage must recover within the configured write window.
     def test_bounded_wait_succeeds_when_service_returns_before_deadline(self):
         adapter, _ = load_adapter()

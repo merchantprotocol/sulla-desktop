@@ -4,6 +4,8 @@ import hashlib
 import os
 import tempfile
 import unittest
+import asyncio
+import errno
 from unittest.mock import patch
 
 from test_directory_paging import load_adapter
@@ -62,6 +64,29 @@ class ReadCacheTests(unittest.TestCase):
         second = self.put("v2", b"abcd")
         self.assertFalse(self.cache.get("v1", first, 4, tempfile.TemporaryFile(dir=self.temp.name)))
         self.assertTrue(self.cache.get("v2", second, 4, tempfile.TemporaryFile(dir=self.temp.name)))
+
+    # risk: availability and data integrity — failed version revalidation must not trigger a second unbounded content fetch.
+    def test_open_stops_after_transient_revalidation_exhaustion(self):
+        class Api:
+            def __init__(self):
+                self.calls = []
+            async def entry(self, *_args):
+                self.calls.append("entry")
+                error = OSError(errno.EIO, "offline")
+                error.status = 503
+                raise error
+            async def read_to_file(self, *_args):
+                self.calls.append("content")
+                raise AssertionError("content request must not follow exhausted revalidation")
+        api = Api()
+        ops = self.adapter.SullaFiles(api)
+        ops.nodes[2] = {"directory": False, "id": "file-id", "collectionId": "collection-id",
+                        "filesPath": "outage/probe.txt", "versionId": "v1", "size": 4}
+        with patch.object(self.adapter, "MAX_WAIT_SECONDS", 0.05):
+            with self.assertRaises(self.adapter.pyfuse3.FUSEError) as caught:
+                asyncio.run(ops.open(2, os.O_RDONLY, object()))
+        self.assertEqual(caught.exception.errno, errno.EIO)
+        self.assertEqual(api.calls, ["entry"])
 
 
 if __name__ == "__main__":
