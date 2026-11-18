@@ -7,6 +7,7 @@
 <template>
   <FilesBrowser
     :data-source="dataSource"
+    :bookmark-creator="bookmarkCreator"
     :tab-id="props.tabId"
     :navigation="props.navigation"
     @navigation-consumed="emit('navigation-consumed')"
@@ -16,6 +17,7 @@
 
 <script setup lang="ts">
 import { openDocumentTab, type FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { DesktopFilesDataSource } from './files/DesktopFilesDataSource';
 import FilesBrowser from './files/FilesBrowser.vue';
@@ -24,6 +26,7 @@ import type { FilesItem } from './files/types';
 const props = defineProps<{ tabId: string; navigation?: FilesNavigationPayload }>();
 const emit = defineEmits<{ 'navigation-consumed': [] }>();
 const dataSource = new DesktopFilesDataSource();
+const bookmarkCreator = { create: (input: { kind: 'bookmark'; title: string; url: string }) => ipcRenderer.invoke('bookmarks:create', input) };
 
 function openEditor(item:FilesItem, collectionId?:string):void {
   openDocumentTab({ fileId: item.id, path: item.path, collectionId });

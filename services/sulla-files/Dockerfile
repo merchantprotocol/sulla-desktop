@@ -30,6 +30,7 @@ COPY services/sulla-files/vite.config.ts ./
 COPY services/sulla-files/src ./src
 COPY services/sulla-files/web-src ./web-src
 COPY pkg/sulla-desktop/pages/files /app/pkg/sulla-desktop/pages/files
+COPY pkg/sulla-desktop/shared /app/pkg/sulla-desktop/shared
 RUN npm run build && npm prune --omit=dev
 FROM node:24-alpine
 # Keep V8 below the compose service memory limit even if compose env is lost.
