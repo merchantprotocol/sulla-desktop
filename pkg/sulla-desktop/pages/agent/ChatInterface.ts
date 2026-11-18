@@ -38,6 +38,7 @@ export class ChatInterface {
   private readonly storageScope:       string;
   private readonly messagesStorageKey: string;
   private readonly messageQueue:       ChatMessageQueue;
+  private readonly onTabClosed:        (event: Event) => void;
 
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
@@ -65,6 +66,12 @@ export class ChatInterface {
     this.hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
     this.registry = getAgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
+    this.onTabClosed = (event: Event) => {
+      if ((event as CustomEvent<{ tabId?: string }>).detail?.tabId === this.tabId && this.tabId) {
+        this.registry.release(this.channelId, this.tabId);
+      }
+    };
+    window.addEventListener('sulla:chat-tab-closed', this.onTabClosed);
     this.messagesRevision = computed(() => this.persona.messagesRevision.value);
 
     // Initialize message queue
@@ -237,6 +244,7 @@ export class ChatInterface {
   }
 
   dispose(): void {
+    window.removeEventListener('sulla:chat-tab-closed', this.onTabClosed);
     // Flush any debounce-pending persist so the tail of the last response
     // isn't lost when the tab/component goes away inside the 500ms window.
     if (this.persistTimer) {
