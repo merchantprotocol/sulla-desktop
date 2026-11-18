@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import ssl
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -32,8 +33,9 @@ class ProxyClient:
             if expect_block: self.security["blocked_url_check"] = e.code == 451
             else: self.errors += 1
             return e.code
-        except Exception:
+        except Exception as exc:
             self.errors += 1
+            print(f"request failed ({type(exc).__name__}): {exc}", file=sys.stderr)
             return 0
 
     async def one(self, *args, **kwargs):
