@@ -35,16 +35,16 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     expect(first.body).toMatchObject({ collectionId: fixture.collectionId, reset: true, more: false, changes: [] });
     const stable = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
     expect(stable.body).toMatchObject({ cursor: first.body.cursor, reset: false, changes: [] });
-    await fixture.createFile('feed/change.txt');
+    await fixture.createFile('docs/inner/feed-change.txt');
     const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
-    expect(changed.body).toMatchObject({ reset: false, changes: [expect.objectContaining({ path: 'feed/change.txt', kind: 'insert' })] });
-    const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='feed/change.txt'`, [fixture.collectionId])).rows[0].id;
-    await fixture.pool.query(`UPDATE files SET path='feed/renamed.txt' WHERE id=$1`, [fileId]);
+    expect(changed.body).toMatchObject({ reset: false, changes: [expect.objectContaining({ path: 'docs/inner/feed-change.txt', kind: 'insert' })] });
+    const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='docs/inner/feed-change.txt'`, [fixture.collectionId])).rows[0].id;
+    await fixture.pool.query(`UPDATE files SET path='docs/inner/feed-renamed.txt' WHERE id=$1`, [fileId]);
     const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);
-    expect(rename.body.changes).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'feed/renamed.txt', oldPath: 'feed/change.txt', kind: 'rename' })]));
+    expect(rename.body.changes).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-renamed.txt', oldPath: 'docs/inner/feed-change.txt', kind: 'rename' })]));
     await fixture.pool.query(`DELETE FROM files WHERE id=$1`, [fileId]);
     const deleted = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ rename.body.cursor }`);
-    expect(deleted.body.changes).toContainEqual(expect.objectContaining({ path: 'feed/renamed.txt', kind: 'delete' }));
+    expect(deleted.body.changes).toContainEqual(expect.objectContaining({ path: 'docs/inner/feed-renamed.txt', kind: 'delete' }));
     const other = randomUUID();
     await fixture.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
       VALUES($1,$2,'Other','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [other, fixture.userId, `spec-${ other }`]);
@@ -52,11 +52,30 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
       body: Buffer.from('other collection'), headers: { 'content-type': 'application/octet-stream' },
     })).status).toBe(201);
     const isolated = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ deleted.body.cursor }`);
-    expect(isolated.body.changes).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: 'feed/another.txt' })]));
+    expect(isolated.body.changes).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-another.txt' })]));
     await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind,changed_at) VALUES($1,'expired.txt','delete',now()-interval '11 minutes')`, [fixture.collectionId]);
     const expired = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=0`);
     expect(expired.body).toMatchObject({ reset: true, changes: [] });
     expect((await fixture.request('/v1/fuse/changes?collectionId=00000000-0000-0000-0000-000000000000')).status).toBe(404);
+  });
+
+  it('does not advance past a lower journal id still owned by an open transaction', async() => {
+    // risk: missed invalidation — BIGSERIAL allocation order is not transaction commit order.
+    const baseline = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }`);
+    const held = await fixture.pool.connect();
+    try {
+      await held.query('BEGIN');
+      await held.query(`INSERT INTO fuse_change_journal(collection_id,path,kind) VALUES($1,'docs/inner/slow-commit.txt','insert')`, [fixture.collectionId]);
+      await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind) VALUES($1,'docs/inner/fast-commit.txt','insert')`, [fixture.collectionId]);
+      const whileOpen = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ baseline.body.cursor }`);
+      expect(whileOpen.body.changes.map((row:any) => row.path)).not.toContain('docs/inner/slow-commit.txt');
+      await held.query('COMMIT');
+      const afterCommit = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ whileOpen.body.cursor }`);
+      expect(afterCommit.body.changes.map((row:any) => row.path)).toContain('docs/inner/slow-commit.txt');
+    } finally {
+      await held.query('ROLLBACK').catch(() => undefined);
+      held.release();
+    }
   });
 
   it('lists one directory\'s live direct children, files and folders, keyset-paged', async() => {

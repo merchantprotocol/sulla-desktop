@@ -1078,6 +1078,15 @@ class SullaFiles(pyfuse3.Operations):
                 data = self._render_folder_metadata(node, current)
                 version_id, source_hash = str(current.get("revision", "")), ""
             else:
+                # The change feed is an optimization, never the source of truth for an
+                # immutable content-cache key: a missed event must not serve old bytes.
+                current_entry = await self.api.entry(node["collectionId"], node["filesPath"])
+                fresh_version = str(current_entry.get("versionId") or current_entry.get("current_version_id") or "")
+                old_version = str(node.get("versionId") or node.get("current_version_id") or "")
+                if fresh_version != old_version:
+                    node.pop("pageCacheVersion", None)
+                    node["versionId"] = fresh_version
+                    node["size"] = int(current_entry.get("size") or 0)
                 temporary = tempfile.TemporaryFile(mode="w+b", dir=SPOOL_DIR)
                 try:
                     version_id = str(node.get("versionId") or node.get("current_version_id") or "")

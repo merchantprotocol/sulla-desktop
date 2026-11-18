@@ -2,6 +2,7 @@
 -- shared tree-revision rows, so unrelated collection writes remain independent.
 CREATE TABLE fuse_change_journal (
   id BIGSERIAL PRIMARY KEY,
+  xid xid8 NOT NULL DEFAULT pg_current_xact_id(),
   collection_id UUID NOT NULL,
   path TEXT NOT NULL,
   old_path TEXT,

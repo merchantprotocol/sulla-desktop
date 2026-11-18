@@ -71,6 +71,30 @@ class ChangeInvalidationTests(unittest.TestCase):
         second = asyncio.run(self.ops._open_handle(inode, 0, None, b"", "v2", ""))
         self.assertFalse(second.keep_cache)
 
+    # risk: stale file contents — a missed feed event must still revalidate immutable version metadata before cache lookup.
+    def test_open_revalidates_version_before_using_read_cache(self):
+        self.pyfuse3.FileInfo = lambda fh: types.SimpleNamespace(fh=fh)
+        cached = types.SimpleNamespace(versions=[], get=lambda version, *_args: cached.versions.append(version) or False)
+        class Api:
+            actor_resolver = None
+            async def entry(self, _collection, _path):
+                return {"versionId": "v2", "size": 3}
+            async def read_to_file(self, _file_id, target):
+                target.write(b"new")
+                return "v2", "hash-v2"
+        self.ops.api = Api()
+        self.ops.read_cache = cached
+        inode = self.ops._node("file.txt", False)
+        self.ops.nodes[inode].update({"id": "file-id", "collectionId": "collection", "filesPath": "file.txt",
+                                      "versionId": "v1", "sourceHash": "hash-v1", "size": 3,
+                                      "pageCacheVersion": "v1"})
+        info = asyncio.run(self.ops.open(inode, 0, None))
+        handle = self.ops.handles[info.fh]
+        self.assertEqual(cached.versions, ["v2"])
+        self.assertEqual(handle["versionId"], "v2")
+        self.assertEqual(__import__("os").pread(handle["file"].fileno(), 3, 0), b"new")
+        handle["file"].close()
+
 
 if __name__ == "__main__":
     unittest.main()
