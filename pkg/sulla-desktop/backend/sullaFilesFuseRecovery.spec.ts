@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { decideFilesFuseRecovery } from './sullaFilesFuseRecovery';
+import { decideFilesFuseRecovery, hashFilesFuseServiceDefinition, toFilesFuseContainerState } from './sullaFilesFuseRecovery';
 
 const base = { containerState: 'running' as const, imageChanged: false, mountDead: false, nowMs: 100_000, restartCooldownMs: 30_000 };
 
@@ -17,6 +17,10 @@ describe('decideFilesFuseRecovery', () => {
 
   it('recreates only when the image changed', () => {
     expect(decideFilesFuseRecovery({ ...base, imageChanged: true })).toBe('recreate');
+  });
+
+  it('recreates when the stable adapter-owned definition changes', () => {
+    expect(decideFilesFuseRecovery({ ...base, configChanged: true })).toBe('recreate');
   });
 
   it('creates a missing or non-restartable stopped container', () => {
@@ -34,5 +38,30 @@ describe('decideFilesFuseRecovery', () => {
   it('rate-limits restarts when Files or the mount flaps', () => {
     expect(decideFilesFuseRecovery({ ...base, mountDead: true, lastRestartMs: 80_001 })).toBe('none');
     expect(decideFilesFuseRecovery({ ...base, mountDead: true, lastRestartMs: 70_000 })).toBe('restart');
+  });
+});
+
+describe('Files FUSE service definition hash', () => {
+  const definition = { image: 'files-fuse:1', volumes: ['/mnt/files:/mnt/files:rshared', '/run/token:/token:ro'], environment: { URL: 'https://files', TOKEN: 'secret' }, cap_add: ['SYS_ADMIN'] };
+
+  // risk: data integrity — unrelated compose regeneration must not recreate a live FUSE mount.
+  it('is stable across regeneration-only metadata and ordering changes', () => {
+    expect(hashFilesFuseServiceDefinition({ ...definition, volumes: [...definition.volumes].reverse(), labels: { generatedAt: 'today' }, generation: 1 }))
+      .toBe(hashFilesFuseServiceDefinition({ ...definition, labels: { generatedAt: 'tomorrow' }, generation: 2 }));
+  });
+
+  // risk: data integrity — changed mount propagation/bind definitions must be applied.
+  it('changes when an adapter bind changes', () => {
+    expect(hashFilesFuseServiceDefinition(definition)).not.toBe(hashFilesFuseServiceDefinition({ ...definition, volumes: ['/mnt/files:/mnt/files:rslave'] }));
+  });
+});
+
+describe('toFilesFuseContainerState', () => {
+  // risk: data integrity — a missing adapter must be created rather than silently left down.
+  it('maps empty/missing inspect results to missing and recognizes known states', () => {
+    expect(toFilesFuseContainerState('')).toBe('missing');
+    expect(toFilesFuseContainerState('Error: No such object: sulla_files_fuse')).toBe('missing');
+    expect(toFilesFuseContainerState('running')).toBe('running');
+    expect(toFilesFuseContainerState('restarting')).toBe('restarting');
   });
 });

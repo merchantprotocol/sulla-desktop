@@ -18,7 +18,7 @@ import omit from 'lodash/omit';
 import yaml from 'yaml';
 
 import { SULLA_FILES_FUSE_HEALTHCHECK, SULLA_FILES_HEALTHCHECK } from './sullaFilesHealthchecks';
-import { decideFilesFuseRecovery } from './sullaFilesFuseRecovery';
+import { decideFilesFuseRecovery, hashFilesFuseServiceDefinition, toFilesFuseContainerState } from './sullaFilesFuseRecovery';
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import {
@@ -269,12 +269,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // The Files mount manager owns the FUSE adapter, and on-demand runtimes
     // may be mid-invocation; neither carries the service secret.
     return this.#composeTargets.filter(target => target.service !== 'sulla_files_fuse' && !(target.service in ON_DEMAND_SERVICES));
-  }, this.#composeDrift, console);
+  }, this.#composeDrift, console, () => this.reconcileFilesFuseDefinition());
   /** Network logins to PostgreSQL: role password follows the secret, then trust → scram (backend/PostgresAuthLifecycle.ts). */
   readonly #postgresAuth = PostgresAuthLifecycle.forGuest({ binary: paths.sullaRuntime, guestArgs: command => this.guestExecArgs({ root: true }, command), drift: this.#composeDrift,
     waitServiceHealthy: (target, timeoutSec) => this.waitForDockerServiceHealthy(target, timeoutSec), accountsPasswordFile: path.join(paths.appHome, 'accounts', 'database.password'), secret: serviceSecretProvider });
   #lastGuestRecovery = 0;
   #lastFilesGuestMountFailure?: string;
+  #filesFuseConfigHash?: string;
   /** The native Sulla runtime VM. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
@@ -1612,6 +1613,15 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
     // Never write a file where a service lacks its secret env or carries a fallback credential.
+    const filesFuseService = compose.services?.sulla_files_fuse;
+
+    if (filesFuseService) {
+      this.#filesFuseConfigHash = hashFilesFuseServiceDefinition(filesFuseService);
+      filesFuseService.labels = { ...(filesFuseService.labels ?? {}), 'com.merchantprotocol.sulla.files-fuse-config-hash': this.#filesFuseConfigHash };
+      composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
+      composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
+      composeYaml = composeYaml.replace(/\{\{sullaRuntimeTempDir\}\}/g, sullaRuntimeTempDir);
+    }
     new ComposeSecretGuard(serviceSecret).assert(compose, composeYaml);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
     this.#composeTargets = ComposeContainerNameReconciler.targetsOf(compose);
@@ -1715,6 +1725,22 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await this.#postgresAuth.aroundSecretChange(() => this.#composeRegeneration.run(`service secret: ${ reason }`, { checkpoint: () => this.assertManagedServicesGeneration(generation) }));
   }
 
+  /** Compose regeneration deliberately excludes the FUSE adapter from generic config-hash sweeps.
+   * Recreate it only when its stable adapter-owned definition digest differs. */
+  private async reconcileFilesFuseDefinition(): Promise<void> {
+    const target = this.#composeTargets.find(candidate => candidate.service === 'sulla_files_fuse');
+
+    if (!target || !this.#filesFuseConfigHash) return;
+    const output = (await this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format',
+      '{{.State.Status}} {{index .Config.Labels "com.merchantprotocol.sulla.files-fuse-config-hash"}}', target.container).catch(() => '')).trim();
+
+    if (toFilesFuseContainerState(output) !== 'running' || output.split(/\s+/)[1] === this.#filesFuseConfigHash) return;
+    console.warn('[Sulla] Files FUSE adapter definition changed; recreating the adapter (stable service hash changed)');
+    await reconcileComposeService({ composeCommand: ['docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla'], service: target.service,
+      run: (...command) => this.execCommand({ root: true }, ...command) });
+    await this.waitForDockerServiceHealthy(target, 20, this.#managedServicesGeneration);
+  }
+
   /**
    * How many optional services may be starting at once: a few on a guest
    * under 3 GiB, otherwise all of them.
@@ -1783,11 +1809,14 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
           // The mount manager only marks this after a failed mount probe and a
           // successful stale-layer detach. Restart the live process in-place;
           // a container recreate would break every consumer's bind mount.
-          const state = (await this.execCommand({ capture: true, root: true, expectFailure: true },
-            'docker', 'inspect', '--format', '{{.State.Status}}', 'sulla_files_fuse').catch(() => '')).trim();
+          const inspectOutput = (await this.execCommand({ capture: true, root: true, expectFailure: true },
+            'docker', 'inspect', '--format', '{{.State.Status}} {{index .Config.Labels "com.merchantprotocol.sulla.files-fuse-config-hash"}}', 'sulla_files_fuse').catch(() => '')).trim();
+          const state = toFilesFuseContainerState(inspectOutput);
+          const runningConfigHash = inspectOutput.split(/\s+/)[1];
           const action = decideFilesFuseRecovery({
-            containerState: state === 'running' ? 'running' : state === 'missing' ? 'missing' : state === 'exited' ? 'exited' : state === 'dead' ? 'dead' : 'other',
+            containerState: state,
             imageChanged: false,
+            configChanged: state === 'running' && !!this.#filesFuseConfigHash && runningConfigHash !== this.#filesFuseConfigHash,
             mountDead: true,
             nowMs: Date.now(),
             lastRestartMs: this.#lastFilesFuseRestartMs,
@@ -2011,8 +2040,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                   await startOptionalService(service);
                 } else {
                   const imageChanged = state === 'running healthy' && await this.#imageFreshness.isStale(container, service, generation);
+                  const runningConfigHash = (await this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', 'inspect', '--format', '{{index .Config.Labels "com.merchantprotocol.sulla.files-fuse-config-hash"}}', container).catch(() => '')).trim();
                   const recovery = decideFilesFuseRecovery({
-                    containerState: 'running', imageChanged, mountDead: false,
+                    containerState: 'running', imageChanged,
+                    configChanged: !!this.#filesFuseConfigHash && runningConfigHash !== this.#filesFuseConfigHash,
+                    mountDead: false,
                     nowMs: Date.now(), lastRestartMs: this.#lastFilesFuseRestartMs, restartCooldownMs: 60_000,
                   });
 
@@ -2021,8 +2053,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                     await startOptionalService(service);
                   }
                 }
-                // Do not run config-hash reconciliation for the adapter: regenerated
-                // env/labels and unrelated compose changes must not kill its mount.
+                // Reconcile only the stable digest of the adapter's own restart-relevant
+                // definition; Compose's full config hash includes volatile regeneration inputs.
               } else if (state !== 'running starting') {
                 await startOptionalService(service);
               } else {

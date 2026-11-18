@@ -41,6 +41,7 @@ export class SullaComposeRegeneration {
     private readonly writeComposeFile: ComposeFileWriter,
     private readonly drift: ContainerDriftReconciler,
     private readonly logger: DriftLogger = console,
+    private readonly reconcileFilesFuseDefinition: () => Promise<void> = async() => undefined,
   ) {}
 
   run(reason: string, options: RegenerationOptions = {}): Promise<DriftOutcome[]> {
@@ -59,6 +60,8 @@ export class SullaComposeRegeneration {
       await beforeSweep();
       checkpoint();
     }
+    await this.reconcileFilesFuseDefinition();
+    checkpoint();
     const outcomes = await this.drift.reconcileAll(targets.filter(target => !SullaComposeRegeneration.NEVER_SWEPT.has(target.service)));
     const recreated = outcomes.filter(outcome => outcome.kind === 'recreated').map(outcome => outcome.service);
 
