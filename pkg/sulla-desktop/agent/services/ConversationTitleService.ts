@@ -29,8 +29,29 @@ export interface TitleMessage {
 /** Number of messages after which auto-title is triggered. */
 const AUTO_TITLE_THRESHOLD = 3;
 
-/** Track which conversations have already been auto-titled. */
-const titledConversations = new Set<string>();
+/** Bounded LRU set; failed attempts are released so the next message retries. */
+export class TitledConversationTracker {
+  private readonly completed = new Set<string>();
+  private readonly inFlight = new Set<string>();
+  constructor(private readonly capacity = 500) {}
+  has(id: string): boolean { return this.completed.has(id); }
+  begin(id: string): boolean {
+    if (this.completed.has(id) || this.inFlight.has(id)) return false;
+    this.inFlight.add(id);
+    return true;
+  }
+  succeed(id: string): void {
+    this.inFlight.delete(id);
+    this.completed.delete(id);
+    this.completed.add(id);
+    while (this.completed.size > this.capacity) this.completed.delete(this.completed.values().next().value!);
+  }
+  fail(id: string): void { this.inFlight.delete(id); }
+  delete(id: string): void { this.completed.delete(id); this.inFlight.delete(id); }
+  get size(): number { return this.completed.size; }
+}
+
+const titledConversations = new TitledConversationTracker();
 
 /**
  * Internal / ephemeral conversations that must never be auto-titled.
@@ -152,24 +173,27 @@ function heuristicTitle(messages: TitleMessage[]): string {
 export async function autoTitleAfterMessages(
   conversationId: string,
   messages: TitleMessage[],
-): Promise<void> {
+): Promise<boolean> {
   // Never title internal/ephemeral (subconscious) conversations — see
   // isInternalConversationId. This is the fix for the per-turn duplicate
   // Claude Code dispatch into the __default__ session.
-  if (isInternalConversationId(conversationId)) return;
+  if (isInternalConversationId(conversationId)) return true;
 
   // Only trigger once per conversation, after reaching the threshold
-  if (titledConversations.has(conversationId)) return;
-  if (messages.length < AUTO_TITLE_THRESHOLD) return;
-
-  titledConversations.add(conversationId);
+  if (titledConversations.has(conversationId)) return true;
+  if (messages.length < AUTO_TITLE_THRESHOLD) return false;
+  if (!titledConversations.begin(conversationId)) return titledConversations.has(conversationId);
 
   try {
     const title = await generateTitle(messages);
 
     await ConversationHistoryModel.updateTitle(conversationId, title);
+    titledConversations.succeed(conversationId);
+    return true;
   } catch (err) {
     globalThis.console.error('[ConversationTitleService] Failed to auto-title:', err);
+    titledConversations.fail(conversationId);
+    return false;
   }
 }
 
