@@ -17,5 +17,11 @@
     "src/**/*.ts",
     "../../packages/workflow-engine/src/**/*.ts",
     "../../packages/runtime-protocol/src/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "../../packages/runtime-protocol/src/**/*.spec.ts",
+    "../../packages/runtime-protocol/src/**/*.test.ts"
   ]
 }
