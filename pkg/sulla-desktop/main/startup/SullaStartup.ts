@@ -12,6 +12,7 @@ import { DockerServicesSession } from './DockerServicesSession';
 import { MainProcessBootstrapIpc } from './MainProcessBootstrapIpc';
 import { MainProcessIpcStartup } from './MainProcessIpcContext';
 import { RuntimeIpc } from './RuntimeIpc';
+import { SecurityIpc } from './SecurityIpc';
 import { ServiceLifecycleStartup } from './ServiceLifecycleStartup';
 import { SullaShutdown } from './SullaShutdown';
 import { VaultServiceRegistrations } from './VaultServiceRegistrations';
@@ -47,6 +48,7 @@ export class SullaStartup {
     new AccountsIpc(),
     new VaultViewIpc(),
     new VaultKeyIpc(),
+    new SecurityIpc(),
     new RuntimeIpc(),
     new VaultTransferIpc(),
   ]);

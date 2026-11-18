@@ -376,7 +376,8 @@ req.end();
 
 
 # Same probe as METRICS_PROBE, for the chunk integrity scan. A 404 means the endpoint is not deployed yet (skipped).
-CHUNK_SCAN_PROBE = METRICS_PROBE.replace("/v1/local/files-metrics", "/v1/local/chunk-integrity/scan")
+CHUNK_SCAN_PROBE = METRICS_PROBE.replace("/v1/local/files-metrics", "/v1/local/chunk-integrity/scan").replace("path: '/v1/local/chunk-integrity/scan'", "path: '/v1/local/chunk-integrity/scan' + (process.env.SCAN_QUERY || '')")
+assert "SCAN_QUERY" in CHUNK_SCAN_PROBE
 # Log lines the restart-writes phase counts and saves (the lines carry names and fingerprints, never key material).
 KEY_LOG_PATTERNS = {
     "chunk_key_mismatch": re.compile(r"chunk_key_mismatch"),
@@ -2005,31 +2006,56 @@ class FilesSoak:
                 FilesSoak._undecryptable_ids(value, found)
         return found
 
-    def _chunk_scan(self):
-        """GET /v1/local/chunk-integrity/scan inside sulla_files. A 404 means the endpoint is not deployed yet: skipped."""
+    def _chunk_scan_page(self, query):
+        """One page of GET /v1/local/chunk-integrity/scan. Returns (state dict, body or None)."""
         try:
-            result = self._docker(["exec", CONTAINER_FILES, "node", "-e", CHUNK_SCAN_PROBE], 90)
+            result = self._docker(["exec", "-e", "SCAN_QUERY=" + query, CONTAINER_FILES, "node", "-e", CHUNK_SCAN_PROBE], 120)
         except CheckFailure as exc:
-            return {"state": "error", "error": str(exc)[:120]}
+            return {"state": "error", "error": str(exc)[:120]}, None
         line = next((ln for ln in result.stdout.splitlines() if ln.startswith("{")), "")
         if result.returncode != 0 or not line:
-            return {"state": "error", "error": short_err(result.stderr) or "no response"}
+            return {"state": "error", "error": short_err(result.stderr) or "no response"}, None
         try:
             wrapper = json.loads(line)
         except ValueError:
-            return {"state": "error", "error": "unparseable probe response"}
+            return {"state": "error", "error": "unparseable probe response"}, None
         if wrapper.get("error"):
-            return {"state": "error", "error": str(wrapper["error"])[:120]}
+            return {"state": "error", "error": str(wrapper["error"])[:120]}, None
         status = wrapper.get("status")
         if status == 404:
-            return {"state": "skipped", "status": 404}
+            return {"state": "skipped", "status": 404}, None
         if status != 200:
-            return {"state": "error", "status": status}
+            return {"state": "error", "status": status}, None
         try:
-            body = json.loads(wrapper.get("body") or "null")
+            return {"state": "scanned", "status": status}, json.loads(wrapper.get("body") or "null")
         except ValueError:
-            return {"state": "error", "status": status, "error": "unparseable body"}
-        return {"state": "scanned", "status": status, "undecryptable": self._undecryptable_ids(body)}
+            return {"state": "error", "status": status, "error": "unparseable body"}, None
+
+    def _chunk_scan(self):
+        """Pages through GET /v1/local/chunk-integrity/scan inside sulla_files (cursor = last chunk id, limit 2000).
+        A 404 means the endpoint is not deployed yet: skipped."""
+        state, first = self._chunk_scan_page("?limit=2000")
+        if first is None:
+            return state
+        undecryptable = self._undecryptable_ids(first)
+        pending = [(c["collectionId"], c.get("nextCursor")) for c in first.get("collections", []) if c.get("nextCursor")]
+        pages = 1
+        for collection_id, cursor in pending:
+            while cursor:
+                if pages >= 100000:
+                    return {"state": "error", "error": "chunk scan page limit reached"}
+                state, body = self._chunk_scan_page("?collectionId=%s&cursor=%s&limit=2000" % (collection_id, cursor))
+                if body is None:
+                    return state
+                pages += 1
+                got = next((c for c in body.get("collections", []) if c.get("collectionId") == collection_id), None)
+                if got is None:
+                    return {"state": "error", "error": "collection missing from a later page"}
+                undecryptable.extend(self._undecryptable_ids(got))
+                if got.get("chunksScanned") == 0 and got.get("nextCursor") == cursor:
+                    return {"state": "error", "error": "chunk scan cursor did not advance"}
+                cursor = got.get("nextCursor")
+        return {"state": "scanned", "status": 200, "pages": pages, "undecryptable": undecryptable}
 
     def _key_log_hits(self, since_epoch, path):
         """Counts per key-log pattern in sulla_files logs since the loop began. Matching lines are saved to `path`."""

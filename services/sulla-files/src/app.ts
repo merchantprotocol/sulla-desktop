@@ -306,7 +306,7 @@ export class FilesApplication {
     new FileResolveRoutes(accessGate, fileLocator).register(app);
     new LocalRootRoutes(manager).register(app);
     new LocalMaintenanceRoutes(db, config, store, transactions, new ScratchMaintenanceRepository(), manager).register(app);
-    // Read-only: lists chunk ids that do not decrypt under the collection key. Under /v1/local/*, so the local token guard applies.
+    // Read-only: lists chunk ids that do not decrypt under the collection key. Paged: collectionId + cursor (last chunk id) + limit; see ChunkIntegrityScanner.scan. Under /v1/local/*, so the local token guard applies.
     app.get('/v1/local/chunk-integrity/scan', async(request, response, next) => { try {
       if (!config.keyring) return response.status(503).json({ error:'Files keyring is unavailable' });
       const options = ChunkIntegrityScanner.parseOptions(request.query);

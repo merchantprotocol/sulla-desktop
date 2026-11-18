@@ -1,0 +1,9 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<script setup lang="ts">
+import SecurityIcon from './SecurityIcon.vue';
+withDefaults(defineProps<{ title: string; subtitle: string; icon: string; status?: string; tone?: 'good'|'warn'|'neutral'; wide?: boolean }>(), { status: '', tone: 'good', wide: false });
+</script>
+<template><section class="security-card" :class="[{ wide }, tone]"><header class="card-head"><span class="icon-tile"><SecurityIcon :name="icon" :size="19" /></span><div class="head-copy"><h2>{{ title }}</h2><p>{{ subtitle }}</p></div><span v-if="status" class="status-pill"><i></i>{{ status }}</span></header><div class="card-body"><slot /></div></section></template>
+<style scoped>
+.security-card{min-width:0;background:var(--surface-1);border:1px solid var(--border-muted);border-radius:var(--radius-panel);overflow:hidden}.wide{grid-column:1/-1}.card-head{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border-muted)}.icon-tile{width:36px;height:36px;display:grid;place-items:center;border-radius:10px;background:var(--accent-dim);color:var(--accent);flex:none}.head-copy{min-width:0;flex:1}.head-copy h2,.head-copy p{margin:0}.head-copy h2{font-size:15px;font-weight:650}.head-copy p{font-size:12px;color:var(--text-muted);margin-top:3px}.status-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-success);background:var(--status-success-soft);color:var(--success);padding:4px 9px;border-radius:999px;font-size:11px;white-space:nowrap}.status-pill i{width:6px;height:6px;border-radius:50%;background:currentColor}.warn .icon-tile{color:var(--warning);background:var(--status-warning-soft)}.warn .status-pill{color:var(--warning);border-color:var(--border-warning);background:var(--status-warning-soft)}.neutral .status-pill{color:var(--text-muted);border-color:var(--border-muted);background:var(--surface-2)}.card-body{padding:0 18px 14px}
+</style>

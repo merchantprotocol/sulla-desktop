@@ -80,7 +80,7 @@ describe('chunk integrity scan (read-only)', () => {
     expect(ChunkIntegrityScanner.parseOptions({ collectionId, limit: '25' })).toEqual({ collectionId, limit: 25 });
     expect(() => ChunkIntegrityScanner.parseOptions({ collectionId: 'not-a-uuid' })).toThrow(ChunkIntegrityQueryError);
     expect(() => ChunkIntegrityScanner.parseOptions({ limit: '0' })).toThrow(ChunkIntegrityQueryError);
-    expect(() => ChunkIntegrityScanner.parseOptions({ limit: '100001' })).toThrow(ChunkIntegrityQueryError);
+    expect(() => ChunkIntegrityScanner.parseOptions({ limit: 'abc' })).toThrow(ChunkIntegrityQueryError);
   });
 });
 
@@ -303,5 +303,146 @@ describe('chunk diagnosis cap (read-only)', () => {
     expect(diagnosed).toHaveLength(50);
     expect(diagnosed.every(failure => failure.opensWith?.collectionId === other)).toBe(true);
     expect(failures.filter(failure => failure.opensWith === undefined)).toHaveLength(1);
+  });
+});
+
+// risk: data integrity. Paging must neither repeat nor skip chunks, or a failing chunk can go unreported on a 100k-chunk collection.
+describe('chunk integrity paging (read-only)', () => {
+  const collectionId = randomUUID();
+  const dataKey = Buffer.alloc(32, 0x31), dedupKey = Buffer.alloc(32, 0x32);
+  const otherDataKey = Buffer.alloc(32, 0x33), otherDedupKey = Buffer.alloc(32, 0x34);
+  const TOTAL = 25;
+  let root = '';
+  let store:Store;
+  let rows:{ id:string; size:number; storedSize:number }[] = [];
+  let failingIds = new Set<string>();
+  let missingIds = new Set<string>();
+  const keyring = { keys: vi.fn(async() => ({ data: dataKey, dedup: dedupKey })) };
+  const chunkPage = vi.fn(async(_collection:string, afterId:string, limit:number) => rows.filter(row => row.id > afterId).slice(0, limit));
+  const repository = {
+    collectionIds: vi.fn(async(filter?:string) => (filter && filter !== collectionId ? [] : [collectionId])),
+    chunkPage,
+  } as unknown as ChunkIntegrityRepository;
+
+  beforeAll(async() => {
+    root = await mkdtemp(join(tmpdir(), 'chunk-paging-spec-'));
+    store = new Store(root);
+    const built:typeof rows = [];
+    for (let index = 0; index < TOTAL; index += 1) {
+      const plain = Buffer.from(`paging-chunk-${ index }`);
+      const id = chunkId(plain, dedupKey);
+      if (index % 5 === 3) {
+        // Stored under another collection key: undecryptable under the current key.
+        failingIds.add(id);
+        await store.put(collectionId, id, await encryptChunk(plain, otherDataKey, id));
+      }
+      else if (index % 7 === 6) {
+        // No blob at all: missing.
+        missingIds.add(id);
+      }
+      else {
+        await store.put(collectionId, id, await encryptChunk(plain, dataKey, id));
+      }
+      built.push({ id, size: plain.length, storedSize: 0 });
+    }
+    for (const row of built) {
+      if (!missingIds.has(row.id)) row.storedSize = (await store.get(collectionId, row.id)).length;
+      else row.storedSize = 100;
+    }
+    rows = built.sort((a, b) => (a.id < b.id ? -1 : 1));
+  });
+
+  afterAll(async() => { if (root) await rm(root, { recursive: true, force: true }) });
+
+  it('pages through every chunk with no duplicates and no gaps, matching a single full scan', async() => {
+    const scanner = new ChunkIntegrityScanner(repository, store, { keys: keyring.keys });
+    const full = await scanner.scan({ collectionId, limit: 10_000 });
+    const seenUndecryptable:string[] = [];
+    const seenMissing:string[] = [];
+    let scanned = 0;
+    let cursor:string | undefined;
+    let pages = 0;
+    do {
+      const report = await scanner.scan({ collectionId, cursor, limit: 7 });
+      const collection = report.collections[0];
+      pages += 1;
+      scanned += collection.chunksScanned;
+      seenUndecryptable.push(...collection.undecryptable);
+      seenMissing.push(...collection.missingBlob);
+      cursor = collection.nextCursor ?? undefined;
+      if (cursor) expect(collection.chunksScanned).toBe(7);
+    } while (cursor && pages < 50);
+    expect(pages).toBe(Math.ceil(TOTAL / 7)); // 7, 7, 7, then a short final page of 4 that ends the collection
+    expect(scanned).toBe(TOTAL);
+    expect(new Set(seenUndecryptable).size).toBe(seenUndecryptable.length);
+    expect(new Set(seenMissing).size).toBe(seenMissing.length);
+    expect([...seenUndecryptable].sort()).toEqual(full.collections[0].undecryptable);
+    expect([...seenMissing].sort()).toEqual(full.collections[0].missingBlob);
+    expect(seenUndecryptable.length).toBe(failingIds.size);
+    expect(seenMissing.length).toBe(missingIds.size);
+  });
+
+  it('resumes strictly after the cursor: the first page after a cursor starts at the next chunk id', async() => {
+    const scanner = new ChunkIntegrityScanner(repository, store, { keys: keyring.keys });
+    const first = await scanner.scan({ collectionId, limit: 10 });
+    const nextCursor = first.collections[0].nextCursor;
+    expect(nextCursor).toBe(rows[9].id);
+    chunkPage.mockClear();
+    await scanner.scan({ collectionId, cursor: nextCursor ?? undefined, limit: 10 });
+    expect(chunkPage.mock.calls[0][1]).toBe(rows[9].id);
+  });
+
+  it('returns a null nextCursor when the collection ends inside the page', async() => {
+    const report = await new ChunkIntegrityScanner(repository, store, { keys: keyring.keys }).scan({ collectionId, cursor: rows[19].id, limit: 100 });
+    const collection = report.collections[0];
+    expect(collection.chunksScanned).toBe(TOTAL - 20);
+    expect(collection.nextCursor).toBeNull();
+  });
+
+  it('a page that ends exactly on the last chunk returns a cursor, and the next call is empty with a null cursor', async() => {
+    const scanner = new ChunkIntegrityScanner(repository, store, { keys: keyring.keys });
+    const exact = await scanner.scan({ collectionId, cursor: rows[TOTAL - 6].id, limit: 5 });
+    expect(exact.collections[0].chunksScanned).toBe(5);
+    expect(exact.collections[0].nextCursor).toBe(rows[TOTAL - 1].id);
+    const after = await scanner.scan({ collectionId, cursor: exact.collections[0].nextCursor ?? undefined, limit: 5 });
+    expect(after.collections[0].chunksScanned).toBe(0);
+    expect(after.collections[0].nextCursor).toBeNull();
+  });
+
+  it('bounds each page: never fetches more rows than the page limit, and never in a batch above 200', async() => {
+    chunkPage.mockClear();
+    await new ChunkIntegrityScanner(repository, store, { keys: keyring.keys }).scan({ collectionId, limit: 12 });
+    const requested = chunkPage.mock.calls.map(call => call[2] as number);
+    expect(requested.reduce((sum, n) => sum + n, 0)).toBe(12);
+    expect(Math.max(...requested)).toBeLessThanOrEqual(200);
+  });
+
+  it('clamps the page limit: default 2000, floor 1, ceiling 10000', () => {
+    expect(ChunkIntegrityScanner.clampLimit(undefined)).toBe(2_000);
+    expect(ChunkIntegrityScanner.clampLimit(0)).toBe(1);
+    expect(ChunkIntegrityScanner.clampLimit(-5)).toBe(1);
+    expect(ChunkIntegrityScanner.clampLimit(2.9)).toBe(2);
+    expect(ChunkIntegrityScanner.clampLimit(10_000)).toBe(10_000);
+    expect(ChunkIntegrityScanner.clampLimit(50_000)).toBe(10_000);
+    expect(ChunkIntegrityScanner.clampLimit(Number.NaN)).toBe(2_000);
+  });
+
+  it('parseOptions clamps an oversized limit and echoes the applied limit in the report', async() => {
+    expect(ChunkIntegrityScanner.parseOptions({ collectionId, limit: '50000' })).toEqual({ collectionId, limit: 10_000 });
+    const report = await new ChunkIntegrityScanner(repository, store, { keys: keyring.keys }).scan({ collectionId, limit: 10_000 });
+    expect(report.limit).toBe(10_000);
+  });
+
+  it('validates cursor: must accompany collectionId and must be a chunk id', () => {
+    expect(() => ChunkIntegrityScanner.parseOptions({ cursor: rows[0].id })).toThrow(ChunkIntegrityQueryError);
+    expect(() => ChunkIntegrityScanner.parseOptions({ collectionId, cursor: 'not-a-chunk-id' })).toThrow(ChunkIntegrityQueryError);
+    expect(() => ChunkIntegrityScanner.parseOptions({ collectionId, cursor: rows[0].id.toUpperCase() })).toThrow(ChunkIntegrityQueryError);
+    expect(ChunkIntegrityScanner.parseOptions({ collectionId, cursor: rows[0].id })).toEqual({ collectionId, cursor: rows[0].id });
+  });
+
+  it('rejects a non-positive or non-numeric limit', () => {
+    expect(() => ChunkIntegrityScanner.parseOptions({ limit: '0' })).toThrow(ChunkIntegrityQueryError);
+    expect(() => ChunkIntegrityScanner.parseOptions({ limit: '-3' })).toThrow(ChunkIntegrityQueryError);
+    expect(() => ChunkIntegrityScanner.parseOptions({ limit: '2.5' })).toThrow(ChunkIntegrityQueryError);
   });
 });

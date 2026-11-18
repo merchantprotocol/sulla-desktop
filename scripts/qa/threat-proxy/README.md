@@ -4,6 +4,10 @@ Disposable, isolated Docker test harness for `services/sulla-threat-proxy`. Neve
 
 The origin offers HTTP on 8080, WebSocket on 8081, and HTTPS on 8443. HTTPS uses a fresh self-signed `*.test` certificate; only the disposable proxy entrypoint copy gets `--set ssl_insecure=true`, so production files are untouched. `--https` on client scenarios sends requests through CONNECT and trusts the proxy's generated CA. The proxy receives `/etc/hosts` entries for `host-N.test` names; `many_hosts` is capped at 2000 (default) to keep Docker argument size bounded and exercises SNI certificate generation/cache churn.
 
+`conn_churn` models proxy memory growth from TLS connection turnover: each request uses an HTTPS CONNECT tunnel to the local HTTPS origin and requests `--size` bytes (default 200000). `--minutes` is the load window, `--concurrency` sets worker threads, and `--rate` caps aggregate request starts per second (default 20). The default `--sni-mode same` keeps the origin hostname; `--sni-mode unique` rotates requests over `--hosts` mapped `host-N.test` names. `--keepalive` reuses one CONNECT/TLS connection per worker as the control. The client JSON records `requests_completed`, `errors`, and duration.
+
+Set `MEMDIAG=1` for this harness only to load `memdiag.py` into mitmdump. It emits JSON `MEMDIAG` lines every 60 seconds and on shutdown, including tracemalloc top lines, selected live-object counts, GC counts, fd count and RSS; the final line records RSS around `gc.collect()` + `malloc_trim(0)`. `summary.md` includes first/last diagnostic records and the three largest-growing tracemalloc source lines. This addon is not part of `services/sulla-threat-proxy` or the shipped image.
+
 WebSockets use `websockets==15.0.1` client HTTP-proxy support (`proxy=http://proxy:8890`) and the standard ws:// handshake through the proxy, no CONNECT. Each socket receives `--msg-kb` (default 64) payloads at `--rate` messages/second for `--minutes`; summary records received messages and connection errors.
 
 ## Commands
@@ -29,3 +33,11 @@ scripts/qa/threat-proxy/run.sh "$IMAGE" soak --duration 7200
 `--https` is available for `concurrent`, `big_download`, `big_upload`, `gzip_bomb`, `llm_prompts`, `many_hosts`, `sse_long`, and `injection_check`. `concurrent` accepts `--ctype` (default `text/html`), `--chunked 0|1|mixed` (default mixed), `--size`, `--concurrency` and `--rounds` (default 1). Use reduced sizes/counts for a smoke run. Large baselines intentionally consume substantial network and host resources.
 
 Results include per-sample `samples.csv`, `proxy-inspect.json`, `client-<scenario>.json`, `results.json` and `summary.md`. Peak is cgroup `memory.peak`; steady is median of the final quarter of load samples; settled is median post-load idle samples. Security is `pass` only when checks ran and all passed; otherwise `fail` or `n/a`.
+
+### Connection churn runs
+
+```sh
+MEMDIAG=1 scripts/qa/threat-proxy/run.sh "$IMAGE" conn_churn --minutes 20 --concurrency 24 --rate 20 --size 200000 --sni-mode same
+MEMDIAG=1 scripts/qa/threat-proxy/run.sh "$IMAGE" conn_churn --minutes 20 --concurrency 24 --rate 20 --size 200000 --sni-mode unique --hosts 2000
+MEMDIAG=1 scripts/qa/threat-proxy/run.sh "$IMAGE" conn_churn --minutes 20 --concurrency 24 --rate 20 --size 200000 --sni-mode same --keepalive
+```

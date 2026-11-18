@@ -83,6 +83,7 @@ export interface IpcMainEvents {
   'tabs:transfer-ready': () => void;
   'agent-window:open': () => void;
   'agent-window:close-self': () => void;
+  'security:check-progress': (result: import('@pkg/main/security/types').SecurityCheckResult) => void;
   /** Non-fatal renderer diagnostics sent to the main-process debug service. */
   'debug:report': (source: string, error: { message?: string; stack?: string }) => void;
   /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
@@ -253,6 +254,9 @@ export interface IpcMainEvents {
  */
 export interface IpcMainInvokeEvents {
   'chat:run-state': (channelId: string, threadId: string) => boolean;
+  'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
+  'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
+  'security:lock-vault': () => { ok: boolean; error?: string };
   'threat-proxy:get-settings': () => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; keyStatus?: { safeBrowsing: boolean; virusTotal: boolean }; error?: string };
   'threat-proxy:set-settings': (partial: Partial<import('@pkg/main/threat-proxy').ThreatProxySettings>) => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; error?: string };
   'threat-proxy:get-status': () => import('@pkg/main/threat-proxy').ThreatProxyStatus;
