@@ -138,8 +138,10 @@ export class ChannelTagExtractor implements Extractor {
       //   processing a wake user_message) and echoes it here.
       const fromThreadId: string = ctx.threadId || '';
       const replyToThread: string = (ctx.state as any)?.metadata?.replyToThread || '';
-      const parentThreadId: string = (ctx.state as any)?.metadata?.isSubAgent
-        ? String((ctx.state as any)?.metadata?.parentConversationId || '')
+      const metadata = (ctx.state as any)?.metadata;
+      const parentThreadId: string = metadata?.isSubAgent
+        && String(metadata?.workflowParentChannel || '') === targetChannel
+        ? String(metadata?.parentConversationId || '')
         : '';
       // toThreadId is the thread that should receive the reply — if this agent
       // was woken by someone else, reply to their thread; otherwise no specific target.

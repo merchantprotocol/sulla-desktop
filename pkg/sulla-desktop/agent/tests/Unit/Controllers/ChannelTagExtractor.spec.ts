@@ -28,10 +28,22 @@ describe('ChannelTagExtractor', () => {
     const extractor = new ChannelTagExtractor();
     const response = { content: '<channel:sulla-desktop>status for parent</channel:sulla-desktop>' } as any;
     extractor.processComplete(response, {
-      channel: 'sulla-desktop', threadId: 'child-thread', state: { metadata: { isSubAgent: true, parentConversationId: 'session-a', agentId: 'coding-manager-sol', wsChannel: 'sulla-desktop' } },
+      channel: 'sulla-desktop', threadId: 'child-thread', state: { metadata: { isSubAgent: true, workflowParentChannel: 'sulla-desktop', parentConversationId: 'session-a', agentId: 'coding-manager-sol', wsChannel: 'sulla-desktop' } },
     } as any);
 
     expect(send.mock.calls[0][1].data).toMatchObject({ toThreadId: 'session-a' });
     expect(send.mock.calls[1][1].data).toMatchObject({ targetThreadId: 'session-a' });
+  });
+
+  it('keeps ordinary peer channel routing unchanged for a spawned child', () => { // risk: peer routing compatibility
+    const extractor = new ChannelTagExtractor();
+    const response = { content: '<channel:reviewer>peer finding</channel:reviewer>' } as any;
+    extractor.processComplete(response, {
+      channel: 'sulla-desktop', threadId: 'child-thread', state: { metadata: { isSubAgent: true, workflowParentChannel: 'sulla-desktop', parentConversationId: 'session-a', agentId: 'coding-manager-sol', wsChannel: 'sulla-desktop' } },
+    } as any);
+
+    expect(send.mock.calls[0][0]).toBe('reviewer');
+    expect(send.mock.calls[0][1].data).toMatchObject({ toThreadId: 'child-thread' });
+    expect(send.mock.calls[1][1].data.targetThreadId).toBe('child-thread');
   });
 });
