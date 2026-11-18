@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { SullaFileBookmarkLink } from '@pkg/shared/sullaFileBookmark';
+import { SullaFileBookmarkLink } from '../../../shared/sullaFileBookmark';
 
 export interface FilesBookmarkCreator {
   create(input: { kind: 'bookmark'; title: string; url: string }): Promise<unknown>;

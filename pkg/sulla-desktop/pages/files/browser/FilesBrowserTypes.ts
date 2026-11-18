@@ -4,12 +4,13 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+import type { FilesBookmarkCreator } from './FilesFileBookmarker';
 
 import type { ExplorerTarget } from '../composables/useFilesExplorerInteractions';
 import type { FilesDataSource, FilesFolderState, FilesItem, FilesTrashItem } from '../types';
 
 /** The public props of FilesBrowser.vue (unchanged by the E2-S5 split). */
-export interface FilesBrowserProps { dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }
+export interface FilesBrowserProps { dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload; bookmarkCreator?: FilesBookmarkCreator }
 
 /** The public emits of FilesBrowser.vue, as the typed emit function the component receives. */
 export interface FilesBrowserEmit {
