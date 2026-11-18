@@ -75,6 +75,7 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  'security:check-progress': (result: import('@pkg/main/security/types').SecurityCheckResult) => void;
   /** Non-fatal renderer diagnostics sent to the main-process debug service. */
   'debug:report': (source: string, error: { message?: string; stack?: string }) => void;
   /** First-run window steps and clicks for the first-run.log timeline (no secrets). */
@@ -244,6 +245,9 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
+  'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
+  'security:lock-vault': () => { ok: boolean; error?: string };
   'threat-proxy:get-settings': () => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; keyStatus?: { safeBrowsing: boolean; virusTotal: boolean }; error?: string };
   'threat-proxy:set-settings': (partial: Partial<import('@pkg/main/threat-proxy').ThreatProxySettings>) => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; error?: string };
   'threat-proxy:get-status': () => import('@pkg/main/threat-proxy').ThreatProxyStatus;
