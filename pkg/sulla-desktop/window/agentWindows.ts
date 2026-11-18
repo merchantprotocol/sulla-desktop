@@ -8,16 +8,23 @@ export interface AgentWindowOptions {
   windowKey?: string;
   bounds?: { x: number; y: number; width: number; height: number };
   focus?: boolean;
+  initialTabs?: 'restore' | 'fresh-chat' | 'adopt';
+}
+
+/** Query flag used to initialize a new secondary window without clearing restored tabs on reload. */
+export function initialTabsQuery(initialTabs: AgentWindowOptions['initialTabs'], isPrimary: boolean): string {
+  if (isPrimary || initialTabs === 'restore') return '';
+  return initialTabs === 'adopt' ? '&adoptPending=1' : '&freshAgentTab=1';
 }
 
 /** Owns agent-window identity and most-recently-focused ordering. */
 export class AgentWindowRegistry {
   private readonly keys = new Map<number, string>();
   private readonly focusOrder: number[] = [];
-  openAgentWindow(create: (name: string, windowKey: string, bounds?: AgentWindowOptions['bounds']) => BrowserWindow, options: AgentWindowOptions = {}): BrowserWindow {
+  openAgentWindow(create: (name: string, windowKey: string, bounds?: AgentWindowOptions['bounds'], initialTabs?: AgentWindowOptions['initialTabs']) => BrowserWindow, options: AgentWindowOptions = {}): BrowserWindow {
     const windowKey = options.windowKey ?? (this.getAgentWindows().length === 0 ? 'main' : `w_${ Math.random().toString(36).slice(2, 10) }`);
     const name = this.getAgentWindows().length === 0 ? 'main-agent' : `agent:${ windowKey }`;
-    const window = create(name, windowKey, options.bounds);
+    const window = create(name, windowKey, options.bounds, options.initialTabs ?? (name === 'main-agent' ? 'restore' : 'fresh-chat'));
     windowMappingRef()[name] = window.id;
     this.keys.set(window.id, windowKey);
     window.on('focus', () => this.noteFocus(window));
@@ -76,7 +83,7 @@ let mappings: Record<string, number> = {};
 export function setAgentWindowMapping(mapping: Record<string, number>): void { mappings = mapping; }
 function windowMappingRef(): Record<string, number> { return mappings; }
 
-let createAgentWindow: ((name: string, windowKey: string, bounds?: AgentWindowOptions['bounds']) => BrowserWindow) | undefined;
+let createAgentWindow: ((name: string, windowKey: string, bounds?: AgentWindowOptions['bounds'], initialTabs?: AgentWindowOptions['initialTabs']) => BrowserWindow) | undefined;
 
 /** Register the BrowserWindow factory without importing window/index.ts here. */
 export function setAgentWindowCreator(creator: typeof createAgentWindow): void { createAgentWindow = creator; }

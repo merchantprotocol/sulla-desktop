@@ -16,7 +16,7 @@ import Electron, {
 import { WindowBoundsStore } from './WindowBoundsStore';
 import { AgentWindowPersistence } from './AgentWindowPersistence';
 import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
-import { agentWindowRegistry, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
+import { agentWindowRegistry, initialTabsQuery, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
@@ -170,7 +170,7 @@ console.log('[window/index] URLs configured:', { webRoot, mainUrl });
 /**
  * Open the main window (Agent); if it is already open, focus it.
  */
-function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBounds?: AgentWindowOptions['bounds']) {
+function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBounds?: AgentWindowOptions['bounds'], initialTabs: AgentWindowOptions['initialTabs'] = 'restore') {
   console.log('[openMain] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
   const fullSize = screen.getPrimaryDisplay().size;
@@ -184,7 +184,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
   const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
-  const windowURL = name === 'main-agent' ? url : `${ url }&freshAgentTab=1`;
+  const windowURL = `${ url }${ initialTabsQuery(initialTabs, name === 'main-agent') }`;
   const window = createWindow(
     name,
     windowURL,
@@ -337,7 +337,7 @@ export function restoreAgentWindows() {
   let first: BrowserWindow | undefined;
   for (const record of records) {
     const bounds = workAreas.some(area => record.bounds.x < area.x + area.width && record.bounds.x + record.bounds.width > area.x && record.bounds.y < area.y + area.height && record.bounds.y + record.bounds.height > area.y) ? record.bounds : undefined;
-    const win = openAgentWindow({ windowKey: record.windowKey, bounds, focus: false });
+    const win = openAgentWindow({ windowKey: record.windowKey, bounds, focus: false, initialTabs: 'restore' });
     if (record.maximized) win.maximize();
     first ??= win;
   }
@@ -345,7 +345,7 @@ export function restoreAgentWindows() {
   return first!;
 }
 export function ensureAgentWindow() { return agentWindowRegistry.ensureAgentWindow(createAgentWindow); }
-export function newAgentWindow() { return openAgentWindow(); }
+export function newAgentWindow() { return openAgentWindow({ initialTabs: 'fresh-chat' }); }
 
 export function openMain() { return agentWindowRegistry.getAgentWindows().length ? ensureAgentWindow() : restoreAgentWindows(); }
 
@@ -422,7 +422,7 @@ if (process.type === 'browser') {
     openUrlInApp(url);
   });
   ipcMain.on('agent-window:open', (event) => {
-    if (agentWindowRegistry.isAgentWebContents(event.sender)) openAgentWindow();
+    if (agentWindowRegistry.isAgentWebContents(event.sender)) openAgentWindow({ initialTabs: 'fresh-chat' });
   });
   ipcMain.on('agent-window:close-self', (event) => {
     const owner = agentWindowRegistry.agentWindowFor(event.sender);
