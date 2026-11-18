@@ -111,7 +111,7 @@ export class PersonaAdapter {
   private readonly optimisticUserMessages = new Map<string, MessageId[]>();
   private lastSendHopKeydownAt?: number;
   private lastSendHopControllerAt?: number;
-  private pendingSendHop?: { threadId: string; marks: Record<string, number>; origin: number };
+  private pendingSendHop?: { threadId: string; marks: Record<string, number>; origin: number; messageCount: number };
 
   constructor(
     private readonly controller: ChatController,
@@ -437,7 +437,7 @@ export class PersonaAdapter {
     };
     try {
       hopMarks.ipcSendIssued = performance.now() - hopOrigin;
-      this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin };
+      this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin, messageCount: this.ci.messages.value.length };
       await this.ci.send(selection, resolved.length ? resolved : undefined);
     } catch (error) {
       this.pendingSendHop = undefined;
@@ -477,20 +477,20 @@ export class PersonaAdapter {
 
   private watchOptimisticUserMessages(): void {
     this.stopWatchers.push(watch(() => this.ci.messagesRevision.value, () => {
-      const backendUserTexts = this.ci.messages.value.filter(message => message.kind === 'user' && !this.seen.has(message.id)).map(message => message.content);
-      let removed = false;
-      for (const [text, ids] of this.optimisticUserMessages) {
-        const matchIndex = backendUserTexts.findIndex(content => content === text || content.endsWith(text) || (text === '(attached)' && (!content || content === '(image attached)')));
-        if (matchIndex < 0) continue;
-        backendUserTexts.splice(matchIndex, 1);
-        const id = ids.shift();
-        if (id) { this.controller.removeMessage(id); removed = true; }
-        if (!ids.length) this.optimisticUserMessages.delete(text);
-      }
-      if (removed) this.messageSyncScheduler.flush();
+      if (!this.optimisticUserMessages.size && !this.pendingSendHop) return;
+      this.reconcileOptimisticUserMessages();
       const pendingHop = this.pendingSendHop;
-      const firstToken = this.ci.messages.value.find(message => message.role === 'assistant' && (message.kind === 'text' || message.kind === 'streaming') && message.content.length > 0);
-      if (pendingHop && firstToken) {
+      const messages = this.ci.messages.value;
+      const start = Math.max(pendingHop?.messageCount ?? 0, messages.length - 20);
+      let hasNewAssistantText = false;
+      for (let index = messages.length - 1; index >= start; index--) {
+        const message = messages[index];
+        if (message.role === 'assistant' && (message.kind === 'text' || message.kind === 'streaming') && message.content.length > 0) {
+          hasNewAssistantText = true;
+          break;
+        }
+      }
+      if (pendingHop && hasNewAssistantText) {
         requestAnimationFrame(() => {
           if (this.pendingSendHop !== pendingHop) return;
           pendingHop.marks.firstTokenPainted = performance.now() - pendingHop.origin;
@@ -499,6 +499,28 @@ export class PersonaAdapter {
         });
       }
     }));
+  }
+
+  private reconcileOptimisticUserMessages(): void {
+    if (!this.optimisticUserMessages.size) return;
+    const tail = this.ci.messages.value.slice(-20);
+    const transcript = this.controller.thread.value.messages;
+    for (const message of tail) {
+      if (message.kind !== 'user' || this.seen.has(message.id)) continue;
+      for (const [text, ids] of this.optimisticUserMessages) {
+        if (!ids.length || !(message.content === text || message.content.endsWith(text) || (text === '(attached)' && (!message.content || message.content === '(image attached)')))) continue;
+        const optimisticId = ids.shift()!;
+        const existing = transcript.findIndex(item => item.id === optimisticId);
+        const mapped = this.mapBackendMessage(message);
+        if (mapped && existing >= 0) {
+          this.controller.updateMessage(optimisticId, mapped as Partial<Message>, existing);
+          this.seen.add(message.id);
+        }
+        else if (existing >= 0) this.controller.removeMessage(optimisticId);
+        if (!ids.length) this.optimisticUserMessages.delete(text);
+        break;
+      }
+    }
   }
 
   /**
@@ -625,6 +647,7 @@ export class PersonaAdapter {
   }
 
   private syncMessages(): void {
+    this.reconcileOptimisticUserMessages();
     const backend = this.ci.messages.value;
     const transcript = this.controller.thread.value.messages;
     const indexById = new Map(transcript.map((message, index) => [message.id, index]));
