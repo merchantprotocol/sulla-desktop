@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 os.environ["SULLA_PROXY_NO_AUTOLOAD"] = "1"
 sys.path.insert(0, os.path.dirname(__file__))
+import common
 import prompt_injection
 
 
@@ -155,7 +156,7 @@ class BoundedDecoderTests(unittest.TestCase):
         scanner = prompt_injection.PromptInjectionScanner(self.Config())
         headers = {"Content-Type": "text/html", "Content-Length": "4096"}
         response = SimpleNamespace(headers=headers, stream=False, raw_content=b"original")
-        flow = SimpleNamespace(response=response, request=SimpleNamespace(pretty_host="example.test"), id="pressure-flow")
+        flow = SimpleNamespace(response=response, request=SimpleNamespace(pretty_url="https://example.test/", pretty_host="example.test"), id="pressure-flow")
         with patch.object(scanner, "_reserve", return_value=False):
             scanner.responseheaders(flow)
         self.assertTrue(callable(response.stream))
@@ -196,7 +197,8 @@ class BoundedDecoderTests(unittest.TestCase):
         response = SimpleNamespace(headers={"Content-Type": "text/html"}, stream=False)
         flow = SimpleNamespace(response=response, request=SimpleNamespace(pretty_host="example.test"), id="failed-hook")
         scanner._should_scan = lambda _flow: (_ for _ in ()).throw(RuntimeError("broken hook"))
-        with patch.object(prompt_injection, "log") as logger:
+        # The fail_open_hook wrapper in common.py emits the line, so patch the logger it resolves.
+        with patch.object(common, "log") as logger:
             scanner.responseheaders(flow)
         self.assertIs(response.stream, True)
         self.assertNotIn("X-Sulla-Prompt-Injection", response.headers)

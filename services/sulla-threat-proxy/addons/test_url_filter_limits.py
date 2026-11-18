@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 os.environ["SULLA_PROXY_NO_AUTOLOAD"] = "1"
 sys.path.insert(0, os.path.dirname(__file__))
+import common
 import url_filter
 
 
@@ -101,7 +102,8 @@ class URLhausLimitTests(unittest.TestCase):
         instance._apply_config = lambda: (_ for _ in ()).throw(RuntimeError("config failure"))
         flow = self.make_flow()
         before_stream = flow.request.stream
-        with patch.object(url_filter, "log") as logger:
+        # The fail_open_hook wrapper in common.py emits the line, so patch the logger it resolves.
+        with patch.object(common, "log") as logger:
             instance.requestheaders(flow)
         self.assertIsNone(flow.response)
         self.assertEqual(flow.request.stream, before_stream)
