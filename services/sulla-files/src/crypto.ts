@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import * as zlib from 'node:zlib';
 
 import sodium from 'libsodium-wrappers-sumo';
@@ -42,6 +42,7 @@ export class ChunkCrypto {
   }
 
   async encrypt(value:Uint8Array, key:Uint8Array, context:string):Promise<Envelope> {
+    this.assertNonZeroKey(key);
     await this.aead.ready;
     const nonce = this.nonces(24);
     const ciphertext = this.aead.crypto_aead_xchacha20poly1305_ietf_encrypt(value, Buffer.from(context), null, nonce, key);
@@ -50,13 +51,43 @@ export class ChunkCrypto {
   }
 
   async decrypt(value:Envelope, key:Uint8Array, context:string):Promise<Uint8Array> {
+    this.assertNonZeroKey(key, true);
     await this.aead.ready;
     return this.aead.crypto_aead_xchacha20poly1305_ietf_decrypt(null, this.bytes(value.ciphertext), Buffer.from(context), this.bytes(value.nonce), key);
   }
 
+  /** Diagnostic-only probe for identifying ciphertext sealed with a zeroized key. Never returns plaintext. */
+  async opensWithZeroKeyForDiagnosis(value:Envelope, context:string):Promise<boolean> {
+    await this.aead.ready;
+    try {
+      const plaintext = this.aead.crypto_aead_xchacha20poly1305_ietf_decrypt(null, this.bytes(value.ciphertext), Buffer.from(context), this.bytes(value.nonce), new Uint8Array(32));
+      plaintext.fill(0);
+      return true;
+    } catch { return false }
+  }
+
   chunkId(value:Uint8Array, key:Uint8Array):string { return createHmac('sha256', key).update(value).digest('hex') }
 
+  /** Non-reversible operational identifier; never log key material. */
+  keyFingerprint(key:Uint8Array):string { return createHmac('sha256', key).update('sulla-files-key-fingerprint').digest('hex').slice(0, 8) }
+  keysMatch(left:Uint8Array, right:Uint8Array):boolean { return left.byteLength === right.byteLength && timingSafeEqual(Buffer.from(left), Buffer.from(right)) }
+
+  async encryptChunkForCollection(value:Uint8Array, key:Uint8Array, id:string, activeKey:Uint8Array, collectionId:string):Promise<Buffer> {
+    const used = this.keyFingerprint(key); const active = this.keyFingerprint(activeKey);
+    console.info('[SullaFiles] chunk encrypt stage', { collectionId, keyVersion:null, keyFingerprint:used });
+    if (!this.keysMatch(key, activeKey)) {
+      console.error('[SullaFiles] collection key mismatch at chunk encryption', { collectionId, keyVersion:null, keyFingerprint:used, activeKeyFingerprint:active });
+      throw Object.assign(new Error('Collection key changed during chunk staging'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+    }
+    const encrypted = await this.encryptChunk(value, key, id);
+    // Bounded per-chunk (4 MiB max) verification before any blob is committed.
+    const verified = await this.decryptChunk(encrypted, activeKey, id, value.length);
+    if (!Buffer.from(verified).equals(Buffer.from(value))) throw new Error('New chunk encryption verification failed');
+    return encrypted;
+  }
+
   async encryptChunk(value:Uint8Array, key:Uint8Array, id:string):Promise<Buffer> {
+    this.assertNonZeroKey(key);
     const compressed = (zlib as any).zstdCompressSync(Buffer.from(value), { level: 3 }) as Buffer;
     return Buffer.from(JSON.stringify(await this.encrypt(compressed, key, `sulla:file-chunk:v1:${ id }`)));
   }
@@ -73,6 +104,14 @@ export class ChunkCrypto {
     const plain = await this.decryptChunk(value, dataKey, id, expectedPlainBytes);
     if (this.chunkId(plain, dedupKey) !== id) throw new Error(`Decrypted chunk identity mismatch for ${ id }`);
     return plain;
+  }
+
+  private assertNonZeroKey(key:Uint8Array, programmingError = false):void {
+    const zero = Buffer.alloc(key.byteLength);
+    if (key.byteLength !== 32 || timingSafeEqual(Buffer.from(key), zero)) {
+      if (programmingError) throw new Error('All-zero key passed to Files decryption');
+      throw Object.assign(new Error('Collection key is unavailable'), { status:503, code:'collection_key_unavailable', retryAfter:1 });
+    }
   }
 
   private b64(value:Uint8Array):string { return Buffer.from(value).toString('base64url') }
