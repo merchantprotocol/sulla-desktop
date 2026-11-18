@@ -82,6 +82,30 @@ export function parseMountInfo(text: string): MountInfoEntry[] {
   return entries;
 }
 
+function normalizeMountPath(path: string): string {
+  const normalized = path.replace(/\/+/g, '/').replace(/\/$/, '');
+
+  return normalized || '/';
+}
+
+function joinMountRoot(root: string, relativePath: string): string {
+  const joined = `${ normalizeMountPath(root) }/${ relativePath }`.replace(/\/+/g, '/');
+
+  return normalizeMountPath(joined);
+}
+
+function expectedSelfBindRoot(entries: MountInfoEntry[], entry: MountInfoEntry, path: string): string | undefined {
+  const candidates = entries.filter(candidate => candidate.mountId !== entry.mountId &&
+    (path === candidate.mountPoint || path.startsWith(`${ normalizeMountPath(candidate.mountPoint) }/`)));
+  const parent = candidates.find(candidate => candidate.mountId === entry.parentId) ??
+    candidates.sort((a, b) => normalizeMountPath(b.mountPoint).length - normalizeMountPath(a.mountPoint).length)[0];
+
+  if (!parent) return undefined;
+  const relativePath = normalizeMountPath(path).slice(normalizeMountPath(parent.mountPoint).length).replace(/^\//, '');
+
+  return joinMountRoot(parent.root, relativePath);
+}
+
 /**
  * Classify what is visible at `path`. mountinfo lists mounts in mount order, so
  * the last entry for a mount point is the topmost one.
@@ -96,7 +120,7 @@ export function classifyFilesAnchor(entries: MountInfoEntry[], path: string = SU
   // Our own anchor: a non-FUSE bind of the directory onto itself. Any other
   // FUSE filesystem (fuse, fuse.*, fuseblk) is never reused.
   if (!entry.fsType.startsWith('fuse') &&
-      (entry.root === path || entry.root.endsWith('/sulla-files'))) {
+      (normalizeMountPath(entry.root) === expectedSelfBindRoot(entries, entry, path) || entry.root.endsWith('/sulla-files'))) {
     return { state: 'anchor', entry };
   }
 
