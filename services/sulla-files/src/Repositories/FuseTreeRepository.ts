@@ -17,6 +17,27 @@ export class FuseTreeRepository {
     return String((await this.db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
   }
 
+  /** Bounded path changes for one authorized collection; cursors are journal ids, not global revisions. */
+  async changes(collectionId:string, since:string):Promise<{cursor:string; reset:boolean; more:boolean; changes:{path:string;oldPath:string|null;kind:string}[]}> {
+    // Opportunistic bounded cleanup; journal rows are append-only during their retention window.
+    await this.db.query(`WITH expired_rows AS (SELECT ctid,collection_id,id FROM fuse_change_journal WHERE changed_at < now()-interval '10 minutes' ORDER BY id LIMIT 1000),
+      expired AS (SELECT collection_id,MAX(id) AS through_id FROM expired_rows GROUP BY collection_id),
+      marked AS (INSERT INTO fuse_change_retention(collection_id,pruned_through) SELECT collection_id,through_id FROM expired
+        ON CONFLICT(collection_id) DO UPDATE SET pruned_through=GREATEST(fuse_change_retention.pruned_through,EXCLUDED.pruned_through) RETURNING collection_id)
+      DELETE FROM fuse_change_journal j USING expired_rows x,marked m WHERE j.ctid=x.ctid AND m.collection_id=x.collection_id`);
+    const bounds = (await this.db.query(`SELECT COALESCE(MIN(j.id),0)::text AS oldest,COALESCE(MAX(j.id),0)::text AS newest,
+      COALESCE(r.pruned_through,0)::text AS pruned FROM fuse_change_retention r FULL JOIN fuse_change_journal j ON j.collection_id=r.collection_id
+      WHERE COALESCE(r.collection_id,j.collection_id)=$1 GROUP BY r.pruned_through`, [collectionId])).rows[0] ?? { oldest:'0',newest:'0',pruned:'0' };
+    const numericSince = /^\d+$/.test(since) ? BigInt(since) : null;
+    const valid = numericSince !== null && numericSince <= 9223372036854775807n;
+    const cursor = valid ? numericSince! : 0n;
+    const oldest = BigInt(bounds.oldest); const newest = BigInt(bounds.newest);
+    if (!valid || cursor < BigInt(bounds.pruned) || (oldest > 0n && cursor < oldest - 1n)) return { cursor: (newest > BigInt(bounds.pruned) ? newest : BigInt(bounds.pruned)).toString(), reset: true, more: false, changes: [] };
+    const rows = (await this.db.query(`SELECT id::text AS id,path,old_path AS "oldPath",kind FROM fuse_change_journal WHERE collection_id=$1 AND id>$2 ORDER BY id LIMIT 1001`, [collectionId, since])).rows;
+    const more = rows.length > 1000; const page = more ? rows.slice(0,1000) : rows;
+    return { cursor: page.at(-1)?.id ?? (newest > cursor ? newest.toString() : since), reset: false, more, changes: page.map(({id: _id,...change}:any) => change) };
+  }
+
   async homeCollectionId(userId:string):Promise<string> {
     return String((await this.db.query(`SELECT h.id FROM collections h WHERE h.owner_user_id=$1 AND h.system_area IS NULL AND h.published=TRUE AND h.legacy_source=FALSE ORDER BY EXISTS(SELECT 1 FROM collection_acl a WHERE a.collection_id=h.id AND a.principal_type='user' AND a.principal_id=$1 AND a.role='manage') DESC,h.is_default DESC,h.created_at LIMIT 1`, [userId])).rows[0]?.id ?? '');
   }

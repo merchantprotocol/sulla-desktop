@@ -4,6 +4,7 @@ import hashlib
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from test_directory_paging import load_adapter
 
@@ -12,7 +13,7 @@ class ReadCacheTests(unittest.TestCase):
     def setUp(self):
         self.adapter, _ = load_adapter()
         self.temp = tempfile.TemporaryDirectory()
-        self.cache = self.adapter.ContentReadCache(self.temp.name, 8)
+        self.cache = self.adapter.ContentReadCache(self.temp.name, 64)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -33,6 +34,15 @@ class ReadCacheTests(unittest.TestCase):
         self.assertTrue(self.cache.get("v1", digest, len(content), result))
         self.assertEqual(os.pread(result.fileno(), len(content), 0), content)
         result.close()
+
+    # risk: mount availability — an unwritable cache spool must not prevent Files mount initialization or reads.
+    def test_unavailable_spool_disables_cache_without_failing_operations(self):
+        ops = self.adapter.SullaFiles(object())
+        with patch.object(self.adapter, "SPOOL_DIR", "/unavailable/sulla-files-spool"), \
+             patch.object(self.adapter.os, "makedirs", side_effect=PermissionError("read-only")):
+            self.assertIsNone(ops._cache())
+            self.assertIsNone(ops._cache())
+        self.assertTrue(ops.read_cache_disabled)
 
     # risk: data integrity — corrupt cache files must never be served as file contents.
     def test_corrupt_entry_is_rejected_and_removed(self):

@@ -7,6 +7,7 @@
 // /tree with FuseTreeSnapshotCache and FuseTreeRepository), on the real app and a real Postgres.
 // Written against the inline app.ts handlers before the move.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 
 import { FuseTreeRepository } from '../src/Repositories/FuseTreeRepository.js';
 import { FuseTreeSnapshotCache } from '../src/Services/FuseTreeSnapshotCache.js';
@@ -27,18 +28,34 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
 
   const directory = (query:string, headers:Record<string, string> = {}) => fixture.request(`/v1/fuse/directory?${ query }`, 'GET', { headers });
 
-  it('change feed is revision-based, requires collection access, and exposes no cross-collection paths', async() => {
-    // risk: permissions — a capability may only poll a collection it can view; global revisions never disclose paths.
+  it('change feed returns per-collection path events and pages from a journal cursor', async() => {
+    // risk: namespace isolation — ordinary audit writes and other collections must not invalidate this tree.
     const first = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }`);
     expect(first.status).toBe(200);
-    expect(first.body).toMatchObject({ collectionId: fixture.collectionId, reset: true, changes: [] });
-    const stable = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.revision }`);
-    expect(stable.status).toBe(200);
-    expect(stable.body).toMatchObject({ revision: first.body.revision, reset: false, changes: [] });
+    expect(first.body).toMatchObject({ collectionId: fixture.collectionId, reset: true, more: false, changes: [] });
+    const stable = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
+    expect(stable.body).toMatchObject({ cursor: first.body.cursor, reset: false, changes: [] });
     await fixture.createFile('feed/change.txt');
-    const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.revision }`);
-    expect(changed.body.reset).toBe(true);
-    expect(changed.body).not.toHaveProperty('path');
+    const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.cursor }`);
+    expect(changed.body).toMatchObject({ reset: false, changes: [expect.objectContaining({ path: 'feed/change.txt', kind: 'insert' })] });
+    const fileId = (await fixture.pool.query(`SELECT id FROM files WHERE collection_id=$1 AND path='feed/change.txt'`, [fixture.collectionId])).rows[0].id;
+    await fixture.pool.query(`UPDATE files SET path='feed/renamed.txt' WHERE id=$1`, [fileId]);
+    const rename = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ changed.body.cursor }`);
+    expect(rename.body.changes).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'feed/renamed.txt', oldPath: 'feed/change.txt', kind: 'rename' })]));
+    await fixture.pool.query(`DELETE FROM files WHERE id=$1`, [fileId]);
+    const deleted = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ rename.body.cursor }`);
+    expect(deleted.body.changes).toContainEqual(expect.objectContaining({ path: 'feed/renamed.txt', kind: 'delete' }));
+    const other = randomUUID();
+    await fixture.pool.query(`INSERT INTO collections(id,owner_user_id,name,kind,home,encrypted_data_key,dedup_key_ciphertext,retention_policy,published,legacy_source,explorer_path)
+      VALUES($1,$2,'Other','knowledge','desktop-only','{}','{}','{}',TRUE,FALSE,$3)`, [other, fixture.userId, `spec-${ other }`]);
+    expect((await fixture.request(`/v1/fuse/files?collectionId=${ other }&path=feed%2Fanother.txt`, 'POST', {
+      body: Buffer.from('other collection'), headers: { 'content-type': 'application/octet-stream' },
+    })).status).toBe(201);
+    const isolated = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ deleted.body.cursor }`);
+    expect(isolated.body.changes).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: 'feed/another.txt' })]));
+    await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind,changed_at) VALUES($1,'expired.txt','delete',now()-interval '11 minutes')`, [fixture.collectionId]);
+    const expired = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=0`);
+    expect(expired.body).toMatchObject({ reset: true, changes: [] });
     expect((await fixture.request('/v1/fuse/changes?collectionId=00000000-0000-0000-0000-000000000000')).status).toBe(404);
   });
 
