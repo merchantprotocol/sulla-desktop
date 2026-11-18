@@ -424,11 +424,11 @@ def adapter_log_near(when):
     return lines[-10:]
 
 
-def record_eio(error, op):
+def record_eio(error, op, when=None):
     """Append one line to eio-events.jsonl for an EIO: time, phase, path, op, errno and the adapter's files-request lines."""
     if getattr(error, "errno", None) != errno.EIO or not EIO_CONTEXT["root"]:
         return
-    when = time.time()
+    when = time.time() if when is None else when
     with EIO_LOCK:
         EIO_COUNTS[EIO_CONTEXT["phase"]] += 1
         capture = EIO_CAPTURES[0] < EIO_CAPTURE_CAP
@@ -1507,9 +1507,8 @@ class FilesSoak:
         with sink_lock:
             outcomes = list(sink)
         for kind, _ms, when, name, code in outcomes:
-            if code == errno.EIO:
-                with EIO_LOG.open("a", encoding="utf-8") as log:
-                    log.write(json.dumps({"run": self.run_id, "root": str(self.root), "t": when}) + "\n")
+            if code == errno.EIO:  # the outcome kept only the errno, so the path is the lock folder
+                record_eio(OSError(errno.EIO, os.strerror(errno.EIO), str(folder)), "lock-" + kind, when=when)
         eio = sum(1 for o in outcomes if o[4] == errno.EIO)
         other = collections.Counter(o[3] for o in outcomes if o[3] and o[4] != errno.EIO)
         metrics = {"seconds": LOCK_SECONDS, "hung_threads": hung, "eio": eio, "other_errors": dict(other)}
