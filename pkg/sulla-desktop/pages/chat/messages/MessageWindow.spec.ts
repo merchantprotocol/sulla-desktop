@@ -8,6 +8,7 @@ describe('MessageWindow', () => {
     const windowed = new MessageWindow().trim(messages);
     expect(windowed[0].content).toBe('20');
     expect(windowed.at(-1)?.content).toBe('119');
+    expect(windowed).toHaveLength(100);
     expect(windowed.filter(message => message.role === 'user')).toHaveLength(50);
   });
 
