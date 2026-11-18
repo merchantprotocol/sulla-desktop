@@ -30,7 +30,7 @@ export interface BrowserTab {
   /** Consumed by a Files tab after it mounts, so navigation is never timer-dependent. */
   filesNavigation?: FilesNavigationPayload;
   /** Files identity for a Paper tab. Content is always reloaded from Files. */
-  documentFile?: { fileId: string; path: string; collectionId?: string };
+  documentFile?: { fileId: string; path: string; collectionId?: string; initialMode?: 'editing'|'preview' };
   /** Recipe rail identity used to refocus its single app tab. */
   recipeAppSlug?: string;
   /** Studio sidebar page a Workflows / Use Cases tab is showing. */
@@ -724,7 +724,7 @@ export function useBrowserTabs() {
 }
 
 /** Open one durable Paper tab per Files identity and focus it. */
-export function openDocumentTab(documentFile: { fileId: string; path: string; collectionId?: string }, focus = true): BrowserTab {
+export function openDocumentTab(documentFile: { fileId: string; path: string; collectionId?: string; initialMode?: 'editing'|'preview' }, focus = true): BrowserTab {
   const { createTab } = useBrowserTabs();
   const existing = tabs.find(tab => tab.mode === 'paper' && tab.documentFile?.fileId === documentFile.fileId);
   const tab = existing ?? createTab('about:blank', {

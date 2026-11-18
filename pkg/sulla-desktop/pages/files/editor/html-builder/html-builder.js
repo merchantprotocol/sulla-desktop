@@ -200,7 +200,7 @@
     if (run) {
       // The opaque-origin frame can only request navigation; the host validates
       // the exact frame WindowProxy before acting on a message.
-      const bridge = `<script>(function(){document.addEventListener('click',function(event){var link=event.target&&event.target.closest&&event.target.closest('a[href]');if(!link)return;var href=link.getAttribute('href')||'';if(href.charAt(0)==='#')return;if(/^https?:\/\//i.test(href)){event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'external',href:href},'*');return}if(/^(mailto:|tel:)/i.test(href))return;if(/^[a-z][a-z\\d+.-]*:/i.test(href)||href.slice(0,2)==='//')return;event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'relative',href:href},'*')},true)})()<\/script>`;
+      const bridge = `<script>(function(){document.addEventListener('click',function(event){var link=event.target&&event.target.closest&&event.target.closest('a[href]');if(!link)return;var href=link.getAttribute('href')||'';if(href.charAt(0)==='#'){event.preventDefault();var id=href.slice(1);try{location.hash=href;if(location.hash===href)return}catch(_){}try{var decoded=decodeURIComponent(id),target=decoded?(document.getElementById(decoded)||document.querySelector('[name=\"'+CSS.escape(decoded)+'\"]')):null;if(target)target.scrollIntoView();else if(!id)window.scrollTo(0,0);if(location.hash!==href)history.replaceState(null,'',href);window.dispatchEvent(new HashChangeEvent('hashchange',{oldURL:location.href,newURL:location.href}))}catch(_){if(!id)window.scrollTo(0,0)}return}if(/^https?:\/\//i.test(href)){event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'external',href:href},'*');return}if(/^(mailto:|tel:)/i.test(href))return;if(/^[a-z][a-z\\d+.-]*:/i.test(href)||href.slice(0,2)==='//')return;event.preventDefault();parent.postMessage({type:'sulla-files-nav',kind:'relative',href:href},'*')},true)})()<\/script>`;
       const head = /<head(?:\s[^>]*)?>/i.exec(value);
       value = head ? value.slice(0, head.index + head[0].length) + bridge + value.slice(head.index + head[0].length) : bridge + value;
     }
@@ -452,7 +452,7 @@
       return NAMES[t] || t
     }
     // ---------- render ----------
-    let editing = true;
+    let editing = options.initialMode === 'editing' && options.canRunScripts !== false;
     const LINKCATCH =
       "<script>document.addEventListener('click',function(e){var a=e.target.closest('a');if(!a)return;var h=a.getAttribute('href')||'';if(/^https?:/.test(h)){a.target='_blank';return}if(e.defaultPrevented)return;e.preventDefault();parent.postMessage({sullaPreviewLink:h},'*')});<\/script>";
 
@@ -2180,7 +2180,7 @@
     render();
     // HTML files open as their designed page first. Editing is an explicit
     // action for this mount, rather than a preference inherited from the last file.
-    setEditing(false);
+    setEditing(options.initialMode === 'editing' && options.canRunScripts !== false);
     if (options.sourceEditorFactory) {
       const sourceHost = host.querySelector('.shb-dv-ed');
       sourceHost.innerHTML = '';

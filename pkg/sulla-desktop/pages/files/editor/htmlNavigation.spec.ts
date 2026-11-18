@@ -16,6 +16,12 @@ describe('HtmlNavigation',()=>{
     expect(nav.classify('mailto:a@example.com')).toBe('mailto');
     expect(nav.classify('tel:+15551234567')).toBe('tel');
   });
+  it('selects initial mode for viewed, new, read-only and script-restricted documents',()=>{
+    expect(HtmlNavigation.initialMode({})).toBe('preview');
+    expect(HtmlNavigation.initialMode({isNew:true})).toBe('editing');
+    expect(HtmlNavigation.initialMode({isNew:true,readOnly:true})).toBe('preview');
+    expect(HtmlNavigation.initialMode({isNew:true,canRunScripts:false})).toBe('preview');
+  });
   it('normalizes relative traversal and drops query/hash',()=>{
     const nav=new HtmlNavigation();
     expect(nav.resolve('one/two/a.html','../other/./b.html?x=1#y')).toBe('one/other/b.html');

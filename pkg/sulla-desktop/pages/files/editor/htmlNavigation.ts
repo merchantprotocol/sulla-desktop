@@ -6,7 +6,14 @@
 
 export type HtmlHrefKind='hash'|'relative'|'external'|'mailto'|'tel'|'unsupported';
 
+export type HtmlInitialMode='editing'|'preview';
+
 export class HtmlNavigation {
+  static initialMode(options:{isNew?:boolean;readOnly?:boolean;canRunScripts?:boolean}):HtmlInitialMode {
+    if(options.readOnly||options.canRunScripts===false)return 'preview';
+    return options.isNew?'editing':'preview';
+  }
+
   private entries:string[]=[];
   private index=-1;
 
