@@ -144,13 +144,12 @@ export class DesktopVaultTransport {
       connect: (options, callback) => {
         const hostname = typeof options.hostname === 'string' ? options.hostname : '';
         // Explicit mapping instead of spreading undici's connector options (port is a string there, and it carries undici-only fields).
-        // Mirrors undici's buildConnector: SNI only for non-IP hostnames.
+        // Mirrors undici's buildConnector: SNI only for non-IP hostnames. The vault is loopback-only,
+        // so localAddress and connect timeouts are not needed (neither is typed on these options).
         const socket = tls.connect({
           host: hostname,
           port: Number(options.port) || 443,
           servername: options.servername ?? (net.isIP(hostname) ? undefined : hostname),
-          localAddress: options.localAddress ?? undefined,
-          timeout: options.timeout ?? undefined,
           rejectUnauthorized: false,
         });
         let settled = false;
