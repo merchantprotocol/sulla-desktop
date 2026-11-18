@@ -7,7 +7,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
+import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
@@ -73,8 +73,14 @@ export interface ClosedTab {
 const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
 const storageKey = (name: string) => makeStorageKey(windowKey, name);
 try {
-  const known = JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '["main"]') as string[];
-  new WindowStorageMigrator().migrate(localStorage, Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || ''), known, windowKey === 'main');
+  // Namespace GC runs once per app session, in the primary window only. Other
+  // windows carry a frozen knownWindowKeys list and would delete newer windows' namespaces.
+  if (windowKey === 'main') {
+    const runGc = shouldRunGc(windowKey, sessionStorage);
+    const known = JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '["main"]') as string[];
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || '');
+    new WindowStorageMigrator().migrate(localStorage, keys, runGc ? known : null, true);
+  }
 } catch { /* malformed startup metadata must not block tabs */ }
 const STORAGE_KEY = storageKey('browser-tabs');
 const HISTORY_KEY = storageKey('closed-tabs');
@@ -185,7 +191,7 @@ const MAX_AGENT_TABS = 10;
 const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 
-const restoredTabs = new URLSearchParams(window.location.search).get('freshAgentTab') === '1' ? [] : loadPersistedTabs();
+const restoredTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
 // Enforce the agent-tab cap. Called synchronously from the write paths that
