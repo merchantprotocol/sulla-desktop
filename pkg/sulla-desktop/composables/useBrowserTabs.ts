@@ -75,6 +75,15 @@ export interface ClosedTab {
 const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
 let adoptPending = new URLSearchParams(window.location.search).get('adoptPending') === '1';
 let adoptFallback: ReturnType<typeof setTimeout> | null = null;
+let closingAfterTransfer = false;
+
+export function shouldEnsureOneTab(): boolean {
+  return !closingAfterTransfer;
+}
+
+export function shouldCloseAfterTransfer(tabCount: number): boolean {
+  return closingAfterTransfer && tabCount === 0;
+}
 const storageKey = (name: string) => makeStorageKey(windowKey, name);
 try {
   // Namespace GC runs once per app session, in the primary window only. Other
@@ -558,6 +567,7 @@ export function useBrowserTabs() {
   }
 
   function ensureOneTab(): BrowserTab | undefined {
+    if (!shouldEnsureOneTab()) return undefined;
     if (tabs.length > 0) {
       return tabs[0];
     }
@@ -866,20 +876,29 @@ export function closeTabByAssetId(assetId: string): boolean {
 
 export function applyTransferAdoption(adopt: (descriptor: BrowserTab) => unknown, descriptor: Record<string, unknown>, acknowledge: () => void): void {
   if (!descriptor.id) return;
+  closingAfterTransfer = false;
   adopt(descriptor as BrowserTab);
   acknowledge();
 }
 
 /** Insertion index for a tab dropped at screenX: the first tab whose midpoint is right of the drop, else append. */
-export function transferDropIndex(screenX: number | undefined, tabCount: number): number {
-  const tabEls = Array.from(document.querySelectorAll<HTMLElement>('.tab-item'));
-  if (tabEls.length === 0) return tabCount;
+export function transferDropIndex(screenX: number | undefined, tabs: readonly Pick<BrowserTab, 'id'>[]): number {
+  const tabEls = Array.from(document.querySelectorAll<HTMLElement>('.tab-item')).filter(el => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  });
+  if (tabEls.length === 0) return tabs.length;
   const localX = (screenX ?? window.screenX) - window.screenX;
-  for (let i = 0; i < tabEls.length; i++) {
-    const rect = tabEls[i].getBoundingClientRect();
-    if (localX < rect.left + rect.width / 2) return i;
+  for (const el of tabEls) {
+    const rect = el.getBoundingClientRect();
+    if (localX < rect.left + rect.width / 2) {
+      const tabId = el.getAttribute('href')?.match(/\/Browser\/([^/?#]+)/)?.[1];
+      const index = tabs.findIndex(tab => tab.id === tabId);
+      if (index >= 0) return index;
+    }
   }
-  return tabCount;
+  return tabs.length;
 }
 
 /** Adopt a dropped tab at its drop position. Works before the UI is mounted (no DOM tabs means append). */
@@ -889,7 +908,7 @@ export function adoptTransferredTab(
   transient: Record<string, unknown> | undefined,
   screenX: number | undefined,
 ): BrowserTab {
-  return store.adoptTab(descriptor, transferDropIndex(screenX, store.tabs.length), transient);
+  return store.adoptTab(descriptor, transferDropIndex(screenX, store.tabs), transient);
 }
 
 /**
@@ -910,6 +929,7 @@ export async function releaseTransferredTab(
     if (neighbour) window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: neighbour.id } }));
   }
   if (!store.releaseTab(tabId)) return;
+  closingAfterTransfer = store.tabs.length === 0;
   await nextTick();
   acknowledge(transferId, tabId);
 }
@@ -931,6 +951,6 @@ ipcRenderer.on('tabs:activate', (_event: unknown, _transferId: string, tabId: st
   }
 });
 ipcRenderer.on('tabs:release-finalize', () => {
-  if (transferTabs.tabs.length === 0) ipcRenderer.send('agent-window:close-self');
+  if (shouldCloseAfterTransfer(transferTabs.tabs.length)) ipcRenderer.send('agent-window:close-self');
 });
 ipcRenderer.send('tabs:transfer-ready');
