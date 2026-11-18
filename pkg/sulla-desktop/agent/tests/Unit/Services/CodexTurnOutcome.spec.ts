@@ -53,10 +53,17 @@ describe('CodexTurnOutcome', () => {
     expect(outcome.fatal).toBe(true);
   });
 
-  it('a notice with no completion is not fatal by itself', () => {
+  it('a notice with no completion is fatal: the turn never finished', () => {
+    // risk: an error that only mentions compaction must not turn an unfinished turn into a success.
     const outcome = new CodexTurnOutcome();
     outcome.recordErrorEvent(HEADS_UP);
-    expect(outcome.fatal).toBe(false);
+    expect(outcome.fatal).toBe(true);
+  });
+
+  it('a compaction failure with no completion is fatal', () => {
+    const outcome = new CodexTurnOutcome();
+    expect(outcome.recordErrorEvent('Context compaction failed: model returned an error')).toBe('notice');
+    expect(outcome.fatal).toBe(true);
   });
 
   it('turn.failed is fatal even when a completion was seen earlier', () => {

@@ -26,12 +26,13 @@ export class CodexNoticeClassifier {
 /**
  * Tracks the terminal state of one `codex exec --json` turn.
  *
- * Fatal only when the turn itself failed (`turn.failed`) or an error event
- * arrived and the turn never reached a successful completion. An error event
+ * Fatal only when the turn itself failed (`turn.failed`) or an error or notice
+ * event arrived and the turn never reached a successful completion. An error event
  * followed by `turn.completed` / `task_complete` is a warning, not a failure.
  */
 export class CodexTurnOutcome {
   private sawErrorEvent = false;
+  private sawNotice = false;
   private sawTurnFailed = false;
   private sawCompletion = false;
 
@@ -39,7 +40,10 @@ export class CodexTurnOutcome {
 
   /** Records an error event from any Codex schema shape. Returns how it was classified. */
   recordErrorEvent(message: unknown): CodexErrorKind {
-    if (this.classifier.isNotice(message)) return 'notice';
+    if (this.classifier.isNotice(message)) {
+      this.sawNotice = true;
+      return 'notice';
+    }
     this.sawErrorEvent = true;
     return 'error';
   }
@@ -57,6 +61,8 @@ export class CodexTurnOutcome {
   }
 
   get fatal(): boolean {
-    return this.sawTurnFailed || (this.sawErrorEvent && !this.sawCompletion);
+    // A notice is only harmless when the turn still completes: an error that
+    // merely mentions compaction must not turn a failed turn into a success.
+    return this.sawTurnFailed || ((this.sawErrorEvent || this.sawNotice) && !this.sawCompletion);
   }
 }
