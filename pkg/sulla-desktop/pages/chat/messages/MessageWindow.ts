@@ -12,10 +12,12 @@ export class MessageWindow {
     if (messages.length === 0) return [];
     let start = 0;
     let turns = 0;
+    let newestCountedUser = 0;
     for (let i = messages.length - 1; i >= 0; i--) {
       if (this.isUser(messages[i])) {
         turns++;
-        if (turns > MessageWindow.MAX_TURNS) { start = i + 1; break; }
+        if (turns > MessageWindow.MAX_TURNS) { start = newestCountedUser; break; }
+        newestCountedUser = i;
       }
     }
     let units = 0;

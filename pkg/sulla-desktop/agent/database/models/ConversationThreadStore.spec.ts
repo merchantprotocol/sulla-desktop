@@ -53,7 +53,8 @@ describe('ConversationThreadStore older-page reads', () => {
     const { loadMessagesBeforeWith } = await import('./ConversationThreadStore');
     const rows = await loadMessagesBeforeWith(db, 'thread-a', 'm5', 2);
     expect(rows.map(row => row.id)).toEqual(['m3', 'm4']);
-    expect(seen[1].params[2]).toBe(2);
+    expect(seen[2].params[1]).toBe(5);
+    expect(seen[2].params[2]).toBe(2);
   });
 });
 
