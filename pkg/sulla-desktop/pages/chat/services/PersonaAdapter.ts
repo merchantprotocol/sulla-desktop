@@ -23,6 +23,7 @@ import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
+import { OptimisticSendFeedback } from './OptimisticSendFeedback';
 import { VoiceAgentRouting } from './VoiceAgentRouting';
 import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
@@ -55,6 +56,7 @@ export interface PersonaAdapterOptions {
 export class PersonaAdapter {
   private readonly voiceAgentRouting = new VoiceAgentRouting();
   private readonly voiceTranscriptTagger = new VoiceTranscriptTagger();
+  private readonly optimisticSendFeedback: OptimisticSendFeedback;
   private ci:           ChatInterface;
   private readonly tabId?: string;
   private stopWatchers: WatchStopHandle[] = [];
@@ -116,6 +118,7 @@ export class PersonaAdapter {
     opts: PersonaAdapterOptions = {},
   ) {
     this.tabId = opts.tabId;
+    this.optimisticSendFeedback = new OptimisticSendFeedback(this.controller);
     (this as any)._supportOptions = opts;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.persistentArtifacts = new Set(
@@ -369,21 +372,13 @@ export class PersonaAdapter {
     this.lastSendHopKeydownAt = undefined;
     this.lastSendHopControllerAt = undefined;
     const sendStartedAt = Date.now();
-    const optimisticRunMessageId = newMessageId();
-    const optimisticText = text.trim() || '(attached)';
-    const optimisticUserMessage: UserMessage = {
-      id: optimisticRunMessageId,
-      kind: 'user',
-      text: optimisticText,
-      attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
-      createdAt: sendStartedAt,
-    };
-    this.controller.appendMessage(optimisticUserMessage);
+    const optimistic = this.optimisticSendFeedback.show(text, attachments, sendStartedAt);
+    const optimisticRunMessageId = optimistic.id;
+    const optimisticText = optimistic.text;
     hopMarks.userBubblePushed = performance.now() - hopOrigin;
     const pendingIds = this.optimisticUserMessages.get(optimisticText) ?? [];
     pendingIds.push(optimisticRunMessageId);
     this.optimisticUserMessages.set(optimisticText, pendingIds);
-    this.controller.transitionRun({ type: 'send', messageId: optimisticRunMessageId, at: sendStartedAt });
     hopMarks.thinkingShown = performance.now() - hopOrigin;
     const statusPromise = ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
