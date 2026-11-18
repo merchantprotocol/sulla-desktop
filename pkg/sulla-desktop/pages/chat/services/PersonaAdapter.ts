@@ -481,16 +481,7 @@ export class PersonaAdapter {
       this.reconcileOptimisticUserMessages();
       const pendingHop = this.pendingSendHop;
       const messages = this.ci.messages.value;
-      const start = Math.max(pendingHop?.messageCount ?? 0, messages.length - 20);
-      let hasNewAssistantText = false;
-      for (let index = messages.length - 1; index >= start; index--) {
-        const message = messages[index];
-        if (message.role === 'assistant' && (message.kind === 'text' || message.kind === 'streaming') && message.content.length > 0) {
-          hasNewAssistantText = true;
-          break;
-        }
-      }
-      if (pendingHop && hasNewAssistantText) {
+      if (pendingHop && this.hasNewAssistantText(messages, pendingHop.messageCount)) {
         requestAnimationFrame(() => {
           if (this.pendingSendHop !== pendingHop) return;
           pendingHop.marks.firstTokenPainted = performance.now() - pendingHop.origin;
@@ -501,12 +492,21 @@ export class PersonaAdapter {
     }));
   }
 
+  private hasNewAssistantText(messages: BackendMessage[], messageCount: number): boolean {
+    const start = Math.max(messageCount, messages.length - 20);
+    for (let index = messages.length - 1; index >= start; index--) {
+      const message = messages[index];
+      if (message.role === 'assistant' && (message.kind === 'text' || message.kind === 'streaming') && message.content.length > 0) return true;
+    }
+    return false;
+  }
+
   private reconcileOptimisticUserMessages(): void {
     if (!this.optimisticUserMessages.size) return;
     const tail = this.ci.messages.value.slice(-20);
     const transcript = this.controller.thread.value.messages;
     for (const message of tail) {
-      if (message.kind !== 'user' || this.seen.has(message.id)) continue;
+      if (message.role !== 'user' || this.seen.has(message.id)) continue;
       for (const [text, ids] of this.optimisticUserMessages) {
         if (!ids.length || !(message.content === text || message.content.endsWith(text) || (text === '(attached)' && (!message.content || message.content === '(image attached)')))) continue;
         const optimisticId = ids.shift()!;
