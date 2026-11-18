@@ -11,7 +11,7 @@ import logging
 import types
 import unittest
 
-from test_directory_paging import load_adapter
+from test_directory_paging import ReaddirToken, load_adapter
 
 
 def files_failure(status, message, code=None):
@@ -50,6 +50,8 @@ class Replies:
         self.names = []
 
     def __call__(self, token, name, attrs, offset):
+        if not isinstance(token, ReaddirToken):
+            raise TypeError("expected pyfuse3.ReaddirToken")
         self.names.append(name)
         return True
 
@@ -63,7 +65,7 @@ class FuseOpErrorTests(unittest.TestCase):
         self.adapter.emit = lambda event, level=logging.INFO, **fields: self.events.append((event, level, fields))
 
     def readdir(self, ops, inode):
-        return asyncio.run(ops.readdir(inode, 0, types.SimpleNamespace()))
+        return asyncio.run(ops.readdir(inode, 0, ReaddirToken()))
 
     # risk: availability — the root listing failing made Desktop recreate the adapter in a loop.
     def test_root_listing_404_answers_an_empty_root_logs_it_and_lists_again_later(self):

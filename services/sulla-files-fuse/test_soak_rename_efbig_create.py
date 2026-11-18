@@ -39,6 +39,16 @@ class Api:
         self.rows[path] = {"id": file_id, "kind": kind, "size": len(content), "collection_id": "home"}
         self.contents[file_id] = content
 
+    async def directory_page(self, collection_id, path, cursor=None, etag=None):
+        prefix = path + "/" if path else ""
+        rows = []
+        for key, row in self.rows.items():
+            if key.startswith(prefix):
+                relative = key[len(prefix):]
+                if relative and "/" not in relative:
+                    rows.append({**row, "path": key})
+        return {"rootCollectionId": "home", "entries": rows, "nextCursor": None}, '"root"'
+
     async def entry(self, collection_id, path):
         if path not in self.rows:
             raise files_error(errno.ENOENT, "not found")
