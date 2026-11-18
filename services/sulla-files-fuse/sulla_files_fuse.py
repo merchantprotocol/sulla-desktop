@@ -683,16 +683,6 @@ class FilesApi:
         await trio.to_thread.run_sync(self._request, f"/v1/fuse/folders?{query}", "DELETE", limiter=self.network_limiter)
 
 
-class _DiscardDirectoryReply:
-    """Sink used to preload the root namespace without retaining FUSE reply state."""
-    def __init__(self):
-        self.names = []
-
-    def __call__(self, token, name, attrs, offset):
-        self.names.append(name)
-        return True
-
-
 class SullaFiles(pyfuse3.Operations):
     enable_writeback_cache = False
 
@@ -915,12 +905,8 @@ class SullaFiles(pyfuse3.Operations):
             async with self.initial_tree_lock:
                 if not self.initial_tree_loaded and not self.initial_tree_attempted:
                     self.initial_tree_attempted = True
-                    # Synthetic APIs used by operations that do not exercise directory
-                    # listing need only the lookup path; production FilesApi implements this.
-                    if not callable(getattr(self.api, "directory_page", None)):
-                        return
                     try:
-                        await self._list_directory(pyfuse3.ROOT_INODE, self.nodes[pyfuse3.ROOT_INODE], 0, _DiscardDirectoryReply())
+                        await self._load_directory(pyfuse3.ROOT_INODE, self.nodes[pyfuse3.ROOT_INODE])
                     except OSError as error:
                         self.initial_tree_error = error
                         emit("root-listing-failed", logging.ERROR, status=getattr(error, "status", None),
@@ -1116,6 +1102,14 @@ class SullaFiles(pyfuse3.Operations):
             raise
 
     async def _list_directory(self, fh, directory, start_id, token):
+        """Load a directory snapshot, then emit entries through the real FUSE reply token."""
+        entries = await self._load_directory(fh, directory)
+        for index, (name, inode, attrs) in enumerate(entries, start=1):
+            if index > start_id and not pyfuse3.readdir_reply(token, os.fsencode(name), attrs, index):
+                break
+
+    async def _load_directory(self, fh, directory):
+        """Fetch all pages and update the in-memory namespace without any FUSE reply state."""
         directory_path = directory["path"]
         collection_id = directory.get("collectionId")
         children = self.children.get(directory_path, {})
@@ -1123,21 +1117,13 @@ class SullaFiles(pyfuse3.Operations):
         if directory_path in self.directory_complete and marker:
             page, _ = await self.api.directory_page(collection_id, self._files_path(directory_path, collection_id), etag=marker)
             if page is None:
-                for index, (name, inode) in enumerate(sorted(children.items()), start=1):
-                    if index > start_id and not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), index):
-                        break
-                return
-        # A changed or uncached directory is streamed in bounded keyset pages.
-        # Inodes must stay stable across a refresh: a process may hold a child directory as its cwd
-        # or an open path, and forgetting it here made its next operation fail with ENOENT
-        # ("nonexistent directory") whenever anything re-listed the parent (health probes, agents).
-        # Only names that are gone after a complete listing are pruned, below.
+                return [(name, inode, self._attrs(inode)) for name, inode in sorted(children.items())]
         old_names = set(children)
         seen_names = set()
         listed_fully = False
         cursor = None
-        absolute_index = 0
         total = 0
+        entries = []
         while True:
             page, marker = await self.api.directory_page(collection_id,
                 self._files_path(directory_path, collection_id) if collection_id else "", cursor)
@@ -1156,15 +1142,11 @@ class SullaFiles(pyfuse3.Operations):
                 inode = self._node(full_path, row["kind"] == "directory")
                 self.nodes[inode].update({**row, "path": full_path, "filesPath": row.get("path", ""),
                     "collectionId": collection_id, "mtimeMs": _mtime_ms(row.get("updated_at"))})
-                absolute_index += 1
-                if absolute_index > start_id and not pyfuse3.readdir_reply(token, os.fsencode(name), self._attrs(inode), absolute_index):
-                    self.directory_complete.discard(directory_path)
-                    return
+                entries.append((name, inode, self._attrs(inode)))
             cursor = page.get("nextCursor")
             if not cursor:
                 listed_fully = True
                 break
-        # Only a fully received listing proves a name is gone (not a 304, not a partial reply).
         if listed_fully:
             if fh == pyfuse3.ROOT_INODE:
                 self.initial_tree_loaded = True
@@ -1174,6 +1156,7 @@ class SullaFiles(pyfuse3.Operations):
             self.directory_complete.add(directory_path)
         else:
             self.directory_complete.discard(directory_path)
+        return entries
 
     @traced("open", lambda s, a: s._inode_info(a[0], a[-1]))
     async def open(self, inode, flags, ctx):
@@ -1734,9 +1717,12 @@ async def warm_tree(operations, status):
     started = time.monotonic()
     try:
         await operations.refresh(force=True)
-    except OSError as error:
-        # Keep health unready; request handlers make bounded attempts rather than exposing an empty root.
-        emit("files-unreachable", logging.WARNING, errno=_errno_name(error.errno), error=str(error))
+    except Exception as error:
+        # A failed warm-up must not escape into Trio's nursery and stop the mount.
+        if isinstance(error, OSError):
+            emit("files-unreachable", logging.WARNING, errno=_errno_name(error.errno), error=str(error))
+        else:
+            emit("warm-tree-failed", logging.ERROR, error=type(error).__name__, detail=str(error))
         status.set("loading-tree", tree="unavailable", error=str(error))
         return
     nodes = len(operations.path_inode)

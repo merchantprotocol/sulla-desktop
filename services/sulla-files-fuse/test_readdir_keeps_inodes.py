@@ -4,7 +4,7 @@ import asyncio
 import types
 import unittest
 
-from test_directory_paging import load_adapter
+from test_directory_paging import ReaddirToken, load_adapter
 
 
 class ListingApi:
@@ -29,7 +29,7 @@ class ReaddirKeepsInodesTests(unittest.TestCase):
         ops = adapter.SullaFiles(api)
         root = pyfuse3.ROOT_INODE
         ops.nodes[root]["collectionId"] = "home"
-        token = types.SimpleNamespace(names=[])
+        token = ReaddirToken()
         asyncio.run(ops.readdir(root, 0, token))
         work = ops.path_inode["work"]
         asyncio.run(ops.readdir(root, 0, token))  # a health probe / agent re-lists the parent
@@ -43,7 +43,7 @@ class ReaddirKeepsInodesTests(unittest.TestCase):
         ops = adapter.SullaFiles(api)
         root = pyfuse3.ROOT_INODE
         ops.nodes[root]["collectionId"] = "home"
-        token = types.SimpleNamespace(names=[])
+        token = ReaddirToken()
         asyncio.run(ops.readdir(root, 0, token))
         gone = ops.path_inode["a.txt"]
         api.entries = [e for e in api.entries if e["path"] != "a.txt"]

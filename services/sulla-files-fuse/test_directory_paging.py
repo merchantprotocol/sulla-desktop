@@ -14,11 +14,20 @@ class Attrs:
     pass
 
 
-class Reply:
+class ReaddirToken:
     def __init__(self):
         self.names = []
 
+
+class Reply:
+    def __init__(self):
+        self.names = []
+        self.calls = 0
+
     def __call__(self, token, name, attrs, offset):
+        if not isinstance(token, ReaddirToken):
+            raise TypeError("expected pyfuse3.ReaddirToken")
+        self.calls += 1
         token.names.append(name)
         return True
 
@@ -105,7 +114,7 @@ class DirectoryPagingTests(unittest.TestCase):
         operations = adapter.SullaFiles(api)
         inode = operations._node("opened", True)
         operations.nodes[inode]["collectionId"] = "home"
-        token = types.SimpleNamespace(names=[])
+        token = ReaddirToken()
 
         asyncio.run(operations.readdir(inode, 0, token))
 
