@@ -54,7 +54,7 @@ describe('CloudOrgMessagingTransport', () => {
       return new Response(JSON.stringify({ hostSeq: 8, status: duplicate ? 'duplicate' : 'accepted' }), { status: 200 });
     });
     const http = new SullaCloudHttpClient(fetch, 'https://cloud.test', 1000, 0);
-    const transport = new CloudOrgMessagingTransport(http, new TestSession(), undefined, 'cloud', cloudRequester(fetch));
+    const transport = new CloudOrgMessagingTransport(http, new TestSession(), undefined, 'cloud', cloudRequester(fetch), 0);
     const envelope = MessageEnvelope.create({
       messageId: 'stable-message-id', conversationId: 'conversation-1', orgId: 'active-org',
       from: ParticipantAddress.human('active-org', 'local-user'),
@@ -73,6 +73,16 @@ describe('CloudOrgMessagingTransport', () => {
       ['https://cloud.test/orgs/active-org/conversations/conversation-1/messages', JSON.stringify({ envelope: new EnvelopeCodec().encode(envelope) })],
       ['https://cloud.test/orgs/active-org/conversations/conversation-1/messages', JSON.stringify({ envelope: new EnvelopeCodec().encode(envelope) })],
     ]);
+  });
+
+  it('does not retry a non-OK 500 response from the cloud requester', async () => {
+    // risk: duplicate side effect — a response from the host means it may have committed, so a 500 is not retried
+    const fetch = vi.fn(async () => new Response('boom', { status: 500 }));
+    const transport = new CloudOrgMessagingTransport(new SullaCloudHttpClient(fetch, 'https://cloud.test', 1000, 0), new TestSession(), undefined, 'cloud', cloudRequester(fetch), 0);
+    await expect(transport.startConversation({
+      conversationId: 'client-generated-id', kind: 'direct', participantUserIds: ['local-user', 'recipient'],
+    })).rejects.toThrow('org messaging request failed (500)');
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a cursor from another org before issuing a request', async () => {
