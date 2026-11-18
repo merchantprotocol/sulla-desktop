@@ -69,11 +69,24 @@ export interface ClosedTab {
   closedAt: number;
 }
 
-const STORAGE_KEY = 'sulla:browser-tabs';
-const HISTORY_KEY = 'sulla:closed-tabs';
-const ORDER_KEY = 'sulla:tab-order';
-const PINNED_KEY = 'sulla:pinned-tabs';
-const ACTIVE_TAB_KEY = 'sulla:active-tab';
+const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
+const storageKey = (name: string) => `sulla:${ windowKey }:${ name }`;
+const legacyKeys = ['browser-tabs', 'closed-tabs', 'tab-order', 'pinned-tabs', 'active-tab'];
+if (windowKey === 'main' && localStorage.getItem('sulla:main:migrated') !== '1') {
+  for (const name of legacyKeys) {
+    const legacy = `sulla:${ name }`;
+    if (localStorage.getItem(storageKey(name)) === null && localStorage.getItem(legacy) !== null) {
+      localStorage.setItem(storageKey(name), localStorage.getItem(legacy)!);
+    }
+    localStorage.removeItem(legacy);
+  }
+  localStorage.setItem('sulla:main:migrated', '1');
+}
+const STORAGE_KEY = storageKey('browser-tabs');
+const HISTORY_KEY = storageKey('closed-tabs');
+const ORDER_KEY = storageKey('tab-order');
+const PINNED_KEY = storageKey('pinned-tabs');
+const ACTIVE_TAB_KEY = storageKey('active-tab');
 const MAX_HISTORY = 25;
 // Cap the restored-tab count to stop a runaway agent from creating hundreds
 // of tabs, persisting them, and blacking out the main chat window on next
@@ -578,7 +591,7 @@ export function useBrowserTabs() {
 
     // Always keep at least one tab open
     if (tabs.length === 0) {
-      createTab('about:blank', { mode: 'chat' });
+      ipcRenderer.send('agent-window:close-self');
     }
   }
 
