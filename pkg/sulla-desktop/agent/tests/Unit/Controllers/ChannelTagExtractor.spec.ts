@@ -23,4 +23,15 @@ describe('ChannelTagExtractor', () => {
     expect(send.mock.calls[0][1].data).toMatchObject({ senderId: 'codex-sol-worker', senderChannel: 'sulla-desktop' });
     expect(send.mock.calls[1][1].data.envelope).toMatchObject({ from: 'codex-sol-worker', kind: 'peer', body: 'independent finding' });
   });
+
+  it('routes a spawned child channel message to its parent session thread, not another same-channel session', () => { // risk: cross-session message isolation
+    const extractor = new ChannelTagExtractor();
+    const response = { content: '<channel:sulla-desktop>status for parent</channel:sulla-desktop>' } as any;
+    extractor.processComplete(response, {
+      channel: 'sulla-desktop', threadId: 'child-thread', state: { metadata: { isSubAgent: true, parentConversationId: 'session-a', agentId: 'coding-manager-sol', wsChannel: 'sulla-desktop' } },
+    } as any);
+
+    expect(send.mock.calls[0][1].data).toMatchObject({ toThreadId: 'session-a' });
+    expect(send.mock.calls[1][1].data).toMatchObject({ targetThreadId: 'session-a' });
+  });
 });

@@ -138,9 +138,12 @@ export class ChannelTagExtractor implements Extractor {
       //   processing a wake user_message) and echoes it here.
       const fromThreadId: string = ctx.threadId || '';
       const replyToThread: string = (ctx.state as any)?.metadata?.replyToThread || '';
+      const parentThreadId: string = (ctx.state as any)?.metadata?.isSubAgent
+        ? String((ctx.state as any)?.metadata?.parentConversationId || '')
+        : '';
       // toThreadId is the thread that should receive the reply — if this agent
       // was woken by someone else, reply to their thread; otherwise no specific target.
-      const toThreadId: string = replyToThread || fromThreadId || '';
+      const toThreadId: string = parentThreadId || replyToThread || fromThreadId || '';
 
       const ws = getWebSocketClientService();
 
@@ -165,6 +168,7 @@ export class ChannelTagExtractor implements Extractor {
         type: 'agent_inbox_message',
         data: {
           receiverChannel: targetChannel,
+          targetThreadId: toThreadId || undefined,
           envelope: {
             from: senderId,
             kind: 'peer',

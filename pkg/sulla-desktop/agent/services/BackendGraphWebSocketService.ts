@@ -722,7 +722,7 @@ export class BackendGraphWebSocketService {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const envelope = data?.envelope;
       if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
-      const target = await this.inboxReceiverResolver.resolve(channelId);
+      const target = await this.inboxReceiverResolver.resolve(channelId, data?.targetThreadId);
       await this.agentInbox.receive({
         envelope,
         target,

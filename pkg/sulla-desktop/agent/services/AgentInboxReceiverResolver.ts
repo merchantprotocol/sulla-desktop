@@ -5,15 +5,16 @@
 import type { AgentInboxTarget } from './AgentInbox';
 import type { AgentJob } from '../tools/agents/jobRegistry';
 
-export interface AgentInboxReceiverResolver { resolve(channel: string): Promise<AgentInboxTarget> }
+export interface AgentInboxReceiverResolver { resolve(channel: string, threadId?: string): Promise<AgentInboxTarget> }
 export interface AgentInboxJobReader { allJobs(): Promise<AgentJob[]>; activeJobs?(): Promise<AgentJob[]> }
 
 /** Resolves a channel to its own persona and durable parked thread; never falls back to Sulla for named agents. */
 export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverResolver {
   constructor(private readonly jobs: AgentInboxJobReader, private readonly activeThread: (channel: string) => string | undefined) {}
 
-  async resolve(channel: string): Promise<AgentInboxTarget> {
+  async resolve(channel: string, threadId?: string): Promise<AgentInboxTarget> {
     const agentId = channel;
+    if (threadId) return { channel, threadId, agentId };
     const liveThread = this.activeThread(channel);
     if (liveThread) return { channel, threadId: liveThread, agentId };
     const jobs = await (this.jobs.activeJobs?.() ?? this.jobs.allJobs());
