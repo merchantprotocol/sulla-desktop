@@ -71,7 +71,7 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
-const CONVERSATION_CONTAINER_SWITCH_WAIT_MS = 30_000;
+const CONVERSATION_CONTAINER_SWITCH_WAIT_MS = 10 * 60_000;
 
 class ConversationContainerBusyError extends Error {
   constructor() {
@@ -143,7 +143,8 @@ export class BackendGraphWebSocketService {
     const deadline = Date.now() + CONVERSATION_CONTAINER_SWITCH_WAIT_MS;
     while (this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
       if (Date.now() >= deadline) {
-        throw new Error('This conversation is still running on another channel. Retry after that turn finishes.');
+        const { AgentLaunchError } = await import('./AgentContainerLauncher');
+        throw new AgentLaunchError('This conversation is still busy with another agent\'s turn. Send your message again when it finishes.', true);
       }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
@@ -508,7 +509,8 @@ export class BackendGraphWebSocketService {
             [...this.activeAborts.keys()].some(activeKey => activeKey.endsWith(`|${ threadId }`))) {
           return existing.lifecycle;
         }
-        return starting;
+        await starting.catch(() => undefined);
+        continue;
       }
       const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
       this.conversationContainerStarts.set(key, start);

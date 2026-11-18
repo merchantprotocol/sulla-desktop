@@ -96,6 +96,31 @@ describe('conversation container persistence key after a parked delegated wake',
     for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
   });
 
+  it('does not hand a concurrent different agent the lifecycle being created for the first agent', async() => {
+    // risk: an agent receives another agent's capability token and Files actor
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype);
+    service.conversationContainers = new Map();
+    service.conversationContainerStarts = new Map();
+    service.activeAborts = new Map();
+    let finishFirst!: (lifecycle: any) => void;
+    const firstLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    const secondLifecycle = { closed: false, close: vi.fn(async() => {}) };
+    createAgentContainerLifecycle.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve }) as any)
+      .mockImplementationOnce(async() => secondLifecycle as any);
+    const firstState = chatState('agent-race-thread');
+    const first = service.conversationContainer('desktop', 'agent-race-thread', 'codex', firstState);
+    const secondState = chatState('agent-race-thread');
+    secondState.metadata.agentId = 'different-agent';
+    const second = service.conversationContainer('mobile-relay', 'agent-race-thread', 'claude', secondState);
+    finishFirst(firstLifecycle);
+    await expect(first).resolves.toBe(firstLifecycle);
+    await expect(second).resolves.toBe(secondLifecycle);
+    expect(createAgentContainerLifecycle).toHaveBeenCalledTimes(2);
+    expect(service.conversationContainers.get('agent-race-thread').agentId).toBe('different-agent');
+    for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
+  });
+
   it('closes and removes the idle desktop agent lifecycle before mobile-relay creates its own', async() => {
     // risk: a different agent collides with the idle thread container or inherits its capability
     const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
