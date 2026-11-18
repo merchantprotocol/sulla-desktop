@@ -412,6 +412,59 @@ missing=0
 docker ps --filter network=sulla-agents --filter status=running --filter label=com.sulla.workload=agent --format '{{.Label "sulla.threat-proxy.ca"}}' 2>/dev/null | grep -qx absent && missing=1
 echo "$state|$health|$oom|$restarting|$probe|$used|$limit|$ca|$missing|$agents"`;
 
+/** Health signals gathered by WATCHER_PROBE_SCRIPT, typed. */
+export interface EgressProbe {
+  state: string; health: string; oomKilled: boolean; restarting: boolean; tcpOk: boolean;
+  memCurrent: number; memMax: number; caPresent: boolean; agentsWithoutCa: boolean; runningAgents: number;
+}
+
+export interface EgressCounters { healthyTicks: number; failedProbes: number }
+
+export interface EgressDecision {
+  /** Policy to apply, or null to keep the current one (hold). */
+  policy: EgressPolicyState | null;
+  status: 'running' | 'failing-open' | 'standby' | 'hold';
+  reason: string;
+  countsAsFailOpen: boolean;
+  next: EgressCounters;
+}
+
+/** Parses the probe's pipe-separated line. Returns null for anything that is not a complete probe. */
+export function parseWatcherProbe(output: string): EgressProbe | null {
+  const fields = output.trim().split('|');
+  if (fields.length !== 10) return null;
+  const [state, health, oom, restarting, probe, usedRaw, limitRaw, ca, missing, agents] = fields;
+  if (!/^\d+$/.test(probe) || !/^\d+$/.test(agents)) return null;
+  return {
+    state, health, oomKilled: oom === 'true', restarting: restarting === 'true', tcpOk: probe === '0',
+    memCurrent: Number(usedRaw), memMax: Number(limitRaw), caPresent: ca === '1', agentsWithoutCa: missing === '1',
+    runningAgents: Number(agents),
+  };
+}
+
+/** Pure egress decision. Same branch order and counter updates as the watcher it replaces. */
+export function decideEgress(probe: EgressProbe | null, prev: EgressCounters): EgressDecision {
+  const failOpen = (reason: string, next: EgressCounters): EgressDecision => ({ policy: 'direct', status: 'failing-open', reason, countsAsFailOpen: true, next });
+  if (!probe) return failOpen('probe_parse_error', { healthyTicks: 0, failedProbes: prev.failedProbes });
+  if (probe.runningAgents === 0) return { policy: 'direct', status: 'standby', reason: 'idle', countsAsFailOpen: false, next: { healthyTicks: 0, failedProbes: 0 } };
+  if (probe.agentsWithoutCa) return failOpen('agent_without_ca', { healthyTicks: 0, failedProbes: prev.failedProbes });
+  if (probe.state !== 'running' || probe.health !== 'healthy' || probe.oomKilled || probe.restarting) {
+    return failOpen(`proxy_${probe.state}_${probe.health}_oom_${probe.oomKilled}_restarting_${probe.restarting}`, { healthyTicks: 0, failedProbes: 0 });
+  }
+  if (!probe.tcpOk) {
+    const failedProbes = prev.failedProbes + 1;
+    if (failedProbes >= 2) return failOpen('probe_failed_twice', { healthyTicks: 0, failedProbes });
+    return { policy: null, status: 'hold', reason: 'probe_failed_once', countsAsFailOpen: false, next: { healthyTicks: 0, failedProbes } };
+  }
+  if (Number.isFinite(probe.memCurrent) && Number.isFinite(probe.memMax) && probe.memMax > 0 && probe.memCurrent >= probe.memMax * 0.9) {
+    return failOpen('memory_pressure', { healthyTicks: 0, failedProbes: 0 });
+  }
+  if (!probe.caPresent) return failOpen('ca_bundle_missing', { healthyTicks: 0, failedProbes: 0 });
+  const healthyTicks = prev.healthyTicks + 1;
+  if (healthyTicks >= 3) return { policy: 'enforced', status: 'running', reason: 'healthy', countsAsFailOpen: false, next: { healthyTicks, failedProbes: 0 } };
+  return { policy: null, status: 'hold', reason: 'healthy_pending', countsAsFailOpen: false, next: { healthyTicks, failedProbes: 0 } };
+}
+
 async function checkProxyHealthNow(): Promise<void> {
   const executor = guest;
   if (!executor) return;
@@ -419,17 +472,12 @@ async function checkProxyHealthNow(): Promise<void> {
     const settings = await readSettings();
     if (!settings.enabled) { healthyProbes = failedProbes = 0; transition('off', 'disabled'); await applyWatcherPolicy(executor, 'off'); return; }
     const data = await executor.execCommand({ root: true, capture: true }, 'sh', '-c', WATCHER_PROBE_SCRIPT, 'threat-proxy-watch', THREAT_PROXY_CONTAINER);
-    const [state, health, oom, restarting, probe, usedRaw, limitRaw, ca, missingAgent, runningAgents] = data.trim().split('|');
-    if (Number(runningAgents) === 0) { healthyProbes = failedProbes = 0; transition('direct', 'idle'); await applyWatcherPolicy(executor, 'direct'); return; }
-    if (missingAgent === '1') { healthyProbes = 0; transition('direct', 'agent_without_ca'); await applyWatcherPolicy(executor, 'direct'); return; }
-    const used = Number(usedRaw), limit = Number(limitRaw);
-    if (state !== 'running' || health !== 'healthy' || oom === 'true' || restarting === 'true') { healthyProbes = failedProbes = 0; transition('direct', `proxy_${state}_${health}_oom_${oom}_restarting_${restarting}`); await applyWatcherPolicy(executor, 'direct'); return; }
-    if (probe !== '0') { failedProbes++; healthyProbes = 0; if (failedProbes >= 2) { transition('direct', 'probe_failed_twice'); await applyWatcherPolicy(executor, 'direct'); } return; }
-    failedProbes = 0;
-    if (Number.isFinite(used) && Number.isFinite(limit) && limit > 0 && used >= limit * 0.9) { healthyProbes = 0; transition('direct', 'memory_pressure'); await applyWatcherPolicy(executor, 'direct'); return; }
-    if (ca !== '1') { healthyProbes = 0; transition('direct', 'ca_bundle_missing'); await applyWatcherPolicy(executor, 'direct'); return; }
-    healthyProbes++;
-    if (healthyProbes >= 3) { transition('enforced', 'healthy'); await applyWatcherPolicy(executor, 'enforced'); }
+    const decision = decideEgress(parseWatcherProbe(data), { healthyTicks: healthyProbes, failedProbes });
+    healthyProbes = decision.next.healthyTicks;
+    failedProbes = decision.next.failedProbes;
+    if (decision.policy === null) return;
+    transition(decision.policy, decision.reason);
+    await applyWatcherPolicy(executor, decision.policy);
   } catch (err: any) {
     healthyProbes = 0; failedProbes++;
     transition('direct', `health_check_error:${err?.message ?? String(err)}`);
