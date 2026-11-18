@@ -3,7 +3,9 @@ import { loopbackOrigin } from '@pkg/utils/instance';
 import { DesktopVaultIdentityRepository, DesktopVaultTransport } from './desktopTransport';
 
 // Default: no port offset. Individual specs remap it to simulate an offset instance.
-vi.mock('@pkg/utils/instance', () => ({
+// Partial mock: keep the real module so transitive imports still resolve; override only loopbackOrigin.
+vi.mock('@pkg/utils/instance', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@pkg/utils/instance')>()),
   loopbackOrigin: vi.fn((protocol: string, basePort: number) => `${ protocol }://127.0.0.1:${ basePort }`),
 }));
 
