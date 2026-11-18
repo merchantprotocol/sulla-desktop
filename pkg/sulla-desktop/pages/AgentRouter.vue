@@ -540,6 +540,8 @@ function onAgentCommand(_event: any, args: any) {
     const tab = createTab('about:blank', { mode: 'conversations' });
 
     router.push(`/Browser/${ tab.id }`);
+    // Show Secretary inside Conversations, but don't start listening.
+    setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', { detail: { tabId: tab.id, start: false } })), 80);
     break;
   }
   case 'start-secretary': {
@@ -553,7 +555,7 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ targetTab.id }`);
     setTimeout(() => {
       window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', {
-        detail: { tabId: targetTab.id },
+        detail: { tabId: targetTab.id, start: true },
       }));
     }, existing ? 0 : 80);
     break;
@@ -589,7 +591,7 @@ function onAgentCommand(_event: any, args: any) {
     const tab = createTab('about:blank', { mode: mode || 'welcome', filesNavigation, studioSection });
 
     router.push(`/Browser/${ tab.id }`);
-    if (requestedMode === 'secretary') setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', { detail: { tabId: tab.id } })), 80);
+    if (requestedMode === 'secretary') setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', { detail: { tabId: tab.id, start: false } })), 80);
     break;
   }
   case 'open-files-item': {

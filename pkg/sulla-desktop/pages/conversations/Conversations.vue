@@ -158,15 +158,17 @@ async function openDirect(personId: string): Promise<void> {
 function startSecretary(): void {
   void nextTick(() => window.setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:secretary-start', { detail: { tabId: props.tabId } })), 40));
 }
-function openSecretaryModal(): void { secretaryOpen.value = true; startSecretary(); }
+// Opening Secretary never starts the microphone; only an explicit start (the
+// secretary/start tool or the Start button inside SecretaryMode) begins listening.
+function openSecretaryModal(start = false): void { secretaryOpen.value = true; if (start) startSecretary(); }
 function initials(label: string): string { return label.split(/\s+/).slice(0, 2).map(part => part[0] ?? '').join('').toUpperCase() || '?'; }
 function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 const openSecretary = (event: Event): void => {
-  const detail = (event as CustomEvent<{ tabId?: string }>).detail;
-  if (!detail?.tabId || detail.tabId === props.tabId) openSecretaryModal();
+  const detail = (event as CustomEvent<{ tabId?: string; start?: boolean }>).detail;
+  if (!detail?.tabId || detail.tabId === props.tabId) openSecretaryModal(detail?.start === true);
 };
 
 watch(activeOrg, () => { if (activeOrg.value && !loading.value) void refresh(); });
