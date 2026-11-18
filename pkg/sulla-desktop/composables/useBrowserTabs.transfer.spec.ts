@@ -1,5 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// useBrowserTabs registers ipcRenderer listeners at module load. Mock the typed
+// wrapper so the spec never loads the real 'electron' package (binary path only in Node).
+vi.mock('@pkg/utils/ipcRenderer', () => ({
+  ipcRenderer: {
+    on: vi.fn(),
+    once: vi.fn(),
+    send: vi.fn(),
+    sendSync: vi.fn(),
+    invoke: vi.fn(() => Promise.resolve([])),
+    removeListener: vi.fn(),
+    removeAllListeners: vi.fn(),
+  },
+}));
+
 import { adoptTransferredTab, applyTransferAdoption, persistActiveTabId, releaseTransferredTab } from './useBrowserTabs';
 
 describe('early tab transfer adoption', () => {
