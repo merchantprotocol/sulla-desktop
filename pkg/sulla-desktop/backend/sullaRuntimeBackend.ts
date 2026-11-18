@@ -18,6 +18,7 @@ import omit from 'lodash/omit';
 import yaml from 'yaml';
 
 import { SULLA_FILES_FUSE_HEALTHCHECK, SULLA_FILES_HEALTHCHECK } from './sullaFilesHealthchecks';
+import { decideFilesFuseRecovery } from './sullaFilesFuseRecovery';
 import { Architecture, BackendError, BackendEvents, BackendProgress, BackendSettings, execOptions, FailureDetails, RestartReasons, State, VMBackend, VMExecutor } from './backend';
 import { ContainerEngineClient, MobyClient } from './containerClient';
 import {
@@ -216,8 +217,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #hostPreparationDeferred = false;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
-  /** FUSE adapter services whose stale mount was drained; compose must recreate them. */
+  /** FUSE adapter services whose dead mount was drained; restart the process in-place. */
   #staleFilesAdapters = new Set<string>();
+  #lastFilesFuseRestartMs?: number;
   /** Every compose service with a fixed container_name, from the last prepared compose file. */
   #composeTargets: ComposeServiceTarget[] = [];
   readonly #guestDocker: DockerCli = { run: args => this.execCommand({ capture: true, root: true, expectFailure: true }, 'docker', ...args) };
@@ -1629,7 +1631,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const { drained } = await prepareSullaFilesGuestAnchorDraining(this);
 
       if (drained > 0) {
-        console.warn(`[Sulla] ${ SULLA_FILES_GUEST_MOUNT_PATH } had ${ drained } stale adapter mount(s); detached them and will recreate sulla_files_fuse`);
+        console.warn(`[Sulla] ${ SULLA_FILES_GUEST_MOUNT_PATH } had ${ drained } stale adapter mount(s); detached them`);
         this.#staleFilesAdapters.add('sulla_files_fuse');
       }
       this.#lastFilesGuestMountFailure = undefined;
@@ -1778,8 +1780,30 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       });
       const startOptionalService = async(service: string): Promise<void> => {
         if (this.#staleFilesAdapters.delete(service)) {
-          // Its mount was detached above; the old process holds a dead FUSE session.
-          await this.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', service);
+          // The mount manager only marks this after a failed mount probe and a
+          // successful stale-layer detach. Restart the live process in-place;
+          // a container recreate would break every consumer's bind mount.
+          const state = (await this.execCommand({ capture: true, root: true, expectFailure: true },
+            'docker', 'inspect', '--format', '{{.State.Status}}', 'sulla_files_fuse').catch(() => '')).trim();
+          const action = decideFilesFuseRecovery({
+            containerState: state === 'running' ? 'running' : state === 'missing' ? 'missing' : state === 'exited' ? 'exited' : state === 'dead' ? 'dead' : 'other',
+            imageChanged: false,
+            mountDead: true,
+            nowMs: Date.now(),
+            lastRestartMs: this.#lastFilesFuseRestartMs,
+            restartCooldownMs: 60_000,
+          });
+
+          if (action === 'restart') {
+            console.warn('[Sulla] Files FUSE mount is dead while its adapter container is running; restarting the adapter process (reason: mount health check failed)');
+            await this.execCommand({ root: true }, 'docker', 'restart', '--time', '10', 'sulla_files_fuse');
+            this.#lastFilesFuseRestartMs = Date.now();
+          } else if (action === 'create' || action === 'recreate') {
+            console.warn(`[Sulla] Files FUSE adapter recovery requires ${ action } (reason: container ${ state || 'missing' })`);
+            await reconcileOptionalService(service);
+          } else {
+            console.warn('[Sulla] Files FUSE restart skipped (reason: adapter restart is rate-limited or container is already transitioning)');
+          }
 
           return;
         }
@@ -1982,12 +2006,37 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
                 } else {
                   await configDrift.reconcile(entry);
                 }
+              } else if (service === 'sulla_files_fuse') {
+                if (this.#staleFilesAdapters.has(service) || !state.startsWith('running')) {
+                  await startOptionalService(service);
+                } else {
+                  const imageChanged = state === 'running healthy' && await this.#imageFreshness.isStale(container, service, generation);
+                  const recovery = decideFilesFuseRecovery({
+                    containerState: 'running', imageChanged, mountDead: false,
+                    nowMs: Date.now(), lastRestartMs: this.#lastFilesFuseRestartMs, restartCooldownMs: 60_000,
+                  });
+
+                  if (recovery === 'recreate') {
+                    console.warn('[Sulla] Files FUSE image changed; recreating adapter (reason: image digest changed)');
+                    await startOptionalService(service);
+                  }
+                }
+                // Do not run config-hash reconciliation for the adapter: regenerated
+                // env/labels and unrelated compose changes must not kill its mount.
               } else if (state !== 'running starting') {
                 await startOptionalService(service);
               } else {
                 await configDrift.reconcile(entry);
               }
               await this.waitForDockerServiceHealthy(entry, service === 'sulla_files' ? 600 : 20, generation);
+              // A dead-mount recovery keeps the existing container alive. Once it
+              // is healthy again, refresh it only if the adapter image actually changed.
+              if (service === 'sulla_files_fuse' && this.#lastFilesFuseRestartMs !== undefined
+                && await this.#imageFreshness.isStale(container, service, generation)) {
+                console.warn('[Sulla] Files FUSE image changed after restart; recreating adapter (reason: image digest changed)');
+                await startOptionalService(service);
+                await this.waitForDockerServiceHealthy(entry, 20, generation);
+              }
               this.#activeOptionalSullaServices.add(service);
               bootStatus.set(service, 'healthy');
               if (service === 'sulla_vault') markVaultContainerReady();
