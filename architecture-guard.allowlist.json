@@ -535,10 +535,9 @@
     },
     "pkg/sulla-desktop/agent/languagemodels/claudeModelCatalog.ts": {
       "rules": {
-        "mutable-state": 1,
         "procedural-module": 2
       },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
+      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/languagemodels/codexAgentInstructions.ts": {
       "rules": {
@@ -560,10 +559,9 @@
     },
     "pkg/sulla-desktop/agent/languagemodels/codexModelCatalog.ts": {
       "rules": {
-        "mutable-state": 1,
         "procedural-module": 2
       },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
+      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/languagemodels/codexPendingMemoryBridge.ts": {
       "rules": {

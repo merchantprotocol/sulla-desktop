@@ -8,6 +8,7 @@ import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery'
 import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelCatalogReport, type ModelClass, type RoutingModelInfo, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
 import { PROVIDER_FACTORIES } from './index';
 import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
+import { LiveProviderSnapshot, type LiveProviderMap } from './LiveProviderSnapshot';
 
 export interface ModelCandidate { provider: string; model: string; effort?: string }
 export type EditableState = EditableRoutingState;
@@ -149,6 +150,10 @@ export class ModelRouter {
   private loadedHealth = false;
   private listeners = new Set<() => void>();
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly liveSnapshot = new LiveProviderSnapshot(() => this.loadLiveProviders());
+  private providerListenerAttached = false;
+
+  invalidateLiveProviders(): void { this.liveSnapshot.invalidate(); }
 
   onStatusChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private emit(): void { for (const listener of this.listeners) listener() }
@@ -187,6 +192,7 @@ export class ModelRouter {
     this.validatePatch(patch);
     const next = normalize({ ...(await this.getEditableState()), ...patch }, recommendedState());
     await SullaSettingsModel.set(SETTING, next, 'json');
+    this.invalidateLiveProviders();
     return next;
   }
 
@@ -258,8 +264,16 @@ export class ModelRouter {
   /** True while the provider is backed off. Backed-off providers are still routed, just after the healthy ones. */
   async isUnavailable(provider: string): Promise<boolean> { await this.loadHealth(); return this.backedOff(provider) }
 
-  private async liveProviders(): Promise<Map<string, { connected: boolean; connectionUnknown: boolean; models: RoutingModelInfo[] }>> {
+  private liveProviders(): Promise<LiveProviderMap> {
+    return this.liveSnapshot.get();
+  }
+
+  private async loadLiveProviders(): Promise<LiveProviderMap> {
     const mps = (() => { try { return this.providerService ? this.providerService() : require('../services/ModelProviderService').getModelProviderService() } catch { return null } })();
+    if (!this.providerListenerAttached && mps?.onChange) {
+      this.providerListenerAttached = true;
+      mps.onChange(() => this.invalidateLiveProviders());
+    }
     let available = new Map<string, { connected: boolean; connectionUnknown: boolean }>();
     try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), { connected: provider.connected === true, connectionUnknown: provider.connectionStatus === 'unknown' }])) } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
@@ -332,6 +346,7 @@ export class ModelRouter {
    * and record what changed since the previous check.
    */
   async refreshCatalog(): Promise<ModelCatalogReport> {
+    this.invalidateLiveProviders();
     await Promise.allSettled([
       import('./claudeModelCatalog').then(m => m.clearClaudeModelCatalogCache()),
       import('./codexModelCatalog').then(m => m.clearCodexModelCatalogCache()),
@@ -347,7 +362,7 @@ export class ModelRouter {
     const { added, removed } = compareCatalogs(saved?.lists || {}, lists);
     const state = await this.getEditableState();
     const { classes, moved } = applyRules(state.classes, new Map([...live].map(([id, p]) => [id, p.models] as const)), state.neverUse);
-    if (moved.length) await SullaSettingsModel.set(SETTING, { ...state, classes }, 'json');
+    if (moved.length) { await SullaSettingsModel.set(SETTING, { ...state, classes }, 'json'); this.invalidateLiveProviders(); }
     const report: ModelCatalogReport = { checkedAt: new Date().toISOString(), added, removed, moved };
     await SullaSettingsModel.set(CATALOG_SETTING, { lists: { ...(saved?.lists || {}), ...lists }, report }, 'json');
     return report;
