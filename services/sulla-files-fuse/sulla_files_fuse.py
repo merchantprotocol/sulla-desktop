@@ -21,6 +21,10 @@ Tunables (environment variables, read once at import):
 - SULLA_FILES_FUSE_SPOOL: disk-backed spool directory for open-file buffers.
 - SULLA_FILES_FUSE_ATTR_TIMEOUT_S (default 5): kernel attr/entry cache lifetime while the
   authenticated change-feed poller is healthy; zero disables kernel caching.
+- SULLA_FILES_FUSE_CHANGE_FEED (default 1): set to 0 to disable change polling and
+  invalidation, and force kernel attr/entry caching off.
+- SULLA_FILES_FUSE_INVALIDATION_TIMEOUT_S (default 5): maximum wait for one kernel
+  invalidation call before caching is marked unhealthy.
 - SULLA_FILES_FUSE_READ_CACHE_MB (default 512): maximum spool-volume immutable read-cache size.
 - SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS (default 1.0) and
   SULLA_FILES_FUSE_HEARTBEAT_SECONDS (default 60): logging thresholds.
@@ -73,6 +77,8 @@ STREAMING_WRITE_THRESHOLD = 1024 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 MAX_CONCURRENT_TRANSFERS = max(1, int(os.environ.get("SULLA_FILES_FUSE_MAX_TRANSFERS", "4")))
 ATTR_TIMEOUT_SECONDS = max(0.0, float(os.environ.get("SULLA_FILES_FUSE_ATTR_TIMEOUT_S", "5")))
+CHANGE_FEED_ENABLED = os.environ.get("SULLA_FILES_FUSE_CHANGE_FEED", "1") != "0"
+INVALIDATION_TIMEOUT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_INVALIDATION_TIMEOUT_S", "5")))
 READ_CACHE_MAX_BYTES = max(0, int(os.environ.get("SULLA_FILES_FUSE_READ_CACHE_MB", "512"))) * 1024 * 1024
 CHANGE_POLL_SECONDS = 1.0
 TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
@@ -694,6 +700,8 @@ class SullaFiles(pyfuse3.Operations):
         self.snapshot_at = 0.0
         self.metadata_cache = {}
         self.feed_healthy = False
+        self.invalidation_healthy = True
+        self.invalidation_limiter = None
         self.feed_revisions = {}
         self.mounted_collections = set()
         self.feed_failures = 0
@@ -713,19 +721,33 @@ class SullaFiles(pyfuse3.Operations):
 
     def queue_invalidation(self, path):
         """Queue request-handler mutations; pyfuse3 invalidation runs only in the background poller."""
-        if path:
+        if CHANGE_FEED_ENABLED and path:
             self.pending_invalidations[path] = None
 
-    def invalidate_path(self, path):
+    async def _run_invalidation(self, function, *args, **kwargs):
+        """Keep potentially blocking FUSE reverse-invalidation off Trio's event-loop thread."""
+        if self.invalidation_limiter is None:
+            self.invalidation_limiter = trio.CapacityLimiter(1)
+        call = functools.partial(function, *args, **kwargs)
+        with trio.move_on_after(INVALIDATION_TIMEOUT_SECONDS) as timeout_scope:
+            await trio.to_thread.run_sync(call, cancellable=True,
+                                          limiter=self.invalidation_limiter)
+        if timeout_scope.cancelled_caught:
+            self.invalidation_healthy = False
+            emit("invalidation-timeout", logging.WARNING, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
+        else:
+            self.invalidation_healthy = True
+
+    async def invalidate_path(self, path):
         """Invalidate a path from the background task, never from a FUSE request handler."""
         inode = self.path_inode.get(path)
         if inode is not None:
-            try: pyfuse3.invalidate_inode(inode, attr_only=False)
+            try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
             except Exception: pass
         parent, name = os.path.split(path)
         parent_inode = self.path_inode.get(parent)
         if parent_inode is not None and name:
-            try: pyfuse3.invalidate_entry(parent_inode, os.fsencode(name))
+            try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
             except Exception: pass
         self.directory_complete.discard(parent)
         self.directory_etags.pop(parent, None)
@@ -745,15 +767,15 @@ class SullaFiles(pyfuse3.Operations):
             for path in (change.get("path"), change.get("oldPath")):
                 if path: self.queue_invalidation(path)
 
-    def invalidate_tree(self):
+    async def invalidate_tree(self):
         for inode in tuple(self.nodes):
-            try: pyfuse3.invalidate_inode(inode, attr_only=False)
-            except (AttributeError, RuntimeError): pass
+            try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
+            except Exception: pass
         for parent, children in tuple(self.children.items()):
             parent_inode = self.path_inode.get(parent)
             if parent_inode is None: continue
             for name in tuple(children):
-                try: pyfuse3.invalidate_entry(parent_inode, os.fsencode(name))
+                try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
                 except Exception: pass
         self.directory_complete.clear()
         self.directory_etags.clear()
@@ -776,7 +798,7 @@ class SullaFiles(pyfuse3.Operations):
                         since = str(result.get("cursor", since))
                         self.feed_revisions[collection_id] = since
                         if not result.get("more"): break
-                self.feed_healthy = bool(self.mounted_collections)
+                self.feed_healthy = CHANGE_FEED_ENABLED and bool(self.mounted_collections)
                 self.feed_failures = 0
                 await trio.sleep(CHANGE_POLL_SECONDS)
             except (OSError, ValueError, KeyError, TypeError) as error:
@@ -791,11 +813,11 @@ class SullaFiles(pyfuse3.Operations):
             if self.pending_tree_reset:
                 self.pending_tree_reset = False
                 self.pending_invalidations.clear()
-                self.invalidate_tree()
+                await self.invalidate_tree()
             else:
                 for path in tuple(self.pending_invalidations):
                     self.pending_invalidations.pop(path, None)
-                    self.invalidate_path(path)
+                    await self.invalidate_path(path)
             await trio.sleep(0.05)
 
     def _describe(self, describe, args):
@@ -963,7 +985,7 @@ class SullaFiles(pyfuse3.Operations):
         timestamp = int(node.get("mtimeMs", time.time() * 1000) * 1_000_000)
         attrs.st_atime_ns = attrs.st_mtime_ns = attrs.st_ctime_ns = timestamp
         attrs.generation = 0
-        timeout = ATTR_TIMEOUT_SECONDS if getattr(self, "feed_healthy", False) else 0.0
+        timeout = ATTR_TIMEOUT_SECONDS if CHANGE_FEED_ENABLED and getattr(self, "feed_healthy", False) and getattr(self, "invalidation_healthy", True) else 0.0
         attrs.entry_timeout = timeout
         attrs.attr_timeout = timeout
         return attrs
@@ -1152,7 +1174,7 @@ class SullaFiles(pyfuse3.Operations):
         info = pyfuse3.FileInfo(fh=handle)
         writable = bool(flags & (os.O_WRONLY | os.O_RDWR))
         # Read-only opens may use kernel page cache only while push invalidation is healthy.
-        info.keep_cache = bool(not writable and self.feed_healthy and version_id and node.get("pageCacheVersion") == version_id)
+        info.keep_cache = bool(CHANGE_FEED_ENABLED and not writable and self.feed_healthy and self.invalidation_healthy and version_id and node.get("pageCacheVersion") == version_id)
         if not writable and version_id:
             node["pageCacheVersion"] = version_id
         info.direct_io = not info.keep_cache
@@ -1602,8 +1624,11 @@ async def main(options):
             nursery.start_soon(heartbeat, operations)
             nursery.start_soon(report_status, operations, status)
             nursery.start_soon(warm_tree, operations, status)
-            nursery.start_soon(operations.follow_changes)
-            nursery.start_soon(operations.invalidation_worker)
+            if CHANGE_FEED_ENABLED:
+                nursery.start_soon(operations.follow_changes)
+                nursery.start_soon(operations.invalidation_worker)
+            else:
+                emit("change-feed-disabled", logging.INFO)
             await pyfuse3.main()
             nursery.cancel_scope.cancel()
     except BaseException as error:

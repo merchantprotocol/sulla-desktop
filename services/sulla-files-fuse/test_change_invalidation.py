@@ -2,6 +2,8 @@
 """FUSE invalidation must evict both kernel names and adapter-side stale rows."""
 import tempfile
 import asyncio
+import threading
+import time
 import types
 import unittest
 
@@ -26,7 +28,7 @@ class ChangeInvalidationTests(unittest.TestCase):
     def test_changed_path_invalidates_correct_inode_and_parent_entry(self):
         parent = self.ops._node("folder", True)
         child = self.ops._node("folder/file.txt", False)
-        self.ops.invalidate_path("folder/file.txt")
+        asyncio.run(self.ops.invalidate_path("folder/file.txt"))
         self.assertIn(("inode", child, {"attr_only": False}), self.events)
         self.assertIn(("entry", parent, b"file.txt"), self.events)
         self.assertEqual(self.ops.path_inode["folder/file.txt"], child)
@@ -54,9 +56,47 @@ class ChangeInvalidationTests(unittest.TestCase):
     # risk: stale namespace — a reset invalidates every known inode and removes cached rows.
     def test_reset_invalidates_whole_known_tree(self):
         child = self.ops._node("folder", True)
-        self.ops.invalidate_tree()
+        asyncio.run(self.ops.invalidate_tree())
         self.assertTrue(any(event[:2] == ("inode", child) for event in self.events))
         self.assertTrue(self.ops.nodes[child]["stale"])
+
+    # risk: FUSE deadlock — reverse invalidation runs on its dedicated cancellable worker, not Trio's request loop.
+    def test_blocked_kernel_invalidation_does_not_block_concurrent_request(self):
+        entered, release = threading.Event(), threading.Event()
+        self.pyfuse3.invalidate_inode = lambda *_args, **_kwargs: (entered.set(), release.wait(2))
+        inode = self.ops._node("file.txt", False)
+        async def exercise():
+            invalidation = asyncio.create_task(self.ops.invalidate_path("file.txt"))
+            await asyncio.wait_for(asyncio.to_thread(entered.wait), 1)
+            request_served = asyncio.Event()
+            request = asyncio.create_task(self._fake_request(request_served))
+            await asyncio.wait_for(request_served.wait(), 0.2)
+            self.assertTrue(request.done())
+            release.set()
+            await invalidation
+        try:
+            asyncio.run(exercise())
+        finally:
+            release.set()
+        limiter, cancellable = self.adapter.trio.run_sync_calls[-1]
+        self.assertIs(limiter, self.ops.invalidation_limiter)
+        self.assertTrue(cancellable)
+        self.assertIn(inode, self.ops.nodes)
+
+    async def _fake_request(self, served):
+        served.set()
+
+    # risk: stale namespace after kernel stalls — a bounded invalidation timeout disables caching.
+    def test_invalidation_timeout_marks_feed_unhealthy(self):
+        self.adapter.INVALIDATION_TIMEOUT_SECONDS = 0.01
+        self.pyfuse3.invalidate_inode = lambda *_args, **_kwargs: time.sleep(0.1)
+        inode = self.ops._node("file.txt", False)
+        self.ops.feed_healthy = True
+        asyncio.run(self.ops.invalidate_path("file.txt"))
+        self.assertFalse(self.ops.invalidation_healthy)
+        attrs = self.ops._attrs(inode)
+        self.assertEqual(attrs.attr_timeout, 0.0)
+        self.assertEqual(attrs.entry_timeout, 0.0)
 
     # risk: stale file contents — kernel pages from an older immutable version must be dropped.
     def test_readonly_page_cache_is_kept_only_for_the_version_it_tracks(self):
