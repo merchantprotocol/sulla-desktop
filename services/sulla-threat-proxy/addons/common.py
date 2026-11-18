@@ -72,9 +72,17 @@ def fail_open_hook(fn):
             return fn(self, flow, *args, **kwargs)
         except Exception as ex:
             component = getattr(self, "log_component", self.__class__.__name__)
-            # Do not mutate the flow on failure or log exception messages that
-            # may contain request data from third-party integrations.
-            log(component, "warn", "fail_open", reason=type(ex).__name__)
+            # Do not log exception messages from third parties; include flow context.
+            request = getattr(flow, "request", None)
+            fields = {"reason": type(ex).__name__}
+            if request is not None:
+                fields.update(url=getattr(request, "pretty_url", None), host=getattr(request, "pretty_host", None))
+            response = getattr(flow, "response", None)
+            if fn.__name__ == "responseheaders" and response is not None:
+                response.stream = True
+            elif fn.__name__ == "requestheaders" and request is not None:
+                request.stream = True
+            log(component, "warn", "fail_open", **fields)
             return None
     return guarded
 

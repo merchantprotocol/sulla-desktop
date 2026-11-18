@@ -158,9 +158,9 @@ class BoundedDecoderTests(unittest.TestCase):
         scanner._should_scan = lambda _flow: (_ for _ in ()).throw(RuntimeError("broken hook"))
         with patch.object(prompt_injection, "log") as logger:
             scanner.responseheaders(flow)
-        self.assertIs(response.stream, False)
+        self.assertIs(response.stream, True)
         self.assertNotIn("X-Sulla-Prompt-Injection", response.headers)
-        logger.assert_called_with("prompt_injection", "warn", "fail_open", reason="RuntimeError")
+        logger.assert_called_with("prompt_injection", "warn", "fail_open", reason="RuntimeError", url=None, host="example.test")
 
     # risk: memory exhaustion — large reservation release trims libc at most once per second.
     def test_malloc_trim_is_rate_limited(self):

@@ -65,8 +65,8 @@ PATTERNS: List[Tuple[re.Pattern, str, str]] = [
 DEFAULT_CONTENT_TYPES = ("text/html", "text/plain", "application/json", "text/markdown", "text/xml", "application/xml")
 # Hard cap on how much body we scan, to avoid OOM on huge responses.
 MAX_SCAN_BYTES = 2 * 1024 * 1024  # 2MB
-BUFFER_BUDGET = 128 * 1024 * 1024
-SCAN_BUFFER_MAX = 8 * 1024 * 1024
+BUFFER_BUDGET = 48 * 1024 * 1024
+SCAN_BUFFER_MAX = 4 * 1024 * 1024
 _RESERVATIONS = {}
 _RESERVATION_BYTES = 0
 _RESERVATION_LOCK = threading.Lock()
@@ -137,11 +137,11 @@ class PromptInjectionScanner:
         self.scan_types = tuple(t.lower() for t in types) or DEFAULT_CONTENT_TYPES
         self.user_allowlist = split_list(self.config.get("allowlist", ""))
         self.scan_max_bytes = self._positive_int("scanMaxBytes", os.environ.get("SULLA_PROXY_SCAN_MAX_BYTES", str(MAX_SCAN_BYTES)), MAX_SCAN_BYTES, 8 * 1024 * 1024)
-        default_budget_mb = os.environ.get("SULLA_PROXY_BUFFER_BUDGET_MB", "128")
-        self.buffer_budget_bytes = self._positive_int("bufferBudgetMb", default_budget_mb, 128, 128) * 1024 * 1024
+        default_budget_mb = os.environ.get("SULLA_PROXY_BUFFER_BUDGET_MB", "48")
+        self.buffer_budget_bytes = self._positive_int("bufferBudgetMb", default_budget_mb, 48, 128) * 1024 * 1024
         default_scan_buffer = os.environ.get("SULLA_PROXY_SCAN_BUFFER_MAX_BYTES", str(SCAN_BUFFER_MAX))
         self.scan_buffer_max_bytes = self._positive_int("scanBufferMaxBytes", default_scan_buffer, SCAN_BUFFER_MAX, 16 * 1024 * 1024)
-        self.memory_pressure_percent = self._positive_int("memoryPressurePercent", os.environ.get("SULLA_PROXY_MEMORY_PRESSURE_PERCENT", "70"), 70, 95)
+        self.memory_pressure_percent = self._positive_int("memoryPressurePercent", os.environ.get("SULLA_PROXY_MEMORY_PRESSURE_PERCENT", "60"), 60, 95)
 
     def _positive_int(self, key: str, fallback: str, default: int, maximum: int) -> int:
         try:
@@ -259,7 +259,7 @@ class PromptInjectionScanner:
             return
         if self._memory_pressure():
             log("prompt_injection", "warn", "fail_open", reason="memory_pressure", url=flow.request.pretty_url, host=flow.request.pretty_host)
-            flow.response.stream = True
+            flow.response.stream = self._windowed_stream(flow)
             return
         if not self._reserve(flow, reserve):
             log("prompt_injection", "warn", "fail_open", reason="memory_guard", url=flow.request.pretty_url, host=flow.request.pretty_host)

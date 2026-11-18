@@ -79,10 +79,10 @@ docker build -f services/sulla-threat-proxy/Dockerfile -t sulla-threat-proxy:loc
 ## Memory bounds and fail-open behavior
 
 The proxy has a 512 MiB container limit. Response buffering is admitted through
-an aggregate 128 MiB reservation budget; `bufferBudgetMb`, `scanBufferMaxBytes`,
+an aggregate 48 MiB reservation budget; `bufferBudgetMb`, `scanBufferMaxBytes`,
 `scanMaxBytes`, and `memoryPressurePercent` are written to `config/proxy.json`
 by Desktop, with corresponding `SULLA_PROXY_*` environment defaults. Bodies
-over the 8 MiB inspection/buffer limit and responses under memory pressure are
+over the 4 MiB response-buffer limit and responses under memory pressure are
 streamed unchanged. Decode errors, unsupported encodings, reputation lookup
 errors, and addon exceptions log `fail_open` and do not synthesize a block
 response. Only positive reputation block verdicts produce HTTP 451.

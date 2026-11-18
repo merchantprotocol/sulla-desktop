@@ -106,7 +106,7 @@ class URLhausLimitTests(unittest.TestCase):
         self.assertIsNone(flow.response)
         self.assertEqual(flow.request.stream, before_stream)
         self.assertEqual(flow.metadata, {})
-        logger.assert_called_with("url_filter", "warn", "fail_open", reason="RuntimeError")
+        logger.assert_called_with("url_filter", "warn", "fail_open", reason="RuntimeError", url="https://blocked.example/path", host="blocked.example")
 
 
 if __name__ == "__main__":
