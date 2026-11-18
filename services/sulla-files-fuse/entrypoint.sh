@@ -115,35 +115,54 @@ top_is_readonly_nonfuse() {
   return 1
 }
 
-sentinel_stage=/run/sulla-files-sentinel
-if ! top_is_readonly_nonfuse; then
-  # The read-only flag is per mount, not a propagation attribute. A direct
-  # remount at mount_path propagates writable copies before its ro flag applies.
-  # Build the RO bind on a private mount, then MS_MOVE it into the shared tree
-  # so every propagated copy (including rslave agents) is RO from first sight.
-  : > "$mount_path/SULLA-FILES-NOT-MOUNTED" || fail marker-create-failed ",\"mount\":\"$mount_path\"" 20
-  mkdir -p "$sentinel_stage" || fail sentinel-stage-dir-failed ",\"stage\":\"$sentinel_stage\"" 21
-  if mountpoint -q "$sentinel_stage"; then
-    if mountpoint -q "$sentinel_stage/s"; then
-      umount "$sentinel_stage/s" || fail sentinel-stage-child-cleanup-failed ",\"stage\":\"$sentinel_stage/s\"" 22
-    fi
-    umount "$sentinel_stage" || fail sentinel-stage-cleanup-failed ",\"stage\":\"$sentinel_stage\"" 23
+sentinel_stage=/tmp/sulla-files-sentinel
+sentinel_skipped() {
+  emit sentinel-skipped ",\"code\":\"$1\",\"stage\":\"$sentinel_stage\",\"detail\":\"${2:-}\""
+}
+sentinel_cleanup_stage() {
+  if mountpoint -q "$sentinel_stage/s" 2>/dev/null; then
+    umount "$sentinel_stage/s" 2>/dev/null || sentinel_skipped stage-child-cleanup-failed "$sentinel_stage/s"
   fi
-  mount -t tmpfs -o size=64k,mode=0700 sentinel-stage "$sentinel_stage" || fail sentinel-stage-mount-failed ",\"stage\":\"$sentinel_stage\"" 24
-  mount --make-private "$sentinel_stage" || fail sentinel-stage-private-failed ",\"stage\":\"$sentinel_stage\"" 25
-  mkdir "$sentinel_stage/s" || fail sentinel-stage-child-failed ",\"stage\":\"$sentinel_stage/s\"" 26
-  mount --bind "$mount_path" "$sentinel_stage/s" || fail sentinel-bind-failed ",\"mount\":\"$mount_path\"" 27
-  mount -o remount,bind,ro "$sentinel_stage/s" || fail sentinel-remount-failed ",\"mount\":\"$mount_path\"" 28
-  mount --make-private "$sentinel_stage/s" || fail sentinel-private-failed ",\"mount\":\"$mount_path\"" 29
-  mount --move "$sentinel_stage/s" "$mount_path" || fail sentinel-move-failed ",\"mount\":\"$mount_path\"" 30
-fi
-# The moved bind no longer lives under the staging tmpfs. Remove that temporary
-# mount both after a successful move and after an idempotent RO-layer reuse.
-if mountpoint -q "$sentinel_stage"; then
-  if mountpoint -q "$sentinel_stage/s"; then
-    umount "$sentinel_stage/s" || fail sentinel-stage-child-cleanup-failed ",\"stage\":\"$sentinel_stage/s\"" 31
+  if mountpoint -q "$sentinel_stage" 2>/dev/null; then
+    umount "$sentinel_stage" 2>/dev/null || sentinel_skipped stage-cleanup-failed "$sentinel_stage"
   fi
-  umount "$sentinel_stage" || fail sentinel-stage-cleanup-failed ",\"stage\":\"$sentinel_stage\"" 32
+}
+
+if top_is_readonly_nonfuse; then
+  emit sentinel-reused ",\"mount\":\"$mount_path\""
+else
+  # The marker remains useful even if the optional RO sentinel cannot be mounted.
+  # Do not prevent FUSE from starting: an absent marker is preferable to no Files mount.
+  if ! : > "$mount_path/SULLA-FILES-NOT-MOUNTED"; then
+    sentinel_skipped marker-create-failed "$mount_path"
+  elif ! mkdir -p "$sentinel_stage"; then
+    sentinel_skipped stage-dir-failed "$sentinel_stage"
+  elif mountpoint -q "$sentinel_stage" && { ! umount "$sentinel_stage"; }; then
+    sentinel_skipped stage-cleanup-failed "$sentinel_stage"
+  elif ! mount -t tmpfs -o size=64k,mode=0700 sentinel-stage "$sentinel_stage"; then
+    sentinel_skipped stage-mount-failed "$sentinel_stage"
+  elif ! mount --make-private "$sentinel_stage"; then
+    sentinel_skipped stage-private-failed "$sentinel_stage"
+    sentinel_cleanup_stage
+  elif ! mkdir "$sentinel_stage/s"; then
+    sentinel_skipped stage-child-failed "$sentinel_stage/s"
+    sentinel_cleanup_stage
+  elif ! mount --bind "$mount_path" "$sentinel_stage/s"; then
+    sentinel_skipped bind-failed "$mount_path"
+    sentinel_cleanup_stage
+  elif ! mount -o remount,bind,ro "$sentinel_stage/s"; then
+    sentinel_skipped remount-readonly-failed "$mount_path"
+    sentinel_cleanup_stage
+  elif ! mount --make-private "$sentinel_stage/s"; then
+    sentinel_skipped bind-private-failed "$mount_path"
+    sentinel_cleanup_stage
+  elif ! mount --move "$sentinel_stage/s" "$mount_path"; then
+    sentinel_skipped move-failed "$mount_path"
+    sentinel_cleanup_stage
+  else
+    emit sentinel-installed ",\"mount\":\"$mount_path\""
+    sentinel_cleanup_stage
+  fi
 fi
 
 anchor=$(containing_mount /proc/self/mountinfo "$mount_path")
