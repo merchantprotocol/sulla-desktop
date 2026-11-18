@@ -18,16 +18,21 @@ export class FuseTreeRepository {
     return String((await this.db.query('SELECT revision FROM fuse_tree_state WHERE singleton=TRUE')).rows[0]?.revision ?? '0');
   }
 
+  /** One bounded, unthrottled prune of journal rows older than 10 minutes; advances pruned_through so stale cursors reset. */
+  async pruneExpired():Promise<void> {
+    await this.db.query(`WITH expired_rows AS (SELECT ctid,collection_id,id FROM fuse_change_journal WHERE changed_at < now()-interval '10 minutes' ORDER BY id LIMIT 1000),
+      expired AS (SELECT collection_id,MAX(id) AS through_id FROM expired_rows GROUP BY collection_id),
+      marked AS (INSERT INTO fuse_change_retention(collection_id,pruned_through) SELECT collection_id,through_id FROM expired
+        ON CONFLICT(collection_id) DO UPDATE SET pruned_through=GREATEST(fuse_change_retention.pruned_through,EXCLUDED.pruned_through) RETURNING collection_id)
+      DELETE FROM fuse_change_journal j USING expired_rows x,marked m WHERE j.ctid=x.ctid AND m.collection_id=x.collection_id`);
+  }
+
   /** Bounded path changes for one authorized collection; cursors are journal ids, not global revisions. */
   async changes(collectionId:string, since:string):Promise<{cursor:string; reset:boolean; more:boolean; changes:{path:string;oldPath:string|null;kind:string}[]}> {
     // Polling adapters share one bounded prune attempt per process, not one DELETE per poll.
     if (Date.now() - this.lastPruneAt >= 30_000) {
       this.lastPruneAt = Date.now();
-      await this.db.query(`WITH expired_rows AS (SELECT ctid,collection_id,id FROM fuse_change_journal WHERE changed_at < now()-interval '10 minutes' ORDER BY id LIMIT 1000),
-      expired AS (SELECT collection_id,MAX(id) AS through_id FROM expired_rows GROUP BY collection_id),
-      marked AS (INSERT INTO fuse_change_retention(collection_id,pruned_through) SELECT collection_id,through_id FROM expired
-        ON CONFLICT(collection_id) DO UPDATE SET pruned_through=GREATEST(fuse_change_retention.pruned_through,EXCLUDED.pruned_through) RETURNING collection_id)
-      DELETE FROM fuse_change_journal j USING expired_rows x,marked m WHERE j.ctid=x.ctid AND m.collection_id=x.collection_id`);
+      await this.pruneExpired();
     }
     // A sequence id is allocated at INSERT, not COMMIT. Exclude transactions that
     // could still commit below a later id returned to this reader.

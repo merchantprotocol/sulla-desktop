@@ -59,6 +59,9 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
     const isolated = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ deleted.body.cursor }`);
     expect(isolated.body.changes).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: 'docs/inner/feed-another.txt' })]));
     await fixture.pool.query(`INSERT INTO fuse_change_journal(collection_id,path,kind,changed_at) VALUES($1,'expired.txt','delete',now()-interval '11 minutes')`, [fixture.collectionId]);
+    // The app's repository throttles its own prune to once per 30 s, so force the prune here, unthrottled.
+    await new FuseTreeRepository(fixture.pool).pruneExpired();
+    expect((await fixture.pool.query(`SELECT 1 FROM fuse_change_journal WHERE path='expired.txt'`)).rowCount).toBe(0);
     const expired = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=0`);
     expect(expired.body).toMatchObject({ reset: true, changes: [] });
     expect((await fixture.request('/v1/fuse/changes?collectionId=00000000-0000-0000-0000-000000000000')).status).toBe(404);
