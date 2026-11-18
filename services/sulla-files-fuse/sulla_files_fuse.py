@@ -80,6 +80,7 @@ ATTR_TIMEOUT_SECONDS = max(0.0, float(os.environ.get("SULLA_FILES_FUSE_ATTR_TIME
 CHANGE_FEED_ENABLED = os.environ.get("SULLA_FILES_FUSE_CHANGE_FEED", "1") != "0"
 INVALIDATION_TIMEOUT_SECONDS = max(0.1, float(os.environ.get("SULLA_FILES_FUSE_INVALIDATION_TIMEOUT_S", "5")))
 READ_CACHE_MAX_BYTES = max(0, int(os.environ.get("SULLA_FILES_FUSE_READ_CACHE_MB", "512"))) * 1024 * 1024
+INVALIDATION_QUIET_SECONDS = 30.0
 CHANGE_POLL_SECONDS = 1.0
 TRANSFER_SEMAPHORE = __import__("threading").BoundedSemaphore(MAX_CONCURRENT_TRANSFERS)
 # One tree snapshot serves every lookup in this window; a single `ls` used to fetch it once per entry.
@@ -702,6 +703,9 @@ class SullaFiles(pyfuse3.Operations):
         self.feed_healthy = False
         self.invalidation_healthy = True
         self.invalidation_limiter = None
+        self.invalidation_timeouts = 0
+        self.invalidation_timed_out_at = 0.0
+        self.invalidation_stuck_logged = False
         self.feed_revisions = {}
         self.mounted_collections = set()
         self.feed_failures = 0
@@ -724,8 +728,29 @@ class SullaFiles(pyfuse3.Operations):
         if CHANGE_FEED_ENABLED and path:
             self.pending_invalidations[path] = None
 
+    def _invalidation_thread_busy(self):
+        # A cancelled (abandoned) to_thread call keeps its CapacityLimiter token until the kernel call returns.
+        return getattr(self.invalidation_limiter, "borrowed_tokens", 0) > 0
+
+    def _record_invalidation_timeout(self):
+        """Latch caching off: a timeout stays unhealthy until a clean full pass or a quiet period."""
+        self.invalidation_healthy = False
+        self.invalidation_timeouts += 1
+        self.invalidation_timed_out_at = time.monotonic()
+        emit("invalidation-timeout", logging.WARNING, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
+        if self._invalidation_thread_busy() and not self.invalidation_stuck_logged:
+            # With cancellable=True an abandoned thread stuck in the kernel keeps the dedicated
+            # CapacityLimiter(1) token until it returns, so later invalidations queue and time out.
+            # Caching stays off (safe degrade); the event loop is never blocked.
+            self.invalidation_stuck_logged = True
+            emit("invalidation-thread-stuck", logging.ERROR, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
+
     async def _run_invalidation(self, function, *args, **kwargs):
-        """Keep potentially blocking FUSE reverse-invalidation off Trio's event-loop thread."""
+        """Keep potentially blocking FUSE reverse-invalidation off Trio's event-loop thread.
+
+        A success never restores health here: only a whole clean pass (see _finish_invalidation_pass)
+        or a quiet period (see recover_invalidation_health) does.
+        """
         if self.invalidation_limiter is None:
             self.invalidation_limiter = trio.CapacityLimiter(1)
         call = functools.partial(function, *args, **kwargs)
@@ -733,13 +758,23 @@ class SullaFiles(pyfuse3.Operations):
             await trio.to_thread.run_sync(call, cancellable=True,
                                           limiter=self.invalidation_limiter)
         if timeout_scope.cancelled_caught:
-            self.invalidation_healthy = False
-            emit("invalidation-timeout", logging.WARNING, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
-        else:
+            self._record_invalidation_timeout()
+
+    def _finish_invalidation_pass(self, timeouts_before):
+        """Restore caching only when a whole pass completed with no timeouts."""
+        if self.invalidation_timeouts == timeouts_before:
+            self.invalidation_healthy = True
+
+    def recover_invalidation_health(self):
+        """Restore caching after a quiet period with no timeouts and no stuck kernel call."""
+        if self.invalidation_healthy or self._invalidation_thread_busy():
+            return
+        if time.monotonic() - self.invalidation_timed_out_at >= INVALIDATION_QUIET_SECONDS:
             self.invalidation_healthy = True
 
     async def invalidate_path(self, path):
         """Invalidate a path from the background task, never from a FUSE request handler."""
+        timeouts_before = self.invalidation_timeouts
         inode = self.path_inode.get(path)
         if inode is not None:
             try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
@@ -749,6 +784,7 @@ class SullaFiles(pyfuse3.Operations):
         if parent_inode is not None and name:
             try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
             except Exception: pass
+        self._finish_invalidation_pass(timeouts_before)
         self.directory_complete.discard(parent)
         self.directory_etags.pop(parent, None)
         # The kernel will look the name up again. Keep the inode stable for in-flight FUSE ops;
@@ -768,6 +804,7 @@ class SullaFiles(pyfuse3.Operations):
                 if path: self.queue_invalidation(path)
 
     async def invalidate_tree(self):
+        timeouts_before = self.invalidation_timeouts
         for inode in tuple(self.nodes):
             try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
             except Exception: pass
@@ -777,6 +814,7 @@ class SullaFiles(pyfuse3.Operations):
             for name in tuple(children):
                 try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
                 except Exception: pass
+        self._finish_invalidation_pass(timeouts_before)
         self.directory_complete.clear()
         self.directory_etags.clear()
         for inode, node in tuple(self.nodes.items()):
@@ -786,6 +824,7 @@ class SullaFiles(pyfuse3.Operations):
     async def follow_changes(self):
         """Long-lived background poller; never runs inside a FUSE request handler."""
         while True:
+            self.recover_invalidation_health()
             roots = [(node.get("collectionId"), path) for path, inode in tuple(self.path_inode.items())
                      if (node := self.nodes.get(inode)) and node.get("collectionRoot") and node.get("collectionId")]
             self.mounted_collections.update(collection_id for collection_id, _ in roots)

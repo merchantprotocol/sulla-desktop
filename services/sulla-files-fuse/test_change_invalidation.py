@@ -98,6 +98,56 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertEqual(attrs.attr_timeout, 0.0)
         self.assertEqual(attrs.entry_timeout, 0.0)
 
+    # risk: stale namespace after kernel stalls — one later successful call must not re-enable caching mid-pass.
+    def test_success_after_timeout_in_same_pass_does_not_restore_health(self):
+        self.adapter.INVALIDATION_TIMEOUT_SECONDS = 0.01
+        self.pyfuse3.invalidate_inode = lambda *_args, **_kwargs: time.sleep(0.1)
+        self.ops._node("folder", True)
+        self.ops._node("folder/file.txt", False)
+        asyncio.run(self.ops.invalidate_path("folder/file.txt"))
+        self.assertFalse(self.ops.invalidation_healthy)
+        self.assertEqual(self.ops.invalidation_timeouts, 1)
+        self.assertIn(("entry", self.ops.path_inode["folder"], b"file.txt"), self.events)
+
+    # risk: stale namespace — a whole pass with no timeouts after a stall restores caching.
+    def test_clean_full_pass_after_stall_restores_health(self):
+        self.adapter.INVALIDATION_TIMEOUT_SECONDS = 0.01
+        calls = []
+        def invalidate_inode(*_args, **_kwargs):
+            calls.append(1)
+            if len(calls) == 1: time.sleep(0.1)  # only the first kernel call stalls
+        self.pyfuse3.invalidate_inode = invalidate_inode
+        self.ops._node("file.txt", False)
+        asyncio.run(self.ops.invalidate_path("file.txt"))
+        self.assertFalse(self.ops.invalidation_healthy)
+        asyncio.run(self.ops.invalidate_path("file.txt"))
+        self.assertTrue(self.ops.invalidation_healthy)
+
+    # risk: stale namespace — a quiet period alone restores caching, but never while the kernel call is still stuck.
+    def test_quiet_period_restores_health_only_when_no_thread_is_stuck(self):
+        self.ops.invalidation_healthy = False
+        self.ops.invalidation_timed_out_at = time.monotonic() - self.adapter.INVALIDATION_QUIET_SECONDS - 1
+        self.ops.invalidation_limiter = types.SimpleNamespace(borrowed_tokens=1)
+        self.ops.recover_invalidation_health()
+        self.assertFalse(self.ops.invalidation_healthy)
+        self.ops.invalidation_limiter = types.SimpleNamespace(borrowed_tokens=0)
+        self.ops.recover_invalidation_health()
+        self.assertTrue(self.ops.invalidation_healthy)
+
+    # risk: operability — a stuck kernel call is reported once, not on every queued invalidation.
+    def test_stuck_invalidation_thread_is_logged_once(self):
+        self.adapter.INVALIDATION_TIMEOUT_SECONDS = 0.01
+        self.pyfuse3.invalidate_inode = lambda *_args, **_kwargs: time.sleep(0.1)
+        self.ops.invalidation_limiter = types.SimpleNamespace(borrowed_tokens=1)
+        emitted = []
+        self.adapter.emit = lambda event, *_args, **_kwargs: emitted.append(event)
+        self.ops._node("a.txt", False)
+        self.ops._node("b.txt", False)
+        asyncio.run(self.ops.invalidate_path("a.txt"))
+        asyncio.run(self.ops.invalidate_path("b.txt"))
+        self.assertEqual(emitted.count("invalidation-thread-stuck"), 1)
+        self.assertEqual(emitted.count("invalidation-timeout"), 2)
+
     # risk: stale file contents — kernel pages from an older immutable version must be dropped.
     def test_readonly_page_cache_is_kept_only_for_the_version_it_tracks(self):
         self.pyfuse3.FileInfo = lambda fh: types.SimpleNamespace(fh=fh)
