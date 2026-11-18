@@ -244,6 +244,8 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'threat-proxy:get-settings': () => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; keyStatus?: { safeBrowsing: boolean; virusTotal: boolean }; error?: string };
+  'threat-proxy:set-settings': (partial: Partial<import('@pkg/main/threat-proxy').ThreatProxySettings>) => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; error?: string };
   'threat-proxy:get-status': () => import('@pkg/main/threat-proxy').ThreatProxyStatus;
   'threat-proxy:get-traffic-log': (request?: import('@pkg/main/threat-proxy').TrafficLogRequest) => Promise<{ entries: Record<string, any>[]; error?: string }>;
   'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
