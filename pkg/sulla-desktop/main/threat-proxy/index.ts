@@ -391,7 +391,7 @@ async function applyWatcherPolicy(executor: VMExecutor, state: EgressPolicyState
 /** One guest command gathers every health signal without entering the proxy container. */
 export const WATCHER_PROBE_SCRIPT = `set +e
 name="$1"
-agents=$(docker ps --filter network=sulla-agents --filter status=running -q 2>/dev/null | wc -l | tr -d ' ')
+agents=$(docker ps --filter network=sulla-agents --filter status=running --filter label=com.sulla.workload=agent -q 2>/dev/null | wc -l | tr -d ' ')
 inspect=$(docker inspect --format '{{.State.Status}}|{{.State.Health.Status}}|{{.State.OOMKilled}}|{{.State.Restarting}}|{{.State.Pid}}' "$name" 2>/dev/null)
 if [ -z "$inspect" ]; then echo "absent||||0|0|0|0|0|$agents"; exit 0; fi
 IFS='|' read -r state health oom restarting pid <<EOF
@@ -409,7 +409,7 @@ used=$(cat "$base/memory.current" 2>/dev/null || echo 0)
 limit=$(cat "$base/memory.max" 2>/dev/null || echo 0)
 ca=0; [ ! -s "${THREAT_PROXY_PUBLIC_DIR}/ca-bundle.pem" ] || ca=1
 missing=0
-docker ps --filter network=sulla-agents --filter status=running --format '{{.Label "sulla.threat-proxy.ca"}}' 2>/dev/null | grep -qx absent && missing=1
+docker ps --filter network=sulla-agents --filter status=running --filter label=com.sulla.workload=agent --format '{{.Label "sulla.threat-proxy.ca"}}' 2>/dev/null | grep -qx absent && missing=1
 echo "$state|$health|$oom|$restarting|$probe|$used|$limit|$ca|$missing|$agents"`;
 
 async function checkProxyHealthNow(): Promise<void> {

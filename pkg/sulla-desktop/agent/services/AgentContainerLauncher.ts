@@ -629,9 +629,8 @@ const THREAT_PROXY_START_BUDGET_MS = 5_000;
 /**
  * Re-apply the agent egress policy before every launch (a Docker or guest
  * restart drops nothing permanent, but this keeps the guarantee local to the
- * launch) and return the CA trust the container needs. With scanning on, a
- * launch that cannot apply the rules or find the proxy CA fails instead of
- * starting an agent whose web traffic would not be scanned.
+ * launch) and return CA trust only when the bundle exists. CA-less agents are
+ * labeled so the watcher holds the policy in direct mode until they exit.
  */
 async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string>; caPresent: boolean }> {
   await guestExec(ensureAgentNetworkCommand());
