@@ -11,7 +11,7 @@ vi.mock('@pkg/utils/logging', () => ({ default: { 'threat-proxy': { info: vi.fn(
 vi.mock('@pkg/utils/paths', () => ({ default: { altAppHome: '/tmp/sulla' } }));
 vi.mock('@pkg/main/cloud/cloudEndpoints', () => ({ CLOUD_API_BASE: 'https://staging-workers.example.test' }));
 
-import { renderConfigFile, URLHAUS_SOURCES, validateSettings } from './index';
+import { renderConfigFile, URLHAUS_SOURCES, validateSettings, WATCHER_PROBE_SCRIPT } from './index';
 
 describe('URLhaus source order', () => {
   it('downloads only from the configured Sulla Cloud route', () => {
@@ -34,5 +34,16 @@ describe('Threat Proxy settings', () => {
   it('passes new backend controls into the proxy config', () => {
     const config = JSON.parse(renderConfigFile({ enabled: true, allowlist: '', blockMode: 'block', injectionMode: 'warn', scanMaxBytes: 2097152, bufferBudgetMb: 48, scanBufferMaxBytes: 4194304, memoryPressurePercent: 60, trafficLogEnabled: true, trafficLogRetentionMinutes: 30 }, { safeBrowsingApiKey: '', virusTotalApiKey: '' }));
     expect(config).toMatchObject({ scanMaxBytes: 2097152, bufferBudgetMb: 48, scanBufferMaxBytes: 4194304, memoryPressurePercent: 60, trafficLogEnabled: true, trafficLogRetentionMinutes: 30 });
+  });
+});
+
+describe('threat proxy watcher probe', () => {
+  // risk: network protection — one guest probe must contain all health signals without container execs.
+  it('gathers inspect, TCP, cgroup memory, CA and missing-agent state in one guest shell script', () => {
+    expect(WATCHER_PROBE_SCRIPT).toContain('docker inspect');
+    expect(WATCHER_PROBE_SCRIPT).toContain('/dev/tcp/127.0.0.1/8890');
+    expect(WATCHER_PROBE_SCRIPT).toContain('memory.current');
+    expect(WATCHER_PROBE_SCRIPT).toContain('sulla.threat-proxy.ca');
+    expect(WATCHER_PROBE_SCRIPT).not.toContain('docker exec');
   });
 });

@@ -253,18 +253,18 @@ export function threatProxyComposeService(image: Record<string, unknown>): Recor
  * Provider CLIs start through `docker exec`, which inherits container env but
  * not anything the entrypoint exports, so this must be container env.
  */
-export function agentCaTrust(): { bind: string; env: Record<string, string> } {
+export function agentCaTrust(caPresent = true): { bind?: string; env: Record<string, string> } {
   const bundle = `${ AGENT_CA_MOUNT }/ca-bundle.pem`;
 
   return {
-    bind: `${ THREAT_PROXY_PUBLIC_DIR }:${ AGENT_CA_MOUNT }:ro`,
-    env:  {
+    ...(caPresent ? { bind: `${ THREAT_PROXY_PUBLIC_DIR }:${ AGENT_CA_MOUNT }:ro` } : {}),
+    env:  caPresent ? {
       NODE_EXTRA_CA_CERTS: `${ AGENT_CA_MOUNT }/ca.crt`,
       SSL_CERT_FILE:       bundle,
       REQUESTS_CA_BUNDLE:  bundle,
       CURL_CA_BUNDLE:      bundle,
       GIT_SSL_CAINFO:      bundle,
       PIP_CERT:            bundle,
-    },
+    } : {},
   };
 }

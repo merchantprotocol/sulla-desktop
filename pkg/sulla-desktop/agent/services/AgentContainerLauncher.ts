@@ -633,29 +633,25 @@ const THREAT_PROXY_START_BUDGET_MS = 5_000;
  * launch that cannot apply the rules or find the proxy CA fails instead of
  * starting an agent whose web traffic would not be scanned.
  */
-async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string> }> {
+async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string>; caPresent: boolean }> {
   await guestExec(ensureAgentNetworkCommand());
-  const enforce = await egressEnforced();
-  if (!enforce) { await applyCurrentEgressPolicy('off'); return { binds: [], env: {} }; }
-  // Fail open immediately; startup/health/CA work is best-effort and never gates
-  // agent creation. The mounted public directory will expose the eventual CA.
-  await applyCurrentEgressPolicy('direct');
-  void Promise.race([
-    ensureOnDemandService('threat_proxy'),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('proxy startup budget exceeded')), THREAT_PROXY_START_BUDGET_MS)),
-  ]).catch(error => log.warn('[AgentContainer] threat proxy is unavailable; continuing direct', error));
-  const deadline = Date.now() + THREAT_PROXY_START_BUDGET_MS;
-  while (Date.now() < deadline) {
-    if (await threatProxyCaPresent()) {
-      const trust = agentCaTrust();
-      return { binds: [trust.bind], env: trust.env };
-    }
-    await new Promise(resolve => setTimeout(resolve, 250));
+  const enabled = await egressEnforced();
+  if (!enabled) { await applyCurrentEgressPolicy('off'); return { binds: [], env: {}, caPresent: false }; }
+  // Preserve already enforced traffic; direct is only a recovery/startup fallback.
+  const alreadyEnforced = await import('@pkg/main/threat-proxy').then(({ getStatus }) => getStatus().state === 'running');
+  if (!alreadyEnforced) {
+    await applyCurrentEgressPolicy('direct');
+    void Promise.race([
+      ensureOnDemandService('threat_proxy'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('proxy startup budget exceeded')), THREAT_PROXY_START_BUDGET_MS)),
+    ]).catch(error => log.warn('[AgentContainer] threat proxy is unavailable; continuing direct', error));
   }
-  // Bind the CA directory even before initial publication. Once the CA appears
-  // the same mount path becomes usable; policy remains direct until then.
+  const deadline = Date.now() + THREAT_PROXY_START_BUDGET_MS;
+  while (!alreadyEnforced && Date.now() < deadline && !await threatProxyCaPresent()) await new Promise(resolve => setTimeout(resolve, 250));
+  const caPresent = await threatProxyCaPresent();
+  if (!caPresent) { await applyCurrentEgressPolicy('direct'); return { binds: [], env: {}, caPresent: false }; }
   const trust = agentCaTrust();
-  return { binds: [trust.bind], env: trust.env };
+  return { binds: trust.bind ? [trust.bind] : [], env: trust.env, caPresent: true };
 }
 
 function threatProxyCaPresent(): Promise<boolean> {
@@ -1359,6 +1355,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       image,
       labels: {
         'com.sulla.workload':       'agent',
+        'sulla.threat-proxy.ca':   egress.caPresent ? 'present' : 'absent',
         'com.sulla.agent-id':       agentId,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),
@@ -1723,6 +1720,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       image,
       labels: {
         'com.sulla.workload':       'agent',
+        'sulla.threat-proxy.ca':   egress.caPresent ? 'present' : 'absent',
         'com.sulla.agent-id':       metadata.agentId ?? run.state.metadata.wsChannel,
         'com.sulla.job-id':         run.jobId,
         'com.sulla.task-index':     String(run.taskIndex),

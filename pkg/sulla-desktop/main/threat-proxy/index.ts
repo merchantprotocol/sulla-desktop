@@ -276,6 +276,7 @@ export function clearGuest(executor: VMExecutor): void {
   if (guest === executor) {
     if (watcher) clearInterval(watcher);
     watcher = null;
+    healthyProbes = failedProbes = 0;
     guest = undefined;
   }
 }
@@ -299,9 +300,10 @@ export function syncGuest(): Promise<void> {
 
     await writeGuestConfig(executor, settings, creds);
     await copyBlocklistToGuest(executor);
-    const policy: EgressPolicyState = settings.enabled ? 'direct' : 'off';
-    transition(policy, settings.enabled ? 'health_check_pending' : 'disabled');
-    await applyEgressPolicyNow(executor, policy);
+    const policy: EgressPolicyState = settings.enabled ? effectivePolicy === 'enforced' ? 'enforced' : 'direct' : 'off';
+    const changed = policy !== effectivePolicy;
+    if (changed) transition(policy, settings.enabled ? 'health_check_pending' : 'disabled');
+    if (changed) { await applyEgressPolicyNow(executor, policy); lastAppliedPolicy = policy; lastReconcileAt = Date.now(); }
   });
 }
 
@@ -347,20 +349,20 @@ export function applyCurrentEgressPolicy(state: EgressPolicyState): Promise<void
   return queueGuestSync(async executor => { await applyEgressPolicyNow(executor, state); });
 }
 
-export interface ThreatProxyStatus { state: 'running' | 'failing-open' | 'off' | 'starting'; reason: string; since: string; lastTransition: string; failOpenTransitions24h: number }
+export interface ThreatProxyStatus { state: 'running' | 'failing-open' | 'off' | 'starting' | 'standby'; reason: string; since: string; lastTransition: string; failOpenTransitions24h: number }
 
 export function getStatus(): ThreatProxyStatus {
   const now = Date.now();
   while (failOpenTransitions.length && failOpenTransitions[0] < now - 86_400_000) failOpenTransitions.shift();
-  return { state: !(guest) || effectivePolicy === 'off' ? (guest ? 'off' : 'starting') : effectivePolicy === 'direct' ? 'failing-open' : 'running', reason: statusReason, since: statusSince, lastTransition, failOpenTransitions24h: failOpenTransitions.length };
+  return { state: statusReason === 'idle' ? 'standby' : !(guest) || effectivePolicy === 'off' ? (guest ? 'off' : 'starting') : effectivePolicy === 'direct' ? 'failing-open' : 'running', reason: statusReason, since: statusSince, lastTransition, failOpenTransitions24h: failOpenTransitions.length };
 }
 
 function transition(state: EgressPolicyState, reason: string): void {
   if (effectivePolicy === state && statusReason === reason) return;
   const from = effectivePolicy; effectivePolicy = state; statusReason = reason; statusSince = new Date().toISOString(); lastTransition = statusSince;
-  if (state === 'direct' && from !== 'direct') failOpenTransitions.push(Date.now());
+  if (state === 'direct' && from !== 'direct' && reason !== 'idle' && reason !== 'health_check_pending' && reason !== 'disabled' && reason !== 'agent_without_ca') failOpenTransitions.push(Date.now());
   console.warn('[threat-proxy] egress policy transition', JSON.stringify({ from, to: state, reason, at: lastTransition }));
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('threat-proxy:status-changed', getStatus());
+  for (const win of BrowserWindow.getAllWindows()) { if (!win.isDestroyed()) win.webContents.send('threat-proxy:status-changed', getStatus()); }
 }
 
 function startWatcher(): void {
@@ -375,29 +377,64 @@ function checkProxyHealth(): Promise<void> {
   return healthCheck;
 }
 
+let lastAppliedPolicy: EgressPolicyState | undefined;
+let lastReconcileAt = 0;
+const RECONCILE_INTERVAL_MS = 60_000;
+
+async function applyWatcherPolicy(executor: VMExecutor, state: EgressPolicyState): Promise<void> {
+  if (lastAppliedPolicy === state && Date.now() - lastReconcileAt < RECONCILE_INTERVAL_MS) return;
+  await applyEgressPolicy(executor, state);
+  lastAppliedPolicy = state;
+  lastReconcileAt = Date.now();
+}
+
+/** One guest command gathers every health signal without entering the proxy container. */
+export const WATCHER_PROBE_SCRIPT = `set +e
+name="$1"
+agents=$(docker ps --filter network=sulla-agents --filter status=running -q 2>/dev/null | wc -l | tr -d ' ')
+inspect=$(docker inspect --format '{{.State.Status}}|{{.State.Health.Status}}|{{.State.OOMKilled}}|{{.State.Restarting}}|{{.State.Pid}}' "$name" 2>/dev/null)
+if [ -z "$inspect" ]; then echo "absent||||0|0|0|0|0|$agents"; exit 0; fi
+IFS='|' read -r state health oom restarting pid <<EOF
+$inspect
+EOF
+probe=0
+if [ "$state" = running ]; then
+  if command -v nc >/dev/null 2>&1; then nc -z -w1 127.0.0.1 8890 >/dev/null 2>&1; probe=$?
+  elif command -v timeout >/dev/null 2>&1; then timeout 1 sh -c 'exec 3<>/dev/tcp/127.0.0.1/8890' >/dev/null 2>&1; probe=$?
+  else probe=1; fi
+fi
+cg=$(awk -F: '$1=="0"{print $3}' /proc/"$pid"/cgroup 2>/dev/null)
+base="/sys/fs/cgroup${cg}"
+used=$(cat "$base/memory.current" 2>/dev/null || echo 0)
+limit=$(cat "$base/memory.max" 2>/dev/null || echo 0)
+ca=0; [ ! -s "${THREAT_PROXY_PUBLIC_DIR}/ca-bundle.pem" ] || ca=1
+missing=0
+docker ps --filter network=sulla-agents --filter status=running --format '{{.Label "sulla.threat-proxy.ca"}}' 2>/dev/null | grep -qx absent && missing=1
+echo "$state|$health|$oom|$restarting|$probe|$used|$limit|$ca|$missing|$agents"`;
+
 async function checkProxyHealthNow(): Promise<void> {
   const executor = guest;
   if (!executor) return;
   try {
     const settings = await readSettings();
-    if (!settings.enabled) { healthyProbes = failedProbes = 0; transition('off', 'disabled'); await applyEgressPolicy(executor, 'off'); return; }
-    const data = await executor.execCommand({ root: true, capture: true }, 'docker', 'inspect', '--format', '{{.State.Status}}|{{.State.Health.Status}}|{{.State.OOMKilled}}|{{.State.Restarting}}', THREAT_PROXY_CONTAINER);
-    const [state, health, oom, restarting] = data.trim().split('|');
-    const healthOk = state === 'running' && health === 'healthy' && oom !== 'true' && restarting !== 'true';
-    if (!healthOk) { healthyProbes = failedProbes = 0; transition('direct', `proxy_${state}_${health}_oom_${oom}_restarting_${restarting}`); await applyEgressPolicy(executor, 'direct'); return; }
-    try { await executor.execCommand({ root: true }, 'docker', 'exec', THREAT_PROXY_CONTAINER, 'python3', '-c', "import socket; s=socket.create_connection(('127.0.0.1',8890),timeout=1); s.close()"); failedProbes = 0; }
-    catch (err) { failedProbes++; healthyProbes = 0; if (failedProbes >= 2) { transition('direct', 'probe_failed_twice'); await applyEgressPolicy(executor, 'direct'); } return; }
-    const memory = await executor.execCommand({ root: true, capture: true }, 'docker', 'exec', THREAT_PROXY_CONTAINER, 'sh', '-c', 'printf \"%s %s\" \"$(cat /sys/fs/cgroup/memory.current)\" \"$(cat /sys/fs/cgroup/memory.max)\"');
-    const [used, limit] = memory.trim().split(/\s+/).map(Number);
-    if (!Number.isFinite(used) || !Number.isFinite(limit) || used >= limit * 0.9) { healthyProbes = failedProbes = 0; transition('direct', 'memory_pressure'); await applyEgressPolicy(executor, 'direct'); return; }
+    if (!settings.enabled) { healthyProbes = failedProbes = 0; transition('off', 'disabled'); await applyWatcherPolicy(executor, 'off'); return; }
+    const data = await executor.execCommand({ root: true, capture: true }, 'sh', '-c', WATCHER_PROBE_SCRIPT, 'threat-proxy-watch', THREAT_PROXY_CONTAINER);
+    const [state, health, oom, restarting, probe, usedRaw, limitRaw, ca, missingAgent, runningAgents] = data.trim().split('|');
+    if (Number(runningAgents) === 0 && state !== 'running') { healthyProbes = failedProbes = 0; transition('direct', 'idle'); await applyWatcherPolicy(executor, 'direct'); return; }
+    if (missingAgent === '1') { healthyProbes = 0; transition('direct', 'agent_without_ca'); await applyWatcherPolicy(executor, 'direct'); return; }
+    const used = Number(usedRaw), limit = Number(limitRaw);
+    if (state !== 'running' || health !== 'healthy' || oom === 'true' || restarting === 'true') { healthyProbes = failedProbes = 0; transition('direct', `proxy_${state}_${health}_oom_${oom}_restarting_${restarting}`); await applyWatcherPolicy(executor, 'direct'); return; }
+    if (probe !== '0') { failedProbes++; healthyProbes = 0; if (failedProbes >= 2) { transition('direct', 'probe_failed_twice'); await applyWatcherPolicy(executor, 'direct'); } return; }
+    failedProbes = 0;
+    if (Number.isFinite(used) && Number.isFinite(limit) && limit > 0 && used >= limit * 0.9) { healthyProbes = 0; transition('direct', 'memory_pressure'); await applyWatcherPolicy(executor, 'direct'); return; }
+    if (ca !== '1') { healthyProbes = 0; transition('direct', 'ca_bundle_missing'); await applyWatcherPolicy(executor, 'direct'); return; }
     healthyProbes++;
-    const caPresent = await executor.execCommand({ root: true }, 'test', '-s', `${THREAT_PROXY_PUBLIC_DIR}/ca-bundle.pem`).then(() => true, () => false);
-    if (healthyProbes >= 3 && caPresent) { transition('enforced', 'healthy'); await applyEgressPolicy(executor, 'enforced'); }
-    else if (!caPresent) { healthyProbes = 0; transition('direct', 'ca_bundle_missing'); await applyEgressPolicy(executor, 'direct'); }
+    if (healthyProbes >= 3) { transition('enforced', 'healthy'); await applyWatcherPolicy(executor, 'enforced'); }
   } catch (err: any) {
     healthyProbes = 0; failedProbes++;
     transition('direct', `health_check_error:${err?.message ?? String(err)}`);
-    await applyEgressPolicy(guest!, 'direct').catch(() => undefined);
+    const current = guest;
+    if (current) await applyWatcherPolicy(current, 'direct').catch(() => { lastAppliedPolicy = undefined; });
   }
 }
 
