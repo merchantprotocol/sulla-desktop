@@ -27,6 +27,7 @@ import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
 import { flushPendingCredentials, pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { FirstRunAiConnectionStatusCache } from '@pkg/main/FirstRunAiConnectionStatusCache';
 import { classifyIntegrationSaveFailure, integrationSaveFailureMessage } from '@pkg/main/integrationSaveFailure';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -349,6 +350,7 @@ export function initIntegrationOAuthEvents(): void {
       if (!response.ok) return { success: false, error: 'Sign-in failed.', reason: 'provider-error' };
       const tokens = await response.json() as Record<string, string>;
       await queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
+      aiConnectionStatusCache.invalidate();
       return { success: true };
     }
     try {
@@ -393,6 +395,7 @@ export function initIntegrationOAuthEvents(): void {
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);
 
       firstRunTrace('oauth', 'flow completed', { integrationId: payload.integrationId, success: true, custody: payload.firstRun ? 'pending' : 'persisted' });
+      aiConnectionStatusCache.invalidate();
       return { success: true };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -491,6 +494,7 @@ export function initIntegrationOAuthEvents(): void {
         const accounts = await service.getAccounts(integrationId);
         if (accounts.length <= 1) await service.setActiveAccount(integrationId, accountId);
       }
+      aiConnectionStatusCache.invalidate();
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -555,11 +559,11 @@ export function initIntegrationOAuthEvents(): void {
     const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
     await getModelProviderService().reconcilePrimaryProvider(false, providerId);
     firstRunTrace('api-key', 'verification succeeded', { provider: providerId, model });
+    aiConnectionStatusCache.invalidate();
     return { success: true, models };
   });
 
-  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent): Promise<{ pending: string[]; connected: boolean; loading: boolean }> => {
-    assertFirstRunOrMainSender(event);
+  const aiConnectionStatusCache = new FirstRunAiConnectionStatusCache(async() => {
     const aiProviderIds = new Set([
       'claude-code', 'codex',
       ...Object.values(integrations).filter(integration => integration.category === 'AI Infrastructure').map(integration => integration.id),
@@ -574,5 +578,12 @@ export function initIntegrationOAuthEvents(): void {
     } catch {
       return { pending, connected: pending.length > 0, loading: true };
     }
+  });
+  // Integration account mutations arrive on this existing renderer→main event.
+  ipcMainProxy.on('integration-value-changed' as any, () => aiConnectionStatusCache.invalidate());
+
+  ipcMainProxy.handle('first-run-ai:connection-status' as any, async(event: Electron.IpcMainInvokeEvent) => {
+    assertFirstRunOrMainSender(event);
+    return aiConnectionStatusCache.get();
   });
 }
