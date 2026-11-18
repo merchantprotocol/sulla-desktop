@@ -112,6 +112,34 @@ describe('Sulla Cloud desktop route policy', () => {
     }
   });
 
+  it('allows only the org memberships read and the team invitations read used by the People list', () => {
+    // risk: permissions and tenant isolation; roles and pending invites are read-only, admin gating happens server-side
+    const allowed: Array<[string, string]> = [
+      ['GET', '/cloud-dashboard/v1/organizations/org-1/memberships'],
+      ['GET', '/cloud-dashboard/v1/organizations/org_1.2~x-3/memberships'],
+      ['GET', '/teams/team-1/invitations'],
+    ];
+    for (const [method, route] of allowed) {
+      expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
+    }
+  });
+
+  it('denies invitation writes and near-miss paths for memberships and invitations', () => {
+    // risk: permissions; an invitation write or a sibling device route must never pass the desktop allowlist
+    const denied: Array<[string, string]> = [
+      ['POST', '/teams/team-1/invitations'],
+      ['DELETE', '/teams/team-1/invitations/invite-1'],
+      ['GET', '/teams/team-1/invitations/invite-1'],
+      ['GET', '/teams/team-1/invitations/invite-1/resend'],
+      ['POST', '/cloud-dashboard/v1/organizations/org-1/memberships'],
+      ['GET', '/cloud-dashboard/v1/organizations/org-1/devices'],
+      ['GET', '/cloud-dashboard/v1/organizations/org-1/memberships/user-1'],
+    ];
+    for (const [method, route] of denied) {
+      expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(false);
+    }
+  });
+
   it('checks every static cloudRequest method/path and inventories every dynamic callsite', () => {
     const dynamicCallSites: string[] = [];
     let scanned = 0;
