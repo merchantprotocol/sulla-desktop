@@ -100,6 +100,8 @@ METADATA_HEADER = """# Folder metadata for: {path}
 """
 log = logging.getLogger("sulla-files-fuse")
 request_actor = contextvars.ContextVar("request_actor", default=None)
+# Per-op accumulator ([ms]) of Files request time inside the current kernel op; _request adds to it.
+op_files_ms = contextvars.ContextVar("op_files_ms", default=None)
 # Requests slower than this are logged at INFO even when DEBUG is off.
 SLOW_REQUEST_SECONDS = float(os.environ.get("SULLA_FILES_FUSE_SLOW_REQUEST_SECONDS", "1.0"))
 HEARTBEAT_SECONDS = float(os.environ.get("SULLA_FILES_FUSE_HEARTBEAT_SECONDS", "60"))
@@ -267,44 +269,63 @@ class ContentReadCache:
             key = next(iter(self.entries)); total -= self.sizes.get(key, 0); self._remove(key)
 
 
+def _files_ms():
+    """Files request ms spent so far inside the current kernel op (None outside a traced op)."""
+    accumulator = op_files_ms.get()
+    return round(accumulator[0], 1) if accumulator is not None else None
+
+
 def traced(operation, describe=None, mutating=False):
-    """Time a FUSE operation and log its outcome. Mutations log at INFO; reads only at DEBUG."""
+    """Time a FUSE operation and log its outcome. Mutations log at INFO; reads only at DEBUG.
+
+    Each op line carries `ms` (kernel op total) and `files_ms` (sum of files-request time inside
+    it), so adapter time = ms - files_ms. create/release/rename/mkdir are the write path.
+    """
     def decorate(function):
         @functools.wraps(function)
         async def wrapper(self, *args):
-            started = time.monotonic()
-            stats["ops"] += 1
-            # Describe before running: unlink/rmdir/release remove the node or handle.
-            details = self._describe(describe, args)
+            token = op_files_ms.set([0.0])
             try:
-                result = await function(self, *args)
-            except pyfuse3.FUSEError as error:
-                code = error.errno
-                quiet = code in QUIET_ERRNOS and not mutating
-                if not quiet: stats["opErrors"] += 1
-                emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
-                     ms=round((time.monotonic() - started) * 1000, 1), **details)
-                raise
-            except OSError as error:
-                # A Files or filesystem failure the operation did not map itself: answer this one
-                # request with its errno (404 ENOENT, 401/403 EACCES, 5xx/timeout EIO after the
-                # bounded retries) and keep the daemon serving every other request.
-                code = HTTP_ERRNO.errno_for_failure(error)
-                quiet = code in QUIET_ERRNOS and not mutating
-                if not quiet: stats["opErrors"] += 1
-                emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
-                     status=getattr(error, "status", None), error=str(error), ms=round((time.monotonic() - started) * 1000, 1), **details)
-                raise pyfuse3.FUSEError(code) from error
-            except Exception:
-                stats["opErrors"] += 1
-                log.exception("unhandled error in %s", operation, extra={"event": "fuse-op-crash", "fields": {"op": operation, **details}})
-                raise pyfuse3.FUSEError(errno.EIO)
-            if mutating or log.isEnabledFor(logging.DEBUG):
-                emit("fuse-op", logging.INFO if mutating else logging.DEBUG, op=operation, ok=True,
-                     ms=round((time.monotonic() - started) * 1000, 1), **details)
-            return result
+                return await _run_traced(self, function, operation, describe, mutating, args)
+            finally:
+                op_files_ms.reset(token)
         return wrapper
     return decorate
+
+
+async def _run_traced(self, function, operation, describe, mutating, args):
+    started = time.monotonic()
+    stats["ops"] += 1
+    # Describe before running: unlink/rmdir/release remove the node or handle.
+    details = self._describe(describe, args)
+    try:
+        result = await function(self, *args)
+    except pyfuse3.FUSEError as error:
+        code = error.errno
+        quiet = code in QUIET_ERRNOS and not mutating
+        if not quiet: stats["opErrors"] += 1
+        emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
+             ms=round((time.monotonic() - started) * 1000, 1), files_ms=_files_ms(), **details)
+        raise
+    except OSError as error:
+        # A Files or filesystem failure the operation did not map itself: answer this one
+        # request with its errno (404 ENOENT, 401/403 EACCES, 5xx/timeout EIO after the
+        # bounded retries) and keep the daemon serving every other request.
+        code = HTTP_ERRNO.errno_for_failure(error)
+        quiet = code in QUIET_ERRNOS and not mutating
+        if not quiet: stats["opErrors"] += 1
+        emit("fuse-op", logging.DEBUG if quiet else logging.WARNING, op=operation, ok=False, errno=_errno_name(code),
+             status=getattr(error, "status", None), error=str(error), ms=round((time.monotonic() - started) * 1000, 1),
+             files_ms=_files_ms(), **details)
+        raise pyfuse3.FUSEError(code) from error
+    except Exception:
+        stats["opErrors"] += 1
+        log.exception("unhandled error in %s", operation, extra={"event": "fuse-op-crash", "fields": {"op": operation, **details}})
+        raise pyfuse3.FUSEError(errno.EIO)
+    if mutating or log.isEnabledFor(logging.DEBUG):
+        emit("fuse-op", logging.INFO if mutating else logging.DEBUG, op=operation, ok=True,
+             ms=round((time.monotonic() - started) * 1000, 1), files_ms=_files_ms(), **details)
+    return result
 
 
 class ActorResolver:
@@ -505,6 +526,8 @@ class FilesApi:
             raise
         finally:
             elapsed = time.monotonic() - started
+            accumulator = op_files_ms.get()
+            if accumulator is not None: accumulator[0] += elapsed * 1000
             slow = elapsed >= SLOW_REQUEST_SECONDS
             if slow: stats["slowRequests"] += 1
             # A 404 is how a stat/lookup learns a path does not exist yet (every create starts with one).

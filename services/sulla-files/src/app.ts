@@ -232,7 +232,7 @@ export class FilesApplication {
     const { store, transactions } = core;
     const contentStager = new VersionContentStager({ keys: id => config.keyring!.keys(id) }, store, { chunkId, encryptChunk }, core.metrics);
     const accessGate = new FilesAccessGate(db);
-    const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db));
+    const requestAudit = new RequestAuditLog(accessGate, new AuditLogRepository(db), core.metrics);
     const managers = new LocalManagerGate(config, manager);
     const versionWriter = new VersionWriter(config, accessGate, store, contentStager, new ManifestChunkRegistry(), new VersionWriteRepository(),
       collectionId => this.dependencies.cloudSync?.versionCommitted(collectionId));
@@ -290,13 +290,13 @@ export class FilesApplication {
     const { accessGate, requestAudit, managers, versionWriter, automergeTexts, liveText, textMerger, operationAccess, actorScope } = services;
     new LocalSourceRoutes(db, config, accessGate, managers, versionWriter, transactions, new HomeSystemFileRepository(db), manager).register(app);
     const fuseWrites = new FuseWriteRepository(db);
-    const fuseFiles = new FuseFileRoutes(db, accessGate, managers, versionWriter, transactions, fuseWrites, requestAudit, operationAccess);
+    const fuseFiles = new FuseFileRoutes(db, accessGate, managers, versionWriter, transactions, fuseWrites, requestAudit, operationAccess, core.metrics);
     fuseFiles.registerSnapshot(app);
     const fuseTree = new FuseTreeRepository(db);
     // Pass the live config, never config.userId: Vault unlock re-owns Files after the app is built.
     new FuseReadRoutes(accessGate, fuseTree, new FuseTreeSnapshotCache(fuseTree, config), managers.fuseExperiment, config).register(app);
     fuseFiles.register(app);
-    new FuseContentRoutes(db, config, store, accessGate, managers, versionWriter, transactions, fuseWrites, textMerger, automergeTexts, liveText, requestAudit, contentReadFailures).register(app);
+    new FuseContentRoutes(db, config, store, accessGate, managers, versionWriter, transactions, fuseWrites, textMerger, automergeTexts, liveText, requestAudit, contentReadFailures, core.metrics).register(app);
     new FuseMetadataRoutes(db, accessGate, transactions, new FileMetadataRepository(db)).register(app);
     const fileLocator = new FileLocatorRepository(db);
     new FileResolveRoutes(accessGate, fileLocator).register(app);

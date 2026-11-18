@@ -16,6 +16,7 @@ import { FilesRequestInput } from '../Http/FilesRequestInput.js';
 import { HttpError } from '../Http/HttpError.js';
 import type { LocalManagerGate } from '../Http/LocalManagerGate.js';
 import type { RequestAuditLog } from '../Http/RequestAuditLog.js';
+import type { FilesMetrics } from '../FilesMetrics.js';
 import type { FuseWriteRepository } from '../Repositories/FuseWriteRepository.js';
 import type { VersionWriter } from '../Services/VersionWriter.js';
 import { ensureStoredFolder, lockStoredNamespace, storedParentPaths } from '../storedNamespace.js';
@@ -38,6 +39,7 @@ export class FuseFileRoutes {
     private readonly writes:FuseWriteRepository,
     private readonly audit:RequestAuditLog,
     private readonly operationAccess:OperationAccessFactory,
+    private readonly metrics?:FilesMetrics,
   ) {}
 
   /** GET /v1/fuse/files, mounted before the FUSE read routes as before. */
@@ -81,6 +83,7 @@ export class FuseFileRoutes {
 
   register(app:express.Express):void {
     app.post('/v1/fuse/files', express.raw({ type: '*/*', limit: '64mb' }), async(request:RequestWithIdentity, response, next) => { try {
+      const routeStarted = performance.now();
       const collectionId = String(request.query.collectionId ?? '');
       const filePath = cleanPath(String(request.query.path ?? ''), false);
       const actor = this.access.identity(request);
@@ -100,6 +103,7 @@ export class FuseFileRoutes {
         await this.audit.record(request,'fuse-create',file,{versionId:file.current_version_id,publicationStatus:file.publication_status},client);
         return file;
       });
+      this.metrics?.observeFuseRoute(performance.now() - routeStarted);
       response.status(201).json(file);
     } catch (error) { next(error) } });
     app.patch('/v1/fuse/files/:id', async(request:RequestWithIdentity, response, next) => { try {

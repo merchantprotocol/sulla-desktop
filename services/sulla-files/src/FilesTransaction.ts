@@ -98,9 +98,9 @@ export class TransactionRunner {
     const waitStarted = performance.now();
     try { client = await this.db.connect() } catch (error) { throw this.translate(error, false) }
     finally { this.metrics?.observePoolWait(performance.now() - waitStarted) }
-    let began = 0; let committing = false;
+    let began = 0; let committing = false; let beganAt = 0;
     try {
-      await this.control.begin(client); began = Date.now();
+      await this.control.begin(client); began = Date.now(); beganAt = performance.now();
       if (this.durability.usesAsynchronousCommit(name)) {
         await this.control.useAsynchronousCommit(client);
       }
@@ -108,6 +108,8 @@ export class TransactionRunner {
       const result = await TransactionScope.within(name, () => work(client));
       committing = true;
       await this.control.commit(client);
+      // Only the FUSE create/write/replace transactions feed the create-latency trace.
+      if (name.startsWith('fuse-')) this.metrics?.observeTxn(performance.now() - beganAt);
       client.release();
       return result;
     } catch (error) {

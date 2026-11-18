@@ -6,15 +6,22 @@
 import type { AuditLogRepository } from '../Repositories/AuditLogRepository.js';
 import type { FilesAccessGate, RequestWithIdentity } from './FilesAccessGate.js';
 import type pg from 'pg';
+import type { FilesMetrics } from '../FilesMetrics.js';
 
 /**
  * Records who did what to which file for a request. A failed write is logged, never thrown:
  * the file-change event is already in the durable audit spool.
  */
 export class RequestAuditLog {
-  constructor(private readonly access:FilesAccessGate, private readonly rows:AuditLogRepository) {}
+  constructor(private readonly access:FilesAccessGate, private readonly rows:AuditLogRepository, private readonly metrics?:FilesMetrics) {}
 
   readonly record = async(request:RequestWithIdentity, action:string, file?:any, details:Record<string, unknown> = {}, client?:pg.PoolClient):Promise<void> => {
+    const started = performance.now();
+    try { await this.write(request, action, file, details, client) }
+    finally { this.metrics?.observeAudit(performance.now() - started) }
+  };
+
+  private async write(request:RequestWithIdentity, action:string, file:any, details:Record<string, unknown>, client?:pg.PoolClient):Promise<void> {
     const actor = this.access.identity(request);
     const row = {
       whoType: actor.agentId ? 'agent' : actor.kind === 'capability' ? 'agent-or-device' : 'user',
@@ -26,9 +33,9 @@ export class RequestAuditLog {
       orgId: details.orgId ?? null,
       details,
     };
-    const write = client
+    const pending = client
       ? this.rows.insertWithinSavepoint(row, client)
       : this.rows.insert(row);
-    await write.catch(error => console.error('[SullaFiles] PostgreSQL audit dual-write failed; file-change event remains in durable spool', error));
-  };
+    await pending.catch(error => console.error('[SullaFiles] PostgreSQL audit dual-write failed; file-change event remains in durable spool', error));
+  }
 }
