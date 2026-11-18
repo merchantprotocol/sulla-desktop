@@ -24,6 +24,9 @@ const DIAGNOSE_CHUNK_CAP = 50;
 
 export class ChunkIntegrityQueryError extends Error {}
 
+/** Marker for a chunk that an all-zero 32-byte data key opens. Cached key buffers can be zeroed in place, so this is a distinct case. */
+export const ZERO_KEY_OPENER = 'zero-key';
+
 export interface ChunkIntegrityScanOptions { collectionId?:string; limit?:number; diagnose?:boolean }
 
 /** Where a chunk fails. `envelope_parse`: the stored blob is not a valid envelope. `aead`: the data key or AAD does not open it. `decompress`: zstd fails or exceeds the cap. `size_mismatch`: plaintext length differs from the row size. `identity_mismatch`: HMAC(dedup key, plaintext) differs from the id. */
@@ -36,8 +39,8 @@ export interface ChunkFailure {
   stage:ChunkFailureStage;
   /** Actual decompressed length. Set only for size_mismatch. A number, never content. */
   plainBytes?:number;
-  /** Set only with diagnose=1 on aead failures: the other collection whose data key opens the chunk, or null when none does. Absent otherwise. */
-  opensWith?:ChunkOpensWith | null;
+  /** Set only with diagnose=1 on aead failures: the other collection whose data key opens the chunk, "zero-key" when an all-zero 32-byte key opens it, or null when none does. Absent otherwise. */
+  opensWith?:ChunkOpensWith | typeof ZERO_KEY_OPENER | null;
 }
 
 export interface CollectionChunkIntegrity {
@@ -99,17 +102,23 @@ class KeyOpenProbe {
     return true;
   }
 
-  async findOpener(ownCollectionId:string, chunkId:string, envelope:Envelope):Promise<ChunkOpensWith | null> {
+  async findOpener(ownCollectionId:string, chunkId:string, envelope:Envelope):Promise<ChunkOpensWith | typeof ZERO_KEY_OPENER | null> {
     for (const other of await this.allCollections()) {
       if (other === ownCollectionId) continue;
       const keys = await this.keysFor(other);
       if (!keys) continue;
-      try {
-        await this.crypto.decrypt(envelope, keys.data, aadFor(chunkId));
-        return { collectionId: other, keyFingerprint: ChunkIntegrityScanner.fingerprint(keys.data) };
-      } catch { /* this collection's key does not open the chunk */ }
+      if (await this.opens(envelope, keys.data, chunkId)) return { collectionId: other, keyFingerprint: ChunkIntegrityScanner.fingerprint(keys.data) };
     }
-    return null;
+    return await this.opens(envelope, new Uint8Array(32), chunkId) ? ZERO_KEY_OPENER : null;
+  }
+
+  private async opens(envelope:Envelope, dataKey:Uint8Array, chunkId:string):Promise<boolean> {
+    try {
+      await this.crypto.decrypt(envelope, dataKey, aadFor(chunkId));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private allCollections():Promise<string[]> {

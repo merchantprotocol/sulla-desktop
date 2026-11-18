@@ -126,6 +126,7 @@ describe('chunk failure stages and key diagnosis (read-only)', () => {
   const keysB = { data: Buffer.alloc(32, 0x07), dedup: Buffer.alloc(32, 0x06) };
   const strangerDataKey = Buffer.alloc(32, 0x33);
   const otherDedupKey = Buffer.alloc(32, 0x55);
+  const zeroDataKey = Buffer.alloc(32, 0);
   const crypto = new ChunkCrypto();
   const plainMarker = 'PLAINTEXT-MARKER-stage-spec';
   const keyring = {
@@ -143,7 +144,7 @@ describe('chunk failure stages and key diagnosis (read-only)', () => {
   } as unknown as ChunkIntegrityRepository;
   let root = '';
   let store:Store;
-  let healthyId = '', sizedId = '', foreignId = '', strangerId = '', identityId = '', notEnvelopeId = '', notZstdId = '';
+  let healthyId = '', sizedId = '', foreignId = '', strangerId = '', identityId = '', zeroId = '', notEnvelopeId = '', notZstdId = '';
   let sizedPlainBytes = 0;
 
   async function writeChunk(collection:string, id:string, blob:Buffer, size:number):Promise<void> {
@@ -186,6 +187,11 @@ describe('chunk failure stages and key diagnosis (read-only)', () => {
     identityId = chunkId(identity, otherDedupKey);
     await writeChunk(collectionA, identityId, await encryptChunk(identity, keysA.data, identityId), identity.length);
 
+    // Sealed under an all-zero data key: diagnose must report "zero-key", not a collection.
+    const zeroSealed = Buffer.from('zero key body');
+    zeroId = chunkId(zeroSealed, keysA.dedup);
+    await writeChunk(collectionA, zeroId, await encryptChunk(zeroSealed, zeroDataKey, zeroId), zeroSealed.length);
+
     notEnvelopeId = chunkId(Buffer.from('not an envelope'), keysA.dedup);
     await writeChunk(collectionA, notEnvelopeId, Buffer.from('not an envelope {'), 8);
 
@@ -204,6 +210,7 @@ describe('chunk failure stages and key diagnosis (read-only)', () => {
       [sizedId]: 'size_mismatch',
       [foreignId]: 'aead',
       [strangerId]: 'aead',
+      [zeroId]: 'aead',
       [identityId]: 'identity_mismatch',
       [notEnvelopeId]: 'envelope_parse',
       [notZstdId]: 'decompress',
@@ -228,11 +235,12 @@ describe('chunk failure stages and key diagnosis (read-only)', () => {
     const report = await new ChunkIntegrityScanner(repository, store, keyring).scan({ collectionId: collectionA, diagnose: true });
     expect(failureFor(report, foreignId)?.opensWith).toEqual({ collectionId: collectionB, keyFingerprint: ChunkIntegrityScanner.fingerprint(keysB.data) });
     expect(failureFor(report, strangerId)?.opensWith).toBeNull();
+    expect(failureFor(report, zeroId)?.opensWith).toBe('zero-key');
     expect(failureFor(report, sizedId)).not.toHaveProperty('opensWith');
     expect(failureFor(report, identityId)).not.toHaveProperty('opensWith');
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain(plainMarker);
-    for (const key of [keysA.data, keysA.dedup, keysB.data, keysB.dedup, strangerDataKey, otherDedupKey]) expect(serialized).not.toContain(key.toString('hex'));
+    for (const key of [keysA.data, keysA.dedup, keysB.data, keysB.dedup, strangerDataKey, otherDedupKey, zeroDataKey]) expect(serialized).not.toContain(key.toString('hex'));
   });
 
   it('parses diagnose as 1 or 0 and rejects anything else', () => {
