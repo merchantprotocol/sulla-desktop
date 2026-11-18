@@ -58,7 +58,7 @@ import { isSullaRuntimeActive } from '@pkg/backend/sullaRuntime/state';
 import { bundledImagesDir, currentBundledImageLock, ensureBundledImages, sullaRuntimeGuestDocker } from '@pkg/backend/bundledImages';
 import { resolveSullaServiceImage, shouldRefreshSullaServiceImage } from '@pkg/backend/sullaServiceImages';
 import {
-  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, egressPolicyCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
+  AGENT_NETWORK, agentCaTrust, connectServiceNetworkCommand, ensureAgentNetworkCommand, THREAT_PROXY_PUBLIC_DIR,
 } from '@pkg/backend/threatProxyEgress';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
@@ -66,7 +66,7 @@ import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { filesGuestBindsForAnchor } from '@pkg/backend/guestMountInfo';
-import { egressEnforced } from '@pkg/main/threat-proxy';
+import { applyCurrentEgressPolicy, egressEnforced } from '@pkg/main/threat-proxy';
 import { deriveCapabilitySigningKey, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
 import Logging from '@pkg/utils/logging';
@@ -623,8 +623,8 @@ export async function repairHostRelay(): Promise<void> {
   await ensureHostRelay(image);
 }
 
-/** How long a launch waits for the threat proxy to publish its CA after a cold boot. */
-const THREAT_PROXY_CA_TIMEOUT_MS = 90_000;
+/** Proxy startup is optional; agent creation must remain available during outages. */
+const THREAT_PROXY_START_BUDGET_MS = 5_000;
 
 /**
  * Re-apply the agent egress policy before every launch (a Docker or guest
@@ -636,24 +636,25 @@ const THREAT_PROXY_CA_TIMEOUT_MS = 90_000;
 async function prepareAgentEgress(): Promise<{ binds: string[]; env: Record<string, string> }> {
   await guestExec(ensureAgentNetworkCommand());
   const enforce = await egressEnforced();
-
-  await guestExec(egressPolicyCommand(enforce));
-  if (!enforce) return { binds: [], env: {} };
-  // The proxy runs only while agents do. Start it and wait until it accepts
-  // connections; if it cannot start, the launch fails here. (Even without this
-  // the redirect fails closed: a stopped proxy means refused connections.)
-  await ensureOnDemandService('threat_proxy');
-  const deadline = Date.now() + THREAT_PROXY_CA_TIMEOUT_MS;
-
-  while (!await threatProxyCaPresent()) {
-    if (Date.now() >= deadline) {
-      throw new AgentLaunchError('Sulla is still starting its web safety check', true,
-        'The threat proxy has not started (no CA in its state directory); agent web traffic cannot be scanned');
+  if (!enforce) { await applyCurrentEgressPolicy('off'); return { binds: [], env: {} }; }
+  // Fail open immediately; startup/health/CA work is best-effort and never gates
+  // agent creation. The mounted public directory will expose the eventual CA.
+  await applyCurrentEgressPolicy('direct');
+  void Promise.race([
+    ensureOnDemandService('threat_proxy'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('proxy startup budget exceeded')), THREAT_PROXY_START_BUDGET_MS)),
+  ]).catch(error => log.warn('[AgentContainer] threat proxy is unavailable; continuing direct', error));
+  const deadline = Date.now() + THREAT_PROXY_START_BUDGET_MS;
+  while (Date.now() < deadline) {
+    if (await threatProxyCaPresent()) {
+      const trust = agentCaTrust();
+      return { binds: [trust.bind], env: trust.env };
     }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
+  // Bind the CA directory even before initial publication. Once the CA appears
+  // the same mount path becomes usable; policy remains direct until then.
   const trust = agentCaTrust();
-
   return { binds: [trust.bind], env: trust.env };
 }
 
@@ -661,9 +662,9 @@ function threatProxyCaPresent(): Promise<boolean> {
   return guestExec(['test', '-s', `${ THREAT_PROXY_PUBLIC_DIR }/ca-bundle.pem`]).then(() => true, () => false);
 }
 
-/** The threat proxy has published its CA, or scanning is off. */
+/** Proxy readiness is never a prerequisite for chat: launch uses direct mode until healthy. */
 export async function threatProxyWarm(): Promise<boolean> {
-  return !await egressEnforced() || await threatProxyCaPresent();
+  return true;
 }
 
 /** The agent image is in the guest and speaks this transport version. */
