@@ -36,6 +36,19 @@ describe('VaultFilesStartup', () => {
     expect(startup.snapshot()).toMatchObject({ phase: 'degraded', ready: true, filesUnlocked: true, mountTokenWritten: true });
   });
 
+  it('reports Files locked and not mounted after an independent service restart', () => {
+    // risk: availability — the mount must not advertise healthy while Files has lost its key.
+    const startup = new VaultFilesStartup();
+
+    startup.filesUnlocking();
+    startup.filesUnlocked();
+    startup.mountTokenWritten();
+    startup.mounted();
+    startup.filesLocked();
+
+    expect(startup.snapshot()).toMatchObject({ phase: 'files-locked', filesUnlocked: false, mountTokenWritten: false, ready: false });
+  });
+
   it('is ready without a mount token when the guest mount is disabled by design, and requires it again after a relock', () => {
     const startup = new VaultFilesStartup();
 

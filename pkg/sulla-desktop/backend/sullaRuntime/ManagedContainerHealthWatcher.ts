@@ -27,6 +27,8 @@ export class ManagedContainerHealthWatcher {
     /** True for the error that ends a managed-services generation. */
     private readonly isCancellation: (error: unknown) => boolean,
     private readonly healPlanner = new ContainerHealPlanner(),
+    /** Securely re-unlock Files after its container loses the in-memory key. */
+    private readonly onFilesRestarted: () => Promise<void> = async() => undefined,
   ) {}
 
   watch(
@@ -104,6 +106,7 @@ export class ManagedContainerHealthWatcher {
     if (action.kind === 'give-up') return;
     if (action.kind === 'restart') {
       await this.guest.execCommand({ root: true }, 'docker', 'restart', '--time', '10', action.container);
+      if (action.container === 'sulla_files' || action.service === 'sulla_files') await this.onFilesRestarted();
 
       return;
     }
@@ -113,5 +116,6 @@ export class ManagedContainerHealthWatcher {
       return;
     }
     await this.guest.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service);
+    if (action.container === 'sulla_files' || action.service === 'sulla_files') await this.onFilesRestarted();
   }
 }

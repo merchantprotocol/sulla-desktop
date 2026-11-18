@@ -239,6 +239,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this, this.#userStopped,
     async() => (await import('@pkg/agent/services/AgentContainerLauncher')).repairHostRelay(),
     error => error instanceof ManagedServicesReconciliationCancelled,
+    undefined,
+    async() => {
+      const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
+      void getSullaFilesWatcher().recoverAfterContainerRestart().catch(error => console.warn('[SullaFiles] restart recovery failed:', error));
+    },
   );
   readonly #identityStore = new HostServiceIdentityStore(() => Electron.safeStorage, () => paths.appHome);
   readonly #tlsIdentities = new GuestTlsIdentityProvisioner(

@@ -83,4 +83,15 @@ describe('ManagedContainerHealthWatcher', () => {
     await health.runHealAction({ kind: 'give-up', container: 'x' } as any, ['docker', 'compose']);
     expect(execCommand).not.toHaveBeenCalled();
   });
+
+  it('notifies Files recovery immediately after a Files restart or recreation only', async() => {
+    const onFilesRestarted = vi.fn(async() => undefined);
+    const health = new ManagedContainerHealthWatcher({ execCommand } as any, userStopped, repairHostRelay, error => error instanceof Cancelled, new ContainerHealPlanner(), onFilesRestarted);
+
+    await health.runHealAction({ kind: 'restart', container: 'sulla_files', service: 'sulla_files' } as any, ['docker', 'compose']);
+    await health.runHealAction({ kind: 'recreate', managedBy: 'compose', container: 'sulla_files', service: 'sulla_files' } as any, ['docker', 'compose']);
+    await health.runHealAction({ kind: 'restart', container: 'sulla_redis', service: 'redis' } as any, ['docker', 'compose']);
+
+    expect(onFilesRestarted).toHaveBeenCalledTimes(2);
+  });
 });
