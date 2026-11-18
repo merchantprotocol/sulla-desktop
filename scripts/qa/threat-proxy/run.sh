@@ -21,7 +21,7 @@ case "$hosts" in *[!0-9]*|"") echo "--hosts must be numeric" >&2; exit 2;; esac
 host_args=; i=0; origin_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$origin")
 while [ "$i" -lt "$hosts" ]; do host_args="$host_args --add-host=host-$i.test:$origin_ip"; i=$((i+1)); done
 # Run actual entrypoint logic copied from source, adding only the harness-only upstream verification override.
-repo_entry="$repo_root/services/sulla-threat-proxy/entrypoint.sh"; sed '/connection_strategy=lazy/a\  --set ssl_insecure=true \\' "$repo_entry" > "$state/entrypoint.sh"; chmod 0755 "$state/entrypoint.sh"
+repo_entry="$repo_root/services/sulla-threat-proxy/entrypoint.sh"; sed '/^[[:space:]]*--set connection_strategy=lazy/a\  --set ssl_insecure=true \\' "$repo_entry" > "$state/entrypoint.sh"; chmod 0755 "$state/entrypoint.sh"
 docker run -d --name "$proxy" --network "$network" --user 10010:10010 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop ALL --security-opt no-new-privileges:true --memory 512m --memory-swap 512m -e SULLA_PROXY_MODE=regular -e SULLA_PROXY_STATE_DIR=/var/lib/sulla-threat-proxy -v "$state/entrypoint.sh:/harness-entrypoint.sh:ro" -v "$state/mitm:/var/lib/sulla-threat-proxy/mitm" -v "$state/cache:/var/lib/sulla-threat-proxy/cache" -v "$state/public:/var/lib/sulla-threat-proxy/public" -v "$state/config:/var/lib/sulla-threat-proxy/config:ro" -v "$state/blocklist:/var/lib/sulla-threat-proxy/blocklist:ro" $host_args --entrypoint /bin/sh "$image" /harness-entrypoint.sh >/dev/null
 # Fail early with the proxy startup diagnostics instead of running clients against a dead container.
 startup=0
@@ -43,6 +43,7 @@ sample() { phase=$1; stats=$(docker stats --no-stream --format '{{.MemUsage}}' "
 while docker inspect -f '{{.State.Running}}' "$client" 2>/dev/null | grep -q true; do sample load; sleep 2; done
 client_exit=$(docker wait "$client" 2>/dev/null || echo 1); i=0; while [ "$i" -lt "${SETTLE:-30}" ]; do sample settled; sleep 2; i=$((i+2)); done
 docker inspect "$proxy" > "$results/proxy-inspect.json" 2>/dev/null || true
+docker logs "$proxy" > "$results/proxy.log" 2>&1 || true
 docker run --rm --user 0 -v "$results:/results" "$helper" summary.py --samples /results/samples.csv --inspect /results/proxy-inspect.json --client "/results/client-$scenario.json" --scenario "$scenario" --output /results/results.json >/dev/null
 cat "$results/summary.md"
 python_cmd='import json,sys; d=json.load(open(sys.argv[1])); print("SUMMARY %s peak_mib=%s steady_mib=%s settled_mib=%s oom=%s alive=%s client_errors=%s security=%s"%(d["scenario"],d["peak_mib"],d["steady_state_mib"],d.get("settled_state_mib"),d["oom_killed"],d["proxy_alive_after"],d["client_errors"],"pass" if d["security_checks"] and all(d["security_checks"].values()) else ("fail" if d["security_checks"] else "n/a")))'
