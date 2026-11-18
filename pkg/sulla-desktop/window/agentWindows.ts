@@ -14,8 +14,6 @@ export interface AgentWindowOptions {
 export class AgentWindowRegistry {
   private readonly keys = new Map<number, string>();
   private readonly focusOrder: number[] = [];
-
-
   openAgentWindow(create: (name: string, windowKey: string, bounds?: AgentWindowOptions['bounds']) => BrowserWindow, options: AgentWindowOptions = {}): BrowserWindow {
     const windowKey = options.windowKey ?? (this.getAgentWindows().length === 0 ? 'main' : `w_${ Math.random().toString(36).slice(2, 10) }`);
     const name = this.getAgentWindows().length === 0 ? 'main-agent' : `agent:${ windowKey }`;
@@ -34,7 +32,8 @@ export class AgentWindowRegistry {
       const index = this.focusOrder.indexOf(window.id);
       if (index >= 0) this.focusOrder.splice(index, 1);
     });
-    if (options.focus !== false) window.show();
+    window.show();
+    if (options.focus !== false) window.focus();
     return window;
   }
 
