@@ -16,12 +16,40 @@ describe('DesktopVaultTransport sessions', () => {
     const controlFetch = vi.fn(async() => new Response('{}'));
     const streamFetch = vi.fn(async() => new Response('{}'));
     const sessionFactory = vi.fn((partition: string) => ({ fetch: partition.endsWith('-control') ? controlFetch : streamFetch }) as never);
-    const transport = new DesktopVaultTransport({} as never, sessionFactory, async() => {});
+    const transport = new DesktopVaultTransport({} as never, sessionFactory, async() => {}, async() => new Response('{}') as never, () => ({ close: vi.fn() } as never));
     await transport.fetch('https://vault.test/status');
-    await transport.fetchStream('https://vault.test/stream');
+    vi.stubEnv('SULLA_VAULT_STREAM_TRANSPORT', 'electron');
+    try { await transport.fetchStream('https://vault.test/stream'); } finally { vi.unstubAllEnvs(); }
     expect(sessionFactory.mock.calls.map(([partition]) => partition)).toEqual(['sulla-vault-broker-control', 'sulla-vault-broker']);
     expect(controlFetch).toHaveBeenCalledTimes(1);
     expect(streamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the pinned Node dispatcher for streams and forwards the abort signal without using Electron', async() => {
+    // risk: availability — active streams must not consume Electron session sockets, and cancellation must release them.
+    const nodeResponse = new Response('stream');
+    const nodeFetch = vi.fn(async(_input: string, init: { signal?: AbortSignal; dispatcher?: unknown }) => {
+      expect(init.signal).toBeDefined();
+      expect(init.dispatcher).toBeDefined();
+      return nodeResponse;
+    });
+    const sessionFactory = vi.fn(() => ({ fetch: vi.fn() }) as never);
+    const transport = new DesktopVaultTransport({} as never, sessionFactory, async() => {}, nodeFetch as never, () => ({ close: vi.fn() } as never));
+    const controller = new AbortController();
+    expect(await transport.fetchStream('https://127.0.0.1:30135/stream', { signal: controller.signal })).toBe(nodeResponse);
+    expect(nodeFetch).toHaveBeenCalledTimes(1);
+    expect(sessionFactory).not.toHaveBeenCalled();
+  });
+
+  it('routes streams to Electron when the transport kill switch is set', async() => {
+    // risk: availability — retain a reversible fallback if the Node stream path regresses.
+    const sessionFetch = vi.fn(async() => new Response('electron'));
+    const nodeFetch = vi.fn();
+    const transport = new DesktopVaultTransport({} as never, () => ({ fetch: sessionFetch }) as never, async() => {}, nodeFetch as never);
+    vi.stubEnv('SULLA_VAULT_STREAM_TRANSPORT', 'electron');
+    try { await transport.fetchStream('https://127.0.0.1:30135/stream'); } finally { vi.unstubAllEnvs(); }
+    expect(sessionFetch).toHaveBeenCalledTimes(1);
+    expect(nodeFetch).not.toHaveBeenCalled();
   });
 
   it('uses identity cache until TTL expiry and reloads when encrypted-file mtime changes', async() => {
