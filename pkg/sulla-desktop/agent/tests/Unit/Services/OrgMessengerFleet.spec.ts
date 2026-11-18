@@ -218,6 +218,14 @@ describe('OrgMessengerFleet', () => {
     expect(host.count()).toBe(before + 2);
   });
 
+  it('uses a real member team when the legacy active org value is the user id', async () => {
+    // risk: tenant isolation — the user's identity is never mistaken for a team id
+    const { identity, fleet } = setup([ACME]);
+    fleets.push(fleet);
+    identity.active = identity.user;
+    await expect(fleet.resolveOrg()).resolves.toEqual(ACME);
+  });
+
   it('stops an org loop when the human leaves that org, never polls solo orgs, and stops everything on sign-out', async () => {
     // risk: data leak — Desktop keeps pulling an org's messages after the human left it or signed out
     const solo: OrgMembership = { orgId: 'org-solo', name: 'Just me', memberCount: 1 };

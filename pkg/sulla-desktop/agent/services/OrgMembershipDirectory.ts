@@ -13,7 +13,7 @@ export interface OrgMembership {
   memberCount: number;
 }
 
-/** Where the membership list comes from. Returns [] when nobody is signed in. */
+/** Where the membership list comes from. */
 export interface OrgMembershipSource {
   organizations(): Promise<readonly OrgMembership[]>;
 }
@@ -37,7 +37,7 @@ export class CloudOrgMembershipSource implements OrgMembershipSource {
 
   async organizations(): Promise<readonly OrgMembership[]> {
     const token = await this.auth.accessToken();
-    if (!token) return [];
+    if (!token) throw new Error('Sulla Cloud session is not ready; retry loading organizations');
     const response = await this.http.send('/cloud-dashboard/v1/organizations', { headers: { Authorization: `Bearer ${token}` } }, true);
     if (!response.ok) throw new Error(`Could not list Sulla Cloud organizations (${response.status})`);
     const body = await response.json() as { data?: { organizations?: CloudOrganizationSummary[] } };
