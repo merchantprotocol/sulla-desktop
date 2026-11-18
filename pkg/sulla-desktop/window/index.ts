@@ -14,6 +14,9 @@ import Electron, {
 } from 'electron';
 
 import { WindowBoundsStore } from './WindowBoundsStore';
+import { AgentWindowPersistence } from './AgentWindowPersistence';
+import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
+import { agentWindowRegistry, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
@@ -32,6 +35,7 @@ const console = Logging[`window_${ process.type || 'unknown' }`];
  * assigned by electron).
  */
 export const windowMapping: Record<string, number> = {};
+setAgentWindowMapping(windowMapping);
 
 export const webRoot = 'app://.';
 
@@ -155,6 +159,8 @@ export function createWindow(name: string, url: string, options: Electron.Browse
 const mainUrl = `${ webRoot }/agent.html`;
 /** The main window's last position and size, kept across restarts. */
 const mainBounds = new WindowBoundsStore(path.join(paths.config, 'main-window-bounds.json'));
+const agentWindowPersistence = new AgentWindowPersistence(path.join(paths.config, 'agent-windows.json'), path.join(paths.config, 'main-window-bounds.json'));
+app.on('before-quit', () => agentWindowPersistence.setQuitting());
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -164,7 +170,7 @@ console.log('[window/index] URLs configured:', { webRoot, mainUrl });
 /**
  * Open the main window (Agent); if it is already open, focus it.
  */
-export function openMain() {
+function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBounds?: AgentWindowOptions['bounds']) {
   console.log('[openMain] Called. mainUrl:', mainUrl, 'webRoot:', webRoot);
 
   const fullSize = screen.getPrimaryDisplay().size;
@@ -173,12 +179,15 @@ export function openMain() {
   const defaultWidth = Math.trunc(fullSize.width * 0.9);
   const defaultHeight = workArea.height;
   // Where the user left it last time, if that spot is still on a connected display.
-  const saved = mainBounds.restore(screen.getAllDisplays().map(display => display.workArea));
+  const saved = requestedBounds ?? (windowKey === 'main' ? mainBounds.restore(screen.getAllDisplays().map(display => display.workArea)) : undefined);
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
+  const knownKeys = agentWindowPersistence.all().map(record => record.windowKey);
+  const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
+  const windowURL = name === 'main-agent' ? url : `${ url }&freshAgentTab=1`;
   const window = createWindow(
-    'main-agent',
-    mainUrl,
+    name,
+    windowURL,
     {
       title:           'Sulla Agent',
       x:               saved?.x ?? 0,
@@ -204,6 +213,12 @@ export function openMain() {
       },
     });
 
+  const persistGeometry = () => {
+    const key = agentWindowRegistry.windowKeyOf(window);
+    if (key) agentWindowPersistence.update(key, window.getNormalBounds(), window.isMaximized());
+  };
+  for (const event of ['move', 'resize', 'maximize', 'unmaximize'] as const) window.on(event, persistGeometry);
+  window.on('close', () => { persistGeometry(); agentWindowPersistence.flush(); });
   if (mainBounds.track(window)) {
     if (saved?.fullScreen) window.setFullScreen(true);
     else if (saved?.maximized) window.maximize();
@@ -230,6 +245,13 @@ export function openMain() {
       { ...CommandOrControl, key: 'N' },
       () => window.webContents.send('agent-command', { command: 'new-chat-tab' }),
       'new chat tab',
+    );
+
+    Shortcuts.register(
+      window,
+      { ...CommandOrControl, shift: true, key: 'N' },
+      () => newAgentWindow(),
+      'new agent window',
     );
 
     Shortcuts.register(
@@ -284,9 +306,16 @@ export function openMain() {
   }
 
   window.on('closed', () => {
-    const cfg = getSettings();
+    const key = agentWindowRegistry.windowKeyOf(window);
+    if (key) agentWindowPersistence.remove(key);
+    const remainingAgentWindows = agentWindowRegistry.getAgentWindows().filter(other => other.id !== window.id).length;
+    const quit = shouldQuitOnAgentWindowClosed({
+      closingViaLastTab:   windowsClosedByLastTab.delete(window.id),
+      remainingAgentWindows,
+      quitOnClose:         getSettings().application.window.quitOnClose,
+    });
 
-    if (cfg.application.window.quitOnClose) {
+    if (quit) {
       BrowserWindow.getAllWindows().forEach((window) => {
         window.close();
       });
@@ -295,7 +324,38 @@ export function openMain() {
   });
 
   app.dock?.show();
+  return window;
 }
+
+setAgentWindowCreator(createAgentWindow);
+
+export function openAgentWindow(options: AgentWindowOptions = {}) { return agentWindowRegistry.openAgentWindow(createAgentWindow, options); }
+export function restoreAgentWindows() {
+  const records = agentWindowPersistence.all();
+  if (!records.length) return ensureAgentWindow();
+  const workAreas = screen.getAllDisplays().map(display => display.workArea);
+  let first: BrowserWindow | undefined;
+  for (const record of records) {
+    const bounds = workAreas.some(area => record.bounds.x < area.x + area.width && record.bounds.x + record.bounds.width > area.x && record.bounds.y < area.y + area.height && record.bounds.y + record.bounds.height > area.y) ? record.bounds : undefined;
+    const win = openAgentWindow({ windowKey: record.windowKey, bounds, focus: false });
+    if (record.maximized) win.maximize();
+    first ??= win;
+  }
+  first?.show(); first?.focus();
+  return first!;
+}
+export function ensureAgentWindow() { return agentWindowRegistry.ensureAgentWindow(createAgentWindow); }
+export function newAgentWindow() { return openAgentWindow(); }
+
+export function openMain() { return agentWindowRegistry.getAgentWindows().length ? ensureAgentWindow() : restoreAgentWindows(); }
+
+const windowsClosedByLastTab = new Set<number>();
+
+export const getAgentWindows = () => agentWindowRegistry.getAgentWindows();
+export const getActiveAgentWindow = () => agentWindowRegistry.getActiveAgentWindow();
+export const isAgentWebContents = (wc: Electron.WebContents) => agentWindowRegistry.isAgentWebContents(wc);
+export const agentWindowFor = (wc: Electron.WebContents) => agentWindowRegistry.agentWindowFor(wc);
+export const windowKeyOf = (win: Electron.BrowserWindow) => agentWindowRegistry.windowKeyOf(win);
 
 /**
  * Open a URL inside the app's browser tab instead of the system browser.
@@ -327,8 +387,7 @@ export function openDocker(section?: string): void {
  * Make sure the main window is open, then hand an `agent-command` to it.
  */
 function sendToMain(payload: Record<string, unknown>): void {
-  openMain();
-  const existing = getWindow('main-agent');
+  const existing = ensureAgentWindow();
 
   const sendCommand = (window: Electron.BrowserWindow) => {
     const send = () => {
@@ -346,7 +405,7 @@ function sendToMain(payload: Record<string, unknown>): void {
     sendCommand(existing);
   } else {
     const poll = setInterval(() => {
-      const window = getWindow('main-agent');
+      const window = getActiveAgentWindow();
 
       if (window) {
         clearInterval(poll);
@@ -361,6 +420,16 @@ function sendToMain(payload: Record<string, unknown>): void {
 if (process.type === 'browser') {
   ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
+  });
+  ipcMain.on('agent-window:open', (event) => {
+    if (agentWindowRegistry.isAgentWebContents(event.sender)) openAgentWindow();
+  });
+  ipcMain.on('agent-window:close-self', (event) => {
+    const owner = agentWindowRegistry.agentWindowFor(event.sender);
+    if (owner && !owner.isDestroyed()) {
+      windowsClosedByLastTab.add(owner.id);
+      owner.close();
+    }
   });
 }
 
@@ -736,7 +805,7 @@ export async function openKubernetesErrorMessageWindow(titlePart: string, mainMe
     title:  `Sulla Desktop - Error`,
     width:  800,
     height: 494,
-    parent: getWindow('main') ?? undefined,
+    parent: getActiveAgentWindow() ?? undefined,
     frame:  true,
   });
 
@@ -759,7 +828,7 @@ export async function openKubernetesErrorMessageWindow(titlePart: string, mainMe
  *   again.
  */
 export async function openSudoPrompt(explanations: Record<string, string[]>): Promise<boolean> {
-  const window = openDialog('SudoPrompt', { parent: getWindow('main') ?? undefined });
+  const window = openDialog('SudoPrompt', { parent: getActiveAgentWindow() ?? undefined });
 
   /**
    * The result of the dialog; this is true if the user asked to never be
@@ -782,7 +851,7 @@ export async function openSudoPrompt(explanations: Record<string, string[]>): Pr
 }
 
 export async function showMessageBox(options: Electron.MessageBoxOptions, couldBeModal = false) {
-  const mainWindow = couldBeModal ? getWindow('main') : null;
+  const mainWindow = couldBeModal ? getActiveAgentWindow() : null;
 
   return await (mainWindow ? Electron.dialog.showMessageBox(mainWindow, options) : Electron.dialog.showMessageBox(options));
 }

@@ -4,11 +4,16 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({
-  default: { BrowserWindow: { fromWebContents: () => null } },
-  BrowserWindow: { fromWebContents: () => null },
-  WebContentsView: class {},
-}));
+vi.mock('electron', () => {
+  // window/index.ts registers app.on('before-quit') at module load, so the import chain needs app.
+  const app = { on: () => {}, off: () => {}, getPath: () => '/tmp', quit: () => {}, isPackaged: false, dock: undefined };
+  return {
+    default: { app, BrowserWindow: { fromWebContents: () => null } },
+    app,
+    BrowserWindow: { fromWebContents: () => null },
+    WebContentsView: class {},
+  };
+});
 
 import { BrowserTabViewManager } from './browserTabViewManager';
 

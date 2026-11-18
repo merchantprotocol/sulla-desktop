@@ -7,6 +7,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
@@ -69,11 +70,23 @@ export interface ClosedTab {
   closedAt: number;
 }
 
-const STORAGE_KEY = 'sulla:browser-tabs';
-const HISTORY_KEY = 'sulla:closed-tabs';
-const ORDER_KEY = 'sulla:tab-order';
-const PINNED_KEY = 'sulla:pinned-tabs';
-const ACTIVE_TAB_KEY = 'sulla:active-tab';
+const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
+const storageKey = (name: string) => makeStorageKey(windowKey, name);
+try {
+  // Namespace GC runs once per app session, in the primary window only. Other
+  // windows carry a frozen knownWindowKeys list and would delete newer windows' namespaces.
+  if (windowKey === 'main') {
+    const runGc = shouldRunGc(windowKey, sessionStorage);
+    const known = JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '["main"]') as string[];
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || '');
+    new WindowStorageMigrator().migrate(localStorage, keys, runGc ? known : null, true);
+  }
+} catch { /* malformed startup metadata must not block tabs */ }
+const STORAGE_KEY = storageKey('browser-tabs');
+const HISTORY_KEY = storageKey('closed-tabs');
+const ORDER_KEY = storageKey('tab-order');
+const PINNED_KEY = storageKey('pinned-tabs');
+const ACTIVE_TAB_KEY = storageKey('active-tab');
 const MAX_HISTORY = 25;
 // Cap the restored-tab count to stop a runaway agent from creating hundreds
 // of tabs, persisting them, and blacking out the main chat window on next
@@ -178,7 +191,7 @@ const MAX_AGENT_TABS = 10;
 const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 
-const restoredTabs = loadPersistedTabs();
+const restoredTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
 // Enforce the agent-tab cap. Called synchronously from the write paths that
@@ -578,7 +591,7 @@ export function useBrowserTabs() {
 
     // Always keep at least one tab open
     if (tabs.length === 0) {
-      createTab('about:blank', { mode: 'chat' });
+      ipcRenderer.send('agent-window:close-self');
     }
   }
 

@@ -1624,7 +1624,7 @@ ipcMainProxy.handle('startup/retry' as any, (event) => {
 
 function assertFirstRunOrMainSender(event: Electron.IpcMainInvokeEvent): void {
   const sender = Electron.BrowserWindow.fromWebContents(event.sender);
-  if (sender !== window.getWindow('first-run') && sender !== window.getWindow('main-agent')) {
+  if (sender !== window.getWindow('first-run') && !window.isAgentWebContents(event.sender)) {
     throw new Error('First-run AI state is only available from a trusted Sulla window');
   }
 }
@@ -1863,7 +1863,7 @@ ipcMainProxy.handle('first-run:quit' as any, (event: Electron.IpcMainInvokeEvent
 function requireFirstRunStateSender(event: Electron.IpcMainInvokeEvent) {
   const senderWindow = Electron.BrowserWindow.fromWebContents(event.sender);
 
-  if (!senderWindow || ![window.getWindow('first-run'), window.getWindow('main-agent')].includes(senderWindow)) {
+  if (!senderWindow || (senderWindow !== window.getWindow('first-run') && !window.isAgentWebContents(event.sender))) {
     throw new Error('First-run state is only available to trusted setup windows');
   }
 }
