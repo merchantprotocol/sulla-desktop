@@ -15,6 +15,7 @@ import { BrowserTabViewManager } from './browserTabViewManager';
 const ownerWindow = (id: number) => ({
   id,
   isDestroyed: () => false,
+  once: vi.fn(),
   contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
 });
 
@@ -23,6 +24,9 @@ const managerWith = (tabId: string, view: any, owner: any) => {
   manager.views = new Map([[tabId, view]]);
   manager.owners = new Map([[tabId, owner]]);
   manager.focusedTabIds = new Map([[owner.id, tabId]]);
+  manager.trackedOwnerWindowIds = new Set<number>();
+  manager.awaitingOwnerBounds = new Set<string>();
+  manager.transferringTabs = new Set<string>();
   manager.latestBounds = new Map([[tabId, { x: 12, y: 24, width: 640, height: 480 }]]);
   manager.appliedPlacement = new WeakMap();
   manager.viewHealth = new Map([[tabId, { captureFailures: 0, stuckScrolls: 0, probeInFlight: false, recovering: false, lastRecoveryAt: 0, recoveryStage: null }]]);
@@ -61,6 +65,9 @@ describe('BrowserTabViewManager window ownership', () => {
     manager.views = new Map([['first-tab', {}], ['second-tab', {}]]);
     manager.owners = new Map([['first-tab', first], ['second-tab', second]]);
     manager.focusedTabIds = new Map();
+    manager.trackedOwnerWindowIds = new Set<number>();
+    manager.awaitingOwnerBounds = new Set<string>();
+    manager.transferringTabs = new Set<string>();
     manager.viewHealth = new Map();
     manager.lastActiveAt = new Map();
     manager.newViewHealth = () => ({ captureFailures: 0 });
@@ -81,6 +88,7 @@ describe('BrowserTabViewManager window ownership', () => {
     const manager = Object.create(BrowserTabViewManager.prototype) as any;
     manager.owners = new Map([['owned', owner], ['handoff', transferringOwner]]);
     manager.transferringTabs = new Set(['handoff']);
+    manager.awaitingOwnerBounds = new Set<string>();
     manager.focusedTabIds = new Map([[owner.id, 'owned'], [transferringOwner.id, 'handoff']]);
     manager.trackedOwnerWindowIds = new Set([owner.id, transferringOwner.id]);
     manager.destroyView = vi.fn();
