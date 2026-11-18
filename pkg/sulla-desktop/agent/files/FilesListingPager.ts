@@ -44,7 +44,7 @@ export class FilesListingPager {
       query.set('limit', String(this.pageSize));
       if (cursor) query.set('cursor', cursor);
       const response = await this.request(`${ this.endpoint }?${ query }`);
-      if (!response.ok) throw new Error(`Files listing failed (${ response.status })`);
+      if (!response.ok) throw new Error(`Files request ${ this.endpoint } failed (${ response.status })`);
       const rows = await response.json() as T[];
       if (!Array.isArray(rows)) throw new Error('Files listing returned a non-array page');
       yield rows;

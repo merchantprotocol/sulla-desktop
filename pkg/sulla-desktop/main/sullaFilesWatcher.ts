@@ -208,10 +208,10 @@ export class SullaFilesWatcher {
     await this.requireAppUnlocked();
     this.startup.filesUnlocking();
     this.assertUnlockGeneration(generation);
-    const response = await traceAsync('files /healthz', () => this.filesRequests.rawLocalRequest('/healthz'));
+    const response = await traceAsync('files /healthz', () => this.filesRequests.rawLocalRequest('/healthz', {}, 120_000));
 
     this.assertUnlockGeneration(generation);
-    if (!response.ok) throw new Error('Files service is unavailable');
+    if (!response.ok) throw new Error(`Files service is unavailable at /healthz (${ response.status })`);
     const health = await response.json();
 
     this.assertUnlockGeneration(generation);
