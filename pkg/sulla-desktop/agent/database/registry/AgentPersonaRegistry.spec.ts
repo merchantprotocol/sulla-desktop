@@ -21,6 +21,20 @@ vi.mock('../../../main/firstRun/pendingCredentials', () => ({
   queuePendingCredential:  vi.fn(),
 }));
 
+// AgentPersonaModel calls getWebSocketClientService() at construction. The real service pulls in
+// IpcMessageBusRenderer, which does not exist in the Node test graph, so swap in a plain stub.
+// Methods used by AgentPersonaModel: connect, onMessage (returns an unsubscribe fn), send (resolves a boolean).
+const { stubWs } = vi.hoisted(() => ({
+  stubWs: {
+    connect:   vi.fn(),
+    onMessage: vi.fn(() => () => {}),
+    send:      vi.fn(async () => true),
+  },
+}));
+vi.mock('../../services/WebSocketClientService', () => ({
+  getWebSocketClientService: () => stubWs,
+}));
+
 describe('AgentPersonaRegistry tab lifecycle', () => {
   it('stops listeners and removes the per-tab service so reopening creates fresh state', () => {
     // risk: renderer memory and duplicate websocket listeners after closing/reopening a chat
