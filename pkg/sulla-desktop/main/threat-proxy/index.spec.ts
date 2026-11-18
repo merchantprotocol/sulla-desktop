@@ -333,7 +333,7 @@ describe('threat proxy guest serialization', () => {
     guest.executor.writeFile.mockImplementationOnce(async (file: string) => { guest.calls.push(`write:${file}`); await new Promise<void>(resolve => { release = resolve; }); });
     const before = guest.calls.length;
     const sync = mod.setSettings({ allowlist: 'example.test' });
-    await vi.waitFor(() => expect(guest.executor.writeFile).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(guest.calls.slice(before)).toContain('write://.proxy.json.new'));
     const apply = mod.applyEgressPolicy(guest.executor, 'enforced');
     await settle();
     const since = () => guest.calls.slice(before).filter(call => call !== 'install:/blocklist');
