@@ -23,6 +23,7 @@ import HeartbeatSection from '@pkg/components/settings/sections/HeartbeatSection
 import ModelsSection from '@pkg/components/settings/sections/ModelsSection.vue';
 import PersonalitySection from '@pkg/components/settings/sections/PersonalitySection.vue';
 import PrivacySection from '@pkg/components/settings/sections/PrivacySection.vue';
+import ThreatProtectionSection from '@pkg/components/settings/sections/ThreatProtectionSection.vue';
 import VoiceSection from '@pkg/components/settings/sections/VoiceSection.vue';
 import WorkflowsSection from '@pkg/components/settings/sections/WorkflowsSection.vue';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
@@ -54,6 +55,7 @@ const SECTIONS: Record<PreferencesSectionId, unknown> = {
   account:     AccountSection,
   files:       FilesSection,
   privacy:     PrivacySection,
+  threat:      ThreatProtectionSection,
   docker:      DockerSection,
   advanced:    AdvancedSection,
 };
@@ -71,6 +73,7 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
   account:     'profile email cloud sign in remote access phone servers master password vault passwords',
   files:       'folders sync finder backups exclusions',
   privacy:     'host access telemetry usage',
+  threat:      'threat proxy malware phishing url link injection allowlist safe browsing virustotal fail open reputation traffic log',
   docker:      'memory cpu virtual machine engine path terminal command line restart snapshots network',
   advanced: 'debug logs troubleshooting health extensions experimental vault proxy reset factory',
 };

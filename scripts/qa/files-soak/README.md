@@ -14,6 +14,7 @@ SOAK_TOKEN_TEST=1 ./files-soak.sh token-empty   # opt-in: empties the adapter to
 ./files-soak.sh latency                  # stat p50/p95 cold and warm (separately) over ~500 files, plus under write load
 ./files-soak.sh staleness                # API write -> mount visibility, and invalidation window
 ./files-soak.sh integrity                # every ledger write checksum-verified via mount, plus an API sample
+./files-soak.sh restart-writes           # writes right after each Files restart (SOAK_RESTART_MODE=docker|fuse|both, SOAK_RESTART_LOOPS=20)
 ./files-soak.sh eio-capture              # per-EIO adapter lines (eio-events.jsonl) and Files/adapter log lines within ±2 s
 ./files-soak.sh env-info                 # images, digests, migrations 067/068, Files metrics probe
 ./files-soak.sh all                      # full sequence (< ~25 min, < 500 MB of QA data)
@@ -66,6 +67,9 @@ Other knobs: `SOAK_INVALIDATE_WINDOW` (5 s), `SOAK_OUTAGE_A_SECONDS` (45), `SOAK
 - **env-info**: container images, image IDs, repo digests, Desktop version (set `SOAK_DESKTOP_VERSION`; unknown otherwise), migrations 067/068 in `files_schema_migrations`, and `GET /v1/local/files-metrics` probed inside `sulla_files` with its local token (`x-sulla-files-token`). Only the numeric fields are recorded.
 - **fuse-identity** (acceptance 4): prints the adapter's id, created, `State.StartedAt`, image, image ID and restart count. Run it before and after a Desktop compose regeneration and compare.
 - **integrity** (acceptance 11): every ledger row written by any phase is checksum-verified through the mount. The phase fails on any EIO (`integrity-eio`, and `eio` in `integrity-mount` and `integrity-api`), not only on a checksum mismatch. A sample is verified through the Files API (via the in-container helper, token never leaves the container). Crash-phase writes are checksum-checked in the `crash` phase and added to the ledger for this integrity pass.
+
+- **restart-writes** (data integrity, chunk-key epic): restarts Files (`docker restart sulla_files`), the FUSE adapter (`docker restart sulla_files_fuse`), or both (`SOAK_RESTART_MODE`), `SOAK_RESTART_LOOPS` times (default 20). After each restart it polls the mount and the API quickly, then writes `SOAK_RESTART_WRITES` files (default 10) through the mount and the same number through the API. Half the slots repeat identical text in every loop, so dedupe paths are exercised. The rest are new random text. Each loop ends by reading every file written so far back through the mount and the API, calling `GET /v1/local/chunk-integrity/scan` (skipped on 404), and saving `chunk_key_mismatch`, `collection_key_unavailable` and key-fingerprint log lines since the loop began. Output is per-loop, then a final read-back, then `RESTART-WRITES PASS|FAIL`. It fails on any write failure, any bad read, any undecryptable chunk id, or any `chunk_key_mismatch` line. Each run uses a **fresh** soak root (the previous one is left in place, not deleted, and is named in the verdict). Logs and `summary.json` go to `~/sulla-twodev/soak/restart-writes-<run>/`, outside Sulla Files. Never prints file content or keys.
+  - **Use restart, not stop.** Desktop heals a stopped Files within seconds (see the `stopped` note above), so a stop-based test measures Desktop, not Files.
 
 ## Phases from before (unchanged behaviour)
 

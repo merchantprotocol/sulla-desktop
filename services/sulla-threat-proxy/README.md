@@ -75,3 +75,22 @@ test fails the build. Locally:
 ```sh
 docker build -f services/sulla-threat-proxy/Dockerfile -t sulla-threat-proxy:local .
 ```
+
+## Memory bounds and fail-open behavior
+
+The proxy has a 512 MiB container limit. Response buffering is admitted through
+an aggregate 48 MiB reservation budget; `bufferBudgetMb`, `scanBufferMaxBytes`,
+`scanMaxBytes`, and `memoryPressurePercent` are written to `config/proxy.json`
+by Desktop, with corresponding `SULLA_PROXY_*` environment defaults. Bodies
+over the 4 MiB response-buffer limit and responses under memory pressure are
+streamed unchanged. Decode errors, unsupported encodings, reputation lookup
+errors, and addon exceptions log `fail_open` and do not synthesize a block
+response. Only positive reputation block verdicts produce HTTP 451.
+
+Allowed and warn-mode request bodies stream after the URL verdict. A blocked
+request with a large or unknown/chunked body is killed in `requestheaders`
+before it can be buffered or forwarded; small blocked requests receive 451 in
+the `request` hook after local body consumption. WebSocket, TCP, and UDP addons retain only
+the latest message. URLhaus input is capped at 32 MiB and one million hosts.
+These limits bound proxy-owned buffers; kernel socket buffers and the
+Python/mitmproxy runtime still contribute to total RSS.

@@ -416,7 +416,10 @@
       class="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm transition-opacity duration-300 cursor-pointer"
       @click="toggleMobileMenu"
     />
-    <div class="fixed top-10 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg">
+    <div
+      class="fixed top-10 left-0 right-0 bg-page shadow-lg transform transition-transform duration-300 ease-in-out rounded-b-lg"
+      style="-webkit-app-region: no-drag; app-region: no-drag;"
+    >
       <nav class="px-4 pb-6 space-y-2">
         <router-link
           to="/Chat"
@@ -620,6 +623,7 @@ function openModeTab(mode: BrowserTabMode) {
   const tab = createTab('about:blank', { mode });
 
   router.push(`/Browser/${ tab.id }`);
+  return tab;
 }
 
 // ── Phase 7: Keyboard shortcuts ──
@@ -659,10 +663,11 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     return;
   }
 
-  // Cmd+Shift+S: secretary mode
+  // Cmd+Shift+S: open Conversations and start Secretary Mode
   if (meta && e.shiftKey && e.key === 'S') {
     e.preventDefault();
-    openModeTab('secretary');
+    const tab = openModeTab('conversations');
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent('sulla:open-conversations-secretary', { detail: { tabId: tab.id } })), 80);
     return;
   }
 
@@ -1515,7 +1520,12 @@ function handleTabContextMenuAction(
 </script>
 
 <style>
-/* Unscoped styles for drag region - must apply to header element */
+/* Unscoped styles for drag region - must apply to header element.
+ * The whole header is draggable except interactive elements. Empty space
+ * (between logo, tabs, and controls) moves the window. Tabs and buttons are
+ * no-drag so clicks, pointer-based tab reorder and wheel scrolling reach JS.
+ * Keep the scroll wrapper/container draggable: a no-drag container would
+ * blanket the empty strip and make it unable to move the window. */
 .app-titlebar {
   -webkit-app-region: drag;
   app-region: drag;
@@ -1526,9 +1536,8 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-item,
 .app-titlebar .tab-item *,
 .app-titlebar input,
-.app-titlebar .tab-scroll-wrapper,
-.app-titlebar .tab-scroll-container,
-.app-titlebar .tab-scroll-container * {
+.app-titlebar select,
+.app-titlebar textarea {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }

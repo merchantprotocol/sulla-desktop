@@ -30,7 +30,7 @@ export class VersionWriteRepository {
   }
 
   async recordChunk(client:pg.PoolClient, collectionId:string, chunk:{ id:string; size:number; storedSize:number }):Promise<void> {
-    await client.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT DO NOTHING`, [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
+    await client.query(`INSERT INTO chunks(collection_id,id,size,stored_size,location,refcount) VALUES($1,$2,$3,$4,$5,0) ON CONFLICT(collection_id,id) DO UPDATE SET size=EXCLUDED.size,stored_size=EXCLUDED.stored_size`, [collectionId, chunk.id, chunk.size, chunk.storedSize, `chunks/${ collectionId }/${ chunk.id }`]);
   }
 
   async lockFile(client:pg.PoolClient, fileId:string):Promise<any> {

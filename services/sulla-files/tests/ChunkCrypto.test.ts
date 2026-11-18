@@ -64,4 +64,19 @@ describe('ChunkCrypto byte format', () => {
     await expect(decryptAndVerifyChunk(stored, dataKey, dedupKey, 'f'.repeat(64), plain.byteLength)).rejects.toThrow();
     await expect(decryptAndVerifyChunk(stored, dataKey, dedupKey, id, plain.byteLength - 1)).rejects.toThrow();
   });
+
+  it('keeps the production decrypt zero-key guard while exposing a plaintext-free diagnosis probe', async() => {
+    // risk: data integrity — zeroized cache keys must not silently decrypt as valid production content.
+    const zeroKey = new Uint8Array(32);
+    await sodium.ready;
+    const nonce = fixedNonce(24);
+    const envelope = {
+      version:1 as const, algorithm:'xchacha20-poly1305' as const,
+      nonce:Buffer.from(nonce).toString('base64url'),
+      ciphertext:Buffer.from(sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(Buffer.from('diagnostic fixture'), Buffer.from('diagnostic AAD'), null, nonce, zeroKey)).toString('base64url'),
+    };
+    await expect(pinned.decrypt(envelope, zeroKey, 'diagnostic AAD')).rejects.toThrow('All-zero key');
+    await expect(pinned.opensWithZeroKeyForDiagnosis(envelope, 'diagnostic AAD')).resolves.toBe(true);
+    await expect(pinned.opensWithZeroKeyForDiagnosis(envelope, 'wrong AAD')).resolves.toBe(false);
+  });
 });

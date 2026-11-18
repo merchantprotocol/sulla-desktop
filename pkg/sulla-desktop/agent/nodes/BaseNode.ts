@@ -11,15 +11,12 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
-import { getPrimaryService, getServiceByProvider, getSubconsciousService, modelRouteService } from '../languagemodels';
+import { getServiceByProvider } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
-import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
 import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
-import { effectiveModelChoice } from '../languagemodels/threadModelChoice';
-import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
 import { ProviderFailure } from '../languagemodels/failures';
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
@@ -39,16 +36,22 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
+import { turnAgentDefinitionMemo } from './turnAgentDefinitionMemo';
+import { turnProviderResolver } from './TurnProviderResolver';
 import { TurnOutputCounter } from '../services/TurnOutputCounter';
+import { turnProviderMemo } from './turnProviderMemo';
+import { templateSnapshotCache } from './TemplateSnapshotCache';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
+import Logging from '@pkg/utils/logging';
 
 // ============================================================================
 // DEFAULT SETTINGS
 // ============================================================================
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
+const perf = Logging.perf;
 
 export const JSON_ONLY_RESPONSE_INSTRUCTIONS = `When you respond it will be parsed as JSON and ONLY the following object will be read.
 Any text outside this exact structure will break downstream parsing.\nRespond ONLY with this valid JSON — nothing before, nothing after, no fences, no commentary:`;
@@ -229,9 +232,19 @@ export async function buildIntegrationsIndex(allowedIntegrations?: string[]): Pr
  * Build the template variable map used to substitute {{...}} placeholders
  * in agent prompt files and the environment prompt.
  */
-export async function getTemplateVariables(): Promise<Record<string, string>> {
-  const botName = await SullaSettingsModel.get('botName', 'Sulla');
-  const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
+export async function getTemplateVariables(threadId = 'unknown'): Promise<Record<string, string>> {
+  const timing: Record<string, number> = {};
+  const measure = async <T>(name: string, work: Promise<T>): Promise<T> => {
+    const started = Date.now();
+    try { return await work; } finally { timing[name] = Date.now() - started; }
+  };
+  const startedAt = Date.now();
+  try {
+  const settingsStarted = Date.now();
+  const [botName, primaryUserName] = await Promise.all([
+    SullaSettingsModel.get('botName', 'Sulla'), SullaSettingsModel.get('primaryUserName', ''),
+  ]);
+  timing.settings = Date.now() - settingsStarted;
   const projectsDir = resolveSullaProjectsDir();
   const skillsDir = resolveSullaSkillsDir();
   const agentsDir = resolveSullaAgentsDir();
@@ -258,8 +271,7 @@ export async function getTemplateVariables(): Promise<Record<string, string>> {
   // Skills index
   let skillsIndex = '_No skills registered yet._';
   try {
-    const { skillsRegistry } = await import('../database/registry/SkillsRegistry');
-    const summaries = await skillsRegistry.getSkillSummaries();
+    const summaries = await measure('skills', import('../database/registry/SkillsRegistry').then(({ skillsRegistry }) => skillsRegistry.getSkillSummaries()));
     if (summaries && summaries.length > 0) {
       const lines = summaries.map((s: any) => {
         const trigger = Array.isArray(s.triggers) && s.triggers.length > 0
@@ -273,21 +285,30 @@ export async function getTemplateVariables(): Promise<Record<string, string>> {
 
   // Compact, DB-backed Files placement guide. Failure is non-fatal while Files is locked.
   let folderMap = '';
+  const folderMapStarted = Date.now();
   try {
+    folderMap = await templateSnapshotCache.get('filesFolderMap', async () => {
     const { filesContainerJson } = await import('../files/containerClient');
     const folders=await filesContainerJson<Array<{collectionName:string;path:string;description:string;namingHint?:string;needsDescription?:boolean}>>('/v1/folders/map?limit=38',{});
-    if (folders.length) folderMap=`## Folder map
+    if (folders.length) return `## Folder map
 Check \`files_where\` before saving. Prefer described folders; if none fits, create a sensible folder with a description.
 ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`:''}: ${folder.description}${folder.namingHint?` (names: ${folder.namingHint})`:''}${folder.needsDescription?' [needs description]':''}`).join('\n')}`;
+    return '';
+    });
+    timing.filesFolderMap = Date.now() - folderMapStarted;
   } catch { /* Files may be locked during bootstrap */ }
 
   // Installed extensions
   let installedExtensions = '';
+  const extensionsStarted = Date.now();
   try {
     const { getExtensionService } = await import('../services/ExtensionService');
     const svc = getExtensionService();
-    await svc.initialize();
-    const installed = await svc.fetchInstalledExtensions();
+    await measure('extensionsInitialize', svc.initialize());
+    const installed = await measure('extensions', templateSnapshotCache.get('installedExtensions', async () => {
+      const rows = await svc.fetchInstalledExtensions();
+      return JSON.stringify(rows);
+    }).then(value => JSON.parse(value)));
     if (installed.length > 0) {
       const lines = installed.map((ext: any) => {
         const title = ext.labels?.['org.opencontainers.image.title'] ?? ext.id;
@@ -298,6 +319,9 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
       installedExtensions = `\n#### Currently Installed Extensions (active products you can use)\nThese are running locally and our preferred system for you to interact with via their web UIs, APIs, database, and Docker tools:\n${ lines.join('\n') }`;
     }
   } catch { /* extension service not available */ }
+  timing.extensions = Date.now() - extensionsStarted;
+
+  perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables settings=${ timing.settings || 0 }ms skills=${ timing.skills || 0 }ms filesFolderMap=${ timing.filesFolderMap || 0 }ms extensions=${ timing.extensions || 0 }ms extensionsInitialize=${ timing.extensionsInitialize || 0 }ms total=${ Date.now() - startedAt }ms`);
 
   return {
     '{{formattedTime}}':        formattedTime,
@@ -318,6 +342,10 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
     '{{installed_extensions}}':  installedExtensions,
     '{{folder_map}}':             folderMap,
   };
+  } catch (err) {
+    perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables total=${ Date.now() - startedAt }ms failed=true`);
+    throw err;
+  }
 }
 
 /** Apply template variable substitution to a string. */
@@ -398,11 +426,11 @@ export async function buildAssignedSkillsSection(skillRefs: string[] | undefined
  * Files whose basename (minus .md) matches a registered section ID become overrides.
  * All other .md files are concatenated as generic prompt content.
  */
-export async function loadAgentPromptData(agentId: string): Promise<AgentPromptLoadResult | null> {
+export async function loadAgentPromptData(agentId: string, templateVarsPromise?: Promise<Record<string, string>>, definitionPromise?: Promise<any>): Promise<AgentPromptLoadResult | null> {
   if (!agentId) return null;
 
   try {
-    const definition = await agentDefinitionService.findBySlug(agentId);
+    const definition = await (definitionPromise || agentDefinitionService.findBySlug(agentId));
     if (!definition || !definition.enabled || definition.status === 'archive') return null;
     const { REGISTERED_SECTION_IDS } = await import('../prompts/sections/index');
     const agentName = definition.name || agentId;
@@ -451,7 +479,7 @@ export async function loadAgentPromptData(agentId: string): Promise<AgentPromptL
     if (assignedSkills) genericSections.push(assignedSkills);
 
     // Get template variables and substitute in generic prompt
-    const vars = await getTemplateVariables();
+    const vars = await (templateVarsPromise || getTemplateVariables());
     vars['{{agent_name}}'] = agentName;
     vars['{{agent_id}}'] = agentId;
     vars['{{agent_dir}}'] = '';
@@ -514,17 +542,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /** Resolve the provider that owns this graph turn. */
   protected async resolveLoopProvider(state: BaseThreadState): Promise<BaseLanguageModel> {
-    const target = resolveModelSlot(state.metadata as any) === 'subconscious' ? 'subconscious' : 'agents';
-    const explicitProvider = String((state.metadata as any).agent?.provider || '').trim();
-    const explicitModel = String((state.metadata as any).agent?.model || '').trim();
-    const agentId = resolveAgentIdentity(state.metadata);
-    const definition = agentId ? await agentDefinitionService.findBySlug(agentId).catch(() => null) : null;
-    // Precedence: explicit per-task pin > the thread's model choice (a Defaults "Model" pick) > the agent's
-    // own Model setting > the list.
-    const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
-    const routed = await modelRouteService.resolve(target, choice);
-    this.routingCandidates = routed ? [...routed.candidates] : [];
-    return routed?.service ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
+    const resolved = await turnProviderResolver.resolve(state);
+    this.routingCandidates = resolved.candidates;
+    return resolved.provider;
   }
 
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
@@ -588,20 +608,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // transport (for example mobile-relay) after graph creation.
     const agentId = resolveAgentIdentity(state.metadata);
     const agentMeta = (state.metadata as any).agent as AgentConfig | undefined;
+    const timing: Record<string, number> = {};
+    const measured = async <T>(key: string, work: Promise<T>): Promise<T> => {
+      const started = Date.now();
+      try { return await work; } finally { timing[key] = Date.now() - started; }
+    };
+    const templateVarsPromise = measured('templateVars', getTemplateVariables(String(state.metadata.threadId || 'unknown')));
+    const definitionPromise = agentId ? turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId)) : undefined;
 
     // These independent reads dominate prompt setup on cold turns. Start them
     // together; their results are still applied in the original order below.
     const [templateVars, agentData, llm, toolModeSetting, promptSectionRows] = await Promise.all([
-      getTemplateVariables(),
+      templateVarsPromise,
       agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID
-        ? loadAgentPromptData(agentId)
+        ? measured('loadAgentPromptData', loadAgentPromptData(agentId, templateVarsPromise, definitionPromise))
         : Promise.resolve(null),
-      this.resolveLoopProvider(state),
-      SullaSettingsModel.get('toolMode', 'slim'),
-      SystemPromptSectionModel.list().catch(err => {
+      measured('resolveLoopProvider', this.resolveLoopProvider(state)),
+      measured('toolMode', SullaSettingsModel.get('toolMode', 'slim')),
+      measured('promptSections', SystemPromptSectionModel.list().catch(err => {
         console.warn('[BaseNode] Could not load system prompt sections from DB; using baked factories:', err);
         return [];
-      }),
+      })),
     ]);
     templateVars['{{agent_name}}'] = agentMeta?.name || agentId || templateVars['{{botName}}'];
     templateVars['{{agent_id}}'] = agentId;
@@ -638,7 +665,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         .map(({ category, description }: { category: string; description: string }) => `- ${ category }: ${ description }`)
         .join('\n');
     }
-    templateVars['{{integrations_index}}'] = await buildIntegrationsIndex(agentConfig?.integrations);
+    templateVars['{{integrations_index}}'] = await measured('buildIntegrationsIndex', buildIntegrationsIndex(agentConfig?.integrations));
     const intIndex = templateVars['{{integrations_index}}'];
     if (intIndex.includes('No integrations configured') || intIndex.includes('No matching integrations')) {
       templateVars['{{integrations_instructions}}'] = '';
@@ -717,7 +744,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     // Build the prompt using the section-based builder
-    const built = await SystemPromptBuilder.build(buildCtx);
+    const built = await measured('SystemPromptBuilder.build', SystemPromptBuilder.build(buildCtx));
+    perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).map(([key, ms]) => `${ key }=${ ms }ms`).join(' ') }`);
     (state.metadata as any).__promptSectionTimings = built.sectionTimings || [];
 
     // Subconscious/dream-consolidated identity is context, not policy. Keep it
@@ -937,15 +965,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Planning pipeline agents (observer, thinker, etc.) opt out via config.yaml.
    */
   protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
+    const started = Date.now();
     const agentId = resolveAgentIdentity(state.metadata);
     if (!agentId) return true;
     if (agentId === DEFAULT_CORE_ROUTINE_AGENT_ID) return true;
 
     try {
-      const definition = await agentDefinitionService.findBySlug(agentId);
-      if (definition?.config?.injectObservations === false) return false;
+      const definition = await turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId));
+      if (definition?.config?.injectObservations === false) {
+        perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } shouldInjectObservationsForAgent=${ Date.now() - started }ms`);
+        return false;
+      }
     } catch { /* default to injecting */ }
-
+    perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } shouldInjectObservationsForAgent=${ Date.now() - started }ms`);
     return true;
   }
 
@@ -1223,6 +1255,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (isContainerLifecycleLost(err)) throw err;
       // A provider-owned tool already ran in the failed call: replaying it anywhere could repeat a side effect.
       if ((err as any)?.unsafeToFallback) throw err;
+      // The failed provider must not stay first for later tool-loop iterations in this turn; re-resolve with health ordering.
+      turnProviderMemo.clear(state);
 
       const candidates = new ModelRecoveryPolicy().candidates(this.routingCandidates, {
         provider: this.llm.getProviderName?.() || 'primary', model: this.llm.getModel?.() || '',

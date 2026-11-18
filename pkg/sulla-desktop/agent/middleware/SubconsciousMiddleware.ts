@@ -22,9 +22,7 @@
  * gone; their tables stay for the scheduled dreamer and existing tools.
  */
 
-import { getAgentOverrideService, getPrimaryService, getSubconsciousService } from '../languagemodels';
 import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
-import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { v7MemoryScheduler } from '../memory/V7MemoryAgents';
 import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -35,6 +33,7 @@ import { stripTurnContext } from '../prompts/turnContext';
 import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import { turnProviderResolver } from '../nodes/TurnProviderResolver';
 
 // Dedicated perf-timing log (perf.log). The existing console.log lines below
 // never surfaced in any log file — the agent's raw console output isn't
@@ -203,11 +202,13 @@ function hasAnalyzableUserMessage(state: BaseThreadState): boolean {
  */
 async function isCliManagedThread(state: BaseThreadState): Promise<boolean> {
   try {
+    const startedAt = Date.now();
     const meta = state.metadata as any;
-    const provider = await getAgentOverrideService(meta.agent) ??
-      (resolveModelSlot(meta) === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());
+    const { provider } = await turnProviderResolver.resolve(state);
+    perf.log(`[PreModelSubTiming] threadId=${ meta.threadId } isCliManagedThread=${ Date.now() - startedAt }ms`);
     return isCliManagedLoop(provider);
   } catch {
+    perf.log(`[PreModelSubTiming] threadId=${ (state.metadata as any).threadId } isCliManagedThread=failed`);
     return false;
   }
 }

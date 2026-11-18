@@ -66,12 +66,16 @@ export function initSecretaryModeStateIpc(): void {
     };
   });
 
-  ipcMain.handle('secretary-mode:save-notes', async(_event, payload: { fileName: string; markdown: string; path?: string | null }) => {
+  ipcMain.handle('secretary-mode:save-notes', async(_event, payload: { fileName: string; markdown: string; path?: string | null; conversationId?: string }) => {
     try {
       const target = resolveMeetingNotesPath(payload.fileName, payload.path);
+      const conversationId = typeof payload.conversationId === 'string' && /^[A-Za-z0-9._:-]{1,200}$/.test(payload.conversationId)
+        ? payload.conversationId
+        : undefined;
+      const markdown = conversationId ? `<!-- conversation-id:${ conversationId } -->\n${ payload.markdown }` : payload.markdown;
 
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await fs.promises.writeFile(target, payload.markdown, 'utf8');
+      await fs.promises.writeFile(target, markdown, 'utf8');
 
       return { ok: true, path: target };
     } catch (err) {

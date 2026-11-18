@@ -253,6 +253,19 @@ export interface IpcMainEvents {
  */
 export interface IpcMainInvokeEvents {
   'chat:run-state': (channelId: string, threadId: string) => boolean;
+  'threat-proxy:get-settings': () => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; keyStatus?: { safeBrowsing: boolean; virusTotal: boolean }; error?: string };
+  'threat-proxy:set-settings': (partial: Partial<import('@pkg/main/threat-proxy').ThreatProxySettings>) => { ok: boolean; settings?: import('@pkg/main/threat-proxy').ThreatProxySettings; error?: string };
+  'threat-proxy:get-status': () => import('@pkg/main/threat-proxy').ThreatProxyStatus;
+  'threat-proxy:get-traffic-log': (request?: import('@pkg/main/threat-proxy').TrafficLogRequest) => Promise<{ entries: Record<string, any>[]; error?: string }>;
+  'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
+
+  'org-conversations:organizations': () => readonly { orgId: string; name: string; slug?: string; memberCount: number }[];
+  'org-conversations:directory': (org?: string) => { membership: { orgId: string; name: string }; directory: { people: readonly unknown[] } };
+  'org-conversations:inbox': (org?: string) => { membership: { orgId: string; name: string }; messages: readonly import('@sulla/domain').MessageEnvelope['data'][] };
+  'org-conversations:contact-requests': (org?: string) => { requests: readonly import('@sulla/domain').MessageEnvelope['data'][] };
+  'org-conversations:participant': (org?: string) => { membership: { orgId: string; name: string }; userId: string };
+  'org-conversations:start': (request: { orgId: string; participantUserIds: string[]; kind?: 'direct' | 'group' | 'agent_thread' }) => { membership: { orgId: string; name: string }; conversationId: string };
+  'org-conversations:send': (input: { orgId: string; conversationId: string; toUserIds: string[]; text: string }) => { messageId: string; message: import('@sulla/domain').MessageEnvelope['data'] };
   'use-case-recall:query': (text: string, options: Partial<import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallQueryOptions>) => import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallSuggestionResponse;
   'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
   'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
@@ -536,7 +549,7 @@ export interface IpcMainInvokeEvents {
   'audio-driver:get-speaker-socket-path':  () => string | null;
   'audio-driver:transcribe-start':         (opts: { mode: 'conversation' | 'secretary'; language?: string; model?: string; profileId?: string; sessionId?: string; manualTurn?: boolean }) => { ok: boolean; provider: 'whisper' | 'grok' };
   'audio-driver:transcribe-stop':          () => { ok: boolean };
-  'secretary-mode:save-notes':             (payload: { fileName: string; markdown: string; path?: string | null }) => { ok: boolean; path?: string; error?: string };
+  'secretary-mode:save-notes':             (payload: { fileName: string; markdown: string; path?: string | null; conversationId?: string }) => { ok: boolean; path?: string; error?: string };
   'secretary-mode:reveal-notes':           (notesPath: string) => { ok: boolean };
   // #endregion
 
@@ -1290,6 +1303,8 @@ export interface IpcRendererEvents {
   'tabs:release-finalize': (transferId: string, tabId: string) => void;
   'tabs:adopt': (transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number, screenY?: number) => void;
   'tabs:activate': (transferId: string, tabId: string) => void;
+  'threat-proxy:status-changed': (status: import('@pkg/main/threat-proxy').ThreatProxyStatus) => void;
+
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;

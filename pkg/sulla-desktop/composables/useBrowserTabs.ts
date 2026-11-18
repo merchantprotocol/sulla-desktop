@@ -9,7 +9,7 @@ import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'conversations' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
