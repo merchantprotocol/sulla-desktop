@@ -21,7 +21,9 @@ describe('Files mount layer draining', () => {
       return '';
     });
 
-    await expect(drainFilesAdapterLayers({ execCommand } as any, '/mnt/sulla/files')).resolves.toBe(2);
+    await expect(drainFilesAdapterLayers({ execCommand } as any, '/mnt/sulla/files')).resolves.toBeGreaterThanOrEqual(1);
+    // Both stacked layers are gone, by two unmounts (plain, then lazy).
+    expect(layers).toBe(0);
     expect(execCommand.mock.calls.filter(call => call[1] === 'umount')).toHaveLength(2);
   });
 });

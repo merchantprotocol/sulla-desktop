@@ -95,8 +95,13 @@ function joinMountRoot(root: string, relativePath: string): string {
 }
 
 function expectedSelfBindRoot(entries: MountInfoEntry[], entry: MountInfoEntry, path: string): string | undefined {
-  const candidates = entries.filter(candidate => candidate.mountId !== entry.mountId &&
-    (path === candidate.mountPoint || path.startsWith(`${ normalizeMountPath(candidate.mountPoint) }/`)));
+  const candidates = entries.filter((candidate) => {
+    if (candidate.mountId === entry.mountId) return false;
+    const mountPoint = normalizeMountPath(candidate.mountPoint);
+
+    // The root mount `/` contains every absolute path.
+    return path === mountPoint || path.startsWith(mountPoint === '/' ? '/' : `${ mountPoint }/`);
+  });
   const parent = candidates.find(candidate => candidate.mountId === entry.parentId) ??
     candidates.sort((a, b) => normalizeMountPath(b.mountPoint).length - normalizeMountPath(a.mountPoint).length)[0];
 
