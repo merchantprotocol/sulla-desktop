@@ -127,11 +127,31 @@ class OTruncNoPrefetchTests(unittest.TestCase):
         self.assertEqual(api.writes, [])
 
 
+def fake_safe_dump(data, sort_keys=False, allow_unicode=False):
+    """Minimal stand-in for yaml.safe_dump: nested mappings as indented `key: value` lines, empty mapping as `{}`."""
+    def render(mapping, indent):
+        lines = []
+        for key, value in mapping.items():
+            if isinstance(value, dict) and value:
+                lines.append(f"{' ' * indent}{key}:")
+                lines.extend(render(value, indent + 2))
+            elif isinstance(value, dict):
+                lines.append(f"{' ' * indent}{key}: {{}}")
+            elif value == "":
+                lines.append(f"{' ' * indent}{key}: ''")
+            else:
+                lines.append(f"{' ' * indent}{key}: {value}")
+        return lines
+    return "\n".join(render(data, 0)) + "\n"
+
+
 class VirtualMetadataOpenTests(unittest.TestCase):
     # risk: data integrity. Opening the virtual _folder-metadata.yaml node must not hit an unbound
     # `truncating`/`prior_size` in open(); a NameError there breaks every read of folder metadata.
     def _folder_metadata_node(self):
         adapter, pyfuse3 = load_adapter()
+        # The yaml stub from load_adapter has no safe_dump; supply a minimal one for this spec only.
+        adapter.yaml.safe_dump = fake_safe_dump
         api, ops, _ = make(adapter, b"")
 
         async def folder_metadata(collection_id, path):
