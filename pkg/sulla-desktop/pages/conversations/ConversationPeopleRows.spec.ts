@@ -27,7 +27,7 @@ describe('ConversationViewBuilder People rows', () => {
   it('names each person’s agent from that person’s own first name, never one shared name', () => {
     // risk: data accuracy; reusing one first name for every agent line misattributes agents
     const people: DirectoryPerson[] = [
-      { userId: 'u-me', displayName: 'Ada Lovelace' },
+      { userId: 'u-me', displayName: 'Ada Lovelace', agentHostOnline: true },
       { userId: 'u-1', displayName: 'Grace Hopper', agentHostOnline: true },
       { userId: 'u-2', displayName: 'Alan Turing', agentHostOnline: false },
     ];
