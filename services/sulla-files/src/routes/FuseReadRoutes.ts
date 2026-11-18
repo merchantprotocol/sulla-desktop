@@ -53,6 +53,17 @@ export class FuseReadRoutes {
   }
 
   register(app:express.Express):void {
+    // 068's revision is global, so never expose cross-collection paths here. A change asks
+    // this mount to invalidate its known tree; authenticated directory reads then refresh only
+    // data the principal can view.
+    app.get('/v1/fuse/changes', async(request:RequestWithIdentity, response, next) => { try {
+      this.requireMount(); this.access.identity(request);
+      const collectionId = await this.collection('/v1/fuse/changes', request);
+      const revision = await this.tree.revision();
+      const since = String(request.query.since ?? '');
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json({ collectionId, revision, reset: !/^\d+$/.test(since) || since !== revision, changes: [] });
+    } catch (error) { next(error) } });
     // FUSE v2 reads one directory at a time. The generated parent_path indexes
     // make both the keyset cursor and direct-child predicate bounded by the page.
     app.get('/v1/fuse/directory', async(request:RequestWithIdentity, response, next) => { try {

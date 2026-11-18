@@ -27,6 +27,21 @@ describe.skipIf(!databaseUrl)('Files FUSE read routes (real app, real Postgres)'
 
   const directory = (query:string, headers:Record<string, string> = {}) => fixture.request(`/v1/fuse/directory?${ query }`, 'GET', { headers });
 
+  it('change feed is revision-based, requires collection access, and exposes no cross-collection paths', async() => {
+    // risk: permissions — a capability may only poll a collection it can view; global revisions never disclose paths.
+    const first = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }`);
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ collectionId: fixture.collectionId, reset: true, changes: [] });
+    const stable = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.revision }`);
+    expect(stable.status).toBe(200);
+    expect(stable.body).toMatchObject({ revision: first.body.revision, reset: false, changes: [] });
+    await fixture.createFile('feed/change.txt');
+    const changed = await fixture.request(`/v1/fuse/changes?collectionId=${ fixture.collectionId }&since=${ first.body.revision }`);
+    expect(changed.body.reset).toBe(true);
+    expect(changed.body).not.toHaveProperty('path');
+    expect((await fixture.request('/v1/fuse/changes?collectionId=00000000-0000-0000-0000-000000000000')).status).toBe(404);
+  });
+
   it('lists one directory\'s live direct children, files and folders, keyset-paged', async() => {
     // risk: data accuracy — a skipped/repeated child or a trashed file in the mount corrupts the user's view.
     const root = await directory('path=');
