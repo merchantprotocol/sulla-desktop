@@ -42,6 +42,10 @@ fail() {
 
 emit entrypoint-start ",\"pid\":$$,\"mountPath\":\"$mount_path\",\"tokenFile\":\"$token_file\",\"tokenWaitSeconds\":$token_wait"
 
+# The shared /mnt/sulla parent is only the propagation anchor. Never mount or
+# detach FUSE there: the adapter owns the replaceable child mount exclusively.
+[ "$mount_path" = /mnt/sulla/files ] || fail invalid-mount-path ",\"mountPath\":\"$mount_path\",\"expected\":\"/mnt/sulla/files\""
+
 waited=0
 while [ ! -s "$token_file" ]; do
   if [ "$waited" -ge "$token_wait" ]; then

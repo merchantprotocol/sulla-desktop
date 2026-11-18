@@ -775,7 +775,7 @@ class SullaFiles(pyfuse3.Operations):
         except OSError as error:
             if fh != pyfuse3.ROOT_INODE or isinstance(error, pyfuse3.FUSEError):
                 raise
-            # The root must always list: Desktop probes the mount with `ls -A /mnt/sulla-files` and
+            # The root must always list: Desktop agents probe the compatibility symlink with `ls -A /mnt/sulla-files` and
             # recreates the adapter when it fails, so an error here became a restart loop. Answer an
             # empty (or partial) root, log why, and list again on the next readdir.
             self.directory_complete.discard(directory["path"])

@@ -208,5 +208,7 @@ export async function drainFilesAdapterLayers(exec: GuestExec, path: string, max
     drained++;
   }
 
+  if (await topIsAdapter()) throw new Error(`Refusing to continue with more than ${ maxLayers } stacked Files adapter mounts at ${ path }`);
+
   return drained;
 }

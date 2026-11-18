@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { SULLA_FILES_GUEST_MOUNT_PATH } from './guestMountInfo';
+
 /**
  * Docker healthchecks for Sulla Files and its FUSE adapter. Both run on every tick inside a VM
  * that may be saturated by the very load they are checking, so each must cost milliseconds.
@@ -16,4 +18,6 @@ const LEGACY_FILES_TLS_PROBE = 'node -e \'const fs=require("fs"),https=require("
 export const SULLA_FILES_HEALTHCHECK = `wget -q -T 3 -O /dev/null http://127.0.0.1:8793/healthz || ${ LEGACY_FILES_TLS_PROBE }`;
 
 /** The FUSE mount is live and the adapter's event loop rewrote its status file in the last 2 minutes. */
-export const SULLA_FILES_FUSE_HEALTHCHECK = 'grep -qs "^sulla-files /mnt/sulla/files fuse" /proc/self/mounts && find /tmp/sulla-files-fuse-status.json -mmin -2 2>/dev/null | grep -q .';
+// grep is intentionally presence-based: shared propagation may expose more
+// than one identical FUSE layer, and any live layer plus a fresh heartbeat is healthy.
+export const SULLA_FILES_FUSE_HEALTHCHECK = `grep -Fqs "sulla-files ${ SULLA_FILES_GUEST_MOUNT_PATH } fuse" /proc/self/mounts && find /tmp/sulla-files-fuse-status.json -mmin -2 2>/dev/null | grep -q .`;

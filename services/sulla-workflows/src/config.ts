@@ -34,7 +34,7 @@ export const config = {
   capabilitySigningKey: process.env.SULLA_CAPABILITY_SIGNING_KEY || (installationSecret ? deriveCapabilitySigningKey(installationSecret) : ''),
   workflowImage:        process.env.SULLA_WORKFLOW_IMAGE ?? 'sulla-workflows:local',
   dockerNetwork:        process.env.SULLA_DOCKER_NETWORK ?? 'sulla_default',
-  // Desktop sets this only after it prepared the shared /mnt/sulla-files anchor.
+  // Desktop sets this only after it prepared the shared /mnt/sulla parent anchor.
   filesGuestMount:      process.env.SULLA_FILES_GUEST_MOUNT === '1',
   localToken,
 };
