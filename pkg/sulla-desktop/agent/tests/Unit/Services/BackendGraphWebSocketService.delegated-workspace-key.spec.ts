@@ -33,6 +33,7 @@ async function containerKeyFor(channelId: string, threadId: string, state: any):
   const service = Object.create(BackendGraphWebSocketService.prototype);
   service.conversationContainers = new Map();
   service.activeAborts = new Map();
+  service.conversationContainerStarts = new Map();
   await service.conversationContainer(channelId, threadId, 'codex', state);
   for (const entry of service.conversationContainers.values()) clearTimeout(entry.idleTimer);
   return createAgentContainerLifecycle.mock.calls.at(-1)![0].persistenceKey;
@@ -84,6 +85,7 @@ describe('conversation container persistence key after a parked delegated wake',
     service.conversationContainers = new Map();
     service.conversationContainerStarts = new Map();
     service.activeAborts = new Map();
+  service.conversationContainerStarts = new Map();
     const state = chatState('shared-thread');
     const [first, second] = await Promise.all([
       service.conversationContainer('desktop', 'shared-thread', 'codex', state),
