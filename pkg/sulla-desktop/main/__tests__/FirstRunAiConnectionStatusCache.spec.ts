@@ -32,4 +32,22 @@ describe('FirstRunAiConnectionStatusCache', () => {
     resolve({ pending: [], connected: false, loading: false });
     await refreshed;
   });
+
+  it('does not cache a disconnected result so a main-process connect is seen right away', async() => {
+    // risk: availability — a user who just connected an AI must not get a stale "not connected" answer.
+    const read = vi.fn(async() => ({ pending: [], connected: false, loading: false }));
+    const cache = new FirstRunAiConnectionStatusCache(read, 30_000, () => 0);
+    await cache.get();
+    await cache.get();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches a connected result within the TTL', async() => {
+    // risk: availability — repeated sends reuse a positive status instead of re-reading vault accounts.
+    const read = vi.fn(async() => ({ pending: [], connected: true, loading: false }));
+    const cache = new FirstRunAiConnectionStatusCache(read, 30_000, () => 0);
+    await cache.get();
+    await cache.get();
+    expect(read).toHaveBeenCalledTimes(1);
+  });
 });

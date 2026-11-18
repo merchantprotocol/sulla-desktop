@@ -350,6 +350,7 @@ export function initIntegrationOAuthEvents(): void {
       if (!response.ok) return { success: false, error: 'Sign-in failed.', reason: 'provider-error' };
       const tokens = await response.json() as Record<string, string>;
       await queuePendingCredential({ integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values: tokens, activate: true });
+      aiConnectionStatusCache.invalidate();
       return { success: true };
     }
     try {
@@ -394,6 +395,7 @@ export function initIntegrationOAuthEvents(): void {
       console.log(`${ LOG_PREFIX } OAuth flow completed for ${ payload.integrationId }`);
 
       firstRunTrace('oauth', 'flow completed', { integrationId: payload.integrationId, success: true, custody: payload.firstRun ? 'pending' : 'persisted' });
+      aiConnectionStatusCache.invalidate();
       return { success: true };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -492,6 +494,7 @@ export function initIntegrationOAuthEvents(): void {
         const accounts = await service.getAccounts(integrationId);
         if (accounts.length <= 1) await service.setActiveAccount(integrationId, accountId);
       }
+      aiConnectionStatusCache.invalidate();
       return { success: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -556,6 +559,7 @@ export function initIntegrationOAuthEvents(): void {
     const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
     await getModelProviderService().reconcilePrimaryProvider(false, providerId);
     firstRunTrace('api-key', 'verification succeeded', { provider: providerId, model });
+    aiConnectionStatusCache.invalidate();
     return { success: true, models };
   });
 

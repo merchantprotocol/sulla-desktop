@@ -4,7 +4,11 @@
 
 export interface AiConnectionStatus { pending: string[]; connected: boolean; loading: boolean }
 
-/** Short-lived cache that collapses concurrent status probes. */
+/**
+ * Collapses concurrent status probes. Only a positive result (connected, not loading)
+ * is cached for the TTL; disconnected or loading results always re-read so a
+ * connection finished in the main process is seen immediately.
+ */
 export class FirstRunAiConnectionStatusCache {
   private cached?: { value: AiConnectionStatus; expiresAt: number };
   private inFlight?: Promise<AiConnectionStatus>;
@@ -17,7 +21,9 @@ export class FirstRunAiConnectionStatusCache {
     if (!this.inFlight) {
       const generation = this.generation;
       const request = this.read().then(value => {
-        if (generation === this.generation) this.cached = { value, expiresAt: this.now() + this.ttlMs };
+        if (generation === this.generation && value.connected && !value.loading) {
+          this.cached = { value, expiresAt: this.now() + this.ttlMs };
+        }
         return value;
       });
       this.inFlight = request;
