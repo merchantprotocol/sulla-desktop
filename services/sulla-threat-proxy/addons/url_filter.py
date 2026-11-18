@@ -379,6 +379,9 @@ class URLFilter:
     def requestheaders(self, flow: http.HTTPFlow) -> None:
         self._apply_config()
         flow.metadata["sulla_url_checked"] = True
+        flow.metadata["sulla_block_verdict"] = None
+        flow.metadata["sulla_block_details"] = []
+        flow.metadata["sulla_block_url"] = flow.request.pretty_url
         if self.block_mode == "off":
             flow.request.stream = True
             return
@@ -403,17 +406,23 @@ class URLFilter:
         )
 
         if verdict == FLAG_BLOCK:
+            flow.metadata["sulla_block_verdict"] = FLAG_BLOCK
+            flow.metadata["sulla_block_details"] = details
             if self.block_mode == "warn":
                 flow.request.headers["X-Sulla-Threat"] = "|".join(details)
                 flow.request.stream = True
                 return
-            self._emit_block(flow, url, details)
+            # Blocking occurs in `request`, after the complete body has arrived but
+            # before connection_strategy=lazy opens an upstream connection.
+            # Do not enable streaming for a blocked request.
             return
         flow.request.stream = True
 
     def request(self, flow: http.HTTPFlow) -> None:
         # Compatibility safety-net for replay paths that bypass requestheaders.
         if flow.metadata.get("sulla_url_checked"):
+            if flow.metadata.get("sulla_block_verdict") == FLAG_BLOCK and self.block_mode == "block":
+                self._emit_block(flow, flow.metadata.get("sulla_block_url", flow.request.pretty_url), flow.metadata.get("sulla_block_details", []))
             return
         self.requestheaders(flow)
 
