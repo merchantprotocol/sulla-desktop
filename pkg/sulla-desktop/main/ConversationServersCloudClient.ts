@@ -44,9 +44,10 @@ export class ConversationServersCloudClient {
     return this.request('PUT', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/notification-preference`, { level });
   }
 
-  async messages(serverId: string, channelId: string, before?: number): Promise<{ messages: ConversationChannelMessage[]; nextBefore?: number | null; latestSeq?: number }> {
+  async messages(serverId: string, channelId: string, before?: number, after?: number): Promise<{ messages: ConversationChannelMessage[]; nextBefore?: number | null; latestSeq?: number }> {
     const query = new URLSearchParams({ limit: '50' });
     if (before !== undefined) query.set('before', String(before));
+    if (after !== undefined) query.set('after', String(after));
     const result = await this.request('GET', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/messages?${query}`);
     return { ...result, messages: Array.isArray(result.messages) ? result.messages as ConversationChannelMessage[] : [] };
   }
@@ -54,7 +55,7 @@ export class ConversationServersCloudClient {
   sendMessage(serverId: string, channelId: string, body: string): Promise<Record<string, unknown>> {
     const text = body.trim();
     if (!text || text.length > 4000) throw new Error('Message must be between 1 and 4000 characters');
-    return this.request('POST', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/messages`, { body: text });
+    return this.request('POST', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/messages`, { body: text, kind: 'text' });
   }
 
   markRead(serverId: string, channelId: string, seq: number): Promise<Record<string, unknown>> {

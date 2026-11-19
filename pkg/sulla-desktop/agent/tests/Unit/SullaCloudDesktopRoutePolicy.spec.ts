@@ -144,6 +144,11 @@ describe('Sulla Cloud desktop route policy', () => {
       ['PATCH', '/conversation-servers/server-1/notification-default'],
       ['GET', '/conversation-servers/server-1/channels/channel-1/notification-preference'],
       ['PUT', '/conversation-servers/server-1/channels/channel-1/notification-preference'],
+      ['PATCH', '/conversation-servers/server-1/channels/channel-1/notification-override'],
+      ['GET', '/conversation-servers/server-1/channels/channel-1/messages'],
+      ['POST', '/conversation-servers/server-1/channels/channel-1/messages'],
+      ['POST', '/conversation-servers/server-1/channels/channel-1/read'],
+      ['GET', '/conversation-servers/server-1/unread'],
     ];
     for (const [method, route] of allowed) expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
     const denied: Array<[string, string]> = [

@@ -16,4 +16,14 @@ describe('ConversationServersData', () => {
     expect(data.effectiveLevel(server, channel, 'nothing')).toBe('nothing');
   });
 
+  it('formats badges according to all, mentions, and nothing preferences and inserts a stable mention token', () => {
+    // risk: read-state accuracy; notification mode must not expose hidden unread counts or suppress mentions
+    const data = new ConversationServersData();
+    expect(data.badge('all', 4, 1)).toBe('4');
+    expect(data.badge('mentions', 4, 1)).toBe('1 mentions');
+    expect(data.badge('nothing', 4, 1)).toBe('');
+    expect(data.badge('mentions', 0, 0)).toBe('');
+    expect(data.mentionToken('user-1')).toBe('<@user-1>');
+  });
+
 });

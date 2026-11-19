@@ -9,6 +9,14 @@ export type ConversationServerMember = { userId: string; role: string };
 
 /** Applies the shared per-member → channel override → server default notification policy. */
 export class ConversationServersData {
+  mentionToken(userId: string): string { return `<@${userId}>`; }
+
+  badge(level: NotificationLevel, unread: number, mentions: number): string {
+    if (level === 'nothing') return '';
+    const count = level === 'mentions' ? mentions : unread;
+    return count > 0 ? (level === 'mentions' ? `${count} mentions` : String(count)) : '';
+  }
+
   effectiveLevel(server: ConversationServer, channel: ConversationChannel, preference?: NotificationLevel): NotificationLevel {
     return preference ?? channel.notificationOverride ?? server.notificationDefault;
   }
