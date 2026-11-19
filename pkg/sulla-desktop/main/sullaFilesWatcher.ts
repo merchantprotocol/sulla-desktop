@@ -67,7 +67,7 @@ export class SullaFilesWatcher {
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
   private filesRecoveryRun?:Promise<void>;
-  private ensureUnlockedRun?:Promise<void>;
+  private ensureUnlockedRun?:{ generation:number; promise:Promise<void> };
   private readonly startup:VaultFilesStartup;
   private readonly nativeSourceRevalidator:NativeSourceRevalidator;
   private readonly nativeBroker = new SullaFilesNativeBroker({
@@ -170,6 +170,11 @@ export class SullaFilesWatcher {
       } catch (error) {
         if (epoch !== this.unlockRetryEpoch || this.stopped || !await this.appUnlocked()) throw error;
         const reason = error instanceof Error ? error.message : String(error);
+        if (reason === 'Files unlock was superseded') {
+          lastReason = reason;
+          failures--;
+          continue;
+        }
         const delay = UNLOCK_RETRY_DELAYS_MS[Math.min(failures, UNLOCK_RETRY_DELAYS_MS.length - 1)];
 
         if (reason !== lastReason || (failures + 1) % 5 === 0) {
@@ -195,15 +200,21 @@ export class SullaFilesWatcher {
   }
 
   private ensureUnlocked():Promise<void> {
-    if (this.ensureUnlockedRun) return this.ensureUnlockedRun;
-    const run = this.performEnsureUnlocked().finally(() => { if (this.ensureUnlockedRun === run) this.ensureUnlockedRun = undefined });
-    this.ensureUnlockedRun = run;
-    return run;
+    const generation = this.lockGeneration;
+    const current = this.ensureUnlockedRun;
+
+    if (current) {
+      if (current.generation === generation) return current.promise;
+      return current.promise.catch(() => undefined).then(() => this.ensureUnlocked());
+    }
+    const promise = this.performEnsureUnlocked(generation).finally(() => {
+      if (this.ensureUnlockedRun?.promise === promise) this.ensureUnlockedRun = undefined;
+    });
+    this.ensureUnlockedRun = { generation, promise };
+    return promise;
   }
 
-  private async performEnsureUnlocked(): Promise<void> {
-    const generation = this.lockGeneration;
-
+  private async performEnsureUnlocked(generation:number): Promise<void> {
     this.assertUnlockGeneration(generation);
     await this.requireAppUnlocked();
     this.startup.filesUnlocking();
@@ -287,7 +298,8 @@ export class SullaFilesWatcher {
   }
 
   private assertUnlockGeneration(generation:number):void {
-    if (!this.unlockPermitted || generation !== this.lockGeneration || this.stopped) throw new Error('Files is shutting down');
+    if (this.stopped) throw new Error('Files is shutting down');
+    if (!this.unlockPermitted || generation !== this.lockGeneration) throw new Error('Files unlock was superseded');
   }
 
   async initialize():Promise<void> {

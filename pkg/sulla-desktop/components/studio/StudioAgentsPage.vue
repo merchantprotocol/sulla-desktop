@@ -85,7 +85,7 @@ import type { ModelCandidate } from '@pkg/agent/languagemodels/modelRouter';
 import { MODEL_ROUTING_IPC, type AgentModelChoice, type ModelRoutingState, type RoutingProviderInfo } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { choiceLabel } from '@pkg/components/settings/sections/modelRouting/routingLogic';
 import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import { agentEditorTeamLabel, agentTryTabPayload, cloneModelCandidates, type AgentEditorRoutingFields } from '@pkg/shared/agentEditor';
 import { RefreshSequencer } from './live/RefreshSequencer';
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
@@ -100,7 +100,6 @@ const directoryRef = ref<InstanceType<typeof AgentDirectoryTab> | null>(null);
 const directoryDetail = ref<Agent | null>(null);
 const tabsRef = ref<HTMLElement | null>(null);
 const tabIndRef = ref<HTMLElement | null>(null);
-const { createTab } = useBrowserTabs();
 
 function moveTabIndicator() {
   const on = tabsRef.value?.querySelector<HTMLButtonElement>('button.on');
@@ -297,12 +296,15 @@ async function recoverModelConfiguration(id: string, slug: string, disabled: boo
   return { configuration: new AgentModelConfiguration(id, slug, fresh, saved.modelChoice, disabled) };
 }
 function closeDetail() { editorGeneration++; active.value = null; openedEditorSnapshot.value = ''; detailMessage.value = ''; }
-function tryAgent(): void {
+async function tryAgent(): Promise<void> {
   if (!canTry.value || !active.value?.id || !active.value.slug) return;
   // Chat selection and runtime routing resolve agents by their saved slug, never by definition id.
   const payload = agentTryTabPayload(active.value.slug, `${ form.name || active.value.name } · Chat`);
-  const tab = createTab('about:blank', payload);
-  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+  try {
+    await openWorkspaceTab(payload);
+  } catch (error) {
+    detailMessage.value = error instanceof Error ? error.message : String(error);
+  }
 }
 async function save() {
   if (!active.value) return;

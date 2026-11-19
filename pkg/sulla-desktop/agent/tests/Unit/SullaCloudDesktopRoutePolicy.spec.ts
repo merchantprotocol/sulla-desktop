@@ -33,31 +33,35 @@ function stringLiteral(node: ts.Expression | undefined): string | undefined {
 // inventory explicit: any new dynamic cloudRequest callsite must be reviewed and
 // added here instead of silently escaping the policy contract scan.
 const reviewedDynamicCallSites = [
-  'cloud/conversationSync/service.ts:101',
-  'cloud/conversationSync/service.ts:116',
-  'cloud/conversationSync/service.ts:127',
-  'cloud/conversationSync/service.ts:149',
-  'cloud/conversationSync/service.ts:220',
-  'cloud/conversationSync/service.ts:246',
+  'ConversationServersCloudClient.ts:84',
+  'OrgMembershipsCloudClient.ts:12',
+  'TeamInvitationsCloudClient.ts:10',
   'cloud/cloudDataSync.ts:31',
   'cloud/cloudDataSync.ts:32',
   'cloud/cloudDataSync.ts:40',
+  'cloud/conversationSync/service.ts:103',
+  'cloud/conversationSync/service.ts:118',
+  'cloud/conversationSync/service.ts:129',
+  'cloud/conversationSync/service.ts:151',
+  'cloud/conversationSync/service.ts:222',
+  'cloud/conversationSync/service.ts:262',
   'cloud/desktopObjectSync.ts:109',
   'cloud/desktopObjectSync.ts:133',
-  'cloud/devices/devicesPanelIpc.ts:22',
+  'cloud/devices/devicesPanelIpc.ts:23',
   'cloud/enrollment/DesktopVaultEnrollmentModule.ts:59',
   'cloud/memorySyncV1/index.ts:44',
+  'cloud/orgFiles/OrgFilesCloudClient.ts:87',
   'cloud/slack/SlackCloudClient.ts:30',
   'cloud/slack/SlackCloudClient.ts:64',
   'devicesCloudApi.ts:118',
   'devicesCloudApi.ts:185',
-  'ipc/MainIpcControllersProvider.ts:94',
-  'marketplace/client.ts:167',
-  'marketplace/client.ts:175',
-  'marketplace/client.ts:251',
+  'ipc/MainIpcControllersProvider.ts:96',
+  'marketplace/client.ts:168',
+  'marketplace/client.ts:176',
+  'marketplace/client.ts:252',
   'marketplace/cloudInstall/deviceInstallSync.ts:54',
   'marketplace/cloudInstall/deviceInstallSync.ts:72',
-  'supportSessionIpc.ts:20',
+  'supportSessionIpc.ts:21',
   'sync/SullaSyncService.ts:229',
 ];
 
@@ -134,6 +138,29 @@ describe('Sulla Cloud desktop route policy', () => {
     for (const [method, route] of allowed) {
       expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
     }
+  });
+
+  it('allows only Conversations server reads and notification preference writes used by the channel UI', () => {
+    // risk: permissions and tenant isolation; keep the new Cloud capability scoped to P2 read/preferences routes
+    const allowed: Array<[string, string]> = [
+      ['GET', '/conversation-servers'], ['GET', '/conversation-servers/server-1'],
+      ['GET', '/conversation-servers/server-1/channels'], ['GET', '/conversation-servers/server-1/members'],
+      ['PATCH', '/conversation-servers/server-1/notification-default'],
+      ['GET', '/conversation-servers/server-1/channels/channel-1/notification-preference'],
+      ['PUT', '/conversation-servers/server-1/channels/channel-1/notification-preference'],
+      ['PATCH', '/conversation-servers/server-1/channels/channel-1/notification-override'],
+      ['GET', '/conversation-servers/server-1/channels/channel-1/messages'],
+      ['POST', '/conversation-servers/server-1/channels/channel-1/messages'],
+      ['POST', '/conversation-servers/server-1/channels/channel-1/read'],
+      ['GET', '/conversation-servers/server-1/unread'],
+    ];
+    for (const [method, route] of allowed) expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
+    const denied: Array<[string, string]> = [
+      ['POST', '/conversation-servers'], ['POST', '/conversation-servers/server-1/channels'],
+      ['GET', '/conversation-servers/server-1/channels/channel-1/notification-preference/extra'],
+      ['DELETE', '/conversation-servers/server-1/members/member-1'],
+    ];
+    for (const [method, route] of denied) expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(false);
   });
 
   it('denies invitation writes and near-miss paths for memberships and invitations', () => {

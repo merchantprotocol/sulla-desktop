@@ -12,6 +12,7 @@ import {
   emptyAgentEditorForm,
 } from '@pkg/components/studio/AgentEditorForm';
 import StudioAgentsPage from '@pkg/components/studio/StudioAgentsPage.vue';
+import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import {
   matchesQuery,
   teamScopeLabel,
@@ -21,25 +22,14 @@ import {
   agentTryTabPayload,
 } from '@pkg/shared/agentEditor';
 
-const f = vi.hoisted(() => ({
-  invoke:    vi.fn(),
-  createTab: vi.fn((url: string, options: Record<string, unknown>) => ({
-    id: 'tab-agent-try',
-    url,
-    ...options,
-  })),
-}));
+const f = vi.hoisted(() => ({ invoke: vi.fn() }));
 
 vi.mock('@pkg/utils/ipcRenderer', () => ({
-  ipcRenderer: { invoke: f.invoke, on: vi.fn(), removeListener: vi.fn() },
+  ipcRenderer: { invoke: f.invoke, on: vi.fn(), removeListener: vi.fn(), send: vi.fn() },
 }));
 vi.mock('@pkg/composables/useDatabaseAvailableReload', () => ({
   useDatabaseAvailableReload: () => {},
 }));
-vi.mock('@pkg/composables/useBrowserTabs', () => ({
-  useBrowserTabs: () => ({ createTab: f.createTab }),
-}));
-
 const agent = {
   id:                 'agent-1',
   slug:               'reviewer',
@@ -83,7 +73,6 @@ const routing = {
 
 describe('agent editor lifecycle contract', () => {
   beforeEach(() => {
-    f.createTab.mockClear();
     f.invoke.mockReset();
     f.invoke.mockImplementation((name: string) => {
       if (name === 'agent-definitions:list') return Promise.resolve([structuredClone(agent)]);
@@ -203,14 +192,16 @@ describe('agent editor lifecycle contract', () => {
       .find((button) => button.text() === 'Try')!
       .trigger('click');
     // Chat selection, the persona picker and runtime routing all key agents by slug, not definition id.
-    expect(f.createTab).toHaveBeenCalledWith('about:blank', {
+    expect(events).toHaveLength(1);
+    const openedChat = useBrowserTabs().getTab(events[0].detail.tabId);
+    expect(openedChat).toMatchObject({
+      url:            'about:blank',
       mode:           'chat',
       title:          'Reviewer · Chat',
       initialAgentId: 'reviewer',
     });
     expect(agentTryTabPayload('reviewer', 'Reviewer · Chat').initialAgentId).toBe('reviewer');
-    expect(f.createTab.mock.calls[0][1]).not.toHaveProperty('agentChat');
-    expect(events.at(-1)?.detail).toEqual({ tabId: 'tab-agent-try' });
+    expect(openedChat).not.toHaveProperty('agentChat');
     window.removeEventListener('sulla:navigate-tab', onNavigate);
     wrapper.unmount();
   });

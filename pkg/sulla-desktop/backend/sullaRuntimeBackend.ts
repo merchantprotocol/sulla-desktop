@@ -172,6 +172,9 @@ function bootFailure(error: unknown): SullaRuntimeBootError {
  * `sulla-runtime` host binary. Guest commands run through
  * `sulla-runtime exec`.
  */
+/** Bundled image names (packaging/bundled-images.yaml) that Postgres and Redis run from; loaded and started first. */
+const DATABASE_IMAGE_NAMES = new Set(['sulla-postgres', 'redis']);
+
 export default class SullaRuntimeBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture) {
     super();
@@ -217,6 +220,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #hostPreparationDeferred = false;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
+  /** One opportunistic cache/image trim per successful managed-services start. */
+  #startupBuildCacheGcGeneration?: number;
   /** FUSE adapter services whose dead mount was drained; restart the process in-place. */
   #staleFilesAdapters = new Set<string>();
   #lastFilesFuseRestartMs?: number;
@@ -780,6 +785,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.reconcileManagedServicesWithRetries(generation, config);
       console.log(`[startup-perf] sulla-runtime managed services ready: ${ Date.now() - t }ms`);
       logStartupPhase('sulla-services', t, 'status=ready runtime=sulla');
+      this.runStartupBuildCacheGc(generation);
       await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
     })().catch((error) => {
       if (!(error instanceof ManagedServicesReconciliationCancelled)) {
@@ -787,6 +793,41 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       }
     });
     logStartupPhase('backend-ready', backendStartTotal, 'scope=docker-api services=streaming runtime=sulla');
+  }
+
+  /** Run low-priority, best-effort Docker cleanup after readiness; never gates startup. */
+  private runStartupBuildCacheGc(generation: number): void {
+    if (this.#startupBuildCacheGcGeneration === generation) return;
+    this.#startupBuildCacheGcGeneration = generation;
+    void (async() => {
+      const startedAt = Date.now();
+      try {
+        // Agent builds use the guest Docker CLI. Avoid pruning while one is active.
+        const building = await this.execCommand({ capture: true, root: true }, 'sh', '-c',
+          'needle="docker"" build"; for p in /proc/[0-9]*/cmdline; do cmd=$(tr "\\000" " " < "$p" 2>/dev/null) || continue; case "$cmd" in *"$needle"*) echo active; exit 0;; esac; done; exit 0');
+        if (building.trim()) {
+          console.log('[startup-perf] build-cache-gc skipped: agent container build active');
+          return;
+        }
+        let reclaimedBytes = 0;
+        for (const args of [
+          // buildx 0.30 (Docker 29 guest) takes --reserved-space; --keep-storage is gone.
+          ['builder', 'prune', '-f', '--reserved-space', '1GB', '--filter', 'until=168h'],
+          ['image', 'prune', '-f'],
+        ]) {
+          const output = await this.execCommand({ capture: true, root: true }, 'sh', '-c',
+            'if command -v ionice >/dev/null 2>&1; then nice -n 19 ionice -c3 docker \"$@\"; else nice -n 19 docker \"$@\"; fi', 'sh', ...args);
+          const matches = [...output.matchAll(/Total(?: reclaimed space)?:\s*([0-9.]+)\s*(B|kB|KB|MB|GB)/gi)];
+          for (const [, amount, unit] of matches) {
+            const factor = ({ B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as Record<string, number>)[unit.toUpperCase()];
+            reclaimedBytes += Math.round(Number(amount) * factor);
+          }
+        }
+        console.log(`[startup-perf] build-cache-gc elapsed=${ Date.now() - startedAt }ms bytes-reclaimed=${ reclaimedBytes }`);
+      } catch (error) {
+        console.warn(`[startup-perf] build-cache-gc failed non-fatally after ${ Date.now() - startedAt }ms`, error);
+      }
+    })();
   }
 
   /**
@@ -959,11 +1000,22 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
+    // The DB images must exist in the guest before Compose is allowed to start
+    // these services; otherwise a fresh install can trigger a network pull.
+    await this.loadBundledImages(image => DATABASE_IMAGE_NAMES.has(image.name));
+    this.assertManagedServicesGeneration(generation);
+
+    // Start readiness gates early, alongside non-DB image import and proxy
+    // preparation. Keep the promise observed so a failed early start cannot
+    // become an unhandled rejection while those operations are in flight.
+    const databaseStart = this.startDatabaseServices(generation);
+    void databaseStart.catch(() => undefined);
+
     // Every service image (threat proxy included) must be in the guest before
     // the agent network/egress setup and compose; agents depend on the proxy.
     await this.progressTracker.action('Loading bundled container images', 40, async() => {
       t = Date.now();
-      await this.loadBundledImages(image => !image.onDemand);
+      await this.loadBundledImages(image => !image.onDemand && !DATABASE_IMAGE_NAMES.has(image.name));
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
     });
@@ -978,6 +1030,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
+      await databaseStart;
       await this.applySullaCompose(generation);
       console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
@@ -994,13 +1047,19 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
   }
 
+  private async startDatabaseServices(generation: number): Promise<void> {
+    this.assertManagedServicesGeneration(generation);
+    await this.execCommand({ root: true }, 'docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d', 'postgres', 'redis');
+    this.assertManagedServicesGeneration(generation);
+  }
+
 
   /**
    * Load the app's bundled images the guest does not have yet (first boot, or
    * after an app update shipped new ones). Without a bundle (development) this
    * does nothing and compose pulls as before.
    */
-  private async loadBundledImages(filter: (image: { onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
+  private async loadBundledImages(filter: (image: { name: string; onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
     const lock = currentBundledImageLock();
     const imagesDir = bundledImagesDir();
 

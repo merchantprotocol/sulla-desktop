@@ -7,6 +7,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -219,13 +220,31 @@ func adoptEarlyLayout() {
 // unmountDataDisk runs after the daemons stopped and the disks were synced.
 // If something still holds a file open (the agent log), the filesystem is
 // remounted read-only instead, which leaves it just as clean.
-func unmountDataDisk() {
+func unmountDataDisk() error {
 	for i := len(dataBinds) - 1; i >= 0; i-- {
-		_ = syscall.Unmount(dataBinds[i].target, 0)
+		started := time.Now()
+		err := syscall.Unmount(dataBinds[i].target, 0)
+		log.Printf("shutdown step=unmount-bind target=%s elapsed_ms=%d result=%s", dataBinds[i].target, time.Since(started).Milliseconds(), resultName(err))
 	}
+	started := time.Now()
 	if err := syscall.Unmount(dataMount, 0); err != nil {
-		_ = syscall.Mount("", dataMount, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+		remountErr := syscall.Mount("", dataMount, "", syscall.MS_REMOUNT|syscall.MS_RDONLY, "")
+		log.Printf("shutdown step=unmount-data elapsed_ms=%d result=failed err=%v", time.Since(started).Milliseconds(), err)
+		if remountErr != nil {
+			return fmt.Errorf("unmount data disk: %v; remount read-only: %w", err, remountErr)
+		}
+		log.Printf("shutdown step=remount-data-readonly elapsed_ms=%d result=clean", time.Since(started).Milliseconds())
+		return nil
 	}
+	log.Printf("shutdown step=unmount-data elapsed_ms=%d result=clean", time.Since(started).Milliseconds())
+	return nil
+}
+
+func resultName(err error) string {
+	if err == nil {
+		return "clean"
+	}
+	return "failed: " + err.Error()
 }
 
 // configureUser adds the account Desktop's files on the data disk belong to,

@@ -7,20 +7,36 @@ import { FunctionDefinitionModel, IntegrationDefinitionModel } from '../agent/da
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
 import { EXTENSION_HOOKS, ExtensionHookName, listExtensionHookAuditEvents, setExtensionHookGrant } from '../agent/extensions/HookRegistry';
 import { extensionUI, ExtensionUISlot } from '../agent/extensions/ExtensionUIRegistry';
+import { LocalExtensionMetadataReader } from '../agent/extensions/LocalExtensionMetadataReader';
+import { resolveAllIntegrationsDirs, resolveSullaFunctionsDir } from '../agent/utils/sullaPaths';
 
 import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 
 export interface ExtensionUiIpcDependencies {
+  /** Returns `notReady` while the DB is down; the permissions list passes `null` so callers can tell "not ready" from "none installed". */
   readGuard: { run<T>(label: string, read: () => Promise<T>, fallback: T): Promise<T> };
   /** Subscribe to hook audit events (lazy-loaded HookRegistry). */
   onHookAudit(listener: (event: { outcome: string }) => void): Promise<unknown>;
   /** Push to every open window. */
   broadcast(channel: string, payload: unknown): void;
+  /** Reads installed extensions from disk. Defaults to the sulla home and resources directories. */
+  localMetadata?: Pick<LocalExtensionMetadataReader, 'list'>;
 }
+
+type PermissionRows = Awaited<ReturnType<ExtensionUiIpcController['listPermissions']>>;
 
 /** extensions-ui:* and extension-permissions:* — extension UI slots and hook/integration grants. */
 export class ExtensionUiIpcController implements IpcController {
-  constructor(private readonly ipc: IpcRegistrar, private readonly deps: ExtensionUiIpcDependencies) {}
+  private readonly localMetadata: Pick<LocalExtensionMetadataReader, 'list'>;
+
+  constructor(private readonly ipc: IpcRegistrar, private readonly deps: ExtensionUiIpcDependencies) {
+    this.localMetadata = deps.localMetadata ?? new LocalExtensionMetadataReader({
+      functionsDirs:    [resolveSullaFunctionsDir()],
+      integrationsDirs: resolveAllIntegrationsDirs(),
+      listUi:           extensionId => extensionUI.list().filter(item => item.extensionId === extensionId),
+      logger:           { warn: message => console.warn(message) },
+    });
+  }
 
   async listPermissions() {
     const [functions, integrations, grants, integrationGrants, hiddenRailItems] = await Promise.all([
@@ -57,7 +73,10 @@ export class ExtensionUiIpcController implements IpcController {
       if (event.outcome === 'permission_denied') this.deps.broadcast('extension-permission-needed', event);
     });
     this.ipc.handle('extensions-ui:list', (_event, slot?: ExtensionUISlot) => extensionUI.list(slot));
-    this.ipc.handle('extension-permissions:list', () => this.deps.readGuard.run('extension-permissions:list', () => this.listPermissions(), []));
+    // Disk-only: paints the installed list before the DB is up. Grants arrive with extension-permissions:list.
+    this.ipc.handle('extension-permissions:local', () => this.localMetadata.list());
+    // null while the DB is down (not []), so the UI shows "available when Sulla finishes starting" instead of "none installed".
+    this.ipc.handle('extension-permissions:list', () => this.deps.readGuard.run<PermissionRows | null>('extension-permissions:list', () => this.listPermissions(), null));
     this.ipc.handle('extension-permissions:audit', () => listExtensionHookAuditEvents());
     this.ipc.handle('extension-permissions:set-hook', async(_event, input: { extensionId: string; hook: ExtensionHookName; granted: boolean }) => {
       if (!(input.hook in EXTENSION_HOOKS)) throw new Error(`Unknown extension hook: ${ input.hook }`);

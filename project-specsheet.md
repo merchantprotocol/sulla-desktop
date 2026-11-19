@@ -699,3 +699,9 @@ The recovery branch integrates the local chat, model routing, agent editor, File
 Worker account verification reads current vault metadata for an existing approved route. A temporary lookup failure uses the bounded wait, and a confirmed account change can move to another approved subscription. Files' use-case index sends the Desktop service credential only to its four system-area routes and uses a Files identity for ordinary reads and publishes. Vault theme updates follow the owning window. The dark Preferences background derives from the active theme's page token.
 
 The affected Vitest suites use `vitest.agent.config.mts`. Run the PostgreSQL and relay feature specs with disposable `SULLA_TEST_DATABASE_URL` and `SULLA_TEST_REDIS_URL` fixtures. Build the native Desktop bundle with `node scripts/ts-wrapper.js scripts/build.ts`. Before live acceptance, record the current tab IDs, saved model routing, and active work. Verify the same tab IDs and routing after launch, refresh the actual AI Models catalog, and check the default agent in a new chat.
+
+## Recovery fixes with isolated tab renderers
+
+The main shell owns the tab list. A hosted tab requests a new tab in its owning shell when a user opens a Supporting report or clicks Try in the agent editor. Supporting reports still resolve and verify their Files identity first. Try still selects the saved agent on a fresh chat. Hosted chat activity follows its owning window and resets when the renderer closes or crashes. The hosted Vault view keeps the existing readiness wait and uses its owning window's theme.
+
+Re-run the startup, internal tab, Vault, Supporting reports, and agent editor suites with the recovery regression set. Build in the PR checkout using the command above. Test hosted tabs with isolated data before loading a candidate into a user's Sulla instance.

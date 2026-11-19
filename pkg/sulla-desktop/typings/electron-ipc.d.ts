@@ -75,6 +75,9 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
+  'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
   'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
   'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -265,6 +268,18 @@ export interface IpcMainInvokeEvents {
   'threat-proxy:get-traffic-log': (request?: import('@pkg/main/threat-proxy').TrafficLogRequest) => Promise<{ entries: Record<string, any>[]; error?: string }>;
   'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
 
+  'conversation-servers:list': (orgId?: string) => import('@pkg/main/ConversationServersCloudClient').ConversationServerSummary[];
+  'conversation-servers:channels': (serverId: string) => import('@pkg/main/ConversationServersCloudClient').ConversationChannelSummary[];
+  'conversation-servers:members': (serverId: string) => { userId: string; role: string }[];
+  'conversation-servers:channel-preference': (input: { serverId: string; channelId: string }) => { level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel; preference: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; channelOverride: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; serverDefault: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel };
+  'conversation-servers:set-default': (input: { serverId: string; level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel }) => Record<string, unknown>;
+  'conversation-servers:set-channel-notification': (input: { serverId: string; channelId: string; level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null }) => Record<string, unknown>;
+  'conversation-servers:set-channel-override': (input: { serverId: string; channelId: string; level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null }) => Record<string, unknown>;
+  'conversation-servers:messages': (input: { serverId: string; channelId: string; before?: number }) => { messages: import('@pkg/main/ConversationServersCloudClient').ConversationChannelMessage[]; nextBefore?: number | null; latestSeq?: number };
+  'conversation-servers:send-message': (input: { serverId: string; channelId: string; body: string }) => Record<string, unknown>;
+  'conversation-servers:read': (input: { serverId: string; channelId: string; seq: number }) => Record<string, unknown>;
+  'conversation-servers:unread': (serverId: string) => Record<string, unknown>;
+
   'org-conversations:organizations': () => readonly { orgId: string; name: string; slug?: string; memberCount: number }[];
   'org-conversations:directory': (org?: string) => { membership: { orgId: string; name: string }; directory: { people: readonly unknown[] } };
   'org-conversations:inbox': (org?: string) => { membership: { orgId: string; name: string }; messages: readonly import('@sulla/domain').MessageEnvelope['data'][] };
@@ -276,7 +291,10 @@ export interface IpcMainInvokeEvents {
   'org-conversations:send': (input: { orgId: string; conversationId: string; toUserIds: string[]; text: string }) => { messageId: string; message: import('@sulla/domain').MessageEnvelope['data'] };
   'use-case-recall:query': (text: string, options: Partial<import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallQueryOptions>) => import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallSuggestionResponse;
   'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
-  'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
+  /** null while the database is not reachable yet; reload on `database:available`. */
+  'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }> | null;
+  /** Installed extensions read from disk (no DB, no grants). Renders before extension-permissions:list. */
+  'extension-permissions:local': () => import('@pkg/agent/extensions/LocalExtensionMetadataReader').LocalExtensionPermissionRow[];
   'extension-permissions:audit': () => import('@pkg/agent/extensions/HookRegistry').HookAuditEvent[];
   'extension-permissions:set-hook': (input:{extensionId:string;hook:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName;granted:boolean}) => void;
   'extension-permissions:revoke-all': (extensionId?:string) => void;
@@ -388,6 +406,12 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
   'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
+  'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
+  'internal-tab-view:activate': (tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown) => void;
+  'internal-tab-view:bounds': (tabId: string, bounds: Electron.Rectangle) => void;
+  'internal-tab-view:visible': (tabId: string, visible: boolean) => void;
+  'internal-tab-view:close': (tabId: string) => void;
+  'internal-tab-view:reload': (tabId: string) => void;
   'browser-tab-view:reclaim-chrome-focus': () => boolean;
 
   // #region Bookmarks
@@ -471,7 +495,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
   'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; needsPassword?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; retryAfter?: number; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-settings:wait-for-backends': () => void;
+  'sulla-settings:wait-for-backends': (payload: { startupId: string; windowKey: string }) => void;
+  'sulla-startup:stage': (payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => boolean;
 
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
   'sulla-cloud-chat:get-link': (conversationId: string) => Record<string, any> | null;
@@ -1321,6 +1346,12 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'internal-tab-view:crashed': (tabId: string) => void;
+  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
+  'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
+  'internal-tab-view:loaded': (tabId: string) => void;
+  'conversation-servers:changed': (event: { channelId: string }) => void;
   'tabs:release': (transferId: string, tabId: string) => void;
   'tabs:release-finalize': (transferId: string, tabId: string) => void;
   'tabs:adopt': (transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number, screenY?: number) => void;

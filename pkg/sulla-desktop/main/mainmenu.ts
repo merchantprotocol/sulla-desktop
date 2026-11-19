@@ -16,6 +16,7 @@ import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openDocker, openPreferences, openUrlInApp } from '@pkg/window';
 import { ensureAgentWindow, getActiveAgentWindow, getAgentWindows, isAgentWebContents, newAgentWindow } from '@pkg/window/agentWindows';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { openProcessManager } from '@pkg/window/processManager';
 import { initSupportCenterIpc, openSupportCenter } from '@pkg/window/supportCenter';
 import { loopbackOrigin } from '@pkg/utils/instance';
@@ -62,7 +63,7 @@ ipcMain.on('app-state:set-routine-context', (event, ctx: RoutineContext) => {
   if (!isAgentWebContents(event.sender)) {
     return;
   }
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = agentWindowFromSender(event.sender);
 
   if (!win) {
     return;

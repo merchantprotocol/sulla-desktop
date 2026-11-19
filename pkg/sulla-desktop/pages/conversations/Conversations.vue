@@ -15,6 +15,7 @@ import ConvList from './components/ConvList.vue';
 import ConvNav from './components/ConvNav.vue';
 import ConvSide from './components/ConvSide.vue';
 import ConvThread from './components/ConvThread.vue';
+import ConversationServersPanel from './components/ConversationServersPanel.vue';
 
 type Org = { orgId: string; name: string; slug?: string; memberCount: number };
 type MessageData = ConversationMessageData;
@@ -35,6 +36,7 @@ const projection = new ConversationProjection();
 // The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
 const cloudStatus = ref<Record<string, any> | null>(null);
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
+const serversOpen = ref(false);
 let mounted = false, initializing = false, retryAttempt = 0, retryTimer: number | undefined;
 const retryDelays = [2_000, 5_000, 10_000, 20_000, 30_000];
 
@@ -71,12 +73,6 @@ const snapshot = computed<LiveSnapshot | null>(() => {
   const threadViews: ThreadView[] = threads.value.map(thread => views.thread(thread));
   const bodies: Record<string, MessageView[]> = {};
   for (const thread of threads.value) bodies[thread.id] = thread.messages.map(message => views.message(message));
-  const requests: RequestView[] = [];
-  for (const request of data.requests) {
-    const existing = requests.find(view => view.senderId === request.from.userId);
-    if (existing) { existing.count += 1; continue; }
-    requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
-  }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
   return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, invited: data.invited.map(entry => views.invitation(entry)), threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
 });
@@ -250,6 +246,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="cv-root">
+    <button class="cv-servers-toggle" aria-label="Open servers and channels" @click="serversOpen = true">Servers</button>
+    <ConversationServersPanel v-if="serversOpen" :org-id="activeOrg" :current-user-id="data.userId" :people="people" @close="serversOpen = false" />
     <div class="app">
       <ConvNav :loading="loading" />
       <ConvList />
@@ -265,3 +263,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style src="./conversations.css"></style>
+<style scoped>
+.cv-servers-toggle { position: absolute; z-index: 4; top: 9px; left: 9px; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--surface-2, #2b2f36); color: var(--text, #eee); cursor: pointer; }
+</style>

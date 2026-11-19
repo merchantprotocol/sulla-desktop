@@ -28,6 +28,8 @@ export interface VaultViewReservation {
 
 interface VaultWindowState {
   view: WebContentsView | null;
+  parentView: Electron.View | null;
+  hostCleanup: (() => void) | null;
   attached: boolean;
   isolatedSession: Electron.Session | null;
   ownerId: string | null;
@@ -51,7 +53,7 @@ export class VaultViewManager {
   private stateFor(window: Electron.BrowserWindow): VaultWindowState {
     let state = this.windows.get(window.id);
     if (!state) {
-      state = { view: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
+      state = { view: null, parentView: null, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
       this.windows.set(window.id, state);
       window.once('closed', () => { this.destroyWindow(window.id) });
     }
@@ -76,7 +78,15 @@ export class VaultViewManager {
     return [...this.windows.values()].some(state => state.ownerId !== null);
   }
 
-  async show(reservation: VaultViewReservation, window: Electron.BrowserWindow, url: string, bounds: Electron.Rectangle, theme?: unknown): Promise<boolean> {
+  async show(
+    reservation: VaultViewReservation,
+    window: Electron.BrowserWindow,
+    url: string,
+    bounds: Electron.Rectangle,
+    parentView?: Electron.View,
+    onParentDisposed?: (listener: () => void) => (() => void) | null,
+    theme?: unknown,
+  ): Promise<boolean> {
     if (!this.isCurrent(reservation)) return false;
     const target = this.validateUrl(url);
     const state = this.windows.get(reservation.windowId);
@@ -87,13 +97,22 @@ export class VaultViewManager {
       this.discardCreatedView(created);
       return false;
     }
+    const hostCleanup = parentView && onParentDisposed
+      ? onParentDisposed(() => this.hide(reservation.ownerId, window))
+      : null;
+    if (parentView && !hostCleanup) {
+      this.discardCreatedView(created);
+      return false;
+    }
     const { view } = created;
     state.view = view;
     state.isolatedSession = created.session;
     state.attachedOwnerId = reservation.ownerId;
+    state.parentView = parentView ?? null;
+    state.hostCleanup = hostCleanup;
     view.webContents.on('dom-ready', () => { void this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error)) });
     view.setBounds(this.validateBounds(bounds));
-    window.contentView.addChildView(view);
+    (parentView ?? window.contentView).addChildView(view);
     state.attached = true;
     // Defense in depth for ordinary OS capture paths. The stronger guarantee
     // is that this view is absent from every browser/agent automation registry.
@@ -154,7 +173,10 @@ export class VaultViewManager {
   }
 
   private releaseAttachedView(state: VaultWindowState): void {
-    if (!state.window.isDestroyed() && state.view && state.attached) state.window.contentView.removeChildView(state.view);
+    state.hostCleanup?.();
+    state.hostCleanup = null;
+    if (!state.window.isDestroyed() && state.view && state.attached) (state.parentView ?? state.window.contentView).removeChildView(state.view);
+    state.parentView = null;
     state.attached = false;
     if (!state.window.isDestroyed()) state.window.setContentProtection(false);
     if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();

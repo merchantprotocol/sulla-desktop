@@ -3,11 +3,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const f = vi.hoisted(() => ({
-  bootstrap: vi.fn(), setFallbackFilePath: vi.fn(), initialize: vi.fn(), reloadHooks: vi.fn(),
+  bootstrap: vi.fn(), readBootstrapFile: vi.fn(), setStartupTelemetry: vi.fn(), setFallbackFilePath: vi.fn(), initialize: vi.fn(), reloadHooks: vi.fn(),
   log: vi.fn(), error: vi.fn(),
 }));
-vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { bootstrap: f.bootstrap, setFallbackFilePath: f.setFallbackFilePath } }));
-vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: f.initialize }) }));
+vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { bootstrap: f.bootstrap, readBootstrapFile: f.readBootstrapFile, setFallbackFilePath: f.setFallbackFilePath } }));
+vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: f.initialize, setStartupTelemetry: f.setStartupTelemetry }) }));
 vi.mock('@pkg/agent/extensions/ExtensionLoader', () => ({ reloadExtensionHooks: f.reloadHooks }));
 vi.mock('@pkg/utils/logging', () => ({ default: { sulla: { log: f.log, info: f.log, error: f.error, warn: vi.fn() } } }));
 
@@ -22,6 +22,7 @@ function deferred<T = void>() {
 /** IPC with the real channel names; the backends-ready signal is controlled by the test. */
 function ipc(backendsReady: Promise<void>) {
   const invoke = vi.fn((channel: string) => {
+    if (channel === 'sulla-startup:stage') return Promise.resolve();
     if (channel === 'get-user-data-path') return Promise.resolve('/tmp/sulla-user-data');
     if (channel === 'sulla-settings:wait-for-backends') return backendsReady;
     return Promise.reject(new Error(`unexpected channel ${ channel }`));

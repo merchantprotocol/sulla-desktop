@@ -502,7 +502,14 @@ let _workingMountCount = 0;
 function _onChatRunning(event: Event) {
   const { tabId, running } = (event as CustomEvent<{ tabId?: string; running?: boolean }>).detail ?? {};
 
-  if (!tabId) return;
+  if (tabId && typeof running === 'boolean') _setChatRunning(tabId, running);
+}
+
+function _onHostedChatRunning(_event: unknown, tabId: string, running: boolean) {
+  _setChatRunning(tabId, running);
+}
+
+function _setChatRunning(tabId: string, running: boolean) {
   const next = new Set(workingTabIds.value);
 
   if (running) next.add(tabId);
@@ -520,7 +527,10 @@ function _mountIpcListeners() {
     ipcRenderer.on('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
   }
-  if (_workingMountCount++ === 0) window.addEventListener('sulla:chat-running', _onChatRunning);
+  if (_workingMountCount++ === 0) {
+    window.addEventListener('sulla:chat-running', _onChatRunning);
+    ipcRenderer.on('internal-tab-view:chat-running', _onHostedChatRunning);
+  }
 }
 
 function _unmountIpcListeners() {
@@ -536,6 +546,7 @@ function _unmountIpcListeners() {
   if (--_workingMountCount <= 0) {
     _workingMountCount = 0;
     window.removeEventListener('sulla:chat-running', _onChatRunning);
+    ipcRenderer.removeListener('internal-tab-view:chat-running', _onHostedChatRunning);
   }
 }
 

@@ -48,6 +48,9 @@ import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
+import { agentWindowFromSender, isTrustedStartupSender } from '@pkg/window/agentWindowTrust';
+import { BROWSER_SESSION_PARTITION } from '@pkg/main/browserTabs/browserSession';
+import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 import { Help } from '@pkg/config/help';
 import * as settings from '@pkg/config/settings';
@@ -1299,7 +1302,8 @@ Electron.app.on('before-quit', async(event) => {
     })();
   }, SHUTDOWN_DEADLINE_MS);
 
-  forceExitTimer.unref(); // don't let this timer keep the process alive on its own
+  // Keep this referenced: otherwise the safety deadline cannot rescue a process
+  // whose remaining handles are all owned by Chromium/native teardown.
 
   // ── Helper: wrap a promise with a timeout ──
   const withTimeout = <T>(label: string, ms: number, promise: Promise<T>): Promise<T | void> => {
@@ -1455,24 +1459,58 @@ Electron.app.on('before-quit', async(event) => {
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();
     }
+    const exitStartedAt = Date.now();
     if (isRestartRequested()) {
       completeRestart();
+      console.log(`[Shutdown] phase=restart-handoff ms=${ Date.now() - exitStartedAt } result=started`);
     } else {
-      Electron.app.quit();
+      // Do not use app.quit() here: it performs another cancellable before-quit
+      // pass and waits for renderer/webContents teardown. All data-safe phases
+      // have completed, so release Chromium owners and bypass that wait.
+      // app.exit() skips will-quit and Chromium's storage flush, so do both
+      // first (bounded): will-quit stops the Files provider, the stranded
+      // scheduler and sleep prevention; localStorage holds window/tab layout.
+      const willQuitStartedAt = Date.now();
+      try {
+        await withTimeout('will-quit handlers', 3_000, (async() => {
+          const willQuitEvent = { preventDefault: () => undefined, defaultPrevented: false } as unknown as Electron.Event;
+          Electron.app.emit('will-quit', willQuitEvent);
+        })());
+        console.log(`[Shutdown] phase=will-quit.emit ms=${ Date.now() - willQuitStartedAt } result=ok`);
+      } catch (error) {
+        console.warn('[Shutdown] will-quit handlers failed:', error);
+      }
+      const flushStartedAt = Date.now();
+      await withTimeout('storage flush', 3_000, Promise.allSettled([
+        Promise.resolve(Electron.session.defaultSession.flushStorageData()),
+        Electron.session.defaultSession.cookies.flushStore(),
+        Electron.session.fromPartition('persist:sulla-browser').cookies.flushStore(),
+      ]));
+      console.log(`[Shutdown] phase=storage.flush ms=${ Date.now() - flushStartedAt } result=ok`);
+      const closeStartedAt = Date.now();
+      try {
+        const { InternalTabViewManager } = await import('@pkg/window/internalTabViewManager');
+        InternalTabViewManager.getInstance().destroyAll();
+        console.log(`[Shutdown] phase=internal-tab-views.destroyAll ms=${ Date.now() - closeStartedAt } result=ok`);
+      } catch (error) {
+        console.warn('[Shutdown] Internal tab view teardown failed:', error);
+        console.log(`[Shutdown] phase=internal-tab-views.destroyAll ms=${ Date.now() - closeStartedAt } result=error`);
+      }
+      const contentStartedAt = Date.now();
+      for (const contents of Electron.webContents.getAllWebContents()) {
+        if (!contents.isDestroyed()) {
+          try { contents.close({ waitForBeforeUnload: false }); } catch { /* already gone */ }
+        }
+      }
+      console.log(`[Shutdown] phase=webContents.close ms=${ Date.now() - contentStartedAt } result=ok`);
+      const windowsStartedAt = Date.now();
+      for (const win of Electron.BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) { try { win.destroy(); } catch { /* already closing */ } }
+      }
+      console.log(`[Shutdown] phase=BrowserWindows.destroy ms=${ Date.now() - windowsStartedAt } result=ok`);
+      console.log(`[Shutdown] phase=app.exit ms=${ Date.now() - exitStartedAt } result=started`);
+      Electron.app.exit(0);
     }
-
-    // Replace the overall deadline with a post-quit backstop.
-    // If app.quit() doesn't terminate the process within 15s (lingering
-    // handles from postgres/redis/k8s), force-exit cleanly.
-    clearTimeout(forceExitTimer);
-    const postQuitTimer = setTimeout(() => {
-      sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 15s — force-exiting' });
-      console.warn('[Shutdown] Post-quit backstop: process still alive after 15s — force-exiting');
-      if (isRestartRequested()) completeRestart();
-      else process.exit(0);
-    }, 15_000);
-
-    postQuitTimer.unref();
   }
 });
 
@@ -1949,8 +1987,44 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 
 // Renderer settings use their own model instance, but must not bootstrap until
 // the authoritative main-process lifecycle has observed both Postgres and Redis.
-ipcMainProxy.handle('sulla-settings:wait-for-backends', async() => {
-  await getServiceLifecycleManager().waitUntilStarted('database-manager', 3 * 60_000);
+const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'settings-ready-from-fallback', 'extensions-ready-from-local', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
+const trustedStartupSender = (event: Electron.IpcMainInvokeEvent, windowKey: string | undefined): boolean => {
+  // Internal tab-host renderers are trusted only through registered ownership;
+  // browser-tab session content and unknown renderers remain untrusted.
+  return isTrustedStartupSender(event.sender, windowKey, AppStartupTelemetry.startupId, Electron.session.fromPartition(BROWSER_SESSION_PARTITION));
+};
+
+ipcMainProxy.handle('sulla-startup:stage', (event, payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => {
+  if (!trustedStartupSender(event, payload?.windowKey) || payload?.startupId !== AppStartupTelemetry.startupId || !startupEvents.has(payload?.event) || !['start', 'end', 'failure'].includes(payload?.status) || !Number.isFinite(payload?.elapsedMs)) return false;
+  // The renderer's clock is a different process clock: log it under its own name and source so it is never mistaken for a main-process elapsedMs.
+  console.info(`[WindowBoot] ${ JSON.stringify({ startupId: payload.startupId, windowKey: payload.windowKey, event: payload.event, status: payload.status, timestamp: new Date().toISOString(), rendererElapsedMs: Math.round(payload.elapsedMs), elapsedSource: 'renderer' }) }`);
+  return true;
+});
+
+ipcMainProxy.handle('sulla-settings:wait-for-backends', async(event, payload: { startupId: string; windowKey: string }) => {
+  const startupId = payload?.startupId;
+  const windowKey = payload?.windowKey;
+  if (!trustedStartupSender(event, windowKey) || startupId !== AppStartupTelemetry.startupId) throw new Error('Untrusted startup readiness request');
+  // Monotonic main-process clock: performance.now() never jumps with wall-clock changes. Never subtract it from a renderer or other-process value.
+  const beganAt = performance.now();
+  const lifecycle = getServiceLifecycleManager();
+  const report = (name: string, status: string, attempts?: number) => console.info(`[WindowBoot] ${ JSON.stringify({ startupId, windowKey, event: name, status, timestamp: new Date().toISOString(), elapsedMs: Math.round(performance.now() - beganAt), elapsedSource: 'main', ...(attempts === undefined ? {} : { attempts }) }) }`);
+  const reportReadiness = (state: { name: string; status: string; attempts: number }) => {
+    if (['postgres', 'redis', 'database-manager'].includes(state.name)) report(`${ state.name }-readiness`, state.status, state.attempts);
+  };
+  lifecycle.serviceStatuses().forEach(reportReadiness);
+  const onServiceStatus = (state: { name: string; status: string; attempts: number }) => reportReadiness(state);
+  lifecycle.on('service:status', onServiceStatus);
+  report('database-manager-readiness', 'start');
+  try {
+    await lifecycle.waitUntilStarted('database-manager', 3 * 60_000);
+    report('database-manager-readiness', 'end');
+  } catch (error) {
+    report('database-manager-readiness', 'failure');
+    throw error;
+  } finally {
+    lifecycle.off('service:status', onServiceStatus);
+  }
 });
 
 // ── Capture Studio IPC ──────────────────────────────────────────────────
@@ -2145,7 +2219,7 @@ ipcMainProxy.on('show-logs', async(event) => {
   const error = await Electron.shell.openPath(paths.logs);
 
   if (error) {
-    const browserWindow = Electron.BrowserWindow.fromWebContents(event.sender);
+    const browserWindow = agentWindowFromSender(event.sender);
     const options: MessageBoxOptions = {
       message: error,
       type:    'error',

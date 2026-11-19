@@ -16,7 +16,15 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({
   },
 }));
 
-import { adoptTransferredTab, applyTransferAdoption, persistActiveTabId, releaseTransferredTab, shouldEnsureOneTab, shouldCloseAfterTransfer } from './useBrowserTabs';
+import { adoptTransferredTab, applyTransferAdoption, persistActiveTabId, releaseTransferredTab, shouldEnsureOneTab, shouldCloseAfterTransfer, shouldPersistTabList } from './useBrowserTabs';
+
+describe('tab-host persistence isolation', () => {
+  it('does not persist tab lists from hosted renderers', () => {
+    // risk: renderer-local state must never overwrite the shell-owned tab list
+    expect(shouldPersistTabList('?tabHost=1&tabId=one')).toBe(false);
+    expect(shouldPersistTabList('?windowKey=main')).toBe(true);
+  });
+});
 
 describe('early tab transfer adoption', () => {
   it('applies an adopted tab before acknowledging transfer readiness', () => {

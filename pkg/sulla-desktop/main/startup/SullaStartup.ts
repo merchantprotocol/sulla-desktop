@@ -6,6 +6,7 @@ import { AccountsIpc } from './AccountsIpc';
 import { ApplicationServiceRegistrations } from './ApplicationServiceRegistrations';
 import { BrowserTabCdpIpc } from './BrowserTabCdpIpc';
 import { BrowserTabViewIpc } from './BrowserTabViewIpc';
+import { InternalTabViewIpc } from './InternalTabViewIpc';
 import { CoreServiceRegistrations } from './CoreServiceRegistrations';
 import { DesktopServiceStartupHooks } from './DesktopServiceStartupHooks';
 import { DockerServicesSession } from './DockerServicesSession';
@@ -45,6 +46,7 @@ export class SullaStartup {
     new MainProcessBootstrapIpc(),
     new BrowserTabCdpIpc(),
     new BrowserTabViewIpc(),
+    new InternalTabViewIpc(),
     new AccountsIpc(),
     new VaultViewIpc(),
     new VaultKeyIpc(),

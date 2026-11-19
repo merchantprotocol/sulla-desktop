@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
+import { WindowBootTelemetry } from '@pkg/agent/startup/WindowBootTelemetry';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
@@ -15,23 +16,35 @@ interface WindowContextIpc {
 
 /** Renderer-side settings and extension hydration for a window. */
 export class WindowContextInitializer {
-  /** Start window hydration without making it a prerequisite for first paint. */
-  startForFirstPaint(): void {
-    const startedAt = Date.now();
-    console.info(`[WindowBoot] window context hydration started at ${ startedAt }`);
-    void this.initialize().then(() => {
-      console.info(`[WindowBoot] window context hydration finished after ${ Date.now() - startedAt }ms`);
-    }).catch((error: unknown) => console.error('[WindowBoot] window context hydration failed:', error));
-  }
+  private boot?: WindowBootTelemetry;
+  private hydration?: Promise<void>;
 
   constructor(private readonly ipc: () => WindowContextIpc = () => require('electron').ipcRenderer) {}
 
+  // The main process constructs this class too. Only the renderer reads its URL
+  // when it starts hydration.
+  private get telemetry(): WindowBootTelemetry {
+    if (!this.boot) {
+      const query = new URLSearchParams(globalThis.window?.location.search ?? '');
+      const windowKey = query.get('windowKey') || 'main';
+      const startupId = query.get('startupId') || crypto.randomUUID();
+      this.boot = new WindowBootTelemetry(startupId, windowKey, (event, status, elapsedMs) =>
+        this.ipc().invoke('sulla-startup:stage', { startupId, windowKey, event, status, elapsedMs }));
+    }
+    return this.boot;
+  }
+
+  /** Start window hydration without making it a prerequisite for first paint. */
+  startForFirstPaint(): void {
+    void this.hydrateOnce();
+  }
+
+  /** Bound the wait for callers that mount after initialization. Hydration continues in the background. */
   async initialize(): Promise<void> {
-    const startup = this.hydrate();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        startup,
+        this.hydrateOnce(),
         new Promise<void>(resolve => { timer = setTimeout(resolve, 8_000) }),
       ]);
     } finally {
@@ -39,39 +52,61 @@ export class WindowContextInitializer {
     }
   }
 
+  private hydrateOnce(): Promise<void> {
+    this.hydration ??= this.hydrate().catch((error: unknown) => {
+      console.error('[WindowContext] Window context hydration failed:', error);
+    });
+    return this.hydration;
+  }
+
   private async hydrate(): Promise<void> {
-    const startedAt = Date.now();
-    const windowKey = new URLSearchParams(globalThis.window?.location.search ?? '').get('windowKey') || 'main';
+    const telemetry = this.telemetry;
+    const { startupId, windowKey } = telemetry;
+    const ipc = this.ipc();
+    telemetry.emit('window-context-hydration', 'start');
+    let stage = 'renderer-settings-bootstrap';
+    let settingsFailed = false;
+    telemetry.emit(stage, 'start');
     try {
-      // Get the user data path from main process
-      const ipcRenderer = this.ipc();
-      const userDataPath = await ipcRenderer.invoke('get-user-data-path');
-      console.info(`[WindowBoot] user-data IPC handshake received after ${ Date.now() - startedAt }ms`);
+      const userDataPath = await ipc.invoke('get-user-data-path');
+      telemetry.emit('user-data-path', 'end');
       const fallbackPath = require('path').join(userDataPath, 'sulla-settings-fallback.json');
       SullaSettingsModel.setFallbackFilePath(fallbackPath);
-      console.log('[WindowContext] Fallback path set to:', fallbackPath);
+      await SullaSettingsModel.readBootstrapFile();
+      telemetry.emit('settings-ready-from-fallback');
+      telemetry.emit(stage, 'end');
 
-      // Renderer settings share the main-process backends. Wait for the lifecycle
-      // readiness signal instead of racing cold Redis with a short retry budget.
-      // Every window awaits this before mounting, so only hold the mount for a
-      // short bound; on a cold boot finish bootstrapping in the background so
-      // the loading overlay can render while Redis/Postgres come up.
-      if (windowKey === 'main') {
-        await ipcRenderer.invoke('sulla-settings:wait-for-backends');
-        console.info(`[WindowBoot] settings backend handshake received after ${ Date.now() - startedAt }ms`);
-      }
+      stage = 'wait-for-backends';
+      telemetry.emit(stage, 'start');
+      await ipc.invoke('sulla-settings:wait-for-backends', { startupId, windowKey });
+      telemetry.emit(stage, 'end');
+
+      stage = 'settings-bootstrap';
+      telemetry.emit(stage, 'start');
       await SullaSettingsModel.bootstrap();
+      telemetry.emit(stage, 'end');
+      telemetry.emit('settings-ready');
     } catch (error) {
+      settingsFailed = true;
+      telemetry.emit(stage, 'failure');
       console.error('[WindowContext] Failed to initialize settings:', error);
     }
 
-    // Initialize extension service
+    stage = 'extension-initialization';
+    telemetry.emit(stage, 'start');
     try {
-      const extensionService = getExtensionService();
-      await extensionService.initialize();
+      const extensions = getExtensionService();
+      extensions.setStartupTelemetry(telemetry);
+      await extensions.initialize();
       await reloadExtensionHooks();
+      telemetry.emit(stage, 'end');
+      telemetry.emit('extensions-ready');
     } catch (error) {
+      telemetry.emit(stage, 'failure');
+      telemetry.emit('window-context-hydration', 'failure');
       console.error('[ExtensionService] Failed to initialize:', error);
+      return;
     }
+    telemetry.emit('window-context-hydration', settingsFailed ? 'failure' : 'end');
   }
 }

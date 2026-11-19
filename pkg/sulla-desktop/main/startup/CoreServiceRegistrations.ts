@@ -9,6 +9,7 @@ import { redisClient } from '@pkg/agent/database/RedisClient';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import Logging from '@pkg/utils/logging';
 
+import { AppStartupTelemetry } from './AppStartupTelemetry';
 import type { LifecycleRegistrationProvider } from './LifecycleRegistrationProvider';
 
 const console = Logging.sulla;
@@ -58,13 +59,13 @@ export class CoreServiceRegistrations implements LifecycleRegistrationProvider {
     // ── Connection readiness gates ─────────────────────────────────────────
 
     lifecycle.registerOnce('postgres', [],
-      async() => { await postgresClient.waitForReady() },
+      async() => { await postgresClient.waitForReady(undefined, undefined, (status, attempt, retrying, errorType) => AppStartupTelemetry.emit('postgres-readiness-attempt', status, 'main-process', { attempt, ...(retrying === undefined ? {} : { retrying }), ...(errorType ? { errorType } : {}) })) },
       async() => { await postgresClient.end() },
       { persistOnRestart: true },
     );
 
     lifecycle.registerOnce('redis', [],
-      async() => { await redisClient.waitForReady() },
+      async() => { await redisClient.waitForReady(undefined, undefined, (status, attempt, retrying, errorType) => AppStartupTelemetry.emit('redis-readiness-attempt', status, 'main-process', { attempt, ...(retrying === undefined ? {} : { retrying }), ...(errorType ? { errorType } : {}) })) },
       async() => { await redisClient.close() },
       { persistOnRestart: true },
     );

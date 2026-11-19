@@ -574,7 +574,8 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                         self.queue.async { self.flowSupported = object["flowControl"] as? Bool == true }
                         self.helloSeen = true; print("hello \(elapsed)")
                     } else if type == "event", let name = object["name"] as? String {
-                        print("event \(name) \(elapsed)")
+                        let detail = object["detail"] as? String ?? ""
+                        print("event \(name) \(elapsed)\(detail.isEmpty ? "" : " \(detail)")")
                         if name == "docker-ready", !self.dockerReady {
                             self.dockerReady = true; print("docker-ready \(elapsed)")
                         }
@@ -633,10 +634,11 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             if case .success(let connection) = result {
                 writeAll(connection.fileDescriptor, Data("{\"id\":1,\"method\":\"shutdown\"}\n".utf8))
             }
-            // The guest stops dockerd (up to 45 s, it stops containers first)
-            // and then containerd (up to 10 s) before it powers off.
-            self.queue.asyncAfter(deadline: .now() + 60) { [weak self] in
+            // Guest shutdown is bounded by 45 s for dockerd and 10 s for
+            // containerd, plus sync/unmount. Leave margin before hard-stop.
+            self.queue.asyncAfter(deadline: .now() + 75) { [weak self] in
                 guard let self, self.machine.state != .stopped else { return }
+                print("guest shutdown timed out after 75000ms; forcing VM stop")
                 self.forceStop()
             }
         }

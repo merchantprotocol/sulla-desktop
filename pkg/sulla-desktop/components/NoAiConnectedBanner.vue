@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -26,6 +26,7 @@ const visible = ref(false);
 // A locked vault hides every model account, so it must win over "connect a model".
 const vaultLocked = ref(false);
 const requestedIntegration = ref<string | null>(null);
+watch([visible, vaultLocked], ([isVisible, isLocked]) => window.dispatchEvent(new CustomEvent('sulla:no-ai-banner', { detail: isVisible || isLocked })), { immediate: true });
 let openedGuidedConnect = false;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -94,6 +95,7 @@ onBeforeUnmount(() => {
   ipcRenderer.removeListener('model-provider:state-changed', onModelChanged);
   ipcRenderer.removeListener('vault:logged-in' as any, onVaultUnlocked);
   window.removeEventListener('sulla:open-ai-connections', onOpenConnections);
+  window.dispatchEvent(new CustomEvent('sulla:no-ai-banner', { detail: false }));
 });
 </script>
 

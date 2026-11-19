@@ -17,6 +17,7 @@ class FakeRuntimeChildProcess extends EventEmitter {
   readonly stdoutStream = new PassThrough();
   readonly stderrStream = new PassThrough();
   #exitCode: number | null = null;
+  readonly killSignals: Array<NodeJS.Signals | undefined> = [];
 
   get process(): ChildProcess {
     return this as unknown as ChildProcess;
@@ -42,7 +43,8 @@ class FakeRuntimeChildProcess extends EventEmitter {
     return null;
   }
 
-  kill(): boolean {
+  kill(signal?: NodeJS.Signals): boolean {
+    this.killSignals.push(signal);
     this.#exitCode = 0;
     this.emit('exit', 0, null);
     return true;
@@ -60,7 +62,8 @@ class FakeRuntimeProcessSpawner implements RuntimeProcessSpawner {
     return this.child.process;
   }
 
-  async spawnFile(_binary: string, args: string[]): Promise<{ stdout: string }> {
+  async spawnFile(binary: string, args: string[]): Promise<{ stdout: string }> {
+    this.spawnCalls.push({ binary, args, options: {} });
     if (args[0] === 'stop') this.child.kill();
     return { stdout: '' };
   }
@@ -123,5 +126,23 @@ describe('NativeRuntime instance isolation', () => {
 
     expect(spawner.spawnCalls[0]?.options.env?.SULLA_RUNTIME_DIR).toMatch(/Sulla-firstrun-test[\\/]runtime$/);
     await runtime.stop();
+  });
+
+  it('waits for the graceful guest stop before considering the runtime stopped', async () => {
+    // risk: data integrity — force-killing before guest sync/unmount causes ext4 journal replay.
+    process.env.SULLA_INSTANCE = 'shutdown-test';
+    const spawner = new FakeRuntimeProcessSpawner();
+    const runtime = new NativeRuntime({
+      binary: '/tmp/sulla-runtime',
+      kernel: '/tmp/vmlinuz',
+      initrd: '/tmp/initramfs.img',
+      usrImage: '/tmp/usr.erofs',
+    } satisfies SullaRuntimeArtifacts, spawner);
+
+    await runtime.start({ dataDisk: '/tmp/data.img', cpus: 1, memoryMiB: 512, shares: [] });
+    await runtime.stop();
+
+    expect(spawner.spawnCalls.some(call => call.args[0] === 'stop')).toBe(true);
+    expect(spawner.child.killSignals).toEqual([undefined]);
   });
 });

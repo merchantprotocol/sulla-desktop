@@ -6,8 +6,11 @@
 import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
+import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
+import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
+
+export function shouldPersistTabList(search: string): boolean { return new URLSearchParams(search).get('tabHost') !== '1'; }
 
 export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'conversations' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
 
@@ -91,7 +94,7 @@ const storageKey = (name: string) => makeStorageKey(windowKey, name);
 try {
   // Namespace GC runs once per app session, in the primary window only. Other
   // windows carry a frozen knownWindowKeys list and would delete newer windows' namespaces.
-  if (windowKey === 'main') {
+  if (windowKey === 'main' && new URLSearchParams(window.location.search).get('tabHost') !== '1') {
     const runGc = shouldRunGc(windowKey, sessionStorage);
     const known = JSON.parse(new URLSearchParams(window.location.search).get('knownWindowKeys') || '["main"]') as string[];
     const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) || '');
@@ -207,7 +210,18 @@ const MAX_AGENT_TABS = 10;
 const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 
-const restoredTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
+const persistedTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
+// A tab host takes its own tab from the owner window (see withHostedTab).
+function hostedTabDescriptor(): { id: string | null; descriptor: unknown } {
+  const query = new URLSearchParams(window.location.search);
+  const id = query.get('tabHost') === '1' ? query.get('tabId') : null;
+  if (!id) return { id: null, descriptor: null };
+  try {
+    return { id, descriptor: ipcRenderer.sendSync('internal-tab-view:descriptor' as any, id) };
+  } catch { return { id, descriptor: null } }
+}
+const hostedTab = hostedTabDescriptor();
+const restoredTabs = withHostedTab(persistedTabs, hostedTab.id, hostedTab.descriptor);
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
 // Enforce the agent-tab cap. Called synchronously from the write paths that
@@ -245,7 +259,12 @@ function flushPersistTabs(): void {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
-  persistTabs([...tabs]);
+  const tabHostId = new URLSearchParams(window.location.search).get('tabId');
+  if (shouldPersistTabList(window.location.search)) persistTabs([...tabs]);
+  if (tabHostId) {
+    const tab = tabs.find(candidate => candidate.id === tabHostId);
+    if (tab) ipcRenderer.send('internal-tab-view:update' as any, tab.id, { ...tab });
+  }
 }
 
 watch(tabs, () => {
@@ -342,6 +361,7 @@ function loadClosedTabs(): ClosedTab[] {
 }
 
 function persistClosedTabs(list: ClosedTab[]): void {
+  if (!shouldPersistTabList(window.location.search)) return;
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_HISTORY)));
   } catch { /* best-effort */ }
@@ -367,6 +387,7 @@ function loadTabOrder(): string[] {
 }
 
 function persistTabOrder(order: string[]): void {
+  if (!shouldPersistTabList(window.location.search)) return;
   try {
     localStorage.setItem(ORDER_KEY, JSON.stringify(order));
   } catch { /* best-effort */ }
@@ -393,6 +414,7 @@ function loadPinnedTabs(): string[] {
 }
 
 function persistPinnedTabs(ids: string[]): void {
+  if (!shouldPersistTabList(window.location.search)) return;
   try {
     localStorage.setItem(PINNED_KEY, JSON.stringify(ids));
   } catch { /* best-effort */ }
@@ -426,6 +448,7 @@ export function getPersistedActiveTabId(): string | null {
 }
 
 export function persistActiveTabId(id: string | null): void {
+  if (!shouldPersistTabList(window.location.search)) return;
   try {
     if (id) {
       localStorage.setItem(ACTIVE_TAB_KEY, id);
@@ -799,6 +822,20 @@ export function useBrowserTabs() {
     clearClosedTabs,
     reorderTabs,
   };
+}
+
+/** The shell owns the tab list, including tabs opened from an isolated renderer. */
+export async function openWorkspaceTab(request: WorkspaceTabRequest): Promise<void> {
+  if (!shouldPersistTabList(window.location.search)) {
+    await ipcRenderer.invoke('internal-tab-view:open-workspace-tab', request);
+    return;
+  }
+  if (request.mode === 'paper') {
+    openDocumentTab(request.documentFile);
+    return;
+  }
+  const tab = useBrowserTabs().createTab('about:blank', request);
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }
 
 /** Open one durable Paper tab per Files identity and focus it. */

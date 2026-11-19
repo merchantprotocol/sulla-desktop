@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { MessageEnvelope, ParticipantAddress } from '@sulla/domain';
+import { ConversationServersCloudClient } from './ConversationServersCloudClient';
 import { OrgMembershipsCloudClient } from './OrgMembershipsCloudClient';
 import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 import { TeamInvitationsCloudClient } from './TeamInvitationsCloudClient';
@@ -24,6 +25,7 @@ export class OrgConversationsIpcController implements IpcController {
     private readonly backend: () => OrgConversationsBackend,
     private readonly memberships: Pick<OrgMembershipsCloudClient, 'list'> = new OrgMembershipsCloudClient(),
     private readonly invitations: Pick<TeamInvitationsCloudClient, 'listPending'> = new TeamInvitationsCloudClient(),
+    private readonly servers: Pick<ConversationServersCloudClient, 'list' | 'channels' | 'members' | 'channelPreference' | 'setServerDefault' | 'setChannelPreference' | 'setChannelOverride' | 'messages' | 'sendMessage' | 'markRead' | 'unread'> = new ConversationServersCloudClient(),
   ) {}
 
   /** Org roles and invitations are keyed by the org id, which the backend resolves for the requested org. */
@@ -33,6 +35,17 @@ export class OrgConversationsIpcController implements IpcController {
   }
 
   register(): void {
+    this.ipc.handle('conversation-servers:list', (_event, orgId?: string) => this.servers.list(orgId));
+    this.ipc.handle('conversation-servers:channels', (_event, serverId: string) => this.servers.channels(serverId));
+    this.ipc.handle('conversation-servers:members', (_event, serverId: string) => this.servers.members(serverId));
+    this.ipc.handle('conversation-servers:channel-preference', (_event, input: { serverId: string; channelId: string }) => this.servers.channelPreference(input.serverId, input.channelId));
+    this.ipc.handle('conversation-servers:set-default', (_event, input: { serverId: string; level: 'all' | 'mentions' | 'nothing' }) => this.servers.setServerDefault(input.serverId, input.level));
+    this.ipc.handle('conversation-servers:set-channel-notification', (_event, input: { serverId: string; channelId: string; level: 'all' | 'mentions' | 'nothing' | null }) => this.servers.setChannelPreference(input.serverId, input.channelId, input.level));
+    this.ipc.handle('conversation-servers:set-channel-override', (_event, input: { serverId: string; channelId: string; level: 'all' | 'mentions' | 'nothing' | null }) => this.servers.setChannelOverride(input.serverId, input.channelId, input.level));
+    this.ipc.handle('conversation-servers:messages', (_event, input: { serverId: string; channelId: string; before?: number }) => this.servers.messages(input.serverId, input.channelId, input.before));
+    this.ipc.handle('conversation-servers:send-message', (_event, input: { serverId: string; channelId: string; body: string }) => this.servers.sendMessage(input.serverId, input.channelId, input.body));
+    this.ipc.handle('conversation-servers:read', (_event, input: { serverId: string; channelId: string; seq: number }) => this.servers.markRead(input.serverId, input.channelId, input.seq));
+    this.ipc.handle('conversation-servers:unread', (_event, serverId: string) => this.servers.unread(serverId));
     this.ipc.handle('org-conversations:organizations', () => this.backend().memberOrganizations());
     this.ipc.handle('org-conversations:directory', (_event, org?: string) => this.backend().loadOrgDirectory(org));
     this.ipc.handle('org-conversations:inbox', async(_event, org?: string) => {

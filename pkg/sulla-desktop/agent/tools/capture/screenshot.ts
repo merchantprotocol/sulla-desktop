@@ -9,6 +9,7 @@ import path from 'node:path';
 import { desktopCapturer, screen as electronScreen } from 'electron';
 
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
+import { ScreenRecordingPermission } from '@pkg/utils/screenRecordingPermission';
 
 import { BaseTool, ToolResponse } from '../base';
 
@@ -22,6 +23,9 @@ export class ScreenshotWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const blocked = new ScreenRecordingPermission().blockedReason();
+    if (blocked) return { successBoolean: false, responseString: blocked };
+
     const sourceId = typeof input.sourceId === 'string' ? input.sourceId.trim() : '';
     const kind = sourceId.startsWith('window:') ? 'window'
       : sourceId.startsWith('screen:') ? 'screen'

@@ -179,24 +179,14 @@ describe('OrgMessengerFleet', () => {
     expect(delivered).toHaveLength(4);
   });
 
-  it('prompts for a held first-contact request in org B while org A is active, and delivers it into org B once allowed', async () => {
-    // risk: consent — first contact in a non-active org is never surfaced or is delivered without the human's choice
-    const { host, delivered, prompts, identity, fleet } = setup([ACME, BETA], envelope => envelope.data.orgId === BETA.orgId && envelope.data.from.userId === 'user-9' ? 'held' : 'accepted');
+  it('never prompts for a held contact request; same-org admission is handled by the host policy', async () => {
+    const { host, delivered, prompts, fleet } = setup([ACME, BETA], envelope => envelope.data.orgId === BETA.orgId && envelope.data.from.userId === 'user-9' ? 'held' : 'accepted');
     fleets.push(fleet);
-    identity.active = ACME.orgId;
     await host.submit(incoming('held-b', BETA.orgId, 'user-9'));
-
     await fleet.reconcile();
-    await vi.waitFor(() => expect(prompts).toHaveLength(1));
-    expect(prompts[0]).toMatchObject({ orgId: BETA.orgId, orgName: 'Beta', senderUserId: 'user-9' });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(prompts).toEqual([]);
     expect(delivered).toEqual([]);
-
-    await prompts[0].resolve('allow_always');
-    await vi.waitFor(() => {
-      fleet.onLiveEvent('conversations', BETA.orgId);
-      expect(delivered.map(entry => entry.envelope.ids.remoteMessageId)).toEqual(['held-b']);
-    });
-    expect(delivered[0].envelope.ids.orgId).toBe(BETA.orgId);
   });
 
   it('refuses to send to an org the human does not belong to, or with an envelope for another org', async () => {

@@ -14,7 +14,7 @@ import { DEFAULT_AGENT_EDITOR_ROUTING, nextAgentEditorTeam } from '@pkg/shared/a
 
 const f = vi.hoisted(() => ({
   invoke:    vi.fn(),
-  createTab: vi.fn((url: string, options: Record<string, unknown>) => ({ id: 'tab-try', url, ...options })),
+  openTab:   vi.fn().mockResolvedValue(undefined),
   agent:     null as any,
   routing:   null as any,
   listDown:  false,
@@ -22,7 +22,7 @@ const f = vi.hoisted(() => ({
 }));
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: f.invoke, on: vi.fn(), removeListener: vi.fn() } }));
 vi.mock('@pkg/composables/useDatabaseAvailableReload', () => ({ useDatabaseAvailableReload: () => {} }));
-vi.mock('@pkg/composables/useBrowserTabs', () => ({ useBrowserTabs: () => ({ createTab: f.createTab }) }));
+vi.mock('@pkg/composables/useBrowserTabs', () => ({ openWorkspaceTab: f.openTab }));
 
 const T1 = '2026-11-18T18:00:00.123Z';
 const providers = [
@@ -64,7 +64,7 @@ function baseAgent(patch: Record<string, unknown> = {}) {
 const nextStamp = () => `2026-11-18T18:00:0${ ++f.stamp }.000Z`;
 
 beforeEach(() => {
-  f.createTab.mockClear(); f.listDown = false; f.stamp = 0;
+  f.openTab.mockClear(); f.listDown = false; f.stamp = 0;
   f.agent = baseAgent();
   f.routing = { workers: [{ id: 'agent-1', slug: 'reviewer' }], workerBindings: {}, providers: structuredClone(providers), agentsList: [], subconsciousList: [], classes: { frontier: [], standard: [], fast: [], coding: [], local: [] }, followProviderOrder: {}, neverUse: [] };
   f.invoke.mockReset();
@@ -122,7 +122,7 @@ describe('Try opens a chat on the saved agent slug', () => {
     const tryButton = button(wrapper, 'Try');
     expect(tryButton.attributes('disabled')).toBeUndefined();
     await tryButton.trigger('click');
-    expect(f.createTab).toHaveBeenCalledWith('about:blank', { mode: 'chat', title: 'QA Try · Chat', initialAgentId: 'qa-try' });
+    expect(f.openTab).toHaveBeenCalledWith({ mode: 'chat', title: 'QA Try · Chat', initialAgentId: 'qa-try' });
     wrapper.unmount();
   });
 

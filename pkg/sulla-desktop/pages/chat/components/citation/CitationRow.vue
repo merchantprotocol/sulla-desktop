@@ -59,7 +59,7 @@ import { computed, reactive } from 'vue';
 
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
 
-import { openDocumentTab, useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -70,7 +70,6 @@ const resolver = new SupportingReportResolver(ipcRenderer);
 const heading = computed(() => props.msg.sources.some(source => resolver.webUrl(source)) ? 'Sources and reports' : 'Supporting reports');
 const busy = reactive(new Set<number>());
 const errors = reactive<Record<number, string>>({});
-const { createTab } = useBrowserTabs();
 
 async function open(source: CitationMessage['sources'][number]): Promise<void> {
   if (busy.has(source.num)) return;
@@ -78,11 +77,8 @@ async function open(source: CitationMessage['sources'][number]): Promise<void> {
   try {
     const file = await resolver.file(source);
     await resolver.verify(file);
-    if (supportsDocumentEditor(file.path)) openDocumentTab(file);
-    else {
-      const tab = createTab('about:blank', { mode: 'files', title: source.title, filesNavigation: { fileId: file.fileId, path: file.path, section: 'detail' } });
-      window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
-    }
+    if (supportsDocumentEditor(file.path)) await openWorkspaceTab({ mode: 'paper', documentFile: file });
+    else await openWorkspaceTab({ mode: 'files', title: source.title, filesNavigation: { ...file, section: 'detail' } });
   } catch (error) { errors[source.num] = error instanceof Error ? error.message : 'The report could not be opened. Please retry.' } finally { busy.delete(source.num) }
 }
 </script>

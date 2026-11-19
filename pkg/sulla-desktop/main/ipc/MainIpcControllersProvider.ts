@@ -19,6 +19,7 @@ import { IntegrationGrantIpcController, IntegrationGrantPackageStore } from '../
 import { getIpcMainProxy } from '../ipcMain';
 import { MessageBusIpcController } from '../messageBusIpc';
 import { awaitDatabaseReady } from '../dbBootGate';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { ModelDefaultsIpcController } from '../modelDefaultsIpc';
 import { ModelRoutingIpcController } from '../modelRoutingIpc';
 import { OrgConversationsIpcController } from '../orgConversationsIpc';
@@ -133,7 +134,7 @@ export class MainIpcControllersProvider {
       bookmarks:             bookmarkService as any,
       configureArtifactSync: () => configureChatArtifactBookmarkSync(getArtifactBookmarkSync()),
       listDockerLinks,
-      isAppWindow:           sender => !!BrowserWindow.fromWebContents(sender),
+      isAppWindow:           sender => !!agentWindowFromSender(sender) || !!BrowserWindow.fromWebContents(sender),
     });
     this.chatMessages = new ChatMessagesIpcController(raw, ConversationThreadStore as any, log);
     this.conversationMessages = new ConversationMessagesIpcController(raw, ConversationMessagesModel, log);

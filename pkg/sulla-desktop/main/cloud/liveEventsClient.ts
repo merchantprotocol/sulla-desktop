@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { BrowserWindow } from 'electron';
 import { CLOUD_RELAY_BASE } from './cloudEndpoints';
+import { ConversationServersLiveEventBridge } from './ConversationServersLiveEventBridge';
 import { getCurrentAccessToken, getCurrentUserId, isCloudSignedIn } from '../sullaCloudAuth';
 
 export interface LiveEvent { type:string; topic:string; id?:string; orgId?:string }
@@ -44,7 +46,9 @@ export class CloudLiveEventsClient {
   private clearInterval(timer:ReturnType<typeof setInterval>):void{(this.deps.clearInterval??clearInterval)(timer)}
 }
 
+const conversationEvents = new ConversationServersLiveEventBridge(channelId => {for(const win of BrowserWindow.getAllWindows()){try{win.webContents.send('conversation-servers:changed',{channelId})}catch{/* window gone */}}});
+
 export const CloudLiveEvents = new CloudLiveEventsClient({
   token:getCurrentAccessToken,userId:getCurrentUserId,signedIn:isCloudSignedIn,socket:url=>new WebSocket(url),
-  dispatch:event=>{if(event.topic==='files'&&event.id){void import('./filesSyncV1').then(({FilesSyncV1})=>FilesSyncV1.pullSoon(event.id!)).catch(()=>undefined)}else if(event.topic==='conversations'&&event.orgId){void import('@pkg/agent/services/BackendGraphWebSocketService').then(({getBackendGraphWebSocketService})=>getBackendGraphWebSocketService().onOrgLiveEvent(event.topic,event.orgId)).catch(()=>undefined)}}
+  dispatch:event=>{conversationEvents.dispatch(event);if(event.topic==='files'&&event.id){void import('./filesSyncV1').then(({FilesSyncV1})=>FilesSyncV1.pullSoon(event.id!)).catch(()=>undefined)}else if(event.topic==='conversations'&&event.orgId){void import('@pkg/agent/services/BackendGraphWebSocketService').then(({getBackendGraphWebSocketService})=>getBackendGraphWebSocketService().onOrgLiveEvent(event.topic,event.orgId)).catch(()=>undefined)}}
 });

@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CitationRow from '@pkg/pages/chat/components/citation/CitationRow.vue';
 import { SupportingReportResolver } from '@pkg/pages/chat/services/SupportingReportResolver';
 
-const f = vi.hoisted(() => ({ invoke: vi.fn(), openDocument: vi.fn(), createTab: vi.fn() }));
+const f = vi.hoisted(() => ({ invoke: vi.fn(), openTab: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: (...args: any[]) => f.invoke(...args) } }));
-vi.mock('@pkg/composables/useBrowserTabs', () => ({ openDocumentTab: (...args: any[]) => f.openDocument(...args), useBrowserTabs: () => ({ createTab: f.createTab }) }));
+vi.mock('@pkg/composables/useBrowserTabs', () => ({ openWorkspaceTab: f.openTab }));
 const source = { num: 1, title: 'Frontend safety audit', origin: 'Projects/qa/audit.md' };
 const file = { id: 'file-a', path: source.origin, collection_id: 'files' };
 beforeEach(() => {
@@ -66,7 +66,7 @@ describe('supporting report controls', () => {
     expect(wrapper.find('a[href="#"]').exists()).toBe(false);
     expect(f.invoke).not.toHaveBeenCalled();
     await wrapper.find('button').trigger('click'); await flushPromises();
-    expect(f.openDocument).toHaveBeenCalledWith({ fileId: file.id, path: file.path, collectionId: 'files' });
+    expect(f.openTab).toHaveBeenCalledWith({ mode: 'paper', documentFile: { fileId: file.id, path: file.path, collectionId: 'files' } });
     expect(f.invoke).toHaveBeenCalledWith('sulla-files:metadata', { fileId: file.id });
     wrapper.unmount();
   });
@@ -76,8 +76,7 @@ describe('supporting report controls', () => {
     const wrapper = mount(CitationRow, { props: { msg: { sources: [source] } as any } });
     await wrapper.find('button').trigger('click'); await flushPromises();
     expect(wrapper.find('[role=alert]').text()).toContain('Please retry');
-    expect(f.openDocument).not.toHaveBeenCalled();
-    expect(f.createTab).not.toHaveBeenCalled();
+    expect(f.openTab).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 });

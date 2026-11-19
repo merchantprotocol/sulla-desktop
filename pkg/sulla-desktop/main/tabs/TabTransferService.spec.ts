@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@pkg/window/internalTabViewManager', () => ({
+  InternalTabViewManager: { getInstance: () => ({ markTransferring: vi.fn(), moveToWindow: vi.fn() }) },
+}));
 
 import { TabTransferService } from './TabTransferService';
 

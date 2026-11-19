@@ -10,12 +10,13 @@
 import { startWindowContextHydration } from '@pkg/sulla';
 import '@pkg/composables/useBrowserTabs'; // register transfer IPC before renderer startup
 
-import { createApp } from 'vue';
+import { createApp, h } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 
 import './agent-tailwind.css';
 
 import AgentRouter from '../pages/AgentRouter.vue';
+import BrowserTab from '../pages/BrowserTab.vue';
 import { lazyScreen } from '../pages/agent/lazyScreen';
 
 import store from './store';
@@ -52,7 +53,24 @@ const router = createRouter({
   ],
 });
 
-const app = createApp(AgentRouter);
+const tabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
+const hostedTabId = new URLSearchParams(window.location.search).get('tabId') || '';
+if (tabHost && hostedTabId) {
+  window.addEventListener('sulla:chat-running', event => {
+    const detail = (event as CustomEvent<{ tabId: string; running: boolean }>).detail;
+    if (detail?.tabId === hostedTabId && typeof detail.running === 'boolean') {
+      ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.running);
+    }
+  });
+}
+// BrowserTab sizes itself from its parent (height: 100%). In the main window that
+// parent is AgentRouter's absolutely positioned tab layer; a tab host has no such
+// layer, so without this viewport-filling frame every page collapses to zero height.
+const TabHost = {
+  name:   'InternalTabHost',
+  render: () => h('div', { class: 'internal-tab-host', style: { position: 'fixed', inset: '0' } }, [h(BrowserTab, { tabId: hostedTabId, isVisible: true })]),
+};
+const app = createApp(tabHost ? TabHost : AgentRouter);
 
 // Live Agents (Studio) and the chat sub-agent drawer inject this client; this
 // window hosts both, so it must provide it (entry/index.ts does the same).

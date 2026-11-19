@@ -20,7 +20,8 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
 import Logging from '@pkg/utils/logging';
-import { getActiveAgentWindow, isAgentWebContents } from '@pkg/window/agentWindows';
+import { getActiveAgentWindow } from '@pkg/window/agentWindows';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 
@@ -62,7 +63,7 @@ function onShow(
   payload: { screenX: number; screenY: number; buttonWidth?: number; buttonHeight?: number; theme?: string },
 ): void {
   const { screenX, screenY, theme = DEFAULT_THEME_ID } = payload;
-  openerWindow = isAgentWebContents(event.sender) ? BrowserWindow.fromWebContents(event.sender) : null;
+  openerWindow = agentWindowFromSender(event.sender);
   const isDark = !theme.includes('light');
 
   console.log('[MoreMenu] onShow', { screenX, screenY, existingWindow: !!win, theme });

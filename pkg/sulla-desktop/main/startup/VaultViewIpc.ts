@@ -8,6 +8,7 @@ import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpc
 import { VaultIpcInputPolicy } from './VaultIpcInputPolicy';
 import { VaultStatusMonitor } from './VaultStatusMonitor';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
+import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
 
 /**
  * How long opening the vault view waits for the lifecycle 'vault' service. A cold
@@ -24,6 +25,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
   async register(ctx: MainProcessIpcContext): Promise<void> {
     const { ipc, window, vaultViewManager } = ctx;
     const tabViewManager = ctx.tabs();
+    const internalTabViews = InternalTabViewManager.getInstance();
     const policy = new VaultIpcInputPolicy(window);
 
     // ── Vault: key management IPC handlers (main-process only — safeStorage) ──
@@ -97,6 +99,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
       const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
       const ownerId = typeof hint?.ownerId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(hint.ownerId) ? hint.ownerId : undefined;
       if (!ownerId) throw new Error('Invalid vault view owner');
+      const tabHostView = internalTabViews.hostViewForSender(event.sender);
       const reservation = vaultViewManager.reserve(parentWindow, ownerId);
       try {
         await getServiceLifecycleManager().waitUntilStarted('vault', VAULT_VIEW_READY_TIMEOUT_MS);
@@ -137,8 +140,25 @@ export class VaultViewIpc implements MainProcessIpcStep {
         target.pathname = '/vault/popup.html';
         if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
       }
-      const opened = await vaultViewManager.show(reservation, parentWindow, target.toString(), bounds, hint?.theme);
-      if (!opened) return { state: 'cancelled' };
+      if (tabHostView && agentWindowFromSender(event.sender) !== parentWindow) {
+        vaultViewManager.hide(ownerId, parentWindow);
+        return { state: 'cancelled' };
+      }
+      const opened = await vaultViewManager.show(
+        reservation,
+        parentWindow,
+        target.toString(),
+        bounds,
+        tabHostView ?? undefined,
+        tabHostView ? listener => agentWindowFromSender(event.sender) === parentWindow
+          ? internalTabViews.onHostDisposed(event.sender, listener)
+          : null : undefined,
+        hint?.theme,
+      );
+      if (!opened) {
+        if (vaultViewManager.isCurrent(reservation)) vaultViewManager.hide(ownerId, parentWindow);
+        return { state: 'cancelled' };
+      }
       vaultStatus.startPolling();
       return { state: 'opened', expiresAt: humanSession.expiresAt };
     });

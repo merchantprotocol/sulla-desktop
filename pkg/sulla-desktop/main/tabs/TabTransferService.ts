@@ -5,6 +5,7 @@
 import type { BrowserWindow, IpcMain, IpcMainEvent, Screen } from 'electron';
 
 import type { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
+import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
 import type { AgentWindowOptions } from '@pkg/window/agentWindows';
 
 interface TransferPayload {
@@ -108,11 +109,14 @@ export class TabTransferService {
     if (state.descriptor.mode === 'browser' && !this.views.ownsTab(state.tabId, state.source)) return;
     const transferId = `${ Date.now() }-${ Math.random().toString(36).slice(2) }`;
     this.views.markTransferring(state.tabId, true);
+    InternalTabViewManager.getInstance().markTransferring(state.tabId, true);
     try {
       await this.sendAndWait('release', state.source, transferId, state.tabId);
       await this.waitForRendererReady(target);
       await this.sendAndWait('adopt', target, transferId, state.tabId, state.descriptor, state.transient, screenX, screenY);
       this.views.moveViewToWindow(state.tabId, target, { focus: true });
+      InternalTabViewManager.getInstance().moveToWindow(state.tabId, target);
+      InternalTabViewManager.getInstance().markTransferring(state.tabId, false);
       this.views.markTransferring(state.tabId, false);
       target.webContents.send('tabs:activate', transferId, state.tabId);
       if (this.getAgentWindowsByFocusOrder().includes(state.source) && state.source.isVisible()) {
@@ -129,6 +133,7 @@ export class TabTransferService {
           console.error('[TabTransfer] Could not restore tab to source window', rollbackError);
         }
       }
+      InternalTabViewManager.getInstance().markTransferring(state.tabId, false);
       this.views.markTransferring(state.tabId, false);
       console.error('[TabTransfer] Transfer failed', error);
     }

@@ -6,6 +6,7 @@ import Logging from '@pkg/utils/logging';
 
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 import { VaultIpcInputPolicy } from './VaultIpcInputPolicy';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 const console = Logging.sulla;
 
@@ -20,7 +21,7 @@ export class VaultTransferIpc implements MainProcessIpcStep {
     const policy = new VaultIpcInputPolicy(window);
 
     // ── Vault: export & import ─────────────────────────────────────────────────
-    const { dialog, BrowserWindow } = await import('electron');
+    const { dialog } = await import('electron');
     const fsPromises = await import('fs/promises');
 
     ipc.handle('vault:export', async(event: Electron.IpcMainInvokeEvent, data: { encrypted: boolean }) => {
@@ -69,7 +70,7 @@ export class VaultTransferIpc implements MainProcessIpcStep {
           defaultName = `sulla-vault-export-${ new Date().toISOString().slice(0, 10) }.json`;
         }
 
-        const senderWindow = BrowserWindow.fromWebContents(event.sender);
+        const senderWindow = agentWindowFromSender(event.sender);
         const result = await dialog.showSaveDialog(senderWindow!, {
           title:       data.encrypted ? 'Export Encrypted Vault Backup' : 'Export Vault (Plain Text)',
           defaultPath: defaultName,
