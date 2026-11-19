@@ -51,8 +51,26 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const response = await Promise.race([
-        fetch(MARKETPLACE_URL, { signal: controller.signal }),
+      const fetchAndParse = async(): Promise<MarketplaceEntry[]> => {
+        const response = await fetch(MARKETPLACE_URL, { signal: controller.signal });
+
+        if (!response.ok) {
+          console.error(`Failed to fetch marketplace data: ${ response.status } ${ response.statusText }`);
+
+          return cachedData ?? [];
+        }
+
+        const text = await response.text();
+        const parsed = yaml.parse(text) as Partial<RemoteIndex>;
+
+        cachedData = parsed.plugins ?? [];
+        cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+        console.log(`Fetched ${ cachedData.length } extensions from remote marketplace`);
+
+        return cachedData;
+      };
+      return await Promise.race([
+        fetchAndParse(),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => {
             controller.abort();
@@ -60,21 +78,6 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
           }, 10_000);
         }),
       ]);
-
-      if (!response.ok) {
-        console.error(`Failed to fetch marketplace data: ${ response.status } ${ response.statusText }`);
-
-        return cachedData ?? [];
-      }
-
-      const text = await response.text();
-      const parsed = yaml.parse(text) as Partial<RemoteIndex>;
-
-      cachedData = parsed.plugins ?? [];
-      cacheExpiresAt = Date.now() + CACHE_TTL_MS;
-      console.log(`Fetched ${ cachedData.length } extensions from remote marketplace`);
-
-      return cachedData;
     } catch (ex) {
       console.error(`Error fetching marketplace data: ${ ex }`);
 

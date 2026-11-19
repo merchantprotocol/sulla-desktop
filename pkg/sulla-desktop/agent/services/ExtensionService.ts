@@ -218,8 +218,26 @@ export class ExtensionService {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       this.startupTelemetry?.emit('marketplace-fetch', 'start');
       try {
-        const response = await Promise.race([
-          fetch(MARKETPLACE_URL, { signal: controller.signal }),
+        const fetchAndParse = async(): Promise<MarketplaceEntry[]> => {
+          const response = await fetch(MARKETPLACE_URL, { signal: controller.signal });
+
+          if (!response.ok) {
+            console.error(`[ExtensionService] Failed to fetch marketplace: ${ response.status }`);
+            this.startupTelemetry?.emit('marketplace-fetch', 'failure');
+            return this.cachedMarketplace ?? [];
+          }
+
+          const text = await response.text();
+          const parsed = yaml.parse(text) as { plugins?: MarketplaceEntry[] };
+
+          this.cachedMarketplace = parsed.plugins ?? [];
+          this.marketplaceCacheExpires = Date.now() + CACHE_TTL_MS;
+          this.startupTelemetry?.emit('marketplace-fetch', 'end');
+
+          return this.cachedMarketplace;
+        };
+        return await Promise.race([
+          fetchAndParse(),
           new Promise<never>((_, reject) => {
             timeout = setTimeout(() => {
               controller.abort();
@@ -227,21 +245,6 @@ export class ExtensionService {
             }, 10_000);
           }),
         ]);
-
-        if (!response.ok) {
-          console.error(`[ExtensionService] Failed to fetch marketplace: ${ response.status }`);
-          this.startupTelemetry?.emit('marketplace-fetch', 'failure');
-          return this.cachedMarketplace ?? [];
-        }
-
-        const text = await response.text();
-        const parsed = yaml.parse(text) as { plugins?: MarketplaceEntry[] };
-
-        this.cachedMarketplace = parsed.plugins ?? [];
-        this.marketplaceCacheExpires = Date.now() + CACHE_TTL_MS;
-        this.startupTelemetry?.emit('marketplace-fetch', 'end');
-
-        return this.cachedMarketplace;
       } catch {
         console.error('[ExtensionService] Error fetching marketplace');
         this.startupTelemetry?.emit('marketplace-fetch', 'failure');
