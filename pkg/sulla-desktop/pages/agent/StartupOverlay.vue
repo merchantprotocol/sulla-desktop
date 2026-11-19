@@ -7,7 +7,7 @@
 <template>
   <!-- Loading overlay while system boots -->
   <div
-    v-if="showOverlay || props.forceVisible"
+    v-if="showOverlay || props.forceVisible || props.mode === 'shutdown'"
     class="sulla-startup-overlay"
   >
     <div class="sulla-startup-column">
@@ -43,10 +43,10 @@
           </div>
           <div>
             <h2 class="sulla-startup-title">
-              Starting Sulla
+              {{ props.mode === 'shutdown' ? 'See you soon' : 'Starting Sulla' }}
             </h2>
             <p class="sulla-startup-subtitle">
-              Getting everything ready for you
+              {{ props.mode === 'shutdown' ? 'We are saving your work for later' : 'Getting everything ready for you' }}
             </p>
           </div>
         </div>
@@ -66,9 +66,9 @@
 
         <!-- Unified startup progress (backend + service lifecycle) -->
         <StartupProgressPanel
-          :snapshot="snapshot"
-          :fallback-percent="progressMax > 0 ? progressCurrent / progressMax * 100 : 0"
-          :fallback-label="progressDescription || 'Preparing the secure environment for Sulla'"
+          :snapshot="props.mode === 'shutdown' ? null : snapshot"
+          :fallback-percent="props.mode === 'shutdown' ? 0 : progressMax > 0 ? progressCurrent / progressMax * 100 : 0"
+          :fallback-label="props.mode === 'shutdown' ? 'Saving your work for later' : progressDescription || 'Preparing the secure environment for Sulla'"
         />
       </div>
     </div>
@@ -85,7 +85,7 @@ import { useStartupProgress } from './useStartupProgress';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
-const props = withDefaults(defineProps<{ forceVisible?: boolean }>(), { forceVisible: false });
+const props = withDefaults(defineProps<{ forceVisible?: boolean; mode?: 'startup' | 'shutdown' }>(), { forceVisible: false, mode: 'startup' });
 
 const {
   systemReady,

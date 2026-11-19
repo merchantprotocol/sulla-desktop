@@ -86,6 +86,7 @@ export class BrowserTabViewManager {
   private static instance: BrowserTabViewManager | undefined;
 
   private views = new Map<string, WebContentsView>();
+  private shuttingDown = false;
   /** The BrowserWindow whose contentView currently owns each native tab view. */
   private owners = new Map<string, Electron.BrowserWindow>();
   private trackedOwnerWindowIds = new Set<number>();
@@ -199,6 +200,23 @@ export class BrowserTabViewManager {
     }
 
     return BrowserTabViewManager.instance;
+  }
+
+  /** Detach browser page surfaces and prevent later reconciliation from covering shutdown chrome. */
+  beginShutdown(): void {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    for (const tabId of this.retryTimers.keys()) this.stopRetry(tabId);
+    if (this.healthMonitor) {
+      clearInterval(this.healthMonitor);
+      this.healthMonitor = null;
+    }
+    for (const [tabId, view] of this.views) {
+      const owner = this.owners.get(tabId);
+      if (!owner || owner.isDestroyed()) continue;
+      try { owner.contentView.removeChildView(view); } catch { /* already detached */ }
+      this.appliedPlacement.delete(view);
+    }
   }
 
   /**
@@ -473,6 +491,7 @@ export class BrowserTabViewManager {
 
   /** Move the existing native view without replacing its WebContents or navigation state. */
   moveViewToWindow(tabId: string, targetWin: Electron.BrowserWindow, options: { focus?: boolean } = {}): boolean {
+    if (this.shuttingDown) return false;
     const view = this.views.get(tabId);
     const oldOwner = this.ownerFor(tabId);
     if (!view || !oldOwner || targetWin.isDestroyed()) return false;
@@ -636,6 +655,7 @@ export class BrowserTabViewManager {
    * contentView.addChildView / removeChildView / setBounds for tab views.
    */
   private reconcileVisibility(ownerWindow?: Electron.BrowserWindow): number {
+    if (this.shuttingDown) return 0;
     const windows = ownerWindow ? [ownerWindow] : [...new Set(this.owners.values())];
     if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
     let totalTouched = 0;
@@ -902,6 +922,7 @@ export class BrowserTabViewManager {
   }
 
   private async recoverWedgedView(tabId: string, reason: string): Promise<void> {
+    if (this.shuttingDown) return;
     const health = this.viewHealth.get(tabId);
     const view = this.views.get(tabId);
     const mainWindow = this.ownerFor(tabId);
@@ -920,7 +941,7 @@ export class BrowserTabViewManager {
       mainWindow.contentView.removeChildView(view);
       await new Promise(resolve => setTimeout(resolve, 50));
 
-      if (this.views.get(tabId) !== view || this.focusedFor(mainWindow) !== tabId) return;
+      if (this.shuttingDown || this.views.get(tabId) !== view || this.focusedFor(mainWindow) !== tabId) return;
 
       const bounds = this.latestBounds.get(tabId);
       if (shouldRecreate) {

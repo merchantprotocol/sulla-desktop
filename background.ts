@@ -1281,6 +1281,26 @@ Electron.app.on('before-quit', async(event) => {
   }
   shuttingDown = true;
   event.preventDefault();
+  // Remove native page surfaces immediately so each agent renderer can paint
+  // the original StartupOverlay in shutdown mode during the slower phases.
+  const agentWindows = window.getAgentWindows();
+  for (const agentWindow of agentWindows) {
+    if (agentWindow.isDestroyed()) continue;
+    try {
+      for (const child of [...agentWindow.contentView.children]) {
+        try { agentWindow.contentView.removeChildView(child); } catch { /* already detached */ }
+      }
+      agentWindow.webContents.send('app:shutting-down');
+    } catch (error) {
+      console.warn(`[Shutdown] Could not prepare shutdown overlay for agent window ${ agentWindow.id }:`, error);
+    }
+  }
+  void import('@pkg/window/internalTabViewManager')
+    .then(({ InternalTabViewManager }) => InternalTabViewManager.getInstance().beginShutdown())
+    .catch(error => console.warn('[Shutdown] Internal tab view shutdown gate failed:', error));
+  void import('@pkg/window/browserTabViewManager')
+    .then(({ BrowserTabViewManager }) => BrowserTabViewManager.getInstance().beginShutdown())
+    .catch(error => console.warn('[Shutdown] Browser tab view shutdown gate failed:', error));
   agentExecutionReadiness.close();
   const agentDrain = import('@pkg/agent/services/BackendGraphWebSocketService').then(({ drainAgentExecution }) => drainAgentExecution());
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');

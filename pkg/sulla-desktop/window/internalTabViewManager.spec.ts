@@ -91,11 +91,30 @@ describe('InternalTabViewManager', () => {
     const instance = manager() as any;
     instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
     expect(owner.contentView.addChildView).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(5 * 60_000 - 1);
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     expect(owner.contentView.addChildView).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('readiness timed out'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('startup readiness timed out after 5 minutes'));
     warn.mockRestore();
     vi.useRealTimers();
+  });
+
+  it('detaches native tab views at shutdown and prevents them from reattaching', () => {
+    // risk: native tab pages can otherwise cover the shutdown overlay during app quit
+    const owner = ownerWindow(12);
+    const instance = manager() as any;
+    instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const tab = instance.tabs.get('one');
+    instance.markChromeReady(owner);
+    owner.contentView.addChildView.mockClear();
+
+    instance.beginShutdown();
+    expect(owner.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
+    instance.setVisible(owner, 'one', true);
+    instance.reload(owner, 'one');
+    instance.markChromeReady(owner);
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
   });
 
   it('keeps child views with a background tab and notifies only when its host is disposed', () => {

@@ -34,6 +34,8 @@ const managerWith = (tabId: string, view: any, owner: any) => {
   manager.transferringTabs = new Set<string>();
   manager.latestBounds = new Map([[tabId, { x: 12, y: 24, width: 640, height: 480 }]]);
   manager.appliedPlacement = new WeakMap();
+  manager.retryTimers = new Map();
+  manager.healthMonitor = null;
   manager.viewHealth = new Map([[tabId, { captureFailures: 0, stuckScrolls: 0, probeInFlight: false, recovering: false, lastRecoveryAt: 0, recoveryStage: null }]]);
   manager.lastActiveAt = new Map();
   manager.reconcileVisibility = vi.fn();
@@ -60,6 +62,21 @@ describe('BrowserTabViewManager window ownership', () => {
     expect(view.setBounds).toHaveBeenCalledWith({ x: -740, y: 24, width: 640, height: 480 });
     expect(webContents.loadURL).not.toHaveBeenCalled();
     expect(webContents.reload).not.toHaveBeenCalled();
+  });
+
+  it('detaches browser tabs at shutdown and blocks transfer or visibility reconciliation', () => {
+    // risk: native browser pages must not cover the shutdown overlay or reattach during shutdown
+    const owner = ownerWindow(20);
+    const target = ownerWindow(21);
+    const view = { webContents: { id: 95 }, setBounds: vi.fn() };
+    const manager = managerWith('tab-shutdown', view, owner);
+
+    manager.beginShutdown();
+    expect(owner.contentView.removeChildView).toHaveBeenCalledWith(view);
+    expect(manager.moveViewToWindow('tab-shutdown', target)).toBe(false);
+    delete manager.reconcileVisibility;
+    expect((BrowserTabViewManager.prototype as any).reconcileVisibility.call(manager)).toBe(0);
+    expect(target.contentView.addChildView).not.toHaveBeenCalled();
   });
 
   it('ignores stale bounds from the former window without changing the view placement', () => {
