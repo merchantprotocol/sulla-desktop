@@ -93,6 +93,11 @@ export class TabTransferService {
     const target = this.getAgentWindowsByFocusOrder().find(win => !win.isDestroyed() && contains(win.getBounds(), x, y));
     if (target === state.source) return;
     if (target) { await this.transfer({ ...state, transient: transient ?? state.transient }, target, x, y); return; }
+    if ((state.tabCount ?? 2) === 1) {
+      const bounds = state.source.getBounds();
+      state.source.setBounds({ ...bounds, x: Math.round(x - bounds.width / 2), y: Math.round(y - 24) });
+      return;
+    }
     const bounds = state.source.getBounds();
     const newWindow = this.openAgentWindow({ bounds: { ...bounds, x: Math.round(x - bounds.width / 2), y: Math.round(y - 24) }, initialTabs: 'adopt' });
     await this.transfer({ ...state, transient: transient ?? state.transient }, newWindow, x, y);
