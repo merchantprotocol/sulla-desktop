@@ -1309,6 +1309,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'conversation-servers:changed': (event: { channelId: string }) => void;
   'tabs:release': (transferId: string, tabId: string) => void;
   'tabs:release-finalize': (transferId: string, tabId: string) => void;
   'tabs:adopt': (transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number, screenY?: number) => void;
