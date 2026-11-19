@@ -9,7 +9,8 @@ import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({ default: { app: { getVersion: () => '9.9.9', isPackaged: false } } }));
+const electronApp = vi.hoisted(() => ({ getVersion: () => '9.9.9', isPackaged: false }));
+vi.mock('electron', () => ({ default: { app: electronApp } }));
 vi.mock('@pkg/utils/logging', () => ({ default: new Proxy({}, { get: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }) }) }));
 vi.mock('@pkg/utils/childProcess', () => ({ spawnFile: vi.fn() }));
 
@@ -34,7 +35,9 @@ describe('AppVersionService', () => {
     const runFile = vi.fn().mockResolvedValue({ stdout: 'v2.0.0-4-gabc\n' });
 
     expect(await new AppVersionService({ SULLA_MOCK_VERSION: '7.7.7' }, runFile).getVersion()).toBe('7.7.7');
-    expect(await new AppVersionService({ NODE_ENV: 'production' }, runFile).getVersion()).toBe('9.9.9');
+    electronApp.isPackaged = true;
+    expect(await new AppVersionService({}, runFile).getVersion()).toBe('9.9.9');
+    electronApp.isPackaged = false;
     expect(runFile).not.toHaveBeenCalled();
     expect(await new AppVersionService({}, runFile).getVersion()).toBe('v2.0.0-4-gabc');
   });
