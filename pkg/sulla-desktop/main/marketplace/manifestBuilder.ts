@@ -492,8 +492,10 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
     const portList = Array.isArray((svc)?.ports) ? (svc).ports : [];
     for (const p of portList) {
       const str = typeof p === 'string' ? p : typeof p === 'object' ? `${ p?.published ?? '' }` : String(p);
-      const hostPort = parseInt(String(str).split(':')[0], 10);
-      if (!isNaN(hostPort)) ports.push(hostPort);
+      const portSegments = String(str).split(':');
+      const firstSegment = portSegments[0];
+      const publishedPort = /^\d+$/.test(firstSegment) ? firstSegment : portSegments[1];
+      if (publishedPort && /^\d+$/.test(publishedPort)) ports.push(Number(publishedPort));
     }
   }
 
