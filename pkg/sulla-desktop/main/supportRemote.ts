@@ -209,12 +209,23 @@ export class RemoteSupportService {
     const clean = message.trim();
     if (!clean || clean.length > 4000) throw new Error('Describe the problem in 1 to 4,000 characters.');
     const deviceId = supportDeviceIdentity.getOrCreate(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
+    const token = crypto.randomBytes(32).toString('base64url');
     const result = await jsonCloud('POST', '/support/sessions', {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
-      deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(),
+      deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), token,
     });
-    stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: result.session.id, message: clean, requestedAt: result.session.createdAt || now(), activity: [] } });
-    broadcast();
+    const session = result.session;
+    const expiresAt = result.grant?.expiresAt;
+    if (!session?.id) throw new Error('Cloud did not return a support session.');
+    if (session.status !== 'active' || typeof expiresAt !== 'string') {
+      stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: session.id, message: clean, requestedAt: session.createdAt || now(), activity: [] } });
+      broadcast(); this.syncKeepAwake();
+      return this.state();
+    }
+    stateStore().update((state) => { state.remote = { status: 'connected', sessionId: session.id, message: clean, requestedAt: session.createdAt || now(), approvedAt: session.createdAt || now(), expiresAt, grant: { sessionId: session.id, token, deviceId, expiresAt }, activity: [] } });
+    broadcast(); this.syncKeepAwake();
+    try { await this.ensureHost() } catch (error) { console.warn('[RemoteSupport] initial host connection deferred:', error) }
+    void this.reportDeviceStatus().catch(error => console.debug('[RemoteSupport] initial device status report deferred:', error));
     return this.state();
   }
 
