@@ -13,10 +13,11 @@
  * Supports source switching via right-click context menus.
  */
 
-import { ref, inject, type Ref } from 'vue';
+import { ref, inject, reactive, type Ref } from 'vue';
 
 import { cameraEffectsKey } from '../effects/CameraEffectsComposition';
 import { CameraStreamService } from '../effects/CameraStreamService';
+import { ScreenStreamRegistry } from '../services/ScreenStreamRegistry';
 
 const { ipcRenderer } = require('electron');
 
@@ -46,6 +47,8 @@ export const QUALITY_PRESETS: Record<Exclude<QualityPreset, 'auto'>, QualityConf
 
 export function useMediaSources() {
   const screenStream: Ref<MediaStream | null> = ref(null);
+  const screenStreams = reactive<Record<string, MediaStream>>({});
+  const screenRegistry = new ScreenStreamRegistry();
   const cameraStream: Ref<MediaStream | null> = ref(null);
   const activeScreenName = ref('');
   const activeScreenSourceId = ref('');
@@ -68,15 +71,15 @@ export function useMediaSources() {
     if (options.autoFrame || options.soften || options.backgroundBlur) cameraEffectError.value = '';
     cameraEffectsRevision.value++;
   });
-  let rawScreenStream: MediaStream | null = null;
-  let cropTimer: ReturnType<typeof setInterval> | null = null;
+  const rawScreenStreams = new Map<string, MediaStream>();
+  const cropTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   /**
    * Acquire a specific screen/window source via desktopCapturer.
    * If no sourceId is given, picks the first available screen.
    */
-  async function acquireScreen(sourceId?: string, crop?: CropRegion): Promise<MediaStream> {
-    releaseScreen();
+  async function acquireScreen(sourceId?: string, crop?: CropRegion, sourceKey = 'screen'): Promise<MediaStream> {
+    releaseScreen(sourceKey);
 
     // If no source specified, pick the first screen
     if (!sourceId) {
@@ -113,7 +116,7 @@ export function useMediaSources() {
       throw new Error('Screen capture returned no video tracks');
     }
 
-    rawScreenStream = stream;
+    const rawStream = stream;
     if (crop && crop.width > 0 && crop.height > 0) {
       const video = document.createElement('video');
       video.srcObject = stream;
@@ -134,19 +137,20 @@ export function useMediaSources() {
       // A timer, not requestAnimationFrame: rAF stops while the studio window
       // is minimized or covered, which would freeze the recording.
       draw();
-      cropTimer = setInterval(draw, 1000 / 30);
+      cropTimers.set(sourceKey, setInterval(draw, 1000 / 30));
       stream = canvas.captureStream(30);
     }
-    screenStream.value = stream;
-    activeScreenSourceId.value = sourceId;
+    screenRegistry.set(sourceKey, stream);
+    screenStreams[sourceKey] = stream;
+    if (sourceKey === 'screen') screenStream.value = stream;
+    rawScreenStreams.set(sourceKey, rawStream);
+    if (sourceKey === 'screen') activeScreenSourceId.value = sourceId;
 
     const videoTrack = stream.getVideoTracks()[0];
-    activeScreenName.value = videoTrack?.label || 'Screen';
+    if (sourceKey === 'screen') activeScreenName.value = videoTrack?.label || 'Screen';
 
     videoTrack?.addEventListener('ended', () => {
-      screenStream.value = null;
-      activeScreenName.value = '';
-      activeScreenSourceId.value = '';
+      if (screenStreams[sourceKey] === stream) releaseScreen(sourceKey);
     });
 
     return stream;
@@ -159,19 +163,28 @@ export function useMediaSources() {
     return acquireScreen(sourceId);
   }
 
-  function releaseScreen() {
-    if (cropTimer !== null) {
-      clearInterval(cropTimer);
-      cropTimer = null;
-    }
-    if (screenStream.value) {
-      screenStream.value.getTracks().forEach(t => t.stop());
+  async function acquireScreenForSource(sourceKey: string, sourceId: string, crop?: CropRegion): Promise<MediaStream> {
+    return acquireScreen(sourceId, crop, sourceKey);
+  }
+
+  function releaseScreen(sourceKey = 'screen') {
+    const cropTimer = cropTimers.get(sourceKey);
+    if (cropTimer !== undefined) { clearInterval(cropTimer); cropTimers.delete(sourceKey); }
+    const stream = screenStreams[sourceKey];
+    screenRegistry.release(sourceKey);
+    delete screenStreams[sourceKey];
+    if (sourceKey === 'screen') {
       screenStream.value = null;
       activeScreenName.value = '';
       activeScreenSourceId.value = '';
     }
-    if (rawScreenStream && rawScreenStream !== screenStream.value) rawScreenStream.getTracks().forEach(t => t.stop());
-    rawScreenStream = null;
+    const raw = rawScreenStreams.get(sourceKey);
+    if (raw && raw !== stream) raw.getTracks().forEach(t => t.stop());
+    rawScreenStreams.delete(sourceKey);
+  }
+
+  function releaseAllScreens() {
+    for (const sourceKey of [...screenRegistry.entries().map(([key]) => key)]) releaseScreen(sourceKey);
   }
 
   /**
@@ -313,6 +326,7 @@ export function useMediaSources() {
     cameraEffectError, cameraEffectsRevision,
     camera,
     screenStream,
+    screenStreams,
     cameraStream,
     activeScreenName,
     activeScreenSourceId,
@@ -321,8 +335,10 @@ export function useMediaSources() {
     screenQuality,
     cameraQuality,
     acquireScreen,
+    acquireScreenForSource,
     switchScreen,
     releaseScreen,
+    releaseAllScreens,
     acquireCamera,
     switchCamera,
     releaseCamera,

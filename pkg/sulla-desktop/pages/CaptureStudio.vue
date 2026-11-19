@@ -61,6 +61,7 @@
         :primary-source="primarySource"
         :pip-source="pipSource"
         :audio-only-sources="audioOnlySources"
+        :channels="splitChannels"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
         @show-audio-menu="showAudioContextMenu"
@@ -509,6 +510,7 @@ const recording = ref(false);
 const captureLifecycle = new CaptureSessionLifecycle();
 // All entry points (UI, setup and RPC) share the parent teardown barrier.
 mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen);
+mediaSources.acquireScreenForSource = captureLifecycle.protect(mediaSources.acquireScreenForSource);
 mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
 mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
 mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
@@ -627,6 +629,15 @@ const canvasClass = computed(() => {
 });
 
 const videoSources = computed(() => sources.filter(s => s.isVideo && s.on));
+const splitChannels = computed(() => sources.filter(source => source.on).map(source => ({
+  id: source.id,
+  type: source.type,
+  name: source.name,
+  stream: source.type === 'screen' ? mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null)
+    : source.type === 'camera' ? mediaSources.cameraStream.value : null,
+  level: source.type === 'mic' ? audioDriver.micLevel.value
+    : source.type === 'system' ? (speakerCapture.level.value || audioDriver.speakerLevel.value) : 0,
+})));
 
 const primarySource = computed(() => sources.find(s => s.id === assign.primary && s.on) || null);
 const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) || null);
@@ -638,7 +649,7 @@ const primaryStream = ref<MediaStream | null>(null);
 const pipStream = ref<MediaStream | null>(null);
 
 // Both preview slots and recorder read the same published camera output.
-watch([primarySource, pipSource, mediaSources.screenStream, mediaSources.cameraStream],
+watch([primarySource, pipSource, mediaSources.screenStreams, mediaSources.screenStream, mediaSources.cameraStream],
   () => updateStreamAssignments(), { flush: 'sync' });
 
 function updateStreamAssignments() {
@@ -646,7 +657,7 @@ function updateStreamAssignments() {
   if (!primary) {
     primaryStream.value = null;
   } else if (primary.type === 'screen') {
-    primaryStream.value = mediaSources.screenStream.value;
+    primaryStream.value = mediaSources.screenStreams[primary.id] || (primary.id === 'screen' ? mediaSources.screenStream.value : null);
   } else if (primary.type === 'camera') {
     primaryStream.value = mediaSources.cameraStream.value;
   } else {
@@ -657,7 +668,7 @@ function updateStreamAssignments() {
   if (!pip) {
     pipStream.value = null;
   } else if (pip.type === 'screen') {
-    pipStream.value = mediaSources.screenStream.value;
+    pipStream.value = mediaSources.screenStreams[pip.id] || (pip.id === 'screen' ? mediaSources.screenStream.value : null);
   } else if (pip.type === 'camera') {
     pipStream.value = mediaSources.cameraStream.value;
   } else {
@@ -811,7 +822,7 @@ async function toggleSrc(src: Source) {
   if (src.on) {
     try {
       if (src.type === 'screen') {
-        await mediaSources.acquireScreen();
+        await mediaSources.acquireScreenForSource(src.id, deviceIdMap[src.name]);
         console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
         if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'camera') {
@@ -829,7 +840,7 @@ async function toggleSrc(src: Source) {
     }
   } else {
     if (src.type === 'screen') {
-      mediaSources.releaseScreen();
+      mediaSources.releaseScreen(src.id);
     } else if (src.type === 'camera') {
       await mediaSources.releaseCamera();
     } else if (src.type === 'mic') {
@@ -999,9 +1010,9 @@ async function toggleRecord() {
     // mic-pcm-socket (PCM) or mic-socket (WebM). Not a MediaRecorder stream.
 
     // Screen — video only, no mic audio muxed in
-    const screenVal = mediaSources.screenStream.value;
-    if (screenVal?.active) {
-      streams.push({ id: 'screen', type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
+    for (const source of sources.filter(candidate => candidate.type === 'screen' && candidate.on)) {
+      const screenVal = mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null);
+      if (screenVal?.active) streams.push({ id: source.id, type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
     }
 
     // Camera — video only, no mic audio muxed in
@@ -1265,6 +1276,11 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
   }
 
   if (isVideo) {
+    if (payload.type === 'screen') {
+      deviceIdMap[newSrc.name] = payload.deviceId;
+      try { await mediaSources.acquireScreenForSource(id, payload.deviceId); }
+      catch (e: any) { newSrc.on = false; console.error('[CaptureStudio] Failed to start added screen:', e.message); }
+    }
     autoAssign();
     updateStreamAssignments();
     if (currentLayout.value === 'screenonly' || currentLayout.value === 'camonly') {
@@ -1282,6 +1298,9 @@ function removeSource(id: string) {
     audioDriver.stopMic().catch(() => {});
   } else if (src?.type === 'system') {
     disableSystemAudio().catch(() => {});
+  } else if (src?.type === 'screen') {
+    mediaSources.releaseScreen(id);
+    delete deviceIdMap[src.name];
   }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
@@ -1915,6 +1934,11 @@ onMounted(async() => {
   // 2. Enumerate devices
   loadingMessage.value = 'Detecting devices...';
   try {
+    const screens = await mediaSources.listScreenSources();
+    if (screens.length) {
+      deviceOptions.screen = screens.map(screen => screen.name);
+      for (const screen of screens) deviceIdMap[screen.name] = screen.id;
+    }
     const { inputs } = await listAudioDevices();
     if (inputs.length > 0) {
       deviceOptions.mic = inputs.map(d => d.label);
@@ -1996,7 +2020,7 @@ async function cleanupCaptureStudio() {
   await recorder.stopSession();
 
   // Release all media streams (screen + camera)
-  mediaSources.releaseScreen();
+  mediaSources.releaseAllScreens();
   await mediaSources.camera.dispose();
   speakerCapture.releaseNative();
 
@@ -2159,8 +2183,16 @@ html, body {
 
 /* Layout: side-by-side */
 .canvas.layout-sidebyside { gap: 12px; }
-.canvas.layout-sidebyside .screen-preview { width: 44%; }
-.canvas.layout-sidebyside .sbs-camera { width: 44%; opacity: 1; transform: scale(1); pointer-events: auto; }
+.canvas.layout-sidebyside .screen-preview,
+.canvas.layout-sidebyside .sbs-camera { display: none; }
+.sbs-grid { width: min(96%, 1500px); height: min(90%, 950px); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 12px; align-content: center; }
+.sbs-tile { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; aspect-ratio: 16/9; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); box-shadow: 0 8px 40px rgba(0,0,0,.4); }
+.sbs-tile video { width: 100%; height: 100%; object-fit: contain; }
+.sbs-tile .placeholder { color: var(--text-dim); }
+.sbs-label { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 9px; border-radius: 6px; color: var(--text-primary); background: rgba(0,0,0,.65); font-size: 11px; }
+.sbs-audio-meter { display: flex; align-items: center; justify-content: center; gap: 3px; width: 76%; height: 58px; }
+.sbs-audio-meter span { width: 4px; min-height: 3px; border-radius: 3px; background: var(--status-success); opacity: .85; transition: height 80ms linear; }
+@media (max-width: 680px) { .sbs-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 7px; } .sbs-label { left: 6px; bottom: 6px; font-size: 9px; } }
 .canvas.layout-sidebyside .cam-container { opacity: 0; pointer-events: none; }
 
 /* Layout: screen only */
