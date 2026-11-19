@@ -36,10 +36,7 @@ describe('WindowContextInitializer first-paint startup', () => {
     const initializer = new WindowContextInitializer();
 
     expect(initializer.startForFirstPaint()).toBeUndefined();
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends');
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends'));
     expect(bootstrap).not.toHaveBeenCalled();
   });
 
@@ -54,13 +51,9 @@ describe('WindowContextInitializer first-paint startup', () => {
     reloadHooks.mockResolvedValue(undefined);
 
     new WindowContextInitializer().startForFirstPaint();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends'));
     signalReady();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(reloadHooks).toHaveBeenCalledOnce());
 
     expect(bootstrap).toHaveBeenCalledOnce();
     expect(initializeExtensions).toHaveBeenCalledOnce();
