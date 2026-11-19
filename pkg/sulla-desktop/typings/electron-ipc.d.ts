@@ -1334,6 +1334,7 @@ export interface IpcMainInvokeEvents {
 export interface IpcRendererEvents {
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
+  'internal-tab-view:loaded': (tabId: string) => void;
   'conversation-servers:changed': (event: { channelId: string }) => void;
   'tabs:release': (transferId: string, tabId: string) => void;
   'tabs:release-finalize': (transferId: string, tabId: string) => void;
