@@ -748,8 +748,10 @@ func (a *agent) shutdown() {
 		logStep("data-disk-unmount", step, "clean")
 	}
 	if !diskClean {
-		a.emit("shutdown-incomplete", "", "data disk neither unmounted nor remounted read-only; awaiting host timeout", "")
-		return
+		// Still power off: the data was synced above, and ext4 replays its
+		// journal safely at the next boot. Waiting for the host's force-stop
+		// would only stretch every quit to the full timeout.
+		a.emit("shutdown-incomplete", "", "data disk neither unmounted nor remounted read-only; powering off after sync", "")
 	}
 	if os.Getpid() == 1 {
 		step = time.Now()
