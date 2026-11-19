@@ -804,19 +804,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       try {
         // Agent builds use the guest Docker CLI. Avoid pruning while one is active.
         const building = await this.execCommand({ capture: true, root: true }, 'sh', '-c',
-          'needle="docker"" build"; for p in /proc/[0-9]*/cmdline; do cmd=$(tr "\\000" " " < "$p" 2>/dev/null) || continue; case "$cmd" in *"$needle"*) echo active; exit 0;; esac; done; exit 1');
+          'needle="docker"" build"; for p in /proc/[0-9]*/cmdline; do cmd=$(tr "\\000" " " < "$p" 2>/dev/null) || continue; case "$cmd" in *"$needle"*) echo active; exit 0;; esac; done; exit 0');
         if (building.trim()) {
           console.log('[startup-perf] build-cache-gc skipped: agent container build active');
           return;
         }
         let reclaimedBytes = 0;
         for (const args of [
-          ['builder', 'prune', '-f', '--keep-storage', '1GB', '--filter', 'until=168h'],
+          // buildx 0.30 (Docker 29 guest) takes --reserved-space; --keep-storage is gone.
+          ['builder', 'prune', '-f', '--reserved-space', '1GB', '--filter', 'until=168h'],
           ['image', 'prune', '-f'],
         ]) {
           const output = await this.execCommand({ capture: true, root: true }, 'sh', '-c',
             'if command -v ionice >/dev/null 2>&1; then nice -n 19 ionice -c3 docker \"$@\"; else nice -n 19 docker \"$@\"; fi', 'sh', ...args);
-          const matches = [...output.matchAll(/Total reclaimed space:\s*([0-9.]+)\s*(B|kB|KB|MB|GB)/gi)];
+          const matches = [...output.matchAll(/Total(?: reclaimed space)?:\s*([0-9.]+)\s*(B|kB|KB|MB|GB)/gi)];
           for (const [, amount, unit] of matches) {
             const factor = ({ B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as Record<string, number>)[unit.toUpperCase()];
             reclaimedBytes += Math.round(Number(amount) * factor);
