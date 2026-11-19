@@ -6,9 +6,8 @@
 /**
  * ask_user_question — pause the agent and ask the user one or more
  * multiple-choice questions. The chat transcript renders an interactive
- * card (ToolQuestion.vue); the tool BLOCKS on a Promise parked in
- * ApprovalService until the user picks options (or types a free-form
- * answer) — or the timeout fires.
+ * card in For You. The tool returns its saved receipt immediately; the
+ * actual answer is delivered later through the existing durable chat inbox.
  *
  * This is the single "pause and ask the human" tool. Use it when you need
  * the user to *choose* between concrete options, supply a small piece of
@@ -22,16 +21,13 @@ import { BaseTool, type InputSchemaDef, type ToolResponse } from '../base';
 
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import {
-  clampTimeout,
-  formatQuestionResolution,
-  MAX_TIMEOUT_MS,
-  MIN_TIMEOUT_MS,
+  formatQuestionReceipt,
   normalizeQuestions,
 } from './askUserQuestionShared';
 
 export class AskUserQuestionWorker extends BaseTool {
   name = 'ask_user_question';
-  description = 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use this whenever the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, supplying a missing detail, or getting a yes/no go-ahead (offer Approve / Deny options).';
+  description = 'Save persistent questions in For You and return a receipt immediately. Questions remain until answered or dismissed. Their saved answers arrive through the original chat mailbox. End the current turn; do not infer consent or ask again while the decision is pending. Resume decision-dependent work only after the answer arrives. Independent work can continue separately.';
 
   schemaDef: InputSchemaDef = {
     questions: {
@@ -62,7 +58,7 @@ export class AskUserQuestionWorker extends BaseTool {
     timeoutMs: {
       type:        'number',
       optional:    true,
-      description: `Timeout in milliseconds. Min ${ MIN_TIMEOUT_MS }, max ${ MAX_TIMEOUT_MS }, default 5 min. On timeout the tool resolves with no selection.`,
+      description: 'Legacy compatibility field. Questions no longer expire while waiting for the user.',
     },
   };
 
@@ -72,37 +68,12 @@ export class AskUserQuestionWorker extends BaseTool {
       return { successBoolean: false, responseString: error };
     }
 
-    // A task (run a command, set a secret) takes longer than a pick: wait the longest unless told otherwise.
-    const timeoutMs = clampTimeout(input?.timeoutMs ?? (questions.some(q => q.task) ? MAX_TIMEOUT_MS : undefined));
-    const { record, result } = await decisionService.request({
-      kind: 'question', title: questions[0].question, questions,
+    const { record, reused } = await decisionService.requestQuestion({
+      title: questions[0].question, questions,
       conversationId: this.state?.metadata?.threadId || '',
       channel: this.state?.metadata?.wsChannel || '',
-    }, timeoutMs, this.state?.metadata?.options?.abort?.signal);
-    const questionId = record.id;
-
-    // Emit the question card over the same WS pipeline chat messages use.
-    // Content is intentionally empty — the structured payload rides on
-    // `toolQuestion`. MessageDispatcher + PersonaAdapter turn this into a
-    // ToolQuestionMessage in the transcript.
-    const emitted = await this.emitMessage('', 'tool_question', {
-      toolQuestion: { questionId, questions },
-    });
-
-    if (!emitted) {
-      await decisionService.expire(questionId);
-      return {
-        successBoolean: false,
-        responseString: 'Failed to emit question card — WebSocket channel not ready. Make sure the tool is invoked inside an active chat turn.',
-      };
-    }
-
-    const outcome = await result;
-    const resolution = { status: outcome.status === 'answered' ? 'answered' as const : 'timed_out' as const, answers: outcome.answers };
-
-    return {
-      successBoolean: true,
-      responseString: formatQuestionResolution(questions, resolution, timeoutMs),
-    };
+    }, this.state?.metadata?.options?.abort?.signal);
+    if (!reused) await this.emitMessage('', 'tool_question', { toolQuestion: { questionId: record.id, questions } });
+    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? '')) };
   }
 }

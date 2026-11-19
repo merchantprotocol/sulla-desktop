@@ -291,7 +291,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
       >
         <RoutingIcon name="plus" />Add provider
       </button>
-      <small>{{ footHint }}</small>
+      <small v-if="footHint">{{ footHint }}</small>
     </div>
 
     <template v-if="connections">
@@ -300,7 +300,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
         class="mr-hint"
       >
         <RoutingIcon name="info" />
-        <span><b>Connect another provider</b> so Sulla can keep working when {{ providerName(state, connected[0].id) }} hits its limit, and so background agents don’t share its usage.</span>
+        <span>Add a fallback for {{ providerName(state, connected[0].id) }}.</span>
         <button
           type="button"
           class="btn sm pri"
@@ -378,6 +378,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
               aria-hidden="true"
             >{{ providerLetter(state, g.provider.id) }}</span>
             <b>{{ providerName(state, g.provider.id) }}</b>
+            <small class="mr-pk-access">{{ providerKind(state, g.provider.id) }}</small>
             <span
               class="mr-chip"
               :class="chipNoTime(g.provider.id).kind"
@@ -406,3 +407,12 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
     </div>
   </section>
 </template>
+
+<style scoped>
+.mr-pk-access {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  margin-left: auto;
+}
+</style>

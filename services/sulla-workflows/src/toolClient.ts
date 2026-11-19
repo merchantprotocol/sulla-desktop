@@ -6,6 +6,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { config } from './config.js';
+import { META_TOOL_CATEGORIES } from './metaToolCategories.js';
 
 function unwrap(value: any): any {
   let current = value;
@@ -25,9 +26,9 @@ function unwrap(value: any): any {
 export class ScopedToolClient {
   constructor(private readonly token: string) {}
 
-  async call(tool: string, input: Record<string, unknown>, category = 'meta'): Promise<any> {
+  async call(tool: string, input: Record<string, unknown>, category?: string): Promise<any> {
     const slash = tool.indexOf('/');
-    const resolvedCategory = slash > 0 ? tool.slice(0, slash) : category;
+    const resolvedCategory = slash > 0 ? tool.slice(0, slash) : category ?? META_TOOL_CATEGORIES[tool] ?? 'meta';
     const resolvedTool = slash > 0 ? tool.slice(slash + 1) : tool;
     const response = await fetch(`${ config.managerUrl }/internal/tools/${ encodeURIComponent(resolvedCategory) }/${ encodeURIComponent(resolvedTool) }`, {
       method: 'POST',

@@ -30,6 +30,7 @@
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 
 import type { AgentContractSpec } from './contract';
+import type { ResultTracking } from '../../../shared/agentResults/AgentResultCard';
 
 export type AgentJobVisibility = 'hidden' | 'tab';
 
@@ -53,13 +54,17 @@ export interface AgentJobResult {
   };
 }
 
-export interface AgentJobTask {
+export interface AgentJobTask extends ResultTracking {
   agentId:    string;
   label:      string;
   prompt:     string;
   /** Per-run routing overrides required to rehydrate this exact agent. */
+  workerModelRoute?:      import('../../languagemodels/workerModelBindings').WorkerModelRoute;
+  /** Exact worker CLI selection captured when this task was created; absent on legacy tasks. */
+  providerCliSnapshot?:   import('../../../shared/providerCliSelection').ProviderCliSnapshot;
   provider?: string;
   model?: string;
+  effort?:                string;
   runLocation?: 'vm' | 'container';
   workspacePath?: string;
   /** Restart recovery attempts already consumed. */

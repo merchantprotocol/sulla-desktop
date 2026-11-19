@@ -6,6 +6,8 @@
 */
 /* Shared by RoleLedger and its parts; each part references it as a scoped style. */
 .ld { padding: 0; overflow: visible; container-type: inline-size; }
+/* Container queries create a stacking context: raise the ledger while its menu overlaps the next card. */
+.ld.ld-picking { position: relative; z-index: 40; }
 .ac { color: var(--accent-primary); }
 .ld-short { display: none; }
 /* The settings pane is often under 1000px wide: keep each line on one row with short effort names. */

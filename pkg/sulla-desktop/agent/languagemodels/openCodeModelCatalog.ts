@@ -22,6 +22,8 @@ const AUTO: OpenCodeCatalogModel = {
 const CACHE_TTL_MS = 5 * 60_000;
 let cache: { at: number; models: OpenCodeCatalogModel[] } | null = null;
 
+export function clearOpenCodeModelCatalogCache(): void { cache = null; }
+
 export async function listOpenCodeModels(opts?: { force?: boolean }): Promise<OpenCodeCatalogModel[]> {
   if (!opts?.force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
   try {

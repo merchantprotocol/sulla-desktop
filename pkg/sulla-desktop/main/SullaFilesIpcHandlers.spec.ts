@@ -94,14 +94,29 @@ describe('Files settings handlers', () => {
     const cloudSync = { status: vi.fn(), setEnabled: vi.fn(), deleteCloudCopy: vi.fn(), cloudCollections: vi.fn(), restore: vi.fn(), restoreAll: vi.fn() };
     const client = fakeClient();
     const ipc = new FakeRegistrar();
+    const storageCleanup = {
+      inventory: vi.fn(() => Promise.resolve({ targets: [] })),
+      takePreparedPreview: vi.fn(() => undefined),
+      plan: vi.fn(() => Promise.resolve({ id: 'plan-1' })),
+      review: vi.fn(() => ({
+        id: 'plan-1',
+        targets: [{ id: 'target-1', displayName: 'merchant/repo · feature', path: '/mnt/data/sulla/runtime/agents/checkout' }],
+        blocked: [{ id: 'blocked-1', displayName: 'merchant/held · saved', path: '/mnt/data/sulla/runtime/agents/held', reason: 'Local stash is retained' }],
+        estimatedRecoverableBytes: 42,
+      })),
+      cancel: vi.fn(() => Promise.resolve({ status: 'cancelled' })),
+      execute: vi.fn(() => Promise.resolve({ status: 'completed' })),
+    };
+    const desktop = { ownerWindow: vi.fn(), showMessageBox: vi.fn(async(_window: Electron.BrowserWindow | undefined, _options: Electron.MessageBoxOptions) => ({ response: 1, checkboxChecked: false })) };
     const handlers = new SullaFilesIpcSettingsHandlers(new SullaFilesIpcApi(client as any), {
-      rootRegistry: vi.fn(), fileProvider: () => fileProvider as any, backups: vi.fn(), watcher: vi.fn(), cloudSync: () => cloudSync,
-    } as any, { ownerWindow: vi.fn() });
+      rootRegistry: vi.fn(), fileProvider: () => fileProvider as any, backups: vi.fn(), watcher: vi.fn(), cloudSync: () => cloudSync, storageCleanup: () => storageCleanup,
+    } as any, desktop as any);
     handlers.registerRoots(ipc);
     handlers.registerCloudBackup(ipc);
     handlers.registerBackups(ipc);
+    handlers.registerStorageCleanup(ipc);
 
-    return { ipc, fileProvider, cloudSync, client };
+    return { ipc, fileProvider, cloudSync, client, storageCleanup, desktop };
   }
 
   it('enables the File Provider only for an explicit true, always as the human', async() => {
@@ -132,6 +147,19 @@ describe('Files settings handlers', () => {
     await ipc.call('files-backups:run', 'dest/1');
     expect(client.backupJson).toHaveBeenCalledWith('/v1/local/backups/dest%2F1/run', { method: 'POST' });
     expect(client.json).not.toHaveBeenCalled();
+  });
+
+  it('keeps cancellation in the trusted main-process confirmation boundary', async() => {
+    const { ipc, storageCleanup, desktop } = harness();
+    await expect(ipc.call('files-storage-cleanup:confirm', { planId: 'plan-1' })).resolves.toEqual({ status: 'cancelled' });
+    expect(desktop.showMessageBox).toHaveBeenCalledWith(undefined, expect.objectContaining({ defaultId: 1, cancelId: 1 }));
+    expect(desktop.showMessageBox.mock.calls[0][1].detail).toContain('merchant/repo · feature\n/mnt/data/sulla/runtime/agents/checkout');
+    expect(desktop.showMessageBox.mock.calls[0][1].detail).toContain('merchant/held · saved · retained');
+    expect(storageCleanup.cancel).toHaveBeenCalledWith('plan-1');
+    expect(storageCleanup.execute).not.toHaveBeenCalled();
+    desktop.showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+    await expect(ipc.call('files-storage-cleanup:confirm', { planId: 'plan-1' })).resolves.toEqual({ status: 'completed' });
+    expect(storageCleanup.execute).toHaveBeenCalledWith('plan-1');
   });
 });
 

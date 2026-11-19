@@ -212,7 +212,7 @@ export class LLMRegistryImpl {
    * the role slots (primary / subconscious). Resolution failures also return
    * null rather than throwing so a bad agent config degrades to slot routing.
    */
-  async getAgentOverrideService(agentCfg?: { model?: string; provider?: string }): Promise<BaseLanguageModel | null> {
+  async getAgentOverrideService(agentCfg?: { model?: string; provider?: string; effort?: string }): Promise<BaseLanguageModel | null> {
     const model = typeof agentCfg?.model === 'string' ? agentCfg.model.trim() : '';
     const provider = typeof agentCfg?.provider === 'string' ? agentCfg.provider.trim() : '';
 
@@ -234,7 +234,7 @@ export class LLMRegistryImpl {
           : model)
         : undefined;
 
-      return await this.getServiceByProvider(effectiveProvider, modelOverride);
+      return await this.getServiceByProvider(effectiveProvider, modelOverride, agentCfg?.effort);
     } catch (err) {
       console.warn(`[LLMRegistry] Agent model override failed (provider="${ provider }", model="${ model }") — falling back to slot routing:`, err);
       return null;
@@ -426,7 +426,7 @@ export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
 export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();
 export const getSecondaryService = async() => await LLMRegistry.getSecondaryService();
 export const getSecondaryProviderId = async() => await LLMRegistry.getSecondaryProviderId();
-export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string; modelChoice?: import('./modelRoutingTypes').AgentModelChoice }) => {
+export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string; effort?: string; modelChoice?: import('./modelRoutingTypes').AgentModelChoice }) => {
   if (agentCfg?.modelChoice) {
     return (await modelRouteService.resolve('agents', agentCfg.modelChoice))?.service ?? null;
   }

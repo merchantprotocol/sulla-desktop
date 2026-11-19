@@ -53,6 +53,11 @@ export class AgentContainerRuntimeRegistry {
     if (this.has(jobId, threadId)) return true;
     return this.rebindPending ? undefined : false;
   }
+  /** Immutable cleanup/read-model snapshot; pending rehydration remains fail-closed. */
+  snapshot(): { ready: boolean; bindings: AgentContainerRuntimeBinding[] } {
+    return { ready: !this.rebindPending, bindings: Array.from(this.bindings.values()).map(binding => ({ ...binding })) };
+  }
+
   withRuntime<T>(binding: AgentContainerRuntimeBinding, action: () => T): T { return this.activeRuntime.run(binding, action); }
   has(jobId?: string, threadId?: string): boolean { return Array.from(this.bindings.values()).some(binding => (!jobId || binding.jobId === jobId) && (!threadId || binding.threadId === threadId)); }
   current(): AgentContainerRuntimeBinding | undefined { return this.activeRuntime.getStore(); }
@@ -82,6 +87,7 @@ export const awaitAgentContainerRuntimeRehydration = () => agentContainerRuntime
 export const withAgentContainerRuntime = <T>(binding: AgentContainerRuntimeBinding, action: () => T) => agentContainerRuntimeRegistry.withRuntime(binding, action);
 export const hasAgentContainerRuntime = (jobId?: string, threadId?: string) => agentContainerRuntimeRegistry.has(jobId, threadId);
 export const probeAgentContainerRuntime = (jobId?: string, threadId?: string) => agentContainerRuntimeRegistry.probe(jobId, threadId);
+export const snapshotAgentContainerRuntimes = () => agentContainerRuntimeRegistry.snapshot();
 export const currentAgentContainerRuntime = () => agentContainerRuntimeRegistry.current();
 export const registerAgentContainerRuntime = (binding: AgentContainerRuntimeBinding) => agentContainerRuntimeRegistry.register(binding);
 export const requireAgentContainerRuntime = (ctx: ToolExecutionContext) => agentContainerRuntimeRegistry.require(ctx);

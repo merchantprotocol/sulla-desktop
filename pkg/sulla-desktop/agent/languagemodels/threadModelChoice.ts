@@ -11,7 +11,7 @@ export function isAgentModelChoice(value: unknown): value is AgentModelChoice {
   if (!v || typeof v !== 'object') return false;
   if (v.mode === 'list') return true;
   if (v.mode === 'class') return MODEL_CLASSES.includes(v.class as any);
-  return v.mode === 'pin' && typeof v.provider === 'string' && !!v.provider.trim() && typeof v.model === 'string' && !!v.model.trim();
+  return (v.effort === undefined || (typeof v.effort === 'string' && /^[a-z]{2,10}$/.test(v.effort))) && v.mode === 'pin' && typeof v.provider === 'string' && !!v.provider.trim() && typeof v.model === 'string' && !!v.model.trim();
 }
 
 /**
@@ -43,9 +43,14 @@ export function providerForModelId(model: string): string {
   return '';
 }
 
-export function effectiveModelChoice(input: { provider?: unknown; model?: unknown; metadata?: unknown; agentChoice?: AgentModelChoice | null }): AgentModelChoice {
+export function effectiveModelChoice(input: { provider?: unknown; model?: unknown; effort?: unknown; metadata?: unknown; agentChoice?: AgentModelChoice | null }): AgentModelChoice {
   const model = String(input.model ?? '').trim();
   const provider = String(input.provider ?? '').trim() || providerForModelId(model);
-  if (provider && model && !SLOT_ALIASES.includes(model)) return { mode: 'pin', provider, model };
+  if (input.effort !== undefined) {
+    if (typeof input.effort !== 'string' || !/^[a-z]{2,10}$/.test(input.effort) || provider !== 'codex' || !model || SLOT_ALIASES.includes(model)) {
+      throw new Error('Per-job effort requires a specific Codex model and a valid effort level. Omit effort to keep the existing default.');
+    }
+  }
+  if (provider && model && !SLOT_ALIASES.includes(model)) return { mode: 'pin', provider, model, ...(input.effort !== undefined ? { effort: input.effort } : {}) };
   return threadModelChoice(input.metadata, isAgentModelChoice(input.agentChoice) ? input.agentChoice : { mode: 'list' });
 }

@@ -39,6 +39,17 @@
         box, one solid surface with no gaps for the transcript to show through.
       -->
       <div class="composer-card">
+        <div v-if="!side" class="composer-for-you">
+          <button
+            type="button"
+            :class="{ 'has-requests': forYou.openCount.value > 0 }" @click="forYou.open.value ? forYou.open.value = false : forYou.show()"
+          >
+            For You<span v-if="forYou.openCount.value"> · {{ forYou.openCount.value }}</span>
+          </button>
+          <div v-if="forYou.open.value" class="composer-for-you-panel">
+            <ForYouPanel />
+          </div>
+        </div>
         <!-- Kept mounted in the side dock (it also drives the tab dots); the tabs and lanes show its content there. -->
         <div class="dock-status">
           <ThreadStatusLine>
@@ -126,9 +137,17 @@
               <span>{{ useCases.strip.items.length }} {{ useCases.strip.items.length === 1 ? 'match' : 'matches' }}</span>
               <span class="usecase-sp" />
               <span v-if="useCases.strip.latencyMs" class="usecase-lat">{{ useCases.strip.latencyMs }} ms</span>
-              <button type="button" class="usecase-strip-x" tabindex="-1" aria-label="Hide suggestions" title="Hide until the topic changes (Esc)" @mousedown.prevent @click="useCases.dismiss()">×</button>
+              <button
+                type="button"
+                class="usecase-strip-x" tabindex="-1" aria-label="Hide suggestions" title="Hide until the topic changes (Esc)" @mousedown.prevent @click="useCases.dismiss()"
+              >
+                ×
+              </button>
             </div>
-            <ul id="usecase-list" class="usecase-list" role="listbox" aria-label="Suggested use cases" @mousedown.prevent>
+            <ul
+              id="usecase-list"
+              class="usecase-list" role="listbox" aria-label="Suggested use cases" @mousedown.prevent
+            >
               <li
                 v-for="(item, index) in useCases.strip.items"
                 :id="`usecase-option-${ index }`"
@@ -178,7 +197,10 @@
               <span class="model-caret">▾</span>
             </button>
             <span class="tool-spacer" />
-            <button class="usage-meter" type="button" title="Context usage" @click="controller.openModal('tokens')">
+            <button
+              class="usage-meter" type="button" title="Context usage"
+              @click="controller.openModal('tokens')"
+            >
               <span class="usage-ring" :style="{ '--usage': `${usagePercent}%` }" />
               <span>{{ usagePercent }}%</span>
             </button>
@@ -246,36 +268,36 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
-import ComposerInput      from './ComposerInput.vue';
-import { DockPositions } from '../../composables/useDockPosition';
-import ComposerMic        from './ComposerMic.vue';
-import ComposerAttach     from './ComposerAttach.vue';
-import ComposerVoicePanel from './ComposerVoicePanel.vue';
-import ComposerSend       from './ComposerSend.vue';
 import AttachmentTray     from './AttachmentTray.vue';
+import CommandPopover     from './CommandPopover.vue';
+import ComposerAttach     from './ComposerAttach.vue';
+import ComposerInput      from './ComposerInput.vue';
+import ComposerMic        from './ComposerMic.vue';
+import ComposerSend       from './ComposerSend.vue';
+import ComposerVoicePanel from './ComposerVoicePanel.vue';
+import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
+import HeartbeatControl   from './HeartbeatControl.vue';
 import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
-import HeartbeatControl   from './HeartbeatControl.vue';
-import CommandPopover     from './CommandPopover.vue';
-import ThreadStatusLine   from './ThreadStatusLine.vue';
 import ShelfPanel         from './ShelfPanel.vue';
-import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
+import ThreadStatusLine   from './ThreadStatusLine.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
+import { useArtifactMentions } from '../../composables/useArtifactMentions';
+import { ChatDecisions } from '../../composables/useChatDecisions';
+import { useCommandPopover } from '../../composables/useCommandPopover';
+import { DockPositions } from '../../composables/useDockPosition';
+import { useSelectionLabel } from '../../composables/useSelectionLabel';
+import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
-import { useCommandPopover } from '../../composables/useCommandPopover';
-import { useArtifactMentions } from '../../composables/useArtifactMentions';
-import { useSelectionLabel } from '../../composables/useSelectionLabel';
+import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
-import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
-import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
-
-import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
-
+import ForYouPanel from '../sidedock/ForYouPanel.vue';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const controller = useChatController();
@@ -336,6 +358,8 @@ const usagePercent = computed(() => {
 // ─── Right drawer (side dock): the status row's button opens or closes it ───
 const { position: dockPosition, setPosition } = DockPositions.use();
 const drawerOpen = computed(() => dockPosition.value === 'side');
+const side = computed(() => dockPosition.value === 'side');
+const forYou = ChatDecisions.useChatDecisions();
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -808,7 +832,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   color: var(--text-muted); margin-right: 4px;
 }
 
-
 .hidden-file-input {
   display: none;
 }
@@ -1084,3 +1107,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .dock-move.on { color: var(--accent); }
 </style>
 <style scoped src="../../styles/composer-field.css"></style>
+
+<style scoped>
+.composer-for-you{padding:8px 12px;border-bottom:1px solid var(--border-default)}.composer-for-you>button{font:inherit;font-size:12px;border:1px solid var(--border-strong);border-radius:7px;padding:6px 10px;background:transparent;color:var(--text-primary);cursor:pointer}.composer-for-you>button.has-requests{color:var(--status-warning);border-color:var(--status-warning)}.composer-for-you-panel{max-height:55vh;overflow:auto}
+</style>

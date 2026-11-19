@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { BrokeredModelCatalogService } from '../../../app/Services/BrokeredModelCatalogService';
-import { ProviderCatalogStrategyRegistry, OpenAiCatalogStrategy } from '../../../app/Services/BrokeredModelCatalogStrategies';
+import { ProviderCatalogStrategyRegistry, CodexCatalogStrategy, OpenAiCatalogStrategy } from '../../../app/Services/BrokeredModelCatalogStrategies';
 import { ExpiringRequestCache } from '../../../app/Services/ExpiringRequestCache';
 
 class FixedClock { now(): Date { return new Date(0); } }
@@ -54,5 +54,41 @@ describe('BrokeredModelCatalogService', () => {
     expect((await service.list('openai')).body).toBeNull();
     expect(calls).toBe(1);
     expect(warnings).toHaveLength(1);
+  });
+
+  it('does not retain a cold-start Codex failure after the broker becomes ready', async() => {
+    let calls = 0;
+    const service = new BrokeredModelCatalogService(
+      new ProviderCatalogStrategyRegistry([new CodexCatalogStrategy()]),
+      accounts,
+      { execute: async() => { calls += 1; if (calls === 1) throw new Error('vault not ready'); return { models: ['gpt-6.2-sol'] }; } },
+      new ExpiringRequestCache(new FixedClock(), 3),
+      { warn: () => undefined },
+    );
+
+    expect((await service.list('codex', undefined, undefined, lane => `${ lane.url }?client_version=0.170.0`)).body).toBeNull();
+    expect((await service.list('codex', undefined, undefined, lane => `${ lane.url }?client_version=0.170.0`)).body).toEqual({ models: ['gpt-6.2-sol'] });
+    expect(calls).toBe(2);
+  });
+
+  it('does not reuse a Codex catalog across connected account identities', async() => {
+    let calls = 0;
+    const service = new BrokeredModelCatalogService(
+      new ProviderCatalogStrategyRegistry([new CodexCatalogStrategy()]),
+      accounts,
+      { execute: request => { calls += 1; return Promise.resolve({ account: request.accountId }) } },
+      new ExpiringRequestCache(new FixedClock(), 3),
+      { warn: () => undefined },
+    );
+    const request = (accountId: string) => ({
+      providerId: 'codex',
+      accountId,
+      url: 'https://chatgpt.com/backend-api/codex/models?client_version=0.170.0',
+      injections: [],
+    });
+
+    await expect(service.fetch(request('account-a'))).resolves.toEqual({ account: 'account-a' });
+    await expect(service.fetch(request('account-b'))).resolves.toEqual({ account: 'account-b' });
+    expect(calls).toBe(2);
   });
 });

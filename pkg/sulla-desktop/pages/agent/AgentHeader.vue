@@ -72,14 +72,12 @@
               'tab-preview': tab.preview,
             },
           ]"
-          :title="tab.preview ? `${tab.label} — preview (double-click to keep open)` : undefined"
+          :aria-label="[tab.label, tab.activity && tab.activity !== 'idle' ? ACTIVITY_LABEL[tab.activity] : '', tab.pinned ? 'Pinned' : ''].filter(Boolean).join(' · ')"
           @pointerdown="onPointerDown($event, index)"
           @dragstart.prevent
           @dblclick="tab.browserId && promoteTab(tab.browserId)"
           @auxclick.prevent="onAuxClick($event, tab)"
           @contextmenu.prevent="onTabContextMenu($event, tab, index)"
-          @mouseenter="queueTabPeek($event, tab)"
-          @mouseleave="hideTabPeek"
         >
           <span class="tab-accent-bar" />
           <svg
@@ -127,6 +125,33 @@
               :title="ACTIVITY_LABEL[tab.activity]"
             />
           </span>
+          <span
+            v-if="tab.activity && tab.activity !== 'idle'"
+            class="tab-status"
+            :class="`tab-status-${tab.activity}`"
+            role="img"
+            :aria-label="ACTIVITY_LABEL[tab.activity]"
+          >
+            <svg
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <template v-if="tab.activity === 'working'">
+                <path d="M2 5v4" />
+                <path d="M6 2v7" />
+                <path d="M10 4v5" />
+              </template>
+              <path
+                v-else-if="tab.activity === 'waiting'"
+                d="M4 3v6M8 3v6"
+              />
+              <template v-else><path d="M6 1l5 5-5 5-5-5z" /><path d="M6 3.5v3M6 8.5v.1" /></template>
+            </svg>
+          </span>
           <input
             v-if="renamingTabId === tab.id"
             ref="renameInput"
@@ -166,11 +191,6 @@
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
-          <span
-            v-if="tab.working"
-            class="tab-working-streak"
-            aria-hidden="true"
-          />
         </router-link>
       </TransitionGroup>
       <button
@@ -208,20 +228,6 @@
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
-      <div
-        v-if="tabPeek"
-        class="tab-peek"
-        :class="{ 'tab-tooltip': tabPeek.pinned }"
-        :style="{ left: `${tabPeek.left}px` }"
-      >
-        <template v-if="tabPeek.pinned">
-          {{ tabPeek.title }} · pinned
-        </template>
-        <template v-else>
-          <span class="tab-peek-title">{{ tabPeek.title }}</span>
-          <span class="tab-peek-status">{{ tabPeek.status }}</span>
-        </template>
-      </div>
     </div>
     <div class="titlebar-controls relative flex shrink-0 justify-end items-center gap-4">
       <div
@@ -453,7 +459,7 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
@@ -568,40 +574,6 @@ const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems())
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
-const tabPeek = ref<{ left: number; pinned: boolean; status: string; title: string; tabId: string } | null>(null);
-let tabPeekTimer: ReturnType<typeof setTimeout> | null = null;
-
-function hideTabPeek() {
-  if (tabPeekTimer) clearTimeout(tabPeekTimer);
-  tabPeekTimer = null;
-  tabPeek.value = null;
-}
-
-function queueTabPeek(event: MouseEvent, tab: HeaderTab) {
-  hideTabPeek();
-  const target = event.currentTarget as HTMLElement;
-  const wrapper = target.closest<HTMLElement>('.tab-scroll-wrapper');
-  if (!wrapper) return;
-  const targetRect = target.getBoundingClientRect();
-  const wrapperRect = wrapper.getBoundingClientRect();
-  const width = tab.pinned ? 180 : 240;
-  const desiredLeft = targetRect.left - wrapperRect.left + (targetRect.width - width) / 2;
-  const left = Math.max(0, Math.min(desiredLeft, wrapperRect.width - width));
-
-  tabPeekTimer = setTimeout(() => {
-    tabPeekTimer = null;
-    if (!orderedTabs.value.some(candidate => candidate.id === tab.id)) return;
-    tabPeek.value = {
-      left,
-      pinned: tab.pinned,
-      status: tab.statusLine,
-      title:  tab.label,
-      tabId:  tab.id,
-    };
-    tabPeekTimer = null;
-  }, tab.pinned ? 250 : 500);
-}
-
 // On initial load, ensure at least one tab exists and handle route recovery
 {
   const tab = ensureOneTab();
@@ -837,11 +809,8 @@ onMounted(() => {
   nextTick(syncTabStrip);
 });
 onActivated(() => nextTick(syncTabStrip));
-// A kept-alive header that is hidden never gets mouseleave, so its preview would stay on screen.
-onDeactivated(hideTabPeek);
 onUnmounted(() => {
   ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
-  hideTabPeek();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -1027,7 +996,7 @@ const allTabsById = computed(() => {
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
     const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
-    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
+    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) ?? (working ? 'working' : undefined) : undefined;
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
@@ -1124,14 +1093,6 @@ watch(
 // The newly active tab's strip becomes visible after the parent re-renders;
 // carry the scroll offset over and keep the focused tab in view.
 watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
-// Sulla closes idle agent tabs by itself; a preview for a tab that disappeared under the
-// pointer never received mouseleave and floated over the page (2026-11-14). Also drop it
-// when the page changes.
-watch(() => orderedTabs.value.map(tab => tab.id), ids => {
-  if (tabPeek.value && !ids.includes(tabPeek.value.tabId)) hideTabPeek();
-});
-watch(() => route.path, hideTabPeek);
-
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
 
@@ -1541,29 +1502,35 @@ function handleTabContextMenuAction(
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
+.app-titlebar .tab-scroll-wrapper,
+.app-titlebar .tab-scroll-container {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
 </style>
 
 <style scoped>
-.tab-activity-dot {
-  position: absolute;
-  top: -2px;
-  right: -3px;
-  width: 7px;
-  height: 7px;
-  margin: 0;
-  flex: none;
-  border-radius: 50%;
+.app-titlebar .tab-working .tab-icon::after { display: none; }
+.tab-status { width: 12px; height: 14px; flex: 0 0 12px; display: inline-flex; align-items: center; justify-content: center; }
+.tab-status svg { display: block; width: 12px; height: 12px; }
+.tab-status-working { color: var(--accent); }
+.tab-status-working path {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: tab-activity-bars 1s ease-in-out infinite;
 }
-.tab-activity-working { background: var(--accent); animation: tab-activity-breathe 1.6s cubic-bezier(.22, 1, .36, 1) infinite; }
-.tab-activity-waiting { background: color-mix(in srgb, var(--accent) 55%, var(--text-muted)); }
-.tab-activity-you { background: var(--status-warning); }
-.tab-activity-stalled { background: var(--status-error); }
-@keyframes tab-activity-breathe {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); }
-  70% { box-shadow: 0 0 0 5px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
+.tab-status-working path:nth-child(2) { animation-delay: -0.65s; }
+.tab-status-working path:nth-child(3) { animation-delay: -0.3s; }
+@keyframes tab-activity-bars {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
+  50% { transform: scaleY(1); opacity: 1; }
 }
-@media (prefers-reduced-motion: reduce) { .tab-activity-working { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .tab-status-working path { animation: none; }
+}
+.tab-status-waiting { color: var(--text-muted); }
+.tab-status-you { color: var(--status-warning); }
+.tab-status-stalled { color: var(--status-error); }
 /* Phase 4: Scroll wrapper */
 .tab-scroll-wrapper {
   display: flex;
@@ -2279,5 +2246,14 @@ function handleTabContextMenuAction(
   }
 }
 
-
+/* Selection is a filled surface plus an inset underline; status stays beside the icon. */
+.app-titlebar .tab-item.tab-active,
+.app-titlebar .tab-item.tab-active-native {
+  background: color-mix(in srgb, var(--text-primary) 16%, var(--bg-surface));
+  color: var(--text-primary);
+  font-weight: 700;
+  box-shadow: inset 0 -3px 0 var(--accent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--border-default));
+}
+.app-titlebar .tab-item.tab-active .tab-label,
+.app-titlebar .tab-item.tab-active-native .tab-label { font-weight: 700; }
 </style>

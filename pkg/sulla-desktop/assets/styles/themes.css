@@ -36,3 +36,8 @@
   --accent-border: rgba(80, 150, 179, 0.45);
   --accent-hover: rgba(80, 150, 179, 0.08);
 }
+
+/* Dark themes use their page surface for shared content panels. */
+html.dark {
+  --bg-content: var(--bg-page);
+}

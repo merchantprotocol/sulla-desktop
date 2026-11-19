@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { resultActivity, type ResultActivity } from './resultActivity';
 import { blockedDetail, parkedActivity, quietDetail, runningDetail, waitTarget } from './threadActivity';
 import { WorkSteps } from './workSteps';
 
@@ -47,7 +48,7 @@ function kindOf(item: AgentResultItem): string {
  * Results by outcome and kind of work, newest first. A job can post more
  * than one card (a retry, a re-delivery); only its newest counts.
  */
-export function groupResults(messages: readonly Message[]): ResultGroups {
+export function groupResults(messages: readonly Message[], activity?: (item: AgentResultItem) => ResultActivity): ResultGroups {
   const pinned: ResultGroups['pinned'] = [];
   const latest = new Map<string, ResultEntry>();
   for (const message of messages) {
@@ -60,10 +61,8 @@ export function groupResults(messages: readonly Message[]): ResultGroups {
     }
   }
   const entries = [...latest.values()].reverse();
-  // A failure is settled once a later run of the same task finished (Sulla relaunches as a new job, e.g. "… (retry)").
-  const finishedAfter = (entry: ResultEntry) => entries.slice(0, entries.indexOf(entry))
-    .some(later => later.item.status === 'completed' && sameTask(later.item.label, entry.item.label));
-  const needsAction = entries.filter(entry => isFailure(entry.item) && !finishedAfter(entry));
+  const current = activity ?? ((item: AgentResultItem) => resultActivity(item, { rows: [], decisions: [], items: entries.map(entry => entry.item) }));
+  const needsAction = entries.filter(entry => isFailure(entry.item) && current(entry.item).kind !== 'completed');
   const rest = entries.filter(entry => !needsAction.includes(entry));
   const sections = [...KINDS, { key: 'other', title: 'Other results' }]
     .map(kind => ({ key: kind.key, title: kind.title, items: rest.filter(({ item }) => kindOf(item) === kind.key) }))
@@ -72,12 +71,6 @@ export function groupResults(messages: readonly Message[]): ResultGroups {
 }
 
 function isFailure(item: AgentResultItem): boolean { return item.status === 'blocked' || item.status === 'error' || item.tone === 'bad' }
-
-/** "Review · Astra #4350 re-review (retry 2)", "… (final)" and "Review · Astra #4350 re-review" are the same task. */
-function sameTask(a: string, b: string): boolean {
-  const key = (label: string) => label.toLowerCase().replace(/\s*\((?:retry|rerun|re-run|again|final|redo)(?:\s*\d+)?\)\s*$/, '').replace(/\s+/g, ' ').trim();
-  return key(a) === key(b);
-}
 
 /** Every result, flat, newest first (for search). */
 export function allResults(groups: ResultGroups): ResultEntry[] {

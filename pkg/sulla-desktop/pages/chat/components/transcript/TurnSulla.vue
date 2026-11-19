@@ -46,6 +46,7 @@
       class="block-reply"
       :style="{ top: `${hoverBlock.top}px` }"
       title="Reply to this part"
+      aria-label="Reply to this part"
       @mousedown.prevent
       @mouseenter="holdBlock"
       @mouseleave="releaseBlock"
@@ -55,7 +56,6 @@
         viewBox="0 0 24 24"
         aria-hidden="true"
       ><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" /></svg>
-      Reply
     </button>
     <ChatFileCard v-for="file in fileReferences" :key="`${file.fileId}:${file.versionId}`" :reference="file" />
     <TurnActions
@@ -150,8 +150,7 @@ const REPLY_BLOCKS = 'p, li, pre, blockquote, table, section.reply-section > :is
 const turnEl = ref<HTMLElement | null>(null);
 const hoverBlock = ref<{ el: HTMLElement; top: number } | null>(null);
 
-// The button sits just outside the message, so the pointer crosses padding
-// and a gap on its way there. Losing the block only hides the button after a
+// The reply pill stays inside the message boundary. Losing the block only hides the button after a
 // short grace period, which reaching the button cancels.
 const RELEASE_GRACE_MS = 400;
 let releaseTimer: ReturnType<typeof setTimeout> | undefined;
@@ -213,21 +212,19 @@ function onNewChat(): void {
 </script>
 
 <style scoped>
-/* Hover "Reply" for the block under the pointer, pinned to the turn's right edge. */
+/* Keep the contextual reply inside the transcript, including beside a narrow dock. */
 .chat-turn.sulla { position: relative; }
+.chat-turn.sulla .chat-body { padding-inline-end: 36px; }
 .block-reply {
-  position: absolute; right: -8px; z-index: 3;
-  display: inline-flex; align-items: center; gap: 5px;
-  height: 26px; padding: 0 9px; border-radius: 7px; cursor: pointer;
+  position: absolute; right: 0; z-index: 3;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border-radius: 7px; cursor: pointer;
   border: 1px solid var(--border-default); background: var(--bg-surface);
   color: var(--text-secondary); font: 500 12px var(--font-body);
   box-shadow: var(--elev-float);
-  transform: translateX(100%);
+  max-width: 100%;
 }
 .block-reply:hover { color: var(--text-primary); border-color: var(--accent); }
-/* Invisible bridge over the gap back to the message, so the pointer never
-   "leaves" while travelling to the button. */
-.block-reply::before { content: ''; position: absolute; top: -6px; bottom: -6px; right: 100%; width: 16px; }
 .block-reply svg { width: 13px; height: 13px; fill: currentColor; }
 .noir-avatar {
   display: none;

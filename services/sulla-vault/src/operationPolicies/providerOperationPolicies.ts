@@ -146,7 +146,7 @@ export const PROVIDER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperatio
   // GET-only, exact host + path per credential lane; the response is the
   // provider's model list, never the credential.
   'provider.models': {
-    integrations: ['claude-code', 'anthropic', 'openai', 'grok', 'kimi', 'alibaba'],
+    integrations: ['claude-code', 'anthropic', 'openai', 'codex', 'grok', 'kimi', 'alibaba'],
     methods: ['GET'],
     injections: [],
     bindings: [
@@ -176,6 +176,23 @@ export const PROVIDER_OPERATION_POLICIES: Readonly<Record<string, BrokerOperatio
         injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }],
         injectionSets: [[{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]],
         pathPattern: /^\/v1\/models$/,
+      },
+      {
+        integration: 'codex',
+        hosts: ['chatgpt.com'],
+        injections: [
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ],
+        requiredInjections: [
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ],
+        injectionSets: [[
+          { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+          { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+        ]],
+        pathPattern: /^\/backend-api\/codex\/models$/,
       },
       // Grok has two billing lanes that must never cross: a pasted API key
       // only goes to the metered api.x.ai catalog, the Sign-in-with-Grok

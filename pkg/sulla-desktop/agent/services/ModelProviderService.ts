@@ -25,6 +25,7 @@ import { getCliStatus } from '../tools/models/shared';
 import { hasPendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
+import { resolveProviderAccess, type ProviderAccessMethod } from '@pkg/shared/providerAccess';
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -55,7 +56,12 @@ export interface ProviderInfo {
   name:      string;
   connected: boolean;
   connectionStatus?: 'unknown';
+  accessMethod?: ProviderAccessMethod;
+  accessLabel?:  string;
+  selectable?:   boolean;
 }
+
+export type ModelSelectionMode = import('@pkg/shared/providerAccess').ModelSelectionMode;
 
 export interface ProviderModelInfo {
   id:             string;
@@ -68,6 +74,8 @@ export interface ProviderModelInfo {
   upgrade?:       string;
   /** True when the entry comes from a fixed list, not from the provider. */
   unverified?:    boolean;
+  /** Automatic provider/CLI selection versus an exact provider model id. */
+  selectionMode?: ModelSelectionMode;
 }
 
 // ── Excluded from the model selector dropdown ────────────────────
@@ -122,6 +130,9 @@ class ModelProviderService {
       await this.reconcilePrimaryProvider();
     } catch (err) {
       console.warn('[ModelProviderService] loadStateFromDB failed — using defaults:', err);
+      // Defaults remain available to settings IPC, but execution must wait for
+      // a successful lifecycle retry to load the user's actual configuration.
+      throw err;
     }
 
     this.initialized = true;
@@ -187,12 +198,49 @@ class ModelProviderService {
 
   // ── Queries (async — may hit IntegrationService / DB) ──────────
 
+  /**
+   * The account the runtime will actually use. `unknown` is reserved for a
+   * real metadata fault (locked/unavailable vault, failed active-account
+   * read); a missing or disconnected selected account is a known, unrunnable
+   * state and never borrows another account.
+   */
+  private async selectedAccount(providerId: string): Promise<{ account?: { accountId: string; connected: boolean }; unknown: boolean }> {
+    const integrationService = getIntegrationService();
+    try {
+      const accounts = await integrationService.getAccounts(providerId, { strict: true });
+      if (!accounts.length) return { unknown: false };
+      let activeAccountId = '';
+      try {
+        activeAccountId = await integrationService.getActiveAccountId(providerId);
+      } catch {
+        return { unknown: true };
+      }
+      // GrokService.create runs on a connected 'oauth' account whenever one
+      // exists, even if an API account is selected. Label that actual lane.
+      const grokOAuth = providerId === 'grok' ? accounts.find(candidate => candidate.account_id === 'oauth' && candidate.connected) : undefined;
+      const account = grokOAuth
+        ?? accounts.find(candidate => candidate.account_id === activeAccountId)
+        ?? (activeAccountId ? undefined : accounts.find(candidate => candidate.active));
+      return account
+        ? { account: { accountId: account.account_id, connected: account.connected }, unknown: false }
+        : { account: { accountId: activeAccountId, connected: false }, unknown: false };
+    } catch {
+      // A missing or locked vault is unknown, not permission to choose another
+      // account whose billing lane may differ from the selected one.
+      return { unknown: true };
+    }
+  }
+
+  private modelInfo(providerId: string, model: { id: string; name: string; description?: string; efforts?: { id: string; description?: string }[]; defaultEffort?: string; upgrade?: string; unverified?: boolean }): ProviderModelInfo {
+    const automatic = model.id === providerId && /^auto\b/i.test(model.name.trim());
+    // parseClaudeCliModels marks a CLI family alias (its id differs from the
+    // CLI's resolvedModel) with this suffix; the CLI picks the version.
+    const alias = providerId === 'claude-code' && / \(CLI alias\)$/.test(model.name);
+    return { ...model, selectionMode: automatic ? 'automatic' : alias ? 'alias' : 'exact' };
+  }
+
   async getAvailableProviders(): Promise<ProviderInfo[]> {
     const providers: ProviderInfo[] = [];
-
-    // All AI Infrastructure integrations — marked with connected state.
-    // UI decides whether to gate on connection or prompt the user to connect.
-    const integrationService = getIntegrationService();
 
     const allIntegrations = Object.values(integrations);
     console.log(`[ModelProviderService] getAvailableProviders: ${ allIntegrations.length } total integrations loaded`);
@@ -200,28 +248,45 @@ class ModelProviderService {
     const candidates = allIntegrations.filter(i => i.category === 'AI Infrastructure' && !EXCLUDED_PROVIDER_IDS.includes(i.id));
     // Vault-metadata lookups run in parallel so opening the window is fast.
     const results = await Promise.allSettled(candidates.map(async(integration) => {
-      let connected = false;
-      let connectionStatus: 'unknown' | undefined;
-      try {
-        connected = hasPendingCredential(integration.id) || await integrationService.isAnyAccountConnected(integration.id);
-      } catch (err) {
-        connectionStatus = 'unknown';
-        console.warn(`[ModelProviderService] connection check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
-      }
+      const selected = await this.selectedAccount(integration.id);
+      let cliInstalled = false;
       // OpenCode and Cursor own credentials in their CLIs. A runnable CLI is
       // enough to show the provider; spawn-time errors give the exact login step.
-      if (!connected && (integration.id === 'opencode' || integration.id === 'cursor')) {
+      if (!selected.unknown && !selected.account && (integration.id === 'opencode' || integration.id === 'cursor')) {
         try {
-          connected = (await getCliStatus(integration.id)).installed;
+          cliInstalled = (await getCliStatus(integration.id)).installed;
         } catch (err) {
           console.warn(`[ModelProviderService] CLI status check failed for ${ integration.id }: ${ err instanceof Error ? err.message : String(err) }`);
         }
       }
 
-      return { id: integration.id, name: integration.name, connected, ...(connectionStatus ? { connectionStatus } : {}) } as ProviderInfo;
+      const access = resolveProviderAccess(integration.id, {
+        account: selected.account,
+        cliInstalled,
+        integrationAuthType: integration.authType,
+        supportsOAuth: integration.oauth === true,
+        hasApiKeyProperty: integration.properties?.some(property => property.key === 'api_key') === true,
+      });
+      const pendingUnknown = !selected.account && !cliInstalled && hasPendingCredential(integration.id);
+      // Only a real lookup fault, a not-yet-stored first-run credential, or a
+      // connected account whose lane cannot be classified is "unknown". A
+      // missing or disconnected selected account is known and not runnable.
+      const connectionStatus: 'unknown' | undefined = selected.unknown || pendingUnknown || (selected.account?.connected === true && access.method === 'unknown') ? 'unknown' : undefined;
+      const connected = access.selectable && !connectionStatus;
+      return {
+        id: integration.id,
+        name: integration.name,
+        connected,
+        accessMethod: access.method,
+        accessLabel: access.label,
+        selectable: connected,
+        ...(connectionStatus ? { connectionStatus } : {}),
+      } as ProviderInfo;
     }));
     results.forEach((r, i) => {
-      providers.push(r.status === 'fulfilled' ? r.value : { id: candidates[i].id, name: candidates[i].name, connected: false });
+      providers.push(r.status === 'fulfilled'
+        ? r.value
+        : { id: candidates[i].id, name: candidates[i].name, connected: false, accessMethod: 'unknown', accessLabel: 'Connection unavailable', selectable: false, connectionStatus: 'unknown' });
     });
 
     console.log(`[ModelProviderService] getAvailableProviders: returning ${ providers.length } providers`);
@@ -229,7 +294,7 @@ class ModelProviderService {
     return providers;
   }
 
-  async getModelsForProvider(providerId: string): Promise<ProviderModelInfo[]> {
+  async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean } = {}): Promise<ProviderModelInfo[]> {
     const integration = integrations[providerId];
     if (!integration) {
       return this.getCliProviderModels(providerId);
@@ -247,12 +312,25 @@ class ModelProviderService {
       const formMap: Record<string, string> = {};
       for (const v of formVals) formMap[v.property] = v.value;
 
+      if (queryOptions.liveOnly && providerId !== 'grok') {
+        const { modelDiscoveryService } = await import('../languagemodels/ModelDiscoveryService');
+        if (modelDiscoveryService.supportsProvider(providerId)) {
+          const models = await modelDiscoveryService.fetchModelsForProvider(providerId, '', {
+            accountId,
+            baseUrl: formMap.base_url,
+            region: formMap.region,
+            liveOnly: true,
+          });
+          return models.map(model => this.modelInfo(providerId, { id: model.id, name: model.name, description: model.description }));
+        }
+      }
+
       const selectBoxProvider = getSelectBoxProvider(modelProp.selectBoxId);
       const options = selectBoxProvider
-        ? await selectBoxProvider.getOptions({ integrationId: providerId, accountId, formValues: formMap })
+        ? await selectBoxProvider.getOptions({ integrationId: providerId, accountId, formValues: formMap, liveOnly: true })
         : await integrationService.getSelectOptions(modelProp.selectBoxId, providerId, accountId, formMap);
 
-      return options.map(opt => ({ id: opt.value, name: opt.label, description: opt.description }));
+      return options.map(opt => this.modelInfo(providerId, { id: opt.value, name: opt.label, description: opt.description }));
     } catch (err) {
       console.warn(`[ModelProviderService] Failed to fetch models for ${ providerId }:`, err);
       return [];
@@ -266,7 +344,7 @@ class ModelProviderService {
       // Degrades to the provider-agnostic Auto sentinel on any failure. See
       // claudeModelCatalog.ts.
       const { listClaudeCodeModels } = await import('../languagemodels/claudeModelCatalog');
-      return listClaudeCodeModels();
+      return (await listClaudeCodeModels()).map(model => this.modelInfo(providerId, model));
     }
 
     if (providerId === 'codex') {
@@ -274,17 +352,17 @@ class ModelProviderService {
       // CLI (through Sulla, so vault OAuth creds are injected). Degrades to the
       // "Auto" sentinel on any failure. See codexModelCatalog.ts.
       const { listCodexModels } = await import('../languagemodels/codexModelCatalog');
-      return listCodexModels();
+      return (await listCodexModels()).map(model => this.modelInfo(providerId, model));
     }
 
     if (providerId === 'opencode') {
       const { listOpenCodeModels } = await import('../languagemodels/openCodeModelCatalog');
-      return listOpenCodeModels();
+      return (await listOpenCodeModels()).map(model => this.modelInfo(providerId, model));
     }
 
     if (providerId === 'cursor') {
       const { listCursorModels } = await import('../languagemodels/cursorModelCatalog');
-      return listCursorModels();
+      return (await listCursorModels()).map(model => this.modelInfo(providerId, model));
     }
 
     return [];

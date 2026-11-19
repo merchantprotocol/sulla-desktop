@@ -10,6 +10,9 @@ scope: [tool-github]
 **When:** Use this to review one PR or coordinate several PRs into a release. A requested merge is reversible through Git and needs no invented approval gate. Posting a review or publishing a release waits for explicit approval.
 
 **Do:**
+
+For code review, prefer a capable reviewer from a different model company than the model(s) that wrote the code when available. Check the actual model company, not the agent name, and ask for review without edits. If unavailable or unverified, keep the existing review path and state the limitation.
+
 1. List every candidate page: `sulla github/list_prs '{"owner":"<owner>","repo":"<repo>","state":"open","base":"<base>","limit":100,"page":1}'`. Follow its next-page instruction until no page remains.
 2. For each candidate, read metadata and the exact file set: `sulla github/get_pr '{"owner":"<owner>","repo":"<repo>","pull_number":1}'` and `sulla github/get_pr_files '{"owner":"<owner>","repo":"<repo>","pull_number":1}'`. Read relevant changed files and repository rules; do not review only titles or summaries.
 3. Check reviews and CI against the PR's current head SHA: `sulla github/list_pr_reviews '{"owner":"<owner>","repo":"<repo>","pull_number":1}'` and `sulla github/check_runs '{"owner":"<owner>","repo":"<repo>","ref":"<head-sha>"}'`. Use `sulla github/ci_logs '{"owner":"<owner>","repo":"<repo>","ref":"<head-sha>","failedOnly":true,"maxLines":120}'` for failures.

@@ -35,7 +35,7 @@ scope: [sulla-agents]
     `sulla agents/stop_agent_job '{"jobId":"<job-id>"}'`
     Stop is cooperative; an in-flight model or tool call can finish first. Check the job once afterward to confirm `stopped`.
 11. Recover instead of restarting blindly. Read what the job left. Relaunch from its pushed branch or retained workspace with the exact remaining gap. If the same model or provider repeatedly fails, choose a different suitable agent from the directory.
-12. Judge and integrate the result yourself with the `sulla-judge-and-land-worker-results` skill. A returned contract is evidence to inspect, not proof that the goal is complete.
+12. Judge and integrate the result yourself with the `sulla-judge-and-land-worker-results` skill. For code review, prefer a capable reviewer from a different model company than the model(s) that wrote the code when available. Check the actual model company, not the agent name, and ask for review without edits. If unavailable or unverified, keep the existing review path and state the limitation. A returned contract is evidence to inspect, not proof that the goal is complete.
 
 **Task fields:**
 - `prompt` is required.
@@ -46,6 +46,7 @@ scope: [sulla-agents]
 - `runLocation` may override one run with `vm` or `container`; it does not change the agent definition.
 - `model` and `provider` are per-run overrides and fail rather than silently falling back when they cannot be resolved.
 - `workspacePath` lets a container job seed its isolated workspace from an existing worktree under `/mnt/worktrees`; shared Git metadata is not mounted.
+- `followUpOf: {jobId, taskIndex}` links replacement/continuation work to the exact original result for live card status. For already-created work, use `sulla agents/link_result` with the follow-up jobId/taskIndex and followUpOf; optional decisionIds must be real question/approval IDs, not project ledger numbers. This records presentation links only and never changes execution or settles a decision.
 - `projectTaskId` is only a legacy correlation id. It does not claim project work.
 
 **Check it worked:**

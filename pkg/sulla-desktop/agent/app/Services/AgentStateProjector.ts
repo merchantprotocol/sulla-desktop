@@ -2,14 +2,18 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
+import { resultTracking } from '../../../shared/agentResults/AgentResultCard';
+import { savedWorkerModelStatus } from '../../languagemodels/workerModelBindings';
+import { AgentModelStatusRegistry } from '../../services/AgentModelStatusRegistry';
+
 import type { AgentRuntimeLiveness } from './AgentRuntimeLiveness';
-import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
+import type { AgentStateService } from './AgentStateService';
 import type { AgentStateRow, AgentStateSnapshot, AgentRowState } from '../../../shared/agentState/AgentStateSnapshot';
+import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 
 /** Derived presentation state. Durable task status remains the lifecycle contract. */
 export type AgentViewStatus = AgentRowState;
-import type { AgentStateService } from './AgentStateService';
-import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
 
 export interface AgentTaskCheckin { createdAt: number; summary: string; blockers: string[]; }
 export interface AgentStateTelemetry {
@@ -82,8 +86,11 @@ export class AgentStateProjector {
         parentJobId: job.parentJobId ?? null, parentTaskIndex: job.parentTaskIndex ?? null,
         rootThreadId: lineage.rootThreadId, threadId: task.threadId ?? null,
         depth: lineage.depth, agentId: task.agentId || null, label: task.label || task.agentId,
+        taskId:             task.taskId,
+        modelStatus:        AgentModelStatusRegistry.get(task.threadId) ?? savedWorkerModelStatus(task.workerModelRoute) ?? (task.model ? { model: task.model, provider: task.provider, effort: task.effort ?? null, source: 'requested' } : undefined),
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
         stateReason: this.reason(state, job, task, checkin),
+        ...resultTracking(task),
         // Why a parked task is waiting and when it checks again, so the window can say "waiting on GitHub checks · 12:12".
         waitReason: state === 'parked' ? task.waitReason ?? null : null,
         wakeAt: state === 'parked' && task.wakeAt !== undefined && task.wakeAt > now ? this.iso(task.wakeAt) : null,

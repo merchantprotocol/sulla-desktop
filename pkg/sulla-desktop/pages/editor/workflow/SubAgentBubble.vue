@@ -26,7 +26,7 @@
 
       <!-- Label + latest thinking preview -->
       <div class="sub-agent-info">
-        <span class="sub-agent-label">{{ activity.nodeLabel }}</span>
+        <span class="sub-agent-label">{{ activity.nodeLabel }}</span><span class="sub-agent-preview">{{ AgentModelStatus.label(modelStatus) }}</span>
         <span
           v-if="previewText"
           class="sub-agent-preview"
@@ -101,6 +101,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue';
 
+import { AgentModelStatus, type AgentModelStatusValue } from '@pkg/shared/agentState/AgentModelStatus';
+
 interface SubAgentActivityInfo {
   nodeId:          string;
   nodeLabel:       string;
@@ -112,8 +114,9 @@ interface SubAgentActivityInfo {
 }
 
 const props = defineProps<{
-  activity: SubAgentActivityInfo;
-  isDark:   boolean;
+  activity:     SubAgentActivityInfo;
+  modelStatus?: AgentModelStatusValue;
+  isDark:       boolean;
 }>();
 
 const expanded = ref(false);

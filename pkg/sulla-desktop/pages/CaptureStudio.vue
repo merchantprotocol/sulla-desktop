@@ -2047,22 +2047,22 @@ html, body {
 }
 
 .capture-studio-app {
-  --bg-page:          var(--bg-page);
-  --bg-surface:       var(--bg-surface);
-  --bg-surface-alt:   var(--bg-surface-alt);
+
+
+
   --bg-surface-hover: var(--border-subtle);
-  --text-primary:     var(--text-primary);
-  --text-secondary:   var(--text-secondary);
-  --text-muted:       var(--text-muted);
-  --text-dim:         var(--text-dim);
-  --accent:           var(--accent);
-  --accent-hover:     var(--accent-hover);
+
+
+
+
+
+
   --success:          var(--status-success);
   --info:             var(--status-info);
   --warning:          var(--status-warning);
   --error:            var(--status-error);
   --border:           var(--border-default);
-  --border-subtle:    var(--border-subtle);
+
   --mono:             var(--font-mono), monospace;
   --display:          var(--font-display), serif;
   --record-red:       #e5534b;

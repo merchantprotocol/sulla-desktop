@@ -27,7 +27,7 @@ import { OptimisticSendFeedback } from './OptimisticSendFeedback';
 import { VoiceAgentRouting } from './VoiceAgentRouting';
 import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
-import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
+import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId, type MessageId } from '../types/chat';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
@@ -35,7 +35,7 @@ import { A2aCardMarkup } from '../messages/a2aCardMarkup';
 
 import type { ChatController } from '../controller/ChatController';
 import type {
-  Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
+  Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, WorkflowRuntimeState, HtmlPayload,
 } from '../models/Artifact';
 import { kindFromName, type Attachment } from '../models/Attachment';
 import type {
@@ -161,9 +161,10 @@ export class PersonaAdapter {
     this.stopWatchers.push(() => ipcRenderer.removeListener('database:available', onDatabaseAvailable));
 
     const unsubscribeArtifactClose = this.controller.on('artifactClosed', (event) => {
-      if (!this.persistentArtifacts.has(event.artifactId)) return;
+      const threadId = this.ci.threadId.value;
+      if (!threadId || !this.persistentArtifacts.has(event.artifactId)) return;
       ipcRenderer.invoke('chat-artifacts:close', {
-        threadId: this.ci.threadId.value,
+        threadId,
         idOrName: event.artifactId,
       }).catch(err => console.warn('[PersonaAdapter] artifact close failed:', err));
     });
@@ -631,6 +632,14 @@ export class PersonaAdapter {
     }
   }
 
+  /** A saved message keeps its own time: a restart replay or a stale first-seen cache must not restamp it. */
+  private keepCreatedAt(backendId: string, existing: Message | undefined, mapped: Message): Message {
+    const saved = existing?.createdAt;
+    if (typeof saved !== 'number' || !Number.isFinite(saved) || saved === mapped.createdAt) return mapped;
+    this.firstSeenAt.set(backendId, saved);
+    return { ...mapped, createdAt: saved };
+  }
+
   /** A re-mapped card starts "pending"; never let that reopen one already resolved. */
   private keepResolution(existing: Message | undefined, mapped: Message): Message {
     if (existing?.kind === 'tool_question' && mapped.kind === 'tool_question' && existing.status !== 'pending') {
@@ -670,12 +679,21 @@ export class PersonaAdapter {
     for (const id of this.seenRunning) if (!liveIds.has(id)) this.seenRunning.delete(id);
     for (const b of backend) {
       if (!b?.id) continue;
+      if (b.readinessCleared) {
+        if (this.controller.messages.value.some(message => message.id === b.id)) {
+          this.controller.removeMessage(asMessageId(b.id));
+          this.controller.persistThread();
+        }
+        this.seen.add(b.id);
+        continue;
+      }
 
       const rawSig = this.rawSignature(b);
       if (this.seen.has(b.id) && this.lastRawSignature.get(b.id) === rawSig) continue;
       this.lastRawSignature.set(b.id, rawSig);
 
       const mapped = this.mapBackendMessage(b);
+      if (mapped && b.modelStatus) mapped.by = { agent: this.controller.thread.value.agentId ?? undefined, model: b.modelStatus.model, modelStatus: b.modelStatus };
       // A null mapping means the message is represented elsewhere (e.g. in the
       // artifact sidebar) and should not produce a transcript entry.
       if (!mapped) {
@@ -689,7 +707,7 @@ export class PersonaAdapter {
       const existing = existingIndex === undefined ? undefined : transcript[existingIndex];
       if (this.seen.has(b.id) || existing) {
         this.seen.add(b.id);
-        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>, existingIndex);
+        this.controller.updateMessage(mapped.id, this.keepResolution(existing, this.keepCreatedAt(b.id, existing, mapped)) as Partial<Message>, existingIndex);
       } else {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
@@ -778,7 +796,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -1196,10 +1214,11 @@ export class PersonaAdapter {
   private stableCreatedAt(backendId: string): number {
     const existing = this.firstSeenAt.get(backendId);
     if (existing !== undefined) return existing;
-    // Backend ids start with their creation time (`1794753730205_ws_thinking`).
-    // Use it so a replay after a restart keeps the real time, not the replay time.
+    // Backend ids start with their creation time (`1794753730205_ws_thinking`), and
+    // user turns are minted as `user_<Date.now()>_<random>`. Use it so a replay after a
+    // restart keeps the real time, not the replay time.
     const now = Date.now();
-    const minted = Number(/^(\d{13})_/.exec(backendId)?.[1]);
+    const minted = Number(/^(?:user_)?(\d{13})_/.exec(backendId)?.[1]);
     const at = minted > 1_500_000_000_000 && minted <= now + 60_000 ? minted : now;
     this.firstSeenAt.set(backendId, at);
     return at;
@@ -1566,7 +1585,7 @@ async function filesReferenceToAttachmentInput(file:{ fileId:string; versionId:s
 
 function mapWorkflowNodeState(
   status: 'running' | 'completed' | 'failed' | 'waiting',
-): WorkflowNode['state'] {
+): WorkflowRuntimeState {
   switch (status) {
   case 'running': return 'active';
   case 'completed': return 'done';

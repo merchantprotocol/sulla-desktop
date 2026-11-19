@@ -283,6 +283,7 @@ export class CodexService extends BaseLanguageModel {
 
   /** Reasoning effort from Preferences → AI models; '' leaves the CLI's own default. */
   private effort = '';
+  override getEffort(): string { return this.effort }
   setEffort(effort: string | undefined): void { this.effort = /^[a-z]{2,10}$/.test(effort || '') ? effort! : '' }
 
   /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */
@@ -920,11 +921,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // unsettled and the UI stuck on "Isolated environment ready" /
       // "calling model" with no recovery. ClaudeCodeService already carries
       // this exact protection (observed hangs up to 7.7h); codex never had
-      // it. Liveness = any stdout/stderr byte, so long in-CLI tool runs
-      // reset the clock; only a completely dead stream trips the kill.
-      // Bound a dead provider stream to a useful recovery window instead of
-      // leaving a spawned worker stuck for fifteen minutes.
-      const STALL_TIMEOUT_MS = 3 * 60 * 1_000;
+      // it. Stdout/stderr silence also occurs during model reasoning; it
+      // does not prove the process is dead. Allow ten quiet minutes, while
+      // retaining a finite recovery bound and the active-tool guards below.
+      const STALL_TIMEOUT_MS = 10 * 60 * 1_000;
       const STALL_CHECK_MS = 30 * 1_000;
       let lastStreamActivityAt = Date.now();
       let stalled = false;

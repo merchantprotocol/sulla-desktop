@@ -9,7 +9,8 @@ import { ModelSelectorKey, useChatController } from '../controller/useChatContro
 
 /**
  * What the agent/model picker should read as. A chat with a selected agent
- * shows the agent's name; otherwise it shows the model. The model stays in
+ * shows the agent's name. An unpinned chat shows the agent it inherits from
+ * Preferences. The model stays in
  * `controller.model` either way — that's what the backend actually runs.
  */
 export function useSelectionLabel(): { label: ComputedRef<string>; title: ComputedRef<string> } {
@@ -28,10 +29,15 @@ export function useSelectionLabel(): { label: ComputedRef<string>; title: Comput
     }
   }, { immediate: true });
 
-  const label = computed(() => agentName.value || controller.model.value.name);
+  const inheritedAgent = computed(() => !agentId.value && !controller.thread.value.providerId && !controller.model.value.id
+    ? selector?.chatDefaultAgentName?.value ?? ''
+    : '');
+  const label = computed(() => agentName.value || inheritedAgent.value || controller.model.value.name);
   const title = computed(() => agentName.value
     ? `Agent: ${ agentName.value } · ${ controller.model.value.name } — switch agent or model`
-    : 'Switch agent or model');
+    : inheritedAgent.value
+      ? `New chat default: ${ inheritedAgent.value } · switch agent or model`
+      : 'Switch agent or model');
 
   return { label, title };
 }

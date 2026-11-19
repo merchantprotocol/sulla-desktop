@@ -198,8 +198,14 @@ export class IntegrationService {
   // ─── Account management ───────────────────────────────────────────
 
   /** Get the active/default account_id for an integration */
-  async getActiveAccountId(integrationId: string): Promise<string> {
+  async getActiveAccountId(integrationId: string, options: { strict?: boolean } = {}): Promise<string> {
     if (usesContainerVaultAuthority()) {
+      if (options.strict) {
+        const metadata = await this.getLocalMetadata(integrationId);
+        const accountId = metadata.activeAccountId ?? metadata.accounts[0]?.accountId;
+        if (!accountId) throw new Error(`No local vault account is configured for ${ integrationId }`);
+        return accountId;
+      }
       const cached = this.activeAccountCache.get(integrationId);
       if (cached && cached.expiresAt > Date.now()) return cached.accountId;
       let pending = this.activeAccountInflight.get(integrationId);
@@ -272,10 +278,16 @@ export class IntegrationService {
     return model?.attributes.value || accountId;
   }
 
-  /** List all accounts for an integration */
-  async getAccounts(integrationId: string): Promise<IntegrationAccount[]> {
+  /**
+   * List all accounts for an integration. By default this is a settings helper: an unavailable
+   * vault reads as no accounts. `strict` lets execution tell an unavailable vault apart from a
+   * missing or disconnected account (same metadata read as isAnyAccountConnected).
+   */
+  async getAccounts(integrationId: string, options: { strict?: boolean } = {}): Promise<IntegrationAccount[]> {
     if (usesContainerVaultAuthority()) {
-      const metadata = await this.getLocalMetadataForSettings(integrationId);
+      const metadata = options.strict
+        ? await this.getLocalMetadata(integrationId)
+        : await this.getLocalMetadataForSettings(integrationId);
       if (!metadata) return [];
       return metadata.accounts.map(account => ({
         integration_id: integrationId,
@@ -544,10 +556,15 @@ export class IntegrationService {
     return models.map(m => this.modelToValue(m));
   }
 
-  /** Read the non-secret configuration needed to select and route an integration. */
-  async getMetadataValues(integrationId: string, accountId?: string): Promise<IntegrationValue[]> {
+  /**
+   * Read the non-secret configuration needed to select and route an integration.
+   * Default stays usable when the vault is down. `strict` propagates that fault.
+   */
+  async getMetadataValues(integrationId: string, accountId?: string, options: { strict?: boolean } = {}): Promise<IntegrationValue[]> {
     if (usesContainerVaultAuthority()) {
-      const metadata = await this.getLocalMetadataForSettings(integrationId, accountId);
+      const metadata = options.strict
+        ? await this.getLocalMetadata(integrationId, accountId)
+        : await this.getLocalMetadataForSettings(integrationId, accountId);
       if (!metadata) return [];
       const acctId = accountId || metadata.activeAccountId || metadata.accounts[0]?.accountId;
       if (!acctId) return [];

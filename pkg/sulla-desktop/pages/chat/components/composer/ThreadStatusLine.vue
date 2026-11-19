@@ -76,16 +76,14 @@
         <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Age</span><span />
       </div>
 
-      <!-- Questions and approvals: answer them right here. -->
-      <ThreadQuestionItem
-        v-for="msg in humanMessages"
-        :key="msg.id"
-        :msg="msg"
-        :open="expanded.has(msg.id)"
-        :when="age(msg.createdAt)"
-        @toggle="toggle(msg.id)"
-        @jump="jumpTo(msg.id)"
-      />
+      <button
+        v-if="decisionStore.openCount.value"
+        type="button"
+        class="ta-btn"
+        @click="decisionStore.show()"
+      >
+        Open For You · {{ decisionStore.openCount.value }}
+      </button>
 
       <!-- Agents launched from this thread. -->
       <div
@@ -110,7 +108,7 @@
             class="ta-dot"
             :class="`ta-dot-${rowState(node.row)}`"
           />{{ rowChip(node.row) }}</span>
-          <span class="ta-name">{{ node.row.label }}<small v-if="node.row.agentId">{{ node.row.agentId }}</small></span>
+          <span class="ta-name" :style="{ paddingLeft: `${ Math.min(node.depth, 3) * 12 }px` }">{{ node.row.label }}<small v-if="node.row.agentId">{{ node.row.agentId }}</small></span>
           <span
             class="ta-last"
             :title="rowDetail(node.row)"
@@ -140,26 +138,6 @@
             </template>
             <dt>Started</dt><dd>{{ node.row.startedAt ? clock(node.row.startedAt) : 'not yet' }}</dd>
           </dl>
-          <div
-            v-if="node.children.length"
-            class="ta-kids"
-          >
-            <div
-              v-for="kid in node.children"
-              :key="kid.row.key"
-              class="ta-kid"
-            >
-              <span
-                class="ta-chip"
-                :class="`ta-chip-${rowState(kid.row)}`"
-              ><span
-                class="ta-dot"
-                :class="`ta-dot-${rowState(kid.row)}`"
-              />{{ rowChip(kid.row) }}</span>
-              <span class="ta-last"><b>{{ kid.row.label }}</b> · {{ shortShas(rowDetail(kid.row)) }}</span>
-              <span class="ta-when">{{ age(Date.parse(kid.row.lastActivityAt)) }}</span>
-            </div>
-          </div>
           <form
             v-if="node.row.canMessage"
             class="ta-msg"
@@ -207,14 +185,14 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
 
 import ThreadAgentActions from './ThreadAgentActions.vue';
-import ThreadQuestionItem from './ThreadQuestionItem.vue';
+import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
 import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
-import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
+import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -241,29 +219,27 @@ const confirmStop = ref('');
 const tree = computed(() => context.backendThreadId.value
   ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)
   : []);
-// A live agent is listed with its live descendants nested under it. One whose
-// parent has already finished is lifted to the top level, so a sub-agent still
-// working under a done manager is not hidden (the Sub-agents panel lists it).
-function liveTops(nodes: readonly AgentTreeNode[]): AgentTreeNode[] {
-  return nodes.flatMap(node => (LIVE.has(node.row.state) ? [node] : liveTops(node.children)));
-}
-const agentNodes = computed(() => liveTops(tree.value));
-const liveRows = computed(() => new AgentTreeBuilder([]).flatten(agentNodes.value).map(node => node.row).filter(row => LIVE.has(row.state)));
+// Show every live descendant as a row without requiring its parent to expand.
+const agentNodes = computed(() => new AgentTreeBuilder([]).flatten(tree.value).filter(node => LIVE.has(node.row.state)));
+const liveRows = computed(() => agentNodes.value.map(node => node.row));
 const heartbeatMinutes = computed(() => controller.heartbeat.value.intervalMinutes ?? null);
 const humanMessages = computed(() => controller.messages.value.filter((msg): msg is ToolQuestionMessage | ToolApprovalMessage =>
   (msg.kind === 'tool_question' && msg.status === 'pending') || (msg.kind === 'tool_approval' && msg.decision === 'pending')));
 
-const activity = computed(() => deriveThreadActivity({
-  running:          controller.isRunning.value,
-  messages:         controller.messages.value,
-  agents:           liveRows.value,
-  heartbeatMinutes: heartbeatMinutes.value,
-}));
-const hasItems = computed(() => humanMessages.value.length + agentNodes.value.length > 0 || !!heartbeatMinutes.value);
+const decisionStore = ChatDecisions.useChatDecisions();
+const activity = computed(() => {
+  const base = deriveThreadActivity({
+    running:          controller.isRunning.value,
+    messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),
+    agents:           liveRows.value,
+    heartbeatMinutes: heartbeatMinutes.value,
+  }); return decisionStore.openCount.value ? { ...base, state: 'you' as const, lead: 'Needs you', parts: [`${ decisionStore.openCount.value } ${ decisionStore.openCount.value === 1 ? 'request' : 'requests' } in For You`, ...(base.state === 'idle' ? [] : base.parts)] } : base;
+});
+const hasItems = computed(() => decisionStore.openCount.value + agentNodes.value.length > 0 || !!heartbeatMinutes.value);
 const stalledRows = computed(() => liveRows.value.filter(row => row.state === 'quiet' && row.canMessage));
 const ageText = computed(() => {
   if (activity.value.state === 'idle') return '';
-  const items = humanMessages.value.length + agentNodes.value.length;
+  const items = decisionStore.openCount.value + agentNodes.value.length;
   const last = activity.value.lastActivityAt;
   if (activity.value.state === 'working' && last) return `last activity ${ activityAge(now.value - last) } ago`;
   return items ? `${ items } item${ items === 1 ? '' : 's' }` : '';

@@ -7,12 +7,14 @@ import { SULLA_FILES_UUID as UUID } from './SullaFilesIpcSupport';
 
 import type { SullaFilesIpcApi, SullaFilesIpcDesktop, SullaFilesIpcRegistrar, SullaFilesIpcServices } from './SullaFilesIpcSupport';
 
+import { formatStorageMegabytes } from '@pkg/shared/storageCleanupUnits';
+
 /** Human-only Files settings: tracked roots, File Provider, backups, pause and cloud backup. */
 export class SullaFilesIpcSettingsHandlers {
   constructor(
     private readonly api:SullaFilesIpcApi,
-    private readonly services:Pick<SullaFilesIpcServices, 'rootRegistry' | 'fileProvider' | 'backups' | 'watcher' | 'cloudSync'>,
-    private readonly desktop:Pick<SullaFilesIpcDesktop, 'ownerWindow'>,
+    private readonly services:Pick<SullaFilesIpcServices, 'rootRegistry' | 'fileProvider' | 'backups' | 'watcher' | 'cloudSync' | 'storageCleanup'>,
+    private readonly desktop:Pick<SullaFilesIpcDesktop, 'ownerWindow' | 'showMessageBox'>,
   ) {}
 
   registerRoots(ipc:SullaFilesIpcRegistrar):void {
@@ -60,6 +62,34 @@ export class SullaFilesIpcSettingsHandlers {
     ipc.handle('files-ui:set-collection-cloud-sync', async(_event, input:{ collectionId:string; enabled:boolean }) => {
       if (!UUID.test(input.collectionId)) throw new Error('Choose a valid Files collection');
       await this.api.json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/cloud-sync`, { method: 'PATCH', body: JSON.stringify({ enabled: input.enabled === true }) });
+    });
+  }
+
+  registerStorageCleanup(ipc:SullaFilesIpcRegistrar):void {
+    const cleanup = () => this.services.storageCleanup();
+    ipc.handle('files-storage-cleanup:inventory', () => cleanup().inventory());
+    ipc.handle('files-storage-cleanup:prepared-plan', () => cleanup().takePreparedPreview());
+    ipc.handle('files-storage-cleanup:plan', (_event, input:{ targetIds:string[] }) => cleanup().plan({ targetIds: input?.targetIds ?? [] }));
+    ipc.handle('files-storage-cleanup:confirm', async(event, input:{ planId:string }) => {
+      const plan = cleanup().review(input?.planId ?? '');
+      const selected = plan.targets.map(target => `${ target.displayName }\n${ target.path }`);
+      const retained = plan.blocked.map(target => `${ target.displayName } · retained\n${ target.path ? `${ target.path }\n` : '' }${ target.reason }`);
+      const result = await this.desktop.showMessageBox(this.desktop.ownerWindow(event.sender), {
+        type:      'warning',
+        title:     'Remove selected code workspaces?',
+        message:   `Remove ${ plan.targets.length } verified workspace${ plan.targets.length === 1 ? '' : 's' } from the Sulla VM?`,
+        detail:    [
+          `Estimated guest recovery: ${ formatStorageMegabytes(plan.estimatedRecoverableBytes) }.`,
+          ...selected,
+          ...retained,
+          'Chat history, provider sessions, conversation workspace containers, and protected work are retained. Host disk recovery may occur later after VM trim or compaction.',
+        ].join('\n\n'),
+        buttons:   ['Remove workspaces', 'Cancel'],
+        defaultId: 1,
+        cancelId:  1,
+        noLink:    true,
+      });
+      return result.response === 0 ? cleanup().execute(plan.id) : cleanup().cancel(plan.id);
     });
   }
 }

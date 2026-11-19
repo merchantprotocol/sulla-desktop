@@ -9,6 +9,8 @@ import crypto from 'crypto';
 import * as fs from 'fs/promises';
 
 import { ServiceSecretGenerator } from '../../app/Services/ServiceSecret/ServiceSecretGenerator';
+import { assertWorkerBindingsUnchanged } from '../../languagemodels/workerBindingAuthority';
+import { assertConfirmedCliUpdate } from '../../../shared/providerCliUpdateAuthority';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
 
@@ -374,6 +376,11 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    * @returns
    */
   public static async setSetting(property: string, value: any, cast?: string): Promise<void> {
+    if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
+    if (property === 'modelRouting') {
+      const previous = await this.get(property, null);
+      assertWorkerBindingsUnchanged(previous?.workerBindings, value?.workerBindings);
+    }
     const valueCast = cast || typeof value;
     const stringValue = this.toStringValue(value, valueCast);
 
@@ -440,6 +447,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // ──────────────────────────────────────────────
 
   public static async delete(property: string): Promise<void> {
+    if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
+    if (property === 'modelRouting') assertWorkerBindingsUnchanged((await this.get(property, null))?.workerBindings, undefined);
     if (isRendererProcess()) {
       return getIpcRenderer().invoke('sulla-settings-delete', property);
     }

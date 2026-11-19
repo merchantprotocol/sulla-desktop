@@ -93,7 +93,7 @@ export class BrokerCredentialFields {
     input: Pick<BrokerExecuteRequest, 'operation' | 'ref'>,
     plaintext: VaultItemPlaintext,
   ): void {
-    if (input.operation !== 'provider.cli' || input.ref.integrationId !== 'codex') return;
+    if (!['provider.cli', 'provider.models'].includes(input.operation) || input.ref.integrationId !== 'codex') return;
     const properties = plaintext.integration?.properties;
     if (!properties || properties.chatgpt_account_id) return;
     const accountId = BrokerCredentialFields.extractBoundedChatgptAccountId(properties.id_token, properties.access_token);

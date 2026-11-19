@@ -75,13 +75,13 @@ export class AgentDefinitionService {
   findBySlug(slug: string): Promise<AgentDefinition | null> { return AgentDefinitionModel.findBySlug(slug) }
   list(status?: AgentDefinitionStatus): Promise<AgentDefinition[]> { return AgentDefinitionModel.list(status) }
   create(input: AgentDefinitionInput): Promise<AgentDefinition> { return AgentDefinitionModel.create(input) }
-  async update(id: string, patch: AgentDefinitionPatch): Promise<AgentDefinition | null> {
+  async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
     const current = await this.get(id);
     if (!current) return null;
     const promptFiles = patch.promptContent !== undefined && patch.promptFiles === undefined
       ? { ...current.prompt_files, 'prompt.md': patch.promptContent }
       : patch.promptFiles;
-    return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}) });
+    return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}) }, expectedUpdatedAt);
   }
 
   setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> { return AgentDefinitionModel.setStatus(id, status) }

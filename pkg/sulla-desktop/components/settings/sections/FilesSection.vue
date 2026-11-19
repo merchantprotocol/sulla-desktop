@@ -6,7 +6,7 @@
 -->
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 import PrefCard from '../PrefCard.vue';
 import PrefIcon from '../PrefIcon.vue';
@@ -14,6 +14,13 @@ import PrefMore from '../PrefMore.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 
+import type {
+  StorageCleanupInventory,
+  StorageCleanupPlan,
+  StorageCleanupReceipt,
+  StorageCleanupTarget,
+} from '@pkg/main/storageCleanup/StorageCleanupService';
+import { formatStorageMegabytes } from '@pkg/shared/storageCleanupUnits';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 interface FileRoot {
@@ -52,6 +59,14 @@ const finderSaving = ref(false);
 const busy = reactive(new Set<string>());
 const error = ref('');
 const adding = ref(false);
+const storageInventory = ref<StorageCleanupInventory>();
+const storageLoading = ref(false);
+const storageView = ref<'project' | 'chat'>('project');
+const storageSelected = ref(new Set<string>());
+const storageExpanded = ref(new Set<string>());
+const storagePlan = ref<StorageCleanupPlan>();
+const storageOutcome = ref<StorageCleanupReceipt>();
+const storageError = ref('');
 const EMPTY_DRAFT = {
   label:        '',
   subfolder:    '',
@@ -94,6 +109,119 @@ async function loadFinder() {
     finder.value = await ipcRenderer.invoke('files-preferences:file-provider-status') as FileProvider;
   } catch (err) {
     fail(err);
+  }
+}
+
+function byteSize(value:number | null | undefined) {
+  return formatStorageMegabytes(value);
+}
+
+async function loadStorage() {
+  storageLoading.value = true;
+  storageError.value = '';
+  storagePlan.value = undefined;
+  try {
+    storageInventory.value = await ipcRenderer.invoke('files-storage-cleanup:inventory');
+    storagePlan.value = await ipcRenderer.invoke('files-storage-cleanup:prepared-plan');
+    const present = new Set(storageInventory.value.targets.filter(target => target.selectable).map(target => target.id));
+    storageSelected.value = new Set([...storageSelected.value].filter(id => present.has(id)));
+  } catch (err) {
+    storageError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    storageLoading.value = false;
+  }
+}
+
+function loadPreparedStoragePreview() {
+  if (!storageLoading.value) loadStorage().catch(err => { storageError.value = err instanceof Error ? err.message : String(err) });
+}
+
+function storageAssociation(target:StorageCleanupTarget) {
+  const matches = target.associations.filter(item => item.kind === storageView.value);
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return { id: 'multiple', label: `Multiple ${ storageView.value === 'project' ? 'projects' : 'chats' }` };
+  return { id: 'unknown', label: storageView.value === 'project' ? 'Unlinked project' : 'Unknown chat' };
+}
+
+const storageGroups = computed(() => {
+  const groups = new Map<string, { id:string; label:string; targets:StorageCleanupTarget[] }>();
+  if (storageView.value === 'project') {
+    for (const project of storageInventory.value?.projects ?? []) {
+      const key = `project:${ project.id }`;
+      groups.set(key, { id: key, label: project.label, targets: [] });
+    }
+  }
+  for (const target of storageInventory.value?.targets ?? []) {
+    const association = storageAssociation(target);
+    const key = `${ storageView.value }:${ association.id }`;
+    const group = groups.get(key) ?? { id: key, label: association.label, targets: [] };
+    group.targets.push(target);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label));
+});
+
+function storageRowContext(target:StorageCleanupTarget) {
+  const kind = storageView.value === 'project' ? 'chat' : 'project';
+  const labels = target.associations.filter(item => item.kind === kind).map(item => item.label);
+  if (!labels.length) return kind === 'chat' ? 'Unknown chat' : 'Unlinked project';
+  return labels.join(', ');
+}
+
+function groupBytes(targets:StorageCleanupTarget[], eligible = false) {
+  if (eligible) return targets.reduce((sum, target) => sum + (target.selectable ? target.recoverableBytes ?? 0 : 0), 0);
+  if (targets.some(target => target.allocatedBytes === null)) return null;
+  return targets.reduce((sum, target) => sum + (target.allocatedBytes ?? 0), 0);
+}
+
+/** A partial total is labelled with its unmeasured count, never shown as complete. */
+const storageAllocatedLabel = computed(() => {
+  const inventory = storageInventory.value;
+  if (!inventory) return { bytes: byteSize(undefined), note: 'Allocated in VM' };
+  if (inventory.allocatedBytes !== null || !inventory.unmeasuredCount) return { bytes: byteSize(inventory.allocatedBytes), note: 'Allocated in VM' };
+  return { bytes: `${ byteSize(inventory.measuredAllocatedBytes) }+`, note: `Allocated in VM · ${ inventory.unmeasuredCount } unmeasured` };
+});
+
+function toggleStorageTarget(id:string) {
+  const next = new Set(storageSelected.value);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  storageSelected.value = next;
+  storagePlan.value = undefined;
+}
+
+function toggleStorageDetails(id:string) {
+  const next = new Set(storageExpanded.value);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  storageExpanded.value = next;
+}
+
+async function reviewStorage() {
+  storageError.value = '';
+  storageOutcome.value = undefined;
+  try {
+    storagePlan.value = await ipcRenderer.invoke('files-storage-cleanup:plan', {
+      targetIds: [...storageSelected.value],
+    });
+  } catch (err) {
+    storageError.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function confirmStorage() {
+  if (!storagePlan.value) return;
+  storageLoading.value = true;
+  storageError.value = '';
+  try {
+    storageOutcome.value = await ipcRenderer.invoke('files-storage-cleanup:confirm', {
+      planId: storagePlan.value.id,
+    });
+    storagePlan.value = undefined;
+    storageSelected.value = new Set();
+    await loadStorage();
+  } catch (err) {
+    storageError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    storageLoading.value = false;
   }
 }
 
@@ -296,7 +424,8 @@ async function addBackup() {
 }
 
 onMounted(async() => {
-  await Promise.all([loadRoots(), loadBackups(), loadFinder()]);
+  window.addEventListener('sulla:storage-cleanup-preview', loadPreparedStoragePreview);
+  await Promise.all([loadRoots(), loadBackups(), loadFinder(), loadStorage()]);
   rootPoll = setInterval(() => {
     if (roots.value.some(root => root.state === 'scanning' || root.state === 'syncing')) {
       void loadRoots();
@@ -310,6 +439,7 @@ onMounted(async() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('sulla:storage-cleanup-preview', loadPreparedStoragePreview);
   clearInterval(rootPoll);
   clearInterval(backupPoll);
 });
@@ -434,6 +564,214 @@ onBeforeUnmount(() => {
       >
         {{ finder.error }}
       </p>
+    </PrefCard>
+
+    <PrefCard
+      title="Storage &amp; cleanup"
+      subtitle="Review inactive code workspaces. Nothing is removed automatically."
+    >
+      <template #actions>
+        <div class="storage-actions">
+          <div
+            class="storage-segment"
+            role="group"
+            aria-label="Group storage by"
+          >
+            <button
+              type="button"
+              :class="{ on: storageView === 'project' }"
+              :aria-pressed="storageView === 'project'"
+              @click="storageView = 'project'"
+            >Projects</button>
+            <button
+              type="button"
+              :class="{ on: storageView === 'chat' }"
+              :aria-pressed="storageView === 'chat'"
+              @click="storageView = 'chat'"
+            >Chats</button>
+          </div>
+          <button
+            type="button"
+            class="btn sm"
+            :disabled="storageLoading"
+            @click="loadStorage"
+          >Refresh</button>
+        </div>
+      </template>
+
+      <div class="storage-summary" aria-live="polite">
+        <span><b>{{ storageAllocatedLabel.bytes }}</b><small>{{ storageAllocatedLabel.note }}</small></span>
+        <span><b>{{ byteSize(storageInventory?.eligibleBytes) }}</b><small>Eligible estimate</small></span>
+        <span><b>{{ storageView === 'project' ? (storageInventory?.projects.length ?? 0) : (storageInventory?.targets.length ?? 0) }}</b><small>{{ storageView === 'project' ? 'Files projects' : 'Code workspaces' }}</small></span>
+      </div>
+
+      <p
+        v-if="storageLoading && !storageInventory"
+        class="note"
+      >Scanning bounded guest workspaces and verifying current GitHub refs…</p>
+      <p
+        v-if="storageError"
+        class="note badc"
+        role="alert"
+      >{{ storageError }}</p>
+      <p
+        v-for="scanError in storageInventory?.scanErrors ?? []"
+        :key="scanError"
+        class="note badc"
+        role="alert"
+      >{{ scanError }}</p>
+
+      <div
+        v-if="storageInventory && !storageInventory.targets.length && !storageLoading"
+        class="empty-row"
+      >No code workspaces were found in the approved guest roots.</div>
+
+      <div
+        v-for="group in storageGroups"
+        :key="group.id"
+        class="storage-group"
+      >
+        <div class="storage-group-head">
+          <b>{{ group.label }}</b>
+          <span>{{ byteSize(groupBytes(group.targets)) }} allocated</span>
+          <span>{{ byteSize(groupBytes(group.targets, true)) }} eligible</span>
+        </div>
+        <div class="storage-table" role="table" :aria-label="`${group.label} storage`">
+          <div class="storage-table-head" role="row">
+            <span role="columnheader">Select</span>
+            <span role="columnheader">Checkout</span>
+            <span role="columnheader">Disk used</span>
+            <span role="columnheader">Last activity</span>
+            <span role="columnheader">Assessment</span>
+          </div>
+          <template
+            v-for="target in group.targets"
+            :key="target.id"
+          >
+            <div class="storage-row" role="row">
+              <span role="cell">
+                <input
+                  type="checkbox"
+                  :checked="storageSelected.has(target.id)"
+                  :disabled="!target.selectable || storageLoading"
+                  :aria-label="`Select ${target.path}`"
+                  @change="toggleStorageTarget(target.id)"
+                >
+              </span>
+              <span class="storage-location" role="cell">
+                <b>{{ target.displayName }}</b>
+                <small>{{ target.location }} · {{ storageRowContext(target) }}</small>
+                <button
+                  type="button"
+                  class="storage-details-button"
+                  :aria-expanded="storageExpanded.has(target.id)"
+                  @click="toggleStorageDetails(target.id)"
+                >{{ storageExpanded.has(target.id) ? 'Hide details' : 'Details' }}</button>
+              </span>
+              <span role="cell">{{ byteSize(target.allocatedBytes) }}</span>
+              <span role="cell">{{ target.lastActivityAt ? ago(target.lastActivityAt) : 'Unknown' }}</span>
+              <span role="cell">
+                <b class="storage-assessment" :class="target.assessment">{{ target.assessment }}</b>
+                <small>{{ target.reason }}</small>
+              </span>
+            </div>
+            <div
+              v-if="storageExpanded.has(target.id)"
+              class="storage-detail"
+              role="row"
+            >
+              <span class="mono">{{ target.path }}</span>
+              <span>{{ target.reasonCode }}</span>
+              <span v-if="target.remoteEvidence.length">{{ target.remoteEvidence.length }} local commit proof{{ target.remoteEvidence.length === 1 ? '' : 's' }} on current remote refs</span>
+            </div>
+          </template>
+          <div
+            v-if="!group.targets.length"
+            class="empty-row"
+          >No code workspaces are explicitly linked to this project.</div>
+        </div>
+      </div>
+
+      <div class="storage-footer">
+        <p class="note">
+          {{ storageInventory?.accounting.host ?? 'Host recovery is reported separately from guest workspace removal.' }}
+        </p>
+        <button
+          type="button"
+          class="btn sm pri"
+          :disabled="storageSelected.size === 0 || storageLoading"
+          @click="reviewStorage"
+        >Review {{ storageSelected.size || '' }}</button>
+      </div>
+
+      <div
+        v-if="storagePlan"
+        class="storage-review"
+        role="region"
+        aria-label="Cleanup review"
+      >
+        <div>
+          <b>Review {{ storagePlan.targets.length }} workspace{{ storagePlan.targets.length === 1 ? '' : 's' }}</b>
+          <small>{{ byteSize(storagePlan.estimatedRecoverableBytes) }} estimated guest recovery. Eligibility is checked again after native confirmation.</small>
+        </div>
+        <ul class="storage-review-list">
+          <li
+            v-for="target in storagePlan.targets"
+            :key="target.id"
+          >
+            <b>{{ target.displayName }}</b>
+            <span class="mono">{{ target.path }}</span>
+          </li>
+          <li
+            v-for="blocked in storagePlan.blocked"
+            :key="`blocked:${blocked.id}`"
+            class="blocked"
+          >
+            <b>{{ blocked.displayName }} · retained</b>
+            <span v-if="blocked.path" class="mono">{{ blocked.path }}</span>
+            <span>{{ blocked.reason }}</span>
+          </li>
+        </ul>
+        <div class="storage-review-actions">
+          <button
+            type="button"
+            class="btn sm ghost"
+            @click="storagePlan = undefined"
+          >Cancel</button>
+          <button
+            type="button"
+            class="btn sm danger"
+            :disabled="storageLoading"
+            @click="confirmStorage"
+          >Continue to confirmation</button>
+        </div>
+      </div>
+
+      <div
+        v-if="storageOutcome"
+        class="storage-outcome"
+        role="status"
+      >
+        <b>Cleanup {{ storageOutcome.status }}</b>
+        <span>{{ byteSize(storageOutcome.removedBytes) }} removed from selected guest paths.</span>
+        <span>{{ byteSize(storageOutcome.guestFreeSpaceDeltaBytes) }} measured VM free-space change.</span>
+        <span>{{ storageOutcome.hostRecovery.note }}</span>
+        <ul
+          v-if="storageOutcome.targets.length"
+          class="storage-review-list"
+          aria-label="Cleanup results by workspace"
+        >
+          <li
+            v-for="item in storageOutcome.targets"
+            :key="`outcome:${item.id}`"
+            :class="{ blocked: item.status !== 'removed' }"
+          >
+            <b>{{ item.status }} · {{ byteSize(item.removedBytes) }} removed</b>
+            <span class="mono">{{ item.path }}</span>
+            <span v-if="item.reason">{{ item.reason }}</span>
+          </li>
+        </ul>
+      </div>
     </PrefCard>
 
     <PrefCard
@@ -608,3 +946,8 @@ onBeforeUnmount(() => {
     </PrefCard>
   </div>
 </template>
+
+<style scoped>
+.storage-actions,.storage-footer,.storage-review-actions{display:flex;align-items:center;gap:8px}.storage-actions{justify-content:flex-end}.storage-segment{display:flex;padding:2px;border:1px solid var(--border-default);border-radius:8px;background:var(--bg-surface-alt)}.storage-segment button{border:0;border-radius:6px;padding:5px 10px;background:transparent;color:var(--text-muted)}.storage-segment button.on{background:var(--bg-surface);color:var(--text-primary);box-shadow:0 1px 2px color-mix(in srgb,var(--text-primary) 10%,transparent)}.storage-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin:0 18px 12px;border:1px solid var(--border-subtle);border-radius:10px;overflow:hidden;background:var(--border-subtle)}.storage-summary>span{display:grid;gap:2px;padding:12px;background:var(--bg-surface)}.storage-summary b{font-size:16px;font-variant-numeric:tabular-nums}.storage-summary small,.storage-row small,.storage-review small{display:block;color:var(--text-muted)}.storage-group{margin:10px 18px;border:1px solid var(--border-subtle);border-radius:10px;overflow:hidden}.storage-group-head{display:flex;align-items:center;gap:12px;padding:9px 12px;background:var(--bg-surface-alt);font-size:12px}.storage-group-head b{margin-right:auto;font-size:13px}.storage-group-head span{color:var(--text-muted);font-variant-numeric:tabular-nums}.storage-table-head,.storage-row{display:grid;grid-template-columns:48px minmax(120px,1fr) 100px 110px minmax(220px,1.7fr);align-items:start;gap:10px;padding:9px 12px}.storage-table-head{font-size:10.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--text-dim);border-bottom:1px solid var(--border-subtle)}.storage-row+.storage-row,.storage-detail+.storage-row{border-top:1px solid var(--border-subtle)}.storage-row{font-size:12px}.storage-location{display:grid;gap:3px}.storage-details-button{width:max-content;padding:0;border:0;background:none;color:var(--text-link);font-size:11px}.storage-assessment{text-transform:capitalize}.storage-assessment.eligible{color:var(--status-success)}.storage-assessment.protected{color:var(--text-muted)}.storage-assessment.blocked,.storage-assessment.unknown{color:var(--status-warning)}.storage-detail{display:flex;flex-wrap:wrap;gap:8px 16px;padding:8px 12px 10px 70px;border-top:1px dashed var(--border-subtle);font-size:11px;color:var(--text-muted)}.storage-detail .mono{max-width:100%;overflow-wrap:anywhere;color:var(--text-primary)}.storage-footer{justify-content:flex-end;padding:2px 18px 12px}.storage-footer .note{margin-right:auto}.storage-review,.storage-outcome{margin:0 18px 12px;padding:12px;border:1px solid var(--border-default);border-radius:10px;background:var(--bg-surface-alt)}.storage-review{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 18px;align-items:start}.storage-review>div:first-child{display:grid;gap:3px}.storage-review-list{grid-column:1/-1;min-width:0;display:grid;gap:7px;margin:0;padding:0;list-style:none}.storage-review-list li>*{min-width:0;overflow-wrap:anywhere}.storage-review-list li{min-width:0;display:grid;gap:2px;padding:8px;border:1px solid var(--border-subtle);border-radius:7px;background:var(--bg-surface)}.storage-review-list .mono{overflow-wrap:anywhere;font-size:11px;color:var(--text-muted)}.storage-review-list .blocked{border-color:var(--status-warning)}.storage-outcome{display:grid;gap:4px;font-size:12px}.storage-outcome span{min-width:0;overflow-wrap:anywhere;color:var(--text-muted)}
+@media(max-width:760px){.storage-summary{grid-template-columns:1fr}.storage-table-head{display:none}.storage-row{grid-template-columns:32px 1fr}.storage-row>span:nth-child(n+3){grid-column:2}.storage-group-head{align-items:flex-start;flex-wrap:wrap}.storage-group-head b{width:100%}.storage-footer,.storage-review{align-items:stretch;flex-direction:column}.storage-review-actions{justify-content:flex-end}.storage-detail{padding-left:54px}}
+</style>

@@ -21,9 +21,11 @@ export const agentToolManifests: ToolManifest[] = [
             runLocation: { type: 'enum', enum: ['vm', 'container'], optional: true, description: 'Per-run execution location override. Never changes the agent definition. Containers support claude-code and codex; other providers fail explicitly.' },
             model: { type: 'string', optional: true, description: 'Per-run model override. Without agentId, uses the default Sulla prompt and tools.' },
             provider: { type: 'string', optional: true, description: 'Provider for this run; defaults to the selected agent or primary provider.' },
+            effort:        { type: 'string', optional: true, description: 'Per-job Codex reasoning effort, e.g. "max". Requires an explicit Codex model such as "gpt-6-luna"; provider may be omitted. Must be supported by that model in the live catalog. Omit to preserve current defaults. Does not change saved settings.' },
             agentName: { type: 'string', description: 'Alias for agentId. Same resolution rules.', optional: true },
             prompt:    { type: 'string', description: 'The task/instruction to give the sub-agent.' },
             projectTaskId: { type: 'string', optional: true, description: 'Optional legacy task correlation id; project work is tracked in Files.' },
+            followUpOf:    { type: 'object', optional: true, description: 'Explicit original result this task continues. Use its exact jobId and taskIndex; never infer from a similar label or PR. Presentation only.', properties: { jobId: { type: 'string' }, taskIndex: { type: 'number' } } },
             workspacePath: {
               type:        'string',
               optional:    true,
@@ -58,6 +60,19 @@ export const agentToolManifests: ToolManifest[] = [
     },
     operationTypes: ['execute'],
     loader:         () => import('./spawn_agent'),
+  },
+  {
+    name:        'link_result',
+    category:    'agents',
+    description: 'Link an existing follow-up task to the original result or real decision IDs so its card updates live. Both tasks must be direct children of your manager conversation. This records display metadata only; never answers, retries, completes or wakes work.',
+    schemaDef:   {
+      jobId:       { type: 'string', description: 'Existing follow-up job ID.' },
+      taskIndex:   { type: 'number', description: 'Zero-based follow-up task index.' },
+      followUpOf:  { type: 'object', optional: true, properties: { jobId: { type: 'string' }, taskIndex: { type: 'number' } }, description: 'Original result this follow-up continues.' },
+      decisionIds: { type: 'array', optional: true, items: { type: 'string' }, description: 'Existing question/approval IDs in your manager or this worker conversation. A project decision number or prose question is not a decision ID.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./link_result'),
   },
   {
     name:        'return_result',

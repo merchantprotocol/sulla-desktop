@@ -3,10 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import '../../Support/TestHomeEnv';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { modelRouter, recommendedState } from '../../../languagemodels/modelRouter';
 import { TestDatabase } from '../../Support/TestDatabase';
+import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 import { SpawnAgentWorker } from '../../../tools/agents/spawn_agent';
+import { toolDecisionPort } from '../../../tools/toolDecisionPort';
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../services/ModelProviderService', () => ({
@@ -17,6 +22,7 @@ const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? descri
 
 dbDescribe('spawn_agent idempotent structured output (real tool and repository)', () => {
   const database = new TestDatabase();
+  let settingsDirectory: string | undefined;
   let registry: typeof import('../../../tools/agents/jobRegistry');
   let agentDefinitionService: typeof import('../../../services/AgentDefinitionService').agentDefinitionService;
 
@@ -37,6 +43,11 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
   }
 
   beforeAll(async() => {
+    vi.spyOn(toolDecisionPort.resolve(), 'requiresApproval').mockResolvedValue(false);
+    settingsDirectory = await mkdtemp(join(tmpdir(), 'sulla-spawn-qa-'));
+    SullaSettingsModel.setFallbackFilePath(join(settingsDirectory, 'settings.json'));
+    // This legacy-launch fixture has no owner-configured worker bindings.
+    vi.spyOn(modelRouter, 'getEditableState').mockResolvedValue(recommendedState());
     await database.initialize();
     process.env.SULLA_DATABASE_URL = database.appUrl();
     process.env.PGOPTIONS = `-csearch_path=${ database.schema },public`;
@@ -48,11 +59,14 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     registry = await import('../../../tools/agents/jobRegistry');
     agentDefinitionService = (await import('../../../services/AgentDefinitionService')).agentDefinitionService;
     vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({
-      slug: 'codex-sol-worker', name: 'Codex SOL Worker', enabled: true, status: 'active', run_location: 'vm',
+      id: 'worker-definition', slug: 'codex-sol-worker', name: 'Codex SOL Worker', enabled: true, status: 'active', run_location: 'vm',
     } as any);
   }, 60_000);
 
-  afterAll(async() => database.dispose());
+  afterAll(async() => {
+    await database.dispose();
+    if (settingsDirectory) await rm(settingsDirectory, { recursive: true, force: true });
+  });
 
   const seed = async(parentThreadId: string, label: string, visibility: 'hidden' | 'tab') => registry.createJob([{
     agentId: 'codex-sol-worker', label, prompt: 'existing work', status: visibility === 'tab' ? 'running' : 'queued',
@@ -63,7 +77,7 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     const parent = `hidden-${ Date.now() }`;
     const existing = await seed(parent, 'same-hidden', 'hidden');
     const hidden = await new SpawnHarness().run(parent, { tasks: [{ agentId: 'codex-sol-worker', label: 'same-hidden', prompt: 'retry' }] });
-    expect(hidden.result).toMatchObject({ mode: 'async', jobId: existing.jobId, deduplicated: true }); // risk: CLI double encoding
+    expect(hidden.result, JSON.stringify(hidden)).toMatchObject({ mode: 'async', jobId: existing.jobId, deduplicated: true }); // risk: CLI double encoding
     expect(typeof hidden.result).toBe('object');
 
     const sync = await new SpawnHarness().run(parent, { tasks: [{ agentId: 'codex-sol-worker', label: 'same-hidden', prompt: 'retry' }], async: false });

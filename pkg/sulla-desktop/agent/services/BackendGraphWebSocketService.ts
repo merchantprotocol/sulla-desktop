@@ -8,13 +8,10 @@
 // heartbeat channels to the default agent via GraphRegistry.
 import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
-import { AbortService } from './AbortService';
-import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
-import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, releaseAgentCompletionClaim, requeueAgentCompletionAfterFailure, requeueAgentCompletionQuietly, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
 import { CompletionKey } from '../app/Services/CompletionKey';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { acquireWhenReady, executeWithContainerLifecycleRecovery } from './ContainerLifecycleRecovery';
 import { applyThreadAgentRoute, resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
-import { agentDefinitionService } from './AgentDefinitionService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { agentWaitProvider } from './AgentWaitServices';
@@ -22,17 +19,22 @@ import { RunActivity } from './RunActivity';
 import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { ChatErrorDiagnostics } from './ChatErrorDiagnostics';
-import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
-import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { getSchedulerService } from './SchedulerService';
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
+import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
+import { settleHiddenAgentRuns } from './HiddenAgentRuns';
+import { AbortService } from './AbortService';
+import { enqueueAgentCompletion, formatCompletionBatch, registerCompletionIdleDispatcher, releaseAgentCompletionClaim, requeueAgentCompletionAfterFailure, requeueAgentCompletionQuietly, setCompletionInboxStopped, takeAgentCompletions, type PendingCompletion } from './AgentCompletionInbox';
+import { recoverPendingAgentCompletions } from './AgentCompletionRecoveryService';
+import { agentDefinitionService } from './AgentDefinitionService';
+import { agentExecutionReadiness, executionAbort, waitForAutomaticAgentExecution } from './AgentExecutionReadiness';
+import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { injectSteer, steerText, takePendingSteers } from '../utils/steerChannel';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
-import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
@@ -46,6 +48,9 @@ import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
 import { SupportSessionPolicy } from './SupportSessionPolicy';
+import { DecisionAnswerDelivery, type DecisionAnswerDeliveryInput } from './DecisionAnswerDelivery';
+import { workerModelRouting, installWorkerRoute, detachTerminalWorkerChat, isWorkerMappingHumanTurn } from './WorkerModelRouting';
+import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import { AgentTurnStopper } from './AgentTurnStopper';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -56,6 +61,7 @@ import type { OrgConversationStartRequest } from './OrgMessenger';
 import type { MessageEnvelope } from '@sulla/domain';
 import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
+import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -101,9 +107,18 @@ let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = 
 
 export function getBackendGraphWebSocketService(): BackendGraphWebSocketService {
   if (!backendGraphWebSocketServiceInstance) {
+    if (agentExecutionReadiness.draining) throw executionAbort();
     backendGraphWebSocketServiceInstance = new BackendGraphWebSocketService();
   }
   return backendGraphWebSocketServiceInstance;
+}
+
+export function drainAgentExecution(): Promise<void> {
+  agentExecutionReadiness.close();
+  const current = backendGraphWebSocketServiceInstance;
+  return (current?.drain() ?? Promise.resolve()).finally(() => {
+    if (backendGraphWebSocketServiceInstance === current) backendGraphWebSocketServiceInstance = null;
+  });
 }
 
 export class BackendGraphWebSocketService {
@@ -117,7 +132,15 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+  private readonly readinessWaits = new Map<string, Set<AbortController>>();
+  private readonly dispatchedRuns = new Set<Promise<unknown>>();
+  private readonly recoveryAbort = new AbortController();
+  private recoveryStarted = false;
+  private readonly recoveryCutoff = Date.now();
   private readonly agentInbox: AgentInbox;
+  private decisionAnswerRetry?:           ReturnType<typeof setTimeout>;
+  private decisionAnswerRetrying = false;
+  private decisionAnswerGeneration = 0;
   private readonly inboxReceiverResolver: AgentInboxReceiverResolver;
   private readonly inboxRunGuard: ReceiverRunGuard;
   private readonly orgMessengerFleet: OrgMessengerFleet;
@@ -133,11 +156,13 @@ export class BackendGraphWebSocketService {
   }>();
   private subscribedChannels = new Set<string>();
   private conversationContainers = new Map<string, {
+    workerMappingKey?: string;
     provider: string;
     model?: string;
+    providerCliSnapshot?: import('@pkg/shared/providerCliSelection').ProviderCliSnapshot;
     agentId: string;
-    lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle;
-    idleTimer: ReturnType<typeof setTimeout>;
+    lifecycle:         import('./AgentContainerLauncher').AgentContainerLifecycle;
+    idleTimer:         ReturnType<typeof setTimeout>;
   }>();
   private conversationContainerStarts = new Map<string, Promise<import('./AgentContainerLauncher').AgentContainerLifecycle>>();
 
@@ -180,6 +205,7 @@ export class BackendGraphWebSocketService {
 
   /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */
   async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<boolean> {
+    await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
     const parked = await parkedAgentRehydrator.resolve(threadId);
     if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
     // The manager is blocked inside spawn_agent's own in-process wait for its
@@ -272,17 +298,19 @@ export class BackendGraphWebSocketService {
     return this.runInConversationContainer(state, channelId, threadId, action, onProgress, signal);
   }
 
-  private async runInConversationContainer<T>(state: AgentGraphState, channelId: string, threadId: string, action: () => T, onProgress?: (message: string) => void, signal?: AbortSignal): Promise<Awaited<T>> {
+  private async runInConversationContainer<T>(state: AgentGraphState, channelId: string, threadId: string, action: () => T, onProgress?: (message: string) => void, signal?: AbortSignal, assertOwner: () => void = () => {}): Promise<Awaited<T>> {
     const { modelRouter } = await import('../languagemodels/modelRouter');
     const routedAgentId = resolveAgentIdentity(state.metadata);
     const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
     const { effectiveModelChoice } = await import('../languagemodels/threadModelChoice');
-    const choice = effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, metadata: state.metadata, agentChoice: definition?.model_choice });
-    const routed = (await modelRouter.resolve('agents', choice))[0];
+    const workerRoute = !(state.metadata as any).workerModelChatOverride && (state.metadata as any).workerModelRoute;
+    const choice = workerRoute ? undefined : effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, effort: state.metadata.agent?.effort, metadata: state.metadata, agentChoice: definition?.model_choice });
+    const routed = (workerRoute ? await workerModelRouting.resolveRoute(workerRoute, signal) : await modelRouter.resolve('agents', choice))[0];
+    assertOwner();
     const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
     return executeWithContainerLifecycleRecovery(
-      () => acquireWhenReady(() => this.conversationContainer(channelId, threadId, provider, state), message => onProgress?.(message), signal),
-      lost => this.recoverConversationContainer(channelId, threadId, provider, state, lost),
+      () => acquireWhenReady(() => { assertOwner(); return this.conversationContainer(channelId, threadId, provider, state) }, message => onProgress?.(message), signal),
+      lost => { assertOwner(); return this.recoverConversationContainer(channelId, threadId, provider, state, lost) },
       action,
     );
   }
@@ -373,23 +401,73 @@ export class BackendGraphWebSocketService {
   }
 
   private inboxThread(target: AgentInboxTarget): string | undefined {
-    if (target.threadId && this.hasActiveRun(target.channel, target.threadId)) return target.threadId;
+    if (target.threadId) return this.hasActiveRun(target.channel, target.threadId) ? target.threadId : undefined;
     const prefix = `${ target.channel }|`;
     return [...this.activeAborts.keys()].find(key => key.startsWith(prefix))?.slice(prefix.length);
   }
 
+  private readonly deliveringDecisionThreads = new Set<string>();
+
+  private decisionThreadOwned(channel: string, threadId: string): boolean {
+    const metadata = GraphRegistry.get(threadId)?.state.metadata as any;
+    return this.hasActiveRun(channel, threadId) || !!metadata?.runtimeRunnerActive || !!metadata?.delegatedRunActive || agentJobLifecycle.hasLiveWaiter(threadId);
+  }
+
+  private async retryDecisionAnswers(): Promise<void> {
+    clearTimeout(this.decisionAnswerRetry); this.decisionAnswerRetry = undefined;
+    if (agentExecutionReadiness.draining) return;
+    if (this.decisionAnswerRetrying) { this.decisionAnswerRetry = setTimeout(() => { this.retryDecisionAnswers() }, 15_000); this.decisionAnswerRetry.unref?.(); return }
+    this.decisionAnswerRetrying = true;
+    const generation = this.decisionAnswerGeneration;
+    let pending = true;
+    try {
+      const { decisionService } = await import('./DecisionService');
+      const targets = await decisionService.pendingAnswerTargets([...this.deliveringDecisionThreads]);
+      if (generation !== this.decisionAnswerGeneration) return;
+      pending = targets.length > 0;
+      for (const target of targets) if (!this.inboxThread(target)) this.agentInbox.flush(target).catch(error => console.warn('[BackendGraphWS] Answer remains queued:', error?.name));
+    } catch { /* Durable records remain queued while storage reconnects. */ } finally { this.decisionAnswerRetrying = false }
+    if (generation !== this.decisionAnswerGeneration) return;
+    if (pending && !agentExecutionReadiness.draining) {
+      this.decisionAnswerRetry = setTimeout(() => { this.retryDecisionAnswers() }, 15_000);
+      this.decisionAnswerRetry.unref?.();
+    }
+  }
+
   private async wakeInbox(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<AgentInboxDeliveryReceipt> {
+    const human = entries.every(entry => entry.envelope.kind === 'human');
+    if (this.inboxThread(target) || (human && target.threadId && this.decisionThreadOwned(target.channel, target.threadId))) return 'deferred';
     const threadId = target.threadId || this.inboxThread(target);
-    return await this.dispatchToAgent(
-      target.channel,
-      target.channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-      batch,
-      threadId,
-      undefined,
-      target.agentId,
-      'system',
-      { source: 'agent_inbox', inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
-    );
+    if (human && threadId) this.deliveringDecisionThreads.add(threadId);
+    try {
+      let receiverAgentId = target.agentId;
+      if (human) {
+        const recordedIdentity = entries[0]?.target?.agentId;
+        // On the shared desktop channel the recorded receiver may be only the transport default
+        // (conversation_history.agent_id); an exact agent saved on the thread is the real role.
+        const recordedSharedDefault = target.channel === SULLA_DESKTOP_CHANNEL_ID && recordedIdentity === SULLA_DESKTOP_CHANNEL_ID;
+        let savedIdentity = (!recordedIdentity || recordedSharedDefault) && threadId ? resolveAgentIdentity((GraphRegistry.get(threadId)?.state ?? await loadThreadState(threadId))?.metadata) : '';
+        // After a restart or Redis expiry the graph is rebuilt with only the shared default identity;
+        // the exact agent the user selected on the linked chat is then the saved role. A failed read
+        // throws, so the answer stays undelivered for retry instead of running on the default agent.
+        if (target.channel === SULLA_DESKTOP_CHANNEL_ID && threadId && (!recordedIdentity || recordedSharedDefault) && (!savedIdentity || savedIdentity === SULLA_DESKTOP_CHANNEL_ID)) {
+          const selected = await ConversationThreadStore.findSelectedAgent(threadId);
+          if (selected && selected !== SULLA_DESKTOP_CHANNEL_ID) savedIdentity = selected;
+        }
+        receiverAgentId = (recordedSharedDefault ? savedIdentity || recordedIdentity : recordedIdentity || savedIdentity) || target.agentId || (target.channel !== SULLA_DESKTOP_CHANNEL_ID && target.channel !== HEARTBEAT_CHANNEL_ID ? target.channel : undefined);
+      }
+      return await this.dispatchToAgent(
+        target.channel,
+        target.channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+        batch,
+        threadId,
+        undefined,
+        receiverAgentId,
+        entries.every(entry => entry.envelope.kind === 'human') ? 'keyboard' : 'system',
+        { source: 'agent_inbox', workerMappingNewHumanTurn: entries.every(entry => entry.envelope.kind === 'human'), inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
+        entries.every(entry => entry.envelope.kind === 'human') ? entries.map(entry => ({ id: entry.envelope.ids.messageId, attempt: String((entry.envelope.ids as any).answerAttempt ?? ''), body: entry.envelope.body })) : undefined,
+      );
+    } finally { if (human && threadId) this.deliveringDecisionThreads.delete(threadId); }
   }
 
   /**
@@ -402,6 +480,7 @@ export class BackendGraphWebSocketService {
    * it (and the job it is waiting to complete) blocked forever.
    */
   private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
+    await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
     if (this.hasActiveRun(channelId, threadId)) return;
     const delegated = GraphRegistry.get(threadId);
     // A runner-owned delegated manager (parked or mid-turn) gets the batch
@@ -438,9 +517,23 @@ export class BackendGraphWebSocketService {
     });
   }
 
+  async drain(): Promise<void> {
+    this.recoveryAbort.abort();
+    for (const waits of this.readinessWaits.values()) for (const wait of waits) wait.abort();
+    this.unsubscribes.forEach(unsubscribe => unsubscribe());
+    this.unsubscribes = [];
+    agentWaitProvider.scheduler.stop();
+    for (const abort of this.activeAborts.values()) abort.abort();
+    GraphRegistry.abortRuntimeRuns();
+    await Promise.all([Promise.allSettled([...this.dispatchedRuns]), settleHiddenAgentRuns()]);
+    this.dispose();
+  }
+
   dispose(): void {
     this.orgMessagingAbort?.abort();
     this.orgMessagingAbort = undefined;
+    this.decisionAnswerGeneration++;
+    clearTimeout(this.decisionAnswerRetry); this.decisionAnswerRetry = undefined;
     this.unsubscribes.forEach(unsub => unsub());
     this.unsubscribes = [];
     for (const [, abort] of this.activeAborts) {
@@ -497,6 +590,7 @@ export class BackendGraphWebSocketService {
     threadId: string,
     provider: string,
     state: AgentGraphState,
+    recoveryCliSnapshot?: import('@pkg/shared/providerCliSelection').ProviderCliSnapshot,
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
     const key = threadId;
     const agentId = String((state.metadata as any).agentId ?? state.metadata.wsChannel ?? '');
@@ -519,7 +613,7 @@ export class BackendGraphWebSocketService {
         await starting.catch(() => undefined);
         continue;
       }
-      const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
+      const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key, recoveryCliSnapshot);
       this.conversationContainerStarts.set(key, start);
       try {
         return await start;
@@ -534,8 +628,28 @@ export class BackendGraphWebSocketService {
 
   private async createOrReuseConversationContainer(
     channelId: string, threadId: string, provider: string, state: AgentGraphState, key: string,
+    recoveryCliSnapshot?: import('@pkg/shared/providerCliSelection').ProviderCliSnapshot,
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
     const existing = this.conversationContainers.get(key);
+    const metadata = state.metadata as any;
+    const route = !metadata.workerModelChatOverride && metadata.workerModelRoute;
+    let providerCliSnapshot = recoveryCliSnapshot;
+    const delegatedJobId = metadata.delegatedJobId ?? metadata.workerModelTask?.jobId;
+    if (delegatedJobId && !providerCliSnapshot) {
+      const { getJob } = await import('../tools/agents/jobRegistry');
+      const taskIndex = Number.isInteger(metadata.delegatedTaskIndex) ? metadata.delegatedTaskIndex : Number(metadata.workerModelTask?.taskIndex ?? 0);
+      providerCliSnapshot = (await getJob(String(delegatedJobId)))?.tasks[taskIndex]?.providerCliSnapshot;
+    } else if (!providerCliSnapshot) {
+      // Ordinary chats capture the approved selection once per root container.
+      // A vanished container passes its captured snapshot through recovery; an
+      // existing lifecycle keeps its own snapshot even when settings change.
+      providerCliSnapshot = recoveryCliSnapshot ?? existing?.providerCliSnapshot;
+      if (!providerCliSnapshot && !existing && !recoveryCliSnapshot) {
+        const { captureProviderCliSnapshot } = await import('../../backend/providerCliUpdates');
+        providerCliSnapshot = await captureProviderCliSnapshot();
+      }
+    }
+    let workerMappingKey = JSON.stringify([route ? [route.slug, route.revision, route.connections] : null, providerCliSnapshot ?? null]);
     const model = state.metadata.agent?.model;
     // The container's capability token, Files actor and runtime binding all
     // carry the agent it was built for (AgentContainerLauncher), so it is
@@ -551,7 +665,7 @@ export class BackendGraphWebSocketService {
     // Compare what the container's provider bridge actually pins: slot aliases
     // ('primary', …) pin nothing, while 'fast' pins the resolved light model.
     const pinned = (value: string | undefined) => cliPinnedModelId(provider, value);
-    if (existing && !existing.lifecycle.closed && existing.agentId === agentId && ((existing.provider === provider && pinned(existing.model) === pinned(model)) || inUse)) {
+    if (existing && existing.workerMappingKey === workerMappingKey && !existing.lifecycle.closed && existing.agentId === agentId && ((existing.provider === provider && pinned(existing.model) === pinned(model)) || inUse)) {
       clearTimeout(existing.idleTimer);
       return existing.lifecycle;
     }
@@ -564,14 +678,22 @@ export class BackendGraphWebSocketService {
         .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
       this.conversationContainers.delete(key);
     }
+    // Closing an idle or switched ordinary root is a new container launch, so
+    // it adopts the current approved CLI selection. Recovery is the exception:
+    // it must retain the vanished root's snapshot.
+    if (!delegatedJobId && !recoveryCliSnapshot && existing) {
+      const { captureProviderCliSnapshot } = await import('../../backend/providerCliUpdates');
+      providerCliSnapshot = await captureProviderCliSnapshot();
+      workerMappingKey = JSON.stringify([route ? [route.slug, route.revision, route.connections] : null, providerCliSnapshot]);
+    }
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
     const lifecycle = await createAgentContainerLifecycle({
       jobId: `chat-${ threadId }`, taskIndex: 0, provider,
-      model, state,
+      model, state, providerCliSnapshot,
       persistenceKey: conversationPersistenceKey(channelId, threadId, state),
     });
     const idleTimer = this.armConversationIdle(key, lifecycle);
-    this.conversationContainers.set(key, { provider, model, agentId, lifecycle, idleTimer });
+    this.conversationContainers.set(key, { provider, model, agentId, lifecycle, idleTimer, workerMappingKey, providerCliSnapshot });
     return lifecycle;
   }
 
@@ -584,6 +706,7 @@ export class BackendGraphWebSocketService {
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
     const key = threadId;
     const current = this.conversationContainers.get(key);
+    const recoveryCliSnapshot = current?.lifecycle === lost ? current.providerCliSnapshot : undefined;
     if (current?.lifecycle === lost) {
       clearTimeout(current.idleTimer);
       this.conversationContainers.delete(key);
@@ -591,7 +714,7 @@ export class BackendGraphWebSocketService {
     await lost.close('container-disappeared', 'BackendGraphWebSocketService.recoverConversationContainer')
       .catch(error => console.warn('[BackendGraphWS] Failed to close vanished conversation container:', error));
     console.warn(`[BackendGraphWS] Rebuilding vanished conversation container for ${ key }; retrying the same provider`);
-    return await this.conversationContainer(channelId, threadId, provider, state);
+    return await this.conversationContainer(channelId, threadId, provider, state, recoveryCliSnapshot);
   }
 
   /**
@@ -602,10 +725,18 @@ export class BackendGraphWebSocketService {
   reinitialize(): void {
     console.log('[BackendGraphWS] reinitialize — re-subscribing to all channels after system resume');
     this.dispose();
-    this.initialize();
+    this.initialize(false);
+    this.retryDecisionAnswers();
   }
 
-  private initialize(): void {
+  private initialize(recover = true): void {
+    const subscriptionGeneration = this.decisionAnswerGeneration;
+    import('./DecisionService').then(({ decisionService }) => {
+      if (subscriptionGeneration !== this.decisionAnswerGeneration) return;
+      this.unsubscribes.push(decisionService.subscribe(record => {
+        if (record.answerDelivery === 'queued') this.retryDecisionAnswers();
+      }));
+    });
     this.wsService.connect(SULLA_DESKTOP_CHANNEL_ID);
     const sullaUnsub = this.wsService.onMessage(SULLA_DESKTOP_CHANNEL_ID, (msg) => {
       this.handleChannelMessageSafely(SULLA_DESKTOP_CHANNEL_ID, 'sulla-desktop', msg);
@@ -651,44 +782,123 @@ export class BackendGraphWebSocketService {
     this.deregisterAgent('workbench').catch(err =>
       console.warn('[BackendGraphWS] Failed to clear retired agent registration:', err));
 
-    // Subscribe to every enabled custom-agent channel stored in Postgres.
-    this.subscribeToAgentChannels().catch(err =>
-      console.warn('[BackendGraphWS] Failed to subscribe to agent channels:', err));
+    if (recover && !this.recoveryStarted) {
+      this.recoveryStarted = true;
+      this.recoverWhenReady().catch(error => {
+        if (error?.name !== 'AbortError') console.warn('[BackendGraphWS] Agent recovery failed:', error);
+      });
+    } else if (!recover) {
+      this.subscribeWhenReady().catch(error => {
+        if (error?.name !== 'AbortError') console.warn('[BackendGraphWS] Channel resubscription failed:', error);
+      });
+    }
+  }
 
-    // The database-backed completion outbox must replay only after the graph
-    // channels are subscribed; otherwise a recovered wake can be emitted into
-    // an empty in-process bus and incorrectly acknowledged as delivered.
-    recoverPendingAgentCompletions().catch(err =>
-      console.warn('[BackendGraphWS] Failed to recover agent completions:', err));
-    this.agentInbox.replayPending().catch(err =>
-      console.warn('[BackendGraphWS] Failed to replay pending agent inbox messages:', err));
-    const interruptedRecovery = new InterruptedAgentRecoveryService(
-      agentJobProvider.states,
-      async(job, taskIndex) => {
-        const task = job.tasks[taskIndex];
-        const channel = job.parentChannel || 'sulla-desktop';
-        await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-          `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
-          task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
+  private async subscribeWhenReady(): Promise<void> {
+    await agentExecutionReadiness.wait(this.recoveryAbort.signal);
+    await this.subscribeToAgentChannels();
+  }
+
+  private async recoverWhenReady(): Promise<void> {
+    for (;;) {
+      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
+      try {
+        await this.recoverRuntimeWork();
+        return;
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || this.recoveryAbort.signal.aborted) return;
+        console.warn('[BackendGraphWS] Agent recovery waiting for services:', error);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+    }
+  }
+
+  private async recoverRuntimeWork(): Promise<void> {
+    const { awaitAgentContainerRuntimeRehydration, probeAgentContainerRuntime } = await import('./AgentContainerRuntimeRegistry');
+    await awaitAgentContainerRuntimeRehydration();
+    await this.subscribeToAgentChannels();
+    await agentWaitProvider.scheduler.start();
+    await recoverPendingAgentCompletions();
+    await this.agentInbox.replayPending();
+    this.retryDecisionAnswers();
+    const eligible = async(job: import('../tools/agents/jobRegistry').AgentJob): Promise<boolean> => {
+      for (const task of job.tasks) {
+        if (task.status !== 'running' || !task.threadId || task.returnedAt) continue;
+        if (this.recoveryAbort.signal.aborted || this.hasActiveRun(job.parentChannel ?? 'sulla-desktop', task.threadId) ||
+          (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
+          probeAgentContainerRuntime(undefined, task.threadId) !== false || await this.hasPendingDecision(task.threadId)) return false;
+      }
+      return true;
+    };
+    // Only startup's interrupted working set is eligible. Normal work created
+    // later must never be restarted by this reconciliation loop.
+    const pending = new Set((await agentJobProvider.jobs.jobsForList(1, false))
+      .filter(job => job.createdAt <= this.recoveryCutoff && job.status === 'running' && job.visibility !== 'tab')
+      .map(job => job.jobId));
+    const recovery = new InterruptedAgentRecoveryService({
+      claimInterruptedJobs: max => agentJobProvider.states.claimInterruptedJobs(max, eligible),
+      recoveryCandidates:   async() => {
+        const candidates = (await agentJobProvider.jobs.jobsForList(1, false))
+          .filter(job => pending.has(job.jobId) && job.status === 'running');
+        const active = new Set(candidates.map(job => job.jobId));
+        for (const id of pending) if (!active.has(id)) pending.delete(id);
+        return candidates;
       },
-      (job, reason) => {
-        if (!job.parentChannel || !job.parentThreadId) return;
-        enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
+      claimInterruptedJob: async(id, max) => {
+        const claimed = await agentJobProvider.states.claimInterruptedJob(id, max, eligible);
+        if (claimed.resumable.length || claimed.exhausted.length) pending.delete(id);
+        return claimed;
       },
-    );
-    interruptedRecovery.recover().catch(err => console.warn('[BackendGraphWS] Failed to recover interrupted agent jobs:', err));
-    agentWaitProvider.scheduler.start().catch(err => console.warn('[BackendGraphWS] Failed to recover delegated task waits:', err));
-    // No spawn_agent runner survives a restart, so a return recorded by a
-    // runner that died (or by a dormant wake turn that predates this fix)
-    // would otherwise never reach its parent.
-    returnedTaskSettlement.settleStranded()
-      .then(count => { if (count) console.log(`[BackendGraphWS] Settled ${ count } returned delegated task(s) left without a runner`); })
-      .catch(err => console.warn('[BackendGraphWS] Failed to settle stranded returned tasks:', err));
+    }, (job, taskIndex) => {
+      // Dispatch owns/records the running turn. Do not wait for a possibly
+      // hours-long worker before admitting its siblings or the next job.
+      this.resumeInterruptedTask(job, taskIndex);
+      return Promise.resolve();
+    }, (job, reason) => {
+      if (job.parentChannel && job.parentThreadId) enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
+    });
+    await returnedTaskSettlement.settleStranded();
     if ((process as any).type === 'browser') {
       this.orgMessagingAbort?.abort();
       this.orgMessagingAbort = new AbortController();
       this.orgMessengerFleet.run(this.orgMessagingAbort.signal).catch(error => console.warn('[BackendGraphWS] Org messaging stopped unexpectedly:', error));
     }
+    while (pending.size && !this.recoveryAbort.signal.aborted) {
+      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
+      await recovery.recover();
+      if (pending.size) await this.waitForRecoveryRecheck();
+    }
+  }
+
+  private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): void {
+    const run = (async() => {
+      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
+      const task = job.tasks[taskIndex];
+      const channel = job.parentChannel || 'sulla-desktop';
+      await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+        `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
+        task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
+    })();
+    this.dispatchedRuns.add(run);
+    run.catch(error => {
+      if (error?.name !== 'AbortError') console.error('[BackendGraphWS] Interrupted worker dispatch failed:', error);
+    }).finally(() => this.dispatchedRuns.delete(run));
+  }
+
+  private waitForRecoveryRecheck(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const signal = this.recoveryAbort.signal;
+      const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(Object.assign(new Error('Recovery stopped'), { name: 'AbortError' })) };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 30_000);
+      timer.unref?.();
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    });
+  }
+
+  private async hasPendingDecision(threadId: string): Promise<boolean> {
+    const { PendingDecisionRepository } = await import('../repositories/PendingDecisionRepository');
+    return new PendingDecisionRepository(postgresClient).hasPendingForConversation(threadId);
   }
 
   /**
@@ -735,6 +945,7 @@ export class BackendGraphWebSocketService {
     try {
       await this.handleChannelMessage(channelId, triggerType, msg);
     } catch (err: any) {
+      if (err?.name === 'AbortError' || agentExecutionReadiness.draining) return;
       console.error(`[BackendGraphWS] ${ msg.type } on ${ channelId } failed before the agent started:`, err);
       if (msg.type !== 'user_message' && msg.type !== 'inject_message') return;
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
@@ -756,6 +967,10 @@ export class BackendGraphWebSocketService {
     _triggerType: 'sulla-desktop' | 'heartbeat',
     msg: WebSocketMessage,
   ): Promise<void> {
+    if ((msg.type === 'user_message' || msg.type === 'inject_message') && msg.data && typeof msg.data === 'object') {
+      const data = msg.data as any;
+      msg = { ...msg, data: { ...data, metadata: DecisionAnswerDelivery.publicMetadata(data.metadata) } };
+    }
     if (msg.type === 'stop_run') {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const stopThreadId = typeof data?.threadId === 'string' ? data.threadId.trim() : '';
@@ -769,8 +984,18 @@ export class BackendGraphWebSocketService {
         console.warn(`[BackendGraphWS:stop_run] ignored unscoped stop for channelId=${ channelId }, tabId=${ stopTabId || '(none)' }`);
         return;
       }
+      for (const wait of this.readinessWaits?.get(this.abortKey(channelId, stopThreadId)) ?? []) wait.abort();
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
       setCompletionInboxStopped(channelId, stopThreadId, true);
+      return;
+    }
+
+    if (msg.type === 'decision_answer_queued') {
+      const { decisionService } = await import('./DecisionService');
+      const record = await decisionService.find((msg.data as any)?.decisionId);
+      if (record?.channel === channelId && record.kind === 'question' && record.answerDelivery === 'queued') {
+        this.retryDecisionAnswers();
+      }
       return;
     }
 
@@ -947,7 +1172,7 @@ export class BackendGraphWebSocketService {
     const overrideAgentId = metadata?.agentId as string | undefined;
     const inputSource = metadata?.inputSource as string | undefined;
 
-    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, metadata);
+    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, { ...metadata, workerMappingNewHumanTurn: isWorkerMappingHumanTurn(msg.type, channelId, metadata) });
   }
 
   private async applySupportSessionCapability(state: AgentGraphState, metadata?: Record<string, unknown>): Promise<void> {
@@ -967,24 +1192,47 @@ export class BackendGraphWebSocketService {
     }
   }
 
-  private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<AgentInboxDeliveryReceipt> {
+  private dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[]): Promise<AgentInboxDeliveryReceipt> {
+    const threadId = threadIdFromMsg || nextThreadId();
+    const key = this.abortKey(channelId, threadId);
+    const controller = new AbortController();
+    const waiters = this.readinessWaits.get(key) ?? new Set<AbortController>();
+    waiters.add(controller);
+    this.readinessWaits.set(key, waiters);
+    const run = (async(): Promise<AgentInboxDeliveryReceipt> => {
+      try {
+        const automatic = inputSource === 'system' || channelId === HEARTBEAT_CHANNEL_ID || metadata?.source === 'system_resume';
+        await AgentReadinessStatus.wait(automatic ? waitForAutomaticAgentExecution : agentExecutionReadiness.wait.bind(agentExecutionReadiness), controller.signal, (content, status) => {
+          this.emitMessage(channelId, 'assistant_message', {
+            content, ...status, role: 'assistant', kind: 'progress', thread_id: threadId,
+          });
+          return Promise.resolve();
+        });
+        if (controller.signal.aborted || agentExecutionReadiness.draining) return 'deferred';
+        // The guard ends here. Normal dispatch still replaces/steers active turns as before.
+        return await this.executeReadyTurn(channelId, triggerType, message, threadIdFromMsg ?? threadId, scopedWorkflowId, overrideAgentId, inputSource, metadata, decisionInputs);
+      } catch (error: any) {
+        if (error?.name === 'AbortError') return 'deferred';
+        throw error;
+      } finally {
+        waiters.delete(controller);
+        if (!waiters.size) this.readinessWaits.delete(key);
+      }
+    })();
+    this.dispatchedRuns.add(run);
+    run.finally(() => this.dispatchedRuns.delete(run)).catch(() => undefined);
+    if (!threadIdFromMsg) this.emitMessage(channelId, 'thread_created', { threadId });
+    return run;
+  }
+
+  private async executeReadyTurn(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[]): Promise<AgentInboxDeliveryReceipt> {
+    const answerInputs = decisionInputs ?? [];
+    const decisionTurn = answerInputs.length > 0;
+    if (decisionTurn && threadIdFromMsg && this.decisionThreadOwned(channelId, threadIdFromMsg)) return 'deferred';
+    const wasActiveForWorkerMapping = !!threadIdFromMsg && this.hasActiveRun(channelId, threadIdFromMsg);
     const completionConsumption = new CompletionConsumptionRecorder();
     const { getModelProviderService } = await import('./ModelProviderService');
     const modelProvider = getModelProviderService();
-    // Before the saved model choice loads (it waits for the vault on a
-    // relaunch), an empty provider is not evidence that no AI is connected.
-    // Give it a minute rather than bouncing the user's first message.
-    for (let waited = 0; !modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID && waited < 60; waited++) {
-      await new Promise(resolve => setTimeout(resolve, 1_000));
-    }
-    if (!modelProvider.isInitialized() && channelId !== HEARTBEAT_CHANNEL_ID) {
-      this.emitMessage(channelId, 'assistant_message', {
-        content: 'Sulla is still starting up. Send your message again in a moment.',
-        role: 'assistant', kind: 'error', thread_id: threadIdFromMsg,
-      });
-      firstRunTrace('chat', 'chat held: model choice not loaded yet', { channelId });
-      return 'failed';
-    }
     if (!modelProvider.isInitialized() || !modelProvider.getPrimaryProvider().trim()) {
       if (channelId === HEARTBEAT_CHANNEL_ID) {
         console.info('[BackendGraphWS] Skipped heartbeat: no AI provider is connected');
@@ -1001,7 +1249,7 @@ export class BackendGraphWebSocketService {
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
-    if (metadata?.source !== 'sub_agent_completion') {
+    if (!decisionTurn && metadata?.source !== 'sub_agent_completion') {
       const pendingCompletions = takeAgentCompletions(channelId, threadId);
       if (pendingCompletions.length) {
         message = `${ message }\n\n${ formatCompletionBatch(pendingCompletions) }`;
@@ -1011,6 +1259,7 @@ export class BackendGraphWebSocketService {
         };
       }
     }
+
     const explicitAgentId = typeof overrideAgentId === 'string' ? overrideAgentId.trim() : '';
     const defaultAgentId = await getAgentIdForTrigger(triggerType) || channelId;
     let agentId = explicitAgentId || defaultAgentId;
@@ -1044,13 +1293,24 @@ export class BackendGraphWebSocketService {
     // duration rather than lying 'parked' while it is actually executing.
     let wakeTurnToRepark: { jobId: string; taskIndex: number } | undefined;
 
-    const isCurrentRun = () => this.activeAborts.get(abortKey) === runAbort;
+    const isCurrentRun = () => (!decisionTurn || !!runAbort) && this.activeAborts.get(abortKey) === runAbort;
+    const assertDecisionOwner = () => {
+      if (decisionTurn && (!isCurrentRun() || runAbort?.signal.aborted)) {
+        const interrupted = new Error('Answer delivery interrupted'); interrupted.name = 'AbortError'; throw interrupted;
+      }
+    };
 
     try {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
       const graph = result.graph;
       state = result.state;
       const parkedIdentity = await parkedAgentRehydrator.resolve(threadId);
+      if (decisionTurn) {
+        if (this.decisionThreadOwned(channelId, threadId)) return 'deferred';
+        runAbort = new AbortService();
+        this.activeAborts.set(abortKey, runAbort);
+      }
+
       if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);
 
       if (newRoute) {
@@ -1058,6 +1318,7 @@ export class BackendGraphWebSocketService {
         // Persist before execution so a renderer refresh or process interruption
         // cannot lose the sticky route chosen for this thread.
         await saveThreadState(state);
+        assertDecisionOwner();
       }
 
       // A support tab supplies an opaque session id every turn. Resolve the
@@ -1065,11 +1326,13 @@ export class BackendGraphWebSocketService {
       // active session ends, the tab omits the id and the old capability is
       // synchronously removed before this turn can execute.
       await this.applySupportSessionCapability(state, metadata);
+      assertDecisionOwner();
 
       // A saved/cached thread carries a historical copy of its agent config.
       // Run-location is deployment policy, so resolve it from the canonical row
       // on every dispatch before applying an explicit per-turn override.
       const currentDefinition = await agentDefinitionService.findBySlug(agentId);
+      assertDecisionOwner();
       if (currentDefinition) {
         state.metadata.agent = {
           ...(state.metadata.agent ?? {}),
@@ -1080,6 +1343,7 @@ export class BackendGraphWebSocketService {
       // Model choices from the chat picker are scoped to this thread state;
       // they never mutate ModelProviderService or global settings.
       state.metadata.agent = new ThreadModelOverridePolicy().apply(state.metadata.agent as any, threadModelSelection);
+      if (metadata?.workerMappingNewHumanTurn && threadModelSelection.mode !== 'unchanged') (state.metadata as any).workerModelChatOverride = threadModelSelection.mode === 'explicit';
 
       if (metadata?.runLocation === 'vm' || metadata?.runLocation === 'container') {
         state.metadata.agent = { ...(state.metadata.agent ?? {}), runLocation: metadata.runLocation };
@@ -1101,7 +1365,7 @@ export class BackendGraphWebSocketService {
       // already written to agent_job_messages by the caller before this
       // dispatch, and the finally block below redelivers anything still
       // pending once the active run ends.
-      if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey)) {
+      if ((metadata?.source === 'sub_agent_completion' || metadata?.source === 'orchestrator_job_message' || metadata?.source === 'agent_inbox') && this.activeAborts.has(abortKey) && (!decisionTurn || !isCurrentRun())) {
         if (metadata?.source === 'sub_agent_completion') {
           // Claimed by the caller's take: requeue clears that claim (enqueue would drop them).
           // No wake: the active run drains the inbox when it ends.
@@ -1111,10 +1375,12 @@ export class BackendGraphWebSocketService {
       }
       // The completion is now part of this turn's input. Persist consumption
       // before the model call so a process restart cannot replay it as new.
-      for (const entry of this.claimedCompletionEntries(state, metadata)) {
+      for (const entry of decisionTurn ? [] : this.claimedCompletionEntries(state, metadata)) {
         completionConsumption.recordInjected([entry]);
         await agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now());
+        assertDecisionOwner();
         await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+        assertDecisionOwner();
       }
       if (metadata?.source !== 'sub_agent_completion') setCompletionInboxStopped(channelId, threadId, false);
 
@@ -1127,6 +1393,7 @@ export class BackendGraphWebSocketService {
       if (parkedIdentity && parkedIdentity.task.status === 'parked') {
         await agentJobLifecycle.beginWakeTurn(parkedIdentity.job.jobId, parkedIdentity.taskIndex);
         wakeTurnToRepark = { jobId: parkedIdentity.job.jobId, taskIndex: parkedIdentity.taskIndex };
+        assertDecisionOwner();
       }
 
       // Abort any prior run still in flight FOR THIS SAME THREAD before
@@ -1134,8 +1401,9 @@ export class BackendGraphWebSocketService {
       // tabs sharing the same WebSocket channel can run in parallel.
       // Rapid double-sends from the same tab still get coalesced because
       // they share a thread id.
+      if (decisionTurn && (!isCurrentRun() || runAbort?.signal.aborted)) return 'deferred';
       const prior = this.activeAborts.get(abortKey);
-      if (prior) {
+      if (prior && prior !== runAbort) {
         try {
           prior.abort();
         } catch {
@@ -1146,7 +1414,7 @@ export class BackendGraphWebSocketService {
 
       // Create abort service for this run.
       // Set state first so stop_run can't race between activeAborts and state.
-      const abort = new AbortService();
+      const abort = runAbort ?? new AbortService();
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
@@ -1178,6 +1446,15 @@ export class BackendGraphWebSocketService {
 
       // Inter-agent wake: propagate replyToThread so ChannelTagExtractor on this
       // agent can include toThreadId when routing responses back to the caller.
+      if (decisionTurn) {
+        const { decisionService } = await import('./DecisionService');
+        const started = await decisionService.startAnswers(answerInputs, threadId);
+        if (started.length !== answerInputs.length || !isCurrentRun() || runAbort?.signal.aborted) {
+          await decisionService.finishAnswers(answerInputs, threadId, false);
+          return 'deferred';
+        }
+      }
+
       if (metadata?.replyToThread) {
         (state.metadata as any).replyToThread = String(metadata.replyToThread);
       }
@@ -1219,6 +1496,17 @@ export class BackendGraphWebSocketService {
       this.prepareFreshTurn(state);
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
+      const newHumanSelection = !parkedIdentity && metadata?.workerMappingNewHumanTurn && !wasActiveForWorkerMapping && !shouldResumeFromCurrentNode;
+      if (newHumanSelection && (state.metadata as any).workerModelRoute && (state.metadata as any).delegatedJobId) {
+        const terminal = await parkedAgentRehydrator.isTerminalDelegatedThread(threadId);
+        assertDecisionOwner();
+        if (terminal) detachTerminalWorkerChat(state);
+      }
+      if (newHumanSelection && !(state.metadata as any).delegatedJobId) {
+        const route = (state.metadata as any).workerModelChatOverride ? undefined : await workerModelRouting.newRoute(agentId);
+        assertDecisionOwner();
+        installWorkerRoute(state, route);
+      }
       // Front-door repair channels stay in the VM during the staged rollout,
       // even if an old client sends a container override or its bound agent row changes.
       // Nothing can run in the guest on the Sulla runtime; there every agent runs in a container.
@@ -1226,16 +1514,22 @@ export class BackendGraphWebSocketService {
       const tracedProvider = String(state.metadata.agent?.provider || '').trim();
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       if (runLocation === 'container') {
-        await this.runInConversationContainer(state, channelId, threadId, () => graph.execute(state, startNode), message => this.emitMessage(channelId, 'assistant_message', {
+        await this.runInConversationContainer(state, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
           content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
-        }), runAbort?.signal);
+        }), runAbort?.signal, assertDecisionOwner);
       } else {
+        assertDecisionOwner();
         await graph.execute(state, startNode);
       }
+      assertDecisionOwner();
       // Completion claims are acknowledged only after a successful graph turn actually consumed them.
-      for (const entry of this.claimedCompletionEntries(state, metadata)) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
+      for (const entry of decisionTurn ? [] : this.claimedCompletionEntries(state, metadata)) await agentJobProvider.completionAcknowledgements.acknowledge(entry);
       for (const message of state.messages as any[]) {
-        if (message?.metadata?.source === 'sub_agent_completion') delete message.metadata.completionEntries;
+        if (!decisionTurn && message?.metadata?.source === 'sub_agent_completion') delete message.metadata.completionEntries;
+      }
+      if (decisionTurn) {
+        const { decisionService } = await import('./DecisionService');
+        await decisionService.finishAnswers(answerInputs, threadId, true);
       }
       turnConsumedInput = true;
       completionConsumption.confirmSeen();
@@ -1274,96 +1568,105 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
-      if (isCurrentRun()) {
-        if (turnConsumedInput) {
+      if (decisionTurn && !turnConsumedInput) {
+        try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
+      }
+      await (async() => {
+        if (isCurrentRun()) {
+          if (turnConsumedInput) {
           // An orchestrator job message (send_job_message waking a parked
           // manager) is acked only now, after the turn it was handed to
           // actually ran — not when wakeParkedAgent was first called. A turn
           // that never reached graph.execute leaves the message pending so
           // it is redelivered rather than lost.
-          const jobMessageIds = [
-            ...(typeof metadata?.jobMessageId === 'string' ? [metadata.jobMessageId] : []),
-            ...(Array.isArray(metadata?.jobMessageIds) ? metadata.jobMessageIds.filter((id: unknown): id is string => typeof id === 'string') : []),
-          ];
-          const jobMessageThreadId = typeof metadata?.jobMessageThreadId === 'string' ? metadata.jobMessageThreadId : '';
-          if (jobMessageIds.length && jobMessageThreadId) {
-            await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
+            const jobMessageIds = [
+              ...(typeof metadata?.jobMessageId === 'string' ? [metadata.jobMessageId] : []),
+              ...(Array.isArray(metadata?.jobMessageIds) ? metadata.jobMessageIds.filter((id: unknown): id is string => typeof id === 'string') : []),
+            ];
+            const jobMessageThreadId = typeof metadata?.jobMessageThreadId === 'string' ? metadata.jobMessageThreadId : '';
+            if (jobMessageIds.length && jobMessageThreadId) {
+              await AgentJobMessagingModel.markMessagesDelivered(jobMessageIds, jobMessageThreadId);
+            }
+          } else {
+            completionConsumption.confirmAnswered(state?.messages ?? []);
+            await completionConsumption.releaseOnAbort(async entry => {
+              if (runAbort?.signal.aborted) requeueAgentCompletionQuietly(channelId, threadId, entry);
+              else requeueAgentCompletionAfterFailure(channelId, threadId, entry);
+              await agentJobProvider.completionAcknowledgements.release(entry);
+            });
+            for (const message of state?.messages ?? []) {
+              if ((message as any)?.metadata?.source === 'sub_agent_completion') delete (message as any).metadata.completionEntries;
+            }
           }
-        } else {
-          // Results the model already answered stay acknowledged; only unseen ones go back to the inbox.
-          completionConsumption.confirmAnswered(state?.messages ?? []);
-          await completionConsumption.releaseOnAbort(async entry => {
-            // A failed turn retries with backoff; a stopped one waits quietly (stop means stop).
-            if (runAbort?.signal.aborted) requeueAgentCompletionQuietly(channelId, threadId, entry);
-            else requeueAgentCompletionAfterFailure(channelId, threadId, entry);
-            await agentJobProvider.completionAcknowledgements.release(entry);
-          });
-          for (const message of state?.messages ?? []) {
-            if ((message as any)?.metadata?.source === 'sub_agent_completion') delete (message as any).metadata.completionEntries;
+          // Truthful status: a dormant parked job this turn woke is re-parked
+          // now unless the turn itself completed/failed/stopped it (parkTask
+          // only acts while the job is still 'running', so this is a no-op then).
+          // A return_result made during the turn is settled and delivered here
+          // instead: no spawn_agent runner is left to hand it to the parent.
+          if (wakeTurnToRepark) await agentJobLifecycle.endDormantWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
+          if (decisionTurn && !isCurrentRun()) return;
+          this.activeAborts.delete(abortKey);
+          this.resumeContexts.delete(abortKey);
+          releaseChatActivity(`graph:${ abortKey }`);
+
+          // Error, abort and success all release queued peer messages as one follow-up batch.
+          await this.agentInbox?.flush({ channel: channelId, threadId, agentId })
+            .catch(err => console.error('[BackendGraphWS] Failed to flush agent inbox:', err));
+
+          if (decisionTurn && this.activeAborts.has(abortKey)) return;
+
+          // Keep a durable transcript for tabs that mount after their first run
+          // has already started or completed. The renderer can hydrate this
+          // snapshot before it begins consuming live events.
+          if (state) {
+            try {
+              await saveThreadState(state);
+            } catch (error) {
+              console.error(`[BackendGraphWS] Failed to save thread ${ threadId } after dispatch:`, error);
+            }
           }
-        }
-        // Truthful status: a dormant parked job this turn woke is re-parked
-        // now unless the turn itself completed/failed/stopped it (parkTask
-        // only acts while the job is still 'running', so this is a no-op then).
-        // A return_result made during the turn is settled and delivered here
-        // instead: no spawn_agent runner is left to hand it to the parent.
-        if (wakeTurnToRepark) await agentJobLifecycle.endDormantWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
-        this.activeAborts.delete(abortKey);
-        this.resumeContexts.delete(abortKey);
-        releaseChatActivity(`graph:${ abortKey }`);
 
-        // Error, abort and success all release queued peer messages as one follow-up batch.
-        await this.agentInbox?.flush({ channel: channelId, threadId, agentId })
-          .catch(err => console.error('[BackendGraphWS] Failed to flush agent inbox:', err));
+          if (decisionTurn && this.activeAborts.has(abortKey)) return;
 
-        // Keep a durable transcript for tabs that mount after their first run
-        // has already started or completed. The renderer can hydrate this
-        // snapshot before it begins consuming live events.
-        if (state) {
-          try {
-            await saveThreadState(state);
-          } catch (error) {
-            console.error(`[BackendGraphWS] Failed to save thread ${ threadId } after dispatch:`, error);
-          }
-        }
-
-        // A steer that landed after the agent's last look at the transcript
-        // would otherwise sit unread in an idle thread. Run it as a new turn.
-        // Skipped when the run was stopped by the user — stop means stop.
-        const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
-        const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
-        if (leftovers.length || completions.length) {
-          const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
-          const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId && candidate.taskIndex === entry.taskIndex) === index);
-          const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
-          const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
-          const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
-          console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
-          this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
-            ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
-            ...(allCompletions.length ? { source: 'sub_agent_completion', completionEntries: allCompletions } : {}),
-          })
-            .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
-        } else if (!runAbort?.signal.aborted) {
+          // A steer that landed after the agent's last look at the transcript
+          // would otherwise sit unread in an idle thread. Run it as a new turn.
+          // Skipped when the run was stopped by the user — stop means stop.
+          const leftovers = state && !runAbort?.signal.aborted ? takePendingSteers(state as any) : [];
+          const completions = !runAbort?.signal.aborted ? takeAgentCompletions(channelId, threadId) : [];
+          if (leftovers.length || completions.length) {
+            const leftoverCompletionEntries = leftovers.flatMap((message: any) => Array.isArray(message.metadata?.completionEntries) ? message.metadata.completionEntries : []);
+            const allCompletions = [...leftoverCompletionEntries, ...completions].filter((entry, index, all) => all.findIndex(candidate => candidate.jobId === entry.jobId && candidate.taskIndex === entry.taskIndex) === index);
+            const text = [leftovers.map(steerText).filter(Boolean).join('\n\n'), formatCompletionBatch(completions)].filter(Boolean).join('\n\n');
+            const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
+            const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
+            console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
+            this.dispatchToAgent(channelId, triggerType, text || '(attached)', threadId, scopedWorkflowId, overrideAgentId, inputSource, {
+              source: 'turn_continuation',
+              ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
+              ...(allCompletions.length ? { source: 'sub_agent_completion', completionEntries: allCompletions } : {}),
+            })
+              .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
+          } else if (!runAbort?.signal.aborted) {
           // An orchestrator message that arrived while this thread was busy
           // (wakeParkedAgent or dispatchToAgent's own busy-guard declined to
           // dispatch for it) is not a steer and would otherwise be stranded
           // once this run ends with activeAborts clear. Redeliver anything
           // still pending now that the thread is idle again.
-          const pendingJobMessages = await AgentJobMessagingModel.pendingMessagesForThread(threadId).catch(err => {
-            console.warn('[BackendGraphWS] Failed to check for stranded orchestrator messages:', (err as Error).message);
-            return [];
-          });
-          if (pendingJobMessages.length) {
-            const text = pendingJobMessages.map(entry => entry.message).join('\n\n');
-            console.log(`[BackendGraphWS] ${ pendingJobMessages.length } orchestrator message(s) arrived while thread ${ threadId } was busy — running them as a follow-up turn`);
-            this.dispatchToAgent(channelId, triggerType, `[Message from orchestrator]\n${ text }`, threadId, scopedWorkflowId, overrideAgentId, inputSource, {
-              source: 'orchestrator_job_message', jobMessageIds: pendingJobMessages.map(entry => entry.id), jobMessageThreadId: threadId,
-            })
-              .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up orchestrator message:', err));
+            const pendingJobMessages = await AgentJobMessagingModel.pendingMessagesForThread(threadId).catch(err => {
+              console.warn('[BackendGraphWS] Failed to check for stranded orchestrator messages:', (err as Error).message);
+              return [];
+            });
+            if (pendingJobMessages.length) {
+              const text = pendingJobMessages.map(entry => entry.message).join('\n\n');
+              console.log(`[BackendGraphWS] ${ pendingJobMessages.length } orchestrator message(s) arrived while thread ${ threadId } was busy — running them as a follow-up turn`);
+              this.dispatchToAgent(channelId, triggerType, `[Message from orchestrator]\n${ text }`, threadId, scopedWorkflowId, overrideAgentId, inputSource, {
+                source: 'orchestrator_job_message', jobMessageIds: pendingJobMessages.map(entry => entry.id), jobMessageThreadId: threadId,
+              })
+                .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up orchestrator message:', err));
+            }
           }
         }
-      }
+      })();
     }
     return turnConsumedInput ? 'accepted' : 'failed';
   }

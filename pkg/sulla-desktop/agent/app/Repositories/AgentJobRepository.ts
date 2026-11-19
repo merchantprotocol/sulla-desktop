@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Repository } from '@sulla/foundation';
 
+import { resultTracking, type ResultActivityRecord } from '../../../shared/agentResults/AgentResultCard';
 import { AgentJob as AgentJobModel } from '../Models/AgentJob';
 import type { AgentJob, AgentJobResult, AgentJobTask, OrphanedChildNotice } from '../../tools/agents/jobRegistry';
 
@@ -167,6 +168,23 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return rows.map(row => this.map(row));
   }
 
+  /** Small display-only projection; never loads prompts, reports or tool arguments. */
+  async resultTrackingForParentThread(owner: string): Promise<ResultActivityRecord[]> {
+    const rows = await this.connection.select(`SELECT j.job_id, (t.ordinality - 1)::int AS task_index,
+      t.task->>'threadId' AS thread_id,
+      CASE WHEN t.task->>'status' = 'error' AND t.task#>>'{completion,status}' = 'completed' THEN 'completed' ELSE t.task->>'status' END AS status,
+      t.task->'followUpOf' AS follow_up_of, t.task->'decisionIds' AS decision_ids
+      FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS t(task, ordinality)
+      WHERE j.parent_thread_id = $1 ORDER BY j.created_at, t.ordinality`, [owner]);
+    return rows.map(row => ({
+      jobId:     String(row.job_id),
+      taskIndex: Number(row.task_index),
+      threadId:  row.thread_id == null ? undefined : String(row.thread_id),
+      status:    String(row.status),
+      ...resultTracking({ followUpOf: row.follow_up_of, decisionIds: row.decision_ids }),
+    }));
+  }
+
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
   async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
     // Walk UP from the small live/recent set instead of DOWN through the thread's whole history:
@@ -269,6 +287,11 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
       j.stopped_by, j.stop_reason, j.orphaned_child_notices, '[]'::jsonb AS results,
       COALESCE((SELECT jsonb_agg(jsonb_build_object(
         'agentId', t.agent_id, 'label', t.label, 'status', t.task_status,
+        'taskId', j.tasks -> t.task_index -> 'taskId',
+        'followUpOf', j.tasks -> t.task_index -> 'followUpOf',
+        'model', j.tasks -> t.task_index -> 'model', 'provider', j.tasks -> t.task_index -> 'provider',
+        'effort', j.tasks -> t.task_index -> 'effort',
+        'workerModelRoute', j.tasks -> t.task_index -> 'workerModelRoute',
         'threadId', t.thread_id, 'startedAt', t.started_at_ms, 'finishedAt', t.finished_at_ms,
         'returnedAt', t.returned_at_ms, 'wakeAt', t.wake_at_ms, 'dismissed', t.dismissed,
         'visibility', t.visibility, 'summary', t.summary, 'waitReason', t.wait_reason,

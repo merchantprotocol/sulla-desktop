@@ -193,14 +193,49 @@ class DecisionTable {
 
 const universe = new CaseUniverse(legacy.BROKER_OPERATION_POLICIES);
 
+function liveLegacyComparablePolicies(): typeof live.BROKER_OPERATION_POLICIES {
+  const current = live.BROKER_OPERATION_POLICIES['provider.models'];
+  if (!current) throw new Error('provider.models policy is missing');
+  return {
+    ...live.BROKER_OPERATION_POLICIES,
+    'provider.models': {
+      ...current,
+      integrations: current.integrations?.filter(integration => integration !== 'codex'),
+      bindings: current.bindings?.filter(binding => binding.integration !== 'codex'),
+    },
+  };
+}
+
 describe('E9 policies: operationPolicy decision tables (legacy == live)', () => {
   it('keeps the broker operation policy table identical, in the same key order', () => {
     expect(Object.keys(live.BROKER_OPERATION_POLICIES)).toEqual(Object.keys(legacy.BROKER_OPERATION_POLICIES));
-    expect(live.BROKER_OPERATION_POLICIES).toEqual(legacy.BROKER_OPERATION_POLICIES);
+    expect(liveLegacyComparablePolicies()).toEqual(legacy.BROKER_OPERATION_POLICIES);
     expect(live.TRUSTED_INTEGRATION_ORIGINS).toEqual(legacy.TRUSTED_INTEGRATION_ORIGINS);
     expect(Object.keys(live.TRUSTED_INTEGRATION_ORIGINS)).toEqual(Object.keys(legacy.TRUSTED_INTEGRATION_ORIGINS));
     expect(live.FILES_SYNC_OPERATION).toBe(legacy.FILES_SYNC_OPERATION);
     expect(live.FILES_SYNC_OPERATION).toBe('sulla-cloud.files-sync');
+  });
+
+  it('asserts the approved Codex models binding separately from the frozen legacy table', () => {
+    const policy = live.BROKER_OPERATION_POLICIES['provider.models'];
+    expect(policy.integrations).toContain('codex');
+    expect(policy.bindings?.filter(binding => binding.integration === 'codex')).toEqual([{
+      integration: 'codex',
+      hosts: ['chatgpt.com'],
+      injections: [
+        { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+      ],
+      requiredInjections: [
+        { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+      ],
+      injectionSets: [[
+        { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+      ]],
+      pathPattern: /^\/backend-api\/codex\/models$/,
+    }]);
   });
 
   for (const operation of [...Object.keys(legacy.BROKER_OPERATION_POLICIES), ...universe.specialOperations]) {

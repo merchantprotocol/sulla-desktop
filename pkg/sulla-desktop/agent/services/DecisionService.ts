@@ -16,8 +16,8 @@ import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
 
 import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
-/** Durable inbox; execution stays parked in the ORIGINAL caller, never a new graph.
- * Restarted processes cannot safely replay closures: their rows expire, fail closed.
+/** Durable human requests retain their context after execution waiters expire.
+ * Late question answers enter the original chat mailbox; expired approvals fail closed.
  * No tool arguments or credentials are copied into cloud snapshots.
  */
 export class DecisionService {
@@ -28,14 +28,14 @@ export class DecisionService {
 
   constructor(
     lateAnswerHandler?: LateDecisionAnswerHandler,
-    repositories: { decisions?: HumanDecisionRepository; approvalPolicies?: ToolApprovalPolicyRepository } = {},
+    repositories: { decisions?: HumanDecisionRepository; approvalPolicies?: ToolApprovalPolicyRepository; pendingDecisions?: PendingDecisionRepository } = {},
   ) {
-    this.pendingDecisions = new PendingDecisionRepository(postgresClient);
+    this.pendingDecisions = repositories.pendingDecisions ?? new PendingDecisionRepository(postgresClient);
     this.decisions = repositories.decisions ?? new HumanDecisionRepository(postgresClient);
     this.approvalPolicies = repositories.approvalPolicies ?? new ToolApprovalPolicyRepository(postgresClient);
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
-      { find: async conversationId => (await ConversationHistoryModel.getByThread(conversationId)) ?? await ConversationHistoryModel.getById(conversationId) },
+      { find: conversationId => this.pendingDecisions.findConversation(conversationId) },
       new LazyLateAnswerMessageSender(() => getWebSocketClientService()),
     );
   }
@@ -51,11 +51,33 @@ export class DecisionService {
     cleanup: () => void;
   }>();
 
+  private questionWrites = Promise.resolve();
+
+  /** Human questions outlive tool transports; answers always use the durable mailbox. */
+  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean }> {
+    const operation = this.questionWrites.then(async() => {
+      if (signal?.aborted) throw new Error('Request cancelled');
+      if (!input.conversationId || !input.channel || !input.questions?.length) throw new Error('A question requires its original conversation and options.');
+      const existing = await this.pendingDecisions.findOpenQuestion(input);
+      if (existing) return { record: existing, reused: true };
+      const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
+      if (signal?.aborted) throw new Error('Request cancelled');
+      const now = Date.now();
+      const record: DecisionRecord = { ...input, relatedConversationIds, kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + 30 * 60_000, payload: { answerRoute: 'inbox' } };
+      await this.decisions.insert(record, this.session);
+      this.changed(record);
+      return { record, reused: false };
+    });
+    this.questionWrites = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
   async request(input: Omit<DecisionRecord, 'id' | 'status' | 'createdAt' | 'expiresAt'>, timeoutMs = 30 * 60_000, signal?: AbortSignal) {
     if (signal?.aborted) throw new Error('Request cancelled');
     if (!input.conversationId || !input.channel) throw new Error('Approval requires the original conversation. No action was executed.');
     const now = Date.now();
-    const record: DecisionRecord = { ...input, id: randomUUID(), status: 'pending', createdAt: now, expiresAt: now + timeoutMs };
+    const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
+    const record: DecisionRecord = { ...input, relatedConversationIds, id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs };
     await this.decisions.insert(record, this.session);
     let settle!: (value: DecisionOutcome) => void;
     const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
@@ -69,13 +91,51 @@ export class DecisionService {
     return { record, result };
   }
 
+  async listForConversation(conversationId: string, before?: { at: number; id: string }): Promise<DecisionRecord[]> {
+    if (!conversationId || conversationId.length > 300) throw new Error('A conversation is required.');
+    await this.reconcileExpired();
+    await this.pendingDecisions.preserveAncestry(conversationId);
+    return this.pendingDecisions.listForConversation(conversationId, before);
+  }
+
+  async dismiss(id: string, conversationId: string): Promise<{ settled: boolean }> {
+    const entry = this.waiting.get(id);
+    if (entry?.busy) return { settled: false };
+    if (entry) entry.busy = true;
+    try {
+      const record = await this.pendingDecisions.dismiss(id, conversationId);
+      if (!record) return { settled: false };
+      if (entry) entry.record = record;
+      this.changed(record);
+      return { settled: true };
+    } finally { if (entry) entry.busy = false; }
+  }
+
+  private async reconcileExpired(): Promise<void> {
+    await postgresClient.query(`UPDATE human_decisions SET status = 'expired',
+      record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
+      WHERE status IN ('pending', 'deferred') AND NOT (record->>'kind'='question' AND COALESCE(record#>>'{payload,answerRoute}','')='inbox')
+        AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)`, [this.session, Date.now()]);
+  }
+
+  async pendingAnswerTargets(locallyOwnedThreads: string[] = []) {
+    for (const record of await this.pendingDecisions.recoverInterruptedAnswers(locallyOwnedThreads)) this.changed(record);
+    return this.pendingDecisions.pendingAnswerTargets();
+  }
+
+  async startAnswers(inputs: { id: string; attempt: string }[], conversationId: string): Promise<string[]> { return this.pendingDecisions.startAnswers(inputs, conversationId) }
+  async finishAnswers(inputs: { id: string; attempt: string }[], conversationId: string, completed: boolean): Promise<void> {
+    for (const record of await this.pendingDecisions.finishAnswers(inputs, conversationId, completed)) this.changed(record);
+  }
+
+  async find(id: string): Promise<DecisionRecord | undefined> { return this.pendingDecisions.findById(id) }
+
   async pendingApprovalForPayload(key: string, value: string): Promise<DecisionRecord | undefined> {
     return this.pendingDecisions.findApproval(this.session, key, value, Date.now());
   }
 
   async list(): Promise<DecisionRecord[]> {
-    // Rows from a previous process are evidence, never runnable requests.
-    await this.decisions.expireForeignOrOverdue(this.session, Date.now());
+    await this.reconcileExpired();
     return this.decisions.listRecent();
   }
 
@@ -84,7 +144,12 @@ export class DecisionService {
     const entry = this.waiting.get(response.id);
     if (!entry) {
       const record = await this.pendingDecisions.findById(response.id);
-      if (record?.kind === 'question' && record.status === 'expired' && response.action === 'answered' && record.conversationId === response.conversationId) return this.lateAnswerHandler.handle(record, response);
+      if (record?.kind === 'question' && (record.status === 'expired' || record.payload?.answerRoute === 'inbox') && response.action === 'answered' && record.conversationId === response.conversationId) {
+        const receipt = await this.lateAnswerHandler.handle(record, response);
+        const updated = await this.pendingDecisions.findById(record.id);
+        if (updated) this.changed(updated);
+        return receipt;
+      }
       return { settled: false, reason: 'Request is no longer waiting.' };
     }
     if (entry.record.conversationId !== response.conversationId || entry.busy) {
@@ -93,7 +158,12 @@ export class DecisionService {
     if (Date.now() >= entry.record.expiresAt) {
       await this.expire(response.id);
       const expired = await this.pendingDecisions.findById(response.id);
-      if (expired?.kind === 'question' && expired.status === 'expired' && response.action === 'answered') return this.lateAnswerHandler.handle(expired, response);
+      if (expired?.kind === 'question' && expired.status === 'expired' && response.action === 'answered') {
+        const receipt = await this.lateAnswerHandler.handle(expired, response);
+        const updated = await this.pendingDecisions.findById(expired.id);
+        if (updated) this.changed(updated);
+        return receipt;
+      }
       return { settled: false, reason: 'This request expired. Ask for a fresh request in the original conversation.' };
     }
     const action = response.action;
@@ -113,7 +183,7 @@ export class DecisionService {
     }
     entry.busy = true;
     try {
-      const next: DecisionRecord = { ...entry.record, status: action, ...(answers.length ? { answers } : {}) };
+      const next: DecisionRecord = { ...entry.record, status: action, ...(action !== 'deferred' ? { attention: 'answered' as const } : {}), ...(answers.length ? { answers } : {}) };
       if (!await this.decisions.settle(response.id, action, next, this.session)) return { settled: false, reason: 'Request is no longer pending.' };
       entry.record = next;
       this.changed(next);
@@ -139,7 +209,7 @@ export class DecisionService {
     clearTimeout(entry.timer);
     entry.cleanup();
     entry.settle({ status: 'expired', answers: [] });
-    this.changed({ ...entry.record, status: 'expired' });
+    this.changed({ ...entry.record, status: 'expired', ...(entry.record.kind === 'question' && !entry.record.attention ? { attention: 'active' as const } : {}) });
     try {
       await this.decisions.expirePending(id);
     } catch { /* Fail closed even if persistence is temporarily unavailable. list() reconciles below. */ }

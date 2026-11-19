@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { randomUUID } from 'node:crypto';
+
 import type { DecisionRecord } from '@pkg/shared/decisions';
 
 interface DecisionQueryClient {
@@ -11,6 +13,25 @@ interface DecisionQueryClient {
 export class PendingDecisionRepository {
   constructor(private readonly client: DecisionQueryClient) {}
 
+  async hasPendingForConversation(conversationId: string, now = Date.now()): Promise<boolean> {
+    const rows = await this.client.query<{ id: string }>(`SELECT id FROM human_decisions
+      WHERE status IN ('pending','deferred') AND record->>'conversationId'=$1
+        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND (record#>>'{payload,answerRoute}'='inbox' OR (record->>'expiresAt')::bigint>$2) LIMIT 1`, [conversationId, now]);
+    return rows.length > 0;
+  }
+
+  /** Only an exact open question in the same conversation/channel can be reused. */
+  async findOpenQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'>): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE record->>'kind'='question' AND record#>>'{payload,answerRoute}'='inbox'
+        AND record->>'conversationId'=$1 AND record->>'channel'=$2 AND record->>'title'=$3 AND record->'questions'=$4::jsonb
+        AND COALESCE(record->>'attention','') <> 'dismissed'
+        AND (COALESCE(record->>'attention','active')='active' OR record->>'answerDelivery' IN ('queued','processing'))
+      ORDER BY (record->>'createdAt')::bigint DESC,id DESC LIMIT 1`, [input.conversationId, input.channel, input.title, JSON.stringify(input.questions)]);
+    return rows[0]?.record;
+  }
+
   async findById(id: string): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(
       `SELECT record FROM human_decisions WHERE id=$1 LIMIT 1`, [id],
@@ -18,23 +39,116 @@ export class PendingDecisionRepository {
     return rows[0]?.record;
   }
 
-  /** Claim delivery of a late answer once, saving the answers with the claim. */
-  async claimLateAnswer(id: string, answers: { question: string; selected: string[] }[] = []): Promise<boolean> {
-    const rows = await this.client.query<{ id: string }>(`
-      UPDATE human_decisions
-      SET record = jsonb_set(jsonb_set(record, '{payload,lateAnswerDelivered}', 'true'::jsonb, true), '{answers}', $2::jsonb, true), updated_at = NOW()
-      WHERE id = $1 AND status = 'expired'
-        AND COALESCE((record->'payload'->>'lateAnswerDelivered')::boolean, false) = false
-      RETURNING id`, [id, JSON.stringify(answers)]);
-    return rows.length > 0;
+  async ancestry(conversationId: string): Promise<string[]> {
+    const rows = await this.client.query<{ id: string }>(`WITH RECURSIVE ancestors(id) AS (
+      SELECT $1::text UNION SELECT job.parent_thread_id FROM agent_jobs job
+      CROSS JOIN LATERAL jsonb_array_elements(job.tasks) task JOIN ancestors child ON task->>'threadId'=child.id
+      WHERE job.parent_thread_id IS NOT NULL
+    ) SELECT id FROM ancestors`, [conversationId]);
+    return rows.map(row => row.id);
   }
 
-  /** Undo a claim whose delivery failed, so the answer can be sent again. The answers stay saved. */
-  async releaseLateAnswer(id: string): Promise<void> {
-    await this.client.query(`
-      UPDATE human_decisions
-      SET record = jsonb_set(record, '{payload,lateAnswerDelivered}', 'false'::jsonb, true), updated_at = NOW()
-      WHERE id = $1`, [id]);
+  /** Snapshot proven links for existing records before normal job retention removes them. */
+  async preserveAncestry(conversationId: string): Promise<void> {
+    await this.client.query(`WITH RECURSIVE family(id,path) AS (
+      SELECT $1::text, ARRAY[$1::text] UNION ALL
+      SELECT task->>'threadId',parent.path || (task->>'threadId') FROM agent_jobs job JOIN family parent ON job.parent_thread_id=parent.id
+      CROSS JOIN LATERAL jsonb_array_elements(job.tasks) task
+      WHERE task->>'threadId' IS NOT NULL AND NOT (task->>'threadId')=ANY(parent.path)
+    ) UPDATE human_decisions decision SET record=jsonb_set(record,'{relatedConversationIds}',COALESCE(record->'relatedConversationIds','[]'::jsonb) || to_jsonb(family.path))
+      FROM family WHERE decision.record->>'conversationId'=family.id AND NOT COALESCE(record->'relatedConversationIds','[]'::jsonb) ? $1`, [conversationId]);
+  }
+
+  async findConversation(conversationId: string): Promise<{ id: string } | null> {
+    const rows = await this.client.query<{ id: string }>(`SELECT id FROM conversation_history WHERE (thread_id=$1 OR id=$1) AND deleted_at IS NULL LIMIT 1`, [conversationId]);
+    return rows[0] ?? null;
+  }
+
+  async pendingAnswerTargets(): Promise<{ channel: string; threadId: string }[]> {
+    return this.client.query(`SELECT DISTINCT receiver_channel AS channel,receiver_thread_id AS "threadId" FROM agent_inbox_messages
+      WHERE kind='human' AND message_id LIKE 'decision-answer:%' AND delivered_at IS NULL AND receiver_thread_id IS NOT NULL`);
+  }
+
+  async startAnswers(inputs: { id: string; attempt: string }[], conversationId: string): Promise<string[]> {
+    const rows = await this.client.query<{ id: string }>(`WITH inputs AS (SELECT * FROM unnest($1::text[],$2::text[]) AS value(id,attempt)), started AS (
+      UPDATE agent_inbox_messages inbox SET ids=jsonb_set(ids,'{decisionDelivery}','"processing"') FROM inputs
+      WHERE inbox.message_id=inputs.id AND ids->>'answerAttempt'=inputs.attempt AND receiver_thread_id=$3
+        AND kind='human' AND delivered_at IS NULL AND COALESCE(ids->>'decisionDelivery','queued')='queued' RETURNING message_id
+    ) UPDATE human_decisions SET record=jsonb_set(record,'{answerDelivery}','"processing"'),updated_at=NOW()
+      WHERE ('decision-answer:' || id) IN (SELECT message_id FROM started) RETURNING ('decision-answer:' || id) AS id`, [inputs.map(input => input.id), inputs.map(input => input.attempt), conversationId]);
+    return rows.map(row => row.id);
+  }
+
+  /** A completed turn confirms delivery. Failed/abandoned turns never automatically replay effects. */
+  async finishAnswers(inputs: { id: string; attempt: string }[], conversationId: string, completed: boolean): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`WITH inputs AS (SELECT * FROM unnest($1::text[],$2::text[]) AS value(id,attempt)), finished AS (
+      UPDATE agent_inbox_messages inbox SET delivered_at=NOW(),lease_owner=NULL,lease_expires_at=NULL FROM inputs
+      WHERE message_id=inputs.id AND ids->>'answerAttempt'=inputs.attempt AND receiver_thread_id=$3 AND kind='human'
+        AND delivered_at IS NULL AND ids->>'decisionDelivery'='processing' RETURNING message_id
+    ) UPDATE human_decisions SET record=record || jsonb_build_object('answerDelivery',$4::text,'attention',$5::text),updated_at=NOW()
+      WHERE ('decision-answer:' || id) IN (SELECT message_id FROM finished) AND record->>'conversationId'=$3 RETURNING record`,
+    [inputs.map(input => input.id), inputs.map(input => input.attempt), conversationId, completed ? 'delivered' : 'interrupted', completed ? 'answered' : 'active']);
+    return rows.map(row => row.record);
+  }
+
+  async recoverInterruptedAnswers(locallyOwnedThreads: string[] = []): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`WITH interrupted AS (
+      UPDATE agent_inbox_messages SET delivered_at=NOW(),lease_owner=NULL,lease_expires_at=NULL
+      WHERE kind='human' AND message_id LIKE 'decision-answer:%' AND delivered_at IS NULL
+        AND NOT (receiver_thread_id=ANY($1::text[])) AND ids->>'decisionDelivery'='processing' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()) RETURNING message_id
+    ) UPDATE human_decisions SET record=record || '{"answerDelivery":"interrupted","attention":"active"}'::jsonb,updated_at=NOW()
+      WHERE ('decision-answer:' || id) IN (SELECT message_id FROM interrupted) RETURNING record`, [locallyOwnedThreads]);
+    return rows.map(row => row.record);
+  }
+
+  /** Exact conversation plus its durably recorded delegated threads, never title matching. */
+  async listForConversation(conversationId: string, before?: { at: number; id: string }, limit = 100): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`WITH RECURSIVE threads(id) AS (
+      SELECT $1::text UNION
+      SELECT task->>'threadId' FROM agent_jobs job JOIN threads parent ON job.parent_thread_id = parent.id
+      CROSS JOIN LATERAL jsonb_array_elements(job.tasks) task WHERE task->>'threadId' IS NOT NULL
+    ), scoped AS (
+      SELECT id,record, (status NOT IN ('answered','approved','denied') AND COALESCE(record->>'attention','') NOT IN ('dismissed','answered') AND
+        ((record->>'kind'='question' AND (record->>'attention'='active' OR status IN ('pending','deferred'))) OR
+         (record->>'kind'='approval' AND status IN ('pending','deferred') AND (record->>'expiresAt')::bigint > $5))) AS active
+      FROM human_decisions WHERE record->>'conversationId' IN (SELECT id FROM threads) OR COALESCE(record->'relatedConversationIds','[]'::jsonb) ? $1
+    ), past AS (
+      SELECT id,record FROM scoped WHERE NOT COALESCE(active,false)
+        AND ($2::bigint IS NULL OR ((record->>'createdAt')::bigint,id) < ($2::bigint,$3::text))
+      ORDER BY (record->>'createdAt')::bigint DESC,id DESC LIMIT $4
+    ) SELECT record FROM scoped WHERE active AND $2::bigint IS NULL UNION ALL SELECT record FROM past`,
+    [conversationId, before?.at ?? null, before?.id ?? '', Math.min(200, Math.max(1, limit)), Date.now()]);
+    return rows.map(row => row.record);
+  }
+
+  async dismiss(id: string, conversationId: string): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions
+      SET record = jsonb_set(record, '{attention}', '"dismissed"'), updated_at = NOW()
+      WHERE id=$1 AND record->>'conversationId'=$2
+        AND status NOT IN ('answered','approved','denied') AND COALESCE(record->>'attention','') <> 'answered'
+      RETURNING record`, [id, conversationId]);
+    return rows[0]?.record;
+  }
+
+  /** The answer and its existing durable inbox message commit together. No send/claim crash gap. */
+  async queueLateAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[], body: string): Promise<DecisionRecord | undefined> {
+    const messageId = `decision-answer:${ record.id }`;
+    const attempt = randomUUID();
+    const rows = await this.client.query<{ record: DecisionRecord }>(`WITH chosen AS (
+      UPDATE human_decisions SET record=record || jsonb_build_object('attention','answered','answerDelivery','queued','answers',$3::jsonb,'answerAttempt',$7::text), updated_at=NOW()
+      WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$2
+        AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox'))
+        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND COALESCE(record#>>'{payload,lateAnswerDelivered}','false') <> 'true'
+      RETURNING record
+    ), queued AS (
+      INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,sender,kind,body,ids,receiver_agent_id)
+      SELECT $4,record->>'channel',record->>'conversationId','you','human',$5,$6::jsonb,
+        (SELECT agent_id FROM conversation_history WHERE (thread_id=$2 OR id=$2) AND deleted_at IS NULL AND NULLIF(agent_id,'') IS NOT NULL
+          ORDER BY CASE WHEN thread_id=$2 THEN 0 ELSE 1 END,last_active_at DESC NULLS LAST,id DESC LIMIT 1) FROM chosen
+      ON CONFLICT(message_id) DO UPDATE SET body=EXCLUDED.body,ids=EXCLUDED.ids,receiver_agent_id=EXCLUDED.receiver_agent_id,delivered_at=NULL,lease_owner=NULL,lease_expires_at=NULL RETURNING message_id
+    ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt]);
+    return rows[0]?.record;
   }
 
   async findApproval(sessionId: string, key: string, value: string, now: number): Promise<DecisionRecord | undefined> {

@@ -19,12 +19,15 @@ import Logging from '@pkg/utils/logging';
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
 import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
 import { FilesListingPager } from '../agent/files/FilesListingPager';
+import { explicitAgentPackageModel, readAgentPackage } from './marketplace/agentPackageManifest';
 
 const USE_CASE_ROW_LIMIT = 20_000;
 const USE_CASE_REQUEST_TIMEOUT_MS = 120_000;
 
 const console = Logging.background;
 const ROOT = 'Use Cases';
+/** Files tags the owner's home collection, where Use Cases live, as the 'sulla' system area (HomeSystemFileRepository.systemAreas). */
+const OWNER_HOME_AREA = 'sulla';
 const TYPES = ['agents', 'skills', 'workflows', 'functions', 'recipes'] as const;
 type UseCaseType = typeof TYPES[number];
 type FilesRow = { id:string; path:string; published_version_id?:string|null; publishedVersionId?:string|null };
@@ -55,7 +58,11 @@ const agentModelSlot = (tier: unknown, legacy: unknown): 'primary'|'secondary'|'
   if (/(sonnet|sol|turbo|medium)/.test(model)) return 'secondary';
   return 'primary';
 };
+const publishedAgentId = (slug:string, fileId:string):string => `agent-${ crypto.createHash('sha256').update(`sulla-use-case-agent\0${ slug }\0${ fileId }`).digest('hex').slice(0, 32) }`;
 
+
+/** A lost pending registration whose exact mapping removal failed; its durable marker keeps it retryable. */
+class MappingCleanupPending extends Error {}
 
 /** Files is authoritative; this class only maintains the disposable Postgres runtime index. */
 export class SullaUseCaseFiles {
@@ -166,7 +173,7 @@ export class SullaUseCaseFiles {
 
   /** Publish a human-authored use-case package through Files, never Postgres. */
   async publishPackage(type:UseCaseType, slug:string, files:Record<string,Buffer|string>):Promise<void> {
-    const area = (await this.areas()).find(item => !item.systemArea);
+    const area = (await this.areas()).find(item => item.systemArea === OWNER_HOME_AREA);
     if (!area) throw new Error('Sulla Files home collection is unavailable');
     for (const [name, value] of Object.entries(files)) {
       await this.ingestPublished(area.id, `${ ROOT }/${ type }/${ slug }/${ name }`, typeof value === 'string' ? Buffer.from(value) : value);
@@ -208,7 +215,11 @@ export class SullaUseCaseFiles {
     if (Notification.isSupported()) new Notification({ title:'Use Case wasn\'t activated', body:message.slice(0, 240) }).show();
   }
 
-  private async activate(type:UseCaseType, slug:string, packageRows:FilesRow[]):Promise<void> {
+  /**
+   * `pending` is the pre-migration phase: register one brand-new agent from its exact, human-approved
+   * root anchor. It never updates an existing row; a concurrent registration wins and is preserved.
+   */
+  private async activate(type:UseCaseType, slug:string, packageRows:FilesRow[], pending?:{ anchor:FilesRow }):Promise<void> {
     const published = packageRows.filter(row => activePublishedVersion(row));
     if (!published.length) return;
     const files:Record<string,StoredFile> = {};
@@ -218,19 +229,42 @@ export class SullaUseCaseFiles {
     }
     const kind = kindFor(type);
     const artifact = bundleToArtifact(kind, files, slug);
-    const anchorName = kind === 'agent' ? 'agent.json' : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
-    const anchor = published.find(row => row.path.endsWith(`/${ anchorName }`));
+    const anchorName = kind === 'agent' ? readAgentPackage(Object.fromEntries(Object.entries(files).map(([name, file]) => [name, text(file)])), slug).anchor : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
+    const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ slug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path.endsWith(`/${ anchorName }`));
     if (!anchor) throw new Error(`${ type }/${ slug } is missing ${ anchorName }`);
     const versionId = String(activePublishedVersion(anchor));
     const manifest = artifact.manifest as any;
-    await postgresClient.transaction(async client => {
+    let agentId:string | undefined;
+    let createdAgentBinding:{ editToken:string; revision:number } | undefined;
+    if (kind === 'agent') {
+      const existing = await postgresClient.queryOne<{id:string;source_kind:string;use_case_file_id:string|null}>('SELECT id,source_kind,use_case_file_id FROM agent_definitions WHERE slug=$1',[slug]);
+      if (existing && !['local', 'user'].includes(existing.source_kind)) throw new Error(`agents/${ slug } conflicts with an existing ${ existing.source_kind } agent; the existing definition was preserved`);
+      // Checked before any owner mapping is written; the INSERT below enforces it again atomically.
+      if (existing && pending) throw new Error(`agents/${ slug } already has a definition; it was preserved until the Use Cases migration runs`);
+      agentId = existing?.id ?? publishedAgentId(slug, anchor.id);
+      const candidate = explicitAgentPackageModel(manifest);
+      if (pending) {
+        const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+        await workerModelRouting.assertReusablePublicationMapping(slug, agentId, { fileId:anchor.id, versionId });
+      }
+      if (candidate) {
+        const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+        // A pending registration marks its mapping in the same write, so a restart can settle it.
+        const initialized = await workerModelRouting.initializeBindingForPublishedPackage(slug, agentId, [candidate], pending ? { fileId:anchor.id, versionId } : undefined);
+        createdAgentBinding = initialized.binding;
+      }
+    }
+    try { await postgresClient.transaction(async client => {
       if (kind === 'agent') {
         const metadata = manifest.metadata ?? {}; const spec = manifest.spec ?? {}; const directory = spec.directory ?? {};
         if (manifest.apiVersion !== 'sulla/v3' || !metadata.title || typeof spec.prompt !== 'string' || metadata.slug !== slug) throw new Error(`agents/${ slug } has an invalid sulla/v3 agent.json`);
-        await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id)
-          VALUES('agent-'||gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,'[]','1.0.0','production',TRUE,$9,$4,$10,$11,$12,NULL,$13,'local',$14,$15,$16,$17,$18,$19,$20,$21,$22)
-          ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,updated_at=NOW()`,
-        [slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId]);
+        const registered = await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','1.0.0','production',TRUE,$10,$5,$11,$12,$13,NULL,$14,'local',$15,$16,$17,$18,$19,$20,$21,$22,$23)
+          ${ pending ? 'ON CONFLICT DO NOTHING' : `ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,updated_at=NOW()` }
+          RETURNING id`,
+        [agentId,slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId]);
+        if (pending && !registered.rows.length) throw new Error(`agents/${ slug } was registered concurrently; that definition was preserved`);
+        if (String(registered.rows[0]?.id ?? '') !== agentId) throw new Error(`agents/${ slug } changed identity during activation; its prior definition was preserved`);
       } else if (kind === 'skill') {
         const raw = text(files['SKILL.md']); const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
         if (!parsed || parsed.slug !== slug) throw new Error(`skills/${ slug } has an invalid SKILL.md`);
@@ -258,7 +292,23 @@ export class SullaUseCaseFiles {
           ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,compose=EXCLUDED.compose,files=EXCLUDED.files,version=EXCLUDED.version,use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,enabled=TRUE,updated_at=NOW()`,
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
-    });
+    }) } catch(error) {
+      if (createdAgentBinding && agentId) {
+        const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+        // Remove only the exact entry this activation wrote; a newer owner edit is preserved.
+        if (!pending) await workerModelRouting.removeBindingForDefinition(slug, agentId, createdAgentBinding).catch(() => undefined);
+        else await workerModelRouting.removeBindingForDefinition(slug, agentId, createdAgentBinding).catch((cleanupError) => {
+          // The marked mapping stays durable; settlePendingRegistrations retries it, also after a restart.
+          throw new MappingCleanupPending(`${ error instanceof Error ? error.message : String(error) }; its new model mapping could not be removed yet and will be retried: ${ cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }`);
+        });
+      }
+      throw error;
+    }
+    if (pending && createdAgentBinding && agentId) {
+      const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+      // Best effort: a marker left behind is settled by the next scan from the committed row.
+      await workerModelRouting.clearPendingPublication(slug, agentId, createdAgentBinding).catch(() => undefined);
+    }
     if (kind !== 'integration') this.notifier?.announce({ type: kind === 'routine' ? 'workflow' : kind, slug, change: 'published' });
     if (kind === 'skill') {
       const raw = text(files['SKILL.md']);
@@ -277,18 +327,101 @@ export class SullaUseCaseFiles {
     for (const row of removed) this.notifier?.announce({ type: row.type as 'agent'|'skill'|'workflow'|'function'|'recipe', slug: row.slug, change: 'deleted' });
   }
 
+  /** The exact root manifest of an agent package, by readAgentPackage precedence; never a nested same-name file. */
+  private static rootAgentAnchor(slug:string, packageRows:FilesRow[]):FilesRow | undefined {
+    const root = (name:string) => packageRows.find(row => row.path === `${ ROOT }/agents/${ slug }/${ name }` && activePublishedVersion(row));
+    return root('agent.json') ?? root('agent.yaml') ?? root('agent.yml');
+  }
+
+  /** True only when Files holds a human-approved publish request for exactly this file version. */
+  private async approvedPublication(anchor:FilesRow):Promise<boolean> {
+    const query = new URLSearchParams({ status:'approved', fileId:anchor.id });
+    const response = await this.request(`/v1/files/publish-requests?${ query }`);
+    if (!response.ok) throw new Error(`Files publication approvals unavailable (${ response.status })`);
+    const body = await response.json() as { requests?:unknown };
+    if (!Array.isArray(body?.requests)) throw new Error('Files returned invalid publication approvals');
+    const versionId = activePublishedVersion(anchor);
+    return body.requests.some((item:any) => item?.status === 'approved' && item.file_id === anchor.id && item.version_id === versionId && item.path === anchor.path);
+  }
+
+  /**
+   * Before the one-time migration has run, Files cannot yet be authoritative for the whole catalog:
+   * register only brand-new agents whose exact root anchor version a human approved. Nothing is
+   * exported, moved, published, disabled or reconciled, no other package type or memory pack is
+   * touched, and the migration timestamp stays unset. Everything else waits for the migration.
+   */
+  /**
+   * Settle every durably marked pending-registration mapping against its definition row. The row
+   * with the marked id, file and version committed: drop only the marker. Another definition holds
+   * the slug: remove only that exact marked mapping. The same id with other provenance: keep both
+   * and report it until the owner edits the mapping (which drops the marker). No row yet: leave it
+   * for the registration to finish; absence never authorizes a deletion. Owner-edited mappings
+   * carry no marker and are never touched. A failed settlement fails the scan and is retried.
+   * Returns the slugs left unresolved.
+   */
+  private async settlePendingRegistrations():Promise<string[]> {
+    const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+    const unresolved:string[] = [];
+    for (const entry of await workerModelRouting.pendingPublicationBindings()) {
+      const row = await postgresClient.queryOne<{id:string;use_case_file_id:string|null;use_case_version_id:string|null}>('SELECT id,use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1', [entry.slug]);
+      if (!row) continue;
+      const created = { editToken:entry.editToken, revision:entry.revision };
+      if (row.id !== entry.agentId) await workerModelRouting.removeBindingForDefinition(entry.slug, entry.agentId, created);
+      else if (row.use_case_file_id === entry.fileId && row.use_case_version_id === entry.versionId) await workerModelRouting.clearPendingPublication(entry.slug, entry.agentId, created);
+      else unresolved.push(`agents/${ entry.slug }`);
+    }
+    return unresolved;
+  }
+
+  private async scanPendingMigration(collectionId:string, unresolvedMappings:string[] = []):Promise<void> {
+    const rows = (await this.list(collectionId)).filter(row => row.path.startsWith(`${ ROOT }/agents/`));
+    const signature = `pending|${ rows.map(row => `${ row.id }:${ activePublishedVersion(row) ?? '-' }:${ row.path }`).sort().join('|') }`;
+    if (signature === this.lastSignature && !unresolvedMappings.length) return;
+    const groups = new Map<string,FilesRow[]>();
+    for (const row of rows) { const slug = row.path.split('/')[2]; if (slug) groups.set(slug, [...(groups.get(slug) ?? []), row]) }
+    // Every read that decides eligibility happens before the first write.
+    const eligible:{ slug:string; packageRows:FilesRow[]; anchor:FilesRow }[] = [];
+    // Awaiting a human approval or a free slug: re-evaluated on every scan, never cached away.
+    const deferred:string[] = [];
+    for (const [slug, packageRows] of groups) {
+      if (!packageRows.some(row => activePublishedVersion(row))) continue;
+      const anchor = SullaUseCaseFiles.rootAgentAnchor(slug, packageRows);
+      const existing = await postgresClient.queryOne<{use_case_file_id:string|null;use_case_version_id:string|null}>('SELECT use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1', [slug]);
+      // The same indexed anchor version is a permanent no-op: owner edits to it are never undone.
+      if (anchor && existing && existing.use_case_file_id === anchor.id && existing.use_case_version_id === activePublishedVersion(anchor)) continue;
+      if (!anchor || existing || !await this.approvedPublication(anchor)) { deferred.push(`agents/${ slug }`); continue }
+      eligible.push({ slug, packageRows, anchor });
+    }
+    const failedPackages:string[] = [];
+    const cleanupPending:string[] = [];
+    for (const { slug, packageRows, anchor } of eligible) {
+      try { await this.activate('agents', slug, packageRows, { anchor }) }
+      catch(error) { failedPackages.push(`agents/${ slug }`); if (error instanceof MappingCleanupPending) cleanupPending.push(`agents/${ slug }`); await this.auditError(anchor, String(activePublishedVersion(anchor)), `agents/${ slug }: ${ error instanceof Error ? error.message : String(error) }`) }
+    }
+    if (unresolvedMappings.length) throw new Error(`An unsettled model mapping from a different publication needs the owner's decision in AI Models for: ${ unresolvedMappings.join(', ') }`);
+    if (cleanupPending.length) throw new Error(`A new model mapping could not be removed yet and will be retried for: ${ cleanupPending.join(', ') }`);
+    if (failedPackages.length) throw new Error(`Use Case activation will retry for: ${ failedPackages.join(', ') }`);
+    if (deferred.length) console.info(`[UseCases] waiting for the Use Cases migration: ${ deferred.join(', ') }`);
+    await postgresClient.query('UPDATE use_case_files_state SET last_error=NULL WHERE singleton=TRUE');
+    // Cache only a settled listing: a deferred package can become eligible without any Files change.
+    this.lastSignature = deferred.length ? '' : signature;
+  }
+
   async scan():Promise<void> {
     if (this.running) return; this.running = true;
     try {
-      const area = (await this.areas()).find(item => !item.systemArea); if (!area) return;
+      const area = (await this.areas()).find(item => item.systemArea === OWNER_HOME_AREA); if (!area) throw new Error('Files reported no owner home area for Use Cases');
+      const state = await postgresClient.queryOne('SELECT initial_export_completed_at FROM use_case_files_state WHERE singleton=TRUE');
+      if (!state?.initial_export_completed_at) return await this.scanPendingMigration(area.id, await this.settlePendingRegistrations());
       let rows = await this.list(area.id); await this.initialExport(area.id, rows); rows = await this.list(area.id);
       const relevant = rows.filter(row => row.path.startsWith(`${ ROOT }/`) && !row.path.startsWith(`${ ROOT }/_legacy-import/`));
-      const signature = relevant.map(row => `${ row.id }:${ activePublishedVersion(row) ?? '-' }:${ row.path }`).sort().join('|');
+      const signature = `completed|${ relevant.map(row => `${ row.id }:${ activePublishedVersion(row) ?? '-' }:${ row.path }`).sort().join('|') }`;
       if (signature === this.lastSignature) return;
       const groups = new Map<string,FilesRow[]>();
       for (const row of relevant) { const [type,slug] = row.path.slice(`${ROOT}/`.length).split('/'); if (!(TYPES as readonly string[]).includes(type) || !slug) continue; const key=`${type}/${slug}`; groups.set(key,[...(groups.get(key)??[]),row]) }
       const active = new Set<string>();
       let activated = 0;
+      const failedPackages:string[] = [];
       for (const [key, packageRows] of groups) {
         const [type,slug]=key.split('/') as [UseCaseType,string];
         if (!packageRows.some(row => activePublishedVersion(row))) continue;
@@ -299,13 +432,14 @@ export class SullaUseCaseFiles {
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
         try { await this.activate(type,slug,packageRows); active.add(key); activated++ }
-        catch(error) { const anchor=packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
+        catch(error) { failedPackages.push(key); const anchor=packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
       const enabledPackSkills = await postgresClient.query<{slug:string}>(`SELECT slug FROM skill_definitions WHERE enabled=TRUE AND deleted_at IS NULL AND use_case_version_id IS NOT NULL AND frontmatter->>'memory_pack'='true'`);
       const activePackSlugs = new Set(enabledPackSkills.map(row => row.slug));
       for (const pack of await listPacks()) if (!activePackSlugs.has(String(pack.slug))) await uninstallPack(String(pack.slug));
       const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry'); await skillsRegistry.invalidate();
+      if (failedPackages.length) throw new Error(`Use Case activation will retry for: ${ failedPackages.join(', ') }`);
       await postgresClient.query('UPDATE use_case_files_state SET last_scan_at=NOW(),last_error=NULL WHERE singleton=TRUE');
       this.lastSignature = signature;
       console.info(`[UseCases] scan ok: ${ activated } activated`);

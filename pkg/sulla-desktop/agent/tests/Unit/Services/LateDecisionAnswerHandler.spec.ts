@@ -1,67 +1,40 @@
-// Sulla Desktop · https://sulladesktop.com
-// Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-// "Sulla" is a trademark. See TRADEMARK.md.
-
 import { describe, expect, it, vi } from 'vitest';
 import { LateDecisionAnswerHandler } from '../../../services/LateDecisionAnswerHandler';
 import type { DecisionRecord } from '@pkg/shared/decisions';
-
-const record: DecisionRecord = {
-  id: 'question-1', conversationId: 'thread-1', channel: 'sulla-desktop', title: 'Pick a color',
-  kind: 'question', status: 'expired', createdAt: 1, expiresAt: 2,
-  questions: [{ question: 'Color?', options: [{ label: 'Blue' }] }],
-};
+const record: DecisionRecord = { id: 'question-1', conversationId: 'thread-1', channel: 'sulla-desktop', title: 'Pick a color', kind: 'question', status: 'expired', attention: 'active', createdAt: 1, expiresAt: 2, questions: [{ question: 'Color?', options: [{ label: 'Blue' }] }] };
 const response = { id: record.id, conversationId: record.conversationId, action: 'answered' as const, answers: [{ question: 'Color?', selected: ['Blue'] }] };
-
-const repo = (claimed = true) => ({ claimLateAnswer: vi.fn().mockResolvedValue(claimed), releaseLateAnswer: vi.fn().mockResolvedValue(undefined) });
-const thread = { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) };
-
-describe('LateDecisionAnswerHandler', () => {
-  // risk: user communication. A late answer used to post only a notice, so Sulla never acted on it.
-  it('hands a late answer to Sulla once, without replacing a running turn, and saves it', async() => {
-    const decisions = repo();
-    const send = vi.fn().mockResolvedValue(true);
-    const handler = new LateDecisionAnswerHandler(decisions, thread, { send });
-
-    await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true });
-
-    expect(decisions.claimLateAnswer).toHaveBeenCalledWith('question-1', [{ question: 'Color?', selected: ['Blue'] }]);
-    // inject_message steers a live turn, or starts one when the thread is idle; a user_message would replace a running turn.
-    expect(send.mock.calls[0]).toEqual(['sulla-desktop', expect.objectContaining({
-      type: 'inject_message',
-      data: expect.objectContaining({ threadId: 'thread-1', content: expect.stringContaining('Color?: Blue'), metadata: expect.objectContaining({ decisionId: 'question-1' }) }),
-    })]);
-    expect(send.mock.calls[1][1]).toMatchObject({ type: 'assistant_message', data: { kind: 'notice', thread_id: 'thread-1' } });
+function fixture() {
+  const decisions = { queueLateAnswer: vi.fn().mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued' }), findById: vi.fn() };
+  const send = vi.fn().mockResolvedValue(true); const conversations = { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) };
+  return { decisions, send, conversations, handler: new LateDecisionAnswerHandler(decisions, conversations, { send }) };
+}
+describe('durable late answers', () => {
+  it('queues the original decision and answers before signalling the original channel', async() => {
+    const f = fixture(); await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true, reason: expect.stringContaining('queued') });
+    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(record, response.answers, expect.stringContaining('Color?: Blue'));
+    expect(f.send).toHaveBeenCalledExactlyOnceWith('sulla-desktop', { type: 'decision_answer_queued', data: { decisionId: 'question-1' } });
+    expect(f.decisions.queueLateAnswer.mock.invocationCallOrder[0]).toBeLessThan(f.send.mock.invocationCallOrder[0]);
   });
-
-  // risk: data loss. The claim was taken before sending and a failed send was ignored.
-  it('releases the claim and reports failure when Sulla cannot be reached', async() => {
-    for (const send of [vi.fn().mockResolvedValue(false), vi.fn().mockRejectedValue(new Error('bus down'))]) {
-      const decisions = repo();
-      const handler = new LateDecisionAnswerHandler(decisions, thread, { send });
-
-      await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: false, reason: expect.stringContaining('send them again') });
-      expect(decisions.releaseLateAnswer).toHaveBeenCalledWith('question-1');
-      expect(send).toHaveBeenCalledTimes(1);
-    }
+  it('keeps a committed answer queued if the wake connection fails', async() => {
+    const f = fixture(); f.send.mockRejectedValue(new Error('bus unavailable'));
+    await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: true, reason: expect.stringContaining('queued') });
+    expect(f.decisions.queueLateAnswer).toHaveBeenCalledTimes(1);
   });
-
-  it('closes the card when the original thread is gone', async() => {
-    // risk: data correctness — never emit a late answer into a replacement or unrelated thread.
-    const decisions = repo();
-    const send = vi.fn();
-    const handler = new LateDecisionAnswerHandler(decisions, { find: vi.fn().mockResolvedValue(null) }, { send });
-    await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true, closed: true });
-    expect(decisions.claimLateAnswer).not.toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalled();
+  it('does not send a second wake or replace the answer when the same receipt already exists', async() => {
+    const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, answerDelivery: 'queued' });
+    await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: true }); expect(f.send).not.toHaveBeenCalled();
   });
-
-  it('does not send a duplicate when another click already claimed delivery', async() => {
-    // risk: duplicate messaging — double-clicks must produce at most one delivery.
-    const send = vi.fn();
-    const handler = new LateDecisionAnswerHandler(repo(false), thread, { send });
-    await expect(handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true });
-    expect(send).not.toHaveBeenCalled();
+  it('does not report a conflicting or dismissed request as answered', async() => {
+    const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, attention: 'dismissed' });
+    await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: false }); expect(f.send).not.toHaveBeenCalled();
+  });
+  it('does not queue into a deleted or replacement conversation', async() => {
+    const f = fixture(); f.conversations.find.mockResolvedValue(null);
+    await expect(f.handler.handle(record, response)).resolves.toMatchObject({ closed: true }); expect(f.decisions.queueLateAnswer).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();
+  });
+  it('propagates a durable-store failure without a false send receipt', async() => {
+    const f = fixture(); f.decisions.queueLateAnswer.mockRejectedValue(new Error('store unavailable'));
+    await expect(f.handler.handle(record, response)).rejects.toThrow('store unavailable'); expect(f.send).not.toHaveBeenCalled();
   });
 });

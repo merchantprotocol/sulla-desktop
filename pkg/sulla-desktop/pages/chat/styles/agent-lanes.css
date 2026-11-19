@@ -109,3 +109,14 @@
 .ln-dot-stopped { background: var(--ln-ink-3); }
 .ln-jump { height: 24px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: none; color: var(--ln-ink-2); font: inherit; font-size: 12px; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .ln-spin::before { animation: none; } }
+
+/* Recorded work groups retain the existing agent controls and live status. */
+.ln-work + .ln-work { border-top: 1px solid var(--border-default); }
+.ln-work-heading { display: flex; gap: 10px; align-items: center; padding: 12px 10px 5px; cursor: pointer; color: var(--text-primary); font-size: 13px; font-weight: 650; }
+.ln-work-heading::before { content: "▸"; color: var(--accent); }
+.ln-work[open] > .ln-work-heading::before { content: "▾"; }
+.ln-work-heading > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ln-work-heading small { color: var(--ln-ink-3); white-space: nowrap; font-size: 11px; font-weight: 400; }
+.ln-work-caption { margin: 0; padding: 0 10px 9px 28px; color: var(--ln-ink-3); font-size: 11px; }
+.ln-relationship { margin: 3px 0; color: var(--ln-ink-3); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.ln-context { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }

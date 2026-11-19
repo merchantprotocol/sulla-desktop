@@ -6,7 +6,7 @@
 // ChatInterface.ts
 import { ref, computed, watch, type ComputedRef } from 'vue';
 
-import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from './ChatMessageQueue';
+import { ChatMessageQueue, createMessageQueue, type PendingAttachment, type QueuedMessage } from './ChatMessageQueue';
 
 import { AgentPersonaService } from '@pkg/agent';
 import type { PersonaSidebarAsset } from '@pkg/agent';
@@ -15,7 +15,7 @@ import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 
 import { touchChatStorageScope } from './ChatStorageGc';
 
-import type { PendingAttachment } from './AgentComposer.vue';
+import type { SpeakListener } from '@pkg/agent/database/models/MessageDispatcher';
 import { MessageWindow } from '../chat/messages/MessageWindow';
 
 export type ChatMessage = RegistryChatMessage;
@@ -45,7 +45,7 @@ export class ChatInterface {
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
 
-  readonly currentAgentId: ReturnType<typeof computed<string>>;
+  readonly currentAgentId: ComputedRef<string>;
 
   readonly messages = ref<ChatMessage[]>([]);
   readonly messagesRevision: ComputedRef<number>;
@@ -477,7 +477,7 @@ export class ChatInterface {
    * Bypasses the messages array watcher for lower-latency TTS triggering.
    * Returns an unsubscribe function.
    */
-  onSpeakDispatch(cb: (text: string, threadId: string, pipelineSequence: number | null, voiceTurnId: string | null) => void): () => void {
+  onSpeakDispatch(cb: SpeakListener): () => void {
     return this.persona.addSpeakListener(cb);
   }
 }

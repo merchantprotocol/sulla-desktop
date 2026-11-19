@@ -149,7 +149,14 @@ export function threadStateToRows(threadId: string, state: ChatThreadState | nul
 
 /** The state with thread.messages emptied — everything else kept. */
 export function stripMessages(state: ChatThreadState): ChatThreadState {
-  return { ...state, thread: { ...(state?.thread ?? {} as any), messages: [] } };
+  // partialHistory describes one renderer's write (a tail-only browser-cache view); the DB copy is complete.
+  const { partialHistory: _partialHistory, ...rest } = state ?? {} as ChatThreadState;
+  return { ...rest, thread: { ...(state?.thread ?? {} as any), messages: [] } } as ChatThreadState;
+}
+
+/** A renderer snapshot made from a tail-only browser cache: it does not know the full history. */
+function isPartialSnapshot(state: ChatThreadState | null | undefined): boolean {
+  return state?.partialHistory === true;
 }
 
 const RESOLVE_SQL = `
@@ -160,6 +167,45 @@ const RESOLVE_SQL = `
            last_active_at DESC NULLS LAST
   LIMIT 1
 `;
+
+const threadStateSaveTails = new Map<string, Promise<string>>();
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${ value.map(canonicalJson).join(',') }]`;
+  const record = value as Record<string, unknown>;
+  return `{${ Object.keys(record).sort().filter(key => record[key] !== undefined)
+    .map(key => `${ JSON.stringify(key) }:${ canonicalJson(record[key]) }`).join(',') }}`;
+}
+
+/**
+ * A lost COMMIT reply is resolved by an exact readback receipt. We never replay
+ * the snapshot write after transaction execution has begun.
+ */
+async function readSavedSnapshotReceipt(threadId: string, snapshot: ChatThreadState): Promise<string | null> {
+  // A partial view never equals the full canonical thread; it cannot prove its commit status.
+  if (isPartialSnapshot(snapshot)) return null;
+  return postgresClient.transaction(async(client) => {
+    const stored = await loadThreadStateWith(client, threadId);
+    if (!stored || canonicalJson(stored) !== canonicalJson(snapshot)) return null;
+    return await resolveHeaderId(client, threadId);
+  });
+}
+
+async function saveSnapshotWithReceipt(threadId: string, snapshot: ChatThreadState): Promise<string> {
+  try {
+    return await postgresClient.transaction(client => saveThreadStateWith(client, threadId, snapshot));
+  } catch (error) {
+    if (!postgresClient.unavailableClassifier.isUnavailable(error)) throw error;
+    try {
+      const receipt = await readSavedSnapshotReceipt(threadId, snapshot);
+      if (receipt) return receipt;
+    } catch {
+      // Preserve the write error. A failed readback cannot prove commit status.
+    }
+    throw error;
+  }
+}
 
 /** Serialise writers of one thread id (save / adopt) inside a transaction. */
 async function lockThread(db: Queryable, key: string): Promise<void> {
@@ -226,7 +272,33 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
     }
   }
 
-  if (rows.length > 0) {
+  if (isPartialSnapshot(state)) {
+    // A tail-only view: never delete, renumber or overwrite canonical rows it did not load.
+    // Only messages new to the store are appended once, after the current last position
+    // (the advisory thread lock above serialises concurrent writers).
+    if (rows.length > 0) {
+      await db.query(`
+        INSERT INTO conversation_messages (
+          id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result,
+          model, status, kind, turn_id, position, payload, created_at, updated_at
+        )
+        SELECT r.id, $2, r.role, r.content, r.tool_calls, r.tool_call_id, r.tool_name, r.tool_result,
+               r.model, r.status, r.kind, r.turn_id,
+               (SELECT COALESCE(MAX(m.position), -1) FROM conversation_messages m WHERE m.conversation_id = $2)
+                 + ROW_NUMBER() OVER (ORDER BY r.position),
+               r.payload,
+               CASE WHEN r.created_ms IS NOT NULL THEN to_timestamp(r.created_ms / 1000.0) ELSE now() END,
+               now()
+        FROM jsonb_to_recordset($1::jsonb) AS r(
+          id text, role text, content text, tool_calls jsonb, tool_call_id text, tool_name text,
+          tool_result jsonb, model text, status text, kind text, turn_id text, position integer,
+          payload jsonb, created_ms double precision
+        )
+        WHERE NOT EXISTS (SELECT 1 FROM conversation_messages m WHERE m.id = r.id)
+        ON CONFLICT (id) DO NOTHING
+      `, [JSON.stringify(rows), headerId]);
+    }
+  } else if (rows.length > 0) {
     await db.query(`
       INSERT INTO conversation_messages (
         id, conversation_id, role, content, tool_calls, tool_call_id, tool_name, tool_result,
@@ -297,8 +369,8 @@ export async function loadThreadStateWith(db: Queryable, idOrThreadId: string): 
   const messages: any[] = Array.isArray(row.messages) ? row.messages : [];
   const base = row.thread_state && typeof row.thread_state === 'object' ? row.thread_state : null;
   if (!base && messages.length === 0) return null;
-  const state: ChatThreadState = base ?? { thread: { id: row.thread_id || row.id, title: row.title ?? '', messages: [] } };
-  return { ...state, thread: { ...(state.thread ?? {} as any), messages } };
+  const { partialHistory: _partialHistory, ...state }: ChatThreadState = base ?? { thread: { id: row.thread_id || row.id, title: row.title ?? '', messages: [] } };
+  return { ...state, thread: { ...(state.thread ?? {} as any), messages } } as ChatThreadState;
 }
 
 export async function loadMessagesBeforeWith(db: Queryable, idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
@@ -341,6 +413,24 @@ export async function getMessageCountWith(db: Queryable, idOrThreadId: string): 
 }
 
 /**
+ * The exact agent the user selected on the chat(s) linked to a backend thread, read from the
+ * renderer's saved thread state. Null when no chat is linked or the one selection is the default.
+ * Throws when linked chats disagree (including exact agent vs default): a known ambiguity must
+ * not pick a persona or provider, so the caller leaves the work undelivered.
+ */
+export async function findSelectedAgentWith(db: Queryable, backendThreadId: string): Promise<string | null> {
+  if (!backendThreadId) return null;
+  const r = await db.query(`
+    SELECT DISTINCT NULLIF(BTRIM(thread_state->'thread'->>'agentId'), '') AS agent_id
+    FROM conversation_history
+    WHERE type = 'chat' AND deleted_at IS NULL AND thread_state IS NOT NULL
+      AND (thread_id = $1 OR thread_state->'thread'->>'backendThreadId' = $1)
+  `, [backendThreadId]);
+  if (r.rows.length > 1) throw new Error(`Agent selection is ambiguous for thread ${ backendThreadId }: linked chats selected different agents`);
+  return r.rows[0]?.agent_id ?? null;
+}
+
+/**
  * Move a thread's transcript from its hidden placeholder header (id =
  * threadId) onto the real tab row once linkThreads has connected them.
  * Idempotent: no placeholder, no tab row, or tabId === threadId → no-op.
@@ -370,7 +460,18 @@ export async function adoptThreadMessagesWith(db: Queryable, tabId: string, thre
 
 export class ConversationThreadStore {
   static saveThreadState(threadId: string, state: ChatThreadState): Promise<string> {
-    return postgresClient.transaction(client => saveThreadStateWith(client, threadId, state));
+    const serialized = JSON.stringify(state);
+    if (serialized === undefined) return Promise.reject(new Error('saveThreadState: state is not serializable'));
+    // Capture an immutable copy before waiting behind another save. Per-thread
+    // FIFO ordering prevents a slow older acquisition/reply from replacing a
+    // newer transcript snapshot in this Desktop process.
+    const snapshot = JSON.parse(serialized) as ChatThreadState;
+    const previous = threadStateSaveTails.get(threadId) ?? Promise.resolve('');
+    const next = previous.catch(() => '').then(() => saveSnapshotWithReceipt(threadId, snapshot));
+    threadStateSaveTails.set(threadId, next);
+    return next.finally(() => {
+      if (threadStateSaveTails.get(threadId) === next) threadStateSaveTails.delete(threadId);
+    });
   }
 
   static loadThreadState(idOrThreadId: string): Promise<ChatThreadState | null> {
@@ -395,5 +496,9 @@ export class ConversationThreadStore {
 
   static adoptThreadMessages(tabId: string, threadId: string): Promise<boolean> {
     return postgresClient.transaction(client => adoptThreadMessagesWith(client, tabId, threadId));
+  }
+
+  static findSelectedAgent(backendThreadId: string): Promise<string | null> {
+    return postgresClient.transaction(client => findSelectedAgentWith(client, backendThreadId));
   }
 }

@@ -2,18 +2,18 @@
 /* Shared HTML editor core. Cloud copy is vendored; edit only in sulla-desktop. */
 
 .shb-root {
-  --p: #f4f7fb;
-  --card: #fff;
-  --tx: #1a2332;
-  --mu: #5b6878;
-  --dim: #8a96a6;
-  --ln: #dde4ee;
-  --ln2: #eef2f7;
-  --ac: #3a7fa0;
-  --acs: #e3eff5;
+  --p: var(--bg-page);
+  --card: var(--bg-surface);
+  --tx: var(--text-primary);
+  --mu: var(--text-secondary);
+  --dim: var(--text-muted);
+  --ln: var(--border-default);
+  --ln2: var(--border-subtle);
+  --ac: var(--accent-primary);
+  --acs: var(--bg-info);
   --ok: #2f8f5b;
   --bad: #d14b4b;
-  --sec: #3a7fa0;
+  --sec: var(--accent-primary);
   --row: #2f9e83;
   --mod: #4c5866;
   --mono: var(--font-mono)
@@ -109,7 +109,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--bg-surface);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
   transition: .2s
 }
@@ -217,7 +217,7 @@
   border: 0;
   height: 100%;
   width: 100%;
-  background: #fff;
+  background: var(--bg-surface);
   transition: width .25s
 }
 
@@ -227,7 +227,7 @@
 
 .shb-dv-stage.narrow .shb-dv-frame {
   border-radius: 14px;
-  box-shadow: 0 0 0 1px var(--ln), 0 16px 50px rgba(26, 35, 50, .12)
+  box-shadow: 0 0 0 1px var(--ln), 0 16px 50px var(--border-default)
 }
 
 .shb-dv-layer {
@@ -262,7 +262,7 @@
 .shb-dv-ol.sel {
   display: block;
   border-style: solid;
-  box-shadow: 0 0 0 4px rgba(58, 127, 160, .15)
+  box-shadow: 0 0 0 4px var(--bg-info)
 }
 
 .shb-dv-tb {
@@ -271,7 +271,7 @@
   pointer-events: auto;
   border-radius: 6px;
   overflow: hidden;
-  box-shadow: 0 4px 14px rgba(26, 35, 50, .22);
+  box-shadow: 0 4px 14px var(--border-default);
   color: #fff;
   font-size: 11.5px;
   white-space: nowrap
@@ -323,7 +323,7 @@
   border: 0;
   color: #fff;
   place-items: center;
-  box-shadow: 0 4px 14px rgba(26, 35, 50, .25);
+  box-shadow: 0 4px 14px var(--border-default);
   transform: translate(-50%, -50%)
 }
 
@@ -354,7 +354,7 @@
   border: 1px solid var(--ln);
   border-radius: 12px;
   padding: 5px 10px 5px 6px;
-  box-shadow: 0 6px 20px rgba(26, 35, 50, .10);
+  box-shadow: 0 6px 20px var(--border-default);
   font-size: 13px
 }
 
@@ -406,7 +406,7 @@
   border: 1px solid var(--ln);
   border-radius: 10px;
   padding: 3px;
-  box-shadow: 0 6px 20px rgba(26, 35, 50, .10);
+  box-shadow: 0 6px 20px var(--border-default);
   font-size: 12px
 }
 
@@ -436,7 +436,7 @@
   border: 1px solid var(--ln);
   border-radius: 14px;
   padding: 5px;
-  box-shadow: 0 10px 34px rgba(26, 35, 50, .16);
+  box-shadow: 0 10px 34px var(--border-default);
   transition: .2s
 }
 
@@ -503,7 +503,7 @@
   max-height: calc(100vh - 120px);
   background: var(--card);
   border-radius: 14px;
-  box-shadow: 0 24px 70px rgba(26, 35, 50, .28);
+  box-shadow: 0 24px 70px var(--border-default);
   display: none;
   flex-direction: column;
   overflow: hidden
@@ -840,7 +840,7 @@
   width: min(760px, 92vw);
   background: var(--card);
   border-radius: 16px;
-  box-shadow: 0 30px 80px rgba(26, 35, 50, .3);
+  box-shadow: 0 30px 80px var(--border-default);
   display: none;
   flex-direction: column;
   max-height: 80vh
@@ -948,7 +948,7 @@
 .shb-dv-dim {
   position: fixed;
   inset: 0;
-  background: rgba(26, 35, 50, .25);
+  background: var(--border-default);
   z-index: 44;
   display: none
 }
@@ -964,7 +964,7 @@
   background: var(--card);
   border: 1px solid var(--ln);
   border-radius: 11px;
-  box-shadow: 0 14px 40px rgba(26, 35, 50, .18);
+  box-shadow: 0 14px 40px var(--border-default);
   padding: 5px;
   min-width: 200px;
   display: none
@@ -1231,7 +1231,7 @@
   position: absolute;
   left: -60px;
   right: 0;
-  background: rgba(58, 127, 160, .09);
+  background: var(--bg-info);
   border-left: 3px solid var(--ac);
   z-index: 0
 }
@@ -1390,7 +1390,7 @@
   background: var(--card);
   border: 1px solid var(--ln);
   border-radius: 11px;
-  box-shadow: 0 14px 44px rgba(26, 35, 50, .18);
+  box-shadow: 0 14px 44px var(--border-default);
   padding: 5px;
   display: none
 }
@@ -1477,7 +1477,7 @@
 .shb-wb-seg button.on {
   background: var(--card);
   color: var(--tx);
-  box-shadow: 0 1px 3px rgba(26, 35, 50, .12)
+  box-shadow: 0 1px 3px var(--border-default)
 }
 
 .shb-wb-seg.sm button {
@@ -1538,7 +1538,7 @@
   width: 260px;
   background: var(--card);
   border-right: 1px solid var(--ln);
-  box-shadow: 16px 0 40px rgba(26, 35, 50, .10);
+  box-shadow: 16px 0 40px var(--border-default);
   z-index: 8;
   transform: translateX(-102%);
   transition: transform .2s;
@@ -1614,7 +1614,7 @@
   background: var(--card);
   border: 1px solid var(--ln);
   border-radius: 12px;
-  box-shadow: 0 14px 40px rgba(26, 35, 50, .16);
+  box-shadow: 0 14px 40px var(--border-default);
   display: none
 }
 
@@ -1779,7 +1779,7 @@
   background: var(--card);
   border: 1px solid var(--ln);
   border-radius: 12px;
-  box-shadow: 0 14px 40px rgba(26, 35, 50, .18);
+  box-shadow: 0 14px 40px var(--border-default);
   padding: 6px;
   display: none
 }

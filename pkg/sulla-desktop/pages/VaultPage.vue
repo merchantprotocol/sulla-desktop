@@ -27,10 +27,13 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type WatchStopHandle } from 'vue';
 
+import { useTheme } from '@pkg/composables/useTheme';
+import { readVaultTheme } from '@pkg/shared/vaultTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { isTransientVaultError } from '@pkg/utils/vaultTransient';
 
 const host = ref<HTMLElement | null>(null);
+const { currentTheme } = useTheme();
 const props = withDefaults(defineProps<{
   integrationId?: string;
   accountId?: string;
@@ -77,6 +80,7 @@ async function open(): Promise<void> {
       siteUrl:       props.siteUrl,
       tabId:         props.tabId,
       ownerId,
+      theme:        readVaultTheme(document),
       restoreFiles: props.restoreFiles,
       connect:      props.connect ? JSON.parse(JSON.stringify(props.connect)) : undefined,
     });
@@ -99,6 +103,13 @@ async function open(): Promise<void> {
     error.value = cause instanceof Error ? cause.message : 'The local vault service did not answer.';
   }
 }
+
+watch(currentTheme, async() => {
+  await nextTick();
+  if (props.active && viewHolder() === claimant) {
+    await ipcRenderer.invoke('vault:view-theme', ownerId, readVaultTheme(document));
+  }
+});
 
 function hide(): void {
   lifecycleGeneration += 1;

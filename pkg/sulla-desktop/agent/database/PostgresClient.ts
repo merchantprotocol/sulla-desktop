@@ -18,6 +18,43 @@ import { DatabaseOutageState, DatabaseUnavailableClassifier } from './DatabaseAv
 // query). Statement timeouts are only set from the main process, so renderers
 // skip AsyncLocalStorage entirely.
 const IN_RENDERER = typeof process !== 'undefined' && process.type === 'renderer';
+/** Approved ride-out for a refused or stalled dial. */
+const SAFE_POOL_CONNECT_OUTAGE_MS = 90_000;
+const SAFE_POOL_CONNECT_MAX_BACKOFF_MS = 1_000;
+const DEFAULT_POOL_CONNECT_TIMEOUT_MS = 10_000;
+/**
+ * pg-pool (3.13) emits this exact message as a bare Error, with no code or cause,
+ * only from the pending-checkout timer. That timer keeps running after the waiter
+ * is handed to a new dial. A new dial that hits connectionTimeoutMillis is
+ * "Connection terminated due to connection timeout" (with cause) and stays retryable.
+ */
+const POOL_CAPACITY_WAIT_MESSAGE = 'timeout exceeded when trying to connect';
+
+/**
+ * Finite checkout budget: the 90s outage, the attempt already in flight when
+ * the database returns, at most one backoff, and one recovering connect.
+ * A checkout starts only when its full connect timeout still fits.
+ */
+function acquisitionRetryWindowMs(connectTimeoutMs: number): number {
+  return SAFE_POOL_CONNECT_OUTAGE_MS + (2 * connectTimeoutMs) + SAFE_POOL_CONNECT_MAX_BACKOFF_MS;
+}
+
+function monotonicNow(): number {
+  return globalThis.performance.now();
+}
+
+function poolConnectTimeoutMs(pool: Pool): number {
+  const configured = pool.options?.connectionTimeoutMillis;
+  if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) return configured;
+  const fromEnv = Number(process.env.SULLA_DATABASE_CONNECT_TIMEOUT_MS ?? DEFAULT_POOL_CONNECT_TIMEOUT_MS);
+  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_POOL_CONNECT_TIMEOUT_MS;
+}
+
+function isPoolCapacityWait(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return typeof code !== 'string' && message === POOL_CAPACITY_WAIT_MESSAGE;
+}
 
 export class PostgresClient {
   private pool: Pool | null = null;
@@ -78,8 +115,12 @@ export class PostgresClient {
       }),
       max:                     Number(process.env.SULLA_DATABASE_POOL_MAX ?? 20),
       idleTimeoutMillis:       30000,   // close idle after 30s
-      // Also bounds the wait for a free pooled client, so a busy burst of
-      // agents must not fail saves after 2s.
+      keepAlive:               true,
+      keepAliveInitialDelayMillis: 10_000,
+      // Also bounds the wait for a free pooled client. That pending-checkout
+      // timeout is pool capacity and is not retried, except while a socket
+      // outage is already known. A stalled new dial is a different error and
+      // is retried inside the acquisition window.
       connectionTimeoutMillis: Number(process.env.SULLA_DATABASE_CONNECT_TIMEOUT_MS ?? 10000),
     });
 
@@ -151,7 +192,49 @@ export class PostgresClient {
     if (!this.connected) {
       await this.initialize();
     }
-    return this.pool!.connect();
+    const pool = this.pool;
+    if (!pool) throw new Error('PostgreSQL pool is not initialized');
+    // Retries stay inside this checkout, before any SQL. Per-thread saves already
+    // wait for the whole call, so this does not add a process-wide write queue.
+    const timeoutMs = poolConnectTimeoutMs(pool);
+    const windowMs = acquisitionRetryWindowMs(timeoutMs);
+    const startedAt = monotonicNow();
+    let attempt = 0;
+    let lastError: unknown;
+    while (monotonicNow() - startedAt <= windowMs) {
+      if (this.shuttingDown) throw new Error('PostgreSQL is shutting down — refusing new connections');
+      const remainingMs = windowMs - (monotonicNow() - startedAt);
+      if (remainingMs < timeoutMs) break;
+      try {
+        const client = await pool.connect();
+        this.connected = true;
+        const downForMs = this.socketOutage.markAvailable();
+        if (downForMs !== null) console.log(`[PostgresPool] Connection restored after ${ Math.round(downForMs / 1000) }s`);
+        return client;
+      } catch (error) {
+        if (isPoolCapacityWait(error)) {
+          // Ordinary capacity surfaces once and never marks the pool disconnected.
+          // While a socket outage is already known, every slot is a failing dial,
+          // so a queued checkout timeout is that outage and rides the same window.
+          if (this.shuttingDown || !this.socketOutage.isDown) throw error;
+        } else {
+          this.connected = false;
+          if (this.shuttingDown || !this.unavailableClassifier.isUnavailable(error)) throw error;
+          if (this.socketOutage.markUnavailable()) {
+            console.warn('[PostgresPool] PostgreSQL client acquisition failed; retrying a safe connection checkout');
+          }
+        }
+        lastError = error;
+        const backoffRoomMs = windowMs - (monotonicNow() - startedAt) - timeoutMs;
+        if (backoffRoomMs < 1) break;
+        attempt += 1;
+        const backoffMs = Math.min(250 * attempt, SAFE_POOL_CONNECT_MAX_BACKOFF_MS, backoffRoomMs);
+        if (backoffMs < 1) break;
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+    }
+    if (lastError) throw lastError;
+    throw new Error('PostgreSQL client acquisition retry window exhausted');
   }
 
   async withStatementTimeout<T>(timeoutMs: number, callback: () => Promise<T>): Promise<T> {
@@ -225,7 +308,7 @@ export class PostgresClient {
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK');
+      try { await client.query('ROLLBACK') } catch { /* preserve the original operation/commit error */ }
       throw err;
     } finally {
       client.release();

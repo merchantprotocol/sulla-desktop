@@ -13,10 +13,13 @@
 import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
 import type { AgentModelChoice } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { choiceLabel } from '@pkg/components/settings/sections/modelRouting/routingLogic';
+import { agentEditorTeamLabel } from '@pkg/shared/agentEditor';
 
 export type DirectoryAgent = AgentDefinitionResponse & { modelChoice?: AgentModelChoice };
 
 export const WILDCARD_CALLEE = '*';
+
+export const teamScopeLabel = agentEditorTeamLabel;
 
 /** can_call isn't empty, or config.type is lead/planner — same as the mockup. */
 export function isManager(agent: Pick<DirectoryAgent, 'canCall' | 'type'>): boolean {

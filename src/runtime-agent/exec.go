@@ -105,7 +105,14 @@ func exitFrame(code int) []byte {
 }
 
 func (a *agent) execSession(c net.Conn) {
-	defer c.Close()
+	defer func() {
+		// The exit frame is part of the response: let the host accept all final
+		// stdout/stderr and status bytes before releasing a framed connection.
+		if flow, ok := c.(*flowConn); ok {
+			_ = flow.CloseWrite()
+		}
+		_ = c.Close()
+	}()
 	r := bufio.NewReaderSize(c, maxMessage)
 	out := &frameWriter{w: c}
 	var req execRequest

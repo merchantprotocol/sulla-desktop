@@ -1,3 +1,8 @@
+import { agentDefinitionService } from './AgentDefinitionService';
+import { modelRouter } from '../languagemodels/modelRouter';
+
+import type { AgentCostTier, AgentDefinition, AgentModelSlot } from '../database/models/AgentDefinitionModel';
+import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -24,11 +29,9 @@
  *   - suggestAgentsForText(text)  → ranked cards for the current situation
  */
 
-import { agentDefinitionService } from './AgentDefinitionService';
-
-import type { AgentCostTier, AgentDefinition, AgentModelSlot } from '../database/models/AgentDefinitionModel';
-
 export interface AgentDirectoryCard {
+  modelChoice?:  AgentModelChoice | null;
+  modelMapping?: string;
   slug:          string;
   name:          string;
   description:   string;
@@ -95,6 +98,7 @@ export function isFrontDoorAgent(agent: AgentDefinition): boolean {
 
 export function toDirectoryCard(agent: AgentDefinition): AgentDirectoryCard {
   return {
+    modelChoice:   agent.model_choice,
     slug:          agent.slug,
     name:          agent.name,
     description:   agent.description,
@@ -143,6 +147,15 @@ export async function listAgentDirectory(opts: AgentDirectoryQuery = {}): Promis
     .filter(agent => !slugFilter || slugFilter.has(agent.slug))
     .map(toDirectoryCard);
 
+  const bindings = (await modelRouter.getEditableState()).workerBindings ?? {};
+  cards = cards.map(card => {
+    const definition = agents.find(agent => agent.slug === card.slug)!;
+    const binding = bindings[card.slug];
+    const modelMapping = binding?.agentId === definition.id
+      ? `Configured worker mapping: ${ binding.candidates.map(row => `${ row.model } / ${ row.effort || 'provider default' }`).join(' then ') }. Launch by agentId; model overrides do not bypass this mapping.`
+      : card.modelChoice?.mode === 'class' ? `Inherits ${ card.modelChoice.class } model settings.` : undefined;
+    return { ...card, modelMapping };
+  });
   const query = opts.query?.trim();
   if (query) {
     cards = cards
@@ -164,6 +177,7 @@ export function suggestAgentsForText(text: string, limit = 3): Promise<AgentDire
 export function formatCardLine(card: AgentDirectoryCard): string {
   const meta = [card.costTier ? `${ card.costTier } cost` : '', card.model ?? ''].filter(Boolean).join(', ');
   const parts = [`- **${ card.slug }** (${ card.name }${ meta ? `; ${ meta }` : '' }): ${ card.whenToCall }`];
+  if (card.modelMapping) parts.push(`  Models: ${ card.modelMapping }`);
   if (card.whenNotToCall) parts.push(`  Not for: ${ card.whenNotToCall }`);
   if (card.send) parts.push(`  Send: ${ card.send }`);
   if (card.returns) parts.push(`  Returns: ${ card.returns }`);

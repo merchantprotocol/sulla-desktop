@@ -30,4 +30,29 @@ export const uiToolManifests: ToolManifest[] = [
     operationTypes: ['execute'],
     loader:         () => import('./open_tab'),
   },
+  {
+    name:        'storage_cleanup_preview',
+    description: 'Read scoped Sulla VM code-workspace usage, optionally prepare an immutable review plan, and open Preferences > Files. This tool cannot confirm or remove anything.',
+    category:    'ui',
+    schemaDef:   {
+      target_ids: {
+        type:        'array',
+        optional:    true,
+        items:       { type: 'string' },
+        description: 'Optional eligible target ids from a prior inventory. Creates a review plan only; native human confirmation is still required.',
+      },
+      open: {
+        type:        'boolean',
+        optional:    true,
+        default:     true,
+        description: 'Open Preferences > Files so the human can inspect the same inventory.',
+      },
+    },
+    operationTypes:  ['read'],
+    executionTarget: 'desktop-local',
+    placements:      ['desktop'],
+    relayable:       false,
+    sideEffect:      'read',
+    loader:          () => import('./storage_cleanup_preview'),
+  },
 ];

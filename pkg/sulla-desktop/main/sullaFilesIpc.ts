@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { ipcMain as liveIpcMain, app, BrowserWindow, dialog, protocol, shell, webContents, type OpenDialogOptions, type SaveDialogOptions, type WebContents } from 'electron';
+import { ipcMain as liveIpcMain, app, BrowserWindow, dialog, protocol, shell, webContents, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions, type WebContents } from 'electron';
 
 import { getIpcMainProxy } from './ipcMain';
+import { getStorageCleanupService } from './storageCleanup/StorageCleanupService';
 import { getSullaFilesCaptureService } from './sullaFilesCapture';
 import { importChatFiles, pickAndImportChatFiles } from './sullaFilesChatImport';
 import { getSullaFilesClient } from './sullaFilesClient';
@@ -30,6 +31,7 @@ export class SullaFilesIpcElectronDesktop implements SullaFilesIpcDesktop {
   ownerWindow(sender:WebContents):BrowserWindow | undefined { return BrowserWindow.fromWebContents(sender) ?? undefined }
   showOpenDialog(owner:BrowserWindow | undefined, options:OpenDialogOptions) { return owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options) }
   showSaveDialog(owner:BrowserWindow | undefined, options:SaveDialogOptions) { return owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options) }
+  showMessageBox(owner:BrowserWindow | undefined, options:MessageBoxOptions) { return owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options) }
   openPath(target:string):Promise<string> { return shell.openPath(target) }
   showItemInFolder(target:string):void { shell.showItemInFolder(target) }
   startAccessingSecurityScopedResource(bookmark:string):() => void { return app.startAccessingSecurityScopedResource(bookmark) as () => void }
@@ -50,6 +52,7 @@ export class SullaFilesIpcElectronServices implements SullaFilesIpcServices {
   mountManager() { return getSullaFilesMountManager() }
   backups() { return getSullaFilesBackups() }
   cloudSync() { return FilesSyncV1 }
+  storageCleanup() { return getStorageCleanupService() }
 }
 
 /** Wires the Files IPC provider to Electron's ipcMain, dialogs, shell and Files services. */

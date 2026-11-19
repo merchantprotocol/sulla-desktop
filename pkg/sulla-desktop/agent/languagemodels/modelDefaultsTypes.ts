@@ -45,6 +45,8 @@ export const MODEL_DEFAULTS_IPC = {
  reset: 'model-defaults:reset', // () => ModelDefaultsState
 } as const;
 
+export const MODEL_DEFAULTS_CHANGED = 'model-defaults:changed' as const;
+
 export function sameModelChoice(a: AgentModelChoice, b: AgentModelChoice): boolean {
  if (a.mode !== b.mode) return false;
  if (a.mode === 'class' && b.mode === 'class') return a.class === b.class;

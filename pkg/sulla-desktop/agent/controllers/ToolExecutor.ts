@@ -647,12 +647,13 @@ export class ToolExecutor {
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
-        phase:     'tool_call',
+        modelStatus: (state.metadata as any).resolvedModelStatus,
+        phase:       'tool_call',
         toolRunId,
         toolName,
         args,
         kind,
-        thread_id: state.metadata.threadId,
+        thread_id:   state.metadata.threadId,
       },
       timestamp: Date.now(),
     });
@@ -664,12 +665,13 @@ export class ToolExecutor {
       await this.dispatchToWebSocket(parentChannel, {
         type: 'progress',
         data: {
-          phase:     'tool_call',
+          modelStatus: (state.metadata as any).resolvedModelStatus,
+          phase:       'tool_call',
           toolRunId,
           toolName,
           args,
           kind,
-          thread_id: parentThreadId,
+          thread_id:   parentThreadId,
         },
         timestamp: Date.now(),
       });

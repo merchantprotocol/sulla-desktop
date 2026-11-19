@@ -493,6 +493,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useVoiceState } from '@pkg/composables/voice';
 
 import type { AgentModelSelectorController } from './AgentModelSelectorController';
+import type { PendingAttachment } from './ChatMessageQueue';
 
 const props = withDefaults(defineProps<{
   modelValue:    string;
@@ -539,12 +540,6 @@ watch(pipelineState, (state) => {
 const voiceStageLabel = computed(() => STAGE_LABELS[pipelineState.value] ?? '');
 const stageElapsed = computed(() => ((stageNow.value - stageStart.value) / 1000).toFixed(1));
 
-export interface PendingAttachment {
-  name:      string;
-  mediaType: string;
-  base64:    string;
-  preview:   string;  // data: URL for thumbnail
-}
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];

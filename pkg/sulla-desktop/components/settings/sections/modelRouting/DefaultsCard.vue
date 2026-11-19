@@ -28,9 +28,9 @@ const emit = defineEmits<{
   (e: 'toast', message: string): void;
 }>();
 
-const ROWS: { key: ModelDefaultKey; title: string; icon: string; help: string; sullaVerb: string }[] = [
-  { key: 'chat', title: 'New chats', icon: 'chat', help: 'Who answers a new chat when you don’t pick someone in the chat’s selector.', sullaVerb: 'answers' },
-  { key: 'heartbeat', title: 'Heartbeat', icon: 'heart', help: 'Who runs the heartbeat: Sulla’s periodic background check-ins on your goals.', sullaVerb: 'runs it' },
+const ROWS: { key: ModelDefaultKey; title: string; icon: string; help: string }[] = [
+  { key: 'chat', title: 'New chats', icon: 'chat', help: 'Used when a chat has no selection.' },
+  { key: 'heartbeat', title: 'Heartbeat', icon: 'heart', help: 'Scheduled check-ins.' },
 ];
 
 const ds = ref<ModelDefaultsState | null>(null);
@@ -139,9 +139,6 @@ function resolution(key: ModelDefaultKey): DefaultResolution {
   const a = shownAgent(key);
   return defaultResolution(props.state, a?.name ?? 'Sulla', a?.modelChoice ?? { mode: 'list' }, true, props.now);
 }
-function help(row: (typeof ROWS)[number]) {
-  return `${ row.help } ${ current(row.key).kind === 'model' ? `Sulla ${ row.sullaVerb } on the model you choose.` : 'That agent’s own Model setting applies.' }`;
-}
 
 async function reset() {
   if (!ds.value) return;
@@ -152,9 +149,7 @@ async function reset() {
     for (const { key } of ROWS) remembered[key].choice = { mode: 'list' };
     adopt(next);
     emit('saved');
-    const hb = next.defaults.heartbeat;
-    const runner = hb.kind === 'agent' && hb.agentId === 'heartbeat' ? 'the Heartbeat agent runs the heartbeat' : 'Sulla runs the heartbeat';
-    emit('toast', `Defaults are back: Sulla answers new chats and ${ runner }, on the Agents list.`);
+    emit('toast', 'Defaults restored.');
   } catch (e) {
     emit('error', e instanceof Error ? e.message : String(e));
   }
@@ -226,7 +221,6 @@ onBeforeUnmount(() => closeMenu());
         <h2 id="mr-def-h">
           Defaults
         </h2>
-        <p>Who answers when you don’t choose. Pick an agent, or have Sulla answer on a model you choose.</p>
       </div>
       <div class="r">
         <button
@@ -249,17 +243,17 @@ onBeforeUnmount(() => closeMenu());
     >
       <div class="l">
         <b><RoutingIcon :name="row.icon" />{{ row.title }}</b>
-        <small>{{ help(row) }}</small>
+        <small>{{ row.help }}</small>
         <div
           class="mr-resolve"
           aria-live="polite"
         >
           <template v-if="missingAgent(row.key)">
-            <span class="mr-wt">{{ missingAgent(row.key) }} is off or deleted, so Sulla stands in.</span>
+            <span class="mr-wt">{{ missingAgent(row.key) }} is unavailable. Using Sulla.</span>
           </template>
-          → <b>{{ resolution(row.key).agent }}</b> · uses {{ resolution(row.key).uses }} →
+          <span v-if="current(row.key).kind === 'model'">{{ resolution(row.key).agent }} · </span>{{ resolution(row.key).uses }} ·
           <template v-if="resolution(row.key).model">
-            <b>{{ resolution(row.key).model }}</b>
+            <b>{{ resolution(row.key).model }}</b> ·
           </template>
           <span :class="{ 'mr-wt': resolution(row.key).warn }">{{ resolution(row.key).text }}</span>
         </div>

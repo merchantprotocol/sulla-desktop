@@ -35,6 +35,7 @@ import { providerSessionStore } from './providerSessionStore';
 import { bindLeaseToProcess, releaseLease } from './guestClaudeBridge';
 import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver';
 import { handleClaudeAuthFailure } from './credentials/ClaudeAuthFailureCoordinator';
+import { assertWorkerSubscription } from './workerSubscriptionGuard';
 import { redisClient } from '../database/RedisClient';
 import type { ProviderCliBridgeLease } from '../../vault-broker';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
@@ -310,6 +311,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     state?: BaseThreadState,
   ): Promise<{ oauthToken: string; apiKey: string; baseUrl?: string; lease?: ProviderCliBridgeLease }> {
     const resolved = await claudeCredentialResolver.resolve({ execution: true, conversationId: convId, state });
+    try { assertWorkerSubscription(state, 'claude-code', 'claude-code', resolved.accountId ?? '', resolved.kind === 'oauth-capability' ? 'oauth' : 'api-key') } catch (error) { if ('lease' in resolved) { resolved.lease?.revoke(); await resolved.lease?.close().catch(() => {}) } throw error }
     if (resolved.kind === 'none' && resolved.unavailable) {
       throw new VaultLocked('claude-code', { cause: 'Claude credential authority unavailable' });
     }
@@ -457,6 +459,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /** Reasoning effort from Preferences → AI models; '' leaves the CLI's own default. */
   private effort = '';
+  override getEffort(): string { return this.effort }
   setEffort(effort: string | undefined): void { this.effort = /^[a-z]{2,10}$/.test(effort || '') ? effort! : '' }
 
   /** The `--model` value this CLI is launched with; '' when the CLI picks its own default. */

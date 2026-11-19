@@ -195,6 +195,8 @@ export class GrokService extends OpenAICompatibleService {
       : super.brokerInjections();
   }
 
+  protected override workerAuthMode(): 'api-key'|'oauth' { return this.oauthMode ? 'oauth' : 'api-key' }
+
   /**
    * The subscription proxy speaks the Responses API regardless of model
    * name; the metered lane keeps default name-based detection.

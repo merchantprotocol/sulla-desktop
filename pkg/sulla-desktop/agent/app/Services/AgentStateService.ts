@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { EventEmitter } from 'node:events';
+
+import { resultTracking, type ResultActivityRecord } from '../../../shared/agentResults/AgentResultCard';
+
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import type { AgentJobFailureObserver } from './AgentJobFailureLogger';
 
@@ -11,6 +14,7 @@ import type { AgentJobFailureObserver } from './AgentJobFailureLogger';
 function isOpenBlocker(task: AgentJobTask): boolean { return task.status === 'blocked' && !task.returnedAt && !task.finishedAt; }
 function isLiveTask(task: AgentJobTask): boolean { return ['queued', 'running', 'parked'].includes(task.status) || isOpenBlocker(task); }
 export interface AgentStateStore {
+  resultTrackingForParentThread?(owner: string): Promise<ResultActivityRecord[]>;
   allJobs(): Promise<AgentJob[]>;
   /** Running/parked jobs only (bounded working set). Optional so test doubles may omit it. */
   liveJobs?(): Promise<AgentJob[]>;
@@ -58,7 +62,7 @@ export class AgentStateService {
   private refreshInFlight?: Promise<AgentJob[]>;
   private liveRefreshInFlight?: Promise<AgentJob[]>;
   private readonly changes = new EventEmitter();
-  private readiness: () => Promise<void> = async() => undefined;
+  private readiness:            () => Promise<void> = () => Promise.resolve();
   private readonly pendingTerminalWrites = new Set<string>();
   private readonly pendingTerminalPromises = new Map<string, Promise<void>>();
 
@@ -134,6 +138,19 @@ export class AgentStateService {
     if (!this.store.jobsForParentThread) return (await this.jobs()).filter(job => job.parentThreadId === parentThreadId && !job.dismissedAt);
     return (await this.store.jobsForParentThread(parentThreadId)).map(job => this.withDerivedStatus(job)).filter(job => !job.dismissedAt);
   }
+
+  async resultTrackingForParentThread(owner: string): Promise<ResultActivityRecord[]> {
+    if (this.store.resultTrackingForParentThread) return this.store.resultTrackingForParentThread(owner);
+    const jobs = this.store.jobsForParentThread ? await this.store.jobsForParentThread(owner) : await this.store.allJobs();
+    return jobs.filter(job => job.parentThreadId === owner).flatMap(job => job.tasks.map((task, taskIndex) => ({
+      jobId:    job.jobId,
+      taskIndex,
+      threadId: task.threadId,
+      status:   task.status === 'error' && task.completion?.status === 'completed' ? 'completed' : task.status,
+      ...resultTracking(task),
+    })));
+  }
+
   /**
    * Read-only, bounded view for the Live Agents projection. Deliberately does not wait for runtime
    * (Docker) inventory: showing agents must never depend on container inspection succeeding, and it must not
@@ -230,23 +247,35 @@ export class AgentStateService {
     const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.writeVersion++; this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
   }
 
-  async claimInterruptedJobs(maxResumes = 2): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
-    const resumable: AgentJob[] = []; const exhausted: AgentJob[] = [];
+  async claimInterruptedJobs(maxResumes = 2, eligible: (job: AgentJob) => Promise<boolean> = () => Promise.resolve(true)): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
+    const result: { resumable: AgentJob[]; exhausted: AgentJob[] } = { resumable: [], exhausted: [] };
     const candidates = (await this.store.jobsForList(1, false)).filter(job => job.status === 'running' && job.visibility !== 'tab')
       .sort((left, right) => left.createdAt - right.createdAt || left.jobId.localeCompare(right.jobId));
     for (const candidate of candidates) {
-      const exhaustedLimit = (candidate.restartResumeCount ?? 0) >= maxResumes;
-      let settled = false;
-      const changed = await this.mutateJob(candidate.jobId, current => {
-        if (current.status !== 'running' || current.visibility === 'tab') return undefined;
-        // Every task already returned (e.g. a delivered blocked result): settle silently, never resume or fail it.
-        if (!current.tasks.some(task => isLiveTask(task))) { settled = true; return this.withDerivedStatus(current); }
-        return exhaustedLimit ? { ...current, status: 'failed', error: 'runtime restart recovery limit exceeded', finishedAt: Date.now(), waitingOnChildren: 0 }
-          : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 };
-      }, undefined, false);
-      if (changed && !settled) (exhaustedLimit ? exhausted : resumable).push(changed);
+      const claimed = await this.claimInterruptedJob(candidate.jobId, maxResumes, eligible);
+      result.resumable.push(...claimed.resumable);
+      result.exhausted.push(...claimed.exhausted);
     }
-    return { resumable, exhausted };
+    return result;
+  }
+
+  /** List rows are presentation projections. Recovery always validates the full durable task record. */
+  async claimInterruptedJob(jobId: string, maxResumes = 2, eligible: (job: AgentJob) => Promise<boolean> = () => Promise.resolve(true)): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {
+    const result: { resumable: AgentJob[]; exhausted: AgentJob[] } = { resumable: [], exhausted: [] };
+    const candidate = await this.store.job(jobId);
+    if (candidate?.status !== 'running' || candidate.visibility === 'tab' || !await eligible(candidate)) return result;
+    let settled = false;
+    let exhausted = false;
+    const changed = await this.mutateJob(jobId, current => {
+      if (current.status !== 'running' || current.visibility === 'tab') return undefined;
+      if (!current.tasks.some(task => isLiveTask(task))) { settled = true; return this.withDerivedStatus(current); }
+      exhausted = (current.restartResumeCount ?? 0) >= maxResumes;
+      return exhausted
+        ? { ...current, status: 'failed', error: 'runtime restart recovery limit exceeded', finishedAt: Date.now(), waitingOnChildren: 0 }
+        : { ...current, restartResumeCount: (current.restartResumeCount ?? 0) + 1 };
+    }, undefined, false);
+    if (changed && !settled) (exhausted ? result.exhausted : result.resumable).push(changed);
+    return result;
   }
 
   /** The only whole-row mutation boundary: latest durable read, mutation, write, cache, and publish share one per-job queue. */

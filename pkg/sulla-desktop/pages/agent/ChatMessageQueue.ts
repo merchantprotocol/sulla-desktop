@@ -6,7 +6,12 @@
 // ChatMessageQueue.ts — Message queue for sequential processing with Windsurf-style UX
 import { ref, computed, markRaw, toRaw } from 'vue';
 
-import type { PendingAttachment } from '../pages/agent/AgentComposer.vue';
+export interface PendingAttachment {
+  name:      string;
+  mediaType: string;
+  base64:    string;
+  preview:   string;  // data: URL for thumbnail
+}
 
 export interface QueuedMessage {
   id:          string;

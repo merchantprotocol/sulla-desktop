@@ -10,7 +10,7 @@ import type { AgentJob } from '../../../tools/agents/jobRegistry';
 const parkedJob = (): AgentJob => ({
   jobId: 'manager-job', status: 'parked', createdAt: 1, finishedAt: null,
   taskCount: 1, results: [], parentChannel: 'sulla-desktop', parentThreadId: 'root',
-  tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'parked', threadId: 'manager-thread', depth: 1, provider: 'openai-codex', model: 'gpt-6.1-sol' }],
+  tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'parked', threadId: 'manager-thread', depth: 1, provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max' }],
 });
 
 describe('ParkedAgentRehydrator', () => {
@@ -26,7 +26,7 @@ describe('ParkedAgentRehydrator', () => {
     expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 0, job: { jobId: 'manager-job' } });
     const state = { metadata: {} as Record<string, unknown> };
     service.apply(state, identity!);
-    expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'openai-codex', model: 'gpt-6.1-sol' } });
+    expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max' } });
   });
 
   it('recognizes terminal delegated threads so late children cannot resurrect them', async() => {

@@ -59,6 +59,7 @@
 
             <div class="mgroup-head">
               <span class="provider">{{ group.providerName }}</span>
+              <span v-if="group.accessLabel" class="access-label">{{ group.accessLabel }}</span>
               <span v-if="group.isActiveProvider" class="primary-pill">Primary</span>
             </div>
 
@@ -75,7 +76,10 @@
               :class="['mitem', { active: m.isActiveModel && !activeAgentId }]"
               @click="pick(m)"
             >
-              <span class="name">{{ m.modelLabel }}</span>
+              <span class="model-copy">
+                <span class="name">{{ m.modelLabel }}</span>
+                <small class="model-mode">{{ modelSelectionModeLabel(m.selectionMode, m.modelId) }}</small>
+              </span>
               <span v-if="m.isActiveModel && !activeAgentId" class="tier active">active</span>
               <span v-else class="tier">{{ group.providerId }}</span>
             </div>
@@ -90,6 +94,7 @@
 import { computed, ref, watch } from 'vue';
 
 import type { AgentOption, ModelOption } from '@pkg/pages/agent/AgentModelSelectorController';
+import { modelSelectionModeLabel } from '@pkg/shared/providerAccess';
 
 import { useChatController, useModelSelector } from '../../controller/useChatController';
 
@@ -133,18 +138,14 @@ const filteredGroups = computed(() => {
     .filter(g => g.models.length > 0);
 });
 
-// First time the modal opens, ask the selector to load provider groups
-// so the list is populated. Subsequent opens reuse the cached groups —
-// IPC state-changed broadcasts keep them fresh automatically. Agents are
-// re-read on every open so ones created in the Agents tab show up.
+// Every open rechecks provider availability. ModelProviderService and its
+// catalogs retain their bounded cache, while stale disconnected groups are
+// removed before a human can pick from them. Agents are also re-read so ones
+// created in the Agents tab show up.
 watch(open, (isOpen) => {
   if (!isOpen) return;
-  if (providerGroups.value.length === 0 && !selector.loadingProvidersValue) {
-    selector.refresh();
-  } else {
-    selector.refreshAgents();
-  }
-});
+  void selector.refresh();
+}, { immediate: true });
 
 function setRunLocation(event: Event): void {
   controller.thread.value = { ...controller.thread.value, runLocation: (event.target as HTMLInputElement).checked ? 'container' : 'vm' };
@@ -217,7 +218,11 @@ function pickAgent(agent: AgentOption): void {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.2em;
   text-transform: uppercase;
 }
-.mgroup-head .provider { color: var(--accent-hover); font-weight: 600; }
+.mgroup-head .provider { flex: 1; min-width: 0; color: var(--accent-hover); font-weight: 600; }
+.mgroup-head .access-label {
+  max-width: 170px; color: var(--text-muted); font-size: 8.5px; letter-spacing: 0.08em;
+  line-height: 1.2; text-align: right; white-space: normal; text-transform: none; font-weight: 400;
+}
 .mgroup-head .primary-pill {
   color: var(--accent-hover);
   background: var(--accent-dim);
@@ -245,8 +250,13 @@ function pickAgent(agent: AgentOption): void {
 .mitem:hover { background: var(--accent-dim); }
 .mitem .name {
   font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); font-weight: 600;
-  flex: 1; min-width: 0;
+  min-width: 0;
   white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+}
+.mitem .model-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mitem .model-mode {
+  color: var(--text-muted); font-family: var(--font-mono); font-size: 9.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mitem .tier {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.18em;

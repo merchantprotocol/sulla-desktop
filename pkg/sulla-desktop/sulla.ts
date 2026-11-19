@@ -73,7 +73,9 @@ export function onVaultUnlocked(): Promise<void> {
  *
  * @see sulla-desktop/background.ts
  */
-export function instantiateSullaStart(assertCurrent?: () => void): Promise<void> {
+export async function instantiateSullaStart(assertCurrent?: () => void): Promise<void> {
+  const { agentExecutionReadiness } = await import('@pkg/agent/services/AgentExecutionReadiness');
+  agentExecutionReadiness.activate();
   return sullaStartup.services.start(assertCurrent);
 }
 

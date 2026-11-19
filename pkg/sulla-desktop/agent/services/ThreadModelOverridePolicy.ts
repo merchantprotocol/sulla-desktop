@@ -19,9 +19,12 @@ export class ThreadModelOverridePolicy {
 
   apply(agent: Record<string, unknown> | null | undefined, selection: ThreadModelSelection): Record<string, unknown> | undefined {
     if (selection.mode === 'unchanged') return agent ?? undefined;
-    if (selection.mode === 'explicit') return { ...(agent ?? {}), provider: selection.provider, model: selection.model };
+    if (selection.mode === 'explicit') {
+      const { effort: _effort, ...rest } = agent ?? {};
+      return { ...rest, provider: selection.provider, model: selection.model };
+    }
     if (!agent) return undefined;
-    const { provider: _provider, model: _model, ...withoutOverride } = agent;
+    const { provider: _provider, model: _model, effort: _effort, ...withoutOverride } = agent;
     return withoutOverride;
   }
 }

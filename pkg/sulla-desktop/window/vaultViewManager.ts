@@ -10,6 +10,7 @@ import Electron, { WebContentsView } from 'electron';
 import { VaultPermissionPolicy } from './vaultPermissionPolicy';
 
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
+import { vaultThemeCss } from '@pkg/shared/vaultTheme';
 
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 // The vault page's "Integrations" side-menu link; intercepted here, never loaded.
@@ -32,6 +33,9 @@ interface VaultWindowState {
   ownerId: string | null;
   attachedOwnerId: string | null;
   generation: number;
+  themeCss: string;
+  themeKey: string | null;
+  themeUpdate: Promise<void>;
   window: Electron.BrowserWindow;
 }
 
@@ -47,7 +51,7 @@ export class VaultViewManager {
   private stateFor(window: Electron.BrowserWindow): VaultWindowState {
     let state = this.windows.get(window.id);
     if (!state) {
-      state = { view: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window };
+      state = { view: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
       this.windows.set(window.id, state);
       window.once('closed', () => { this.destroyWindow(window.id) });
     }
@@ -72,11 +76,12 @@ export class VaultViewManager {
     return [...this.windows.values()].some(state => state.ownerId !== null);
   }
 
-  async show(reservation: VaultViewReservation, window: Electron.BrowserWindow, url: string, bounds: Electron.Rectangle): Promise<boolean> {
+  async show(reservation: VaultViewReservation, window: Electron.BrowserWindow, url: string, bounds: Electron.Rectangle, theme?: unknown): Promise<boolean> {
     if (!this.isCurrent(reservation)) return false;
     const target = this.validateUrl(url);
     const state = this.windows.get(reservation.windowId);
     if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
+    state.themeCss = theme === undefined ? '' : vaultThemeCss(theme);
     const created = await this.createView(window);
     if (!this.isCurrent(reservation)) {
       this.discardCreatedView(created);
@@ -86,6 +91,7 @@ export class VaultViewManager {
     state.view = view;
     state.isolatedSession = created.session;
     state.attachedOwnerId = reservation.ownerId;
+    view.webContents.on('dom-ready', () => { void this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error)) });
     view.setBounds(this.validateBounds(bounds));
     window.contentView.addChildView(view);
     state.attached = true;
@@ -100,6 +106,29 @@ export class VaultViewManager {
       throw error;
     }
     return this.isCurrent(reservation);
+  }
+
+  async setTheme(ownerId: string, theme: unknown, window: Electron.BrowserWindow): Promise<void> {
+    const state = this.windows.get(window.id);
+    if (state?.ownerId !== ownerId) return;
+    const css = vaultThemeCss(theme);
+    state.themeCss = css;
+    if (state.view) await this.applyTheme(state, state.view);
+  }
+
+  private applyTheme(state: VaultWindowState, view: WebContentsView): Promise<void> {
+    const update = state.themeUpdate.then(() => this.insertTheme(state, view));
+    state.themeUpdate = update.catch(() => {});
+    return update;
+  }
+
+  private async insertTheme(state: VaultWindowState, view: WebContentsView): Promise<void> {
+    if (state.view !== view || view.webContents.isDestroyed() || !state.themeCss) return;
+    const previous = state.themeKey;
+    const key = await view.webContents.insertCSS(state.themeCss);
+    if (state.view !== view || view.webContents.isDestroyed()) return;
+    state.themeKey = key;
+    if (previous) await view.webContents.removeInsertedCSS(previous);
   }
 
   setBounds(ownerId: string, bounds: Electron.Rectangle, window: Electron.BrowserWindow): void {
@@ -130,6 +159,8 @@ export class VaultViewManager {
     if (!state.window.isDestroyed()) state.window.setContentProtection(false);
     if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();
     state.view = null;
+    state.themeKey = null;
+    state.themeCss = '';
     void state.isolatedSession?.clearStorageData();
     state.isolatedSession = null;
     state.attachedOwnerId = null;

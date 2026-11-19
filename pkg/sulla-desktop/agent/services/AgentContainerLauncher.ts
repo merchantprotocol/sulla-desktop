@@ -32,6 +32,7 @@ import {
   seedGitWorktreeIntoGuest,
   type GuestRuntimeIdentity,
 } from './GuestRuntimeTransport';
+import { claimGuestWorkspace, type GuestWorkspaceClaim } from './GuestWorkspaceClaim';
 import { getIntegrationService } from './IntegrationService';
 import { RunActivity } from './RunActivity';
 import { runTools } from './RunToolTracker';
@@ -50,6 +51,8 @@ import { ContainerLifecycleLostError, isContainerLifecycleLost } from '../langua
 import { ProviderBridgeLeasePool } from './ProviderBridgeLeasePool';
 import { claudeCredentialResolver } from '../languagemodels/credentials/ClaudeCredentialResolver';
 import { VaultLocked } from '../languagemodels/failures';
+import { assertWorkerSubscription } from '../languagemodels/workerSubscriptionGuard';
+import { providerCliContainerSettings, type ProviderCliSnapshot } from '@pkg/shared/providerCliSelection';
 import { onSteer, steerText } from '../utils/steerChannel';
 import { stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -208,6 +211,8 @@ export interface AgentContainerRun {
   taskIndex:      number;
   provider:       string;
   model?:         string | null;
+  /** Exact CLI selection captured when a durable job task was created. */
+  providerCliSnapshot?: ProviderCliSnapshot;
   prompt:         string;
   instructions:   string;
   /** Explicit existing worktree used only to seed this job's isolated clone. */
@@ -902,6 +907,7 @@ async function cleanupContainerResources(
   removal: { name: string; reason: string; caller: string } = {
     name: containerId ?? 'unknown', reason: 'resource-cleanup', caller: 'cleanupContainerResources',
   },
+  workspaceClaim?: GuestWorkspaceClaim,
 ): Promise<AgentContainerCleanupReceipt> {
   const failures: unknown[] = [];
   const receipt: AgentContainerCleanupReceipt = {
@@ -961,6 +967,11 @@ async function cleanupContainerResources(
   if (secretDir) {
     await cleanupOwner.run(`secrets:${ secretDir }`, () => removeContainerSecrets(secretDir)).catch(error => failures.push(error));
   }
+  // Never release use ownership while a container might still be running. A
+  // failed release leaves only a dead holder that confirmed cleanup reclaims.
+  if (containerRemoved && workspaceClaim) {
+    await workspaceClaim.release().catch(error => log.warn(`[AgentContainer] workspace claim release deferred to cleanup reconciliation: ${ (error as Error)?.message ?? error }`));
+  }
   if (failures.length) throw new AggregateError(failures, 'Agent container cleanup remains pending');
   return receipt;
 }
@@ -996,6 +1007,7 @@ interface ContainerProviderTransportOptions {
   /** Aborted when the container lifecycle ends; later provider calls fail fast. */
   lifecycle:     AbortSignal;
   ownsBridge(ref: string): boolean;
+  validateBridge?(input: Parameters<ProviderExecutionTransport['context']>[0], bridge: ProviderCliBridgeLease): void;
 }
 
 class ContainerProviderExecutionTransport implements ProviderExecutionTransport {
@@ -1022,6 +1034,8 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
       input.toolSessionId ? this.ensureToolConfig(input.toolSessionId) : Promise.resolve(undefined),
       input.provider === 'codex' ? this.configureCodexHome() : Promise.resolve(),
     ]);
+
+    this.options.validateBridge?.(input, bridge);
 
     return {
       runtime:        'container',
@@ -1206,6 +1220,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  * into this lifecycle; non-CLI providers retain their canonical transport.
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
+  const cliSettings = providerCliContainerSettings(run.providerCliSnapshot);
   const image = await ensureAgentImage().catch((error) => {
     throw new AgentLaunchError('Sulla is still loading its assistant', true, (error as Error)?.message ?? String(error));
   });
@@ -1222,10 +1237,12 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
   let secretDir: string | undefined;
   let containerId: string | undefined;
   let workspacePath: string | undefined;
+  let workspaceClaim: GuestWorkspaceClaim | undefined;
   let unregisterRuntime: (() => void) | undefined;
   const guestRuntimePaths: string[] = [];
   let providerBridges: ProviderBridgeLeasePool | undefined;
   const providerBridgeRefs = new Set<string>();
+  const providerBridgeAuth = new Map<string, { integration: string; account: string; mode?: string }>();
   let toolSession: ReturnType<ReturnType<typeof getMCPServerHost>['registerSession']> | undefined;
   let renewTimer: ReturnType<typeof setInterval> | undefined;
   let livenessTimer: ReturnType<typeof setInterval> | undefined;
@@ -1317,18 +1334,22 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const dirsTask = phase('dirs', async() => {
       const checkout = await prepareCheckout(run.workspacePath, jobKey);
       if (!stableKey) {
-        return {
+        const dirs = {
           workspace: checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`),
           claudeHome: undefined,
           codexHome: undefined,
           persistentRoot: undefined,
         };
+        workspaceClaim = await claimGuestWorkspace(dirs.workspace, containerName);
+        return dirs;
       }
       const [persistentRoot, persistentWorkspace, , claudeHome, codexHome] = await ensureGuestRuntimeDirectories(
         GUEST_CONVERSATIONS_ROOT,
         [stableKey, `${ stableKey }/workspace`, `${ stableKey }/home`, `${ stableKey }/home/claude`, `${ stableKey }/home/codex`],
       );
-      return { workspace: checkout ?? persistentWorkspace, claudeHome, codexHome, persistentRoot };
+      const dirs = { workspace: checkout ?? persistentWorkspace, claudeHome, codexHome, persistentRoot };
+      workspaceClaim = await claimGuestWorkspace(dirs.workspace, containerName);
+      return dirs;
     });
     const memorySeedTask = phase('memorySeed', () => seedContentAddressedDirectoryIntoGuest(
       resolveMemorySeedDir(), `${ GUEST_RUNTIME_ROOT }/memory-seed`, 'memory-seed',
@@ -1363,6 +1384,17 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     secretDir = secretsResult.value;
     workspacePath = dirs.workspace;
     const providerWorkspace = workspacePath;
+    for (const pin of cliSettings.pinned) {
+      const executable = pin.provider === 'claude-code' ? 'claude' : 'codex';
+      await guestExec(['sh', '-c', [
+        'set -eu',
+        'root=$(readlink -f "$1")',
+        '[ "$root" = "$1" ]',
+        'binary=$(readlink -f "$1/node_modules/.bin/$2")',
+        'case "$binary" in "$root"/*) ;; *) exit 73;; esac',
+        '[ -x "$binary" ]',
+      ].join('; '), 'sulla-cli-selection-check', pin.prefix, executable]);
+    }
     const binds = [
       `${ secretDir }:/run/secrets/sulla-agent:rw`,
       `${ workspacePath }:${ workspacePath }:rw`,
@@ -1373,6 +1405,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ...(dirs.codexHome ? [`${ dirs.codexHome }:/home/sulla/.codex:rw`] : []),
       ...sullaFilesGuestBinds(),
       ...egress.binds,
+      ...cliSettings.binds,
     ];
     containerId = await phase('create', () => createAgentContainer(runtime, {
       name:   containerName,
@@ -1399,6 +1432,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         SULLA_AGENT_PROVIDER: run.provider,
         SULLA_AGENT_MODEL:    run.model ?? '',
         ...egress.env,
+        ...cliSettings.env,
       },
       binds,
       network:     AGENT_NETWORK,
@@ -1545,6 +1579,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
             }
             : undefined,
         });
+        providerBridgeAuth.set(bridge.config.opaqueConfigRef, { integration: integrationId, account: accountId, mode: authMode });
         providerBridgeRefs.add(bridge.config.opaqueConfigRef);
         return bridge;
       })();
@@ -1562,13 +1597,17 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const bridgeFor = (provider: ProviderName, launchModel?: string): Promise<ProviderCliBridgeLease> => bridgePool.lease(provider, launchModel);
     const providerTransport = new ContainerProviderExecutionTransport({
       containerName,
-      workspacePath: providerWorkspace,
+      workspacePath:  providerWorkspace,
       secretDir,
-      files:         providerFiles,
+      files:          providerFiles,
       identity,
       bridgeFor,
-      lifecycle:     lifecycleAbort.signal,
-      ownsBridge:    ref => providerBridgeRefs.has(ref),
+      lifecycle:      lifecycleAbort.signal,
+      ownsBridge:     ref => providerBridgeRefs.has(ref),
+      validateBridge: (input, bridge) => {
+        const auth = providerBridgeAuth.get(bridge.config.opaqueConfigRef);
+        assertWorkerSubscription(input.state, input.provider, auth?.integration ?? '', auth?.account ?? '', auth?.mode);
+      },
     });
     renewTimer = setInterval(() => {
       capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
@@ -1628,7 +1667,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
         return await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
           name: containerName, reason: closeRemoval.reason, caller: closeRemoval.caller,
-        });
+        }, workspaceClaim);
       });
       return closePromise;
     };
@@ -1665,7 +1704,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const receipt = await (closePromise ??
       cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
         name: containerName, reason: 'lifecycle-startup-failed', caller: 'createAgentContainerLifecycle.catch',
-      })).catch(cleanupError => {
+      }, workspaceClaim)).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     if (receipt.recoveryWorkspacePath && error instanceof Error) {
@@ -1686,6 +1725,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
   let capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
   let containerId: string | undefined;
   let workspacePath: string | undefined;
+  let workspaceClaim: GuestWorkspaceClaim | undefined;
   let unregisterRuntime: (() => void) | undefined;
   const guestRuntimePaths: string[] = [];
   try {
@@ -1727,6 +1767,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const checkout = await prepareCheckout(run.workspacePath, jobKey);
     workspacePath = checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`);
+    workspaceClaim = await claimGuestWorkspace(workspacePath, containerName);
     const memorySeedPath = await seedDirectoryIntoGuest(resolveMemorySeedDir(), `${ GUEST_RUNTIME_ROOT }/memory-seed`, `${ jobKey }-`);
     guestRuntimePaths.push(memorySeedPath);
     await chownGuestPaths([workspacePath, memorySeedPath], identity);
@@ -1852,7 +1893,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         try {
           cleanupReceipt = await cleanupContainerResources(runtime, startedContainerId, secretDir, undefined, workspacePath, guestRuntimePaths, {
             name: containerName, reason: error ? 'job-finished-with-error' : 'job-finished', caller: 'runAgentContainer.finish',
-          });
+          }, workspaceClaim);
         } catch (cleanupError) {
           reject(new AggregateError(error ? [error, cleanupError] : [cleanupError], 'Agent container cleanup remains pending'));
           return;
@@ -1983,7 +2024,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, capabilityExpiresAt - Math.floor(Date.now() / 1000))).catch(() => {});
     const receipt = await cleanupContainerResources(runtime, containerId, secretDir, undefined, workspacePath, guestRuntimePaths, {
       name: containerName, reason: 'job-startup-failed', caller: 'runAgentContainer.catch',
-    }).catch(cleanupError => {
+    }, workspaceClaim).catch(cleanupError => {
       throw new AggregateError([error, cleanupError], 'Agent container startup and cleanup both failed');
     });
     if (receipt.recoveryWorkspacePath && error instanceof Error) {

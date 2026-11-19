@@ -6,6 +6,7 @@
 import os from 'node:os';
 
 import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
+import { RELAY_RESULT_OUTBOX_MAX_ENTRIES } from '../../../packages/relay-protocol/src/relayProtocol.js';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -37,7 +38,7 @@ export function loadConfig(): RelayConfig {
     redisUrl:             process.env.SULLA_REDIS_URL?.trim() || 'redis://127.0.0.1:6379',
     deviceTokenSecret:    required('SULLA_RELAY_DEVICE_TOKEN_SECRET'),
     internalToken:        required('SULLA_RELAY_INTERNAL_TOKEN'),
-    maxInFlightPerDevice: positiveInteger('SULLA_RELAY_MAX_IN_FLIGHT', 16),
+    maxInFlightPerDevice: positiveInteger('SULLA_RELAY_MAX_IN_FLIGHT', RELAY_RESULT_OUTBOX_MAX_ENTRIES),
     presenceTtlSeconds:   positiveInteger('SULLA_RELAY_PRESENCE_TTL_SECONDS', 45),
     // Default to the longest deadline the shared policy hands out (git_clone, long exec)
     // so the relay never silently cuts a call below its own tool deadline.

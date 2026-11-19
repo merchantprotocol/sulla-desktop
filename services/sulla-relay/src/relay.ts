@@ -4,13 +4,16 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import crypto from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 import { Redis } from 'ioredis';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { bearerToken, tokenMatches, verifyDeviceToken } from './auth.js';
 import { RedisHealthProbe } from './RedisHealthProbe.js';
+import { RelayRequestLedger } from './RequestLedger.js';
 import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
+import { RELAY_TOOL_RESULT_MAX_BYTES, RELAY_TUNNEL_WIRE_MAX_BYTES } from '../../../packages/relay-protocol/src/relayProtocol.js';
 
 import type { RelayConfig } from './config.js';
 import type {
@@ -25,6 +28,10 @@ interface DeviceConnection {
   connectionId: string;
   inflight:     Set<string>;
   heartbeat:    ReturnType<typeof setInterval>;
+  heartbeatNonce: string | null;
+  heartbeatSentAt: number;
+  heartbeatRtts: number[];
+  lastHeartbeatRttMs: number;
 }
 
 interface PendingHttp {
@@ -37,12 +44,17 @@ interface PendingHttp {
   operationTypes: string[];
   startedAt:      number;
   deadlineMs:     number;
+  fingerprint:    string;
+  requestId:      string;
 }
 
 interface LocalRoute {
   originReplicaId: string;
   deviceId:        string;
   timer:           ReturnType<typeof setTimeout>;
+  envelope:        RelayToolCallEnvelope;
+  connectionId:    string;
+  connection:      DeviceConnection;
 }
 
 type BusMessage =
@@ -50,10 +62,23 @@ type BusMessage =
   | { kind: 'result'; envelope: RelayToolResultEnvelope }
   | { kind: 'cancel'; requestId: string; deviceId: string };
 
-/** Desktop enforces the deadline itself; the relay waits a little longer so a result landing at the deadline still reaches its caller. */
+/** Desktop enforces its fresh lease budget; relay retains the route for a late result receipt. */
 const RESULT_GRACE_MS = 1_000;
+const RESULT_RETENTION_MS = 10 * 60_000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
+const HEARTBEAT_TIMEOUT_MS = 15_000;
+const MIN_DISPATCH_SAFETY_MS = 250;
 const presenceKey = (deviceId: string) => `sulla:relay:device:${ deviceId }`;
 const replicaChannel = (replicaId: string) => `sulla:relay:replica:${ replicaId }`;
+const callKey = (deviceId: string, requestId: string) => `${ deviceId }\0${ requestId }`;
+const REFRESH_PRESENCE_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local current = cjson.decode(raw)
+if current.connectionId ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+`;
 
 function relayError(code: RelayError['code'], message: string, retryable = false): RelayError {
   return { code, message, ...(retryable ? { retryable: true } : {}) };
@@ -80,9 +105,10 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
 }
 
 export class RelayService {
-  readonly webSockets = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+  readonly webSockets = new WebSocketServer({ noServer: true, maxPayload: RELAY_TUNNEL_WIRE_MAX_BYTES });
   private readonly redis:      Redis;
   private readonly subscriber: Redis;
+  private readonly ledger: RelayRequestLedger;
   private readonly redisHealth: RedisHealthProbe;
   private readonly devices = new Map<string, DeviceConnection>();
   private readonly pendingHttp = new Map<string, PendingHttp>();
@@ -91,6 +117,7 @@ export class RelayService {
   constructor(private readonly config: RelayConfig) {
     this.redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 2 });
     this.subscriber = this.redis.duplicate();
+    this.ledger = new RelayRequestLedger(this.redis, RESULT_RETENTION_MS);
     // ioredis reconnects (and resubscribes) with backoff; /healthz reports the outage meanwhile.
     for (const [label, client] of [['command', this.redis], ['subscriber', this.subscriber]] as const) {
       client.on('error', (error: Error) => console.warn(`[sulla-relay] Redis ${ label } connection error; reconnecting:`, error.message));
@@ -108,10 +135,22 @@ export class RelayService {
   }
 
   async stop(): Promise<void> {
-    for (const connection of this.devices.values()) {
-      clearInterval(connection.heartbeat);
-      connection.socket.close(1012, 'relay_shutdown');
-    }
+    const connections = [...this.devices.values()];
+    for (const connection of connections) clearInterval(connection.heartbeat);
+    // Remove local ownership before closing sockets so their asynchronous close
+    // handlers cannot race Redis shutdown and attempt a second presence cleanup.
+    this.devices.clear();
+    let presenceCleanupError: unknown;
+    await Promise.all(connections.map(async connection => {
+      try {
+        const current = await this.getPresence(connection.deviceId);
+        if (current?.connectionId === connection.connectionId) await this.redis.del(presenceKey(connection.deviceId));
+      } catch (error) {
+        presenceCleanupError ??= error;
+      } finally {
+        connection.socket.close(1012, 'relay_shutdown');
+      }
+    }));
     for (const pending of this.pendingHttp.values()) clearTimeout(pending.timer);
     for (const route of this.localRoutes.values()) clearTimeout(route.timer);
     this.pendingHttp.clear();
@@ -122,6 +161,8 @@ export class RelayService {
     await Promise.all([this.redis, this.subscriber].map(async client => {
       try { await client.quit() } catch { client.disconnect() }
     }));
+    // Continue closing service resources, then surface any presence failure.
+    if (presenceCleanupError) throw presenceCleanupError;
   }
 
   async healthy(): Promise<boolean> {
@@ -152,20 +193,42 @@ export class RelayService {
       else sendJson(response, 503, { ok: false, error: 'redis_unavailable' });
       return;
     }
-    const match = /^\/v1\/devices\/([^/]+)\/tools\/([^/]+)\/([^/]+)$/.exec(url.pathname);
-    if (request.method !== 'POST' || !match) { sendJson(response, 404, { error: relayError('BAD_REQUEST', 'Route not found') }); return }
+    const resultMatch = /^\/v1\/devices\/([^/]+)\/tools\/results\/([^/]+)$/.exec(url.pathname);
+    const toolMatch = /^\/v1\/devices\/([^/]+)\/tools\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    if (!resultMatch && (request.method !== 'POST' || !toolMatch)) {
+      sendJson(response, 404, { error: relayError('BAD_REQUEST', 'Route not found') }); return;
+    }
     if (!tokenMatches(bearerToken(request.headers.authorization), this.config.internalToken)) {
       sendJson(response, 401, { error: relayError('FORBIDDEN', 'Invalid relay service token') }); return;
+    }
+    if (request.method === 'GET' && resultMatch) {
+      const [deviceId, requestId] = resultMatch.slice(1).map(decodeURIComponent);
+      const fingerprint = request.headers['x-sulla-request-fingerprint'];
+      if (typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) {
+        sendJson(response, 400, { error: relayError('BAD_REQUEST', 'A request fingerprint is required') }); return;
+      }
+      const record = await this.ledger.get(deviceId, requestId);
+      if (!record) { sendJson(response, 404, { error: relayError('DEADLINE_EXCEEDED', 'No retained result exists for this request') }); return }
+      if (record.fingerprint !== fingerprint) {
+        sendJson(response, 409, { error: relayError('REQUEST_ID_REUSE', 'Request identity does not match the retained request') }); return;
+      }
+      if (record.result) this.sendResultResponse(response, record.result);
+      else sendJson(response, 202, { error: relayError('REQUEST_IN_PROGRESS', 'The original request has no stored result yet', true) });
+      return;
+    }
+    if (request.method !== 'POST' || !toolMatch) {
+      sendJson(response, 404, { error: relayError('BAD_REQUEST', 'Route not found') }); return;
     }
     let body: Record<string, unknown>;
     try { body = await readJson(request) } catch (error) {
       sendJson(response, 400, { error: relayError('BAD_REQUEST', error instanceof Error ? error.message : String(error)) }); return;
     }
-    const [deviceId, category, tool] = match.slice(1).map(decodeURIComponent);
+    const [deviceId, category, tool] = toolMatch.slice(1).map(decodeURIComponent);
     const ctx = body.ctx as RelayToolExecutionContext | undefined;
     const requestedDeadline = Number(body.deadlineMs);
-    if (!ctx || typeof ctx.sub !== 'string' || !ctx.request_id || !Number.isFinite(requestedDeadline) || requestedDeadline <= 0) {
-      sendJson(response, 400, { error: relayError('BAD_REQUEST', 'ctx and a positive deadlineMs are required') }); return;
+    if (!ctx || typeof ctx.sub !== 'string' || typeof ctx.request_id !== 'string' || !ctx.request_id
+      || ctx.request_id.length > 256 || !Number.isFinite(requestedDeadline) || requestedDeadline <= 0) {
+      sendJson(response, 400, { error: relayError('BAD_REQUEST', 'ctx, request_id and a positive deadlineMs are required') }); return;
     }
     const presence = await this.getPresence(deviceId);
     if (!presence) { sendJson(response, 503, { error: relayError('DEVICE_OFFLINE', 'Desktop device is offline', true) }); return }
@@ -173,44 +236,52 @@ export class RelayService {
       sendJson(response, 403, { error: relayError('FORBIDDEN', 'Tool context does not match the target Desktop') }); return;
     }
     const deadlineMs = Math.min(requestedDeadline, this.config.maxDeadlineMs);
-    const requestId = ctx.request_id || crypto.randomUUID();
-    if (this.pendingHttp.has(requestId)) {
-      sendJson(response, 400, { error: relayError('BAD_REQUEST', 'request_id is already in flight') }); return;
+    const requestId = ctx.request_id;
+    const registration = await this.ledger.register({
+      requestId, deviceId, userId: presence.userId, originReplicaId: this.config.replicaId, deadlineMs,
+      identity: { ctx, category, tool, args: body.args },
+    });
+    if (registration.kind === 'conflict') {
+      sendJson(response, 409, { error: relayError('REQUEST_ID_REUSE', 'request_id is already bound to a different user, context or tool payload') }); return;
     }
+    if (registration.kind === 'existing') {
+      if (registration.record.result) this.sendResultResponse(response, registration.record.result);
+      else sendJson(response, 202, { error: relayError('REQUEST_IN_PROGRESS', 'The original request is still running; it will not be dispatched again', true) });
+      return;
+    }
+    const requestFingerprint = registration.record.fingerprint;
     const envelope: RelayToolCallEnvelope = {
       type:            'tool-call',
-      action:          'execute',
+      action:          'offer',
       requestId,
       deviceId,
       originReplicaId: this.config.replicaId,
+      requestFingerprint,
       ctx,
       category,
       tool,
       args:            body.args,
-      deadlineAt:      Date.now() + deadlineMs,
       operationTypes:  Array.isArray(body.operationTypes) ? body.operationTypes.filter((type): type is string => typeof type === 'string') : [],
     };
-    const startedAt = Date.now();
+    const startedAt = performance.now();
+    const key = callKey(deviceId, requestId);
     const timer = setTimeout(() => {
-      this.timeoutRequest(requestId).catch(error => console.error('[sulla-relay] Timeout cleanup failed:', error));
+      this.timeoutRequest(key).catch(error => console.error('[sulla-relay] Timeout cleanup failed:', error));
     }, deadlineMs + RESULT_GRACE_MS);
-    this.pendingHttp.set(requestId, {
+    this.pendingHttp.set(key, {
       response, ownerReplicaId: presence.replicaId, deviceId, timer, category, tool,
-      operationTypes: envelope.operationTypes ?? [], startedAt, deadlineMs,
+      operationTypes: envelope.operationTypes ?? [], startedAt, deadlineMs, fingerprint: requestFingerprint, requestId,
     });
     response.on('close', () => {
-      if (!response.writableEnded && this.pendingHttp.has(requestId)) {
-        this.cancelRequest(requestId).catch(error => console.error('[sulla-relay] Cancellation failed:', error));
+      if (!response.writableEnded && this.pendingHttp.has(key)) {
+        this.cancelRequest(key).catch(error => console.error('[sulla-relay] Cancellation failed:', error));
       }
     });
-    if (presence.replicaId === this.config.replicaId) this.dispatchLocal(envelope);
+    if (presence.replicaId === this.config.replicaId) {
+      this.dispatchLocal(envelope).catch(error => console.error('[sulla-relay] Dispatch failed:', error));
+    }
     else if (await this.publish(presence.replicaId, { kind: 'call', envelope }) === 0) {
-      this.finishHttp({
-        type:  'tool-result',
-        requestId,
-        deviceId,
-        error: relayError('DEVICE_OFFLINE', 'Desktop relay replica is offline', true),
-      });
+      await this.completeBeforeDispatch(envelope, relayError('DEVICE_OFFLINE', 'Desktop relay replica is offline', true));
     }
   }
 
@@ -226,12 +297,17 @@ export class RelayService {
       userId:    claims.sub,
       connectionId,
       inflight:  new Set(),
-      heartbeat: setInterval(() => {
-        this.refreshPresence(claims.device_id, connectionId).catch(error => console.error('[sulla-relay] Presence refresh failed:', error));
-      }, Math.max(5_000, this.config.presenceTtlSeconds * 500)),
+      heartbeatNonce: null,
+      heartbeatSentAt: 0,
+      lastHeartbeatRttMs: 0,
+      heartbeatRtts: [],
+      heartbeat: setInterval(() => this.pingDevice(connection), HEARTBEAT_INTERVAL_MS),
     };
     this.devices.set(claims.device_id, connection);
     await this.writePresence(connection);
+    socket.on('pong', data => {
+      this.onHeartbeatPong(connection, Buffer.from(data)).catch(error => console.error('[sulla-relay] Presence refresh failed:', error));
+    });
     socket.on('message', raw => {
       this.onDeviceMessage(connection, String(raw)).catch(error => console.error('[sulla-relay] Device message failed:', error));
     });
@@ -243,6 +319,33 @@ export class RelayService {
     });
   }
 
+  private pingDevice(connection: DeviceConnection): void {
+    if (this.devices.get(connection.deviceId)?.connectionId !== connection.connectionId) return;
+    if (connection.heartbeatNonce) {
+      if (performance.now() - connection.heartbeatSentAt >= HEARTBEAT_TIMEOUT_MS) connection.socket.terminate();
+      return;
+    }
+    const nonce = crypto.randomBytes(16).toString('hex');
+    connection.heartbeatNonce = nonce;
+    connection.heartbeatSentAt = performance.now();
+    connection.socket.ping(nonce, false, error => {
+      if (error && this.devices.get(connection.deviceId)?.connectionId === connection.connectionId) {
+        connection.socket.terminate();
+      }
+    });
+  }
+
+  private async onHeartbeatPong(connection: DeviceConnection, payload: Buffer): Promise<void> {
+    if (this.devices.get(connection.deviceId)?.connectionId !== connection.connectionId) return;
+    if (!connection.heartbeatNonce || payload.toString('utf8') !== connection.heartbeatNonce) return;
+    const rtt = Math.max(0, performance.now() - connection.heartbeatSentAt);
+    connection.heartbeatNonce = null;
+    connection.heartbeatRtts.push(rtt);
+    if (connection.heartbeatRtts.length > 3) connection.heartbeatRtts.shift();
+    connection.lastHeartbeatRttMs = Math.max(...connection.heartbeatRtts);
+    await this.refreshPresence(connection.deviceId, connection.connectionId);
+  }
+
   private async writePresence(connection: DeviceConnection): Promise<void> {
     await this.redis.set(presenceKey(connection.deviceId), JSON.stringify({
       replicaId: this.config.replicaId, userId: connection.userId, connectionId: connection.connectionId,
@@ -252,18 +355,19 @@ export class RelayService {
   private async refreshPresence(deviceId: string, connectionId: string): Promise<void> {
     const connection = this.devices.get(deviceId);
     if (connection?.connectionId !== connectionId) return;
-    const current = await this.getPresence(deviceId);
-    if (current && current.connectionId !== connectionId) {
+    const refreshed = Number(await this.redis.eval(
+      REFRESH_PRESENCE_SCRIPT, 1, presenceKey(deviceId), connectionId,
+      JSON.stringify({ replicaId: this.config.replicaId, userId: connection.userId, connectionId }), String(this.config.presenceTtlSeconds),
+    ));
+    if (refreshed !== 1) {
       connection.socket.close(1008, 'superseded');
-      return;
     }
-    await this.writePresence(connection);
   }
 
   private async removeDevice(connection: DeviceConnection): Promise<void> {
+    clearInterval(connection.heartbeat);
     if (this.devices.get(connection.deviceId)?.connectionId !== connection.connectionId) return;
     this.devices.delete(connection.deviceId);
-    clearInterval(connection.heartbeat);
     const current = await this.getPresence(connection.deviceId);
     if (current?.connectionId === connection.connectionId) await this.redis.del(presenceKey(connection.deviceId));
   }
@@ -274,55 +378,133 @@ export class RelayService {
     try { return JSON.parse(raw) } catch { return null }
   }
 
-  private dispatchLocal(envelope: RelayToolCallEnvelope): void {
+  private async dispatchLocal(envelope: RelayToolCallEnvelope): Promise<void> {
+    const key = callKey(envelope.deviceId, envelope.requestId);
+    if (this.localRoutes.has(key)) return;
+    const remainingMs = await this.ledger.remainingMs(envelope.deviceId, envelope.requestId);
+    if (remainingMs <= 0) {
+      await this.completeBeforeDispatch(envelope, relayError('DEADLINE_EXCEEDED', 'Tool request lease expired before delivery', true));
+      return;
+    }
     const connection = this.devices.get(envelope.deviceId);
     if (connection?.socket.readyState !== WebSocket.OPEN) {
-      this.routeResult(envelope.originReplicaId!, {
-        type:      'tool-result',
-        requestId: envelope.requestId,
-        deviceId:  envelope.deviceId,
-        error:     relayError('DEVICE_OFFLINE', 'Desktop device is offline', true),
-      }).catch(error => console.error('[sulla-relay] Result routing failed:', error));
+      await this.completeBeforeDispatch(envelope, relayError('DEVICE_OFFLINE', 'Desktop device is offline', true));
       return;
     }
     if (envelope.ctx?.sub !== connection.userId) {
-      this.routeResult(envelope.originReplicaId!, {
-        type:      'tool-result',
-        requestId: envelope.requestId,
-        deviceId:  envelope.deviceId,
-        error:     relayError('FORBIDDEN', 'Tool context does not match connected Desktop'),
-      }).catch(error => console.error('[sulla-relay] Result routing failed:', error));
+      await this.completeBeforeDispatch(envelope, relayError('FORBIDDEN', 'Tool context does not match connected Desktop'));
       return;
     }
     if (connection.inflight.size >= this.config.maxInFlightPerDevice) {
-      this.routeResult(envelope.originReplicaId!, {
-        type:      'tool-result',
-        requestId: envelope.requestId,
-        deviceId:  envelope.deviceId,
-        error:     relayError('BACKPRESSURE', 'Desktop has reached its in-flight tool-call limit', true),
-      }).catch(error => console.error('[sulla-relay] Result routing failed:', error));
+      await this.completeBeforeDispatch(envelope, relayError('BACKPRESSURE', 'Desktop has reached its in-flight tool-call limit', true));
       return;
     }
-    connection.inflight.add(envelope.requestId);
+    connection.inflight.add(key);
     const timer = setTimeout(() => {
-      connection.inflight.delete(envelope.requestId);
-      this.localRoutes.delete(envelope.requestId);
-      this.sendToDevice(connection, { type: 'tool-call', action: 'cancel', requestId: envelope.requestId, deviceId: envelope.deviceId });
-    }, Math.max(1, (envelope.deadlineAt ?? Date.now()) - Date.now()) + RESULT_GRACE_MS);
-    this.localRoutes.set(envelope.requestId, { originReplicaId: envelope.originReplicaId!, deviceId: envelope.deviceId, timer });
-    this.sendToDevice(connection, envelope);
+      this.expireLocalRoute(key).catch(error => console.error('[sulla-relay] Route expiry failed:', error));
+    }, remainingMs + RESULT_GRACE_MS + RESULT_RETENTION_MS);
+    const route: LocalRoute = {
+      originReplicaId: envelope.originReplicaId!, deviceId: envelope.deviceId, timer,
+      envelope, connectionId: connection.connectionId, connection,
+    };
+    this.localRoutes.set(key, route);
+    try {
+      this.sendToDevice(connection, { ...envelope, action: 'offer', remainingMs });
+    } catch (error) {
+      clearTimeout(timer);
+      this.localRoutes.delete(key);
+      connection.inflight.delete(key);
+      await this.completeBeforeDispatch(envelope, relayError('DEVICE_OFFLINE', 'Desktop tunnel closed before the request was delivered', true));
+    }
+  }
+
+  private async claimLocal(connection: DeviceConnection, claim: Extract<RelayEnvelope, { type: 'tool-call-claim' }>): Promise<void> {
+    if (claim.deviceId !== connection.deviceId) return;
+    const key = callKey(claim.deviceId, claim.requestId);
+    const route = this.localRoutes.get(key);
+    if (!route || route.envelope.requestFingerprint !== claim.requestFingerprint || route.envelope.ctx?.sub !== connection.userId) return;
+    const safetyMs = Math.max(MIN_DISPATCH_SAFETY_MS, Math.ceil(connection.lastHeartbeatRttMs));
+    const grant = await this.ledger.grantExecution(claim.deviceId, claim.requestId, claim.requestFingerprint, safetyMs);
+    if (grant.kind === 'expired') {
+      await this.completeBeforeDispatch(route.envelope, relayError('DEADLINE_EXCEEDED', 'Tool request lease expired before execution was authorized', true));
+      this.removeLocalRoute(key, route);
+      this.sendToDevice(connection, { type: 'tool-call', action: 'cancel', requestId: claim.requestId, deviceId: claim.deviceId });
+      return;
+    }
+    if (grant.kind !== 'granted') return;
+    if (route.connection !== connection) {
+      route.connection.inflight.delete(key);
+      connection.inflight.add(key);
+      route.connection = connection;
+      route.connectionId = connection.connectionId;
+    }
+    this.sendToDevice(connection, { ...route.envelope, action: 'execute', remainingMs: grant.remainingMs });
+  }
+
+  private async expireLocalRoute(key: string): Promise<void> {
+    const route = this.localRoutes.get(key);
+    if (!route) return;
+    const record = await this.ledger.get(route.deviceId, route.envelope.requestId);
+    if (!record?.executionGranted && !record?.result) {
+      await this.completeBeforeDispatch(route.envelope, relayError('DEADLINE_EXCEEDED', 'Tool request lease expired before execution was authorized', true));
+    }
+    this.removeLocalRoute(key, route);
+    if (route.connection.socket.readyState === WebSocket.OPEN) {
+      this.sendToDevice(route.connection, { type: 'tool-call', action: 'cancel', requestId: route.envelope.requestId, deviceId: route.deviceId });
+    }
+  }
+
+  private removeLocalRoute(key: string, route: LocalRoute): void {
+    if (this.localRoutes.get(key) !== route) return;
+    clearTimeout(route.timer);
+    this.localRoutes.delete(key);
+    route.connection.inflight.delete(key);
+  }
+
+  private async completeBeforeDispatch(envelope: RelayToolCallEnvelope, error: RelayError): Promise<void> {
+    const result: RelayToolResultEnvelope = {
+      type: 'tool-result', requestId: envelope.requestId, deviceId: envelope.deviceId,
+      requestFingerprint: envelope.requestFingerprint, resultRevision: 1, error,
+    };
+    const write = await this.ledger.storeResult(result);
+    if (write === 'missing' || write === 'fingerprint-mismatch' || write === 'conflict') return;
+    const record = await this.ledger.get(envelope.deviceId, envelope.requestId);
+    if (record?.result) await this.routeResult(record.originReplicaId, record.result);
   }
 
   private async onDeviceMessage(connection: DeviceConnection, raw: string): Promise<void> {
     let envelope: RelayEnvelope;
     try { envelope = JSON.parse(raw) as RelayEnvelope } catch { return }
-    if (envelope.type !== 'tool-result' || envelope.deviceId !== connection.deviceId) return;
-    const route = this.localRoutes.get(envelope.requestId);
-    if (!route) return;
-    clearTimeout(route.timer);
-    this.localRoutes.delete(envelope.requestId);
-    connection.inflight.delete(envelope.requestId);
-    await this.routeResult(route.originReplicaId, envelope);
+    if (envelope.type === 'tool-call-claim') {
+      await this.claimLocal(connection, envelope);
+      return;
+    }
+    if (envelope.type !== 'tool-result' || envelope.deviceId !== connection.deviceId || !envelope.requestFingerprint) return;
+    const record = await this.ledger.get(envelope.deviceId, envelope.requestId);
+    if (!record || record.userId !== connection.userId) return;
+    const bounded = this.boundResult(envelope);
+    const write = await this.ledger.storeResult(bounded);
+    if (write === 'missing' || write === 'fingerprint-mismatch' || write === 'conflict') return;
+    const saved = await this.ledger.get(envelope.deviceId, envelope.requestId);
+    if (!saved?.result || !saved.fingerprint) return;
+    this.sendToDevice(connection, {
+      type: 'tool-result-ack', requestId: envelope.requestId, deviceId: envelope.deviceId,
+      requestFingerprint: saved.fingerprint, resultRevision: saved.result.resultRevision ?? 1,
+    });
+    const key = callKey(envelope.deviceId, envelope.requestId);
+    const route = this.localRoutes.get(key);
+    if (route && !saved.result.provisional) this.removeLocalRoute(key, route);
+    await this.routeResult(saved.originReplicaId, saved.result);
+  }
+
+  private boundResult(envelope: RelayToolResultEnvelope): RelayToolResultEnvelope {
+    if (Buffer.byteLength(JSON.stringify(envelope), 'utf8') <= RELAY_TOOL_RESULT_MAX_BYTES) return envelope;
+    return {
+      type: 'tool-result', requestId: envelope.requestId, deviceId: envelope.deviceId,
+      requestFingerprint: envelope.requestFingerprint, resultRevision: envelope.resultRevision,
+      ...(envelope.provisional ? { provisional: true } : {}), ...(envelope.late ? { late: true } : {}),
+      error: relayError('RESULT_TOO_LARGE', `Tool result exceeds the ${ RELAY_TOOL_RESULT_MAX_BYTES} byte per-result limit`),
+    };
   }
 
   private async routeResult(originReplicaId: string, envelope: RelayToolResultEnvelope): Promise<void> {
@@ -330,37 +512,46 @@ export class RelayService {
     else await this.publish(originReplicaId, { kind: 'result', envelope });
   }
 
-  private finishHttp(envelope: RelayToolResultEnvelope): void {
-    const pending = this.pendingHttp.get(envelope.requestId);
-    if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pendingHttp.delete(envelope.requestId);
+  private sendResultResponse(response: ServerResponse, envelope: RelayToolResultEnvelope): void {
     const status = envelope.error?.code === 'FORBIDDEN'
       ? 403
       : envelope.error?.code === 'DEVICE_OFFLINE'
         ? 503
         : envelope.error?.code === 'BACKPRESSURE'
           ? 429
-          : envelope.error?.code === 'DEADLINE_EXCEEDED' ? 504 : envelope.error ? 500 : 200;
-    sendJson(pending.response, status, envelope.error ? { error: envelope.error } : { result: envelope.result });
+          : envelope.error?.code === 'DEADLINE_EXCEEDED' ? 504
+            : envelope.error?.code === 'REQUEST_IN_PROGRESS' ? 202
+              : envelope.error?.code === 'RESULT_TOO_LARGE' ? 413
+                : envelope.error ? 500 : 200;
+    sendJson(response, status, envelope.error ? { error: envelope.error } : { result: envelope.result });
   }
 
-  private async timeoutRequest(requestId: string): Promise<void> {
-    const pending = this.pendingHttp.get(requestId);
-    if (!pending) return;
-    this.pendingHttp.delete(requestId);
-    const details = new ToolDeadlinePolicy().timeoutDetails(
-      `${ pending.category }/${ pending.tool }`, pending.deadlineMs, Date.now() - pending.startedAt, pending.operationTypes);
-    sendJson(pending.response, 504, { error: { ...relayError('DEADLINE_EXCEEDED', 'Desktop tool call deadline exceeded', true), details } });
-    await this.publishOrCancelLocal(pending.ownerReplicaId, requestId, pending.deviceId);
-  }
-
-  private async cancelRequest(requestId: string): Promise<void> {
-    const pending = this.pendingHttp.get(requestId);
+  private finishHttp(envelope: RelayToolResultEnvelope): void {
+    const pending = this.pendingHttp.get(callKey(envelope.deviceId, envelope.requestId));
     if (!pending) return;
     clearTimeout(pending.timer);
-    this.pendingHttp.delete(requestId);
-    await this.publishOrCancelLocal(pending.ownerReplicaId, requestId, pending.deviceId);
+    this.pendingHttp.delete(callKey(envelope.deviceId, envelope.requestId));
+    this.sendResultResponse(pending.response, envelope);
+  }
+
+  private async timeoutRequest(key: string): Promise<void> {
+    const pending = this.pendingHttp.get(key);
+    if (!pending) return;
+    this.pendingHttp.delete(key);
+    const elapsedMs = Math.max(0, Math.round(performance.now() - pending.startedAt));
+    const details = new ToolDeadlinePolicy().timeoutDetails(
+      `${ pending.category }/${ pending.tool }`, pending.deadlineMs, elapsedMs, pending.operationTypes);
+    sendJson(pending.response, 504, { error: { ...relayError('DEADLINE_EXCEEDED', 'Desktop tool call deadline exceeded', true), details } });
+    // Do not cancel here: the result may still arrive after an interrupted/ambiguous write.
+    // The Desktop owns its deadline abort, and the relay keeps the request route for retrieval.
+  }
+
+  private async cancelRequest(key: string): Promise<void> {
+    const pending = this.pendingHttp.get(key);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingHttp.delete(key);
+    await this.publishOrCancelLocal(pending.ownerReplicaId, pending.requestId, pending.deviceId);
   }
 
   private async publishOrCancelLocal(ownerReplicaId: string, requestId: string, deviceId: string): Promise<void> {
@@ -369,15 +560,15 @@ export class RelayService {
   }
 
   private cancelLocal(requestId: string, deviceId: string): void {
-    const route = this.localRoutes.get(requestId);
-    if (route) clearTimeout(route.timer);
-    this.localRoutes.delete(requestId);
+    const key = callKey(deviceId, requestId);
+    const route = this.localRoutes.get(key);
+    if (route) this.removeLocalRoute(key, route);
     const connection = this.devices.get(deviceId);
-    connection?.inflight.delete(requestId);
     if (connection) this.sendToDevice(connection, { type: 'tool-call', action: 'cancel', requestId, deviceId });
   }
 
   private sendToDevice(connection: DeviceConnection, envelope: RelayEnvelope): void {
+    if (connection.socket.readyState !== WebSocket.OPEN) throw new Error('Desktop relay socket is not open');
     connection.socket.send(JSON.stringify(envelope));
   }
 
@@ -385,10 +576,10 @@ export class RelayService {
     return await this.redis.publish(replicaChannel(replicaId), JSON.stringify(message));
   }
 
-  private onBusMessage(raw: string): void {
+  private async onBusMessage(raw: string): Promise<void> {
     let message: BusMessage;
     try { message = JSON.parse(raw) as BusMessage } catch { return }
-    if (message.kind === 'call') this.dispatchLocal(message.envelope);
+    if (message.kind === 'call') await this.dispatchLocal(message.envelope);
     else if (message.kind === 'result') this.finishHttp(message.envelope);
     else this.cancelLocal(message.requestId, message.deviceId);
   }

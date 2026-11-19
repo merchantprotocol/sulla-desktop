@@ -17,10 +17,13 @@
 import { applyThreadAgentRoute, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
 import { GraphRegistry } from './GraphRegistry';
 import { getWebSocketClientService } from './WebSocketClientService';
+import { installWorkerRoute } from './WorkerModelRouting';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { getJob, type AgentJob } from '../tools/agents/jobRegistry';
 
 import { getActiveAgentWindow } from '@pkg/window/agentWindows';
+
+import type { WorkerModelRoute } from '../languagemodels/workerModelBindings';
 
 const READINESS_TIMEOUT_MS = 10_000;
 const readinessWaiters = new Map<string, { threadId: string; finish: (ready: boolean) => void }>();
@@ -89,20 +92,22 @@ function emitProactive(channel: string, threadId: string, headline: string, body
 }
 
 export interface OpenAgentTabInput {
-  jobId:            string;
-  childThreadId:    string;
-  childAgent:       RoutableAgent;
-  title:            string;
-  parentThreadId:   string;
-  parentAgentId:    string;
-  parentAgentName:  string;
-  depth:            number;
-  focus:            boolean;
+  jobId:             string;
+  childThreadId:     string;
+  childAgent:        RoutableAgent;
+  title:             string;
+  parentThreadId:    string;
+  parentAgentId:     string;
+  parentAgentName:   string;
+  depth:             number;
+  focus:             boolean;
   /** Full first-turn message: brief plus contract footer. */
-  prompt:           string;
+  prompt:            string;
   /** Dead-run keys the child's activity must touch. */
-  activityKeys:     string[];
-  runOverrides?: { model?: string; provider?: string; runLocation?: 'vm' | 'container' };
+  activityKeys:      string[];
+  workerModelRoute?: WorkerModelRoute;
+  providerCliSnapshot?: import('../../shared/providerCliSelection').ProviderCliSnapshot;
+  runOverrides?: { model?: string; provider?: string; effort?: string; runLocation?: 'vm' | 'container' };
 }
 
 /** Prime the child thread, open its tab and dispatch the brief. Throws on failure. */
@@ -110,13 +115,16 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
   const { state } = await GraphRegistry.getOrCreateAgentGraph(input.childAgent.graphAgentId, input.childThreadId);
   applyThreadAgentRoute(state, input.childAgent);
   const meta = state.metadata as any;
+  if (input.workerModelRoute) installWorkerRoute(state, input.workerModelRoute, { jobId: input.jobId, taskIndex: 0 });
   meta.agent = { ...(meta.agent ?? {}), ...Object.fromEntries(Object.entries(input.runOverrides ?? {}).filter(([, value]) => value !== undefined)) };
-  if (input.runOverrides?.model || input.runOverrides?.provider) {
+  if (!input.workerModelRoute && (input.runOverrides?.model || input.runOverrides?.provider)) {
     const { getAgentOverrideService } = await import('../languagemodels');
     if (!await getAgentOverrideService(meta.agent)) throw new Error('Requested provider/model could not be resolved; refusing fallback');
   }
   meta.activityKeys = input.activityKeys;
   meta.delegatedJobId = input.jobId;
+  meta.delegatedTaskIndex = 0;
+  if (input.providerCliSnapshot) meta.providerCliSnapshot = input.providerCliSnapshot;
   await saveThreadState(state);
 
   const rendererReady = waitForRenderer(input.jobId, input.childThreadId);

@@ -49,6 +49,7 @@ export class AgentJobLifecycleService {
   }
 
   async waitForWake(threadId: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     const queuedAt = this.pendingWakes.get(threadId);
     this.pendingWakes.delete(threadId);
     if (queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;

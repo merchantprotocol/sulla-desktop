@@ -1,12 +1,12 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
-
-import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
-import { failJob } from '../tools/agents/jobRegistry';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
 import { delegatedThreadPersistenceKey } from './DelegatedContainerKey';
+import { installWorkerRoute } from './WorkerModelRouting';
+import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { failJob } from '../tools/agents/jobRegistry';
 
 import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
 
@@ -68,6 +68,7 @@ export class ParkedAgentRehydrator {
   }
 
   apply(state: any, identity: ParkedAgentIdentity): void {
+    if (identity.task.workerModelRoute) installWorkerRoute(state, identity.task.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
     state.metadata.isSubAgent = true;
     state.metadata.modelSlot = 'primary';
     state.metadata.subAgentDepth = Number(identity.task.depth) || 1;
@@ -80,6 +81,7 @@ export class ParkedAgentRehydrator {
       ...(state.metadata.agent ?? {}),
       ...(identity.task.provider ? { provider: identity.task.provider } : {}),
       ...(identity.task.model ? { model: identity.task.model } : {}),
+      ...(identity.task.effort !== undefined ? { effort: identity.task.effort } : {}),
       ...(identity.task.runLocation ? { runLocation: identity.task.runLocation } : {}),
     };
   }

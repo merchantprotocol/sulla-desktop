@@ -22,19 +22,22 @@ export class SullaShutdown {
       console.log('[Shutdown] SIGTERM received');
       const lifecycle = getServiceLifecycleManager();
 
-      await lifecycle.stopAll('full');
+      await this.end('full');
       app.quit();
     });
     process.on('SIGINT', async() => {
       console.log('[Shutdown] SIGINT received');
       const lifecycle = getServiceLifecycleManager();
 
-      await lifecycle.stopAll('full');
+      await this.end('full');
       app.quit();
     });
   }
 
   async end(mode: 'full' | 'restart' = 'full'): Promise<void> {
+    const { drainAgentExecution } = await import('@pkg/agent/services/BackendGraphWebSocketService');
+    const { awaitWithBudget } = await import('@pkg/utils/awaitWithBudget');
+    await awaitWithBudget('agent execution drain', drainAgentExecution(), 10000);
     const lifecycle = getServiceLifecycleManager();
 
     // Stop the terminal WebSocket server (kills any live sulla-runtime exec PTYs).

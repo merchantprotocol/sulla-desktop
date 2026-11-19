@@ -13,7 +13,7 @@
     <div class="head">
       <span class="spin" />
       <span class="name">{{ msg.name }}</span>
-      <span class="desc">{{ msg.desc }}</span>
+      <span class="desc">{{ msg.desc }} · {{ AgentModelStatus.label(msg.by?.modelStatus) }}</span>
       <span class="ts">{{ timeLabel }}</span>
       <span class="status-label">{{ statusLabel }}</span>
       <span class="chev">▸</span>
@@ -38,6 +38,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+
+import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 
 import type { SubAgentMessage } from '../../models/Message';
 

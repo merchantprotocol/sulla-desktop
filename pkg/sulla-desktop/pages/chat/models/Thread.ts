@@ -97,4 +97,9 @@ export interface ThreadState {
   connection:       ConnectionState;
   model:            ModelDescriptor;
   heartbeat?:       ChatHeartbeatConfig;
+  /**
+   * Write provenance only: this snapshot came from a tail-only browser-cache view, so it does
+   * not know the full history. The store must not delete, renumber or overwrite rows from it.
+   */
+  partialHistory?:  boolean;
 }

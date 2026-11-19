@@ -63,7 +63,7 @@ describe('IpcController channel registration', () => {
     ['support sessions', ipc => new SupportSessionIpcController(ipc, new SupportSessionCloudClient(vi.fn())), ['support-session:get', 'support-session:events', 'support-session:end', 'support-session:extend', 'support-session:presence']],
     ['conversation messages', ipc => new ConversationMessagesIpcController(ipc, { appendMany: vi.fn(), list: vi.fn(), count: vi.fn() }, log), ['conversation-messages:append', 'conversation-messages:list', 'conversation-messages:count']],
     ['tabs', ipc => new TabsIpcController(ipc, { list: vi.fn(), getActiveAssetId: vi.fn(), open: vi.fn(), close: vi.fn(), setActive: vi.fn(), onChange: vi.fn() }, { allWebContents: () => [], browserSession: () => null, send: vi.fn() }), ['tabs:list', 'tabs:active', 'tabs:open', 'tabs:close', 'tabs:setActive']],
-    ['model routing', ipc => new ModelRoutingIpcController(ipc, { router: { onStatusChange: vi.fn() } as any, recommendedState: vi.fn(), listAgents: vi.fn(), onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }), ['model-routing:get', 'model-routing:set', 'model-routing:reset', 'model-routing:refresh']],
+    ['model routing', ipc => new ModelRoutingIpcController(ipc, { router: { onStatusChange: vi.fn() } as any, recommendedState: vi.fn(), listAgents: vi.fn(), onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }), ['model-routing:get', 'model-routing:set', 'model-routing:reset', 'model-routing:worker-set', 'model-routing:refresh', 'model-routing:cli-check', 'model-routing:cli-update']],
     ['chat heartbeat', ipc => new ChatHeartbeatIpcController(ipc, () => ({}) as any), ['chat-heartbeat:register', 'chat-heartbeat:set', 'chat-heartbeat:busy', 'chat-heartbeat:unregister']],
     ['extension ui', ipc => new ExtensionUiIpcController(ipc, { readGuard: guard as any, onHookAudit: vi.fn(async() => undefined), broadcast: vi.fn() }), ['extensions-ui:list', 'extension-permissions:list', 'extension-permissions:audit', 'extension-permissions:set-hook', 'extension-permissions:revoke-all', 'extension-permissions:set-rail-hidden']],
     ['chat messages', ipc => new ChatMessagesIpcController(ipc, { saveThreadState: vi.fn(), loadThreadState: vi.fn(), loadMessagesBefore: vi.fn(), deleteThreadState: vi.fn(), deleteMessages: vi.fn(), getMessageCount: vi.fn() }, log), ['chat-messages:save', 'chat-messages:load', 'chat-messages:load-before', 'chat-messages:delete', 'chat-messages:delete-messages', 'chat-messages:message-count']],
@@ -105,11 +105,30 @@ describe('IpcController delegation', () => {
 
   it('model defaults: removes stale handlers first and returns fresh state after set', async() => {
     const ipc = new FakeIpc();
-    const defaults = { state: vi.fn(() => 'state'), set: vi.fn(async() => undefined), reset: vi.fn(async() => undefined) };
+    const defaults = { state: vi.fn(() => 'state'), set: vi.fn(async() => undefined), reset: vi.fn(async() => undefined), broadcast: vi.fn() };
     new ModelDefaultsIpcController(ipc, defaults).register();
     expect(ipc.removed).toEqual(['model-defaults:get', 'model-defaults:set', 'model-defaults:reset']);
     expect(await ipc.invoke('model-defaults:set', {}, null)).toBe('state');
     expect(defaults.set).toHaveBeenCalledWith({});
+    expect(defaults.broadcast).toHaveBeenCalledWith('model-defaults:changed', 'state');
+    expect(await ipc.invoke('model-defaults:reset', {})).toBe('state');
+    expect(defaults.broadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it('model defaults: reads persisted settings only after the database starts', async() => {
+    const ipc = new FakeIpc();
+    let ready!: () => void;
+    const startup = new Promise<void>(resolve => { ready = resolve; });
+    const state = vi.fn(() => ({ defaults: { chat: { kind: 'agent', agentId: 'account-manager' } } }));
+    new ModelDefaultsIpcController(ipc, {
+      state, set: vi.fn(), reset: vi.fn(), whenReady: () => startup,
+    }).register();
+
+    const pending = ipc.invoke('model-defaults:get', {});
+    await Promise.resolve();
+    expect(state).not.toHaveBeenCalled();
+    ready();
+    expect(await pending).toEqual({ defaults: { chat: { kind: 'agent', agentId: 'account-manager' } } });
   });
 
   it('support session: missing session throws session_not_found (404)', async() => {
@@ -158,7 +177,7 @@ describe('IpcController delegation', () => {
 
   it('model routing: invalid reset target is refused before touching the router', async() => {
     const ipc = new FakeIpc();
-    const router = { getEditableState: vi.fn(async() => ({})), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
+    const router = { getEditableState: vi.fn(async() => ({})), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), replaceWorkerBinding: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
     new ModelRoutingIpcController(ipc, { router, recommendedState: () => ({}), listAgents: async() => [{ name: 'A', enabled: true, model_choice: { mode: 'class', class: 'Fast' } }], onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
     await expect(ipc.invoke('model-routing:reset', {}, { section: 'bogus' })).rejects.toThrow('Invalid model routing reset target');
     expect(router.reset).not.toHaveBeenCalled();
@@ -193,7 +212,7 @@ describe('IpcController delegation', () => {
 
   it('message bus: subscriptions are per controller and sends are not echoed to the sender', async() => {
     const ipc = new FakeIpc();
-    const bus = { dispatch: vi.fn(), send: vi.fn(async() => true) };
+    const bus = { dispatch: vi.fn(), send: vi.fn(async(_channel: string, _content: string) => true) };
     const send = vi.fn();
     const wcs = [{ id: 1 }, { id: 2 }];
     new MessageBusIpcController(ipc, { bus: () => bus, allWebContents: () => wcs, send, log: vi.fn() }).register();

@@ -17,7 +17,7 @@ export class ArceeModels extends SelectBoxProvider {
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
     const apiKey = context.formValues.api_key;
-    const staticModels = this.getStaticModels();
+    const staticModels = this.getStaticModels(context);
 
     if (!apiKey) {
       return staticModels;
@@ -51,7 +51,8 @@ export class ArceeModels extends SelectBoxProvider {
     return staticModels;
   }
 
-  private getStaticModels(): SelectOption[] {
+  private getStaticModels(context: SelectBoxContext): SelectOption[] {
+    if (context.liveOnly) return [];
     return [
       {
         value: 'trinity-large-thinking',

@@ -15,6 +15,10 @@ COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
+# Two dependency-free modules the Files read tools import. Copy exact files only;
+# the rest of shared/ and main/ stay out of the container.
+COPY pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts ./pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts
+COPY pkg/sulla-desktop/main/FilesListingPager.ts ./pkg/sulla-desktop/main/FilesListingPager.ts
 # Preserve the root ESM package boundary for TypeScript imported from pkg/.
 # Without it, tsx loads those modules as CommonJS and named imports fail.
 COPY package.json ./package.json
@@ -28,6 +32,10 @@ RUN ./node_modules/.bin/tsx -e "import('/app/pkg/sulla-desktop/main/firstRun/pen
 # Import the real catalog entrypoint so every manifest/registry dependency must
 # resolve while the image is built, rather than failing later in production.
 RUN ./node_modules/.bin/tsx -e "import('./services/sulla-tools/src/catalog.ts').then(({initializeCatalog})=>initializeCatalog())"
+# Catalog Files read tools load their Files client and settings model only when
+# the registry loader runs, so the catalog import above cannot catch a missing
+# source file. Construct each through its real loader; nothing executes.
+RUN ./node_modules/.bin/tsx -e "import('./services/sulla-tools/src/catalog.ts').then(async({initializeCatalog,listTools})=>{await initializeCatalog();const{toolRegistry}=await import('./pkg/sulla-desktop/agent/tools/registry.ts');for(const name of ['files_history','files_versions','files_collections','files_search','files_list']){if(listTools('files').find(tool=>tool.name===name)?.executionTarget!=='catalog')throw new Error(name+' is not a catalog tool');await toolRegistry.createTool(name)}}).catch(error=>{console.error(error);process.exit(1)})"
 ENV NODE_ENV=production
 WORKDIR /app/services/sulla-tools
 USER node

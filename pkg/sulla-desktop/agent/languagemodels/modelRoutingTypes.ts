@@ -33,6 +33,7 @@ export interface ClassModel {
 
 /** What changed in the providers' live model lists at the last Refresh models. */
 export interface ModelCatalogReport {
+ checks?: { provider: string; status: 'refreshed' | 'unavailable' }[];
  checkedAt: string | null;
  added: ClassModel[]; // models a provider lists now that it did not list at the previous check
  removed: ClassModel[]; // models a provider no longer lists
@@ -45,6 +46,8 @@ export interface RoutingProviderInfo {
  id: string;
  name: string;
  connected: boolean;
+ accessMethod?: import('@pkg/shared/providerAccess').ProviderAccessMethod;
+ accessLabel?: string;
  local: boolean; // runs on this Mac (only local providers may use the Local class)
  subscription: boolean; // shares a usage limit across all uses (Claude Code, Codex ...)
  status: ProviderStatus;
@@ -68,10 +71,12 @@ export interface RoutingModelInfo {
  defaultEffort?: string;
  upgrade?: string; // the model the provider recommends moving to
  unverified?: boolean; // from a fixed list, not reported by the provider
+ selectionMode?: import('@pkg/shared/providerAccess').ModelSelectionMode;
 }
 
 /** The part of the routing state the human edits (and Reset restores). */
 export interface EditableRoutingState {
+ workerBindings?:     import('./workerModelBindings').WorkerModelBindings;
  agentsList: RoutingRow[];
  subconsciousList: RoutingRow[];
  classes: Record<ModelClass, ClassModel[]>;
@@ -80,6 +85,7 @@ export interface EditableRoutingState {
 }
 
 export interface ModelRoutingState extends EditableRoutingState {
+ workers?:     import('./workerModelBindings').WorkerModelInfo[];
  providers: RoutingProviderInfo[];
  /** What each Reset link restores. The UI disables a Reset link while its section already equals this. */
  recommended?: EditableRoutingState;
@@ -93,13 +99,16 @@ export interface ModelRoutingState extends EditableRoutingState {
 export type AgentModelChoice =
  | { mode: 'list' } // walk the Agents list (Subconscious list for subconscious agents)
  | { mode: 'class'; class: ModelClass } // walk that class's model list across providers
- | { mode: 'pin'; provider: string; model: string }; // one exact model, no fallback
+ | { mode: 'pin'; provider: string; model: string; effort?: string }; // one exact model, no fallback
 
 /** IPC channel names (ipcRenderer.invoke / ipcMain.handle, and one push event). */
 export const MODEL_ROUTING_IPC = {
+ cliCheck: 'model-routing:cli-check',
+ cliUpdate: 'model-routing:cli-update',
+ workerSet: 'model-routing:worker-set',
  get: 'model-routing:get', // () => ModelRoutingState (with `recommended`)
  set: 'model-routing:set', // (patch: Partial<Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'|'neverUse'>>) => ModelRoutingState
- refresh: 'model-routing:refresh', // () => ModelRoutingState, after re-fetching every connected provider's model list
- reset: 'model-routing:reset', // (target: { section: 'agents'|'subconscious'|'classes'; class?: ModelClass }) => ModelRoutingState
- status: 'model-routing:status', // main → renderer push: RoutingProviderInfo[] whenever a provider's status changes
+  refresh:   'model-routing:refresh', // () => ModelRoutingState, after re-fetching every connected provider's model list
+  reset: 'model-routing:reset', // (target: { section: 'agents'|'subconscious'|'classes'; class?: ModelClass }) => ModelRoutingState
+  status: 'model-routing:status', // main → renderer push: RoutingProviderInfo[] whenever a provider's status changes
 } as const;

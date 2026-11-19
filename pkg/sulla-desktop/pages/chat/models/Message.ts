@@ -45,7 +45,7 @@ export interface MessageBase {
   /** For pinning/bookmarking */
   pinned?:            boolean;
   /** The agent and model that were running when this block arrived (work blocks only). */
-  by?:                { agent?: string; model?: string };
+  by?:                { agent?: string; model?: string; modelStatus?: import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue };
 }
 
 // ─── User ─────────────────────────────────────────────────────────

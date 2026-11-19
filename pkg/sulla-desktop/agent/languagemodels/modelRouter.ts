@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
-import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelCatalogReport, type ModelClass, type RoutingModelInfo, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
 import { PROVIDER_FACTORIES } from './index';
 import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
 import { LiveProviderSnapshot, type LiveProviderMap } from './LiveProviderSnapshot';
+import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelCatalogReport, type ModelClass, type RoutingModelInfo, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
+import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
+import { copyWorkerBindings } from './workerModelBindings';
+import type { WorkerModelBinding } from './workerModelBindings';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { isSubscriptionAccess, type ProviderAccessMethod } from '@pkg/shared/providerAccess';
 
 export interface ModelCandidate { provider: string; model: string; effort?: string }
 export type EditableState = EditableRoutingState;
@@ -94,6 +97,17 @@ export function recommendedState(connected = providerOrder): EditableState {
   };
 }
 
+/**
+ * Whether an existing same-agent mapping may be reused for a requested registration. An unmarked
+ * (owner-saved or settled) mapping is authoritative; a marked one belongs to exactly one pending
+ * publication and is never adopted for another, so a stale package pin cannot become owner settings.
+ */
+export function reusableForPublication(existing: WorkerModelBinding, requested?: { fileId: string; versionId: string }): boolean {
+  const marker = existing.pendingPublication;
+  return !marker || (!!requested && marker.fileId === requested.fileId && marker.versionId === requested.versionId);
+}
+export const STALE_PUBLICATION_MAPPING = 'An unsettled package model mapping from another publication exists; it was preserved for the owner to resolve in AI Models.';
+
 export function canonicalProviderId(provider: string): string {
   const normalized = String(provider || '').trim().toLowerCase();
   const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai' };
@@ -113,6 +127,7 @@ function normalize(saved: Partial<EditableState>, defaults: EditableState): Edit
     subconsciousList: Array.isArray(saved.subconsciousList) ? saved.subconsciousList : defaults.subconsciousList,
     classes,
     followProviderOrder: { ...defaults.followProviderOrder, ...(saved.followProviderOrder || {}) },
+    workerBindings:      copyWorkerBindings(saved.workerBindings),
     neverUse: Array.isArray(saved.neverUse) ? saved.neverUse : legacyNeverUse(saved),
   };
 }
@@ -181,6 +196,12 @@ export class ModelRouter {
         if (item.effort !== undefined && !/^[a-z]{2,10}$/.test(item.effort)) throw new Error(`Invalid effort for ${ item.provider }`);
       }
     }
+    for (const [slug, binding] of Object.entries(patch.workerBindings ?? {})) {
+      if (!slug || !binding.agentId || !Number.isInteger(binding.revision) || binding.revision < 1 || !Array.isArray(binding.candidates) || !binding.candidates.length || binding.candidates.length > 10) throw new Error('Invalid worker model mapping');
+      for (const candidate of binding.candidates) {
+        if (!providers.has(candidate.provider) || !candidate.model?.trim() || (candidate.effort !== undefined && !/^[a-z]{2,10}$/.test(candidate.effort))) throw new Error('Invalid worker model candidate');
+      }
+    }
     for (const item of patch.neverUse || []) {
       if (!providers.has(item.provider) || !item.model || !(item.effort === 'any' || /^[a-z]{2,10}$/.test(item.effort || ''))) {
         throw new Error(`Invalid never-use pair: ${ item.provider }/${ item.model } at ${ item.effort }`);
@@ -188,12 +209,103 @@ export class ModelRouter {
     }
   }
 
+  private writes: Promise<unknown> = Promise.resolve();
+  private serializeWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.writes.then(operation);
+    this.writes = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   async set(patch: Partial<EditableState>): Promise<EditableState> {
     this.validatePatch(patch);
-    const next = normalize({ ...(await this.getEditableState()), ...patch }, recommendedState());
-    await SullaSettingsModel.set(SETTING, next, 'json');
-    this.invalidateLiveProviders();
-    return next;
+    return this.serializeWrite(async() => {
+      const next = normalize({ ...(await this.getEditableState()), ...patch }, recommendedState());
+      await SullaSettingsModel.set(SETTING, next, 'json');
+      this.invalidateLiveProviders();
+      return next;
+    });
+  }
+
+  /** Atomically add an owner binding without replacing another mapping or a concurrent edit. */
+  async addWorkerBindingIfAbsent(slug: string, binding: WorkerModelBinding): Promise<boolean> {
+    this.validatePatch({ workerBindings: { [slug]: binding } });
+    return this.serializeWrite(async() => {
+      const current = await this.getEditableState();
+      const existing = current.workerBindings?.[slug];
+      if (existing) {
+        if (existing.agentId !== binding.agentId) throw new Error('A different agent already owns this worker mapping; it was preserved.');
+        // Enforced here too, inside the serialized write, for a marked mapping that raced the caller's pre-check.
+        if (!reusableForPublication(existing, binding.pendingPublication)) throw new Error(STALE_PUBLICATION_MAPPING);
+        return false;
+      }
+      const workerBindings = { ...(current.workerBindings ?? {}), [slug]: binding };
+      const next = normalize({ ...current, workerBindings }, recommendedState());
+      await SullaSettingsModel.set(SETTING, next, 'json');
+      return true;
+    });
+  }
+
+  /**
+   * Owner edit of one worker mapping: compare-and-set against the opened token/revision inside the
+   * write serializer, touching only this slug so concurrent registrations and rollbacks survive.
+   */
+  async replaceWorkerBinding(
+    slug: string,
+    agentId: string,
+    /**
+     * `entry` is the stored same-slug mapping (any agent) observed before the caller's async checks;
+     * null when there was none. The write applies only if that exact entry is still stored.
+     */
+    expected: { token: string; revision: number; entry?: { agentId: string; editToken?: string; revision: number } | null },
+    next: { editToken: string; connections: Record<string, string>; candidates: ModelCandidate[] } | null,
+  ): Promise<EditableState> {
+    if (next) this.validatePatch({ workerBindings: { [slug]: { agentId, revision: 1, candidates: next.candidates } } });
+    return this.serializeWrite(async() => {
+      const current = await this.getEditableState();
+      const previous = current.workerBindings?.[slug];
+      const own = previous?.agentId === agentId ? previous : undefined;
+      const sameEntry = expected.entry === undefined || (expected.entry === null
+        ? !previous
+        : !!previous && previous.agentId === expected.entry.agentId && (previous.editToken ?? '') === (expected.entry.editToken ?? '') && previous.revision === expected.entry.revision);
+      if (!sameEntry || (own?.editToken ?? '') !== expected.token || (own?.revision ?? 0) !== expected.revision) throw new Error('These model settings changed elsewhere. Reload the agent page before saving.');
+      const workerBindings = { ...(current.workerBindings ?? {}) };
+      if (next) workerBindings[slug] = { editToken: next.editToken, agentId, revision: (own?.revision ?? 0) + 1, connections: { ...next.connections }, candidates: next.candidates.map(row => ({ ...row })) };
+      else delete workerBindings[slug];
+      const state = normalize({ ...current, workerBindings }, recommendedState());
+      await SullaSettingsModel.set(SETTING, state, 'json');
+      return state;
+    });
+  }
+
+  /**
+   * Remove only a binding still owned by the exact definition that created it. With `created`,
+   * remove only that exact entry: a later owner edit (new token/revision) is preserved.
+   */
+  async removeWorkerBindingIfOwned(slug: string, agentId: string, created?: { editToken: string; revision: number }): Promise<boolean> {
+    return this.serializeWrite(async() => {
+      const current = await this.getEditableState();
+      const existing = current.workerBindings?.[slug];
+      if (existing?.agentId !== agentId) return false;
+      if (created && ((existing.editToken ?? '') !== created.editToken || existing.revision !== created.revision)) return false;
+      const workerBindings = { ...current.workerBindings };
+      delete workerBindings[slug];
+      const next = normalize({ ...current, workerBindings }, recommendedState());
+      await SullaSettingsModel.set(SETTING, next, 'json');
+      return true;
+    });
+  }
+
+  /** Drop the pending-publication marker from the exact entry it was written with; anything else is left alone. */
+  async clearPendingPublication(slug: string, agentId: string, created: { editToken: string; revision: number }): Promise<boolean> {
+    return this.serializeWrite(async() => {
+      const current = await this.getEditableState();
+      const existing = current.workerBindings?.[slug];
+      if (!existing?.pendingPublication || existing.agentId !== agentId || (existing.editToken ?? '') !== created.editToken || existing.revision !== created.revision) return false;
+      const { pendingPublication: _settled, ...settled } = existing;
+      const next = normalize({ ...current, workerBindings: { ...current.workerBindings, [slug]: settled } }, recommendedState());
+      await SullaSettingsModel.set(SETTING, next, 'json');
+      return true;
+    });
   }
 
   async reset(target: { section: 'agents'|'subconscious'|'classes'; class?: ModelClass }): Promise<EditableState> {
@@ -209,7 +321,11 @@ export class ModelRouter {
       current.classes = defaults.classes;
       current.followProviderOrder = defaults.followProviderOrder;
     }
-    return this.set(current);
+    return this.set(target.section === 'agents'
+      ? { agentsList: current.agentsList }
+      : target.section === 'subconscious'
+        ? { subconsciousList: current.subconsciousList }
+        : { classes: current.classes, followProviderOrder: current.followProviderOrder });
   }
 
   // Health is in memory only. It is a routing hint, never a stored verdict: a restart starts every provider
@@ -274,38 +390,63 @@ export class ModelRouter {
       this.providerListenerAttached = true;
       mps.onChange(() => this.invalidateLiveProviders());
     }
-    let available = new Map<string, { connected: boolean; connectionUnknown: boolean }>();
-    try { available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), { connected: provider.connected === true, connectionUnknown: provider.connectionStatus === 'unknown' }])) } catch { /* fail closed */ }
+    let available = new Map<string, { connected: boolean; connectionUnknown: boolean; accessMethod?: ProviderAccessMethod; accessLabel?: string }>();
+    try {
+      available = new Map((await mps?.getAvailableProviders?.() || []).map((provider: any) => [String(provider.id), {
+        connected: provider.connected === true && provider.selectable !== false && provider.accessMethod !== 'unknown',
+        // Only a real lookup fault is "unknown" (still tried with authenticated
+        // execution). An unconfigured or disconnected selected account also
+        // reports accessMethod 'unknown' but is known unrunnable.
+        connectionUnknown: provider.connectionStatus === 'unknown',
+        accessMethod: provider.accessMethod as ProviderAccessMethod | undefined,
+        accessLabel: typeof provider.accessLabel === 'string' ? provider.accessLabel : undefined,
+      }]))
+    } catch { /* fail closed */ }
     const entries = await Promise.all(providerOrder.map(async id => {
       const connected = available.get(id)?.connected === true;
       const connectionUnknown = available.get(id)?.connectionUnknown === true;
       let models: RoutingModelInfo[] = [];
       if (connected && mps?.getModelsForProvider) {
         try {
-          models = (await mps.getModelsForProvider(id)).map((model: any) => ({
+          models = (await mps.getModelsForProvider(id, { liveOnly: true })).map((model: any) => ({
             id:    String(model.id),
             label: String(model.name || model.label || model.id),
             ...(Array.isArray(model.efforts) && model.efforts.length ? { efforts: model.efforts } : {}),
             ...(model.defaultEffort ? { defaultEffort: String(model.defaultEffort) } : {}),
             ...(model.upgrade ? { upgrade: String(model.upgrade) } : {}),
             ...(model.unverified ? { unverified: true } : {}),
+            ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
           }));
         } catch { /* discovery is best effort */ }
       }
-      return [id, { connected, connectionUnknown, models }] as const;
+      return [id, { connected, connectionUnknown, accessMethod: available.get(id)?.accessMethod, accessLabel: available.get(id)?.accessLabel, models }] as const;
     }));
     return new Map(entries);
+  }
+
+  /** Snapshot soft health once at launch; a resumed selection never jumps backwards. */
+  async workerLaunchCandidates(candidates: ModelCandidate[]): Promise<ModelCandidate[]> {
+    await this.loadHealth();
+    return [...candidates.filter(row => !this.backedOff(row.provider)), ...candidates.filter(row => this.backedOff(row.provider))];
   }
 
   async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice = { mode: 'list' }): Promise<ModelCandidate[]> {
     const state = await this.getEditableState();
     const live = await this.liveProviders();
     const pinned = choice.mode === 'pin'
-      ? { provider: canonicalProviderId(choice.provider), model: choice.model }
+      ? { provider: canonicalProviderId(choice.provider), model: choice.model, ...(choice.effort !== undefined ? { effort: choice.effort } : {}) }
       : null;
     // A human's explicit selector choice is a hard route boundary. Recovery may retry this
     // exact route, but it must never substitute a configured alternate provider or model.
-    if (pinned) return [pinned];
+    if (pinned) {
+      if (pinned.effort !== undefined) {
+        const levels = live.get(pinned.provider)?.models.find(model => model.id === pinned.model)?.efforts;
+        if (pinned.provider !== 'codex' || !levels?.some(level => level.id === pinned.effort)) {
+          throw new Error(`Requested effort "${ pinned.effort }" is not advertised for ${ pinned.provider }/${ pinned.model }. Refresh models and choose a supported effort, or omit effort for the default.`);
+        }
+      }
+      return [pinned];
+    }
     // Rules pick from the live lists; never-use models are skipped everywhere except an explicit pin above.
     const liveModels = new Map([...live].map(([id, p]) => [id, p.models] as const));
     state.classes = applyRules(state.classes, liveModels, state.neverUse).classes;
@@ -346,24 +487,30 @@ export class ModelRouter {
    * and record what changed since the previous check.
    */
   async refreshCatalog(): Promise<ModelCatalogReport> {
-    this.invalidateLiveProviders();
     await Promise.allSettled([
       import('./claudeModelCatalog').then(m => m.clearClaudeModelCatalogCache()),
       import('./codexModelCatalog').then(m => m.clearCodexModelCatalogCache()),
-      import('./cursorModelCatalog').then(m => m.listCursorModels({ force: true })),
-      import('./openCodeModelCatalog').then(m => m.listOpenCodeModels({ force: true })),
+      import('./cursorModelCatalog').then(m => m.clearCursorModelCatalogCache()),
+      import('./openCodeModelCatalog').then(m => m.clearOpenCodeModelCatalogCache()),
+      import('../services/brokeredModelList').then(m => m.clearBrokeredModelListCache()),
+      import('./ModelDiscoveryService').then(m => m.modelDiscoveryService.clearCache()),
     ]);
+    this.invalidateLiveProviders();
     const live = await this.liveProviders();
     const lists: Record<string, string[]> = {};
+    const checks: NonNullable<ModelCatalogReport['checks']> = [];
     for (const [id, p] of live) {
-      if (p.connected && p.models.length) lists[id] = p.models.map(m => m.id);
+      if (!p.connected) continue;
+      const reported = p.models.filter(model => !model.unverified && !['claude-code', 'codex', 'cursor', 'opencode'].includes(model.id));
+      checks.push({ provider: id, status: reported.length ? 'refreshed' : 'unavailable' });
+      if (reported.length) lists[id] = p.models.map(m => m.id);
     }
     const saved = await SullaSettingsModel.get(CATALOG_SETTING, null) as { lists?: Record<string, string[]> } | null;
     const { added, removed } = compareCatalogs(saved?.lists || {}, lists);
     const state = await this.getEditableState();
-    const { classes, moved } = applyRules(state.classes, new Map([...live].map(([id, p]) => [id, p.models] as const)), state.neverUse);
-    if (moved.length) { await SullaSettingsModel.set(SETTING, { ...state, classes }, 'json'); this.invalidateLiveProviders(); }
-    const report: ModelCatalogReport = { checkedAt: new Date().toISOString(), added, removed, moved };
+    const { classes, moved } = applyRules(state.classes, new Map([...live].filter(([id]) => !!lists[id]).map(([id, p]) => [id, p.models] as const)), state.neverUse);
+    if (moved.length) await this.set({ classes });
+    const report: ModelCatalogReport = { checkedAt: new Date().toISOString(), added, removed, moved, checks };
     await SullaSettingsModel.set(CATALOG_SETTING, { lists: { ...(saved?.lists || {}), ...lists }, report }, 'json');
     return report;
   }
@@ -376,7 +523,25 @@ export class ModelRouter {
   async providerInfo(): Promise<RoutingProviderInfo[]> {
     await this.loadHealth();
     const live = await this.liveProviders(); const now = Date.now();
-    return providerOrder.map(id => { const h = this.backedOff(id, now) ? this.health.get(id) : undefined; const current = live.get(id); const connected = current?.connected === true; return { id, name: id, connected, local: localProviders.has(id), subscription: subscriptionProviders.has(id), status: current?.connectionUnknown ? 'error' : !connected ? 'disconnected' : h?.status || 'ready', coolingUntil: h?.status === 'cooling' ? new Date(h.until).toISOString() : null, lastError: current?.connectionUnknown ? 'Connection status is temporarily unavailable; authentication is checked when starting a model.' : h?.lastError || null, models: current?.models.length ? current.models : [] } });
+    return providerOrder.map(id => {
+      const h = this.backedOff(id, now) ? this.health.get(id) : undefined;
+      const current = live.get(id);
+      const connected = current?.connected === true;
+      const accessMethod = current?.accessMethod;
+      return {
+        id,
+        name: id,
+        connected,
+        ...(accessMethod ? { accessMethod } : {}),
+        ...(current?.accessLabel ? { accessLabel: current.accessLabel } : {}),
+        local: localProviders.has(id),
+        subscription: accessMethod ? isSubscriptionAccess(accessMethod) : subscriptionProviders.has(id),
+        status: current?.connectionUnknown ? 'error' : !connected ? 'disconnected' : h?.status || 'ready',
+        coolingUntil: h?.status === 'cooling' ? new Date(h.until).toISOString() : null,
+        lastError: current?.connectionUnknown ? 'Connection status is temporarily unavailable; authentication is checked when starting a model.' : h?.lastError || null,
+        models: current?.models.length ? current.models : [],
+      };
+    });
   }
 }
 

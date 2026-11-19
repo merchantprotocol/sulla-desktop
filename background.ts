@@ -31,6 +31,7 @@ import { SullaSettingsModel } from './pkg/sulla-desktop/agent/database/models/Su
 import { getServiceLifecycleManager } from './pkg/sulla-desktop/agent/services/ServiceLifecycleManager';
 
 import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
+import { agentExecutionReadiness } from '@pkg/agent/services/AgentExecutionReadiness';
 import { BackendError, FailureDetails, State } from '@pkg/backend/backend';
 import K8sFactory from '@pkg/backend/factory';
 import { getImageProcessor } from '@pkg/backend/images/imageFactory';
@@ -61,6 +62,9 @@ import { HttpCredentialHelperServer } from '@pkg/main/credentialServer/httpCrede
 import { DeploymentProfileError, readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import { ExtensionErrorCode, isExtensionError } from '@pkg/main/extensions';
 import { FailureLifecycle } from '@pkg/main/failureLifecycle';
+import { FIRST_RUN_LAST_STEP, getFirstRunState, readFirstRunStateFile, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
+import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
+import { startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
 import { ImageEventHandler } from '@pkg/main/imageEvents';
 import { IpcRegistrationGate } from '@pkg/main/ipcRegistrationGate';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -98,9 +102,6 @@ import { RecursivePartial, RecursiveReadonly } from '@pkg/utils/typeUtils';
 import { getVersion } from '@pkg/utils/version';
 import * as window from '@pkg/window';
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
-import { FIRST_RUN_LAST_STEP, getFirstRunState, readFirstRunStateFile, updateFirstRunState } from '@pkg/main/firstRun/firstRunState';
-import { startPendingCredentialFlush } from '@pkg/main/firstRun/pendingCredentials';
-import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { e2eTrace } from '@pkg/main/e2eTrace';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
@@ -1277,6 +1278,8 @@ Electron.app.on('before-quit', async(event) => {
   }
   shuttingDown = true;
   event.preventDefault();
+  agentExecutionReadiness.close();
+  const agentDrain = import('@pkg/agent/services/BackendGraphWebSocketService').then(({ drainAgentExecution }) => drainAgentExecution());
   console.log('[Shutdown] before-quit: preventDefault called, closing HTTP servers');
 
   // ── Safety-net: force-exit if graceful shutdown exceeds 90 seconds ──
@@ -1337,6 +1340,8 @@ Electron.app.on('before-quit', async(event) => {
   // Restart phases are budgeted to finish before the 90s overall deadline.
   const restart = isRestartRequested();
   const phaseTimeout = (quitMs: number, restartMs: number) => restart ? restartMs : quitMs;
+
+  await withTimeout('agent-execution-drain', phaseTimeout(10_000, 5_000), agentDrain);
 
   // Vault lock is handled by ServiceLifecycleManager in sullaEnd()
 

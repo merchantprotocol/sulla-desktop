@@ -64,8 +64,9 @@ export async function resolveCodexExecutionAuth(input: {
   conversationId: string;
   state?:         BaseThreadState;
 }): Promise<CodexExecutionAuth> {
+  const mapped = (input.state?.metadata as any)?.workerModelRoute && !(input.state?.metadata as any)?.workerModelChatOverride;
   const pending = getPendingCredential('codex');
-  if (pending?.values.access_token) {
+  if (pending?.values.access_token && !mapped) {
     const idToken = typeof pending.values.id_token === 'string' ? pending.values.id_token : undefined;
     const chatgptAccountId = extractChatgptAccountId(idToken);
     if (!chatgptAccountId) {
@@ -92,6 +93,7 @@ export async function resolveCodexExecutionAuth(input: {
     }
   }
 
+  if (mapped) throw new RoutingUnavailable('codex', { cause: new Error('Mapped workers require the subscription vault connection.') });
   const ok = await ensureCodexAuthFile();
   if (!ok) {
     throw new AuthExpired('codex', { cause: new Error('No Codex credentials configured. Sign in with ChatGPT via Integrations → OpenAI Codex.') });

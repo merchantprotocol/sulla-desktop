@@ -105,5 +105,5 @@ defineExpose({revealProperties,insertBlock,addProperty});
 onBeforeUnmount(()=>view?.destroy());
 </script>
 <style scoped>
-.markdown-wrap{position:relative;min-height:420px;padding-left:52px;margin-left:-52px}.editing-area{min-height:420px}.block-gutter{position:absolute;left:0;z-index:2;display:flex;opacity:0;transition:opacity .15s}.block-gutter.visible,.block-gutter:focus-within{opacity:1}.block-gutter button{width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:#8a96a6;font-size:13px;cursor:pointer}.block-gutter button:hover{background:#f4f7fb}
+.markdown-wrap{position:relative;min-height:420px;padding-left:52px;margin-left:-52px}.editing-area{min-height:420px}.block-gutter{position:absolute;left:0;z-index:2;display:flex;opacity:0;transition:opacity .15s}.block-gutter.visible,.block-gutter:focus-within{opacity:1}.block-gutter button{width:22px;height:22px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--text-muted);font-size:13px;cursor:pointer}.block-gutter button:hover{background:var(--bg-page)}
 </style>

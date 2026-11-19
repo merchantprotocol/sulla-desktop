@@ -55,7 +55,7 @@ export class SullaFilesWatcher {
   private readonly suggestionRoot = new UseCaseSuggestionCompositionRoot(postgresClient, getBuiltinSkillSpecs().map(skill => skill.slug), new RedisUseCaseChangeTransport(redisClient));
   private readonly useCaseFilesRequest = new SullaUseCaseFilesRequest(
     (endpoint, init = {}) => this.requestFiles(endpoint, init),
-    (endpoint, init = {}) => this.requestNativeFiles(endpoint, init),
+    (endpoint, init = {}) => this.filesRequests.localRequest(endpoint, init),
   );
   private readonly useCases = new SullaUseCaseFiles((endpoint, init = {}) => this.useCaseFilesRequest.send(endpoint, init), this.suggestionRoot.notifier);
   private nativeEnabled = false;

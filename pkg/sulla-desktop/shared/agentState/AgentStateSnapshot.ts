@@ -8,6 +8,9 @@
  * manager's approval: main and renderer are built against this exact shape.
  */
 
+import type { AgentModelStatusValue } from './AgentModelStatus';
+import type { ResultTracking } from '../agentResults/AgentResultCard';
+
 export type AgentStopAttribution = { agentId: string; threadId: string } | { system: string } | 'human';
 
 export type AgentRowState =
@@ -21,7 +24,7 @@ export type AgentRowState =
  | 'stopped' // stopped by a human or parent
  | 'done'; // returned its result
 
-export interface AgentStateRow {
+export interface AgentStateRow extends ResultTracking {
  /** Stable row key: `${jobId}:${taskIndex}` */
  key: string;
  jobId: string;
@@ -36,6 +39,9 @@ export interface AgentStateRow {
  /** 0 = launched directly from the root chat. */
  depth: number;
  agentId: string | null;
+ /** Explicit existing Projects task assignment. */
+ taskId?:            string;
+ modelStatus?:       AgentModelStatusValue;
  label: string;
  visibility: 'hidden' | 'tab';
  state: AgentRowState;
@@ -81,9 +87,9 @@ export interface AgentStateSnapshot {
 /** Result of a Message / Stop action. `stale` = the row was no longer live; the caller should resync. */
 export interface AgentActionResult {
  ok: boolean;
- stale?: boolean;
- error?: string;
- snapshot?: AgentStateSnapshot;
+  stale?: boolean;
+  error?: string;
+  snapshot?: AgentStateSnapshot;
 }
 
 /** IPC channel names. */

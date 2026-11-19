@@ -34,6 +34,12 @@ import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefi
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
 import { getDatabaseReadGuard } from './DatabaseReadGuard';
 import { debugErrorService } from './DebugErrorService';
+import {
+  validateAgentDefinitionId,
+  validateAgentEditorCreateInput,
+  validateAgentEditorPatch,
+} from './agentEditorContract';
+import type { AgentDefinitionPatch } from '@pkg/agent/database/models/AgentDefinitionModel';
 
 // ── Response shape ───────────────────────────────────────────────────────────
 
@@ -133,6 +139,9 @@ export interface AgentDefinitionResponse {
   canCall:            string[];
   isBuiltin:          boolean;
   frontDoor:          boolean | null;
+  allowedTools:       string[];
+  skillRefs:          string[];
+  routineRefs:        string[];
   updatedAt:          string;
   /** config.type ('lead' | 'planner' | 'worker' | 'designer' | ...): the other half of the Manager/Worker split, alongside canCall. */
   type:               string | null;
@@ -238,6 +247,48 @@ const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.sta
 const agentStatePublisher = new AgentStatePublisher(agentJobProvider.states, agentStateProjector);
 const strandedManagerLifecycle = new StrandedManagerLifecycle(agentJobProvider.stranded, app);
 
+/** `strict` callers are told when the database is unreachable instead of receiving an empty list. */
+export interface AgentDefinitionsListOptions { strict?: boolean }
+export const AGENT_DEFINITIONS_UNAVAILABLE = 'Agent definitions are temporarily unavailable while the database reconnects.';
+
+export async function listAgentDefinitions(options: AgentDefinitionsListOptions = {}): Promise<AgentDefinitionResponse[]> {
+  const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
+  // [] while the database is still starting; Studio Agents reloads on `database:available`.
+  // A strict caller keeping a loaded catalog gets an error instead, never a false empty list.
+  const strict = options?.strict === true;
+  const definitions = await getDatabaseReadGuard().run<Awaited<ReturnType<typeof agentDefinitionService.list>> | null>('agent-definitions:list', () => agentDefinitionService.list(), strict ? null : []);
+  if (definitions === null) throw new Error(AGENT_DEFINITIONS_UNAVAILABLE);
+  return definitions.filter(a => a.status !== 'archive').map(a => ({
+    id:                 a.id,
+    slug:               a.slug,
+    name:               a.name,
+    description:        a.description,
+    provider:           a.provider,
+    model:              a.model,
+    modelSlot:          a.model_slot,
+    modelChoice:        a.model_choice ?? (a.provider && a.model ? { mode: 'pin', provider: a.provider, model: a.model } : { mode: 'list' }),
+    prompt:             a.prompt_content,
+    sourceKind:         a.source_kind,
+    marketplaceVersion: a.marketplace_version,
+    status:             a.status,
+    enabled:            a.enabled,
+    runLocation:        a.run_location,
+    whenToCall:         a.when_to_call,
+    whenNotToCall:      a.when_not_to_call,
+    send:               a.send,
+    returns:            a.returns,
+    costTier:           a.cost_tier,
+    canCall:            a.can_call,
+    isBuiltin:          a.is_builtin,
+    frontDoor:          a.front_door,
+    allowedTools:       [...(a.allowed_tools ?? [])],
+    skillRefs:          [...(a.skill_refs ?? [])],
+    routineRefs:        [...(a.routine_refs ?? [])],
+    updatedAt:          toIso(a.updated_at),
+    type:               typeof a.config?.type === 'string' ? a.config.type : null,
+  }));
+}
+
 export function initAgentsIpc(): void {
   // Do not decide a container is gone until fail-closed inventory completes. Every state read awaits this same readiness promise.
   configureAgentContainerRuntimeSupervisor(new GuestAgentContainerRuntimeSupervisor(undefined, { resolve: async(jobId, taskIndex) => {
@@ -252,61 +303,85 @@ export function initAgentsIpc(): void {
   strandedManagerLifecycle.start();
   new AgentShutdownController(runtimeRehydration, agentLivenessReconciler).register(app);
   agentStatePublisher.register();
-  ipcMain.handle('agent-definitions:list', async(): Promise<AgentDefinitionResponse[]> => {
-    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    // [] while the database is still starting; Studio Agents reloads on `database:available`.
-    const definitions = await getDatabaseReadGuard().run('agent-definitions:list', () => agentDefinitionService.list(), []);
-    return definitions.filter(a => a.status !== 'archive').map(a => ({
-      id:                 a.id,
-      slug:               a.slug,
-      name:               a.name,
-      description:        a.description,
-      provider:           a.provider,
-      model:              a.model,
-      modelSlot:          a.model_slot,
-      modelChoice:        a.model_choice ?? (a.provider && a.model ? { mode: 'pin', provider: a.provider, model: a.model } : { mode: 'list' }),
-      prompt:             a.prompt_content,
-      sourceKind:         a.source_kind,
-      marketplaceVersion: a.marketplace_version,
-      status:             a.status,
-      enabled:            a.enabled,
-      runLocation:        a.run_location,
-      whenToCall:         a.when_to_call,
-      whenNotToCall:      a.when_not_to_call,
-      send:               a.send,
-      returns:            a.returns,
-      costTier:           a.cost_tier,
-      canCall:            a.can_call,
-      isBuiltin:          a.is_builtin,
-      frontDoor:          a.front_door,
-      updatedAt:          toIso(a.updated_at),
-      type:               typeof a.config?.type === 'string' ? a.config.type : null,
-    }));
-  });
+  ipcMain.handle('agent-definitions:list', (_event, options?: AgentDefinitionsListOptions) => listAgentDefinitions(options));
 
-  ipcMain.handle('agent-definitions:create', async(_event, input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; prompt: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:create', async(_event, rawInput: unknown) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.create({
+    const input = validateAgentEditorCreateInput(rawInput);
+    if (await agentDefinitionService.findBySlug(input.slug)) {
+      throw new Error(`An agent with slug "${ input.slug }" already exists.`);
+    }
+    const candidates = input.modelChoice?.mode === 'pin'
+      ? [
+        {
+          provider: input.modelChoice.provider,
+          model:    input.modelChoice.model,
+          ...(input.modelChoice.effort ? { effort: input.modelChoice.effort } : {}),
+        },
+        ...input.modelFallbacks,
+      ]
+      : [];
+    const profile = {
       slug:          input.slug,
       name:          input.name,
-      description:   input.description ?? '',
+      description:   input.description,
       provider:      input.provider ?? null,
-      modelSlot:     input.modelSlot ?? 'secondary',
+      modelSlot:     input.modelSlot,
+      modelChoice:   input.modelChoice,
       systemPrompt:  input.prompt,
       promptContent: input.prompt,
       promptFiles:   { 'prompt.md': input.prompt },
-      status:        'production',
-      sourceKind:    'local',
+      allowedTools:  input.allowedTools,
+      skillRefs:     input.skillRefs,
+      routineRefs:   input.routineRefs,
+      whenToCall:    input.whenToCall,
+      whenNotToCall: input.whenNotToCall,
+      send:          input.send,
+      returns:       input.returns,
+      costTier:      input.costTier,
+      canCall:       input.canCall,
+      frontDoor:     input.frontDoor,
+      status:        'production' as const,
+      sourceKind:    'local' as const,
       runLocation:   input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
+    };
+    if (candidates.length) {
+      const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+      // Reject unrepresentable or unavailable pins before either the profile or owner mapping is written.
+      await workerModelRouting.validateSubscriptionCandidates(candidates);
+      const created = await agentDefinitionService.create({
+        ...profile,
+        enabled:       false,
+      });
+      try {
+        await workerModelRouting.initializeBindingForDefinition(input.slug, created.id, candidates);
+        const enabled = await agentDefinitionService.update(created.id, { enabled: input.enabled });
+        if (!enabled) throw new Error('The saved agent disappeared before activation.');
+        return enabled;
+      } catch (error) {
+        const mappingRemoved = await workerModelRouting.removeBindingForDefinition(input.slug, created.id).then(() => true, () => false);
+        const profileRemoved = await agentDefinitionService.delete(created.id).catch(() => false);
+        if (!mappingRemoved || !profileRemoved) {
+          throw new Error(`The agent was not activated. Its exact profile remains disabled for recovery (${ created.id }); the requested model route could not be saved safely.`);
+        }
+        throw new Error(`The agent was not created because its requested model could not be activated safely: ${ error instanceof Error ? error.message : String(error) }`);
+      }
+    }
+    return agentDefinitionService.create({
+      ...profile,
+      enabled:       input.enabled,
     });
   });
 
-  ipcMain.handle('agent-definitions:update', async(_event, id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string; runLocation?: 'vm' | 'container' }) => {
+  ipcMain.handle('agent-definitions:update', async(_event, rawId: string, rawPatch: unknown) => {
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.update(id, {
+    const id = validateAgentDefinitionId(rawId);
+    const { patch, expectedUpdatedAt } = validateAgentEditorPatch(rawPatch);
+    const definitionPatch: AgentDefinitionPatch = {
       ...patch,
       ...(patch.prompt !== undefined ? { systemPrompt: patch.prompt, promptContent: patch.prompt } : {}),
-    });
+    };
+    return agentDefinitionService.update(id, definitionPatch, expectedUpdatedAt);
   });
 
   ipcMain.handle('agent-definitions:delete', async(_event, id: string) => {

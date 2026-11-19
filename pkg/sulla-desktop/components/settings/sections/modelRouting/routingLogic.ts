@@ -13,6 +13,7 @@
 import {
   MODEL_CLASSES, type AgentModelChoice, type ClassModel, type ModelClass, type ModelRoutingState, type RoutingProviderInfo, type RoutingRow,
 } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import { modelSelectionModeLabel, providerAccessLabel } from '@pkg/shared/providerAccess';
 
 export type RoutingListKey = 'agents' | 'subconscious';
 
@@ -29,29 +30,29 @@ export const CLASS_FALLBACK: Partial<Record<ModelClass, ModelClass>> = { frontie
 
 // ── Provider and model display ────────────────────────────────────────────
 
-interface ProviderMeta { name: string; letter: string; kind: string }
+interface ProviderMeta { name: string; letter: string }
 
 /** Display names for the AI Infrastructure catalog (the backend sends ids as names). */
 const PROVIDER_META: Record<string, ProviderMeta> = {
-  'claude-code':      { name: 'Claude Code', letter: 'C', kind: 'Claude subscription · command line' },
-  codex:              { name: 'OpenAI Codex', letter: 'X', kind: 'ChatGPT subscription · command line' },
-  anthropic:          { name: 'Anthropic', letter: 'A', kind: 'API key' },
-  openai:             { name: 'OpenAI', letter: 'O', kind: 'API key' },
-  google:             { name: 'Google Gemini', letter: 'G', kind: 'API key' },
-  grok:               { name: 'Grok', letter: 'K', kind: 'API key' },
-  deepseek:           { name: 'DeepSeek', letter: 'D', kind: 'API key' },
-  kimi:               { name: 'Kimi', letter: 'K', kind: 'API key' },
-  alibaba:            { name: 'Alibaba Cloud', letter: 'Q', kind: 'API key' },
-  nvidia:             { name: 'NVIDIA', letter: 'N', kind: 'API key' },
-  arcee:              { name: 'Arcee AI', letter: 'R', kind: 'API key' },
-  cerebras:           { name: 'Cerebras', letter: 'C', kind: 'API key' },
-  together:           { name: 'Together AI', letter: 'T', kind: 'API key' },
-  'vertex-ai':        { name: 'Google Vertex AI Express', letter: 'V', kind: 'API key' },
-  opencode:           { name: 'OpenCode', letter: 'O', kind: 'Command line' },
-  cursor:             { name: 'Cursor CLI', letter: 'U', kind: 'Command line' },
-  enterprise_gateway: { name: 'Merchant Protocol Enterprise Gateway', letter: 'M', kind: 'Gateway' },
-  custom:             { name: 'OpenAI-compatible endpoint', letter: '·', kind: 'Custom URL' },
-  ollama:             { name: 'Ollama', letter: 'L', kind: 'On this Mac' },
+  'claude-code':      { name: 'Claude Code', letter: 'C' },
+  codex:              { name: 'OpenAI Codex', letter: 'X' },
+  anthropic:          { name: 'Anthropic', letter: 'A' },
+  openai:             { name: 'OpenAI', letter: 'O' },
+  google:             { name: 'Google Gemini', letter: 'G' },
+  grok:               { name: 'Grok', letter: 'K' },
+  deepseek:           { name: 'DeepSeek', letter: 'D' },
+  kimi:               { name: 'Kimi', letter: 'K' },
+  alibaba:            { name: 'Alibaba Cloud', letter: 'Q' },
+  nvidia:             { name: 'NVIDIA', letter: 'N' },
+  arcee:              { name: 'Arcee AI', letter: 'R' },
+  cerebras:           { name: 'Cerebras', letter: 'C' },
+  together:           { name: 'Together AI', letter: 'T' },
+  'vertex-ai':        { name: 'Google Vertex AI Express', letter: 'V' },
+  opencode:           { name: 'OpenCode', letter: 'O' },
+  cursor:             { name: 'Cursor CLI', letter: 'U' },
+  enterprise_gateway: { name: 'Merchant Protocol Enterprise Gateway', letter: 'M' },
+  custom:             { name: 'OpenAI-compatible endpoint', letter: '·' },
+  ollama:             { name: 'Ollama', letter: 'L' },
 };
 
 const MODEL_NAMES: Record<string, string> = {
@@ -81,15 +82,21 @@ export function providerLetter(state: Pick<ModelRoutingState, 'providers'>, id: 
 
 export function providerKind(state: Pick<ModelRoutingState, 'providers'>, id: string): string {
   const info = findProvider(state, id);
-  if (PROVIDER_META[id]) return PROVIDER_META[id].kind;
+  if (info?.accessLabel) return info.accessLabel;
+  if (info?.accessMethod) return providerAccessLabel(info.accessMethod);
   if (info?.local) return 'On this Mac';
-  return info?.subscription ? 'Subscription · command line' : 'API key';
+  return 'Connection method unavailable';
 }
 
 export function modelName(state: Pick<ModelRoutingState, 'providers'>, provider: string, model: string): string {
   const label = findProvider(state, provider)?.models.find(m => m.id === model)?.label;
   if (label && label !== model) return label;
   return MODEL_NAMES[model] ?? model;
+}
+
+export function modelSelectionLabel(state: Pick<ModelRoutingState, 'providers'>, provider: string, model: string): string {
+  const info = findProvider(state, provider)?.models.find(candidate => candidate.id === model);
+  return modelSelectionModeLabel(info?.selectionMode, model);
 }
 
 /** Compact name for one-line summaries: "Claude Opus 5.5" → "Opus 5.5". */
@@ -341,7 +348,7 @@ export interface DefaultResolution {
   uses:   string;
   /** Short model name in bold, when something can run. */
   model?: string;
-  /** The rest of the line: "via Claude Code right now (no fallback)", "waits for … until 6:40 PM" … */
+  /** Provider or availability details shown after the model. */
   text:   string;
   warn:   boolean;
 }
@@ -358,11 +365,11 @@ export function defaultResolution(state: ModelRoutingState, agent: string, choic
     const a = availability(state, choice.provider, now);
     if (a.kind === 'cool') return { agent, uses, text: `waits for ${ name } until ${ formatClock(p.coolingUntil) } (no fallback)`, warn: true };
     if (!a.ok) return { agent, uses, text: `${ name }: ${ a.why ?? 'Error' } (no fallback)`, warn: true };
-    return { agent, uses, model: shortModelName(modelName(state, choice.provider, choice.model)), text: `via ${ name } right now (no fallback)`, warn: false };
+    return { agent, uses, model: shortModelName(modelName(state, choice.provider, choice.model)), text: `${ name } (no fallback)`, warn: false };
   }
   if (choice.mode === 'list') {
     const t = traceRoute(state, 'agents', now);
-    if (t.chosen?.model) return { agent, uses: 'Agents list', model: shortModelName(modelName(state, t.chosen.model.provider, t.chosen.model.model)), text: `via ${ providerName(state, t.chosen.row.provider) } right now`, warn: false };
+    if (t.chosen?.model) return { agent, uses: 'Agents list', model: shortModelName(modelName(state, t.chosen.model.provider, t.chosen.model.model)), text: providerName(state, t.chosen.row.provider), warn: false };
     if (t.waits.length) return { agent, uses: 'Agents list', text: `waits for ${ providerName(state, t.waits[0].row.provider) } until ${ formatClock(findProvider(state, t.waits[0].row.provider)?.coolingUntil) }`, warn: true };
     return { agent, uses: 'Agents list', text: 'nothing can run right now', warn: true };
   }
@@ -370,7 +377,7 @@ export function defaultResolution(state: ModelRoutingState, agent: string, choic
   const t = traceClass(state, choice.class, now);
   if (t.chosen) {
     const via = t.via ? ` (${ CLASS_LABELS[choice.class] } is empty, so ${ CLASS_LABELS[t.via] })` : '';
-    return { agent, uses, model: shortModelName(modelName(state, t.chosen.provider, t.chosen.model)), text: `via ${ providerName(state, t.chosen.provider) } right now${ via }`, warn: false };
+    return { agent, uses, model: shortModelName(modelName(state, t.chosen.provider, t.chosen.model)), text: `${ providerName(state, t.chosen.provider) }${ via }`, warn: false };
   }
   if (t.waits.length) return { agent, uses, text: `waits for ${ providerName(state, t.waits[0].provider) } until ${ formatClock(findProvider(state, t.waits[0].provider)?.coolingUntil) }`, warn: true };
   return { agent, uses, text: 'nothing can run right now', warn: true };

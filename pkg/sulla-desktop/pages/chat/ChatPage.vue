@@ -39,7 +39,7 @@
         @close="controller.toggleHistory()"
       />
 
-      <main class="main">
+      <main ref="mainRef" class="main">
         <!--
           Header backdrop: blurred, dimmed bar behind StatusBadges +
           SessionMark so transcript content scrolling up doesn't collide
@@ -117,24 +117,26 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
+import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import Canvas             from './components/chrome/Canvas.vue';
 import ChatHeader         from './components/chrome/ChatHeader.vue';
 import DropOverlay        from './components/chrome/DropOverlay.vue';
 import ModelSwitcherModal from './components/chrome/ModelSwitcherModal.vue';
+import SearchBar          from './components/chrome/SearchBar.vue';
 import ShortcutsModal     from './components/chrome/ShortcutsModal.vue';
 import TokenUsageModal    from './components/chrome/TokenUsageModal.vue';
-import SearchBar          from './components/chrome/SearchBar.vue';
 
 import Transcript        from './components/transcript/Transcript.vue';
 import Composer          from './components/composer/Composer.vue';
-import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import HistoryRail       from './components/history/HistoryRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
 import SubAgentDrawer    from './components/subagent/SubAgentDrawer.vue';
 import SideDock          from './components/sidedock/SideDock.vue';
 import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
+import { ChatDecisions } from './composables/useChatDecisions';
 import { DockPositions } from './composables/useDockPosition';
+import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 
 import { restoreChatFromHistory } from './services/historyRestore';
@@ -189,6 +191,11 @@ const props = defineProps<{
   initialModelId?: string;
   /** Agent persona preselected by launch_agent_tab. */
   initialAgentId?: string;
+  /**
+   * One-time agent selection for a normal chat (the agent editor's Try). Applied only to a
+   * brand-new thread, then reported consumed; a later human choice in the chat always wins.
+   */
+  handoffAgentId?:     string;
   /** Contract metadata used to acknowledge and hydrate an agent-owned tab. */
   agentTabContractId?: string;
   agentTabThreadId?:   string;
@@ -202,6 +209,7 @@ const props = defineProps<{
 // ─── Emits (to BrowserTab for URL opening) ─────────────────────────
 const emit = defineEmits<{
   (e: 'navigate-url', url: string): void;
+  (e: 'handoff-agent-consumed'): void;
 }>();
 
 // ─── Registry + controller (single-source-of-truth root) ─────────
@@ -216,7 +224,14 @@ function initController(): ChatController {
     const storedId = persister.getTabThread(props.tabId);
     if (storedId) {
       const state = persister.load(storedId);
-      if (state) return registry.open(state, props.tabId);
+      if (state) {
+        // An oversized thread's cache holds only its recent tail. Mark it partial BEFORE any save,
+        // so the store never treats this view as the complete thread; then fill in the rest from the DB.
+        const tailOnly = persister.isTailOnlyCache(state);
+        const opened = registry.open(tailOnly ? { ...state, partialHistory: true } : state, props.tabId);
+        if (tailOnly) void completeTailOnlyHistory(storedId);
+        return opened;
+      }
       // localStorage miss — but the thread may still live in the durable
       // conversations DB backup. This is the normal case when reopening
       // from the History sidebar: threads scribed by the relay/mobile
@@ -229,8 +244,12 @@ function initController(): ChatController {
       void hydrateFromDbBackup(storedId);
     }
   }
+  // Only a tab with no saved thread to restore starts brand new.
+  startedNewThread = !pendingRestoreId;
   return registry.create({ tabId: props.tabId });
 }
+/** True when initController made a new thread rather than restoring this tab's saved one. */
+let startedNewThread = false;
 
 // Async DB-backup rehydration for a tab whose thread blob wasn't in
 // localStorage. Runs after initController returns; hydrates the live
@@ -240,6 +259,9 @@ function initController(): ChatController {
 // pointer — otherwise a failed/slow DB load permanently orphans the real
 // conversation behind an empty thread.
 let pendingRestoreId: ThreadId | null = null;
+// Set once the human picks Default, a model or an agent in this tab. A slower
+// restore must not replace that newer choice with the saved one.
+let humanSelectedModel = false;
 
 async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
   // Restored tabs mount at app start, often before Postgres is reachable —
@@ -251,7 +273,14 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
       if (dbState) {
         // Don't clobber a conversation the user already started in the
         // provisional thread while the load was in flight.
-        if (controller.thread.value.messages.length === 0) controller.hydrate(dbState);
+        if (controller.thread.value.messages.length === 0) {
+          const pick = humanSelectedModel
+            ? { model: controller.model.value, providerId: controller.thread.value.providerId ?? null, agentId: controller.thread.value.agentId ?? null }
+            : null;
+          controller.hydrate(dbState);
+          if (pick) controller.selectForChat(pick.model, pick.providerId, pick.agentId);
+          else restoreSelectorFromThread();
+        }
         if (props.tabId) persister.setTabThread(props.tabId, controller.thread.value.id);
         return;
       }
@@ -271,6 +300,21 @@ async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
   }
 }
 
+// Same bounded retry as hydrateFromDbBackup. A failure keeps the cached tail and the
+// tab pointer; nothing else in the open chat (run, queue, staging, model) is touched.
+async function completeTailOnlyHistory(id: ThreadId): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const dbState = await persister.loadAsync(id, { preferDatabase: true });
+      if (dbState && controller.thread.value.id === id) controller.mergeCanonicalHistory(dbState.thread.messages);
+      return;
+    } catch (e) {
+      console.error(`[ChatPage] full history read failed (attempt ${ attempt + 1 }):`, e);
+      await new Promise(resolve => setTimeout(resolve, 2_000 * (attempt + 1)));
+    }
+  }
+}
+
 const controller = initController();
 onMounted(async() => {
   const threadId = controller.thread.value.backendThreadId;
@@ -286,6 +330,15 @@ onMounted(async() => {
 });
 if (props.initialAgentId && !controller.thread.value.agentId) {
   controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, props.initialAgentId);
+}
+// Try's handoff selects the agent once, on the brand-new thread only, which then keeps
+// agentId itself. A restored thread (remount, reopen, restart) keeps whatever the human
+// picked since, including Default or a plain model. The tab drops the handoff either way.
+if (props.handoffAgentId) {
+  if (startedNewThread && !controller.thread.value.agentId) {
+    controller.selectForChat(controller.model.value, controller.thread.value.providerId ?? null, props.handoffAgentId);
+  }
+  emit('handoff-agent-consumed');
 }
 
 // ─── Shared model selector (source of truth for selected model) ───
@@ -306,6 +359,7 @@ const modelSelector   = new AgentModelSelectorController({
   modelName:   _modelName,
   modelMode:   _modelMode,
   onSelectForChat: ({ providerId, modelId, agentId, label }) => {
+    humanSelectedModel = true;
     const known = findModel(modelId);
     const selected = modelId
       ? known ?? { id: modelId, name: label || modelId, tier: 'hosted' as const, ctx: '' }
@@ -314,11 +368,15 @@ const modelSelector   = new AgentModelSelectorController({
   },
 });
 controller.agentModelOf = agentId => modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.model;
-modelSelector.start().then(() => {
-  if (controller.thread.value.providerId || controller.thread.value.agentId) {
-    modelSelector.restoreForChat(controller.thread.value.providerId, controller.model.value.id, controller.thread.value.agentId);
-  }
-}).catch(error => console.warn('[ChatPage] Failed to initialize model selector:', error));
+/** Point the selector at this chat's own saved pin (provider, exact model, agent). */
+function restoreSelectorFromThread(): void {
+  const { providerId, agentId } = controller.thread.value;
+  if (providerId || agentId) modelSelector.restoreForChat(providerId, controller.model.value.id, agentId);
+}
+// Restore before the mirror below first runs, so it reads the chat's pin instead of
+// clearing controller.model; the selector keeps that pin when its settings load later.
+restoreSelectorFromThread();
+modelSelector.start().catch(error => console.warn('[ChatPage] Failed to initialize model selector:', error));
 
 // Mirror the selector's active model into ChatController.model so the
 // status badge, PersonaAdapter payload, and anything else reading
@@ -392,6 +450,7 @@ const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
+ChatDecisions.provide(subAgentParentThreadId);
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;
@@ -634,8 +693,8 @@ const mainRef     = ref<HTMLElement | null>(null);
 const composerRef = ref<HTMLElement | null>(null);
 
 onMounted(() => {
-  mainRef.value     = document.querySelector('.chat-root .main');
-  composerRef.value = document.querySelector('.chat-root .composer-wrap');
+  // Tabs remain mounted. Measure this chat's composer, never another tab's.
+  composerRef.value = mainRef.value?.querySelector('.composer-wrap') ?? null;
   void loadRecentHistory();
 });
 

@@ -29,6 +29,10 @@ const TAB_KEY = (tabId: string) => `chat:tab:${ tabId }`;
 // Sizes are in UTF-16 code units (what the ~5M-unit quota is measured in).
 const MAX_THREAD_CACHE_UNITS = 1_500_000;
 const CACHE_TAIL_MESSAGES = 60;
+// Browser-cache-only marker on a capped copy (never sent to the DB). Reopening such a
+// thread reads the full history from the DB. Older builds wrote the tail unmarked, so a
+// cached copy of exactly CACHE_TAIL_MESSAGES messages is treated as possibly tail-only too.
+const CACHE_TAIL_MARKER = 'cacheTailOnly';
 
 // Startup GC target for all chat:thread:* blobs combined. Keeping the chat
 // cache under this leaves headroom for tabs/history/theme keys in the same
@@ -93,6 +97,7 @@ export class LocalStoragePersister implements ThreadPersister {
       if (json.length > MAX_THREAD_CACHE_UNITS && Array.isArray(state.thread?.messages)) {
         cacheJson = JSON.stringify({
           ...state,
+          [CACHE_TAIL_MARKER]: true,
           thread: { ...state.thread, messages: state.thread.messages.slice(-CACHE_TAIL_MESSAGES) },
         });
         console.warn(`[LocalStoragePersister] thread ${ state.thread.id } cache capped to last ${ CACHE_TAIL_MESSAGES } messages (${ json.length } units > ${ MAX_THREAD_CACHE_UNITS })`);
@@ -121,14 +126,21 @@ export class LocalStoragePersister implements ThreadPersister {
     } catch { return null; }
   }
 
+  /** True when a cached copy may hold only the recent tail of a longer DB thread. */
+  isTailOnlyCache(state: ThreadState): boolean {
+    return (state as unknown as Record<string, unknown>)[CACHE_TAIL_MARKER] === true
+      || state.partialHistory === true
+      || state.thread?.messages?.length === CACHE_TAIL_MESSAGES;
+  }
+
   /**
    * Async load with database fallback (called when localStorage misses).
    * Returns the state from database or null if not found.
    */
-  async loadAsync(id: ThreadId): Promise<ThreadState | null> {
+  async loadAsync(id: ThreadId, opts: { preferDatabase?: boolean } = {}): Promise<ThreadState | null> {
     try {
-      // Try localStorage first
-      const raw = localStorage.getItem(KEY(id));
+      // Try localStorage first, unless the caller needs the full DB thread behind a tail-only cache.
+      const raw = opts.preferDatabase ? null : localStorage.getItem(KEY(id));
       if (raw) return JSON.parse(raw) as ThreadState;
 
       // localStorage miss — load from database. An IPC/DB failure is NOT
@@ -137,6 +149,8 @@ export class LocalStoragePersister implements ThreadPersister {
       const result = await ipcRenderer.invoke('chat-messages:load', id);
       if (!result?.success) throw new Error(result?.error || 'chat-messages:load failed');
       if (result.data) {
+        // The capped cache copy stays as it is; never write a full oversized thread into it.
+        if (opts.preferDatabase) return result.data as ThreadState;
         // Restore to localStorage for next time
         try {
           localStorage.setItem(KEY(id), JSON.stringify(result.data));

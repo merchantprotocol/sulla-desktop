@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { readAgentPackage } from './agentPackageManifest';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -211,9 +212,8 @@ export function bundleToArtifact(kind: InstallableKind, files: Record<string, St
   }
   case 'recipe': return { manifest: parseYamlFile(files, ['installation.yaml', 'manifest.yaml'], slug), files };
   case 'agent': {
-    const raw = textFile(files, 'agent.json');
-    if (!raw) throw new Error(`${ slug } is missing agent.json`);
-    return { manifest: JSON.parse(raw), files };
+    const source = Object.fromEntries(Object.entries(files).map(([name]) => [name, textFile(files, name) ?? '']));
+    return { manifest: readAgentPackage(source, slug).manifest, files };
   }
   }
 }

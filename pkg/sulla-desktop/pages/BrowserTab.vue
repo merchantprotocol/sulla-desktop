@@ -6,7 +6,7 @@
 -->
 <template>
   <div
-    class="h-full overflow-hidden font-sans page-root flex flex-col"
+    class="h-full overflow-visible font-sans page-root flex flex-col"
     :class="{ dark: isDark }"
   >
     <AgentHeader
@@ -259,9 +259,11 @@
           :tab-id="props.tabId"
           :is-active="props.isVisible"
           :initial-agent-id="agentChat?.agentId"
+          :handoff-agent-id="initialAgentId || undefined"
           :agent-tab-contract-id="agentChat?.contractId"
           :agent-tab-thread-id="agentChat?.threadId"
           @navigate-url="onNavigateUrl"
+          @handoff-agent-consumed="updateTab(props.tabId, { initialAgentId: undefined })"
         />
       </div>
     </template>
@@ -480,6 +482,7 @@ const { showOverlay } = useStartupProgress();
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
 const tabContent = computed(() => getTab(props.tabId)?.content || '');
 const agentChat = computed(() => getTab(props.tabId)?.agentChat);
+const initialAgentId = computed(() => getTab(props.tabId)?.initialAgentId || '');
 
 function navigateToAgentParent(): void {
   const parentThreadId = agentChat.value?.parentThreadId;
