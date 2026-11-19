@@ -1241,7 +1241,7 @@ function onPointerDown(e: PointerEvent, index: number) {
       if (descriptor) {
         stateNow.detached = true;
         window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
-        ipcRenderer.send('tabs:drag-start', { tabId: descriptor.id, descriptor: { ...descriptor }, tabCount: browserTabs.length });
+        ipcRenderer.send('tabs:drag-start', { tabId: descriptor.id, descriptor: { ...descriptor }, title: descriptor.label, favicon: descriptor.favicon, tabCount: browserTabs.length, screenX: me.screenX, screenY: me.screenY, grabOffsetX: Math.max(0, Math.min(me.clientX - tabEl.getBoundingClientRect().left, tabEl.getBoundingClientRect().width)), grabOffsetY: Math.max(0, Math.min(me.clientY - tabEl.getBoundingClientRect().top, tabEl.getBoundingClientRect().height)) });
       }
     }
     if (stateNow.detached) return;
