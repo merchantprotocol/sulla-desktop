@@ -17,7 +17,7 @@ import { BrowserWindow, ipcMain, app, clipboard, globalShortcut, screen, shell }
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import mainEvents from '@pkg/main/mainEvents';
-import { getSullaFilesCaptureService, openScreenshotMarkup, type CaptureResult, type ScreenshotMode } from '@pkg/main/sullaFilesCapture';
+import { getSullaFilesCaptureService, openScreenshotMarkup, SullaFilesCapturePathClipboardService, type CaptureResult, type ScreenshotMode } from '@pkg/main/sullaFilesCapture';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
@@ -454,10 +454,15 @@ function registerPanelIpc(): void {
     panelWindow?.hide();
     try { return await getSullaFilesCaptureService().upload() } finally { panelWindow?.show() }
   });
-  ipcMain.handle('tray-panel:share-capture', async(event, capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }) => {
+  ipcMain.handle('tray-panel:share-capture', async(event, capture:CaptureResult, options:{ mode:ShareMode }) => {
     requireTrayRenderer(event);
     if (!options || !['view', 'download'].includes(options.mode)) throw new Error('Unknown share mode');
-    return getSullaFilesCaptureService().share(await trustedCapture(capture), { mode: options.mode, keepAvailable: options.keepAvailable === true });
+    return getSullaFilesCaptureService().share(await trustedCapture(capture), { mode: options.mode });
+  });
+  ipcMain.handle('tray-panel:copy-capture-path', async(event, capture:CaptureResult) => {
+    requireTrayRenderer(event);
+    const safeCapture = await trustedCapture(capture);
+    return new SullaFilesCapturePathClipboardService(() => getSullaFilesWatcher().folder, value => clipboard.writeText(value)).copy(safeCapture.relativePath);
   });
   ipcMain.on('files-after-capture:close', (event) => { if (!isTrustedTrayRenderer(event)) return; afterCaptureWindow?.close() });
   ipcMain.on('files-after-capture:resize', (event, height:number) => {

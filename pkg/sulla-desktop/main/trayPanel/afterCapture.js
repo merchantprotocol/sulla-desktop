@@ -39,39 +39,45 @@ function paintPreview(node) {
   image.src = `file://${ encodeURI(capture.path) }`;
 }
 
-function showToast(title, detail, success) {
-  $('postcap').hidden = true; $('toast').hidden = false;
-  $('toast-title').textContent = title; $('toast-detail').textContent = detail;
-  $('toast-icon').classList.toggle('warn', !success);
-  $('markup').hidden = capture.kind !== 'screenshot';
-  paintPreview($('toast-preview')); fitWindow();
-  scheduleClose(8_000);
-}
-
 function scheduleClose(ms) { clearTimeout(closeTimer); closeTimer = setTimeout(close, ms) }
+
+function finishAction(button) {
+  done = true; clearInterval(timer); button.classList.add('selected');
+  scheduleClose(450);
+}
 
 async function share() {
   if (!capture || working || done) return;
   working = true; clearInterval(timer); $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
   try {
-    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view', keepAvailable: $('keep').classList.contains('on') });
-    done = true;
-    if (result.url) showToast('Link copied', result.url.replace(/^https?:\/\//, ''), true);
-    else showToast('Saved to Files', result.message, false);
+    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view' });
+    if (!result.url) throw new Error(result.message || 'Sharing failed. The capture is saved in Files.');
+    finishAction($('share'));
   } catch (error) {
     $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Sharing failed. The capture is saved in Files.'; fitWindow();
   } finally { working = false }
 }
 
+async function saveToFiles() {
+  if (!capture || working || done) return;
+  working = true; clearInterval(timer); $('countdown').classList.remove('err'); $('countdown').textContent = 'copying Files path…';
+  try {
+    await ipcRenderer.invoke('tray-panel:copy-capture-path', capture);
+    finishAction($('save'));
+  } catch (error) {
+    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Could not copy the Files path.'; fitWindow();
+  } finally { working = false }
+}
+
 function beginCountdown(action) {
   clearInterval(timer); seconds = 4;
-  const label = () => (action === 'save' ? `closes in ${ seconds } s` : `auto-shares in ${ seconds } s`);
+  const label = () => (action === 'save' ? `copies path in ${ seconds } s` : `auto-shares in ${ seconds } s`);
   $('countdown').textContent = label();
   timer = setInterval(() => {
     seconds -= 1;
     if (seconds > 0) { $('countdown').textContent = label(); return }
     clearInterval(timer);
-    if (action === 'save') close(); else share();
+    if (action === 'save') saveToFiles(); else share();
   }, 1_000);
 }
 
@@ -86,7 +92,6 @@ ipcRenderer.on('files-after-capture:show', async(_event, value) => {
   paintPreview($('preview'));
   const expiryDays = Number(preferences.expiryDays ?? 30);
   $('share-detail').textContent = ['Public link', preferences.visitorMode === 'download' ? 'download' : 'view only', expiryDays > 0 ? `expires in ${ expiryDays } days` : 'never expires'].join(' · ');
-  $('keep').classList.toggle('on', preferences.keepCapturesAvailable !== false);
   const action = preferences.defaultAction === 'save' || preferences.defaultAction === 'ask' ? preferences.defaultAction : 'share';
   $('share').classList.toggle('on', action === 'share'); $('share').classList.toggle('default', action === 'share');
   $('save').classList.toggle('on', action === 'save'); $('save').classList.toggle('default', action === 'save');
@@ -96,23 +101,10 @@ ipcRenderer.on('files-after-capture:show', async(_event, value) => {
 });
 
 $('share').addEventListener('click', share);
-$('save').addEventListener('click', close);
+$('save').addEventListener('click', saveToFiles);
 $('close').addEventListener('click', close);
-$('keep').addEventListener('click', () => { $('keep').classList.toggle('on'); $('keep').setAttribute('aria-checked', String($('keep').classList.contains('on'))); stopCountdown() });
-$('markup').addEventListener('click', async() => {
-  if (capture?.kind !== 'screenshot') return;
-  try {
-    await ipcRenderer.invoke('tray-panel:markup', capture.path);
-    close();
-  } catch (error) {
-    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Could not open markup'; fitWindow();
-  }
-});
 const openPreferences = (event) => { event.preventDefault(); ipcRenderer.send('tray-panel:files-preferences', 'capture'); stopCountdown() };
-$('preferences').addEventListener('click', openPreferences);
 $('preferences-link').addEventListener('click', openPreferences);
-$('toast').addEventListener('mouseenter', () => clearTimeout(closeTimer));
-$('toast').addEventListener('mouseleave', () => scheduleClose(3_000));
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !$('postcap').hidden) share();
   else if (event.key === 'Escape') close();
