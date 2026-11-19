@@ -39,6 +39,7 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(window.contentView.addChildView).toHaveBeenCalledWith(view);
     expect(manager.hide('legacy-owner', window)).toBe(true);
     expect(window.contentView.removeChildView).toHaveBeenCalledWith(view);
+    manager.destroy();
   });
 
   it('attaches with tab-relative bounds and detaches from that host on hide', async() => {
@@ -70,9 +71,52 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(manager.hide('tab-owner', window)).toBe(true);
     expect(host.removeChildView).toHaveBeenCalledWith(view);
     expect(window.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(session.clearStorageData).not.toHaveBeenCalled();
+    expect(disposed).toBeDefined();
+
+    const reopened = manager.reserve(window, 'tab-owner');
+    await expect(manager.show(reopened, window, 'https://vault.test/vault/home?grant=next&csrf=next', { x: 4, y: 5, width: 600, height: 450 }, host, onDisposed, theme)).resolves.toBe(true);
+    expect(manager.createView).toHaveBeenCalledOnce();
+    expect(view.webContents.loadURL).toHaveBeenCalledOnce();
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 4, y: 5, width: 600, height: 450 });
+
+    const changedHint = manager.reserve(window, 'tab-owner');
+    await expect(manager.show(changedHint, window, 'https://vault.test/vault/home?grant=third&csrf=third#connect=different', { x: 4, y: 5, width: 600, height: 450 }, host, onDisposed, theme)).resolves.toBe(true);
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(2);
+  });
+
+  it('destroys a hidden renderer after the five-minute grace period', async() => {
+    // risk: a hidden renderer must not retain the vault session indefinitely
+    vi.useFakeTimers();
+    try {
+      const manager = new VaultViewManager() as any;
+      const view = makeView();
+      const session = { clearStorageData: vi.fn() };
+      manager.createView = vi.fn().mockResolvedValue({ view, session });
+      const window = { id: 5, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
+      const reservation = manager.reserve(window, 'expiry-owner');
+      await manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 300, height: 200 });
+      manager.hide('expiry-owner', window);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(view.webContents.close).toHaveBeenCalledOnce();
+      expect(session.clearStorageData).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('destroys the live renderer immediately when the vault locks', async() => {
+    // risk: a locked vault must never leave a decrypted renderer available to reopen
+    const manager = new VaultViewManager() as any;
+    const view = makeView();
+    const session = { clearStorageData: vi.fn() };
+    manager.createView = vi.fn().mockResolvedValue({ view, session });
+    const window = { id: 6, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
+    const reservation = manager.reserve(window, 'locked-owner');
+    await manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 300, height: 200 });
+    manager.destroy();
     expect(view.webContents.close).toHaveBeenCalledOnce();
     expect(session.clearStorageData).toHaveBeenCalledOnce();
-    expect(disposed).toBeDefined();
+    expect(manager.hasActiveOwner()).toBe(false);
   });
 
   it('opens the vault unthemed when renderer theme colors are invalid', async() => {
