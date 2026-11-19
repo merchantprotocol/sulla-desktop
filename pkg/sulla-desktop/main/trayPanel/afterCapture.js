@@ -7,8 +7,6 @@ const { ipcRenderer } = require('electron');
 
 let capture;
 let preferences = {};
-let seconds = 4;
-let timer;
 let closeTimer;
 let working = false;
 let done = false;
@@ -28,7 +26,7 @@ function fitWindow() {
   window.requestAnimationFrame(() => ipcRenderer.send('files-after-capture:resize', Math.ceil(document.body.scrollHeight)));
 }
 
-function close() { clearInterval(timer); clearTimeout(closeTimer); ipcRenderer.send('files-after-capture:close') }
+function close() { clearTimeout(closeTimer); ipcRenderer.send('files-after-capture:close') }
 
 function paintPreview(node) {
   node.className = 'th'; node.innerHTML = '';
@@ -42,13 +40,13 @@ function paintPreview(node) {
 function scheduleClose(ms) { clearTimeout(closeTimer); closeTimer = setTimeout(close, ms) }
 
 function finishAction(button) {
-  done = true; clearInterval(timer); button.classList.add('selected');
+  done = true; button.classList.add('selected');
   scheduleClose(450);
 }
 
 async function share() {
   if (!capture || working || done) return;
-  working = true; clearInterval(timer); $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
+  working = true; $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
   try {
     const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view' });
     if (!result.url) throw new Error(result.message || 'Sharing failed. The capture is saved in Files.');
@@ -60,7 +58,7 @@ async function share() {
 
 async function saveToFiles() {
   if (!capture || working || done) return;
-  working = true; clearInterval(timer); $('countdown').classList.remove('err'); $('countdown').textContent = 'copying Files path…';
+  working = true; $('countdown').classList.remove('err'); $('countdown').textContent = 'copying Files path…';
   try {
     await ipcRenderer.invoke('tray-panel:copy-capture-path', capture);
     finishAction($('save'));
@@ -69,19 +67,7 @@ async function saveToFiles() {
   } finally { working = false }
 }
 
-function beginCountdown(action) {
-  clearInterval(timer); seconds = 4;
-  const label = () => (action === 'save' ? `copies path in ${ seconds } s` : `auto-shares in ${ seconds } s`);
-  $('countdown').textContent = label();
-  timer = setInterval(() => {
-    seconds -= 1;
-    if (seconds > 0) { $('countdown').textContent = label(); return }
-    clearInterval(timer);
-    if (action === 'save') saveToFiles(); else share();
-  }, 1_000);
-}
-
-function stopCountdown() { if (!working && !done) { clearInterval(timer); $('countdown').textContent = '' } }
+function stopCountdown() { if (!working && !done) $('countdown').textContent = '' }
 
 ipcRenderer.on('files-after-capture:show', async(_event, value) => {
   capture = value; done = false;
@@ -95,8 +81,7 @@ ipcRenderer.on('files-after-capture:show', async(_event, value) => {
   const action = preferences.defaultAction === 'save' || preferences.defaultAction === 'ask' ? preferences.defaultAction : 'share';
   $('share').classList.toggle('on', action === 'share'); $('share').classList.toggle('default', action === 'share');
   $('save').classList.toggle('on', action === 'save'); $('save').classList.toggle('default', action === 'save');
-  if (action === 'ask') $('countdown').textContent = 'choose an action';
-  else beginCountdown(action);
+  $('countdown').textContent = action === 'ask' ? 'choose an action' : 'select an action to continue';
   fitWindow();
 });
 
@@ -106,6 +91,8 @@ $('close').addEventListener('click', close);
 const openPreferences = (event) => { event.preventDefault(); ipcRenderer.send('tray-panel:files-preferences', 'capture'); stopCountdown() };
 $('preferences-link').addEventListener('click', openPreferences);
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && !$('postcap').hidden) share();
+  if (event.key === 'Enter' && !$('postcap').hidden) {
+    if ($('save').classList.contains('on')) saveToFiles(); else share();
+  }
   else if (event.key === 'Escape') close();
 });
