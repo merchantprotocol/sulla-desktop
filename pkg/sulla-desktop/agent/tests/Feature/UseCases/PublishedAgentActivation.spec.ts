@@ -15,6 +15,7 @@ vi.mock('@pkg/agent/memory/MemoryPackLoader', () => ({ installMemoryPackForSkill
 vi.mock('@pkg/agent/database/registry/SkillsRegistry', () => ({ skillsRegistry: { invalidate: vi.fn() } }));
 // Provider boundary: the owner mapping store; live subscription validation is covered by unit specs.
 vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
+  pendingPublicationBindings:           vi.fn().mockResolvedValue([]),
   initializeBindingForPublishedPackage: vi.fn(async(slug: string, agentId: string, candidates: unknown[]) => {
     f.routes.push([slug, agentId, candidates]);
     const owner = f.owned.get(slug);
@@ -36,6 +37,7 @@ dbDescribe('published agent activation on real Postgres', () => {
   const run = randomUUID().slice(0, 8);
   const slug = `grok-pr-reviewer-${ run }`;
   const existingSlug = `local-reviewer-${ run }`;
+  const removedSlug = `removed-reviewer-${ run }`;
   const failSequence = `published_agent_fail_${ run }`;
   const failFunction = `published_agent_fail_fn_${ run }`;
   const failTrigger = `published_agent_fail_tr_${ run }`;
@@ -87,7 +89,7 @@ dbDescribe('published agent activation on real Postgres', () => {
     await database.query(`DROP TRIGGER IF EXISTS "${ failTrigger }" ON agent_definitions`).catch(() => undefined);
     await database.query(`DROP FUNCTION IF EXISTS "${ failFunction }"()`).catch(() => undefined);
     await database.query(`DROP SEQUENCE IF EXISTS "${ failSequence }"`).catch(() => undefined);
-    await database.query('DELETE FROM agent_definitions WHERE slug = ANY($1::text[])', [[slug, existingSlug]]).catch(() => undefined);
+    await database.query('DELETE FROM agent_definitions WHERE slug = ANY($1::text[])', [[slug, existingSlug, removedSlug]]).catch(() => undefined);
     await database.dispose();
   });
 
@@ -127,5 +129,37 @@ dbDescribe('published agent activation on real Postgres', () => {
     expect(await agent(existingSlug)).toMatchObject({ id: `agent-existing-${ run }`, enabled: true, status: 'production', use_case_version_id: v1 });
     expect(f.routes[0].slice(0, 2)).toEqual([existingSlug, `agent-existing-${ run }`]);
     expect(f.removed).toEqual([]);
+  });
+
+  it('keeps an editor-removed agent out after a fresh scan while retaining its Files package', async() => {
+    publish(fileId, removedSlug, v1, manifest(removedSlug, 'grok-4.7', 'Original prompt.'));
+    await new SullaUseCaseFiles(files).scan();
+    const first = await agent(removedSlug);
+    expect(first).toMatchObject({ enabled: true, use_case_version_id: v1 });
+    const { AgentDefinitionModel } = await import('../../../database/models/AgentDefinitionModel');
+    const publisher = { announce: vi.fn() };
+    expect(await AgentDefinitionModel.removeFromEditor(first!.id, publisher)).toEqual({ slug: removedSlug, archived: true });
+    expect(publisher.announce).toHaveBeenCalledWith({ type: 'agent', slug: removedSlug, change: 'deleted' });
+
+    publish(fileId, removedSlug, v2, manifest(removedSlug, 'grok-4.7', 'A later published version.'));
+    await new SullaUseCaseFiles(files).scan();
+    await database.query('UPDATE use_case_files_state SET initial_export_completed_at=NULL WHERE singleton=TRUE');
+    try { await new SullaUseCaseFiles(files).scan() } finally {
+      await database.query('UPDATE use_case_files_state SET initial_export_completed_at=NOW() WHERE singleton=TRUE');
+    }
+    expect(await agent(removedSlug)).toMatchObject({ id: first!.id, enabled: false, status: 'archive', use_case_version_id: v1 });
+    expect(rows).toHaveLength(1);
+    expect(f.owned.get(removedSlug)).toBe(first!.id);
+  });
+
+  it('round-trips routine references in an exported local definition', async() => {
+    const { agentDefinitionService } = await import('../../../services/AgentDefinitionService');
+    const local = await agentDefinitionService.create({ slug: `export-${ run }`, name: 'Export test', routineRefs: ['qa.review'] });
+    const manifest = await agentDefinitionService.exportManifest(local.slug);
+    expect(manifest.spec.routines).toEqual(['qa.review']);
+    const imported = await agentDefinitionService.importManifest({ ...manifest, metadata: { ...manifest.metadata, slug: `import-${ run }` } });
+    expect(imported.routine_refs).toEqual(['qa.review']);
+    expect(await agentDefinitionService.removeFromEditor(local.id)).toEqual({ slug: local.slug, archived: false });
+    expect(await agentDefinitionService.findBySlug(local.slug)).toBeNull();
   });
 });

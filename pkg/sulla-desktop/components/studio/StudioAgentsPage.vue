@@ -399,7 +399,26 @@ async function save() {
 }
 async function exportAgent() { if (!active.value) return; const manifest = await ipcRenderer.invoke('agent-definitions:export', active.value.slug); const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${ active.value.slug }.json`; a.click(); URL.revokeObjectURL(url); }
 async function publishAgent() { if (!active.value) return; publishing.value = true; const check = await ipcRenderer.invoke('agent-definitions:publish-check', active.value.slug); if ('error' in check) { detailError.value = true; detailMessage.value = check.error; publishing.value = false; return; } if (check.warnings.length && !window.confirm(`${ check.warnings.join('\n') }\n\nPublish anyway?`)) { publishing.value = false; return; } const res = await ipcRenderer.invoke('agent-definitions:publish', active.value.slug); publishing.value = false; detailError.value = 'error' in res; detailMessage.value = 'error' in res ? res.error : `Submitted as ${ res.templateId }.`; }
-async function deleteAgent() { if (!active.value?.id || !window.confirm(`Delete ${ active.value.name }?`)) return; await ipcRenderer.invoke('agent-definitions:delete', active.value.id); closeDetail(); await load(); }
+async function deleteAgent() {
+  const agent = active.value;
+  if (!agent?.id || saving.value || publishing.value || !window.confirm(`Delete ${ agent.name }?`)) return;
+  const generation = editorGeneration;
+  saving.value = true;
+  detailMessage.value = '';
+  try {
+    const removed = await ipcRenderer.invoke('agent-definitions:delete', agent.id);
+    if (!removed) throw new Error('This agent has already been removed.');
+    if (generation === editorGeneration) closeDetail();
+    await load();
+  } catch (cause) {
+    if (generation === editorGeneration) {
+      detailError.value = true;
+      detailMessage.value = cause instanceof Error ? cause.message : String(cause);
+    }
+  } finally {
+    saving.value = false;
+  }
+}
 onMounted(load);
 useDatabaseAvailableReload(load, 'StudioAgentsPage');
 </script>

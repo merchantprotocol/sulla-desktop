@@ -237,7 +237,9 @@ export class SullaUseCaseFiles {
     let agentId:string | undefined;
     let createdAgentBinding:{ editToken:string; revision:number } | undefined;
     if (kind === 'agent') {
-      const existing = await postgresClient.queryOne<{id:string;source_kind:string;use_case_file_id:string|null}>('SELECT id,source_kind,use_case_file_id FROM agent_definitions WHERE slug=$1',[slug]);
+      const existing = await postgresClient.queryOne<{ id: string; source_kind: string; removed_from_editor: boolean }>(
+        `SELECT id,source_kind,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor FROM agent_definitions WHERE slug=$1`, [slug]);
+      if (existing?.removed_from_editor) return;
       if (existing && !['local', 'user'].includes(existing.source_kind)) throw new Error(`agents/${ slug } conflicts with an existing ${ existing.source_kind } agent; the existing definition was preserved`);
       // Checked before any owner mapping is written; the INSERT below enforces it again atomically.
       if (existing && pending) throw new Error(`agents/${ slug } already has a definition; it was preserved until the Use Cases migration runs`);
@@ -254,6 +256,7 @@ export class SullaUseCaseFiles {
         createdAgentBinding = initialized.binding;
       }
     }
+    let suppressed = false;
     try { await postgresClient.transaction(async client => {
       if (kind === 'agent') {
         const metadata = manifest.metadata ?? {}; const spec = manifest.spec ?? {}; const directory = spec.directory ?? {};
@@ -261,9 +264,11 @@ export class SullaUseCaseFiles {
         const registered = await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','1.0.0','production',TRUE,$10,$5,$11,$12,$13,NULL,$14,'local',$15,$16,$17,$18,$19,$20,$21,$22,$23)
           ${ pending ? 'ON CONFLICT DO NOTHING' : `ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,updated_at=NOW()` }
+          ${ pending ? '' : `WHERE NOT COALESCE(agent_definitions.config @> '{"removedFromEditor":true}'::jsonb,FALSE)` }
           RETURNING id`,
         [agentId,slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId]);
         if (pending && !registered.rows.length) throw new Error(`agents/${ slug } was registered concurrently; that definition was preserved`);
+        if (!registered.rows.length) { suppressed = true; return }
         if (String(registered.rows[0]?.id ?? '') !== agentId) throw new Error(`agents/${ slug } changed identity during activation; its prior definition was preserved`);
       } else if (kind === 'skill') {
         const raw = text(files['SKILL.md']); const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
@@ -304,6 +309,7 @@ export class SullaUseCaseFiles {
       }
       throw error;
     }
+    if (suppressed) return;
     if (pending && createdAgentBinding && agentId) {
       const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
       // Best effort: a marker left behind is settled by the next scan from the committed row.
@@ -386,7 +392,9 @@ export class SullaUseCaseFiles {
     for (const [slug, packageRows] of groups) {
       if (!packageRows.some(row => activePublishedVersion(row))) continue;
       const anchor = SullaUseCaseFiles.rootAgentAnchor(slug, packageRows);
-      const existing = await postgresClient.queryOne<{use_case_file_id:string|null;use_case_version_id:string|null}>('SELECT use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1', [slug]);
+      const existing = await postgresClient.queryOne<{ use_case_file_id: string | null; use_case_version_id: string | null; removed_from_editor: boolean }>(
+        `SELECT use_case_file_id,use_case_version_id,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor FROM agent_definitions WHERE slug=$1`, [slug]);
+      if (existing?.removed_from_editor) continue;
       // The same indexed anchor version is a permanent no-op: owner edits to it are never undone.
       if (anchor && existing && existing.use_case_file_id === anchor.id && existing.use_case_version_id === activePublishedVersion(anchor)) continue;
       if (!anchor || existing || !await this.approvedPublication(anchor)) { deferred.push(`agents/${ slug }`); continue }

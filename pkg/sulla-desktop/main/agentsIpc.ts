@@ -384,9 +384,18 @@ export function initAgentsIpc(): void {
     return agentDefinitionService.update(id, definitionPatch, expectedUpdatedAt);
   });
 
-  ipcMain.handle('agent-definitions:delete', async(_event, id: string) => {
+  ipcMain.handle('agent-definitions:delete', async(_event, rawId: string) => {
+    const id = validateAgentDefinitionId(rawId);
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.delete(id);
+    const removed = await agentDefinitionService.removeFromEditor(id);
+    if (!removed) return false;
+    if (!removed.archived) {
+      const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+      await workerModelRouting.removeBindingForDefinition(removed.slug, id).catch(error => {
+        console.warn('[AgentsIPC] Could not clean up removed agent model settings:', error);
+      });
+    }
+    return true;
   });
 
   ipcMain.handle('agent-definitions:export', async(_event, slug: string) => {

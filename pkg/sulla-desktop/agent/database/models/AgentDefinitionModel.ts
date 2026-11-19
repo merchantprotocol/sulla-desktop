@@ -421,6 +421,19 @@ export class AgentDefinitionModel {
     return !!row;
   }
 
+  /** Keep an explicit removal for Files-backed definitions so scans cannot reinstall them. */
+  static async removeFromEditor(id: string, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<{ slug: string; archived: boolean } | null> {
+    const row = await postgresClient.queryOne<{ slug: string; archived: boolean }>(`WITH archived AS (
+      UPDATE agent_definitions SET status = 'archive', enabled = FALSE, updated_at = NOW(),
+        config = COALESCE(config, '{}'::jsonb) || '{"removedFromEditor":true}'::jsonb
+      WHERE id = $1 AND use_case_file_id IS NOT NULL RETURNING slug, TRUE AS archived
+    ), removed AS (
+      DELETE FROM agent_definitions WHERE id = $1 AND use_case_file_id IS NULL RETURNING slug, FALSE AS archived
+    ) SELECT slug, archived FROM archived UNION ALL SELECT slug, archived FROM removed`, [id]);
+    if (row) useCaseChanges.announce({ type: 'agent', slug: row.slug, change: 'deleted' });
+    return row ?? null;
+  }
+
   /** Import-once semantics: an existing DB row always wins over legacy files. */
   static async importIfMissing(input: AgentDefinitionInput): Promise<AgentDefinition> {
     const existing = await AgentDefinitionModel.findBySlug(input.slug);

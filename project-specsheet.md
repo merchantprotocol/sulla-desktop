@@ -670,6 +670,12 @@ The built-in seed hash now covers only what `AgentDefinitionModel` stores. The m
 
 Seed specs build their rows through the real `AgentDefinitionModel.create`/`findBySlug` against `agent/tests/Support/AgentDefinitionTableFake.ts`, an in-memory `agent_definitions` table that answers the model's SQL. `BuiltinSeedStoredRows.spec.ts` runs the real seeder and model end to end. It covers an older-hash row that differs from the bundle staying byte-identical across two boots, an identical older-hash row getting a hash-only re-stamp and later normal upgrades, and v2 prompt upgrades that keep the human's model class. `ChatPageTryHandoff.spec.ts` covers Try, then Default or a plain model, then remount.
 
+## Agent editor removal and export (2026-11-19)
+
+The Agents editor removes standalone definitions and releases model settings owned by that definition. Removing a Files-backed agent archives and disables the definition, keeps the linked package in Files, and prevents the Files scanner from registering it again. This also applies while the first Use Cases migration is pending. Failed removals show an error in the editor. Agent exports carry routine references, and older manifests that omit them preserve an existing agent’s routines when imported. Running jobs retain the configuration captured at launch.
+
+`PublishedAgentActivation.spec.ts` exercises these persistence rules against Postgres, including a fresh scan of a newer package version and the pending-migration path. Run it with the editor, model routing, and Try handoff suites using `yarn test:agent` and a disposable `SULLA_TEST_DATABASE_URL`.
+
 ## Vault view cold-start readiness (2026-11-18)
 
 On a cold start, the renderer restores the Vault page and calls `vault:view-open` before the backend has registered its lifecycle services. On R6 that registration came about 26s after launch, and the vault was ready about 27.4s after launch after a 1.45s initialization. `VaultViewIpc` used to wait on `waitUntilStarted('vault')` with the lifecycle's general 15s default. That timeout is not a transient error in `vaultTransient`, so VaultPage stayed on "Vault unavailable" until the user pressed Retry.

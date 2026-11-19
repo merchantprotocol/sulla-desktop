@@ -37,6 +37,7 @@ export interface AgentMarketplaceManifest {
     goals?:      string;
     tools:       string[];
     skills:      string[];
+    routines?:    string[];
     config:      Record<string, unknown>;
     promptFiles: Record<string, string>;
     /** Agent-directory card (optional; older manifests omit it). */
@@ -86,6 +87,7 @@ export class AgentDefinitionService {
 
   setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> { return AgentDefinitionModel.setStatus(id, status) }
   delete(id: string): Promise<boolean> { return AgentDefinitionModel.delete(id) }
+  removeFromEditor(id: string) { return AgentDefinitionModel.removeFromEditor(id) }
 
   /** Import legacy directories once. Existing DB slugs always win. */
   async importLegacyDirectories(roots = resolveAllAgentsDirs()): Promise<{ imported: number; skipped: number; errors: string[] }> {
@@ -160,6 +162,7 @@ export class AgentDefinitionService {
         goals:       agent.goals_content,
         tools:       agent.allowed_tools,
         skills:      agent.skill_refs,
+        routines:    agent.routine_refs,
         config:      agent.config,
         promptFiles: agent.prompt_files,
         directory:   {
@@ -201,6 +204,7 @@ export class AgentDefinitionService {
       promptFiles:           spec.promptFiles ?? {},
       allowedTools:          spec.tools ?? [],
       skillRefs:             spec.skills ?? [],
+      ...(spec.routines === undefined ? {} : { routineRefs: stringArray(spec.routines) }),
       provider:              spec.provider ?? null,
       modelChoice:           spec.modelChoice,
       model:                 spec.model ?? null,
