@@ -97,8 +97,28 @@
             <path d="M14.5 4l5.5 5.5" />
           </svg>
           <span class="tab-icon">
+            <span
+              v-if="tab.activity === 'working'"
+              class="tab-status tab-status-working tab-icon-meter"
+              role="img"
+              :aria-label="ACTIVITY_LABEL.working"
+              :title="ACTIVITY_LABEL.working"
+            >
+              <svg
+                viewBox="0 0 12 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <path d="M2 5v4" />
+                <path d="M6 2v7" />
+                <path d="M10 4v5" />
+              </svg>
+            </span>
             <img
-              v-if="tab.favicon"
+              v-else-if="tab.favicon"
               :src="tab.favicon"
               draggable="false"
               class="tab-favicon-img"
@@ -117,40 +137,13 @@
               <path :d="tab.iconPath" />
             </svg>
             <span
-              v-if="tab.activity && tab.activity !== 'idle'"
+              v-if="tab.activity && tab.activity !== 'idle' && tab.activity !== 'working'"
               class="tab-activity-dot"
               :class="`tab-activity-${tab.activity}`"
               role="img"
               :aria-label="ACTIVITY_LABEL[tab.activity]"
               :title="ACTIVITY_LABEL[tab.activity]"
             />
-          </span>
-          <span
-            v-if="tab.activity && tab.activity !== 'idle'"
-            class="tab-status"
-            :class="`tab-status-${tab.activity}`"
-            role="img"
-            :aria-label="ACTIVITY_LABEL[tab.activity]"
-          >
-            <svg
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              aria-hidden="true"
-            >
-              <template v-if="tab.activity === 'working'">
-                <path d="M2 5v4" />
-                <path d="M6 2v7" />
-                <path d="M10 4v5" />
-              </template>
-              <path
-                v-else-if="tab.activity === 'waiting'"
-                d="M4 3v6M8 3v6"
-              />
-              <template v-else><path d="M6 1l5 5-5 5-5-5z" /><path d="M6 3.5v3M6 8.5v.1" /></template>
-            </svg>
           </span>
           <input
             v-if="renamingTabId === tab.id"
@@ -1527,6 +1520,9 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-working .tab-icon::after { display: none; }
 .tab-status { width: 12px; height: 14px; flex: 0 0 12px; display: inline-flex; align-items: center; justify-content: center; }
 .tab-status svg { display: block; width: 12px; height: 12px; }
+/* While a chat is working the meter takes the icon slot; icon and dot return when it stops. */
+.tab-icon-meter { width: 100%; height: 100%; flex: none; }
+.tab-icon-meter svg { width: 14px; height: 14px; }
 .tab-status-working { color: var(--accent); }
 .tab-status-working path {
   transform-box: fill-box;
