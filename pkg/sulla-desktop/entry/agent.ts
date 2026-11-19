@@ -15,11 +15,8 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 
 import './agent-tailwind.css';
 
-import AgentCalendar from '../pages/AgentCalendar.vue';
-import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
-import AgentIntegrations from '../pages/AgentIntegrations.vue';
 import AgentRouter from '../pages/AgentRouter.vue';
-import ExtensionView from '../pages/ExtensionView.vue';
+import { lazyScreen } from '../pages/agent/lazyScreen';
 
 import store from './store';
 
@@ -39,12 +36,13 @@ await initiateWindowContext();
 const router = createRouter({
   history: createWebHashHistory(),
   routes:  [
-    { path: '/Calendar', component: AgentCalendar, name: 'AgentCalendar' },
-    { path: '/Integrations', component: AgentIntegrations, name: 'AgentIntegrations' },
-    { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
+    // Route screens are lazy so their code is only fetched when a route is visited.
+    { path: '/Calendar', component: lazyScreen(() => import('../pages/AgentCalendar.vue'), 'AgentCalendar'), name: 'AgentCalendar' },
+    { path: '/Integrations', component: lazyScreen(() => import('../pages/AgentIntegrations.vue'), 'AgentIntegrations'), name: 'AgentIntegrations' },
+    { path: '/Integrations/:id', component: lazyScreen(() => import('../pages/AgentIntegrationDetail.vue'), 'AgentIntegrationDetail'), name: 'AgentIntegrationDetail' },
     { path: '/Browser/:id', component: BrowserTabStub, name: 'BrowserTab' },
 
-    { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },
+    { path: '/Extension/:name/:path*', component: lazyScreen(() => import('../pages/ExtensionView.vue'), 'ExtensionView'), name: 'ExtensionView' },
   ],
 });
 
