@@ -48,7 +48,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { computed, inject, nextTick, reactive, ref, watch, type Ref } from 'vue';
+import { computed, inject, nextTick, onMounted, reactive, ref, watch, type Ref } from 'vue';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 import ToolTask from '../tool/ToolTask.vue';
 import { AgentResultActions } from '../../composables/useAgentResultActions';
@@ -59,6 +59,9 @@ import type { ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/M
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 import type { DecisionRecord } from '@pkg/shared/decisions';
 const store = ChatDecisions.useChatDecisions();
+onMounted(() => {
+  if (!store.loading.value) void store.refresh();
+});
 const root = ref<HTMLElement>();
 const actions = AgentResultActions.useAgentResultActions();
 const controller = useChatController();

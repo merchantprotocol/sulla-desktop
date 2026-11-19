@@ -27,6 +27,21 @@ async function fixture() {
   const wrapper = mount(component, { global: { provide: { [ChatControllerKey as symbol]: { thread: ref({ id: 'ui-a' }), messages: ref([]) }, 'chat:activity-context': { backendThreadId: owner } } } }); mounted.push(wrapper); await flushPromises(); return { wrapper, store, owner, visible };
 }
 describe('For You requests', () => {
+  it('loads saved requests when opening the panel after an update was missed', async() => {
+    f.records = [];
+    const v = await fixture();
+    v.visible.value = false;
+    await nextTick();
+
+    f.records = [question('recovered')];
+    expect(v.store.openCount.value).toBe(0);
+    v.visible.value = true;
+    await flushPromises();
+
+    expect(v.store.openCount.value).toBe(1);
+    expect(v.wrapper.get('.fy-request').attributes('data-decision-id')).toBe('recovered');
+  });
+
   it('does not ask again when submitting the newer copy of an expired duplicate', async() => {
     f.records = [question('old'), question('new', { createdAt: 20 })];
     const v = await fixture();

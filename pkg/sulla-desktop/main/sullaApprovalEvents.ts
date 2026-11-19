@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, webContents } from 'electron';
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import { toolRegistry } from '@pkg/agent/tools';
 /**
@@ -24,14 +24,26 @@ import { toolRegistry } from '@pkg/agent/tools';
 import { ApprovalService, type UserQuestionAnswerItem } from '@pkg/agent/services/ApprovalService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
 export function initSullaApprovalEvents(): void {
   decisionService.subscribe(record => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && /^(file:|app:)/.test(window.webContents.getURL())) window.webContents.send('decisions:changed', record);
+    const windows = new Set(BrowserWindow.getAllWindows().filter(window => !window.isDestroyed()).map(window => window.webContents));
+    for (const contents of webContents.getAllWebContents()) {
+      if (contents.isDestroyed()) continue;
+      const url = contents.getURL();
+      const appWindow = windows.has(contents) && /^(file:|app:)/.test(url);
+      // Chat tabs can be native views, which are absent from BrowserWindow.getAllWindows().
+      const chatView = url.startsWith('app://./agent.html?') && isAgentWindowSender(contents);
+      if (!appWindow && !chatView) continue;
+      try {
+        contents.send('decisions:changed', record);
+      } catch (error) {
+        console.debug('[decisions] Could not notify a desktop view', error);
+      }
     }
   });
   // Agent file publish requests: once the human decides in Decide, apply the
