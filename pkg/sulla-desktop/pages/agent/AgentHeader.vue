@@ -840,6 +840,7 @@ onActivated(() => nextTick(syncTabStrip));
 // A kept-alive header that is hidden never gets mouseleave, so its preview would stay on screen.
 onDeactivated(hideTabPeek);
 onUnmounted(() => {
+  document.documentElement.classList.remove('tab-pointer-dragging');
   ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
   hideTabPeek();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
@@ -1219,6 +1220,7 @@ function onPointerDown(e: PointerEvent, index: number) {
   };
 
   dragState.value = state;
+  document.documentElement.classList.add('tab-pointer-dragging');
 
   const onMove = (me: PointerEvent) => {
     if (me.pointerId !== dragState.value?.pointerId) return;
@@ -1241,7 +1243,7 @@ function onPointerDown(e: PointerEvent, index: number) {
       if (descriptor) {
         stateNow.detached = true;
         window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
-        ipcRenderer.send('tabs:drag-start', { tabId: descriptor.id, descriptor: { ...descriptor }, tabCount: browserTabs.length });
+        ipcRenderer.send('tabs:drag-start', { tabId: descriptor.id, descriptor: { ...descriptor }, title: descriptor.label, favicon: descriptor.favicon, tabCount: browserTabs.length, screenX: me.screenX, screenY: me.screenY, grabOffsetX: Math.max(0, Math.min(me.clientX - tabEl.getBoundingClientRect().left, tabEl.getBoundingClientRect().width)), grabOffsetY: Math.max(0, Math.min(me.clientY - tabEl.getBoundingClientRect().top, tabEl.getBoundingClientRect().height)) });
       }
     }
     if (stateNow.detached) return;
@@ -1292,6 +1294,7 @@ function onPointerDown(e: PointerEvent, index: number) {
     const wasDragging = dragState.value?.active ?? false;
     const draggedEl = dragState.value?.tabEl ?? tabEl;
     dragState.value = null;
+    document.documentElement.classList.remove('tab-pointer-dragging');
     if (state.detached) {
       window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: state.tabId } }));
         ipcRenderer.send('tabs:drag-end', { tabId: state.tabId, screenX: ue.screenX, screenY: ue.screenY, transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) } });
@@ -2224,6 +2227,10 @@ function handleTabContextMenuAction(
 </style>
 
 <style>
+/* Keep the normal pointer cursor on hover; use a closed hand only while pressed. */
+html.tab-pointer-dragging,
+html.tab-pointer-dragging * { cursor: grabbing !important; }
+
 /* Phase 8: Tab animations — unscoped because TransitionGroup generates elements */
 .tab-anim-enter-from {
   opacity: 0;

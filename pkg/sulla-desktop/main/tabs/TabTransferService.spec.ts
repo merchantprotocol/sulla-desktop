@@ -47,6 +47,40 @@ class FakeWindow {
 }
 
 describe('TabTransferService', () => {
+  it('shows, follows, hides over an agent tab strip, and destroys the ghost on drag end', () => {
+    // risk: invisible tear-off feedback leaves users unsure whether a tab drag registered
+    vi.useFakeTimers();
+    const ipc = new FakeIpc(); const actions: string[] = [];
+    const source = new FakeWindow(1, actions, { x: 0, y: 0, width: 800, height: 600 }, ipc);
+    let cursor = { x: 900, y: 400 };
+    const ghost = { destroyed: false, visible: false, position: [0, 0] as number[], setIgnoreMouseEvents: vi.fn(), loadURL: vi.fn(), setPosition(x: number, y: number) { this.position = [x, y]; }, showInactive() { this.visible = true; }, hide() { this.visible = false; }, isVisible() { return this.visible; }, isDestroyed() { return this.destroyed; }, destroy() { this.destroyed = true; }, once: vi.fn() };
+    const createGhost = vi.fn(() => ghost as any);
+    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => cursor } as any, () => source as any, () => [source] as any, () => source as any, {} as any, createGhost, () => false);
+    service.install();
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-1', descriptor: { id: 'tab-1' }, tabCount: 2, title: 'Example', screenX: 900, screenY: 400, grabOffsetX: 10, grabOffsetY: 12 });
+    expect(createGhost).toHaveBeenCalledOnce();
+    expect(ghost.visible).toBe(true);
+    vi.advanceTimersByTime(16);
+    expect(ghost.position).toEqual([890, 388]);
+    cursor = { x: 400, y: 40 };
+    vi.advanceTimersByTime(16);
+    expect(ghost.visible).toBe(false);
+    ipc.emit('tabs:drag-end', { sender: source.webContents }, { tabId: 'tab-1', screenX: 400, screenY: 40 });
+    expect(ghost.destroyed).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it('destroys the ghost when its source renderer is destroyed mid-drag', () => {
+    // risk: leaked always-on-top ghost remains visible after renderer crash
+    const ipc = new FakeIpc(); const source = new FakeWindow(1, [], undefined, ipc);
+    const ghost = { destroyed: false, isDestroyed() { return this.destroyed; }, destroy() { this.destroyed = true; }, once: vi.fn(), setIgnoreMouseEvents: vi.fn(), loadURL: vi.fn(), showInactive: vi.fn(), setPosition: vi.fn() };
+    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 100, y: 100 }) } as any, () => source as any, () => [source] as any, () => source as any, {} as any, () => ghost as any);
+    service.install();
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-1', descriptor: { id: 'tab-1' } });
+    source.webContents.destroy();
+    expect(ghost.destroyed).toBe(true);
+  });
+
   it('forgets renderer readiness when a window closes', () => {
     // risk: stale BrowserWindow ids prevent a replacement window from awaiting renderer readiness
     const ipc = new FakeIpc(); const actions: string[] = [];

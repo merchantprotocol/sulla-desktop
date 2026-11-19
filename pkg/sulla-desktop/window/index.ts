@@ -10,7 +10,7 @@ import os from 'os';
 import path from 'path';
 
 import Electron, {
-  BrowserWindow, app, shell, ipcMain, screen,
+  BrowserWindow, app, shell, ipcMain, screen, nativeTheme,
 } from 'electron';
 
 import { WindowBoundsStore } from './WindowBoundsStore';
@@ -449,7 +449,7 @@ function sendToMain(payload: Record<string, unknown>): void {
 if (process.type === 'browser') {
   app.on('before-quit', () => getAgentWindowPersistence().setQuitting());
   void import('./browserTabViewManager').then(({ BrowserTabViewManager }) => {
-    new TabTransferService(ipcMain, screen, agentWindowRegistry.agentWindowFor.bind(agentWindowRegistry), agentWindowRegistry.getAgentWindowsByFocusOrder.bind(agentWindowRegistry), openAgentWindow, BrowserTabViewManager.getInstance()).install();
+    new TabTransferService(ipcMain, screen, agentWindowRegistry.agentWindowFor.bind(agentWindowRegistry), agentWindowRegistry.getAgentWindowsByFocusOrder.bind(agentWindowRegistry), openAgentWindow, BrowserTabViewManager.getInstance(), options => new BrowserWindow(options), () => nativeTheme.shouldUseDarkColors, app).install();
   }).catch(error => console.error('[TabTransfer] Could not initialize transfer service', error));
   ipcMain.handle('chat:run-state', async(event, channelId: string, threadId: string) => {
     if (!agentWindowRegistry.isAgentWebContents(event.sender) || !channelId || !threadId) return false;
