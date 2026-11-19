@@ -23,6 +23,7 @@ import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
+import { OptimisticSendFeedback } from './OptimisticSendFeedback';
 import { VoiceAgentRouting } from './VoiceAgentRouting';
 import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
@@ -55,6 +56,7 @@ export interface PersonaAdapterOptions {
 export class PersonaAdapter {
   private readonly voiceAgentRouting = new VoiceAgentRouting();
   private readonly voiceTranscriptTagger = new VoiceTranscriptTagger();
+  private readonly optimisticSendFeedback: OptimisticSendFeedback;
   private ci:           ChatInterface;
   private readonly tabId?: string;
   private stopWatchers: WatchStopHandle[] = [];
@@ -105,12 +107,18 @@ export class PersonaAdapter {
   private staticWorkflowArtifacts = new Map<string, ArtifactId>();
   /** IDs of DB-backed artifacts currently reconciled into the controller. */
   private persistentArtifacts = new Set<string>();
+  /** Optimistic user bubbles awaiting their backend echo, keyed by normalized text. */
+  private readonly optimisticUserMessages = new Map<string, MessageId[]>();
+  private lastSendHopKeydownAt?: number;
+  private lastSendHopControllerAt?: number;
+  private pendingSendHop?: { threadId: string; marks: Record<string, number>; origin: number; messageCount: number };
 
   constructor(
     private readonly controller: ChatController,
     opts: PersonaAdapterOptions = {},
   ) {
     this.tabId = opts.tabId;
+    this.optimisticSendFeedback = new OptimisticSendFeedback(this.controller);
     (this as any)._supportOptions = opts;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.persistentArtifacts = new Set(
@@ -118,6 +126,15 @@ export class PersonaAdapter {
     );
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     this.hasSentMessage = this.ci.hasMessages;
+
+    const onSendHopKeydown = (event: Event) => { this.lastSendHopKeydownAt = Number((event as CustomEvent).detail); };
+    const onSendHopController = (event: Event) => { this.lastSendHopControllerAt = Number((event as CustomEvent).detail); };
+    window.addEventListener('sulla:send-hop-keydown', onSendHopKeydown);
+    window.addEventListener('sulla:send-hop-controller', onSendHopController);
+    this.stopWatchers.push(() => {
+      window.removeEventListener('sulla:send-hop-keydown', onSendHopKeydown);
+      window.removeEventListener('sulla:send-hop-controller', onSendHopController);
+    });
 
     // Tell the controller to delegate send/stop/continue to us.
     this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId, opts?.useCaseIntent, opts?.agentId, opts?.voiceIdentity));
@@ -150,6 +167,7 @@ export class PersonaAdapter {
     this.stopWatchers.push(unsubscribeArtifactClose);
     this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
       console.warn('[PersonaAdapter] artifact load failed:', err));
+    this.watchOptimisticUserMessages();
 
     // Pull in any messages that were already restored from localStorage.
     this.syncMessages();
@@ -173,6 +191,10 @@ export class PersonaAdapter {
     this.stopWatchers.push(
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
+        // Only transient streaming/thinking projections depend on run state.
+        for (const message of this.ci.messages.value) {
+          if (message.kind === 'streaming' || message.kind === 'thinking') this.lastRawSignature.delete(message.id);
+        }
         this.messageSyncScheduler.flush();
         if (opts.tabId) {
           window.dispatchEvent(new CustomEvent('sulla:chat-running', {
@@ -339,25 +361,33 @@ export class PersonaAdapter {
   }
 
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
-    const aiStatus = await ipcRenderer.invoke('first-run-ai:connection-status' as any)
+    // Optimistically render the user turn and thinking state before awaiting readiness IPC.
+    const adapterStart = performance.now();
+    const hopOrigin = this.lastSendHopKeydownAt ?? this.lastSendHopControllerAt ?? adapterStart;
+    const hopMarks: Record<string, number> = {
+      ...(this.lastSendHopKeydownAt ? { keydown: 0 } : {}),
+      ...(this.lastSendHopControllerAt ? { controllerSend: Math.max(0, this.lastSendHopControllerAt - hopOrigin) } : {}),
+      adapterStart: Math.max(0, adapterStart - hopOrigin),
+    };
+    this.lastSendHopKeydownAt = undefined;
+    this.lastSendHopControllerAt = undefined;
+    const sendStartedAt = Date.now();
+    const optimistic = this.optimisticSendFeedback.show(text, attachments, sendStartedAt);
+    const optimisticRunMessageId = optimistic.id;
+    const optimisticText = optimistic.text;
+    hopMarks.userBubblePushed = performance.now() - hopOrigin;
+    const pendingIds = this.optimisticUserMessages.get(optimisticText) ?? [];
+    pendingIds.push(optimisticRunMessageId);
+    this.optimisticUserMessages.set(optimisticText, pendingIds);
+    hopMarks.thinkingShown = performance.now() - hopOrigin;
+    const statusPromise = ipcRenderer.invoke('first-run-ai:connection-status' as any)
       .catch(() => ({ connected: false, loading: true }));
+    await new Promise<void>(resolve => requestAnimationFrame(() => { hopMarks.userBubblePainted = performance.now() - hopOrigin; resolve(); }));
+    const aiStatus = await statusPromise;
+    hopMarks.connectionStatusResolved = performance.now() - hopOrigin;
     if (!aiStatus.loading && !aiStatus.connected) {
-      const createdAt = Date.now();
-      this.controller.appendMessage({
-        id:        asMessageId(`no-ai-user-${ createdAt }`),
-        kind:      'user',
-        text:      text.trim() || '(attached)',
-        attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
-        createdAt,
-      });
-      this.controller.appendMessage({
-        id:        asMessageId(`no-ai-notice-${ createdAt }`),
-        kind:      'notice',
-        text:      'Connect an AI model to start chatting',
-        action:    { label: 'Connect', kind: 'connect' },
-        createdAt: createdAt + 1,
-      });
-      this.controller.persistThread();
+      this.showDisconnectedFeedback(optimisticRunMessageId, optimisticText, text, attachments);
+      this.writeSendHop(this.controller.thread.value.id, hopMarks);
       return;
     }
     const taggedText = inputSource === 'voice' && voiceIdentity
@@ -385,7 +415,20 @@ export class PersonaAdapter {
       ...(this.supportSessionMetadata()),
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };
-    await this.ci.send(selection, resolved.length ? resolved : undefined);
+    try {
+      hopMarks.ipcSendIssued = performance.now() - hopOrigin;
+      this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin, messageCount: this.ci.messages.value.length };
+      await this.ci.send(selection, resolved.length ? resolved : undefined);
+    } catch (error) {
+      this.pendingSendHop = undefined;
+      this.controller.removeMessage(optimisticRunMessageId);
+      const queuedIds = this.optimisticUserMessages.get(optimisticText)?.filter(id => id !== optimisticRunMessageId) ?? [];
+      if (queuedIds.length) this.optimisticUserMessages.set(optimisticText, queuedIds);
+      else this.optimisticUserMessages.delete(optimisticText);
+      this.controller.transitionRun({ type: 'error', message: 'Message could not be delivered' });
+      this.writeSendHop(this.controller.thread.value.id, hopMarks);
+      throw error;
+    }
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     // The message is already sent; a failed artifact refresh must not turn
     // send() into a rejection.
@@ -393,8 +436,95 @@ export class PersonaAdapter {
       console.warn('[PersonaAdapter] artifact load failed:', err));
   }
 
+  private showDisconnectedFeedback(optimisticId: MessageId, optimisticText: string, text: string, attachments: Attachment[]): void {
+    this.controller.removeMessage(optimisticId);
+    const queuedIds = this.optimisticUserMessages.get(optimisticText)?.filter(id => id !== optimisticId) ?? [];
+    if (queuedIds.length) this.optimisticUserMessages.set(optimisticText, queuedIds);
+    else this.optimisticUserMessages.delete(optimisticText);
+    this.controller.transitionRun({ type: 'idle' });
+    const createdAt = Date.now();
+    this.controller.appendMessage({
+      id:        asMessageId(`no-ai-user-${ createdAt }`),
+      kind:      'user',
+      text:      text.trim() || '(attached)',
+      attachments: attachments.map(a => ({ id: a.id, name: a.name, size: a.size, kind: a.kind, fileRef: a.fileRef })),
+      createdAt,
+    });
+    this.controller.appendMessage({
+      id:        asMessageId(`no-ai-notice-${ createdAt }`),
+      kind:      'notice',
+      text:      'Connect an AI model to start chatting',
+      action:    { label: 'Connect', kind: 'connect' },
+      createdAt: createdAt + 1,
+    });
+    this.controller.persistThread();
+  }
+
   private agentTextForVoice(text: string, identity: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): string {
     return this.voiceTranscriptTagger.agentText(text, identity);
+  }
+
+  private writeSendHop(threadId: string, marks: Record<string, number>): void {
+    ipcRenderer.send('send-hop:log' as any, {
+      threadId,
+      messageCount: this.controller.messages.value.length,
+      marks,
+    });
+  }
+
+  private flushPendingSendHop(): void {
+    const pending = this.pendingSendHop;
+    if (!pending) return;
+    this.pendingSendHop = undefined;
+    this.writeSendHop(pending.threadId, pending.marks);
+  }
+
+  private watchOptimisticUserMessages(): void {
+    this.stopWatchers.push(watch(() => this.ci.messagesRevision.value, () => {
+      if (!this.optimisticUserMessages.size && !this.pendingSendHop) return;
+      this.reconcileOptimisticUserMessages();
+      const pendingHop = this.pendingSendHop;
+      const messages = this.ci.messages.value;
+      if (pendingHop && this.hasNewAssistantText(messages, pendingHop.messageCount)) {
+        requestAnimationFrame(() => {
+          if (this.pendingSendHop !== pendingHop) return;
+          pendingHop.marks.firstTokenPainted = performance.now() - pendingHop.origin;
+          this.pendingSendHop = undefined;
+          this.writeSendHop(pendingHop.threadId, pendingHop.marks);
+        });
+      }
+    }));
+  }
+
+  private hasNewAssistantText(messages: BackendMessage[], messageCount: number): boolean {
+    const start = Math.max(messageCount, messages.length - 20);
+    for (let index = messages.length - 1; index >= start; index--) {
+      const message = messages[index];
+      if (message.role === 'assistant' && (message.kind === 'text' || message.kind === 'streaming') && message.content.length > 0) return true;
+    }
+    return false;
+  }
+
+  private reconcileOptimisticUserMessages(): void {
+    if (!this.optimisticUserMessages.size) return;
+    const tail = this.ci.messages.value.slice(-20);
+    const transcript = this.controller.thread.value.messages;
+    for (const message of tail) {
+      if (message.role !== 'user' || this.seen.has(message.id)) continue;
+      for (const [text, ids] of this.optimisticUserMessages) {
+        if (!ids.length || !(message.content === text || message.content.endsWith(text) || (text === '(attached)' && (!message.content || message.content === '(image attached)')))) continue;
+        const optimisticId = ids.shift()!;
+        const existing = transcript.findIndex(item => item.id === optimisticId);
+        const mapped = this.mapBackendMessage(message);
+        if (mapped && existing >= 0) {
+          this.controller.updateMessage(optimisticId, mapped as Partial<Message>, existing);
+          this.seen.add(message.id);
+        }
+        else if (existing >= 0) this.controller.removeMessage(optimisticId);
+        if (!ids.length) this.optimisticUserMessages.delete(text);
+        break;
+      }
+    }
   }
 
   /**
@@ -413,7 +543,7 @@ export class PersonaAdapter {
     await this.ci.injectMessage(text, resolved.length ? resolved : undefined, metadata);
   }
 
-  stop(): void { this.ci.stop() }
+  stop(): void { this.ci.stop(); this.flushPendingSendHop() }
   continueRun(): void { this.ci.continueRun() }
   newChat(): void {
     this.ci.newChat();
@@ -451,6 +581,7 @@ export class PersonaAdapter {
     this.htmlArtifacts.clear();
     this.staticWorkflowArtifacts.clear();
     this.persistentArtifacts.clear();
+    this.seen.clear();
     this.ci.dispose();
   }
 
@@ -520,7 +651,16 @@ export class PersonaAdapter {
   }
 
   private syncMessages(): void {
+    this.reconcileOptimisticUserMessages();
     const backend = this.ci.messages.value;
+    const transcript = this.controller.thread.value.messages;
+    const indexById = new Map(transcript.map((message, index) => [message.id, index]));
+    const liveIds = new Set(backend.filter(message => message?.id).map(message => message.id));
+    for (const id of this.seen) if (!liveIds.has(id)) this.seen.delete(id);
+    for (const map of [this.lastRawSignature, this.lastMappedHash, this.firstSeenAt, this.firstCompletedAt]) {
+      for (const id of map.keys()) if (!liveIds.has(id)) map.delete(id);
+    }
+    for (const id of this.seenRunning) if (!liveIds.has(id)) this.seenRunning.delete(id);
     for (const b of backend) {
       if (!b?.id) continue;
 
@@ -538,13 +678,15 @@ export class PersonaAdapter {
       }
       // Also update when the message was restored from the local save: appending
       // it again would create a duplicate card that updates can never reach.
-      const existing = this.controller.thread.value.messages.find(m => m.id === mapped.id);
+      const existingIndex = indexById.get(mapped.id);
+      const existing = existingIndex === undefined ? undefined : transcript[existingIndex];
       if (this.seen.has(b.id) || existing) {
         this.seen.add(b.id);
-        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>);
+        this.controller.updateMessage(mapped.id, this.keepResolution(existing, mapped) as Partial<Message>, existingIndex);
       } else {
         this.seen.add(b.id);
         this.controller.appendMessage(mapped);
+        indexById.set(mapped.id, this.controller.thread.value.messages.length - 1);
       }
     }
   }
@@ -597,8 +739,8 @@ export class PersonaAdapter {
    * Must cover every backend field MessageDispatcher mutates in place after
    * a message's first push (verified against MessageDispatcher.ts): content,
    * `_completed`, toolCard.status/output/error, subAgentActivity.*, and
-   * workflowNode.status/output/error/nodeIndex/totalNodes. graphRunning is
-   * included because thinking/streaming completion falls back to it.
+   * workflowNode.status/output/error/nodeIndex/totalNodes. Graph-running
+   * transitions invalidate only streaming/thinking messages explicitly.
    * Other kinds (patch, citation, tool_approval, tool_question, channel,
    * proactive, html, workflow_document) are pushed once and never mutated,
    * so kind|role|contentLen already makes their signature stable.
@@ -606,7 +748,6 @@ export class PersonaAdapter {
   private rawSignature(b: BackendMessage): string {
     const contentLen = typeof b.content === 'string' ? b.content.length : -1;
     const completed = (b as any)._completed === true ? 1 : 0;
-    const running = this.ci.graphRunning.value ? 1 : 0;
     const tool = b.toolCard
       ? `${ b.toolCard.status }|${ b.toolCard.output?.length ?? -1 }|${ b.toolCard.error ?? '' }`
       : '';
@@ -617,7 +758,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ running }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }`;
   }
 
   private syncRunState(running: boolean): void {

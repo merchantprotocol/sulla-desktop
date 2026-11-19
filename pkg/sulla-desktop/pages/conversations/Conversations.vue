@@ -10,6 +10,7 @@ import SecretaryMode from '@pkg/pages/SecretaryMode.vue';
 import { ConversationProjection, type ConversationMessageData, type ConversationThreadProjection } from './ConversationProjection';
 import { CONV_STORE, ConversationScreenStore, type LiveSnapshot, type MessageView, type OrgView, type PersonView, type RequestView, type ThreadView } from './ConversationScreenStore';
 import { ConversationViewBuilder, type DirectoryPerson } from './ConversationViewBuilder';
+import { DirectoryPersonNormalizer } from './DirectoryPersonNormalizer';
 import ConvList from './components/ConvList.vue';
 import ConvNav from './components/ConvNav.vue';
 import ConvSide from './components/ConvSide.vue';
@@ -25,12 +26,16 @@ defineEmits<{ (event: 'set-mode', mode: string): void }>();
 // Data layer: org list, directory, inbox, participant, start and send, all through the existing IPC.
 const organizations = ref<Org[]>([]), activeOrg = ref(''), people = ref<Person[]>([]), messages = ref<MessageData[]>([]), localSent = ref<MessageData[]>([]);
 const contactRequests = ref<MessageData[]>([]);
+const invitedRaw = ref<{ id: string; email: string; expiresAt: string }[]>([]);
 const userId = ref(''), userName = ref(''), loading = ref(false), sending = ref(false), secretaryOpen = ref(false), error = ref('');
 const emptyConversations = ref<ConversationThreadProjection[]>([]);
 const projection = new ConversationProjection();
+const directoryNormalizer = new DirectoryPersonNormalizer();
 // The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
 const cloudStatus = ref<Record<string, any> | null>(null);
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
+let mounted = false, initializing = false, retryAttempt = 0, retryTimer: number | undefined;
+const retryDelays = [2_000, 5_000, 10_000, 20_000, 30_000];
 
 const store = new ConversationScreenStore();
 provide(CONV_STORE, store);
@@ -58,7 +63,7 @@ const snapshot = computed<LiveSnapshot | null>(() => {
     requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
   }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
-  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
+  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, invited: invitedRaw.value.map(entry => views.invitation(entry)), threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
 });
 
 function displayName(id: string): string {
@@ -68,16 +73,20 @@ function displayName(id: string): string {
 async function refresh(): Promise<void> {
   if (!activeOrg.value) return;
   const requestedOrg = activeOrg.value;
-  loading.value = true; error.value = ''; people.value = []; messages.value = []; contactRequests.value = []; emptyConversations.value = []; localSent.value = [];
+  loading.value = true; error.value = ''; people.value = []; invitedRaw.value = []; messages.value = []; contactRequests.value = []; emptyConversations.value = []; localSent.value = [];
   try {
-    const [directory, inbox, participant, contact] = await Promise.all([
+    const [directory, inbox, participant, contact, memberships, invitations] = await Promise.all([
       ipcRenderer.invoke('org-conversations:directory', activeOrg.value),
       ipcRenderer.invoke('org-conversations:inbox', activeOrg.value),
       ipcRenderer.invoke('org-conversations:participant', activeOrg.value),
       ipcRenderer.invoke('org-conversations:contact-requests', activeOrg.value),
+      // Roles and invitations are best-effort: a failed or forbidden read hides the pill or section instead of showing a wrong one.
+      ipcRenderer.invoke('org-conversations:memberships', activeOrg.value).catch(() => ({ memberships: [] })),
+      ipcRenderer.invoke('org-conversations:invitations', activeOrg.value).catch(() => ({ invitations: [] })),
     ]);
     if (activeOrg.value !== requestedOrg) return;
-    people.value = (directory.directory.people as Person[]).map((person: any) => ({ ...person, userId: person.userId ?? person.id, displayName: person.displayName ?? person.name ?? person.userId ?? person.id }));
+    people.value = directoryNormalizer.withRoles(directory.directory.people as Record<string, unknown>[], memberships.memberships ?? []) as Person[];
+    invitedRaw.value = (invitations.invitations ?? []) as { id: string; email: string; expiresAt: string }[];
     messages.value = inbox.messages as MessageData[];
     contactRequests.value = contact.requests as MessageData[];
     userId.value = participant.userId;
@@ -87,13 +96,47 @@ async function refresh(): Promise<void> {
 }
 
 async function initialize(): Promise<void> {
+  if (!mounted || initializing) return;
+  initializing = true;
   loading.value = true;
   try {
     organizations.value = [...await ipcRenderer.invoke('org-conversations:organizations')];
-    if (!activeOrg.value && organizations.value.length) activeOrg.value = organizations.value[0].orgId;
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load your organizations'; }
-  finally { loading.value = false; }
-  await refresh();
+    if (!organizations.value.length) {
+      // An empty success is a real answer: stop loading so ConvNav shows "No organization", and keep watching for one.
+      error.value = '';
+      loading.value = false;
+      scheduleOrganizationRetry();
+      return;
+    }
+    retryAttempt = 0;
+    clearOrganizationRetry();
+    if (!activeOrg.value) activeOrg.value = organizations.value[0].orgId;
+    loading.value = false;
+    await refresh();
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'Could not load your organizations';
+    loading.value = true;
+    scheduleOrganizationRetry();
+  } finally {
+    initializing = false;
+    if (retryTimer === undefined && organizations.value.length) loading.value = false;
+  }
+}
+
+function scheduleOrganizationRetry(): void {
+  if (!mounted || retryTimer !== undefined) return;
+  const delay = retryDelays[Math.min(retryAttempt, retryDelays.length - 1)];
+  retryAttempt++;
+  retryTimer = window.setTimeout(() => {
+    retryTimer = undefined;
+    void initialize();
+  }, delay);
+}
+
+function clearOrganizationRetry(): void {
+  if (retryTimer === undefined) return;
+  window.clearTimeout(retryTimer);
+  retryTimer = undefined;
 }
 
 async function sendMessage(text: string): Promise<void> {
@@ -166,11 +209,18 @@ store.directHandler = personId => void openDirect(personId);
 store.groupHandler = personIds => void createGroup(personIds);
 store.secretaryHandler = () => openSecretaryModal();
 
-const onCloudStatus = (_event: unknown, status: Record<string, any>): void => { cloudStatus.value = status; };
+const onCloudStatus = (_event: unknown, status: Record<string, any>): void => {
+  cloudStatus.value = status;
+  if (status?.signedIn === true && organizations.value.length === 0) {
+    clearOrganizationRetry();
+    void initialize();
+  }
+};
 const goOnline = (): void => { online.value = true; };
 const goOffline = (): void => { online.value = false; };
 
 onMounted(() => {
+  mounted = true;
   void initialize();
   window.addEventListener('sulla:open-conversations-secretary', openSecretary);
   window.addEventListener('online', goOnline);
@@ -179,6 +229,8 @@ onMounted(() => {
   ipcRenderer.invoke('sulla-cloud-connection:get-status').then(status => { cloudStatus.value = status; }).catch(() => undefined);
 });
 onBeforeUnmount(() => {
+  mounted = false;
+  clearOrganizationRetry();
   window.removeEventListener('sulla:open-conversations-secretary', openSecretary);
   window.removeEventListener('online', goOnline);
   window.removeEventListener('offline', goOffline);
@@ -190,7 +242,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="cv-root">
     <div class="app">
-      <ConvNav />
+      <ConvNav :loading="loading" />
       <ConvList />
       <ConvThread :error="error" />
       <ConvSide />

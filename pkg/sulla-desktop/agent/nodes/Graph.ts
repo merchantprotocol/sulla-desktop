@@ -122,6 +122,11 @@ export interface BaseThreadState {
     /** Parent's ws channel, so a sub-agent can message the parent back via <channel:...>. */
     workflowParentChannel?: string;
 
+    /** Active remote-support capability; populated only for support-session turns. */
+    supportSessionId?: string;
+    supportContext?:    string;
+    allowedToolNames?:  string[];
+
     options: {
       abort?: AbortService;
     };

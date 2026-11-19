@@ -24,6 +24,33 @@ export interface OAuthStartOptions {
   pollIntervalMs?: number;
 }
 
+export interface OAuthVaultGateIpc {
+  on(channel: string, listener: (...args: any[]) => void): unknown;
+  removeListener(channel: string, listener: (...args: any[]) => void): unknown;
+  invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+}
+
+/** Holds an OAuth request until the shared vault surface reports it unlocked. */
+export class OAuthVaultGate {
+  constructor(private readonly ipc: OAuthVaultGateIpc = ipcRenderer as unknown as OAuthVaultGateIpc) {}
+
+  async waitUntilUnlocked(firstRun = false): Promise<void> {
+    if (firstRun) return;
+    let finish!: () => void;
+    const unlocked = new Promise<void>(resolve => { finish = resolve });
+    const onUnlocked = () => finish();
+    this.ipc.on('vault:logged-in', onUnlocked);
+    try {
+      const status = await this.ipc.invoke('vault:status') as { unlocked?: boolean };
+      if (status?.unlocked) return;
+      await this.ipc.invoke('vault:unlock-required');
+      await unlocked;
+    } finally {
+      this.ipc.removeListener('vault:logged-in', onUnlocked);
+    }
+  }
+}
+
 interface OAuthConnectionState {
   status: OAuthConnectionStatus;
   stageText: string;
@@ -110,6 +137,7 @@ export function useOAuthConnection(providerId: string | (() => string), provider
     get canRetry() { return this.status === 'failed' || this.status === 'cancelled'; },
   });
   let attempt = 0;
+  const vaultGate = new OAuthVaultGate();
   let resolveClaudeResult: ((result: OAuthResult) => void) | null = null;
 
   const onClaudeStage = (_event: unknown, text: unknown) => {
@@ -134,6 +162,8 @@ export function useOAuthConnection(providerId: string | (() => string), provider
     state.errorMessage = '';
     state.failureCode = null;
     try {
+      await vaultGate.waitUntilUnlocked(!!options.firstRun);
+      if (currentAttempt !== attempt) return false;
       state.status = 'waiting-for-browser';
       const claudeResult = id === 'claude-code' ? new Promise<OAuthResult>((resolve) => { resolveClaudeResult = resolve }) : null;
       const invocation: Promise<OAuthResult> = id === 'claude-code'

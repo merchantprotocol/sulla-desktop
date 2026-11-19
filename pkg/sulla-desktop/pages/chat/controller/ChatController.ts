@@ -28,6 +28,7 @@ import { popoverClosed, defaultSlashCommands } from '../models/Command';
 import { idle as runIdle, isRunning } from '../models/RunState';
 import { emptyTokenUsage } from '../models/Thread';
 import { voiceIdle } from '../models/VoiceState';
+import { MessageWindow } from '../messages/MessageWindow';
 import {
   type MessageId, type ArtifactId, type AttachmentId, type QueuedId, type ThreadId,
   newMessageId, newArtifactId, newThreadId, newQueuedId, newTurnId,
@@ -162,7 +163,10 @@ export class ChatController {
 
     const initial: ThreadState = opts.hydrateFrom ?? this.fresh();
 
-    this.thread = ref(initial.thread);
+    const initialMessages = new MessageWindow().trim(initial.thread.messages);
+    this.thread = ref(initialMessages.length === initial.thread.messages.length
+      ? initial.thread
+      : { ...initial.thread, messages: initialMessages });
     // Never resurrect a non-idle runState from a persisted snapshot (process
     // restart left it stuck on 'thinking' etc.). The backend drives
     // runState live; an idle start is always correct.
@@ -199,6 +203,7 @@ export class ChatController {
    */
   newChat(): void {
     const blank = this.fresh();
+    this.olderPagesLoaded = 0;
     this.thread.value = blank.thread;
     this.runState.value = blank.runState;
     this.queue.value = [];
@@ -230,6 +235,7 @@ export class ChatController {
     if (this.sendHandler) {
       this.staged.value = [];
       this.autoTitleFromFirstUserMessage(trimmed);
+      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('sulla:send-hop-controller', { detail: performance.now() }));
       this.sendHandler(trimmed || '(attached)', attachments, opts);
       return;
     }
@@ -371,12 +377,40 @@ export class ChatController {
     this.continueHandler = handlers.onContinue;
   }
 
+  private async deleteMessagesDurably(messageIds: MessageId[]): Promise<void> {
+    const threadId = this.thread.value.id;
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
+    await ipcRenderer.invoke('chat-messages:delete-messages', { threadId, messageIds: messageIds.map(String) });
+  }
+
   // ─── Message CRUD ───────────────────────────────────────────────
+  private olderPagesLoaded = 0;
+
+  prependOlder(messages: Message[]): void {
+    const ids = new Set(this.thread.value.messages.map(message => message.id));
+    const older = messages.filter(message => {
+      if (ids.has(message.id)) return false;
+      ids.add(message.id);
+      return true;
+    });
+    if (!older.length) return;
+    this.olderPagesLoaded++;
+    this.thread.value = { ...this.thread.value, messages: [...older, ...this.thread.value.messages], updatedAt: Date.now() };
+  }
+
+  releaseOlderPages(): void {
+    if (!this.olderPagesLoaded) return;
+    this.olderPagesLoaded = 0;
+    const messages = new MessageWindow().trim(this.thread.value.messages);
+    this.thread.value = { ...this.thread.value, messages };
+  }
+
   appendMessage(m: Message): void {
     m = this.stampAuthor(m);
+    const messages = this.olderPagesLoaded ? [...this.thread.value.messages, m] : new MessageWindow().trim([...this.thread.value.messages, m]);
     this.thread.value = {
       ...this.thread.value,
-      messages:  [...this.thread.value.messages, m],
+      messages,
       updatedAt: Date.now(),
     };
     this.bus.emit({ kind: 'messageAppended', threadId: this.thread.value.id, message: m });
@@ -420,8 +454,11 @@ export class ChatController {
     this.persist();
   }
 
-  updateMessage<T extends Message>(id: MessageId, patch: Partial<T>): void {
-    const idx = this.thread.value.messages.findIndex(m => m.id === id);
+  updateMessage<T extends Message>(id: MessageId, patch: Partial<T>, knownIndex?: number): void {
+    const messages = this.thread.value.messages;
+    const idx = knownIndex !== undefined && messages[knownIndex]?.id === id
+      ? knownIndex
+      : knownIndex === undefined ? messages.findIndex(m => m.id === id) : -1;
     if (idx < 0) return;
     const next = [...this.thread.value.messages];
     next[idx] = { ...next[idx], ...patch } as Message;
@@ -443,6 +480,7 @@ export class ChatController {
   }
 
   removeMessage(id: MessageId): void {
+    void this.deleteMessagesDurably([id]);
     this.thread.value = {
       ...this.thread.value,
       messages:  this.thread.value.messages.filter(m => m.id !== id),
@@ -467,6 +505,8 @@ export class ChatController {
     while (userIdx >= 0 && msgs[userIdx].kind !== 'user') userIdx--;
     if (userIdx < 0) return;
     const user = msgs[userIdx] as UserMessage;
+    const removedIds = msgs.slice(userIdx + 1).map(message => message.id);
+    if (removedIds.length) void this.deleteMessagesDurably(removedIds);
     this.thread.value = {
       ...this.thread.value,
       messages:  msgs.slice(0, userIdx + 1),
@@ -858,7 +898,9 @@ export class ChatController {
     // DB-restored blobs often lack it; dropping it left per-chat features
     // (heartbeat, sub-agent cards) unable to find their backend thread.
     const backendThreadId = this.thread.value.backendThreadId ?? state.thread.backendThreadId;
-    this.thread.value = backendThreadId ? { ...state.thread, backendThreadId } : state.thread;
+    const bounded = new MessageWindow().trim(state.thread.messages);
+    const restored = bounded.length === state.thread.messages.length ? state.thread : { ...state.thread, messages: bounded };
+    this.thread.value = backendThreadId ? { ...restored, backendThreadId } : restored;
     // Never rehydrate a non-idle runState across a process restart.
     // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
     // authoritative source for whether work is in flight; if we restored

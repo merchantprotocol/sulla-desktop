@@ -70,7 +70,7 @@ export class SullaFilesWatcherRequestService {
 
   async localPrincipalId():Promise<string> {
     const response = await this.rawLocalRequest('/v1/local/identity');
-    if (!response.ok) throw new Error('Files service identity is unavailable');
+    if (!response.ok) throw new Error(`Files service identity unavailable at /v1/local/identity (${ response.status })`);
     const body = await response.json() as { principalId?: unknown };
     if (typeof body.principalId !== 'string' || !body.principalId) throw new Error('Files service returned an invalid identity');
     return body.principalId;

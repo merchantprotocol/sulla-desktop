@@ -87,6 +87,8 @@ export function getIntegrationService(): IntegrationService {
 export class IntegrationService {
   private initialized = false;
   private valueCallbacks: IntegrationValueCallback[] = [];
+  private readonly activeAccountCache = new Map<string, { accountId: string; expiresAt: number }>();
+  private readonly activeAccountInflight = new Map<string, Promise<string>>();
 
   async initialize(): Promise<void> {
     if (this.initialized) {
@@ -198,10 +200,20 @@ export class IntegrationService {
   /** Get the active/default account_id for an integration */
   async getActiveAccountId(integrationId: string): Promise<string> {
     if (usesContainerVaultAuthority()) {
-      const metadata = await this.getLocalMetadata(integrationId);
-      const accountId = metadata.activeAccountId ?? metadata.accounts[0]?.accountId;
-      if (!accountId) throw new Error(`No local vault account is configured for ${ integrationId }`);
-      return accountId;
+      const cached = this.activeAccountCache.get(integrationId);
+      if (cached && cached.expiresAt > Date.now()) return cached.accountId;
+      let pending = this.activeAccountInflight.get(integrationId);
+      if (!pending) {
+        pending = (async() => {
+          const metadata = await this.getLocalMetadata(integrationId);
+          const accountId = metadata.activeAccountId ?? metadata.accounts[0]?.accountId;
+          if (!accountId) throw new Error(`No local vault account is configured for ${ integrationId }`);
+          this.activeAccountCache.set(integrationId, { accountId, expiresAt: Date.now() + 60_000 });
+          return accountId;
+        })();
+        this.activeAccountInflight.set(integrationId, pending);
+      }
+      try { return await pending; } finally { this.activeAccountInflight.delete(integrationId); }
     }
     return IntegrationValueModel.getDefaultAccountId(integrationId);
   }
@@ -209,12 +221,16 @@ export class IntegrationService {
   /** Set which account is the default for an integration.
    *  Clears is_default on all other accounts, sets it on the target. */
   async setActiveAccount(integrationId: string, accountId: string): Promise<void> {
+    this.activeAccountCache.delete(integrationId);
+    this.activeAccountInflight.delete(integrationId);
     if (usesContainerVaultAuthority()) {
       await this.setLocalActiveAccount(integrationId, accountId);
+      this.activeAccountCache.delete(integrationId);
       console.log(`[IntegrationService] Local vault active account for ${ integrationId } set to: ${ accountId }`);
       return;
     }
     await IntegrationValueModel.setDefaultAccount(integrationId, accountId);
+    this.activeAccountCache.delete(integrationId);
     console.log(`[IntegrationService] Default account for ${ integrationId } set to: ${ accountId }`);
   }
 

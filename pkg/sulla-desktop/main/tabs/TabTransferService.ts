@@ -36,7 +36,7 @@ export class TabTransferService {
   install(): void {
     this.ipc.on('tabs:transfer-ready', (event) => {
       const owner = this.agentWindowFor(event.sender);
-      if (owner) this.readyWindows.add(owner.id);
+      if (owner) this.markWindowReady(owner);
     });
     this.ipc.on('tabs:drag-start', (event, payload: TransferPayload & { tabCount?: number }) => this.start(event, payload));
     this.ipc.on('tabs:drag-end', (event, payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => {
@@ -50,6 +50,12 @@ export class TabTransferService {
         void this.transfer({ ...payload, source }, this.openAgentWindow({ bounds: { ...bounds, x: bounds.x + 40, y: bounds.y + 40 }, initialTabs: 'adopt' }), bounds.x + Math.round(bounds.width / 2), bounds.y + Math.round(bounds.height / 2));
       }
     });
+  }
+
+  private markWindowReady(owner: BrowserWindow): void {
+    if (this.readyWindows.has(owner.id)) return;
+    this.readyWindows.add(owner.id);
+    owner.once('closed', () => this.readyWindows.delete(owner.id));
   }
 
   private start(event: IpcMainEvent, payload: TransferPayload & { tabCount?: number }): void {
@@ -135,7 +141,7 @@ export class TabTransferService {
       const listener = (event: IpcMainEvent) => {
         if (event.sender.id !== target.webContents.id) return;
         clearTimeout(timer);
-        this.readyWindows.add(target.id);
+        this.markWindowReady(target);
         this.ipc.removeListener('tabs:transfer-ready', listener);
         resolve();
       };

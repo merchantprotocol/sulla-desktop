@@ -106,7 +106,7 @@ function createGroup(): void {
           <div class="tx">
             <div class="t1"><b>{{ person.name }}</b><span v-if="person.role" class="pill idle">{{ person.role }}</span></div>
             <div class="t2">{{ person.status }}</div>
-            <div class="person-agent"><ConvAvatar bot theirs :pres="person.agentOnline ? 'online' : 'offline'" /> {{ person.firstName }}'s agent <span style="color:var(--dim)">· {{ person.agentOnline ? 'online' : 'offline' }}</span></div>
+            <div v-if="person.hasAgent" class="person-agent"><ConvAvatar bot theirs :pres="person.agentOnline ? 'online' : 'offline'" /> {{ person.agentName }} <span style="color:var(--dim)">· {{ person.agentOnline ? 'online' : 'offline' }}</span></div>
           </div>
           <div v-if="!picking" class="acts">
             <button class="btn sm ghost" title="Message" @click.stop="store.openDirect(person.id)"><ConvIcon name="chat" /></button>
@@ -114,6 +114,16 @@ function createGroup(): void {
             <button class="btn sm ghost" title="Video call" disabled @click.stop><ConvIcon name="video" /></button>
           </div>
         </div>
+        <template v-if="!picking && store.invited().length">
+          <div class="lgrp">Invited · {{ store.invited().length }}</div>
+          <div v-for="invite in store.invited()" :key="invite.id" class="row">
+            <ConvAvatar :ini="invite.initials" size="lg" />
+            <div class="tx">
+              <div class="t1"><b>{{ invite.email }}</b><span class="pill warn">Invited</span></div>
+              <div class="t2">Invitation pending</div>
+            </div>
+          </div>
+        </template>
         <div v-if="picking" class="list-empty" style="display:grid;gap:8px">
           <span>{{ picked.length }} selected. A group needs at least two people.</span>
           <button class="btn sm pri" :disabled="picked.length < 2" @click="createGroup"><ConvIcon name="chat" />Start group conversation</button>

@@ -4,10 +4,15 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
+import tls from 'node:tls';
+
+import { Agent, fetch as undiciFetch } from 'undici';
 
 import Electron from 'electron';
 
+import { loopbackOrigin } from '@pkg/utils/instance';
 import paths from '@pkg/utils/paths';
 
 import type { VaultBrokerFetch, VaultBrokerServiceIdentity } from './index';
@@ -17,14 +22,18 @@ const APPROVAL_TOKEN_FILE = 'vault-approval-token.enc';
 const BROKER_SERVICE_ID = 'sulla-tools';
 const APPROVAL_SERVICE_ID = 'sulla-desktop-approval';
 const SESSION_PARTITION = 'sulla-vault-broker';
+const CONTROL_SESSION_PARTITION = 'sulla-vault-broker-control';
+const IDENTITY_TTL_MS = 60_000;
 
 /** Reads the OS-protected service identities the runtime writes when it starts the vault. */
 export class DesktopVaultIdentityRepository {
+  private readonly cache = new Map<string, { identity: VaultBrokerServiceIdentity; mtimeMs: number; expiresAt: number }>();
   // Resolved on each call so nothing touches Electron or the app home at construction.
   constructor(
     private readonly safeStorage: () => Electron.SafeStorage = () => Electron.safeStorage,
     private readonly appHome: () => string = () => paths.appHome,
     private readonly readFile: (filePath: string) => Promise<Buffer> = filePath => fs.readFile(filePath),
+    private readonly statFile: (filePath: string) => Promise<{ mtimeMs: number }> = filePath => fs.stat(filePath),
   ) {}
 
   /** Decrypt for the duration of one request; never persist plaintext identity. */
@@ -41,9 +50,10 @@ export class DesktopVaultIdentityRepository {
     if (!safeStorage.isEncryptionAvailable()) {
       throw new Error('OS-protected vault service identity is unavailable');
     }
-    let encrypted: Buffer;
+    const filePath = path.join(this.appHome(), fileName);
+    let mtimeMs: number;
     try {
-      encrypted = await this.readFile(path.join(this.appHome(), fileName));
+      mtimeMs = (await this.statFile(filePath)).mtimeMs;
     } catch (error) {
       // The runtime writes these identities when it starts the vault. Before that
       // (first launch, startup still running or failed) there is nothing to read.
@@ -52,20 +62,32 @@ export class DesktopVaultIdentityRepository {
       }
       throw error;
     }
+    const cached = this.cache.get(fileName);
+    if (cached && cached.mtimeMs === mtimeMs && cached.expiresAt > Date.now()) return cached.identity;
+    const encrypted = await this.readFile(filePath);
     const serviceToken = safeStorage.decryptString(encrypted);
     if (!serviceToken) throw new Error('Vault service identity is empty');
 
-    return { serviceId, serviceToken };
+    const identity = { serviceId, serviceToken };
+    this.cache.set(fileName, { identity, mtimeMs, expiresAt: Date.now() + IDENTITY_TTL_MS });
+    return identity;
   }
+
+  invalidate(): void { this.cache.clear(); }
 }
 
 /** Electron net transport pinned to the locally provisioned vault certificate. */
 export class DesktopVaultTransport {
   private pinnedSession: Promise<Electron.Session> | undefined;
+  private controlSession: Promise<Electron.Session> | undefined;
+  private nodeStreamDispatcher: Agent | undefined;
+  private loggedStreamTransport = false;
+  private readonly nodeFetch: typeof undiciFetch;
+  private readonly dispatcherFactory: () => Agent;
 
   constructor(
     private readonly identities: DesktopVaultIdentityRepository = new DesktopVaultIdentityRepository(),
-    private readonly sessionFactory: () => Electron.Session = () => Electron.session.fromPartition(SESSION_PARTITION, { cache: false }),
+    private readonly sessionFactory: (partition: string) => Electron.Session = partition => Electron.session.fromPartition(partition, { cache: false }),
     private readonly pinSession: (session: Electron.Session) => Promise<void> = async(session) => {
       // Loaded only in Electron main. Keeping this require lazy avoids importing
       // Electron-only TLS code when the same broker package starts in tools.
@@ -74,13 +96,95 @@ export class DesktopVaultTransport {
       };
       await configureVaultPinnedSession(session);
     },
-  ) {}
+    nodeFetch: typeof undiciFetch = undiciFetch,
+    dispatcherFactory?: () => Agent,
+  ) {
+    this.nodeFetch = nodeFetch;
+    this.dispatcherFactory = dispatcherFactory ?? (() => this.createNodeStreamDispatcher());
+  }
 
   readonly fetch: VaultBrokerFetch = async(input, init) => {
-    const session = await this.getPinnedSession();
-
-    return session.fetch(input, init);
+    const session = await this.getPinnedSession(true);
+    const response = await session.fetch(input, init);
+    if (response.status === 401 || response.status === 423) this.identities.invalidate();
+    return response;
   };
+
+  /** Explicit route for any caller whose response body remains open as a stream. */
+  readonly fetchStream: VaultBrokerFetch = async(input, init) => {
+    const useElectron = process.env.SULLA_VAULT_STREAM_TRANSPORT === 'electron';
+    if (!this.loggedStreamTransport) {
+      this.loggedStreamTransport = true;
+      console.info(`[vault-broker] stream transport: ${useElectron ? 'electron' : 'node-pinned'}`);
+    }
+    if (!useElectron) {
+      // Resolved per call: configureInstancePorts() remaps the vault port on offset instances.
+      // Comparing full origins keeps https + loopback-only enforcement and the exact port.
+      const target = new URL(input);
+      if (target.origin !== loopbackOrigin('https', 30135)) {
+        throw new Error('Vault stream transport only accepts the local vault origin');
+      }
+      const response = await this.nodeFetch(input, {
+        ...init,
+        dispatcher: this.nodeStreamDispatcher ??= this.dispatcherFactory(),
+      } as never);
+      if (response.status === 401 || response.status === 423) this.identities.invalidate();
+      return response as unknown as Response;
+    }
+    const session = await this.getPinnedSession(false);
+
+    const response = await session.fetch(input, init);
+    if (response.status === 401 || response.status === 423) this.identities.invalidate();
+    return response;
+  };
+
+  private createNodeStreamDispatcher(): Agent {
+    return new Agent({
+      connections: 64,
+      connect: (options, callback) => {
+        const hostname = typeof options.hostname === 'string' ? options.hostname : '';
+        // Explicit mapping instead of spreading undici's connector options (port is a string there, and it carries undici-only fields).
+        // Mirrors undici's buildConnector: SNI only for non-IP hostnames. The vault is loopback-only,
+        // so localAddress and connect timeouts are not needed (neither is typed on these options).
+        const socket = tls.connect({
+          host: hostname,
+          port: Number(options.port) || 443,
+          servername: options.servername ?? (net.isIP(hostname) ? undefined : hostname),
+          rejectUnauthorized: false,
+        });
+        let settled = false;
+        const fail = (error: Error) => {
+          if (settled) return;
+          settled = true;
+          callback(error, null);
+        };
+        const succeed = (connected: tls.TLSSocket) => {
+          if (settled) return;
+          settled = true;
+          callback(null, connected);
+        };
+        socket.once('error', error => fail(error));
+        socket.once('secureConnect', () => {
+          void (async() => {
+            const certificate = socket.getPeerCertificate(true);
+            const raw = certificate.raw;
+            const pem = raw ? `-----BEGIN CERTIFICATE-----\n${raw.toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----` : '';
+            const { vaultTlsPins } = require('@pkg/main/vaultTls') as typeof import('@pkg/main/vaultTls');
+            if (!pem || !await vaultTlsPins.verifyPeer(hostname, pem)) {
+              socket.destroy();
+              fail(new Error('Vault TLS certificate pin verification failed'));
+              return;
+            }
+            succeed(socket);
+          })().catch((error) => {
+            socket.destroy();
+            fail(error as Error);
+          });
+        });
+        return socket;
+      },
+    });
+  }
 
   loadBrokerIdentity(): Promise<VaultBrokerServiceIdentity> {
     return this.identities.loadBrokerIdentity();
@@ -90,20 +194,21 @@ export class DesktopVaultTransport {
     return this.identities.loadApprovalIdentity();
   }
 
-  private getPinnedSession(): Promise<Electron.Session> {
-    this.pinnedSession ??= this.createPinnedSession().catch((error) => {
-      this.pinnedSession = undefined;
+  private getPinnedSession(control: boolean): Promise<Electron.Session> {
+    const slot = control ? 'controlSession' : 'pinnedSession';
+    this[slot] ??= this.createPinnedSession(control).catch((error) => {
+      this[slot] = undefined;
       throw error;
     });
 
-    return this.pinnedSession;
+    return this[slot]!;
   }
 
-  private async createPinnedSession(): Promise<Electron.Session> {
+  private async createPinnedSession(control: boolean): Promise<Electron.Session> {
     if (!Electron.safeStorage.isEncryptionAvailable()) {
       throw new Error('OS-protected vault broker identity is unavailable');
     }
-    const session = this.sessionFactory();
+    const session = this.sessionFactory(control ? CONTROL_SESSION_PARTITION : SESSION_PARTITION);
     await this.pinSession(session);
 
     return session;

@@ -8,6 +8,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason, usageTokenTotal } from './BaseLanguageModel';
+import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
 import {
   getProviderExecutionTransport,
   requireBrokeredContainerAuth,
@@ -28,6 +29,7 @@ import {
 } from './cliFaultRecovery';
 import { legacyProviderFailure, VaultLocked } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { SupportSessionPolicy } from '../services/SupportSessionPolicy';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
 import { bindLeaseToProcess, releaseLease } from './guestClaudeBridge';
@@ -45,9 +47,35 @@ import { markSteerPending, onSteer } from '../utils/steerChannel';
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
+import { TurnHopTiming } from '../utils/turnHopTiming';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
+
+function redactClaudeDiagnostic(value: unknown, messages: ChatMessage[]): string {
+  const raw = value instanceof Error ? value.message : String(value ?? '');
+  const promptText = messages.flatMap(message => typeof message.content === 'string'
+    ? [message.content]
+    : message.content.map(block => block.type === 'text' ? block.text : '')).filter(text => text.trim().length >= 8);
+  if (promptText.some(text => raw.includes(text.trim()))) return '[omitted: stderr echoed prompt content]';
+
+  return redactLLMFailureMessage(value).slice(0, 200);
+}
+
+function logClaudeRetry(error: CliFaultError, attempt: number, messages: ChatMessage[]): void {
+  let cause: any = error.cause;
+  let diagnosticCause: any = error;
+  let exitCode: number | null | undefined;
+  let errorClass = error.name;
+  for (let depth = 0; cause && depth < 8; depth++, cause = cause.cause) {
+    diagnosticCause = cause;
+    errorClass = errorClass === error.name ? cause.name || errorClass : errorClass;
+    if (typeof cause.exitCode === 'number' || cause.exitCode === null) exitCode = cause.exitCode;
+  }
+  const diagnostic = redactClaudeDiagnostic(diagnosticCause, messages);
+  const kind = classifyLLMFailure(error).kind;
+  log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt }; error=${ errorClass }; fault=${ error.kind }; recovery=${ kind }; exitCode=${ exitCode ?? 'unknown' }; stderr=${ JSON.stringify(diagnostic) })`);
+}
 // Dedicated perf-timing log (~/Library/Logs/sulla-desktop/perf.log). All
 // latency instrumentation routes here via the Logging facility (NOT console.log,
 // which never lands in a readable file) so timing is greppable in one place.
@@ -456,7 +484,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), {}, options, false, turn), {
       signal:   options.signal,
       canRetry: () => true,
-      onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
+      maxAttempts: options.disableCliRecovery ? 1 : undefined,
+      onRetry:  (error, attempt) => logClaudeRetry(error, attempt, messages),
     });
   }
 
@@ -485,6 +514,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       profileId?:      string;
       usageEventId?:   string;
       state?:          BaseThreadState | any;
+      /** Background-only CLI calls may opt out of internal process recovery. */
+      disableCliRecovery?: boolean;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -511,7 +542,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
       const result = await runWithCliFaultRecovery('Claude Code', attempt => this.runClaude(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options, false, turn), {
         signal:   options.signal,
         canRetry: () => !toolStarted,
-        onRetry:  (_error, attempt) => log.warn(`[ClaudeCodeService] retrying failed CLI process (attempt ${ attempt })`),
+        maxAttempts: options.disableCliRecovery ? 1 : undefined,
+        onRetry:  (error, attempt) => logClaudeRetry(error, attempt, messages),
       });
       if (streamedText) result.text = streamedText;
       const response: NormalizedResponse = {
@@ -801,6 +833,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     retryWithoutSession = false,
     turn: ClaudeTurnState = { handedOff: false },
   ): Promise<{ text: string; usage?: any }> {
+    TurnHopTiming.mark(options.state, 'onActivity.Preparing your turn');
+    TurnHopTiming.emitProviderStart(options.state, 'claude', messages.length);
     const runPhaseStart = Date.now();
     const runPhaseMarks: Record<string, number> = {};
     let lastSetupMark = runPhaseStart;
@@ -954,7 +988,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
-      data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+      data:          new SupportSessionPolicy().appendSupportContext(
+        systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+        options.state?.metadata?.supportContext,
+      ),
     });
     const systemPromptPath = systemPromptFile.path;
     markPhase('systemPromptFile');
@@ -1142,6 +1179,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // prompt. Settling on that result failed the turn as "claude produced
         // no output" while the CLI went on to answer the real prompt unseen.
         let promptConsumed = false;
+        let textDeltaCount = 0;
+        let firstTextDeltaAt = 0;
 
         // ── Perf: per-tool execution timing inside the claude CLI ──────────
         // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
@@ -1513,6 +1552,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               stopHeartbeat();
               if (!firstContentAt) firstContentAt = Date.now();
               if (!firstTokenAt) { firstTokenAt = Date.now(); logRunPhase() }
+              textDeltaCount++;
+              if (!firstTextDeltaAt) firstTextDeltaAt = Date.now();
               textCollected += ev.delta.text;
               try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
               return;
@@ -1605,6 +1646,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
           // Final result event — capture full text and record usage/cost.
           if (parsed.type === 'result' && !promptConsumed && !parsed.is_error) {
+            perf.log(`[StreamHop:Claude] convId=${ convId } promptConsumed=false textDeltaCount=${ textDeltaCount } firstTextDeltaMs=${ firstTextDeltaAt ? firstTextDeltaAt - runStartedAt : -1 } resultFallback=false ignoredPrePromptResult=true`);
             log.log(`[ClaudeCodeService] ignoring result of a CLI-initiated turn that ran before this turn's prompt (convId=${ convId })`);
             textCollected = '';
             return;
@@ -1612,6 +1654,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
           if (parsed.type === 'result') {
             if (options.signal?.aborted) return;
+            const resultFallback = !parsed.is_error && typeof parsed.result === 'string' && !textCollected;
+            perf.log(`[StreamHop:Claude] convId=${ convId } promptConsumed=${ promptConsumed } textDeltaCount=${ textDeltaCount } firstTextDeltaMs=${ firstTextDeltaAt ? firstTextDeltaAt - runStartedAt : -1 } resultFallback=${ resultFallback } ignoredPrePromptResult=false`);
             sawTerminalResult = true;
             lastUsage = parsed.usage;
             // Perf summary: split the run into tool-execution time vs the rest
@@ -1911,6 +1955,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
           if (code !== 0) {
             const msg = errorMessage || stderrBuffer.trim().slice(-200) || `claude exited with code ${ code }`;
+            log.warn(`[ClaudeCodeService] runClaude exited nonzero (exitCode=${ code }; stderr=${ JSON.stringify(redactClaudeDiagnostic(stderrBuffer.trim(), messages)) })`);
             const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
             await handleClaudeAuthFailure(typedFailure);
             const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);

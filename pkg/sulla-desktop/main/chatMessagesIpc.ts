@@ -14,7 +14,9 @@ import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 export interface ChatThreadStatePort {
   saveThreadState(id: string, state: any): Promise<unknown>;
   loadThreadState(id: string): Promise<unknown>;
+  loadMessagesBefore(id: string, beforeMessageId: string, limit: number): Promise<any[]>;
   deleteThreadState(id: string): Promise<unknown>;
+  deleteMessages(threadId: string, messageIds: string[]): Promise<unknown>;
   getMessageCount(id: string): Promise<number>;
 }
 
@@ -54,6 +56,16 @@ export class ChatMessagesIpcController implements IpcController {
       }
     });
 
+    this.ipc.handle('chat-messages:load-before', async(_event, input: { threadId: string; beforeMessageId: string; limit?: number }) => {
+      try {
+        const messages = await store.loadMessagesBefore(input.threadId, input.beforeMessageId, input.limit ?? 50);
+        return { success: true, data: messages };
+      } catch (err) {
+        log.error('[ChatMessagesIpc] Failed to load older messages:', err);
+        return { success: false, error: String(err), data: [] };
+      }
+    });
+
     this.ipc.handle('chat-messages:delete', async(_event, id: string) => {
       try {
         await store.deleteThreadState(id);
@@ -64,6 +76,11 @@ export class ChatMessagesIpcController implements IpcController {
 
         return { success: false, error: String(err) };
       }
+    });
+
+    this.ipc.handle('chat-messages:delete-messages', async(_event, input: { threadId: string; messageIds: string[] }) => {
+      try { await store.deleteMessages(input.threadId, input.messageIds); return { success: true }; }
+      catch (err) { log.error('[ChatMessagesIpc] Failed to delete messages:', err); return { success: false, error: String(err) }; }
     });
 
     this.ipc.handle('chat-messages:message-count', async(_event, id: string) => {

@@ -35,11 +35,11 @@ import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // Matches the whole block (DOTALL).
 // Group 1 = channel name, Group 2 = optional attribute string, Group 3 = body.
-const CHANNEL_BLOCK_RE = /<channel:([\w.-]+)([^>]*)>([\s\S]*?)<\/channel:[\w.-]+>/gi;
+const CHANNEL_BLOCK_RE = /<channel:([\w.-]+(?:#[\w.-]+)?)([^>]*)>([\s\S]*?)<\/channel:[\w.-]+(?:#[\w.-]+)?>/gi;
 
 // Matches a partial opening tag mid-stream, so we can truncate the
 // streamed buffer before the tag surfaces in the chat bubble.
-const CHANNEL_OPEN_PARTIAL_RE = /<channel:[\w.-]*$|<channel:[\w.-]+[^>]*>[\s\S]*$/i;
+const CHANNEL_OPEN_PARTIAL_RE = /<channel:[\w.-]*(?:#[\w.-]*)?$|<channel:[\w.-]+(?:#[\w.-]+)?[^>]*>[\s\S]*$/i;
 
 export class ChannelTagExtractor implements Extractor {
   readonly name = 'channel';
@@ -64,12 +64,13 @@ export class ChannelTagExtractor implements Extractor {
 
     // 1) Dispatch + strip any fully-closed channel blocks.
     visible = visible.replace(CHANNEL_BLOCK_RE, (_full, name: string, attrs: string, body: string) => {
-      const target = String(name).trim().toLowerCase();
+      const [rawTarget, targetId] = String(name).trim().split('#', 2);
+      const target = rawTarget.toLowerCase();
       const text = String(body).trim();
-      const key = `${ target }::${ text }`;
+      const key = `${ target }#${ targetId || '' }::${ text }`;
       if (!text || this.dispatchedBodies.has(key)) return '';
       this.dispatchedBodies.add(key);
-      this.dispatchChannel(ctx, target, text, String(attrs));
+      this.dispatchChannel(ctx, target, text, String(attrs), targetId);
       return '';
     });
 
@@ -100,12 +101,13 @@ export class ChannelTagExtractor implements Extractor {
     // Final sweep on the full response — catches blocks that straddled
     // chunk boundaries during streaming.
     reply.content = reply.content.replace(CHANNEL_BLOCK_RE, (_full, name: string, attrs: string, body: string) => {
-      const target = String(name).trim().toLowerCase();
+      const [rawTarget, targetId] = String(name).trim().split('#', 2);
+      const target = rawTarget.toLowerCase();
       const text = String(body).trim();
-      const key = `${ target }::${ text }`;
+      const key = `${ target }#${ targetId || '' }::${ text }`;
       if (text && !this.dispatchedBodies.has(key)) {
         this.dispatchedBodies.add(key);
-        this.dispatchChannel(ctx, target, text, String(attrs));
+        this.dispatchChannel(ctx, target, text, String(attrs), targetId);
       }
       return '';
     });
@@ -123,7 +125,7 @@ export class ChannelTagExtractor implements Extractor {
 
   // ─── Internal ───────────────────────────────────────────────
 
-  private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string): void {
+  private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string, targetId?: string): void {
     try {
       const senderChannel = ctx.channel || (ctx.state as any)?.metadata?.wsChannel || 'unknown';
       const senderId = resolveAgentIdentity((ctx.state as any)?.metadata) || senderChannel;
@@ -137,15 +139,20 @@ export class ChannelTagExtractor implements Extractor {
       //   state.metadata.replyToThread (set by BackendGraphWebSocketService when
       //   processing a wake user_message) and echoes it here.
       const fromThreadId: string = ctx.threadId || '';
-      const replyToThread: string = (ctx.state as any)?.metadata?.replyToThread || '';
-      const metadata = (ctx.state as any)?.metadata;
-      const parentThreadId: string = metadata?.isSubAgent
-        && String(metadata?.workflowParentChannel || '') === targetChannel
-        ? String(metadata?.parentConversationId || '')
+      const metadata = (ctx.state as any)?.metadata || {};
+      const senderJobId = String(metadata.delegatedJobId || metadata.jobId || '');
+      const senderLabel = String(metadata.delegatedTaskLabel || metadata.agentLabel || metadata.agent?.name || senderId);
+      const replyToThread: string = metadata.replyToThread || '';
+      // A spawned child reports to its parent's exact session thread, not a same-channel sibling.
+      const parentThreadId: string = metadata.isSubAgent
+        && String(metadata.workflowParentChannel || '') === targetChannel
+        ? String(metadata.parentConversationId || '')
         : '';
+      const replyThreadId: string = parentThreadId || replyToThread;
       // toThreadId is the thread that should receive the reply — if this agent
-      // was woken by someone else, reply to their thread; otherwise no specific target.
-      const toThreadId: string = parentThreadId || replyToThread || fromThreadId || '';
+      // was woken by someone else (or is a child of that channel's session), reply to
+      // that thread; otherwise no specific target.
+      const toThreadId: string = replyThreadId || fromThreadId || '';
 
       const ws = getWebSocketClientService();
 
@@ -158,6 +165,7 @@ export class ChannelTagExtractor implements Extractor {
           role:          'assistant',
           senderId,
           senderChannel,
+          targetId,
           fromThreadId:  fromThreadId || undefined,
           toThreadId:    toThreadId   || undefined,
         },
@@ -170,12 +178,18 @@ export class ChannelTagExtractor implements Extractor {
         type: 'agent_inbox_message',
         data: {
           receiverChannel: targetChannel,
-          targetThreadId: toThreadId || undefined,
+          targetThreadId: !targetId && parentThreadId ? parentThreadId : undefined,
           envelope: {
             from: senderId,
             kind: 'peer',
             body,
-            ids: { messageId, threadId: fromThreadId || undefined },
+            senderChannel,
+            senderThreadId: fromThreadId || undefined,
+            senderJobId: senderJobId || undefined,
+            senderLabel,
+            targetId,
+            replyToThreadId: !targetId && replyThreadId ? replyThreadId : undefined,
+            ids: { messageId, threadId: fromThreadId || undefined, jobId: senderJobId || undefined },
           },
         },
       });

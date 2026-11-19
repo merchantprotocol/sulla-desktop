@@ -89,6 +89,9 @@
     <!-- Startup progress overlay -->
     <StartupOverlay />
 
+    <!-- A locked or not-yet-configured vault blocks every tab and route. -->
+    <VaultUnlockScreen v-if="vaultUnlockVisible" />
+
     <!-- Status Bar Footer -->
     <footer class="agent-footer">
       <div class="agent-footer-left">
@@ -155,6 +158,7 @@ import { useRoute, useRouter } from 'vue-router';
 import BrowserTab from './BrowserTab.vue';
 import ModeRail from './chat/components/chrome/ModeRail.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
+import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
 import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
@@ -164,7 +168,7 @@ import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioS
 import { openDocumentTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
-import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
+import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -177,7 +181,15 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
-const { tryAutoLogin, invalidateStatus } = useVaultUnlock();
+const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
+const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
+  statusResolved: vaultStatusResolved.value,
+  loggedIn: vaultLoggedIn.value,
+  waitingOnUnlock: waitingOnUnlock.value,
+}));
+watch(vaultUnlockVisible, (visible) => {
+  if (visible) void ipcRenderer.invoke('vault:unlock-required' as any).catch(() => undefined);
+}, { immediate: true });
 const { systemReady, showOverlay: startupOverlayVisible } = useStartupProgress();
 
 watch(systemReady, (ready) => {

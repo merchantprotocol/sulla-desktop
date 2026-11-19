@@ -16,6 +16,7 @@ import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
 import { touchChatStorageScope } from './ChatStorageGc';
 
 import type { PendingAttachment } from './AgentComposer.vue';
+import { MessageWindow } from '../chat/messages/MessageWindow';
 
 export type ChatMessage = RegistryChatMessage;
 
@@ -38,6 +39,8 @@ export class ChatInterface {
   private readonly storageScope:       string;
   private readonly messagesStorageKey: string;
   private readonly messageQueue:       ChatMessageQueue;
+  private readonly onTabClosed:        (event: Event) => void;
+  private readonly messageWindow = new MessageWindow();
 
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
@@ -65,6 +68,12 @@ export class ChatInterface {
     this.hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
     this.registry = getAgentPersonaRegistry();
     this.persona = this.registry.getOrCreatePersonaService(channelId, tabId);
+    this.onTabClosed = (event: Event) => {
+      if ((event as CustomEvent<{ tabId?: string }>).detail?.tabId === this.tabId && this.tabId) {
+        this.registry.release(this.channelId, this.tabId);
+      }
+    };
+    window.addEventListener('sulla:chat-tab-closed', this.onTabClosed);
     this.messagesRevision = computed(() => this.persona.messagesRevision.value);
 
     // Initialize message queue
@@ -80,13 +89,15 @@ export class ChatInterface {
 
     // Restore persisted messages from localStorage
     this.restoreMessages();
+    this.trimMessages();
 
     // Mirror explicit message revisions instead of deep-watching the full
     // transcript. A deep watcher traversed every historical message for every
     // stream delta before this callback even ran, recreating the renderer
     // starvation that the persistence debounce was meant to prevent.
     watch(() => this.persona.messagesRevision.value, () => {
-      this.messages.value = [...this.persona.messages];
+      this.trimMessages();
+      this.messages.value = this.persona.messages;
       this.schedulePersist();
     });
 
@@ -106,7 +117,12 @@ export class ChatInterface {
       }
     });
 
-    this.messages.value = [...this.persona.messages];
+    this.messages.value = this.persona.messages;
+  }
+
+  private trimMessages(): void {
+    const bounded = this.messageWindow.trim(this.persona.messages);
+    if (bounded.length !== this.persona.messages.length) this.persona.messages.splice(0, this.persona.messages.length, ...bounded);
   }
 
   /** Trailing-debounce timer for persistMessages — see the messages watcher. */
@@ -237,6 +253,7 @@ export class ChatInterface {
   }
 
   dispose(): void {
+    window.removeEventListener('sulla:chat-tab-closed', this.onTabClosed);
     // Flush any debounce-pending persist so the tail of the last response
     // isn't lost when the tab/component goes away inside the 500ms window.
     if (this.persistTimer) {

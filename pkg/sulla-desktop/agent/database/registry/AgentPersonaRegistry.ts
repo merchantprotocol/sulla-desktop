@@ -257,6 +257,16 @@ export class AgentPersonaRegistry {
     return this.personaServices.get(key)!;
   }
 
+  /** Release renderer-owned state for a genuinely closed tab. */
+  release(agentId: string, tabId: string): boolean {
+    const key = `${ agentId }_${ tabId }`;
+    const service = this.personaServices.get(key);
+    if (!service) return false;
+    service.stopListening();
+    this.personaServices.delete(key);
+    return true;
+  }
+
   getPersonaService(agentId: string): AgentPersonaService | undefined {
     return this.personaServices.get(agentId);
   }

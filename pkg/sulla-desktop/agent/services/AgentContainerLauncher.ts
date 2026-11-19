@@ -402,7 +402,7 @@ export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRunti
   }
 }
 
-async function removeAgentContainer(
+export async function removeAgentContainer(
   runtime: ContainerRuntimeDriver,
   id: string,
   name: string,
@@ -410,8 +410,11 @@ async function removeAgentContainer(
   caller: string,
 ): Promise<void> {
   log.info(`[AgentContainer] remove name=${ safeName(name) } reason=${ safeName(reason) } caller=${ safeName(caller) }`);
-  await runtime.remove(id);
-  liveAgentContainerNames.delete(name);
+  try {
+    await runtime.remove(id);
+  } finally {
+    liveAgentContainerNames.delete(name);
+  }
 }
 
 export async function createAgentContainer(runtime: ContainerRuntimeDriver, spec: ContainerSpec): Promise<string> {
@@ -422,18 +425,26 @@ export async function createAgentContainer(runtime: ContainerRuntimeDriver, spec
   } catch (error) {
     const message = (error as Error)?.message ?? String(error);
     if (!/conflict|already in use/i.test(message)) throw error;
-    if (liveAgentContainerNames.has(spec.name)) {
+    const trackedAsLive = liveAgentContainerNames.has(spec.name);
+    let existing: any;
+    try {
+      existing = await runtime.inspect(spec.name);
+    } catch (inspectError) {
+      const inspectMessage = (inspectError as Error)?.message ?? String(inspectError);
+      if (!/not found|no such (container|object)|does not exist/i.test(inspectMessage)) {
+        throw new AgentLaunchError('Sulla could not safely replace a stale assistant container. Please retry.', true, message);
+      }
+    }
+    const isStopped = existing && existing.State?.Running === false && existing.State?.Restarting !== true;
+    if (trackedAsLive && !isStopped && existing) {
       throw new AgentLaunchError('This chat is already using its assistant container. Please retry in a moment.', true, 'container name is owned by a live lifecycle');
     }
-    let existing: any;
-    try { existing = await runtime.inspect(spec.name) } catch {
-      throw new AgentLaunchError('Sulla could not safely replace a stale assistant container. Please retry.', true, message);
-    }
-    if (existing?.Config?.Labels?.['com.sulla.workload'] !== 'agent') {
+    if (existing && existing.Config?.Labels?.['com.sulla.workload'] !== 'agent') {
       throw new AgentLaunchError('Sulla could not safely replace the conflicting assistant container.', false, 'container name is owned by another workload');
     }
     try {
-      await runtime.remove(existing.Id ?? spec.name, true);
+      if (existing) await runtime.remove(existing.Id ?? spec.name, true);
+      liveAgentContainerNames.delete(spec.name);
       const id = await runtime.create(spec);
       liveAgentContainerNames.add(spec.name);
       return id;

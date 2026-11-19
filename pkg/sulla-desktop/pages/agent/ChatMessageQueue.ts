@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 // ChatMessageQueue.ts — Message queue for sequential processing with Windsurf-style UX
-import { ref, computed } from 'vue';
+import { ref, computed, markRaw, toRaw } from 'vue';
 
 import type { PendingAttachment } from '../pages/agent/AgentComposer.vue';
 
@@ -25,6 +25,18 @@ export class ChatMessageQueue {
   readonly isProcessing = computed(() => this.processing.value);
   readonly queueLength = computed(() => this.queue.value.length);
 
+  /** Copy queue metadata to ordinary cloneable data before a queued send reaches IPC. */
+  private plainMetadata(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+    if (value === null || typeof value !== 'object') return value;
+    const raw = toRaw(value as object);
+    const prior = seen.get(raw);
+    if (prior) return prior;
+    const copy: any = Array.isArray(raw) ? [] : {};
+    seen.set(raw, copy);
+    for (const key of Object.keys(raw)) copy[key] = this.plainMetadata((raw as any)[key], seen);
+    return copy;
+  }
+
   /**
    * Add a message to the queue
    */
@@ -33,7 +45,8 @@ export class ChatMessageQueue {
       id:        `queued_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       content,
       attachments,
-      metadata,
+      // markRaw keeps the plain copy from being re-wrapped by the deep queue ref, so shift() returns cloneable data.
+      metadata: metadata ? markRaw(this.plainMetadata(metadata) as Record<string, unknown>) : undefined,
       timestamp: Date.now(),
     };
 

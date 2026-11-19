@@ -63,6 +63,9 @@ export class VaultKeyService {
 
   private async runBootstrapProcess(): Promise<boolean> {
     if (![this.identityPath, this.masterKeyPath].every(file => fs.existsSync(file))) {
+      console.warn('[VaultKeyService] Auto-unlock skipped because vault key files are missing; the vault needs attention.');
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(false);
       return getDesktopVaultClient().status().then(status => status.unlocked, () => false);
     }
     const result = await this.bootstrapRetry.run(() => this.runIsolatedHelper('--sulla-vault-bootstrap-helper'));

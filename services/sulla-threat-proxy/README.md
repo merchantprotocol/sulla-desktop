@@ -1,12 +1,13 @@
 # Sulla threat proxy
 
 `ghcr.io/merchantprotocol/sulla-threat-proxy` scans the web traffic of agent
-containers on the Sulla runtime: mitmdump in transparent mode with two addons.
+containers on the Sulla runtime: mitmdump in transparent mode with three addons.
 
 - `addons/url_filter.py`: URL reputation (URLhaus blocklist, then Google Safe
   Browsing, then VirusTotal). A blocked request gets HTTP 451 with a JSON body;
   the upstream connection is never opened (`connection_strategy=lazy`).
 - `addons/prompt_injection.py`: flags prompt-injection patterns in response bodies.
+- `addons/memory_hygiene.py`: periodically collects cyclic garbage and trims the libc heap; `SULLA_PROXY_GC_INTERVAL_S` defaults to 15 seconds and `SULLA_PROXY_GC_EVERY_CONNECTIONS` defaults to 200 closed connections.
 - `addons/common.py`: logging (JSON lines on stdout), config, verdict cache, allowlist.
 
 ## How traffic reaches it

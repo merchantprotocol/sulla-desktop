@@ -36,7 +36,7 @@ import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionH
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
-import { DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
+import { AmbiguousAgentInboxTargetError, NoAgentInboxTargetError, DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
 import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
 import { postgresClient } from '../database/PostgresClient';
 
@@ -45,6 +45,7 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
+import { SupportSessionPolicy } from './SupportSessionPolicy';
 import { AgentTurnStopper } from './AgentTurnStopper';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -71,6 +72,14 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
+const CONVERSATION_CONTAINER_SWITCH_WAIT_MS = 10 * 60_000;
+
+class ConversationContainerBusyError extends Error {
+  constructor() {
+    super('A conversation container is still in use by another channel.');
+    this.name = 'ConversationContainerBusyError';
+  }
+}
 
 /**
  * Folder key for a conversation container's workspace and provider homes.
@@ -125,6 +134,22 @@ export class BackendGraphWebSocketService {
     idleTimer: ReturnType<typeof setTimeout>;
   }>();
   private conversationContainerStarts = new Map<string, Promise<import('./AgentContainerLauncher').AgentContainerLifecycle>>();
+
+  private hasActiveRunOnAnotherChannel(channelId: string, threadId: string): boolean {
+    const currentKey = this.abortKey(channelId, threadId);
+    return [...this.activeAborts.keys()].some(key => key !== currentKey && key.endsWith(`|${ threadId }`));
+  }
+
+  private async waitForOtherChannelRun(channelId: string, threadId: string): Promise<void> {
+    const deadline = Date.now() + CONVERSATION_CONTAINER_SWITCH_WAIT_MS;
+    while (this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
+      if (Date.now() >= deadline) {
+        const { AgentLaunchError } = await import('./AgentContainerLauncher');
+        throw new AgentLaunchError('This conversation is still busy with another agent\'s turn. Send your message again when it finishes.', true);
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
 
   private abortKey(channelId: string, threadId: string): string {
     return `${ channelId }|${ threadId }`;
@@ -261,7 +286,7 @@ export class BackendGraphWebSocketService {
     this.inboxRunGuard = dependencies.inboxRunGuard ?? new ReceiverRunGuard();
     this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(
       agentJobProvider.jobs,
-      channel => this.inboxThread({ channel }) ?? GraphRegistry.findThreadByChannel(channel),
+      channel => GraphRegistry.findThreadsByChannel(channel).map(candidate => ({ ...candidate, executing: this.hasActiveRun(channel, candidate.threadId) || this.inboxRunGuard.isActive({ channel, threadId: candidate.threadId }) })),
     );
     this.agentInbox = new AgentInbox(repository, {
       isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
@@ -468,14 +493,36 @@ export class BackendGraphWebSocketService {
     state: AgentGraphState,
   ): Promise<import('./AgentContainerLauncher').AgentContainerLifecycle> {
     const key = threadId;
-    const starting = this.conversationContainerStarts.get(key);
-    if (starting) return starting;
-    const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
-    this.conversationContainerStarts.set(key, start);
-    try {
-      return await start;
-    } finally {
-      if (this.conversationContainerStarts.get(key) === start) this.conversationContainerStarts.delete(key);
+    const agentId = String((state.metadata as any).agentId ?? state.metadata.wsChannel ?? '');
+    for (;;) {
+      const existing = this.conversationContainers.get(key);
+      if (existing && !existing.lifecycle.closed && existing.agentId !== agentId && this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
+        // Do not kill or lend another agent's lifecycle to a parallel channel turn.
+        // Wait outside the creation lock so the existing run can still reacquire its container.
+        await this.waitForOtherChannelRun(channelId, threadId);
+        continue;
+      }
+      const starting = this.conversationContainerStarts.get(key);
+      if (starting) {
+        // A cross-agent replacement may be waiting for another channel's active turn.
+        // Let that turn keep using its own lifecycle while the new agent waits.
+        if (existing && !existing.lifecycle.closed && existing.agentId === agentId &&
+            [...this.activeAborts.keys()].some(activeKey => activeKey.endsWith(`|${ threadId }`))) {
+          return existing.lifecycle;
+        }
+        await starting.catch(() => undefined);
+        continue;
+      }
+      const start = this.createOrReuseConversationContainer(channelId, threadId, provider, state, key);
+      this.conversationContainerStarts.set(key, start);
+      try {
+        return await start;
+      } catch (error) {
+        if (error instanceof ConversationContainerBusyError) continue;
+        throw error;
+      } finally {
+        if (this.conversationContainerStarts.get(key) === start) this.conversationContainerStarts.delete(key);
+      }
     }
   }
 
@@ -503,6 +550,9 @@ export class BackendGraphWebSocketService {
       return existing.lifecycle;
     }
     if (existing) {
+      if (existing.agentId !== agentId && this.hasActiveRunOnAnotherChannel(channelId, threadId)) {
+        throw new ConversationContainerBusyError();
+      }
       clearTimeout(existing.idleTimer);
       await existing.lifecycle.close(existing.agentId === agentId ? 'provider-or-model-switch' : 'agent-switch', 'BackendGraphWebSocketService.conversationContainer')
         .catch(error => console.warn('[BackendGraphWS] Failed to close dead conversation container:', error));
@@ -722,7 +772,23 @@ export class BackendGraphWebSocketService {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const envelope = data?.envelope;
       if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
-      const target = await this.inboxReceiverResolver.resolve(channelId, data?.targetThreadId);
+      let target: AgentInboxTarget;
+      try {
+        target = await this.inboxReceiverResolver.resolve(channelId, envelope.targetId, envelope.replyToThreadId ?? data?.targetThreadId);
+      } catch (error) {
+        if (error instanceof AmbiguousAgentInboxTargetError || error instanceof NoAgentInboxTargetError) {
+          const senderChannel = String(envelope.senderChannel || '');
+          const senderThreadId = String(envelope.senderThreadId || '');
+          if (senderChannel && senderThreadId) {
+            await this.agentInbox.receive({
+              envelope: { from: channelId, kind: 'blocker', body: `Peer message was not delivered: ${error.message} Re-address the message using <channel:${channelId}#threadId-or-jobId>... if needed.`, senderChannel: channelId, ids: { messageId: nextMessageId() } },
+              target: { channel: senderChannel, threadId: senderThreadId, agentId: senderChannel },
+            });
+          } else console.warn('[BackendGraphWS] peer routing error could not wake sender: sender thread/channel missing', { senderChannel, senderThreadId });
+          return;
+        }
+        throw error;
+      }
       await this.agentInbox.receive({
         envelope,
         target,
@@ -758,6 +824,7 @@ export class BackendGraphWebSocketService {
       // but idle graph would just hold the message with nobody to read it.
       const existing = this.activeAborts.has(this.abortKey(channelId, threadId)) ? GraphRegistry.get(threadId) : undefined;
       if (existing) {
+        await this.applySupportSessionCapability(existing.state, data?.metadata);
         // Run in flight — steer it without starting a new execution
         const attachments = data?.metadata?.attachments as any[] | undefined;
         const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -803,6 +870,7 @@ export class BackendGraphWebSocketService {
     // falling through to a disconnected new dispatchToAgent turn below.
     const parkedWaiter = typeof data?.threadId === 'string' && agentJobLifecycle.hasLiveWaiter(data.threadId);
     if (content && delegated && (parkedWaiter || (delegated.state.metadata as any)?.delegatedRunActive)) {
+      await this.applySupportSessionCapability(delegated.state, data?.metadata);
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
@@ -834,6 +902,23 @@ export class BackendGraphWebSocketService {
     const inputSource = metadata?.inputSource as string | undefined;
 
     await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, metadata);
+  }
+
+  private async applySupportSessionCapability(state: AgentGraphState, metadata?: Record<string, unknown>): Promise<void> {
+    const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
+      ? metadata.supportSessionId : '';
+    if (supportSessionId) {
+      const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
+      state.metadata.supportSessionId = supportSessionId;
+      state.metadata.allowedToolNames = supportTabTools;
+      state.metadata.supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
+      (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
+    } else if (state.metadata.supportSessionId && new SupportSessionPolicy().shouldClearCapability(metadata)) {
+      delete state.metadata.supportSessionId;
+      delete state.metadata.allowedToolNames;
+      delete state.metadata.supportContext;
+      delete (state as any).llmTools;
+    }
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<AgentInboxDeliveryReceipt> {
@@ -933,20 +1018,7 @@ export class BackendGraphWebSocketService {
       // fixed tool set here rather than trusting renderer-provided names. If an
       // active session ends, the tab omits the id and the old capability is
       // synchronously removed before this turn can execute.
-      const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
-        ? metadata.supportSessionId : '';
-      if (supportSessionId) {
-        (state.metadata as any).supportSessionId = supportSessionId;
-        const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
-        (state.metadata as any).allowedToolNames = supportTabTools;
-        (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
-        (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
-      } else if ((state.metadata as any).supportSessionId) {
-        delete (state.metadata as any).supportSessionId;
-        delete (state.metadata as any).allowedToolNames;
-        delete (state.metadata as any).supportContext;
-        delete (state as any).llmTools;
-      }
+      await this.applySupportSessionCapability(state, metadata);
 
       // A saved/cached thread carries a historical copy of its agent config.
       // Run-location is deployment policy, so resolve it from the canonical row

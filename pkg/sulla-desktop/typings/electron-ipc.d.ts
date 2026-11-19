@@ -195,6 +195,8 @@ export interface IpcMainEvents {
 
   // #region IPC Message Bus
   'message-bus:send': (channelId: string, message: any) => void;
+  /** Content-free renderer send timing. */
+  'send-hop:log': (payload: { threadId: string; messageCount: number; marks: Record<string, number> }) => void;
   // #endregion
 
   // #region Routine menu context (renderer → main)
@@ -267,6 +269,8 @@ export interface IpcMainInvokeEvents {
   'org-conversations:directory': (org?: string) => { membership: { orgId: string; name: string }; directory: { people: readonly unknown[] } };
   'org-conversations:inbox': (org?: string) => { membership: { orgId: string; name: string }; messages: readonly import('@sulla/domain').MessageEnvelope['data'][] };
   'org-conversations:contact-requests': (org?: string) => { requests: readonly import('@sulla/domain').MessageEnvelope['data'][] };
+  'org-conversations:memberships': (org?: string) => { memberships: { userId: string; name: string; role: 'owner' | 'admin' | 'member'; joinedAt: string; isPayer: boolean }[] };
+  'org-conversations:invitations': (org?: string) => { invitations: { id: string; email: string; expiresAt: string }[] };
   'org-conversations:participant': (org?: string) => { membership: { orgId: string; name: string }; userId: string };
   'org-conversations:start': (request: { orgId: string; participantUserIds: string[]; kind?: 'direct' | 'group' | 'agent_thread' }) => { membership: { orgId: string; name: string }; conversationId: string };
   'org-conversations:send': (input: { orgId: string; conversationId: string; toUserIds: string[]; text: string }) => { messageId: string; message: import('@sulla/domain').MessageEnvelope['data'] };
@@ -1232,7 +1236,9 @@ export interface IpcMainInvokeEvents {
   // #region Chat Messages (persistent storage with DB fallback)
   'chat-messages:save':          (id: string, state: any) => { success: boolean; error?: string };
   'chat-messages:load':          (id: string) => { success: boolean; data?: any; error?: string };
+  'chat-messages:load-before':   (input: { threadId: string; beforeMessageId: string; limit?: number }) => { success: boolean; data?: any[]; error?: string };
   'chat-messages:delete':        (id: string) => { success: boolean; error?: string };
+  'chat-messages:delete-messages': (input: { threadId: string; messageIds: string[] }) => { success: boolean; error?: string };
   'chat-messages:message-count': (id: string) => { success: boolean; count: number; error?: string };
   'conversation-messages:append': (input: import('@pkg/agent/database/models/ConversationMessagesModel').AppendConversationMessageInput | import('@pkg/agent/database/models/ConversationMessagesModel').AppendConversationMessageInput[]) => { success: boolean; error?: string };
   'conversation-messages:list': (conversationId: string, opts?: import('@pkg/agent/database/models/ConversationMessagesModel').ListConversationMessagesOptions) => { success: boolean; data: import('@pkg/agent/database/models/ConversationMessagesModel').ConversationMessageRecord[]; error?: string };

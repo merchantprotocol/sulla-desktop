@@ -11,6 +11,7 @@ import ConvAvatar from './ConvAvatar.vue';
 import ConvIcon from './ConvIcon.vue';
 
 const store = useConvStore();
+defineProps<{ loading?: boolean }>();
 const org = computed(() => store.org());
 const me = computed(() => store.me());
 const counts = computed(() => store.navCounts());
@@ -36,7 +37,7 @@ function setTab(tab: ListTab): void { store.setListTab(tab); }
     <div class="brand"><div class="mark"><ConvIcon name="robot" /></div><div><b>Sulla</b><span>Conversations</span></div></div>
     <button class="orgbtn" :class="{ open: store.s.orgMenu }" title="Switch organization" @click="store.toggleOrgMenu()">
       <span class="ochip" :style="{ background: org.gradient }">{{ org.initials }}</span>
-      <span class="nm2"><b>{{ org.name || 'No organization' }}</b><small>{{ orgSubtitle }}</small></span>
+      <span class="nm2"><b>{{ org.name || (loading ? 'Loading organizations…' : 'No organization') }}</b><small>{{ loading && !org.name ? 'Connecting to Sulla Cloud' : orgSubtitle }}</small></span>
       <ConvIcon name="chev" />
     </button>
     <a href="#" :class="{ on: store.s.listTab === 'threads' }" @click.prevent="setTab('threads')"><ConvIcon name="chat" /><span>All conversations</span><span v-if="counts.threads" class="cnt hot">{{ counts.threads }}</span></a>
@@ -59,7 +60,7 @@ function setTab(tab: ListTab): void { store.setListTab(tab); }
         <span><b>{{ item.name }}</b><small>{{ item.memberCount }} member{{ item.memberCount === 1 ? '' : 's' }}</small></span>
         <span class="r"><ConvIcon v-if="store.s.org === item.id" name="check" /></span>
       </button>
-      <p v-if="!store.orgs().length" class="of">You're not in an organization yet.</p>
+      <p v-if="!store.orgs().length && !loading" class="of">You're not in an organization yet.</p>
     </div>
   </nav>
 </template>
