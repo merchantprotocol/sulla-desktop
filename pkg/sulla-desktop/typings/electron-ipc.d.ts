@@ -1351,6 +1351,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'sulla:theme-changed': (theme: string) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
