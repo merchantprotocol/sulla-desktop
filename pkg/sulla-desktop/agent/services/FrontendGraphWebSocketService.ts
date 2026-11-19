@@ -10,6 +10,7 @@ import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from
 import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { saveThreadState } from '../nodes/ThreadStateStore';
+import { SupportSessionPolicy } from './SupportSessionPolicy';
 
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
 
@@ -157,7 +158,7 @@ export class FrontendGraphWebSocketService {
       (state.metadata as any).allowedToolNames = supportTabTools;
       (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
       (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
-    } else if ((state.metadata as any).supportSessionId) {
+    } else if ((state.metadata as any).supportSessionId && new SupportSessionPolicy().shouldClearCapability(metadata)) {
       delete (state.metadata as any).supportSessionId;
       delete (state.metadata as any).allowedToolNames;
       delete (state.metadata as any).supportContext;

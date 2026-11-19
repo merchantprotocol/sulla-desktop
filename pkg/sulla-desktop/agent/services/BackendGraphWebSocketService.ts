@@ -45,6 +45,7 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
+import { SupportSessionPolicy } from './SupportSessionPolicy';
 import { AgentTurnStopper } from './AgentTurnStopper';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -823,6 +824,7 @@ export class BackendGraphWebSocketService {
       // but idle graph would just hold the message with nobody to read it.
       const existing = this.activeAborts.has(this.abortKey(channelId, threadId)) ? GraphRegistry.get(threadId) : undefined;
       if (existing) {
+        await this.applySupportSessionCapability(existing.state, data?.metadata);
         // Run in flight — steer it without starting a new execution
         const attachments = data?.metadata?.attachments as any[] | undefined;
         const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -868,6 +870,7 @@ export class BackendGraphWebSocketService {
     // falling through to a disconnected new dispatchToAgent turn below.
     const parkedWaiter = typeof data?.threadId === 'string' && agentJobLifecycle.hasLiveWaiter(data.threadId);
     if (content && delegated && (parkedWaiter || (delegated.state.metadata as any)?.delegatedRunActive)) {
+      await this.applySupportSessionCapability(delegated.state, data?.metadata);
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
@@ -899,6 +902,23 @@ export class BackendGraphWebSocketService {
     const inputSource = metadata?.inputSource as string | undefined;
 
     await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, metadata);
+  }
+
+  private async applySupportSessionCapability(state: AgentGraphState, metadata?: Record<string, unknown>): Promise<void> {
+    const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
+      ? metadata.supportSessionId : '';
+    if (supportSessionId) {
+      const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
+      state.metadata.supportSessionId = supportSessionId;
+      state.metadata.allowedToolNames = supportTabTools;
+      state.metadata.supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
+      (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
+    } else if (state.metadata.supportSessionId && new SupportSessionPolicy().shouldClearCapability(metadata)) {
+      delete state.metadata.supportSessionId;
+      delete state.metadata.allowedToolNames;
+      delete state.metadata.supportContext;
+      delete (state as any).llmTools;
+    }
   }
 
   private async dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>): Promise<AgentInboxDeliveryReceipt> {
@@ -998,20 +1018,7 @@ export class BackendGraphWebSocketService {
       // fixed tool set here rather than trusting renderer-provided names. If an
       // active session ends, the tab omits the id and the old capability is
       // synchronously removed before this turn can execute.
-      const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
-        ? metadata.supportSessionId : '';
-      if (supportSessionId) {
-        (state.metadata as any).supportSessionId = supportSessionId;
-        const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
-        (state.metadata as any).allowedToolNames = supportTabTools;
-        (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
-        (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
-      } else if ((state.metadata as any).supportSessionId) {
-        delete (state.metadata as any).supportSessionId;
-        delete (state.metadata as any).allowedToolNames;
-        delete (state.metadata as any).supportContext;
-        delete (state as any).llmTools;
-      }
+      await this.applySupportSessionCapability(state, metadata);
 
       // A saved/cached thread carries a historical copy of its agent config.
       // Run-location is deployment policy, so resolve it from the canonical row
