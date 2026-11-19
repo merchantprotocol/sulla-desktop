@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ACTING_NATIVE_TOOL_DENYLIST, BASE_DISALLOWED_TOOLS, ClaudeToolPolicy, DELEGATED_NATIVE_TOOL_DENYLIST, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST } from '../../languagemodels/claudeToolPolicy';
+import { ACTING_NATIVE_TOOL_DENYLIST, BASE_DISALLOWED_TOOLS, ClaudeToolPolicy, DELEGATED_NATIVE_TOOL_DENYLIST, SUBCONSCIOUS_NATIVE_TOOL_DENYLIST, SUPPORT_NATIVE_TOOL_DENYLIST } from '../../languagemodels/claudeToolPolicy';
 
 describe('delegated Claude native-tool policy', () => {
   const policy = new ClaudeToolPolicy();
@@ -33,5 +33,12 @@ describe('delegated Claude native-tool policy', () => {
     expect(denied).toEqual(expect.arrayContaining(BASE_DISALLOWED_TOOLS.split(' ')));
     expect(denied).toEqual(expect.arrayContaining(SUBCONSCIOUS_NATIVE_TOOL_DENYLIST.split(' ')));
     expect(denied).not.toContain('SendMessage');
+  });
+
+  it('restricts support chats to the gated Sulla support RPC transport', () => {
+    // risk: permissions — remote support must not get the normal filesystem, network, browser, or code-editing tools.
+    const denied = policy.disallowedToolsFor({ supportSessionId: 'support-session-12345678' }).split(' ');
+    expect(denied).toEqual(expect.arrayContaining(SUPPORT_NATIVE_TOOL_DENYLIST.split(' ')));
+    expect(denied).not.toContain('Bash');
   });
 });

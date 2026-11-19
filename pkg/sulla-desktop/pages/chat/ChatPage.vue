@@ -367,6 +367,9 @@ const adapter = new PersonaAdapter(controller, {
   supportSessionId:    props.supportSessionId,
   supportToolNames:    props.supportToolNames,
 });
+watch(() => [props.supportSessionId, props.supportToolNames] as const, ([sessionId, names]) => {
+  adapter.setSupportSessionContext(sessionId, names || []);
+}, { immediate: true });
 const onSupportPrompt = (event:Event) => {
   const detail = (event as CustomEvent<{tabId?:string;text?:string}>).detail;
   if (!props.supportSessionId || detail?.tabId !== props.tabId || !detail.text) return;

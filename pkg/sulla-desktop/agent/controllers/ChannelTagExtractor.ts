@@ -116,10 +116,16 @@ export class ChannelTagExtractor implements Extractor {
       const senderLabel = String(metadata.delegatedTaskLabel || metadata.agentLabel || metadata.agent?.name || senderId);
       const replyToThread: string = metadata.replyToThread || '';
       const fromThreadId: string = ctx.threadId || '';
+      // A spawned child reports to its parent's exact session thread, not a same-channel sibling.
+      const parentThreadId: string = metadata.isSubAgent
+        && String(metadata.workflowParentChannel || '') === targetChannel
+        ? String(metadata.parentConversationId || '')
+        : '';
+      const replyThreadId: string = parentThreadId || replyToThread;
       const ws = getWebSocketClientService();
-      void ws.send(targetChannel, { type: 'agent_inbox_message', data: { receiverChannel: targetChannel, envelope: { from: senderId, kind: 'peer', body, senderChannel, senderThreadId: fromThreadId || undefined, senderJobId: senderJobId || undefined, senderLabel, targetId, replyToThreadId: !targetId && replyToThread ? replyToThread : undefined, ids: { messageId, threadId: fromThreadId || undefined, jobId: senderJobId || undefined } } } });
+      void ws.send(targetChannel, { type: 'agent_inbox_message', data: { receiverChannel: targetChannel, targetThreadId: !targetId && parentThreadId ? parentThreadId : undefined, envelope: { from: senderId, kind: 'peer', body, senderChannel, senderThreadId: fromThreadId || undefined, senderJobId: senderJobId || undefined, senderLabel, targetId, replyToThreadId: !targetId && replyThreadId ? replyThreadId : undefined, ids: { messageId, threadId: fromThreadId || undefined, jobId: senderJobId || undefined } } } });
       const action = /\b(?:interrupt|wake)\b/i.test(attrs) ? 'inbox (legacy modifier ignored)' : 'inbox';
-      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } chars=${ body.length }`);
+      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } replyThread=${ replyThreadId.slice(-8) } chars=${ body.length }`);
     } catch (err) { console.warn('[ChannelTagExtractor] dispatch failed:', err); }
   }
 }

@@ -48,6 +48,19 @@ describe('SullaUseCaseFilesRequest', () => {
     expect(ordinary).toHaveBeenCalledTimes(1);
   });
 
+  it('gives scan requests an extended timeout and identifies the endpoint when transport fails', async() => {
+    // risk: published Use Cases never activate when large listings/previews exceed the generic Files timeout
+    const request = vi.fn(async(_endpoint:string, init?:RequestInit) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      throw new DOMException('aborted', 'TimeoutError');
+    });
+    const scanner = new SullaUseCaseFiles(request);
+
+    await expect((scanner as any).areas()).rejects.toThrow('Files request /v1/local/system-areas failed: aborted');
+    expect(request).toHaveBeenCalledTimes(1);
+    scanner.stop();
+  });
+
   it('retries a failed scheduled scan after local Files credentials become available and records the successful scan', async() => {
     // risk: published Use Cases never activate because one boot-time 401 permanently prevents indexing
     let serviceCredential:string | undefined;
@@ -63,7 +76,7 @@ describe('SullaUseCaseFilesRequest', () => {
     const scanner = new SullaUseCaseFiles((endpoint, init) => transport.send(endpoint, init));
 
     await (scanner as any).runScheduledScan();
-    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('SET last_error=$1'), ['Files system areas unavailable (401)']);
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('SET last_error=$1'), ['Files request /v1/local/system-areas failed (401)']);
 
     serviceCredential = 'available-after-vault-unlock';
     await (scanner as any).runScheduledScan();

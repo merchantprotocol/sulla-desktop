@@ -58,6 +58,7 @@ export class PersonaAdapter {
   private readonly voiceAgentRouting = new VoiceAgentRouting();
   private readonly voiceTranscriptTagger = new VoiceTranscriptTagger();
   private readonly optimisticSendFeedback: OptimisticSendFeedback;
+  private supportOptions: PersonaAdapterOptions;
   private ci:           ChatInterface;
   private readonly tabId?: string;
   private stopWatchers: WatchStopHandle[] = [];
@@ -120,8 +121,8 @@ export class PersonaAdapter {
     opts: PersonaAdapterOptions = {},
   ) {
     this.tabId = opts.tabId;
+    this.supportOptions = { ...opts };
     this.optimisticSendFeedback = new OptimisticSendFeedback(this.controller);
-    (this as any)._supportOptions = opts;
     this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.persistentArtifacts = new Set(
       this.controller.artifacts.value.list.filter(artifact => artifact.persistent).map(artifact => artifact.id),
@@ -354,12 +355,16 @@ export class PersonaAdapter {
 
   // ─── Intents dispatched by the controller ──────────────────────────
   private supportSessionMetadata():Record<string, unknown> {
-    const options = (this as any)._supportOptions as PersonaAdapterOptions | undefined;
+    const options = this.supportOptions;
     return options?.supportSessionId ? {
       supportSessionId: options.supportSessionId,
       allowedToolNames: options.supportToolNames || [],
       supportContext: `Remote support session ${ options.supportSessionId }. Use only the support.* tools available in this session. The target scope is the user's Sulla runtime VM/services; never their host, Files, vault, passwords, or chats. Every tool call is visible in the session transcript and activity log.`,
     } : {};
+  }
+
+  setSupportSessionContext(supportSessionId?: string, supportToolNames: string[] = []): void {
+    this.supportOptions = { ...this.supportOptions, supportSessionId, supportToolNames: [...supportToolNames] };
   }
 
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {

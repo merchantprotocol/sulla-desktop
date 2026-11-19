@@ -21,6 +21,7 @@ import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBu
 import { FilesListingPager } from '../agent/files/FilesListingPager';
 
 const USE_CASE_ROW_LIMIT = 20_000;
+const USE_CASE_REQUEST_TIMEOUT_MS = 120_000;
 
 const console = Logging.background;
 const ROOT = 'Use Cases';
@@ -105,9 +106,19 @@ export class SullaUseCaseFiles {
     }
   }
 
+  private async requestFiles(endpoint:string, init:RequestInit = {}):Promise<Response> {
+    try {
+      return await this.request(endpoint, { ...init, signal:init.signal ?? AbortSignal.timeout(USE_CASE_REQUEST_TIMEOUT_MS) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Files request ${ endpoint } failed: ${ message }`, { cause:error });
+    }
+  }
+
   private async areas():Promise<{ id:string; systemArea:string }[]> {
-    const response = await this.request('/v1/local/system-areas');
-    if (!response.ok) throw new Error(`Files system areas unavailable (${ response.status })`);
+    const endpoint = '/v1/local/system-areas';
+    const response = await this.requestFiles(endpoint);
+    if (!response.ok) throw new Error(`Files request ${ endpoint } failed (${ response.status })`);
     return response.json();
   }
 
@@ -118,7 +129,7 @@ export class SullaUseCaseFiles {
    */
   private async list(collectionId:string):Promise<FilesRow[]> {
     const rows:FilesRow[] = [];
-    for await (const page of FilesListingPager.pages<FilesRow>(url => this.request(url), '/v1/files', { collectionId, path: ROOT })) {
+    for await (const page of FilesListingPager.pages<FilesRow>(url => this.requestFiles(url), '/v1/files', { collectionId, path: ROOT })) {
       if (rows.length + page.length > USE_CASE_ROW_LIMIT) throw new Error(`Use Cases folder exceeds ${ USE_CASE_ROW_LIMIT } files; nothing was activated or disabled`);
       rows.push(...page);
     }
@@ -126,8 +137,9 @@ export class SullaUseCaseFiles {
   }
 
   private async content(file:FilesRow, versionId:string):Promise<Buffer> {
-    const response = await this.request(`/v1/files/${ encodeURIComponent(file.id) }/preview?versionId=${ encodeURIComponent(versionId) }`);
-    if (!response.ok) throw new Error(`${ file.path }: published content unavailable (${ response.status })`);
+    const endpoint = `/v1/files/${ encodeURIComponent(file.id) }/preview?versionId=${ encodeURIComponent(versionId) }`;
+    const response = await this.requestFiles(endpoint);
+    if (!response.ok) throw new Error(`Files request ${ endpoint } failed (${ response.status }); ${ file.path } published content unavailable`);
     return Buffer.from(await response.arrayBuffer());
   }
 
@@ -144,11 +156,12 @@ export class SullaUseCaseFiles {
     const hash = crypto.createHash('sha256').update(body).digest('hex');
     const query = new URLSearchParams({ collectionId, path });
     const payload = new ArrayBuffer(body.byteLength); new Uint8Array(payload).set(body);
-    const ingested = await this.request(`/v1/local/system-areas/ingest?${ query }`, { method:'PUT', headers:{ 'content-type':'application/octet-stream', 'x-sulla-source-hash':hash }, body:payload });
-    if (!ingested.ok) throw new Error(`Could not export ${ path } (${ ingested.status }): ${ await ingested.text() }`);
+    const endpoint = `/v1/local/system-areas/ingest?${ query }`;
+    const ingested = await this.requestFiles(endpoint, { method:'PUT', headers:{ 'content-type':'application/octet-stream', 'x-sulla-source-hash':hash }, body:payload });
+    if (!ingested.ok) throw new Error(`Files request ${ endpoint } failed (${ ingested.status }): ${ await ingested.text() }`);
     const row = await ingested.json() as { id:string; current_version_id:string };
-    const published = await this.request(`/v1/files/${ encodeURIComponent(row.id) }/versions/${ encodeURIComponent(row.current_version_id) }/publish`, { method:'POST', body:json({ comment:'Initial Postgres use-case export' }) });
-    if (!published.ok) throw new Error(`Could not publish ${ path } (${ published.status }): ${ await published.text() }`);
+    const published = await this.requestFiles(`/v1/files/${ encodeURIComponent(row.id) }/versions/${ encodeURIComponent(row.current_version_id) }/publish`, { method:'POST', body:json({ comment:'Initial Postgres use-case export' }) });
+    if (!published.ok) throw new Error(`Files request /v1/files/${ encodeURIComponent(row.id) }/versions/${ encodeURIComponent(row.current_version_id) }/publish failed (${ published.status }): ${ await published.text() }`);
   }
 
   /** Publish a human-authored use-case package through Files, never Postgres. */
@@ -177,8 +190,8 @@ export class SullaUseCaseFiles {
       const [type, slug, ...rest] = relative.split('/');
       if (!(TYPES as readonly string[]).includes(type) || !slug || live.has(`${ type }/${ slug }`)) continue;
       const target = `${ ROOT }/_legacy-import/${ type }/${ slug }/${ rest.join('/') }`;
-      const moved = await this.request('/v1/local/system-areas/move', { method:'POST', body:json({ fileId:file.id, targetPath:target }) });
-      if (!moved.ok) throw new Error(`Could not retain legacy import ${ file.path } (${ moved.status }): ${ await moved.text() }`);
+      const moved = await this.requestFiles('/v1/local/system-areas/move', { method:'POST', body:json({ fileId:file.id, targetPath:target }) });
+      if (!moved.ok) throw new Error(`Files request /v1/local/system-areas/move failed (${ moved.status }) for ${ file.path }: ${ await moved.text() }`);
     }
     for (const item of definitions) {
       const artifact = await readDatabaseArtifact(item.kind, item.slug);
@@ -191,7 +204,7 @@ export class SullaUseCaseFiles {
   }
 
   private async auditError(file:FilesRow|undefined, versionId:string|undefined, message:string):Promise<void> {
-    await this.request('/v1/local/system-areas/audit', { method:'POST', body:json({ fileId:file?.id, versionId, action:'use-case-index-error', details:{ message } }) }).catch(() => undefined);
+    await this.requestFiles('/v1/local/system-areas/audit', { method:'POST', body:json({ fileId:file?.id, versionId, action:'use-case-index-error', details:{ message } }) }).catch(() => undefined);
     if (Notification.isSupported()) new Notification({ title:'Use Case wasn\'t activated', body:message.slice(0, 240) }).show();
   }
 
@@ -275,6 +288,7 @@ export class SullaUseCaseFiles {
       const groups = new Map<string,FilesRow[]>();
       for (const row of relevant) { const [type,slug] = row.path.slice(`${ROOT}/`.length).split('/'); if (!(TYPES as readonly string[]).includes(type) || !slug) continue; const key=`${type}/${slug}`; groups.set(key,[...(groups.get(key)??[]),row]) }
       const active = new Set<string>();
+      let activated = 0;
       for (const [key, packageRows] of groups) {
         const [type,slug]=key.split('/') as [UseCaseType,string];
         if (!packageRows.some(row => activePublishedVersion(row))) continue;
@@ -284,7 +298,7 @@ export class SullaUseCaseFiles {
           const existing = await postgresClient.queryOne<{enabled:boolean;deleted_at:string|null;use_case_file_id:string|null}>('SELECT enabled,deleted_at,use_case_file_id FROM skill_definitions WHERE slug=$1',[slug]);
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
-        try { await this.activate(type,slug,packageRows); active.add(key) }
+        try { await this.activate(type,slug,packageRows); active.add(key); activated++ }
         catch(error) { const anchor=packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
@@ -294,6 +308,7 @@ export class SullaUseCaseFiles {
       const { skillsRegistry } = await import('@pkg/agent/database/registry/SkillsRegistry'); await skillsRegistry.invalidate();
       await postgresClient.query('UPDATE use_case_files_state SET last_scan_at=NOW(),last_error=NULL WHERE singleton=TRUE');
       this.lastSignature = signature;
+      console.info(`[UseCases] scan ok: ${ activated } activated`);
     } catch(error) {
       await postgresClient.query('UPDATE use_case_files_state SET last_error=$1 WHERE singleton=TRUE',[error instanceof Error?error.message:String(error)]).catch(()=>undefined);
       throw error;

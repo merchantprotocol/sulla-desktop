@@ -12,7 +12,7 @@ vi.mock('electron', () => ({
   default: {},
 }));
 
-import { VaultUnlockController, type VaultUnlockIpc } from '../../../../composables/useVaultUnlock';
+import { shouldShowVaultUnlockOverlay, VaultUnlockController, type VaultUnlockIpc } from '../../../../composables/useVaultUnlock';
 
 function fakeIpc(responses: Record<string, unknown | Error>): VaultUnlockIpc & { listeners: Record<string, () => void> } {
   const listeners: Record<string, () => void> = {};
@@ -29,6 +29,14 @@ function fakeIpc(responses: Record<string, unknown | Error>): VaultUnlockIpc & {
 }
 
 describe('VaultUnlockController', () => {
+  it('blocks the window for a resolved locked or not-yet-configured vault, and for boot services waiting on unlock', () => {
+    // risk: availability — locked states must never leave the user on an apparently usable app screen.
+    expect(shouldShowVaultUnlockOverlay({ statusResolved: true, loggedIn: false, waitingOnUnlock: false })).toBe(true);
+    expect(shouldShowVaultUnlockOverlay({ statusResolved: false, loggedIn: false, waitingOnUnlock: true })).toBe(true);
+    expect(shouldShowVaultUnlockOverlay({ statusResolved: false, loggedIn: false, waitingOnUnlock: false })).toBe(false);
+    expect(shouldShowVaultUnlockOverlay({ statusResolved: true, loggedIn: true, waitingOnUnlock: false })).toBe(false);
+  });
+
   it('settles on the quick status when the vault is already unlocked', async() => {
     // risk: availability — the common already-unlocked case must not wait on the bootstrap helper.
     const ipc = fakeIpc({ 'vault:status': { unlocked: true, state: 'unlocked' } });
@@ -57,6 +65,14 @@ describe('VaultUnlockController', () => {
 
     await controller.refreshStatus();
     expect(controller.vaultSetUp.value).toBe(false);
+  });
+
+  it('shows the blocking surface when setup is required', async() => {
+    // risk: availability — a missing vault must lead to setup UI, not an unblocked app.
+    const controller = new VaultUnlockController(fakeIpc({ 'vault:status': { unlocked: false, setup: { required: true } } }));
+    await controller.tryAutoLogin();
+    expect(controller.vaultSetUp.value).toBe(false);
+    expect(shouldShowVaultUnlockOverlay({ statusResolved: controller.statusResolved.value, loggedIn: controller.loggedIn.value, waitingOnUnlock: false })).toBe(true);
   });
 
   it('shows the error and stays logged out when the status call fails', async() => {

@@ -29,6 +29,7 @@ import {
 } from './cliFaultRecovery';
 import { legacyProviderFailure, VaultLocked } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { SupportSessionPolicy } from '../services/SupportSessionPolicy';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
 import { bindLeaseToProcess, releaseLease } from './guestClaudeBridge';
@@ -987,7 +988,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       context:       transportContext,
       purpose:       'system-prompt',
       suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
-      data:          systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+      data:          new SupportSessionPolicy().appendSupportContext(
+        systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+        options.state?.metadata?.supportContext,
+      ),
     });
     const systemPromptPath = systemPromptFile.path;
     markPhase('systemPromptFile');

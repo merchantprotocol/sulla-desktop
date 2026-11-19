@@ -6,13 +6,19 @@
 import { ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import type { StartupProgressSnapshot } from '@pkg/utils/startupProgress';
 
 type VaultStatus = { unlocked?: boolean; state?: string; setup?: { required?: boolean } };
 
 /** The IPC surface the unlock state needs. Injected so the state machine runs without Electron. */
 export interface VaultUnlockIpc {
-  on(channel: string, listener: () => void): unknown;
+  on(channel: string, listener: (...args: any[]) => void): unknown;
   invoke(channel: string): Promise<unknown>;
+}
+
+/** Locked or unconfigured vaults always take precedence over the normal app UI. */
+export function shouldShowVaultUnlockOverlay(state: { statusResolved: boolean; loggedIn: boolean; waitingOnUnlock: boolean }): boolean {
+  return state.waitingOnUnlock || (state.statusResolved && !state.loggedIn);
 }
 
 /**
@@ -25,6 +31,7 @@ export class VaultUnlockController {
   readonly statusResolved = ref(false);
   readonly unlockError = ref('');
   readonly unlockMode = ref<'password' | 'recovery'>('password');
+  readonly waitingOnUnlock = ref(false);
   private statusGeneration = 0;
 
   constructor(private readonly ipc: VaultUnlockIpc = ipcRenderer as unknown as VaultUnlockIpc) {
@@ -41,6 +48,12 @@ export class VaultUnlockController {
       this.statusResolved.value = true;
       void this.refreshStatus();
     });
+    this.ipc.on('startup-progress', (_event: unknown, snapshot: StartupProgressSnapshot) => {
+      this.waitingOnUnlock.value = !!snapshot?.services?.some(service => service.status === 'waiting-on-unlock');
+    });
+    void this.ipc.invoke('startup-progress').then((snapshot) => {
+      this.waitingOnUnlock.value = !!(snapshot as StartupProgressSnapshot)?.services?.some(service => service.status === 'waiting-on-unlock');
+    }).catch(() => undefined);
   }
 
   async tryAutoLogin(): Promise<void> {
@@ -91,6 +104,7 @@ export class VaultUnlockController {
     return {
       loggedIn: this.loggedIn,
       vaultSetUp: this.vaultSetUp,
+      waitingOnUnlock: this.waitingOnUnlock,
       statusResolved: this.statusResolved,
       unlockError: this.unlockError,
       unlockMode: this.unlockMode,
