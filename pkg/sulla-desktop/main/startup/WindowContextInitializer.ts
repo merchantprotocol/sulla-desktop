@@ -12,13 +12,27 @@ const console = Logging.sulla;
 
 /** Renderer-side settings and extension hydration for a window. */
 export class WindowContextInitializer {
-  private readonly query = new URLSearchParams(window.location.search);
-  private readonly windowKey = this.query.get('windowKey') || 'main';
-  private readonly startupId = this.query.get('startupId') || crypto.randomUUID();
-  private readonly telemetry: WindowBootTelemetry = new WindowBootTelemetry(this.startupId, this.windowKey, (event, status, elapsedMs): Promise<unknown> => {
-    const { ipcRenderer } = require('electron');
-    return ipcRenderer.invoke('sulla-startup:stage', { startupId: this.startupId, windowKey: this.windowKey, event, status, elapsedMs });
-  });
+  // Created on first use, never at construction: the main process builds one of
+  // these at import time (SullaStartup.windowContext), where `window` does not
+  // exist. Reading window.location eagerly crashed main boot before any window opened.
+  private boot?: { windowKey: string; startupId: string; telemetry: WindowBootTelemetry };
+
+  private get context(): { windowKey: string; startupId: string; telemetry: WindowBootTelemetry } {
+    if (!this.boot) {
+      const query = new URLSearchParams(window.location.search);
+      const windowKey = query.get('windowKey') || 'main';
+      const startupId = query.get('startupId') || crypto.randomUUID();
+      const telemetry = new WindowBootTelemetry(startupId, windowKey, (event, status, elapsedMs): Promise<unknown> => {
+        const { ipcRenderer } = require('electron');
+        return ipcRenderer.invoke('sulla-startup:stage', { startupId, windowKey, event, status, elapsedMs });
+      });
+      this.boot = { windowKey, startupId, telemetry };
+    }
+    return this.boot;
+  }
+
+  private get windowKey(): string { return this.context.windowKey; }
+  private get telemetry(): WindowBootTelemetry { return this.context.telemetry; }
 
   /** Start window hydration without making it a prerequisite for first paint. */
   startForFirstPaint(): void {
