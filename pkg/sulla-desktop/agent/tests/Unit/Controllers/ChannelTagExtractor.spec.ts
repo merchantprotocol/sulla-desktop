@@ -8,9 +8,21 @@ const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 vi.mock('../../../services/WebSocketClientService', () => ({ getWebSocketClientService: () => ({ send }) }));
 
 import { ChannelTagExtractor } from '../../../controllers/ChannelTagExtractor';
+import { a2aMarkersToText, stripProtocolTagsForUi } from '../../../utils/stripProtocolTags';
+import { A2aCardMarkup } from '../../../../pages/chat/messages/a2aCardMarkup';
 
 describe('ChannelTagExtractor', () => {
   beforeEach(() => send.mockReset());
+
+  it('converts persisted A2A markers into readable model text while retaining the original UI card marker', () => { // risk: model-history pollution / UI card loss
+    const card = { id: 'm-1', to: 'coding-manager', targetId: 'abc', body: 'Review the patch' };
+    const encoded = Buffer.from(JSON.stringify(card)).toString('base64url');
+    const marker = `⟦SULLA_A2A:${encoded}⟧`;
+    expect(a2aMarkersToText(`sent ${marker}`)).toBe('sent [a2a → coding-manager#abc: Review the patch]');
+    expect(stripProtocolTagsForUi(marker)).toBe(marker);
+    expect(new A2aCardMarkup().render(marker)).toContain('Review the patch');
+    expect(marker).toContain('⟦SULLA_A2A:');
+  });
 
   it('labels a peer envelope with the stable agent identity rather than its transport channel', () => { // risk: message provenance
     const extractor = new ChannelTagExtractor();

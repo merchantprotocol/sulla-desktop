@@ -31,7 +31,7 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
-import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
+import { a2aMarkersToText, isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsForUi, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
@@ -1446,7 +1446,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     const mergedMessages: ChatMessage[] = [
-      ...(state.messages || []).filter(msg => msg.role !== 'system').map(msg => ({ ...msg })),
+      ...(state.messages || []).filter(msg => msg.role !== 'system').map(msg => ({
+        ...msg,
+        content: typeof msg.content === 'string'
+          ? a2aMarkersToText(msg.content)
+          : Array.isArray(msg.content)
+            ? msg.content.map((block: any) => block?.type === 'text' && typeof block.text === 'string' ? { ...block, text: a2aMarkersToText(block.text) } : block)
+            : msg.content,
+      })),
       systemMessage,
     ];
 
@@ -1518,12 +1525,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (hasToolUseBlocks) {
       messageContent = rawProviderContent.map((block: any) => {
         if (block?.type === 'text' && typeof block.text === 'string') {
-          return { ...block, text: isOverheardProtocolTurn(block.text) ? block.text.trim() : stripProtocolTags(block.text) };
+          return { ...block, text: isOverheardProtocolTurn(block.text) ? block.text.trim() : stripProtocolTagsForUi(block.text) };
         }
         return block;
       });
     } else {
-      messageContent = keepPrivateOverheardContext ? contentStr.trim() : normalizedContent;
+      messageContent = keepPrivateOverheardContext ? contentStr.trim() : stripProtocolTagsForUi(contentStr);
     }
 
     const messageMeta: Record<string, any> = {

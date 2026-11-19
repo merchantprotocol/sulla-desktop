@@ -21,7 +21,7 @@
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
-import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
+import { stripProtocolTagsForUi } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
@@ -954,7 +954,7 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
     for (const m of restoredMessages) {
       if ((m.metadata)?._conversationSummary) continue;
       const role = m.role === 'user' ? 'user' : 'assistant';
-      const content = stripProtocolTags(contentToString(m.content));
+      const content = stripProtocolTagsForUi(contentToString(m.content));
       if (!content.trim()) continue;
       ctx.messages.push({
         id:        m.id || `restored_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,

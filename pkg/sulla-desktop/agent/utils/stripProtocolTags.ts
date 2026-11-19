@@ -35,6 +35,29 @@ const ABORT_WORKFLOW_RE = /<ABORT_WORKFLOW>([\s\S]*?)<\/ABORT_WORKFLOW>/gi;
 // a CitationRow in the transcript; never shown as visible text.
 const CITATIONS_RE = /<citations>([\s\S]*?)<\/citations>/gi;
 
+const A2A_MARKER_RE = /⟦SULLA_A2A:([A-Za-z0-9_-]+)⟧/g;
+
+/** Replace UI-only durable A2A card payloads with readable conversation text. */
+export function a2aMarkersToText(text: string | null | undefined): string {
+  if (!text) return '';
+  return text.replace(A2A_MARKER_RE, (marker, encoded: string) => {
+    try {
+      const json = Buffer.from(encoded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+      const card = JSON.parse(json);
+      const destination = `${card.to || 'agent'}${card.targetId ? `#${card.targetId}` : ''}`;
+      return `[a2a → ${destination}: ${String(card.body || '')}]`;
+    } catch { return marker; }
+  });
+}
+
+/** Strip protocol wrappers for durable UI history without flattening A2A cards. */
+export function stripProtocolTagsForUi(text: string | null | undefined): string {
+  if (!text) return '';
+  const markers: string[] = [];
+  const preserved = text.replace(A2A_MARKER_RE, marker => `\u0000A2A${markers.push(marker) - 1}\u0000`);
+  return stripProtocolTags(preserved).replace(/\u0000A2A(\d+)\u0000/g, (_placeholder, index: string) => markers[Number(index)] ?? '');
+}
+
 
 // Inner tags (can appear standalone if the LLM partially formats)
 const KEY_RESULT_RE = /<\/?KEY_RESULT>/gi;
@@ -62,6 +85,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(UNBLOCK_REQUIREMENTS_RE, '')
     .replace(STATUS_REPORT_RE, '')
     .replace(STATUS_MESSAGE_RE, '')
+    .replace(A2A_MARKER_RE, marker => a2aMarkersToText(marker))
     .trim();
 }
 
