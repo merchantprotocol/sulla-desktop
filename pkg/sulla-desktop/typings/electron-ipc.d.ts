@@ -258,6 +258,11 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'chat-workflow:get': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:save': (input: import('@pkg/shared/productOwnerWorkflow').WorkflowSaveInput) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:history': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowRunRow[];
+  'chat-workflow:execution': (threadId: string, reference: { jobId: string; taskIndex: number } | null) => import('@pkg/shared/agentState/AgentModelStatus').AgentModelStatusValue[];
+
   'chat:run-state': (channelId: string, threadId: string) => boolean;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;

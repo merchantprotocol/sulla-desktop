@@ -13,6 +13,7 @@ import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel'
 import { SpawnAgentWorker } from '../../../tools/agents/spawn_agent';
 import { toolDecisionPort } from '../../../tools/toolDecisionPort';
 
+vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireChatActivity: vi.fn(), releaseChatActivity: vi.fn() }));
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../services/ModelProviderService', () => ({
   getModelProviderService: () => ({ isInitialized: () => true, getPrimaryProvider: () => 'anthropic' }),
@@ -36,8 +37,8 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
 
     constructor() { super(); this.allowVisibleTabs = true; }
 
-    run(parentThreadId: string, input: unknown) {
-      this.setState({ metadata: { threadId: parentThreadId, wsChannel: 'coding-manager-sol', routedAgentId: 'coding-manager-sol' } } as any);
+    run(parentThreadId: string, input: unknown, caller = 'coding-manager-sol') {
+      this.setState({ metadata: { threadId: parentThreadId, wsChannel: caller, agentId: caller, routedAgentId: caller } } as any);
       return this.call(input);
     }
   }
@@ -98,5 +99,56 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     ] });
     expect(mixed.result).toMatchObject({ mode: 'async', jobId: existingHidden.jobId }); // risk: mixed-mode tab metadata loss
     expect((mixed.result as any).tabs[0].jobId).toBe(existingTab.jobId);
+  });
+
+  it('captures a chat-specific route through the existing spawn and settlement path', async() => {
+    const root = `workflow-chat-${Date.now()}`;
+    const manager = `workflow-manager-${Date.now()}`;
+    const sol = { provider: 'codex', model: 'gpt-6.2-sol', effort: 'max' };
+    const sonnet = { provider: 'claude-code', model: 'claude-sonnet', effort: 'high' };
+    const { withWorkflowWrite } = await import('../../../services/WorkflowWriteAuthority');
+    const { HiddenAgentTaskRunner } = await import('../../../services/HiddenAgentTaskRunner');
+    const { AgentModelStatusRegistry } = await import('../../../services/AgentModelStatusRegistry');
+    const { readWorkflowHistory } = await import('../../../services/ProductOwnerWorkflow');
+    const findAgent = vi.mocked(agentDefinitionService.findBySlug);
+    const restore = findAgent.getMockImplementation()!;
+    findAgent.mockImplementation(async(slug) => ({
+      id: `def-${slug}`, slug, enabled: true, status: 'production', can_call: [], run_location: 'vm',
+    } as any));
+    const runner = vi.spyOn(HiddenAgentTaskRunner.prototype, 'run').mockImplementation(async(input) => {
+      AgentModelStatusRegistry.recordResponse(input.threadId, [{ ...sonnet, source: 'resolved' }]);
+      return { status: 'completed', label: input.task.label, output: 'Fixture completed', threadId: input.threadId };
+    });
+    try {
+      await registry.createJob([{
+        agentId: 'coding-manager', label: 'Build', prompt: 'feature', workflowStep: 'build', status: 'running', threadId: manager,
+      }], 'account-manager', root, { parentAgentId: 'account-manager' });
+      const prior = await registry.createJob([{
+        agentId: 'codex-sol-worker', label: 'Already assigned', prompt: 'keep this job', status: 'running',
+      }], 'coding-manager', manager, { dedupeLabel: 'Already assigned', parentAgentId: 'coding-manager' });
+      await withWorkflowWrite(() => SullaSettingsModel.set(`productOwnerWorkflow.${root}.implementation`, {
+        revision: 'workflow-acceptance', agentSlug: 'sonnet-worker', agentId: 'def-sonnet-worker', candidates: [sol, sonnet],
+        binding: { agentId: 'def-sonnet-worker', editToken: 'workflow-acceptance', revision: 1, candidates: [sol, sonnet], connections: { codex: 'existing', 'claude-code': 'existing' } },
+      }, 'json'));
+
+      const spawn = (label: string) => new SpawnHarness().run(manager, { async: false, tasks: [{
+        agentId: 'codex-sol-worker', workflowStep: 'implementation', label, prompt: 'Implement export',
+      }] }, 'coding-manager');
+      const retried = await spawn('Already assigned');
+      expect(retried.result).toMatchObject({ jobId: prior.jobId, deduplicated: true });
+      expect(runner).not.toHaveBeenCalled();
+      expect((await registry.getJob(prior.jobId))?.tasks[0]).toMatchObject({ agentId: 'codex-sol-worker', status: 'running' });
+
+      const launched = await spawn('Next assignment');
+      expect(launched.success, launched.error).toBe(true);
+      expect(runner).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        task: expect.objectContaining({ agentId: 'sonnet-worker', workflowStep: 'implementation', workerModelRoute: expect.objectContaining({ candidates: [sol, sonnet], editToken: 'workflow-acceptance' }) }),
+      }));
+      const rows = await readWorkflowHistory(root);
+      expect(rows.find(row => row.label === 'Next assignment')).toMatchObject({ agentId: 'sonnet-worker', state: 'done', responseModels: [{ ...sonnet, source: 'resolved' }] });
+    } finally {
+      runner.mockRestore();
+      findAgent.mockImplementation(restore);
+    }
   });
 });

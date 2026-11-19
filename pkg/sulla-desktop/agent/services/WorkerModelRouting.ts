@@ -261,7 +261,7 @@ export function installWorkerRoute(state: BaseThreadState, route: WorkerModelRou
 /** Clear delegation bookkeeping for an independent human follow-up, never mutate the job. */
 export function detachTerminalWorkerChat(state: BaseThreadState): void {
   const meta = state.metadata as any;
-  for (const key of ['delegatedJobId', 'workerModelTask', 'workerModelRoute', 'delegatedTaskIndex', 'managerAgentId', 'managerThreadId', 'workflowParentChannel', 'parentWsChannel', 'activityKeys']) delete meta[key];
+  for (const key of ['delegatedJobId', 'productOwnerWorkflowStep', 'workerModelTask', 'workerModelRoute', 'delegatedTaskIndex', 'managerAgentId', 'managerThreadId', 'workflowParentChannel', 'parentWsChannel', 'activityKeys']) delete meta[key];
   if (!meta.workerModelChatOverride && meta.agent) {
     delete meta.agent.provider;
     delete meta.agent.model;

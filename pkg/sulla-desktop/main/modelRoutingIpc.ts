@@ -9,6 +9,9 @@ import { withConfirmedCliUpdate } from '../shared/providerCliUpdateAuthority';
 
 import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ModelClass, type ModelRoutingState } from '../agent/languagemodels/modelRoutingTypes';
 
+import { agentWindowFromSender } from '../window/agentWindowTrust';
+import type { WorkflowSaveInput } from '../shared/productOwnerWorkflow';
+
 import type { IpcController, IpcMainRegistrar } from './ipc/IpcController';
 
 /** The modelRouter surface this controller uses. */
@@ -69,6 +72,32 @@ export class ModelRoutingIpcController implements IpcController {
   }
 
   register(): void {
+    // Restricted to the local app main frame, including its registered tab hosts.
+    const requireWorkflowOwner = (event: Electron.IpcMainInvokeEvent) => {
+      if (!event?.sender || event.sender.mainFrame !== event.senderFrame || !agentWindowFromSender(event.sender)) throw new Error('Untrusted Workflow caller.');
+      const url = new URL(event.sender.getURL());
+      if (url.protocol !== 'app:' || url.host !== '.' || url.pathname !== '/agent.html') throw new Error('Untrusted Workflow caller.');
+    };
+    this.ipc.removeHandler('chat-workflow:get');
+    this.ipc.removeHandler('chat-workflow:save');
+    this.ipc.removeHandler('chat-workflow:execution');
+    this.ipc.removeHandler('chat-workflow:history');
+    this.ipc.handle('chat-workflow:history', async(event, threadId: string) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).readWorkflowHistory(threadId);
+    });
+    this.ipc.handle('chat-workflow:get', async(event, threadId: string) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).getProductOwnerWorkflow(threadId);
+    });
+    this.ipc.handle('chat-workflow:save', async(event, input: WorkflowSaveInput) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).saveProductOwnerWorkflow(input);
+    });
+    this.ipc.handle('chat-workflow:execution', async(event, threadId: string, reference: unknown) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).readWorkflowExecution(threadId, reference);
+    });
     const { router } = this.deps;
     this.ipc.removeHandler(MODEL_ROUTING_IPC.get);
     this.ipc.removeHandler(MODEL_ROUTING_IPC.set);

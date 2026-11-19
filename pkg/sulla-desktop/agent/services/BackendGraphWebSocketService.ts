@@ -1503,7 +1503,12 @@ export class BackendGraphWebSocketService {
         if (terminal) detachTerminalWorkerChat(state);
       }
       if (newHumanSelection && !(state.metadata as any).delegatedJobId) {
-        const route = (state.metadata as any).workerModelChatOverride ? undefined : await workerModelRouting.newRoute(agentId);
+        let route;
+        if (!(state.metadata as any).workerModelChatOverride) {
+          const leadRoute = agentId === 'account-manager' && channelId === SULLA_DESKTOP_CHANNEL_ID && !decisionTurn
+            ? await (await import('./ProductOwnerWorkflow')).productOwnerLeadRoute(threadId) : undefined;
+          route = leadRoute ?? await workerModelRouting.newRoute(agentId);
+        }
         assertDecisionOwner();
         installWorkerRoute(state, route);
       }

@@ -25,6 +25,8 @@ export const agentToolManifests: ToolManifest[] = [
             agentName: { type: 'string', description: 'Alias for agentId. Same resolution rules.', optional: true },
             prompt:    { type: 'string', description: 'The task/instruction to give the sub-agent.' },
             projectTaskId: { type: 'string', optional: true, description: 'Optional legacy task correlation id; project work is tracked in Files.' },
+            workflowStep: { type: 'enum', enum: ['mockup', 'build', 'implementation', 'review', 'acceptance'], optional: true,
+              description: 'For a Product Owner feature handoff, label the step as mockup, build, or acceptance. The build lead labels coding jobs implementation and independent reviews review, with followUpOf pointing to the implementation. This applies any choices saved by the human for that step; omit for unrelated work.' },
             followUpOf:    { type: 'object', optional: true, description: 'Explicit original result this task continues. Use its exact jobId and taskIndex; never infer from a similar label or PR. Presentation only.', properties: { jobId: { type: 'string' }, taskIndex: { type: 'number' } } },
             workspacePath: {
               type:        'string',

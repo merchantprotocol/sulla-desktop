@@ -4,6 +4,7 @@
 import { Service, type Clock } from '@sulla/foundation';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import type { AgentStateService } from './AgentStateService';
+import { AgentModelStatusRegistry } from '../../services/AgentModelStatusRegistry';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
@@ -141,6 +142,8 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
   this.wrapUp.taskSettled(jobId, taskIndex);
   await this.states.mutateJob(jobId, job => {
     if (!job.tasks[taskIndex]) return job;
+    const task = job.tasks[taskIndex];
+    const responseModels = AgentModelStatusRegistry.responsesFor(task.threadId || result.threadId);
     job.results[taskIndex] = result;
     job.tasks[taskIndex] = { ...job.tasks[taskIndex],
 
@@ -148,7 +151,8 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
 
       threadId: result.threadId || job.tasks[taskIndex].threadId,
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
-      completion: result };
+      completion: result,
+      ...(responseModels?.length ? { responseModels } : {}) };
     return job;
   });
 }

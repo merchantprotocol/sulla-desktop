@@ -126,7 +126,7 @@ describe('the side dock tabs', () => {
     invoke.mockImplementation(channel => Promise.resolve(channel === 'decisions:conversation' ? [{ id: 'q-m1', conversationId: 'thread-1', kind: 'question', status: 'expired', attention: 'active', createdAt: NOW, expiresAt: 1, title: 'Question', questions: [] }] : []));
     const plain = mountWith(SideDock, { messages: [question('m1')] });
     await flushPromises();
-    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'For You1', 'Files']);
+    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'For You1', 'Workflow', 'Files']);
     const withArtifacts = mountWith(SideDock, { artifacts: 2 });
     expect(withArtifacts.findAll('.sdk-tab').map(t => t.text())).toContain('Artifacts2');
     await withArtifacts.findAll('.sdk-tab')[1].trigger('click');

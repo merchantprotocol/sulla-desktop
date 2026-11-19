@@ -7,6 +7,8 @@ export interface AgentModelStatusValue {
   /** Empty means the CLI default; null means this provider does not report effort. */
   effort:    string | null;
   source:    'resolved' | 'requested';
+  /** Present only when the existing provider recovery path returned a fallback response. */
+  fallbackFrom?: { provider: string; model: string; reason: string };
 }
 
 export class AgentModelStatus {

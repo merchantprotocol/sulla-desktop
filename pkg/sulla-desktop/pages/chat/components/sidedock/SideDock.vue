@@ -15,7 +15,7 @@
     ref="rootEl"
     class="sdk"
     :class="{ 'sdk-resizing': dragging }"
-    aria-label="Sulla, results, decisions and files for this chat"
+    aria-label="Side panel for this chat"
   >
     <!-- Drag the edge to resize; arrow keys nudge it; double-click resets it. -->
     <div
@@ -33,31 +33,29 @@
       @keydown.left.prevent="nudge(0.02)"
       @keydown.right.prevent="nudge(-0.02)"
     />
-    <div
-      class="sdk-tabs"
-      role="tablist"
-    >
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        type="button"
-        role="tab"
-        class="sdk-tab"
-        :class="{ 'sdk-attention': tab.id === 'decisions' && openCount > 0 }"
-        :aria-selected="current === tab.id"
-        @click="pick(tab.id)"
-      >
-        {{ tab.label }}<span
-          v-if="tab.badge"
-          class="sdk-badge"
-          :class="`sdk-badge-${tab.badge.tone}`"
-        >{{ tab.badge.text }}</span><span
-          v-else-if="tab.pulse"
-          class="sdk-pulse"
-          aria-label="working"
-        />
-      </button>
-      <span class="sdk-sp" />
+    <div class="sdk-tabs">
+      <div class="sdk-tab-scroll" role="tablist" aria-label="Chat side panel">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="sdk-tab"
+          :class="{ 'sdk-attention': tab.id === 'decisions' && openCount > 0 }"
+          :aria-selected="current === tab.id"
+          @click="pick(tab.id)"
+        >
+          {{ tab.label }}<span
+            v-if="tab.badge"
+            class="sdk-badge"
+            :class="`sdk-badge-${tab.badge.tone}`"
+          >{{ tab.badge.text }}</span><span
+            v-else-if="tab.pulse"
+            class="sdk-pulse"
+            aria-label="working"
+          />
+        </button>
+      </div>
       <button
         type="button"
         class="sdk-move"
@@ -81,6 +79,7 @@
         @show-activity="current = 'sulla'"
       />
       <ForYouPanel v-else-if="current === 'decisions'" />
+      <WorkflowPanel v-else-if="current === 'workflow'" />
       <div
         v-else-if="current === 'files'"
         class="sdk-embed"
@@ -103,6 +102,7 @@ import { computed, inject, ref, watch, type Ref } from 'vue';
 import AgentLanes from './AgentLanes.vue';
 import ForYouPanel from './ForYouPanel.vue';
 import ResultsPanel from './ResultsPanel.vue';
+import WorkflowPanel from './WorkflowPanel.vue';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { DockPositions, SIDE_RATIO_DEFAULT } from '../../composables/useDockPosition';
 import { useChatController } from '../../controller/useChatController';
@@ -110,7 +110,7 @@ import { useChatController } from '../../controller/useChatController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
 
-type TabId = 'sulla' | 'results' | 'decisions' | 'files' | 'artifacts';
+type TabId = 'sulla' | 'results' | 'decisions' | 'workflow' | 'files' | 'artifacts';
 
 const controller = useChatController();
 const { setPosition, sideRatio, setSideRatio } = DockPositions.use();
@@ -161,6 +161,7 @@ const tabs = computed(() => [
   { id: 'sulla' as const, label: 'Sulla', pulse: working.value },
   { id: 'results' as const, label: 'Results' },
   { id: 'decisions' as const, label: 'For You', badge: openCount.value ? { text: String(openCount.value), tone: 'you' } : undefined },
+  { id: 'workflow' as const, label: 'Workflow' },
   { id: 'files' as const, label: 'Files' },
   ...(artifactCount.value ? [{ id: 'artifacts' as const, label: 'Artifacts', badge: { text: String(artifactCount.value), tone: 'n' } }] : []),
 ] as { id: TabId; label: string; badge?: { text: string; tone: string }; pulse?: boolean }[]);
@@ -188,7 +189,8 @@ defineExpose({ selectTab });
 .sdk-resize:focus-visible { outline: none; }
 /* While dragging, text in the transcript and panels must not get selected. */
 .sdk-resizing, .sdk-resizing * { user-select: none; }
-.sdk-tabs { display: flex; flex: none; gap: 3px; padding: 10px 8px 0; border-bottom: 1px solid var(--border-strong); background: var(--bg-page); }
+.sdk-tabs { display: flex; flex: none; gap: 5px; padding: 10px 8px 0; border-bottom: 1px solid var(--border-strong); background: var(--bg-page); }
+.sdk-tab-scroll { min-width: 0; flex: 1; display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; }
 .sdk-tab {
   position: relative; display: inline-flex; flex: none; align-items: center; gap: 4px; height: 34px; padding: 0 8px;
   border: 1px solid var(--border-strong); border-bottom: 0; border-radius: 9px 9px 0 0;
@@ -213,10 +215,10 @@ defineExpose({ selectTab });
   70% { box-shadow: 0 0 0 6px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-.sdk-sp { flex: 1 1 0; min-width: 4px; }
 .sdk-move {
+  flex:none;
   align-self: center; display: grid; place-items: center; width: 28px; height: 28px; margin-bottom: 6px;
-  border: 1px solid var(--border-strong); border-radius: 8px; background: none; color: var(--sdk-ink-2); cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-page); color: var(--sdk-ink-2); cursor: pointer;
 }
 .sdk-move:hover { color: var(--text-primary); border-color: var(--accent); }
 .sdk-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
