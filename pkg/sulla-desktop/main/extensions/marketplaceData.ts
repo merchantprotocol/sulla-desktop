@@ -48,8 +48,18 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
   }
 
   inFlightFetch = (async() => {
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const response = await fetch(MARKETPLACE_URL);
+      const response = await Promise.race([
+        fetch(MARKETPLACE_URL, { signal: controller.signal }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            reject(new Error('Marketplace fetch timed out'));
+          }, 10_000);
+        }),
+      ]);
 
       if (!response.ok) {
         console.error(`Failed to fetch marketplace data: ${ response.status } ${ response.statusText }`);
@@ -70,6 +80,7 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
 
       return cachedData ?? [];
     } finally {
+      if (timeout) clearTimeout(timeout);
       inFlightFetch = undefined;
     }
   })();

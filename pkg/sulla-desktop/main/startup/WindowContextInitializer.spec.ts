@@ -14,7 +14,7 @@ vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsM
   setFallbackFilePath: deps.setFallbackFilePath,
   bootstrap: deps.bootstrap,
 } }));
-vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: deps.initializeExtensions }) }));
+vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: deps.initializeExtensions, setStartupTelemetry: vi.fn() }) }));
 vi.mock('@pkg/agent/extensions/ExtensionLoader', () => ({ reloadExtensionHooks: deps.reloadExtensionHooks }));
 vi.mock('@pkg/utils/logging', () => ({ default: { sulla: { info: vi.fn(), log: vi.fn(), error: vi.fn() } } }));
 
@@ -38,6 +38,7 @@ describe('WindowContextInitializer', () => {
 
     await new WindowContextInitializer().initialize();
     expect(deps.setFallbackFilePath).toHaveBeenCalledWith('/user-data/sulla-settings-fallback.json');
+    expect(deps.invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends', expect.stringMatching(/^[0-9a-f-]{36}$/i));
     expect(deps.bootstrap).not.toHaveBeenCalled();
     expect(deps.initializeExtensions).not.toHaveBeenCalled();
 

@@ -1945,8 +1945,39 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 
 // Renderer settings use their own model instance, but must not bootstrap until
 // the authoritative main-process lifecycle has observed both Postgres and Redis.
-ipcMainProxy.handle('sulla-settings:wait-for-backends', async() => {
-  await getServiceLifecycleManager().waitUntilStarted('database-manager', 3 * 60_000);
+const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
+const trustedStartupSender = (event: Electron.IpcMainInvokeEvent): boolean => {
+  if (!agentWindowFromSender(event.sender)) return false;
+  try { return new URL(event.sender.getURL()).searchParams.get('tabHost') !== '1' } catch { return false }
+};
+
+ipcMainProxy.handle('sulla-startup:stage', (event, payload: { startupId: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => {
+  if (!trustedStartupSender(event) || !/^[0-9a-f-]{36}$/i.test(payload?.startupId ?? '') || !startupEvents.has(payload?.event) || !['start', 'end', 'failure'].includes(payload?.status) || !Number.isFinite(payload?.elapsedMs)) return false;
+  console.info(`[WindowBoot] ${ JSON.stringify({ startupId: payload.startupId, event: payload.event, status: payload.status, timestamp: new Date().toISOString(), elapsedMs: Math.round(payload.elapsedMs) }) }`);
+  return true;
+});
+
+ipcMainProxy.handle('sulla-settings:wait-for-backends', async(event, startupId: string) => {
+  if (!trustedStartupSender(event) || !/^[0-9a-f-]{36}$/i.test(startupId ?? '')) throw new Error('Untrusted startup readiness request');
+  const beganAt = Date.now();
+  const lifecycle = getServiceLifecycleManager();
+  const report = (name: string, status: string, attempts?: number) => console.info(`[WindowBoot] ${ JSON.stringify({ startupId, event: name, status, timestamp: new Date().toISOString(), elapsedMs: Date.now() - beganAt, ...(attempts === undefined ? {} : { attempts }) }) }`);
+  const reportReadiness = (state: { name: string; status: string; attempts: number }) => {
+    if (['postgres', 'redis', 'database-manager'].includes(state.name)) report(`${ state.name }-readiness`, state.status, state.attempts);
+  };
+  lifecycle.serviceStatuses().forEach(reportReadiness);
+  const onServiceStatus = (state: { name: string; status: string; attempts: number }) => reportReadiness(state);
+  lifecycle.on('service:status', onServiceStatus);
+  report('database-manager-readiness', 'start');
+  try {
+    await lifecycle.waitUntilStarted('database-manager', 3 * 60_000);
+    report('database-manager-readiness', 'end');
+  } catch (error) {
+    report('database-manager-readiness', 'failure');
+    throw error;
+  } finally {
+    lifecycle.off('service:status', onServiceStatus);
+  }
 });
 
 // ── Capture Studio IPC ──────────────────────────────────────────────────
