@@ -68,6 +68,22 @@ describe('InternalTabViewManager', () => {
     expect(instance.hostViewForSender(sender)).toBeNull();
   });
 
+  it('asks the owning shell to refresh its measured bounds after the tab-host page loads', () => {
+    // risk: stale initial renderer geometry can leave a visible gap after shell layout settles
+    const owner = ownerWindow(11);
+    const instance = manager() as any;
+    instance.activate(owner, 'one', 'main', { x: 0, y: 56, width: 800, height: 600 });
+    const tab = instance.tabs.get('one');
+
+    tab.view.webContents.listeners['did-finish-load']();
+
+    expect(owner.webContents.send).toHaveBeenCalledWith('internal-tab-view:loaded', 'one');
+    instance.destroy(owner, 'one');
+    owner.webContents.send.mockClear();
+    tab.view.webContents.listeners['did-finish-load']();
+    expect(owner.webContents.send).not.toHaveBeenCalled();
+  });
+
   it('destroys only the closed tab view', () => {
     // risk: closing a tab must release its isolated Chromium renderer
     const owner = ownerWindow(2);

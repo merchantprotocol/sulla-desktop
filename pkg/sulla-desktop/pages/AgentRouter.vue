@@ -243,6 +243,18 @@ function onInternalTabCrashed(_event: unknown, tabId: string) { crashedInternalT
 function onInternalTabUpdated(_event: unknown, tabId: string, descriptor: BrowserTabDescriptor) {
   if (descriptor?.id === tabId) updateTab(tabId, descriptor);
 }
+function refreshInternalTabBounds(tabId: string): void {
+  const element = internalTabElements.get(tabId);
+  if (!element || !internalTabRoute(tabId)) return;
+  requestAnimationFrame(() => {
+    if (internalTabElements.get(tabId) !== element || !internalTabRoute(tabId)) return;
+    void ipcRenderer.invoke('internal-tab-view:bounds' as any, tabId, internalTabBounds(element)).catch(() => undefined);
+  });
+}
+function onInternalTabLoaded(_event: unknown, tabId: string) { refreshInternalTabBounds(tabId); }
+function onInternalTabsWindowResize() {
+  for (const tabId of internalTabElements.keys()) refreshInternalTabBounds(tabId);
+}
 function reloadInternalTab(tabId: string) {
   crashedInternalTabIds.delete(tabId);
   void ipcRenderer.invoke('internal-tab-view:reload' as any, tabId).catch(() => undefined);
@@ -268,7 +280,9 @@ function setInternalTabElement(id: string, value: Element | null): void {
   const observer = new ResizeObserver(update);
   observer.observe(value);
   internalTabObservers.set(id, observer);
-  update();
+  // The ref callback can run before shell layout settles; ResizeObserver only
+  // notices size changes, so also remeasure after the initial layout frame.
+  requestAnimationFrame(update);
 }
 watch(() => route.path, async(path, previous) => {
   if (!processPerTab) return;
@@ -866,6 +880,8 @@ const presenceTracker = getHumanPresenceTracker();
 onMounted(async() => {
   ipcRenderer.on('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.on('internal-tab-view:updated' as any, onInternalTabUpdated as any);
+  ipcRenderer.on('internal-tab-view:loaded' as any, onInternalTabLoaded as any);
+  window.addEventListener('resize', onInternalTabsWindowResize);
   ipcRenderer.on('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.on('database:available', onDatabaseAvailable);
   void refreshRailExtensions().catch(err => console.warn('[AgentRouter] extension rail load failed:', err));
@@ -926,6 +942,8 @@ onUnmounted(() => {
   window.removeEventListener('sulla:no-ai-banner', onNoAiBannerChange);
   ipcRenderer.removeListener('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.removeListener('internal-tab-view:updated' as any, onInternalTabUpdated as any);
+  ipcRenderer.removeListener('internal-tab-view:loaded' as any, onInternalTabLoaded as any);
+  window.removeEventListener('resize', onInternalTabsWindowResize);
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('database:available', onDatabaseAvailable);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
@@ -1029,8 +1047,9 @@ onUnmounted(() => {
   position: relative;
   z-index: 3;
 }
+/* Match the 44px AgentHeader titlebar; 56px left a visible 12px strip. */
 .internal-browser-tab-layer {
-  top: 56px;
+  top: 44px;
 }
 
 .internal-tab-reload {
