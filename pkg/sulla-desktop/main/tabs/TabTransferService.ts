@@ -133,8 +133,9 @@ export class TabTransferService {
     this.ghost.setPosition(Math.round((payload.screenX ?? this.lastPointer.x) - (payload.grabOffsetX ?? 16)), Math.round((payload.screenY ?? this.lastPointer.y) - (payload.grabOffsetY ?? 14)), false);
     this.ghost.loadURL(`data:text/html;charset=utf-8,${ encodeURIComponent(html) }`);
     this.ghost.showInactive();
-    this.ghost.once('closed', () => { this.ghost = null; });
-    this.ghost.once('ready-to-show', () => { if (this.ghost && this.drags.size) this.ghost.showInactive(); });
+    const ghost = this.ghost;
+    ghost.once('closed', () => { if (this.ghost === ghost) this.ghost = null; });
+    ghost.once('ready-to-show', () => { if (this.ghost === ghost && this.drags.size) ghost.showInactive(); });
   }
 
   private destroyGhost(): void {
