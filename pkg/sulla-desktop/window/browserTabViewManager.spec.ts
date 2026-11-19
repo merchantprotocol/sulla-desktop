@@ -62,6 +62,21 @@ describe('BrowserTabViewManager window ownership', () => {
     expect(webContents.reload).not.toHaveBeenCalled();
   });
 
+  it('detaches browser tabs at shutdown and blocks transfer or visibility reconciliation', () => {
+    // risk: native browser pages must not cover the shutdown overlay or reattach during shutdown
+    const owner = ownerWindow(20);
+    const target = ownerWindow(21);
+    const view = { webContents: { id: 95 }, setBounds: vi.fn() };
+    const manager = managerWith('tab-shutdown', view, owner);
+
+    manager.beginShutdown();
+    expect(owner.contentView.removeChildView).toHaveBeenCalledWith(view);
+    expect(manager.moveViewToWindow('tab-shutdown', target)).toBe(false);
+    delete manager.reconcileVisibility;
+    expect((BrowserTabViewManager.prototype as any).reconcileVisibility.call(manager)).toBe(0);
+    expect(target.contentView.addChildView).not.toHaveBeenCalled();
+  });
+
   it('ignores stale bounds from the former window without changing the view placement', () => {
     // risk: cross-window tab control; late IPC must never reposition another window's view
     const oldOwner = ownerWindow(31);

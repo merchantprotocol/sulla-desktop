@@ -15,6 +15,7 @@ export class InternalTabViewManager {
   private readonly tabs = new Map<string, InternalTabView>();
   private readonly hostDisposalListeners = new Map<string, Set<() => void>>();
   private readonly chromeReadyOwners = new Set<number>();
+  private shuttingDown = false;
   private readonly chromeReadyTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   static getInstance(): InternalTabViewManager {
@@ -61,7 +62,7 @@ export class InternalTabViewManager {
 
   /** Called after the shell chrome has mounted and its first frame has painted. */
   markChromeReady(owner: Electron.BrowserWindow): void {
-    if (owner.isDestroyed()) return;
+    if (owner.isDestroyed() || this.shuttingDown) return;
     this.chromeReadyOwners.add(owner.id);
     const timer = this.chromeReadyTimers.get(owner.id);
     if (timer) clearTimeout(timer);
@@ -71,7 +72,7 @@ export class InternalTabViewManager {
   }
 
   private armChromeReadyFallback(owner: Electron.BrowserWindow): void {
-    if (this.chromeReadyOwners.has(owner.id) || this.chromeReadyTimers.has(owner.id)) return;
+    if (this.shuttingDown || this.chromeReadyOwners.has(owner.id) || this.chromeReadyTimers.has(owner.id)) return;
     const timer = setTimeout(() => {
       this.chromeReadyTimers.delete(owner.id);
       if (owner.isDestroyed() || this.chromeReadyOwners.has(owner.id)) return;
@@ -83,7 +84,7 @@ export class InternalTabViewManager {
   }
 
   private attach(tab: InternalTabView): void {
-    if (tab.owner.isDestroyed() || tab.crashed || !tab.visible) return;
+    if (this.shuttingDown || tab.owner.isDestroyed() || tab.crashed || !tab.visible) return;
     tab.owner.contentView.addChildView(tab.view);
     tab.view.setBounds(tab.bounds);
   }
@@ -236,8 +237,18 @@ export class InternalTabViewManager {
     this.tabs.delete(tabId);
   }
 
+  /** Detach native tab surfaces before the shutdown overlay paints, without destroying their renderers yet. */
+  beginShutdown(): void {
+    this.stopReadinessFallbacks();
+    for (const tab of this.tabs.values()) {
+      if (tab.owner.isDestroyed()) continue;
+      try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+    }
+  }
+
   /** Release every tab-host renderer after the graceful shutdown phases finish. */
   destroyAll(): void {
+    this.stopReadinessFallbacks();
     for (const [tabId, tab] of this.tabs) {
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
       this.notifyHostDisposed(tabId);
@@ -246,6 +257,13 @@ export class InternalTabViewManager {
       }
       this.tabs.delete(tabId);
     }
+  }
+
+  private stopReadinessFallbacks(): void {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    for (const timer of this.chromeReadyTimers.values()) clearTimeout(timer);
+    this.chromeReadyTimers.clear();
   }
 
   private readonly owners = new Set<number>();

@@ -1347,6 +1347,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;

@@ -100,6 +100,23 @@ describe('InternalTabViewManager', () => {
     vi.useRealTimers();
   });
 
+  it('detaches native tab views at shutdown and prevents them from reattaching', () => {
+    // risk: native tab pages can otherwise cover the shutdown overlay during app quit
+    const owner = ownerWindow(12);
+    const instance = manager() as any;
+    instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const tab = instance.tabs.get('one');
+    instance.markChromeReady(owner);
+    owner.contentView.addChildView.mockClear();
+
+    instance.beginShutdown();
+    expect(owner.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
+    instance.setVisible(owner, 'one', true);
+    instance.reload(owner, 'one');
+    instance.markChromeReady(owner);
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
+  });
+
   it('keeps child views with a background tab and notifies only when its host is disposed', () => {
     // risk: switching tabs must hide a vault child without leaving it on top of the next tab
     const owner = ownerWindow(10);

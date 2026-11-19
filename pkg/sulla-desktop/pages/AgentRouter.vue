@@ -100,7 +100,7 @@
     </aside>
 
     <!-- Startup progress overlay -->
-    <StartupOverlay />
+    <StartupOverlay :mode="shutdownMode ? 'shutdown' : 'startup'" />
 
     <!-- A locked or not-yet-configured vault blocks every tab and route. -->
     <VaultUnlockScreen v-if="vaultUnlockVisible" />
@@ -231,11 +231,13 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+const shutdownMode = ref(false);
+const onAppShuttingDown = () => { shutdownMode.value = true; };
 const chromePainted = ref(false);
 let tabViewsRevealed = false;
 const onChromeReady = () => { chromePainted.value = true; };
-watch([chromePainted, systemReady, startupOverlayVisible, vaultUnlockVisible], ([painted, ready, startupVisible, vaultVisible]) => {
-  if (!painted || !ready || startupVisible || vaultVisible || tabViewsRevealed) return;
+watch([chromePainted, systemReady, startupOverlayVisible, vaultUnlockVisible, shutdownMode], ([painted, ready, startupVisible, vaultVisible, shuttingDown]) => {
+  if (!painted || !ready || startupVisible || vaultVisible || shuttingDown || tabViewsRevealed) return;
   tabViewsRevealed = true;
   void ipcRenderer.invoke('internal-tab-view:chrome-ready' as any).catch(error => {
     console.warn('[AgentRouter] unable to signal tab view readiness', error);
@@ -893,6 +895,7 @@ const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
   window.addEventListener('sulla:chrome-ready', onChromeReady, { once: true });
+  ipcRenderer.on('app:shutting-down' as any, onAppShuttingDown as any);
   ipcRenderer.on('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.on('internal-tab-view:updated' as any, onInternalTabUpdated as any);
   ipcRenderer.on('internal-tab-view:loaded' as any, onInternalTabLoaded as any);
@@ -956,6 +959,7 @@ onMounted(async() => {
 
 onUnmounted(() => {
   window.removeEventListener('sulla:chrome-ready', onChromeReady);
+  ipcRenderer.removeListener('app:shutting-down' as any, onAppShuttingDown as any);
   window.removeEventListener('sulla:no-ai-banner', onNoAiBannerChange);
   ipcRenderer.removeListener('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.removeListener('internal-tab-view:updated' as any, onInternalTabUpdated as any);
