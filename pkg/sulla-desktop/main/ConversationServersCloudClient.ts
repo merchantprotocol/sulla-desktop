@@ -6,6 +6,8 @@ import type { cloudRequest } from './cloud/cloudFetch';
 
 export type ConversationServerNotificationLevel = 'all' | 'mentions' | 'nothing';
 type CloudRequester = typeof cloudRequest;
+export type ConversationServerSummary = ConversationServerDto;
+export type ConversationChannelSummary = ConversationChannelDto;
 type ConversationServerDto = { id: string; name: string; visibility: 'public' | 'organization'; orgId?: string; ownerUserId: string; notificationDefault: ConversationServerNotificationLevel };
 type ConversationChannelDto = { id: string; serverId: string; name: string; kind: 'text' | 'a2a' | 'announcement'; private: boolean; memberUserIds?: string[] };
 export type ConversationChannelMessage = { id: string; seq: number; authorUserId: string; authorAgentId?: string | null; kind: string; body: string; createdAt: string };

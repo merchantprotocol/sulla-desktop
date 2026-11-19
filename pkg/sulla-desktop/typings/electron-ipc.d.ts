@@ -265,6 +265,18 @@ export interface IpcMainInvokeEvents {
   'threat-proxy:get-traffic-log': (request?: import('@pkg/main/threat-proxy').TrafficLogRequest) => Promise<{ entries: Record<string, any>[]; error?: string }>;
   'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
 
+  'conversation-servers:list': (orgId?: string) => import('@pkg/main/ConversationServersCloudClient').ConversationServerSummary[];
+  'conversation-servers:channels': (serverId: string) => import('@pkg/main/ConversationServersCloudClient').ConversationChannelSummary[];
+  'conversation-servers:members': (serverId: string) => { userId: string; role: string }[];
+  'conversation-servers:channel-preference': (input: { serverId: string; channelId: string }) => { level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel; preference: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; channelOverride: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; serverDefault: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel };
+  'conversation-servers:set-default': (input: { serverId: string; level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel }) => Record<string, unknown>;
+  'conversation-servers:set-channel-notification': (input: { serverId: string; channelId: string; level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null }) => Record<string, unknown>;
+  'conversation-servers:set-channel-override': (input: { serverId: string; channelId: string; level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null }) => Record<string, unknown>;
+  'conversation-servers:messages': (input: { serverId: string; channelId: string; before?: number }) => { messages: import('@pkg/main/ConversationServersCloudClient').ConversationChannelMessage[]; nextBefore?: number | null; latestSeq?: number };
+  'conversation-servers:send-message': (input: { serverId: string; channelId: string; body: string }) => Record<string, unknown>;
+  'conversation-servers:read': (input: { serverId: string; channelId: string; seq: number }) => Record<string, unknown>;
+  'conversation-servers:unread': (serverId: string) => Record<string, unknown>;
+
   'org-conversations:organizations': () => readonly { orgId: string; name: string; slug?: string; memberCount: number }[];
   'org-conversations:directory': (org?: string) => { membership: { orgId: string; name: string }; directory: { people: readonly unknown[] } };
   'org-conversations:inbox': (org?: string) => { membership: { orgId: string; name: string }; messages: readonly import('@sulla/domain').MessageEnvelope['data'][] };
