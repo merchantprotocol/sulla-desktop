@@ -36,44 +36,26 @@ export class WindowContextInitializer {
       SullaSettingsModel.setFallbackFilePath(fallbackPath);
       console.log('[WindowContext] Fallback path set to:', fallbackPath);
 
-      // Renderer settings share the main-process backends. Wait for the lifecycle
-      // readiness signal instead of racing cold Redis with a short retry budget.
-      // Every window awaits this before mounting, so only hold the mount for a
-      // short bound; on a cold boot finish bootstrapping in the background so
-      // the loading overlay can render while Redis/Postgres come up.
-      if (windowKey !== 'main') {
-        void SullaSettingsModel.bootstrap().catch((error: unknown) => console.error('[WindowContext] Secondary settings bootstrap failed:', error));
-      } else {
+      // Every window waits on the same backend lifecycle gate. Bootstrapping
+      // secondary windows immediately races cold Redis/Postgres and exhausts
+      // the settings model's short retry budget before the backends start.
+      // Keep all settings/extension work off the first-paint path; warm windows
+      // bootstrap as soon as the main process reports database readiness.
       const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends');
-      void backendsReady.then(
-        () => console.info(`[WindowBoot] settings backend handshake received after ${ Date.now() - startedAt }ms`),
-        () => undefined,
-      );
-      const readyInTime = await Promise.race([
-        backendsReady.then(() => true),
-        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 8_000)),
-      ]);
-
-      if (readyInTime) {
+      void backendsReady.then(async() => {
+        console.info(`[WindowBoot] settings backend handshake received after ${ Date.now() - startedAt }ms`);
+        const settingsStartedAt = Date.now();
         await SullaSettingsModel.bootstrap();
-      } else {
-        console.log('[WindowContext] Settings backends still starting; bootstrapping when ready');
-        backendsReady
-          .then(() => SullaSettingsModel.bootstrap())
-          .catch((error: unknown) => console.error('[WindowContext] Failed to initialize settings:', error));
-      }
-      }
+        console.info(`[WindowBoot] settings bootstrap finished after ${ Date.now() - settingsStartedAt }ms`);
+
+        const extensionsStartedAt = Date.now();
+        const extensionService = getExtensionService();
+        await extensionService.initialize();
+        await reloadExtensionHooks();
+        console.info(`[WindowBoot] extension hydration finished after ${ Date.now() - extensionsStartedAt }ms`);
+      }).catch((error: unknown) => console.error(`[WindowContext] Backend-dependent hydration failed for ${ windowKey }:`, error));
     } catch (error) {
       console.error('[WindowContext] Failed to initialize settings:', error);
-    }
-
-    // Initialize extension service
-    try {
-      const extensionService = getExtensionService();
-      await extensionService.initialize();
-      await reloadExtensionHooks();
-    } catch (error) {
-      console.error('[ExtensionService] Failed to initialize:', error);
     }
   }
 }
