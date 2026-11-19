@@ -70,6 +70,7 @@ class ChangeInvalidationTests(unittest.TestCase):
         observed = []
         async def during_notification(_notify, target, **_options):
             observed.append((await self.ops.getattr(target)).st_size)
+            return True
         self.ops._run_invalidation = during_notification
         self.ops.consume_change_page({"changes": [{"path": path, "kind": "update", "versionId": "v2", "size": 13}]})
         asyncio.run(self.ops.invalidate_path(path, **self.ops.pending_invalidations.pop(path)))
@@ -221,10 +222,24 @@ class ChangeInvalidationTests(unittest.TestCase):
             asyncio.run(exercise())
         finally:
             release.set()
-        limiter, cancellable = self.adapter.trio.run_sync_calls[-1]
+        limiter, abandon_on_cancel = self.adapter.trio.run_sync_calls[-1]
         self.assertIs(limiter, self.ops.invalidation_limiter)
-        self.assertTrue(cancellable)
+        self.assertTrue(abandon_on_cancel)
         self.assertIn(inode, self.ops.nodes)
+
+    # risk: stale reads — a failed inode notification must disable positive caching even if the dentry notification works.
+    def test_failed_notification_disables_caching(self):
+        def fail(*_args, **_options):
+            raise RuntimeError("notification failed")
+        self.pyfuse3.invalidate_inode = fail
+        parent = self.ops._node("folder", True)
+        inode = self.ops._node("folder/file.txt", False)
+        self.ops.nodes[inode]["collectionId"] = "home"
+        self.ops.feed_healthy = True
+        self.ops.feed_ready_collections.add("home")
+        asyncio.run(self.ops.invalidate_path("folder/file.txt"))
+        self.assertIn(("entry", parent, b"file.txt"), self.events)
+        self.assertFalse(self.ops.invalidation_healthy)
 
     async def _fake_request(self, served):
         served.set()

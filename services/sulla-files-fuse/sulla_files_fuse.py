@@ -801,7 +801,7 @@ class SullaFiles(pyfuse3.Operations):
         self.invalidation_timed_out_at = time.monotonic()
         emit("invalidation-timeout", logging.WARNING, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
         if self._invalidation_thread_busy() and not self.invalidation_stuck_logged:
-            # With cancellable=True an abandoned thread stuck in the kernel keeps the dedicated
+            # An abandoned thread stuck in the kernel keeps the dedicated
             # CapacityLimiter(1) token until it returns, so later invalidations queue and time out.
             # Caching stays off (safe degrade); the event loop is never blocked.
             self.invalidation_stuck_logged = True
@@ -836,11 +836,21 @@ class SullaFiles(pyfuse3.Operations):
             self.invalidation_limiter = trio.CapacityLimiter(1)
         limiter = self.invalidation_limiter
         call = functools.partial(function, *args, **kwargs)
-        with trio.move_on_after(INVALIDATION_TIMEOUT_SECONDS) as timeout_scope:
-            await trio.to_thread.run_sync(call, cancellable=True,
-                                          limiter=limiter)
+        try:
+            with trio.move_on_after(INVALIDATION_TIMEOUT_SECONDS) as timeout_scope:
+                await trio.to_thread.run_sync(call, abandon_on_cancel=True, limiter=limiter)
+        except FileNotFoundError:
+            # The kernel has already dropped this cache entry.
+            return True
+        except Exception as error:
+            self.invalidation_healthy = False
+            self.invalidation_timed_out_at = time.monotonic()
+            emit("invalidation-failed", logging.WARNING, error=str(error))
+            return False
         if timeout_scope.cancelled_caught:
             self._record_invalidation_timeout()
+            return False
+        return True
 
     def _finish_invalidation_pass(self, timeouts_before):
         """Restore caching only when a whole pass completed with no timeouts."""
@@ -868,14 +878,14 @@ class SullaFiles(pyfuse3.Operations):
                 if cached == path or cached.startswith(path + "/"):
                     self.nodes[cached_inode]["stale"] = True
         inode = self.path_inode.get(path)
+        notified = True
         if inode is not None:
-            try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
-            except Exception: pass
+            notified = await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
         parent_inode = self.path_inode.get(parent)
         if membership_changed and parent_inode is not None and name:
-            try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
-            except Exception: pass
-        self._finish_invalidation_pass(timeouts_before)
+            notified = await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name)) and notified
+        if notified:
+            self._finish_invalidation_pass(timeouts_before)
 
     def consume_change_page(self, result):
         """Queue path events, reserving whole-tree invalidation for an explicit cursor reset."""
