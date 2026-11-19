@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
+import Logging from '@pkg/utils/logging';
 
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 import { VaultIpcInputPolicy } from './VaultIpcInputPolicy';
 import { VaultStatusMonitor } from './VaultStatusMonitor';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
+
+const console = Logging.sulla;
 
 /**
  * How long opening the vault view waits for the lifecycle 'vault' service. A cold
@@ -41,7 +44,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
       },
       lifecycleVaultUnlocked: () => getServiceLifecycleManager().isVaultUnlocked(),
       refreshMasterCache:     () => vaultKey.refreshMasterCache(),
-      publish:                unlocked => ctx.vaultState.publish(unlocked),
+      publish:                unlocked => { if (!unlocked) vaultViewManager.destroy(); return ctx.vaultState.publish(unlocked) },
       hasActiveVaultView:     () => vaultViewManager.hasActiveOwner(),
     });
 
@@ -101,6 +104,8 @@ export class VaultViewIpc implements MainProcessIpcStep {
       if (!ownerId) throw new Error('Invalid vault view owner');
       const tabHostView = internalTabViews.hostViewForSender(event.sender);
       const reservation = vaultViewManager.reserve(parentWindow, ownerId);
+      const openStartedAt = performance.now();
+      const waitStartedAt = performance.now();
       try {
         await getServiceLifecycleManager().waitUntilStarted('vault', VAULT_VIEW_READY_TIMEOUT_MS);
       } catch (error) {
@@ -108,6 +113,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
         vaultViewManager.hide(ownerId, parentWindow);
         throw error;
       }
+      const waitUntilStartedMs = Math.round(performance.now() - waitStartedAt);
       if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
       const { getDesktopVaultClient } = await import('@pkg/agent/services/DesktopVaultClient');
       if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
@@ -116,13 +122,32 @@ export class VaultViewIpc implements MainProcessIpcStep {
       // The container can be recreated right after the lifecycle reports it started;
       // ride out that window instead of surfacing a raw connection error.
       const { retryTransientVault } = await import('@pkg/utils/vaultTransient');
-      const humanSession = await retryTransientVault(
+      const createViewStartedAt = performance.now();
+      let createViewMs = 0;
+      const createViewPromise = vaultViewManager.prepareView(parentWindow).then(prepared => {
+        createViewMs = Math.round(performance.now() - createViewStartedAt);
+        return prepared;
+      });
+      const sessionStartedAt = performance.now();
+      let createHumanSessionMs = 0;
+      const humanSessionPromise = retryTransientVault(
         () => getDesktopVaultClient().createHumanSession(
           popupTabId && popupOrigin ? { tabId: popupTabId, origin: popupOrigin } : undefined,
         ),
         { shouldContinue: () => vaultViewManager.isCurrent(reservation) },
-      );
-      if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
+      ).then(session => {
+        createHumanSessionMs = Math.round(performance.now() - sessionStartedAt);
+        return session;
+      });
+      let humanSession: Awaited<typeof humanSessionPromise>;
+      let preparedView: Awaited<typeof createViewPromise>;
+      try {
+        [humanSession, preparedView] = await Promise.all([humanSessionPromise, createViewPromise]);
+      } catch (error) {
+        vaultViewManager.discardPreparedView(await createViewPromise.catch(() => null));
+        throw error;
+      }
+      if (!vaultViewManager.isCurrent(reservation)) { vaultViewManager.discardPreparedView(preparedView); return { state: 'cancelled' }; }
       const target = new URL(humanSession.url);
       const integrationId = safeMetadata(hint?.integrationId);
       const accountId = safeMetadata(hint?.accountId);
@@ -144,6 +169,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
         vaultViewManager.hide(ownerId, parentWindow);
         return { state: 'cancelled' };
       }
+      let loadURLMs = 0;
       const opened = await vaultViewManager.show(
         reservation,
         parentWindow,
@@ -154,12 +180,16 @@ export class VaultViewIpc implements MainProcessIpcStep {
           ? internalTabViews.onHostDisposed(event.sender, listener)
           : null : undefined,
         hint?.theme,
+        preparedView,
+        { requestedAt: openStartedAt, waitUntilStartedMs, createHumanSessionMs, createViewMs, onLoadURLComplete: durationMs => { loadURLMs = durationMs } },
       );
       if (!opened) {
         if (vaultViewManager.isCurrent(reservation)) vaultViewManager.hide(ownerId, parentWindow);
         return { state: 'cancelled' };
       }
+      vaultViewManager.setSessionExpiry(parentWindow.id, humanSession.expiresAt);
       vaultStatus.startPolling();
+      console.info(`[VaultView] IPC open timing waitUntilStarted=${waitUntilStartedMs}ms createHumanSession=${createHumanSessionMs}ms createView=${createViewMs}ms loadURL=${loadURLMs}ms total=${Math.round(performance.now() - openStartedAt)}ms`);
       return { state: 'opened', expiresAt: humanSession.expiresAt };
     });
 

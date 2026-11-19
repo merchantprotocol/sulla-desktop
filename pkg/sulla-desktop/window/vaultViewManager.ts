@@ -4,13 +4,16 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { randomUUID } from 'node:crypto';
-
+import Logging from '@pkg/utils/logging';
 import Electron, { WebContentsView } from 'electron';
 
 import { VaultPermissionPolicy } from './vaultPermissionPolicy';
 
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
 import { vaultThemeCss } from '@pkg/shared/vaultTheme';
+
+const console = Logging.sulla;
+export const VAULT_VIEW_KEEP_ALIVE_MS = 5 * 60_000;
 
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 // The vault page's "Integrations" side-menu link; intercepted here, never loaded.
@@ -38,12 +41,24 @@ interface VaultWindowState {
   themeCss: string;
   themeKey: string | null;
   themeUpdate: Promise<void>;
+  keepAliveTimer: ReturnType<typeof setTimeout> | null;
+  expiryTimer: ReturnType<typeof setTimeout> | null;
+  sessionExpiresAt: number | null;
+  targetUrl: string | null;
   window: Electron.BrowserWindow;
 }
 
 interface CreatedVaultView {
   view:    WebContentsView;
   session: Electron.Session;
+}
+
+interface VaultOpenTimings {
+  requestedAt: number;
+  waitUntilStartedMs: number;
+  createHumanSessionMs: number;
+  createViewMs: number;
+  onLoadURLComplete?: (durationMs: number) => void;
 }
 
 /** Dedicated human-only vault view. It is never registered as a browser tab. */
@@ -53,7 +68,7 @@ export class VaultViewManager {
   private stateFor(window: Electron.BrowserWindow): VaultWindowState {
     let state = this.windows.get(window.id);
     if (!state) {
-      state = { view: null, parentView: null, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
+      state = { view: null, parentView: null, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve(), keepAliveTimer: null, expiryTimer: null, sessionExpiresAt: null, targetUrl: null };
       this.windows.set(window.id, state);
       window.once('closed', () => { this.destroyWindow(window.id) });
     }
@@ -65,7 +80,13 @@ export class VaultViewManager {
     const state = this.stateFor(window);
     state.ownerId = ownerId;
     state.generation += 1;
-    this.releaseAttachedView(state);
+    this.clearKeepAlive(state);
+    if (state.sessionExpiresAt !== null && state.sessionExpiresAt <= Date.now()) {
+      if (state.expiryTimer) clearTimeout(state.expiryTimer);
+      state.expiryTimer = null;
+    }
+    if (state.attached) this.detachView(state);
+    state.attachedOwnerId = null;
     return { ownerId, windowId: window.id, generation: state.generation };
   }
 
@@ -86,45 +107,81 @@ export class VaultViewManager {
     parentView?: Electron.View,
     onParentDisposed?: (listener: () => void) => (() => void) | null,
     theme?: unknown,
+    preparedView?: CreatedVaultView | null,
+    timings?: VaultOpenTimings,
   ): Promise<boolean> {
-    if (!this.isCurrent(reservation)) return false;
+    if (!this.isCurrent(reservation)) { this.discardPreparedView(preparedView ?? null); return false; }
     const target = this.validateUrl(url);
     const state = this.windows.get(reservation.windowId);
     if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
     state.themeCss = this.themeCssOrUnthemed(theme, 'open');
-    const created = await this.createView(window);
-    if (!this.isCurrent(reservation)) {
-      this.discardCreatedView(created);
-      return false;
+    const startedAt = performance.now();
+    let created: CreatedVaultView | null = preparedView ?? null;
+    if (!state.view || state.view.webContents.isDestroyed() || !state.isolatedSession) {
+      created ??= await this.createView(window);
+      if (!this.isCurrent(reservation)) { this.discardCreatedView(created); return false; }
+      state.view = created.view;
+      state.isolatedSession = created.session;
+      state.view.webContents.on('dom-ready', () => { void this.applyTheme(state, state.view!).catch(error => console.warn('Vault theme update failed', error)) });
     }
+    const view = state.view;
+    if (!view) return false;
+    const oldTarget = state.targetUrl ? new URL(state.targetUrl) : null;
+    const sessionExpired = state.sessionExpiresAt !== null && state.sessionExpiresAt <= Date.now();
+    const targetChanged = sessionExpired || !oldTarget || !this.samePageTarget(oldTarget, target);
+    if (targetChanged && !oldTarget) state.themeKey = null;
     const hostCleanup = parentView && onParentDisposed
-      ? onParentDisposed(() => this.hide(reservation.ownerId, window))
+      ? onParentDisposed(() => this.destroyOwner(reservation.ownerId, window))
       : null;
     if (parentView && !hostCleanup) {
-      this.discardCreatedView(created);
+      this.destroyOwner(reservation.ownerId, window);
       return false;
     }
-    const { view } = created;
-    state.view = view;
-    state.isolatedSession = created.session;
     state.attachedOwnerId = reservation.ownerId;
     state.parentView = parentView ?? null;
     state.hostCleanup = hostCleanup;
-    view.webContents.on('dom-ready', () => { void this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error)) });
     view.setBounds(this.validateBounds(bounds));
     (parentView ?? window.contentView).addChildView(view);
     state.attached = true;
     // Defense in depth for ordinary OS capture paths. The stronger guarantee
     // is that this view is absent from every browser/agent automation registry.
     window.setContentProtection(true);
+    const loadStartedAt = performance.now();
     try {
-      await view.webContents.loadURL(target.toString());
+      if (targetChanged) await view.webContents.loadURL(target.toString());
+      if (!this.isCurrent(reservation)) return false;
+      state.targetUrl = target.toString();
+      await this.applyTheme(state, view);
     } catch (error) {
       if (!this.isCurrent(reservation)) return false;
-      this.hide(reservation.ownerId, window);
+      this.destroyOwner(reservation.ownerId, window);
       throw error;
     }
+    const loadURLMs = Math.round(performance.now() - loadStartedAt);
+    timings?.onLoadURLComplete?.(loadURLMs);
+    console.info(`[VaultView] open timing waitUntilStarted=${timings?.waitUntilStartedMs ?? 0}ms createHumanSession=${timings?.createHumanSessionMs ?? 0}ms createView=${timings?.createViewMs ?? Math.round(loadStartedAt - startedAt)}ms loadURL=${loadURLMs}ms total=${Math.round(performance.now() - (timings?.requestedAt ?? startedAt))}ms`);
     return this.isCurrent(reservation);
+  }
+
+  /** Prepare the expensive isolated renderer while the IPC layer creates its human session. */
+  async prepareView(window: Electron.BrowserWindow): Promise<CreatedVaultView | null> {
+    const state = this.stateFor(window);
+    if (state.view && !state.view.webContents.isDestroyed() && state.isolatedSession) return null;
+    return this.createView(window);
+  }
+
+  discardPreparedView(created: CreatedVaultView | null): void {
+    if (created) this.discardCreatedView(created);
+  }
+
+  /** Auth grants are single-use boot material; a live session already exchanged its grant. */
+  private samePageTarget(previous: URL, next: URL): boolean {
+    if (previous.origin !== next.origin || previous.pathname !== next.pathname) return false;
+    const stable = (params: URLSearchParams) => [...params.entries()]
+      .filter(([key]) => key !== 'grant' && key !== 'csrf')
+      .sort(([a, av], [b, bv]) => a.localeCompare(b) || av.localeCompare(bv));
+    return JSON.stringify(stable(previous.searchParams)) === JSON.stringify(stable(next.searchParams)) &&
+      JSON.stringify(stable(new URLSearchParams(previous.hash.slice(1)))) === JSON.stringify(stable(new URLSearchParams(next.hash.slice(1))));
   }
 
   async setTheme(ownerId: string, theme: unknown, window: Electron.BrowserWindow): Promise<void> {
@@ -177,26 +234,62 @@ export class VaultViewManager {
       released = true;
     }
     if (state.attachedOwnerId === ownerId) {
-      this.releaseAttachedView(state);
+      this.detachView(state);
+      this.clearKeepAlive(state);
+      state.keepAliveTimer = setTimeout(() => this.releaseAttachedView(state), VAULT_VIEW_KEEP_ALIVE_MS);
       released = true;
     }
     return released;
   }
 
-  private releaseAttachedView(state: VaultWindowState): void {
+  destroyOwner(ownerId: string, window: Electron.BrowserWindow): boolean {
+    const state = this.windows.get(window.id);
+    if (!state || (state.ownerId !== ownerId && state.attachedOwnerId !== ownerId)) return false;
+    state.ownerId = null;
+    state.generation += 1;
+    this.releaseAttachedView(state);
+    return true;
+  }
+
+  private detachView(state: VaultWindowState): void {
     state.hostCleanup?.();
     state.hostCleanup = null;
     if (!state.window.isDestroyed() && state.view && state.attached) (state.parentView ?? state.window.contentView).removeChildView(state.view);
     state.parentView = null;
     state.attached = false;
     if (!state.window.isDestroyed()) state.window.setContentProtection(false);
+    state.attachedOwnerId = null;
+  }
+
+  private clearKeepAlive(state: VaultWindowState): void {
+    if (state.keepAliveTimer) clearTimeout(state.keepAliveTimer);
+    state.keepAliveTimer = null;
+  }
+
+  private releaseAttachedView(state: VaultWindowState): void {
+    this.clearKeepAlive(state);
+    if (state.expiryTimer) clearTimeout(state.expiryTimer);
+    state.expiryTimer = null;
+    this.detachView(state);
     if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();
     state.view = null;
     state.themeKey = null;
     state.themeCss = '';
     void state.isolatedSession?.clearStorageData();
     state.isolatedSession = null;
-    state.attachedOwnerId = null;
+    state.targetUrl = null;
+    state.sessionExpiresAt = null;
+    state.ownerId = null;
+  }
+
+  setSessionExpiry(windowId: number, expiresAt: number | string): void {
+    const state = this.windows.get(windowId);
+    const expiry = typeof expiresAt === 'number' ? expiresAt : Date.parse(expiresAt);
+    if (!state || !Number.isFinite(expiry)) return;
+    if (state.sessionExpiresAt !== null && state.sessionExpiresAt > Date.now()) return;
+    if (state.expiryTimer) clearTimeout(state.expiryTimer);
+    state.sessionExpiresAt = expiry;
+    state.expiryTimer = setTimeout(() => this.releaseAttachedView(state), Math.max(0, expiry - Date.now()));
   }
 
   destroy(): void {
