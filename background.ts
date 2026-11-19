@@ -47,6 +47,7 @@ import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 import { Help } from '@pkg/config/help';
 import * as settings from '@pkg/config/settings';
@@ -2140,7 +2141,7 @@ ipcMainProxy.on('show-logs', async(event) => {
   const error = await Electron.shell.openPath(paths.logs);
 
   if (error) {
-    const browserWindow = Electron.BrowserWindow.fromWebContents(event.sender);
+    const browserWindow = agentWindowFromSender(event.sender);
     const options: MessageBoxOptions = {
       message: error,
       type:    'error',

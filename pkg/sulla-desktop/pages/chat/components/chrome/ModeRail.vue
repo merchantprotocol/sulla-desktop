@@ -205,6 +205,7 @@ const emit = defineEmits<{
   (e: 'open-extension', item: ExtensionRailItem): void;
   (e: 'extension-permissions', item: ExtensionRailItem): void;
   (e: 'remove-extension', item: ExtensionRailItem): void;
+  (e: 'overlay-change', visible: boolean): void;
 }>();
 
 interface ExtensionRailItem { extensionId:string; id:string; label:string; icon?:string; component:string; tooltip?:string }
@@ -244,8 +245,8 @@ const indicatorStyle = computed<CSSProperties>(() => ({
 const FALLBACK_EXTENSION_ICON = '<svg viewBox="0 0 24 24"><path d="M8 3v4M16 3v4M5 8h14v5a7 7 0 0 1-14 0z"/><path d="M12 20v2"/></svg>';
 const extensionMenu = ref<{x:number;y:number;item:ExtensionRailItem}>();
 const safeExtensions = computed(() => (props.extensions ?? []).map(item => ({ ...item, tooltip: item.tooltip || item.label, icon: DOMPurify.sanitize(item.icon || FALLBACK_EXTENSION_ICON, { USE_PROFILES:{svg:true,svgFilters:false}, FORBID_TAGS:['script','style','foreignObject'], FORBID_ATTR:['style','href','xlink:href','src'] }) })));
-function openExtensionMenu(event:MouseEvent,item:ExtensionRailItem){ extensionMenu.value={x:event.clientX,y:event.clientY,item}; }
-function chooseExtensionMenu(action:'open'|'permissions'|'remove'){ const item=extensionMenu.value?.item;if(!item)return; extensionMenu.value=undefined; if(action==='open') (emit as any)('open-extension',item); else if(action==='permissions') (emit as any)('extension-permissions',item); else (emit as any)('remove-extension',item); }
+function openExtensionMenu(event:MouseEvent,item:ExtensionRailItem){ extensionMenu.value={x:event.clientX,y:event.clientY,item}; emit('overlay-change', true); }
+function chooseExtensionMenu(action:'open'|'permissions'|'remove'){ const item=extensionMenu.value?.item;if(!item)return; extensionMenu.value=undefined; emit('overlay-change', false); if(action==='open') (emit as any)('open-extension',item); else if(action==='permissions') (emit as any)('extension-permissions',item); else (emit as any)('remove-extension',item); }
 
 const safeRailApps = computed(() => (props.railApps ?? []).map(app => ({
   ...app,

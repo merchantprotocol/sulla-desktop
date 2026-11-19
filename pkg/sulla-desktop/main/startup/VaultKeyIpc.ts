@@ -7,6 +7,7 @@ import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycle
 
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 import { VaultIpcInputPolicy } from './VaultIpcInputPolicy';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 /** Vault setup/unlock/lock, backups, v2 item access, the closed sync crypto channels and lifecycle status. */
 export class VaultKeyIpc implements MainProcessIpcStep {
@@ -118,8 +119,7 @@ export class VaultKeyIpc implements MainProcessIpcStep {
       setUserLoggedIn(false);
       // Every window raises its own overlay, so detach the native tab in the window that asked,
       // not just the active one, or a second window's browser view would cover its unlock screen.
-      const { BrowserWindow } = await import('electron');
-      const owner = BrowserWindow.fromWebContents(event.sender);
+      const owner = agentWindowFromSender(event.sender);
       if (owner) tabViewManager.setFocusedTab(null, undefined, undefined, owner);
       else tabViewManager.setFocusedTab(null);
       return true;

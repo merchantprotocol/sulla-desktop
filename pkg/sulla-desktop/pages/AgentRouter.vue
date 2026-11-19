@@ -26,6 +26,7 @@
         @open-extension="openExtension"
         @extension-permissions="openExtensionPermissions"
         @remove-extension="removeExtensionFromRail"
+        @overlay-change="modeRailOverlayOpen = $event"
         @toggle-bookmarks="toggleBookmarks()"
         @toggle-chat-files="toggleChatFiles()"
       />
@@ -42,6 +43,7 @@
       />
 
       <div class="agent-router-content flex flex-col">
+        <AgentHeader v-if="processPerTab && activeTabMode !== 'browser'" class="internal-shell-header" />
         <NoAiConnectedBanner />
         <!--
           Non-browser routes use keep-alive normally.
@@ -68,8 +70,18 @@
           fully rendered and composited in the background.
         -->
         <template v-for="tab in browserTabs" :key="tab.id">
+          <div
+            v-if="openedTabIds.has(tab.id) && processPerTab && tab.mode !== 'browser'"
+            :ref="(element) => setInternalTabElement(tab.id, element)"
+            class="browser-tab-layer internal-browser-tab-layer"
+          >
+            <div v-if="crashedInternalTabIds.has(tab.id)" class="internal-tab-reload" role="alert">
+              <span>This tab stopped unexpectedly.</span>
+              <button type="button" @click="reloadInternalTab(tab.id)">Reload tab</button>
+            </div>
+          </div>
           <BrowserTab
-            v-if="openedTabIds.has(tab.id)"
+            v-else-if="openedTabIds.has(tab.id)"
             class="browser-tab-layer"
             :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
             :tab-id="tab.id"
@@ -156,9 +168,11 @@
 import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import BrowserTab from './BrowserTab.vue';
+import { lazyScreen } from './agent/lazyScreen';
+const BrowserTab = lazyScreen(() => import('./BrowserTab.vue'), 'BrowserTab');
 import ModeRail from './chat/components/chrome/ModeRail.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
+import AgentHeader from './agent/AgentHeader.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
@@ -167,6 +181,7 @@ import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
 import { openDocumentTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
@@ -175,6 +190,10 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
+const modeRailOverlayOpen = ref(false);
+const noAiBannerVisible = ref(false);
+function onNoAiBannerChange(event: Event) { noAiBannerVisible.value = !!(event as CustomEvent<boolean>).detail; }
+window.addEventListener('sulla:no-ai-banner', onNoAiBannerChange);
 async function onPermissionNeeded(_event:unknown,event:{extensionId:string;hook:any}){if(permissionPrompt.value)return;const extensions=await ipcRenderer.invoke('extension-permissions:list').catch((err:unknown)=>{console.warn('[AgentRouter] extension permissions load failed:',err);return null});if(!extensions)return;const ext=extensions.find(item=>item.extensionId===event.extensionId);if(ext&&typeof ext.grants?.[event.hook]==='boolean')return;// already decided: never re-ask
   permissionPrompt.value={event,name:ext?.name||event.extensionId,label:hookPromptLabels[event.hook]||event.hook}}
 async function answerPermission(granted:boolean){const prompt=permissionPrompt.value;if(!prompt)return;await ipcRenderer.invoke('extension-permissions:set-hook',{extensionId:prompt.event.extensionId,hook:prompt.event.hook,granted});permissionPrompt.value=undefined}
@@ -214,6 +233,59 @@ const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
 // Keep a tab's page tree unmounted until the user first opens it. Once opened,
 // retain its existing renderer-local state while switching between tabs.
 const openedTabIds = reactive(new Set<string>());
+// The process isolation kill switch can be flipped in localStorage without a
+// rebuild: localStorage.setItem('tabs.processPerTab', 'false'). Defaults on.
+const processPerTab = localStorage.getItem('tabs.processPerTab') !== 'false';
+const internalTabElements = new Map<string, HTMLElement>();
+const internalTabObservers = new Map<string, ResizeObserver>();
+const crashedInternalTabIds = reactive(new Set<string>());
+function onInternalTabCrashed(_event: unknown, tabId: string) { crashedInternalTabIds.add(tabId); }
+function onInternalTabUpdated(_event: unknown, tabId: string, descriptor: BrowserTabDescriptor) {
+  if (descriptor?.id === tabId) updateTab(tabId, descriptor);
+}
+function reloadInternalTab(tabId: string) {
+  crashedInternalTabIds.delete(tabId);
+  void ipcRenderer.invoke('internal-tab-view:reload' as any, tabId).catch(() => undefined);
+}
+const internalTabRoute = (id: string) => route.path === `/Browser/${ id }` && browserTabs.some(tab => tab.id === id && tab.mode !== 'browser');
+function internalTabBounds(element: HTMLElement) {
+  const rect = element.getBoundingClientRect();
+  return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) };
+}
+function setInternalTabElement(id: string, value: Element | null): void {
+  internalTabObservers.get(id)?.disconnect();
+  internalTabObservers.delete(id);
+  if (!(value instanceof HTMLElement)) { internalTabElements.delete(id); return; }
+  internalTabElements.set(id, value);
+  const update = () => {
+    if (internalTabRoute(id)) void ipcRenderer.invoke('internal-tab-view:bounds' as any, id, internalTabBounds(value)).catch(() => undefined);
+  };
+  const observer = new ResizeObserver(update);
+  observer.observe(value);
+  internalTabObservers.set(id, observer);
+  update();
+}
+watch(() => route.path, async(path, previous) => {
+  if (!processPerTab) return;
+  const previousId = /^\/Browser\/(.+)$/.exec(previous || '')?.[1];
+  if (previousId) void ipcRenderer.invoke('internal-tab-view:visible' as any, previousId, false).catch(() => undefined);
+  const id = /^\/Browser\/(.+)$/.exec(path)?.[1];
+  if (!id) return;
+  openedTabIds.add(id);
+  await nextTick();
+  const element = internalTabElements.get(id);
+  if (element) void ipcRenderer.invoke('internal-tab-view:activate' as any, id, new URLSearchParams(window.location.search).get('windowKey') || 'main', internalTabBounds(element)).catch(() => undefined);
+}, { immediate: true });
+watch(() => browserTabs.map(tab => tab.id).join(','), (joined, old) => {
+  if (!processPerTab) return;
+  const active = new Set(joined ? joined.split(',') : []);
+  for (const id of old ? old.split(',') : []) if (!active.has(id)) {
+    internalTabObservers.get(id)?.disconnect();
+    internalTabObservers.delete(id);
+    internalTabElements.delete(id);
+    void ipcRenderer.invoke('internal-tab-view:close' as any, id).catch(() => undefined);
+  }
+});
 watch(() => route.path, (path) => {
   const match = /^\/Browser\/(.+)$/.exec(path);
   if (match) openedTabIds.add(match[1]);
@@ -339,6 +411,13 @@ function openRailApp(slug: string) {
 // ── Bookmarks pane ──
 const BOOKMARKS_OPEN_KEY = 'sulla:bookmarks-pane-open';
 const bookmarksOpen = ref(localStorage.getItem(BOOKMARKS_OPEN_KEY) === '1');
+const shellOverlayVisible = computed(() => vaultUnlockVisible.value || startupOverlayVisible.value || bookmarksOpen.value || !!permissionPrompt.value || modeRailOverlayOpen.value || noAiBannerVisible.value);
+watch(shellOverlayVisible, (visible) => {
+  const id = /^\/Browser\/(.+)$/.exec(route.path)?.[1];
+  if (!id || !internalTabRoute(id)) return;
+  void ipcRenderer.invoke('internal-tab-view:visible' as any, id, !visible).catch(() => undefined);
+}, { immediate: true });
+
 const bookmarkRevealId = ref<string | null>(null);
 const chatFilesOpen = ref(false);
 
@@ -779,6 +858,8 @@ const presenceTracker = getHumanPresenceTracker();
 
 
 onMounted(async() => {
+  ipcRenderer.on('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
+  ipcRenderer.on('internal-tab-view:updated' as any, onInternalTabUpdated as any);
   ipcRenderer.on('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.on('database:available', onDatabaseAvailable);
   void refreshRailExtensions().catch(err => console.warn('[AgentRouter] extension rail load failed:', err));
@@ -836,6 +917,9 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('sulla:no-ai-banner', onNoAiBannerChange);
+  ipcRenderer.removeListener('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
+  ipcRenderer.removeListener('internal-tab-view:updated' as any, onInternalTabUpdated as any);
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('database:available', onDatabaseAvailable);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
@@ -933,6 +1017,25 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   z-index: 1;
+}
+
+.internal-shell-header {
+  position: relative;
+  z-index: 3;
+}
+.internal-browser-tab-layer {
+  top: 56px;
+}
+
+.internal-tab-reload {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg-surface);
 }
 
 .browser-tab-hidden {
