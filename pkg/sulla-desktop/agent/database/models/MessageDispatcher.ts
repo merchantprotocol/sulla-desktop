@@ -720,7 +720,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       senderChannel: typeof data?.senderChannel === 'string' ? data.senderChannel : '',
       fromThreadId:  typeof data?.fromThreadId === 'string' ? data.fromThreadId : undefined,
       toThreadId:    typeof data?.toThreadId === 'string' ? data.toThreadId : undefined,
+      senderLabel:   typeof data?.senderLabel === 'string' ? data.senderLabel : undefined,
+      senderJobId:   typeof data?.senderJobId === 'string' ? data.senderJobId : undefined,
     };
+  }
+  if (kind === 'a2a_delivery_status' && data?.a2aDeliveryStatus && typeof data.a2aDeliveryStatus.messageId === 'string') {
+    message.a2aDeliveryStatus = data.a2aDeliveryStatus;
   }
 
   if (kind !== 'speak' && finalContent.includes('<speak>')) {

@@ -17,7 +17,8 @@ export interface ChatMessage {
   content:   string;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   fileReferences?: Array<Record<string, unknown>>;
-  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'sub_agent_exchange' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive' | 'notice';
+  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'a2a_delivery_status' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'sub_agent_exchange' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive' | 'notice';
+  a2aDeliveryStatus?: { messageId: string; status: 'sent' | 'delivered' | 'failed'; reason?: string };
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -44,6 +45,8 @@ export interface ChatMessage {
     senderChannel: string;
     fromThreadId?: string;
     toThreadId?:   string;
+    senderLabel?:  string;
+    senderJobId?:  string;
   };
   workflowNode?: {
     workflowRunId: string;

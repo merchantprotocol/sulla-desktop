@@ -1592,6 +1592,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Text streaming state — throttle at ~50ms to avoid flooding the WebSocket
     let contentBuffer = '';
+    let displayBuffer = '';
     let lastStreamFlush = 0;
     let streamingWsSent = false;
     const STREAM_THROTTLE_MS = 50;
@@ -1634,6 +1635,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       // Run token through all active extractors (speak extraction, etc.)
       const cleaned = controller.processChunk(token, ctx);
+      displayBuffer += cleaned;
 
       // Non-voice mode: stream accumulated text to the UI progressively.
       // Use the streaming-aware strip so a half-streamed opening wrapper
@@ -1644,7 +1646,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const now = Date.now();
         if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
           lastStreamFlush = now;
-          const stripped = stripProtocolTagsStreaming(contentBuffer);
+          const stripped = stripProtocolTagsStreaming(displayBuffer);
           if (stripped.trim()) {
             sendStreamingUpdate(stripped);
             streamingWsSent = true;
@@ -1676,13 +1678,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
       if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(contentBuffer);
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
         if (stripped.trim()) {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         contentBuffer = '';
+        displayBuffer = '';
       }
 
       const parentWsCh = (state.metadata as any).parentWsChannel;
@@ -1713,13 +1716,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
       if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(contentBuffer);
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
         if (stripped.trim()) {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         contentBuffer = '';
+        displayBuffer = '';
       }
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
@@ -1782,12 +1786,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // this is a no-op when nothing is open.
       if (!isVoiceMode) {
         if (contentBuffer.trim()) {
-          const stripped = stripProtocolTagsStreaming(contentBuffer);
+          const stripped = stripProtocolTagsStreaming(displayBuffer);
           if (stripped.trim()) {
             sendStreamingUpdate(stripped);
             streamingWsSent = true;
           }
           contentBuffer = '';
+          displayBuffer = '';
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         this.wsChatMessage(state, '', 'assistant', 'thinking_complete');

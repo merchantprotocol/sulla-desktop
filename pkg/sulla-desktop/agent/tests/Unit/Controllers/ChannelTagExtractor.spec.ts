@@ -48,4 +48,57 @@ describe('ChannelTagExtractor', () => {
     expect(send.mock.calls[1][1].data.envelope.targetId).toBe('thread-a');
     expect(send.mock.calls[3][1].data.envelope.targetId).toBe('thread-b');
   });
+
+  it('keeps a quoted unclosed channel example visible without dispatching it', () => { // risk: user-visible content loss / unintended peer message
+    const extractor = new ChannelTagExtractor();
+    const response = { content: 'Use "<channel:reviewer> as the routing syntax in documentation.' } as any;
+    expect(extractor.processComplete(response, { channel: 'worker', threadId: 't', state: {} } as any))
+      .toBe('Use "<channel:reviewer> as the routing syntax in documentation.');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch a complete channel example quoted as prose', () => { // risk: accidental peer delivery from quoted documentation
+    const extractor = new ChannelTagExtractor();
+    const quoted = 'Example: "<channel:reviewer>not a message</channel:reviewer>"';
+    const response = { content: quoted } as any;
+    expect(extractor.processComplete(response, { channel: 'worker', threadId: 't', state: {} } as any)).toBe(quoted);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('shows channel syntax inside inline and fenced code without routing it', () => { // risk: quoting protocol syntax must not trigger a peer delivery
+    const extractor = new ChannelTagExtractor();
+    const text = '`<channel:agent>hello</channel:agent>`\n```xml\n<channel:agent>fenced</channel:agent>\n```';
+    const response = { content: text } as any;
+    expect(extractor.processComplete(response, { channel: 'worker', threadId: 't', state: {} } as any)).toBe(text);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unclosed channel block as plain text at end of reply', () => { // risk: partial protocol output hiding user text
+    const extractor = new ChannelTagExtractor();
+    const response = { content: 'Before <channel:agent>still visible at end' } as any;
+    expect(extractor.processComplete(response, { channel: 'worker', threadId: 't', state: {} } as any))
+      .toBe('Before <channel:agent>still visible at end');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('replaces a closed channel tag with a durable visible card marker and dispatches once', () => { // risk: a2a visibility and accidental duplicate delivery
+    const extractor = new ChannelTagExtractor();
+    const response = { content: 'before <channel:reviewer#Thread-1>please check</channel:reviewer#Thread-1> after' } as any;
+    const rendered = extractor.processComplete(response, { channel: 'worker', threadId: 't', state: {} } as any);
+    expect(rendered).toMatch(/^before ⟦SULLA_A2A:/);
+    expect(rendered).toContain('⟧ after');
+    expect(rendered).not.toContain('<channel:');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('holds only a trailing partial opener and resumes with the rest of the reply', () => { // risk: live assistant reply truncated after a partial opener
+    const extractor = new ChannelTagExtractor();
+    const ctx = { channel: 'worker', threadId: 't', state: {} } as any;
+    expect(extractor.processChunk('answer <channel:', ctx)).toBe('answer ');
+    const rest = extractor.processChunk('agent>go</channel:agent> and more', ctx);
+    expect(rest).toContain('and more');
+    expect(rest).toMatch(/⟦SULLA_A2A:/);
+    expect(rest).not.toBe('answer ');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
 });

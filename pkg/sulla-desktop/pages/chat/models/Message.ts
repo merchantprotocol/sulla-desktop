@@ -195,6 +195,9 @@ export interface ChannelMessage extends MessageBase {
   agent:   string;          // e.g. "Heartbeat" | "Mobile"
   channel: string;          // e.g. "heartbeat"
   text:    string;          // HTML/markdown-ish
+  senderLabel?: string;
+  senderThreadId?: string;
+  senderJobId?: string;
 }
 
 // ─── Sub-agent activity ───────────────────────────────────────────

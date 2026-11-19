@@ -779,6 +779,10 @@ export class BackendGraphWebSocketService {
           const senderChannel = String(envelope.senderChannel || '');
           const senderThreadId = String(envelope.senderThreadId || '');
           if (senderChannel && senderThreadId) {
+            this.emitMessage(senderChannel, 'subconscious_message', {
+              content: `a2a delivery ${ envelope.ids.messageId } failed`, role: 'assistant', kind: 'a2a_delivery_status', thread_id: senderThreadId,
+              a2aDeliveryStatus: { messageId: envelope.ids.messageId, status: 'failed', reason: error.message },
+            });
             await this.agentInbox.receive({
               envelope: { from: channelId, kind: 'blocker', body: `Peer message was not delivered: ${error.message} Re-address the message using <channel:${channelId}#threadId-or-jobId>... if needed.`, senderChannel: channelId, ids: { messageId: nextMessageId() } },
               target: { channel: senderChannel, threadId: senderThreadId, agentId: senderChannel },
@@ -788,9 +792,23 @@ export class BackendGraphWebSocketService {
         }
         throw error;
       }
-      await this.agentInbox.receive({
+      const receipt = await this.agentInbox.receive({
         envelope,
         target,
+      });
+      this.emitMessage(channelId, 'subconscious_message', {
+        content: envelope.body, role: 'assistant', kind: 'channel_message',
+        thread_id: target.threadId,
+        senderId: envelope.from,
+        senderChannel: envelope.senderChannel,
+        senderLabel: envelope.senderLabel,
+        senderJobId: envelope.senderJobId,
+        fromThreadId: envelope.senderThreadId,
+        targetId: envelope.targetId,
+      });
+      if (envelope.senderChannel && envelope.senderThreadId) this.emitMessage(envelope.senderChannel, 'subconscious_message', {
+        content: `a2a delivery ${ envelope.ids.messageId } ${ receipt === 'delivered' ? 'delivered' : 'sent' }`, role: 'assistant', kind: 'a2a_delivery_status', thread_id: envelope.senderThreadId,
+        a2aDeliveryStatus: { messageId: envelope.ids.messageId, status: receipt === 'delivered' ? 'delivered' : 'sent' },
       });
       return;
     }

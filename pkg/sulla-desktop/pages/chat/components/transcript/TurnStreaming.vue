@@ -39,6 +39,7 @@ import { computed } from 'vue';
 
 import IsolatedHtml from './IsolatedHtml.vue';
 import { renderMarkdown } from '../../messages/markdown';
+import { A2aCardMarkup } from '../../messages/a2aCardMarkup';
 
 import type { StreamingMessage } from '../../models/Message';
 
@@ -64,7 +65,8 @@ const htmlDocument = computed(() => {
   return COMPLETE_HTML_RE.exec(text)?.[0] ?? text;
 });
 
-const rendered = computed(() => renderMarkdown(props.msg.text));
+const a2aCards = new A2aCardMarkup();
+const rendered = computed(() => renderMarkdown(a2aCards.render(props.msg.text)));
 </script>
 
 <style scoped>

@@ -10,6 +10,7 @@
     <div class="chead">
       <span class="agent">{{ msg.agent }}</span>
       <span class="ch">#{{ msg.channel }}</span>
+      <span v-if="msg.senderThreadId || msg.senderJobId" class="provenance">{{ msg.senderLabel || msg.agent }} · {{ msg.channel }}<template v-if="msg.senderThreadId"> · {{ msg.senderThreadId }}</template><template v-if="msg.senderJobId"> · {{ msg.senderJobId }}</template></span>
       <span class="ts">{{ timeLabel }}</span>
     </div>
     <div class="body" v-html="msg.text" />
@@ -50,6 +51,7 @@ const timeLabel = computed(() => {
   color: var(--accent-hover); font-size: 9px;
 }
 .chead .ts { margin-left: auto; color: var(--text-dim); font-size: 9.5px; }
+.chead .provenance { font-size: 9px; letter-spacing: 0; text-transform: none; color: var(--text-dim); }
 .body {
   font-family: var(--font-display); font-size: 15.5px; line-height: 1.6;
   color: var(--text-primary);
