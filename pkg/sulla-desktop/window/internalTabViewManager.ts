@@ -30,7 +30,8 @@ export class InternalTabViewManager {
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
       });
-      const url = agentWindowUrl(`tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }`);
+      const startupId = new URL(owner.webContents.getURL()).searchParams.get('startupId') ?? '';
+      const url = agentWindowUrl(`tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }&startupId=${ encodeURIComponent(startupId) }`);
       void view.webContents.loadURL(url);
     } else if (tab.owner !== owner) {
       this.moveToWindow(tabId, owner);

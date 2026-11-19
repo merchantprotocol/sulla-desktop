@@ -26,7 +26,7 @@ const ownerWindow = (id: number) => ({
   id,
   isDestroyed: () => false,
   once: vi.fn(),
-  webContents: { send: vi.fn() },
+  webContents: { send: vi.fn(), getURL: () => 'app://./agent.html?windowKey=main&startupId=boot-id' },
   contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
 });
 const manager = () => new (InternalTabViewManager as any)() as InternalTabViewManager;
@@ -40,7 +40,7 @@ describe('InternalTabViewManager', () => {
     expect(instance.tabs.size).toBe(0);
     instance.activate(owner, 'one', 'main', bounds);
     const tab = instance.tabs.get('one');
-    expect(tab.view.webContents.loadURL).toHaveBeenCalledWith('app://./agent.html?tabHost=1&tabId=one&windowKey=main');
+    expect(tab.view.webContents.loadURL).toHaveBeenCalledWith('app://./agent.html?tabHost=1&tabId=one&windowKey=main&startupId=boot-id');
     expect(owner.contentView.addChildView).toHaveBeenCalledWith(tab.view);
     instance.setVisible(owner, 'one', false);
     expect(owner.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
