@@ -12,7 +12,7 @@ import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStor
 
 export function shouldPersistTabList(search: string): boolean { return new URLSearchParams(search).get('tabHost') !== '1'; }
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'conversations' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'conversations' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal' | 'files' | 'paper' | 'decide' | 'preferences' | 'docker' | 'support-session' | 'capture-studio';
 
 export interface FilesNavigationPayload {
   fileId?:  string;
@@ -534,6 +534,7 @@ export function useBrowserTabs() {
     decide:       'Decide',
     preferences:  'Preferences',
     docker:       'Docker',
+    'capture-studio': 'Capture Studio',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; initialAgentId?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string; supportSession?: BrowserTab['supportSession'] }): BrowserTab {

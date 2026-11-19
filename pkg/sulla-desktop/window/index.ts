@@ -18,6 +18,7 @@ import { AgentWindowPersistence } from './AgentWindowPersistence';
 import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
 import { agentWindowRegistry, initialTabsQuery, setAgentWindowCreator, setAgentWindowMapping, type AgentWindowOptions } from './agentWindows';
 import { TabTransferService } from '@pkg/main/tabs/TabTransferService';
+import { InternalTabViewManager } from './internalTabViewManager';
 
 import type { FailureDetails } from '@pkg/backend/backend';
 import { getSettings } from '@pkg/config/settingsImpl';
@@ -187,7 +188,6 @@ function getAgentWindowPersistence(): AgentWindowPersistence {
 }
 const updatesUrl = `${ webRoot }/updates.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
-const captureStudioUrl = `${ webRoot }/capture-studio.html`;
 
 console.log('[window/index] URLs configured:', { webRoot, mainUrl });
 
@@ -514,53 +514,16 @@ export function openUpdatesWindow() {
   return window;
 }
 
-/**
- * Open the Capture Studio window; if it is already open, focus it.
- */
-export function openCaptureStudio() {
-  console.log('[openCaptureStudio] Called.');
-
-  const fullSize = screen.getPrimaryDisplay().size;
-  const workArea = screen.getPrimaryDisplay().workAreaSize;
-
-  const defaultWidth = Math.trunc(fullSize.width * 0.9);
-  const defaultHeight = workArea.height;
-
-  const window = createWindow(
-    'capture-studio',
-    captureStudioUrl,
-    {
-      title:           'Sulla Desktop - Capture Studio',
-      x:               0,
-      y:               0,
-      width:           defaultWidth,
-      height:          defaultHeight,
-      resizable:       true,
-      icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      backgroundColor: '#0d1117',
-      // macOS: hide native title bar, keep traffic lights overlaid on content
-      ...(os.platform() === 'darwin'
-        ? {
-          titleBarStyle:        'hiddenInset',
-          trafficLightPosition: { x: 16, y: 8 },
-        }
-        : {}),
-      webPreferences: {
-        devTools:               !app.isPackaged,
-        nodeIntegration:        true,
-        contextIsolation:       false,
-        webSecurity:            false,
-        backgroundThrottling:   false,
-      },
-    });
-
-  window.on('closed', () => {
-    delete windowMapping['capture-studio'];
-  });
-
-  app.dock?.show();
-
-  return window;
+/** Open or focus Capture Studio in the app's transferable tab system. */
+export function openCaptureStudio(): void {
+  const existing = InternalTabViewManager.getInstance().ownerForDescriptor((value) =>
+    !!value && typeof value === 'object' && (value as { mode?: unknown }).mode === 'capture-studio');
+  if (existing && !existing.isDestroyed()) {
+    restoreWindow(existing);
+    existing.webContents.send('agent-command', { command: 'open-tab', mode: 'capture-studio' });
+    return;
+  }
+  sendToMain({ command: 'open-tab', mode: 'capture-studio' });
 }
 
 /**

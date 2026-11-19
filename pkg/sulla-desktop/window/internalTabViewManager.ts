@@ -192,6 +192,14 @@ export class InternalTabViewManager {
     return true;
   }
 
+  /** Find the live host window for a tab descriptor matching the predicate. */
+  ownerForDescriptor(predicate: (descriptor: unknown) => boolean): Electron.BrowserWindow | null {
+    for (const tab of this.tabs.values()) {
+      if (tab.descriptor !== undefined && predicate(tab.descriptor) && !tab.owner.isDestroyed()) return tab.owner;
+    }
+    return null;
+  }
+
   resolveOwner(sender: Electron.WebContents): Electron.BrowserWindow | null {
     for (const tab of this.tabs.values()) if (tab.view.webContents === sender && !tab.owner.isDestroyed()) return tab.owner;
     return null;

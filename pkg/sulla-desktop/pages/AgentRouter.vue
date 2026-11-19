@@ -711,6 +711,12 @@ function onAgentCommand(_event: any, args: any) {
       openSingleTab('preferences', 'account');
       break;
     }
+    if (mode === 'capture-studio') {
+      const existing = browserTabs.find(tab => tab.mode === 'capture-studio');
+      const target = existing ?? createTab('about:blank', { mode: 'capture-studio' });
+      router.push(`/Browser/${ target.id }`);
+      break;
+    }
     if (mode === 'preferences' || mode === 'docker') {
       openSingleTab(mode, args.section);
       break;
