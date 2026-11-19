@@ -13,6 +13,8 @@ import Electron, {
   BrowserWindow, app, shell, ipcMain, screen, nativeTheme,
 } from 'electron';
 
+import { STARTUP_BACKGROUND } from '@pkg/config/theme';
+
 import { WindowBoundsStore } from './WindowBoundsStore';
 import { AgentWindowPersistence } from './AgentWindowPersistence';
 import { shouldQuitOnAgentWindowClosed } from './agentWindowClose';
@@ -222,7 +224,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
       height:          saved?.height ?? defaultHeight,
       resizable:       true,
       icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      backgroundColor: nativeTheme.shouldUseDarkColors ? '#0d1117' : '#f6f7f9',
+      backgroundColor: STARTUP_BACKGROUND,
       // macOS: hide native title bar, keep traffic lights overlaid on content
       ...(os.platform() === 'darwin'
         ? {

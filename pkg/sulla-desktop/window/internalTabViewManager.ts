@@ -5,6 +5,7 @@
 import Electron, { WebContentsView } from 'electron';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { agentWindowUrl } from './agentWindowUrl';
+import { STARTUP_BACKGROUND } from '@pkg/config/theme';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 type HostLayoutListener = (bounds: Electron.Rectangle | null, raised: boolean) => void;
@@ -30,6 +31,7 @@ export class InternalTabViewManager {
     let tab = this.tabs.get(tabId);
     if (!tab) {
       const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
+      view.setBackgroundColor(STARTUP_BACKGROUND);
       // The descriptor must be stored before the renderer loads: the host reads it synchronously at boot.
       tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
       this.tabs.set(tabId, tab);

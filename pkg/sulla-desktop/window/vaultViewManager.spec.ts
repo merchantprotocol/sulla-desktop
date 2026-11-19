@@ -96,6 +96,29 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(disposed).toBeDefined();
   });
 
+  it('keeps the loading pane visible until the initial Vault theme is applied', async() => {
+    const manager = new VaultViewManager() as any;
+    const view = makeView();
+    let finishNavigation!: () => void;
+    let finishTheme!: (key: string) => void;
+    view.webContents.loadURL.mockReturnValue(new Promise<void>(resolve => { finishNavigation = resolve }));
+    view.webContents.insertCSS.mockReturnValue(new Promise<string>(resolve => { finishTheme = resolve }));
+    manager.createView = vi.fn().mockResolvedValue({ view, session: { clearStorageData: vi.fn() } });
+    const window = { id: 9, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn() } };
+    const reservation = manager.reserve(window, 'paint-owner');
+    const theme = { dark: true, colors: Object.fromEntries(VAULT_THEME_TOKENS.map(token => [token, 'rgb(10, 25, 41)'])) };
+    const opened = manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 400, height: 300 }, undefined, theme);
+
+    await vi.waitFor(() => expect(view.webContents.loadURL).toHaveBeenCalledOnce());
+    expect(window.contentView.addChildView).not.toHaveBeenCalled();
+    finishNavigation();
+    await vi.waitFor(() => expect(view.webContents.insertCSS).toHaveBeenCalledOnce());
+    expect(window.contentView.addChildView).not.toHaveBeenCalled();
+    finishTheme('initial-theme');
+    await expect(opened).resolves.toBe(true);
+    expect(window.contentView.addChildView).toHaveBeenCalledOnce();
+  });
+
   it('opens the vault unthemed when renderer theme colors are invalid', async() => {
     // risk: renderer CSS serialization must not prevent access to the password vault
     const manager = new VaultViewManager() as any;

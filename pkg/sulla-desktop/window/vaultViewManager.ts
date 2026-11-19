@@ -11,6 +11,7 @@ import { VaultPermissionPolicy } from './vaultPermissionPolicy';
 
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
 import { vaultThemeCss } from '@pkg/shared/vaultTheme';
+import { STARTUP_BACKGROUND } from '@pkg/config/theme';
 
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
 // The vault page's "Integrations" side-menu link; intercepted here, never loaded.
@@ -37,6 +38,7 @@ interface VaultWindowState {
   hostBounds: Electron.Rectangle | null | undefined;
   hostCleanup: (() => void) | null;
   attached: boolean;
+  ready: boolean;
   isolatedSession: Electron.Session | null;
   ownerId: string | null;
   attachedOwnerId: string | null;
@@ -59,7 +61,7 @@ export class VaultViewManager {
   private stateFor(window: Electron.BrowserWindow): VaultWindowState {
     let state = this.windows.get(window.id);
     if (!state) {
-      state = { view: null, bounds: null, hostBounds: undefined, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
+      state = { view: null, bounds: null, hostBounds: undefined, hostCleanup: null, attached: false, ready: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
       this.windows.set(window.id, state);
       window.once('closed', () => { this.destroyWindow(window.id) });
     }
@@ -118,7 +120,9 @@ export class VaultViewManager {
     state.isolatedSession = created.session;
     state.attachedOwnerId = reservation.ownerId;
     state.bounds = placement;
-    view.webContents.on('dom-ready', () => { void this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error)) });
+    let paintedTheme: Promise<void> | undefined;
+    const paintTheme = () => this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error));
+    view.webContents.on('dom-ready', () => { paintedTheme = paintTheme() });
     if (host) {
       const unsubscribe = host.observeLayout((hostBounds, raised) => {
         if (!this.isCurrent(reservation)) return;
@@ -126,17 +130,20 @@ export class VaultViewManager {
         this.placeView(state, raised);
       });
       state.hostCleanup = () => { unsubscribe(); dispose?.() };
-    } else {
-      this.placeView(state);
     }
     try {
       await view.webContents.loadURL(target.toString());
+      await (paintedTheme ?? paintTheme());
     } catch (error) {
       if (!this.isCurrent(reservation)) return false;
       this.hide(reservation.ownerId, window);
       throw error;
     }
-    return this.isCurrent(reservation);
+    if (!this.isCurrent(reservation)) return false;
+    state.ready = true;
+    this.placeView(state);
+
+    return true;
   }
 
   async setTheme(ownerId: string, theme: unknown, window: Electron.BrowserWindow): Promise<void> {
@@ -198,7 +205,7 @@ export class VaultViewManager {
 
   private placeView(state: VaultWindowState, raised = false): void {
     const { window, view, bounds, hostBounds } = state;
-    if (!view || !bounds || window.isDestroyed()) return;
+    if (!state.ready || !view || !bounds || window.isDestroyed()) return;
 
     // A nested WebContentsView can load yet remain behind its host on macOS.
     // Place the isolated view in the window and clip it to its owner's tab.
@@ -230,6 +237,7 @@ export class VaultViewManager {
     state.hostCleanup?.();
     state.hostCleanup = null;
     this.detachView(state);
+    state.ready = false;
     state.bounds = null;
     state.hostBounds = undefined;
     if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();
@@ -294,6 +302,7 @@ export class VaultViewManager {
         spellcheck: false,
       },
     });
+    view.setBackgroundColor(STARTUP_BACKGROUND);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     view.webContents.on('will-navigate', (event, url) => {
       try {

@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
       reload: vi.fn(),
     };
     setBounds = vi.fn();
+    setBackgroundColor = vi.fn();
   },
 }));
 
@@ -40,6 +41,7 @@ describe('InternalTabViewManager', () => {
     expect(instance.tabs.size).toBe(0);
     instance.activate(owner, 'one', 'main', bounds);
     const tab = instance.tabs.get('one');
+    expect(tab.view.setBackgroundColor).toHaveBeenCalledWith('#0d1117');
     expect(tab.view.webContents.loadURL).toHaveBeenCalledWith(expect.stringMatching(/^app:\/\/\.\/agent\.html\?tabHost=1&tabId=one&windowKey=main&startupId=/));
     expect(owner.contentView.addChildView).not.toHaveBeenCalled();
     instance.markChromeReady(owner);
