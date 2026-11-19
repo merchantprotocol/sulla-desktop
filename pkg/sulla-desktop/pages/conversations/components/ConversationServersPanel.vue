@@ -5,15 +5,18 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { ConversationServersData, type ConversationChannel, type ConversationServer, type ConversationServerMember, type NotificationLevel } from '../ConversationServersData';
 import { DirectoryPersonNormalizer } from '../DirectoryPersonNormalizer';
 import { ConversationServersLiveUpdateHandler } from '../ConversationServersLiveUpdateHandler';
+import { ConversationChannelComposer, type ConversationChannelTarget } from '../ConversationChannelComposer';
 
 const props = defineProps<{ orgId: string; currentUserId: string; people: { userId: string; displayName: string }[] }>();
 defineEmits<{ (event: 'close'): void }>();
 const domain = new ConversationServersData();
+const composer = new ConversationChannelComposer();
+const composerRevision = ref(0);
 const servers = ref<ConversationServer[]>([]), channels = ref<ConversationChannel[]>([]), members = ref<ConversationServerMember[]>([]);
 const memberNames = ref<{ userId: string; displayName: string }[]>([]);
 const messages = ref<{ id: string; seq: number; authorUserId: string; body: string }[]>([]);
 const unreadByChannel = ref<Record<string, { unreadCount?: number; mentionCount?: number; unread?: number; mentions?: number }>>({});
-const draft = ref(''), loadingOlder = ref(false), sending = ref(false);
+const loadingOlder = ref(false), sending = ref(false);
 const orgMembers = ref<{ userId: string; role?: string; displayName?: string }[]>([]);
 const selectedServer = ref(''), selectedChannel = ref(''), error = ref(''), loading = ref(false), openMenu = ref('');
 const server = computed(() => servers.value.find(item => item.id === selectedServer.value));
@@ -80,29 +83,49 @@ async function load(): Promise<void> {
   } catch (cause) { if (loadId === latestLoad) error.value = cause instanceof Error ? cause.message : 'Could not load servers'; }
   finally { if (loadId === latestLoad) loading.value = false; }
 }
-async function loadMessages(before?: number): Promise<void> {
-  if (!server.value || !channel.value) return;
-  const response = await ipcRenderer.invoke('conversation-servers:messages', { serverId: server.value.id, channelId: channel.value.id, before }) as { messages?: { id: string; seq: number; authorUserId: string; body: string }[] };
+async function loadMessages(before?: number, target: ConversationChannelTarget = currentTarget()): Promise<void> {
+  if (!target.serverId || !target.channelId) return;
+  const response = await ipcRenderer.invoke('conversation-servers:messages', { serverId: target.serverId, channelId: target.channelId, before }) as { messages?: { id: string; seq: number; authorUserId: string; body: string }[] };
   const page = response.messages ?? [];
-  messages.value = before === undefined ? page : [...page, ...messages.value.filter(old => !page.some(item => item.id === old.id))];
-  const last = messages.value[messages.value.length - 1];
-  if (last) await ipcRenderer.invoke('conversation-servers:read', { serverId: server.value.id, channelId: channel.value.id, seq: last.seq });
-  await loadUnread();
+  const stillSelected = selectedServer.value === target.serverId && selectedChannel.value === target.channelId;
+  const nextMessages = before === undefined ? page : [...page, ...messages.value.filter(old => !page.some(item => item.id === old.id))];
+  if (stillSelected) messages.value = nextMessages;
+  const last = nextMessages[nextMessages.length - 1];
+  if (last) await ipcRenderer.invoke('conversation-servers:read', { serverId: target.serverId, channelId: target.channelId, seq: last.seq });
+  await loadUnread(target.serverId);
 }
-async function loadUnread(): Promise<void> {
-  if (!server.value) return;
-  const result = await ipcRenderer.invoke('conversation-servers:unread', server.value.id) as { channels?: { channelId?: string; unreadCount?: number; mentionCount?: number; unread?: number; mentions?: number }[] };
-  unreadByChannel.value = Object.fromEntries((result.channels ?? []).filter(item => item.channelId).map(item => [item.channelId!, item]));
+async function loadUnread(serverId = selectedServer.value): Promise<void> {
+  if (!serverId) return;
+  const result = await ipcRenderer.invoke('conversation-servers:unread', serverId) as { channels?: { channelId?: string; unreadCount?: number; mentionCount?: number; unread?: number; mentions?: number }[] };
+  if (selectedServer.value === serverId) unreadByChannel.value = Object.fromEntries((result.channels ?? []).filter(item => item.channelId).map(item => [item.channelId!, item]));
 }
-async function send(): Promise<void> {
-  const body = draft.value.trim();
-  if (!body || !server.value || !channel.value || sending.value) return;
+function currentTarget(): ConversationChannelTarget { return { serverId: selectedServer.value, channelId: selectedChannel.value }; }
+function currentDraft(): string { void composerRevision.value; return composer.draft(currentTarget()); }
+function updateComposerDraft(event: Event): void {
+  const textarea = event.currentTarget as HTMLTextAreaElement;
+  composer.updateDraft({ serverId: textarea.dataset.serverId ?? '', channelId: textarea.dataset.channelId ?? '' }, textarea.value);
+  composerRevision.value += 1;
+}
+function insertMention(userId: string): void {
+  const target = currentTarget();
+  const body = composer.draft(target);
+  composer.updateDraft(target, `${body}${body && !body.endsWith(' ') ? ' ' : ''}${domain.mentionToken(userId)} `);
+  composerRevision.value += 1;
+}
+async function sendFromComposer(form: HTMLFormElement): Promise<void> {
+  const textarea = form.querySelector('textarea');
+  if (!textarea) return;
+  const submission = composer.capture({ serverId: form.dataset.serverId ?? '', channelId: form.dataset.channelId ?? '' }, textarea.value);
+  if (!submission || sending.value) return;
   sending.value = true;
-  try { await ipcRenderer.invoke('conversation-servers:send-message', { serverId: server.value.id, channelId: channel.value.id, body }); draft.value = ''; await loadMessages(); }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not send message'; }
+  try {
+    await ipcRenderer.invoke('conversation-servers:send-message', { serverId: submission.serverId, channelId: submission.channelId, body: submission.body });
+    composer.clearAfterSend(submission);
+    composerRevision.value += 1;
+    if (selectedServer.value === submission.serverId && selectedChannel.value === submission.channelId) await loadMessages(undefined, submission);
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not send message'; }
   finally { sending.value = false; }
 }
-function insertMention(userId: string): void { draft.value += `${draft.value && !draft.value.endsWith(' ') ? ' ' : ''}${domain.mentionToken(userId)} `; }
 function unreadLabel(item: ConversationChannel): string { const data = unreadByChannel.value[item.id]; if (!data || item.notificationLevel === 'nothing') return ''; const count = item.notificationLevel === 'mentions' ? (data.mentionCount ?? data.mentions ?? 0) : (data.unreadCount ?? data.unread ?? 0); return domain.badge(item.notificationLevel, data.unreadCount ?? data.unread ?? 0, data.mentionCount ?? data.mentions ?? 0); }
 const liveUpdateHandler = new ConversationServersLiveUpdateHandler({
   selectedChannelId: () => selectedChannel.value,
@@ -111,7 +134,7 @@ const liveUpdateHandler = new ConversationServersLiveUpdateHandler({
   refreshUnread: () => loadUnread(),
 });
 function onChannelChanged(_event: Electron.IpcRendererEvent, update: { channelId: string }): void { void liveUpdateHandler.refresh(update?.channelId).catch(cause => { error.value = cause instanceof Error ? cause.message : 'Could not refresh conversations'; }); }
-watch(() => [selectedServer.value, selectedChannel.value], () => { messages.value = []; draft.value = ''; if (channel.value) void loadMessages().catch(cause => { error.value = cause instanceof Error ? cause.message : 'Could not load messages'; }); });
+watch(() => [selectedServer.value, selectedChannel.value], () => { messages.value = []; if (channel.value) void loadMessages().catch(cause => { error.value = cause instanceof Error ? cause.message : 'Could not load messages'; }); });
 function serverDefault(): NotificationLevel { return server.value?.notificationDefault ?? 'all'; }
 function selectServer(serverId: string): void {
   selectedServer.value = serverId;
@@ -164,7 +187,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('conversation-servers:changed',
         <button v-if="messages.length >= 50" class="cs-older" :disabled="loadingOlder" @click="loadingOlder = true; void loadMessages(messages[0]?.seq).finally(() => loadingOlder = false)">Load older messages</button>
         <p v-if="!messages.length" class="cs-muted">No messages yet</p>
         <article v-for="message in messages" :key="message.id" class="cs-message"><b>{{ displayName(message.authorUserId) }}</b><p>{{ message.body }}</p><small>#{{ message.seq }}</small></article>
-        <form class="cs-composer" @submit.prevent="void send()"><textarea v-model="draft" maxlength="4000" aria-label="Message" placeholder="Message this channel" @keydown.enter.exact.prevent="void send()"/><div class="cs-compose-tools"><select aria-label="Insert member mention" @change="($event.target as HTMLSelectElement).value && insertMention(($event.target as HTMLSelectElement).value)"><option value="">Mention a member…</option><option v-for="member in visibleMembers" :key="member.userId" :value="member.userId">{{ displayName(member.userId) }}</option></select><button :disabled="!draft.trim() || sending">Send</button></div></form>
+        <form class="cs-composer" :data-server-id="selectedServer" :data-channel-id="selectedChannel" @submit.prevent="void sendFromComposer($event.currentTarget as HTMLFormElement)"><textarea :value="currentDraft()" :data-server-id="selectedServer" :data-channel-id="selectedChannel" maxlength="4000" aria-label="Message" placeholder="Message this channel" @input="updateComposerDraft" @keydown.enter.exact.prevent="void sendFromComposer(($event.currentTarget as HTMLTextAreaElement).form!)"/><div class="cs-compose-tools"><select aria-label="Insert member mention" @change="($event.target as HTMLSelectElement).value && insertMention(($event.target as HTMLSelectElement).value)"><option value="">Mention a member…</option><option v-for="member in visibleMembers" :key="member.userId" :value="member.userId">{{ displayName(member.userId) }}</option></select><button :disabled="!currentDraft().trim() || sending">Send</button></div></form>
       </section>
       <aside class="cs-members"><b>Members · {{ visibleMembers.length }}</b><div v-for="member in visibleMembers" :key="member.userId">{{ displayName(member.userId) }} <small v-if="member.role">{{ member.role }}</small></div></aside>
     </main>
