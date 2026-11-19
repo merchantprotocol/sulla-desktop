@@ -12,17 +12,18 @@
       v-model:search="search"
       :search-placeholder="innerTab === 'dir' ? 'Search name, slug, when to call, model…' : 'Search custom agents'"
       @crumb="closeCurrentDetail"
-    ><template #actions><button v-if="!active && !directoryDetail" class="btn pri" @click="newAgent">＋ New agent</button></template></StudioTopbar>
+    ><template #actions><button v-if="!active && !directoryDetail" class="btn pri" :disabled="!catalogLoaded" @click="newAgent">＋ New agent</button></template></StudioTopbar>
     <div class="studio-content">
       <template v-if="!active">
-        <div v-if="!directoryDetail" class="tb"><h1>Agents</h1><span>{{ agents.length }} installed on this Sulla</span><span v-if="refreshNotice" role="status">{{ refreshNotice }}</span></div>
+        <div v-if="!directoryDetail" class="tb"><h1>Agents</h1><span v-if="catalogLoaded">{{ agents.length }} installed on this Sulla</span><span v-if="refreshNotice" role="status">{{ refreshNotice }}</span></div>
         <div v-if="!directoryDetail" class="seg-tabs" ref="tabsRef">
           <i ref="tabIndRef" />
           <button :class="{ on: innerTab === 'dir' }" @click="selectTab('dir')">Directory</button>
           <button :class="{ on: innerTab === 'manage' }" @click="selectTab('manage')">Manage</button>
         </div>
+        <ConfigurationLoadState v-if="!catalogLoaded" label="Loading agents…" :error="error ? 'Couldn’t load agents.' : ''" @retry="load" />
         <AgentDirectoryTab
-          v-if="innerTab === 'dir'" ref="directoryRef" :agents="agents"
+          v-else-if="innerTab === 'dir'" ref="directoryRef" :agents="agents"
           :model-labels="configuredModelLabels" :loading="loading" v-model:search="search" @detail-change="directoryDetail = $event" @edit="editDirectoryAgent"
         />
         <template v-else>
@@ -81,9 +82,11 @@ import {
   type AgentEditorFormState,
 } from './AgentEditorForm';
 import StudioTopbar from './StudioTopbar.vue';
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
 import type { ModelCandidate } from '@pkg/agent/languagemodels/modelRouter';
 import { MODEL_ROUTING_IPC, type AgentModelChoice, type ModelRoutingState, type RoutingProviderInfo } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { choiceLabel } from '@pkg/components/settings/sections/modelRouting/routingLogic';
+import { ConfigurationLoadPolicy } from '@pkg/composables/useConfigurationLoad';
 import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
 import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import { agentEditorTeamLabel, agentTryTabPayload, cloneModelCandidates, type AgentEditorRoutingFields } from '@pkg/shared/agentEditor';
@@ -157,6 +160,8 @@ function sourceLabel(source: string) { return source === 'local' ? 'You' : sourc
 const catalogReads = new RefreshSequencer();
 const pageRef = ref<HTMLElement | null>(null);
 const refreshNotice = ref('');
+const catalogLoaded = ref(false);
+const loadPolicy = new ConfigurationLoadPolicy();
 let catalogKey = ''; let refreshing = false; let disposed = false; let latestCatalogRead = 0; let latestLoad = 0;
 let providerStatusVersion = 0; let latestProviderStatus: RoutingProviderInfo[] | null = null;
 const catalogSignature = (list: Agent[]) => JSON.stringify(list);
@@ -165,7 +170,10 @@ function nextCatalogRead(): number {
   return latestCatalogRead;
 }
 async function readDetails(list: Agent[], includeManifests = true, routingStatusVersion = providerStatusVersion) {
-  const nextRouting = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get).catch(() => null);
+  const nextRouting = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get).catch(cause => {
+    if (loadPolicy.isTransient(cause)) throw cause;
+    return null;
+  });
   const pairs = includeManifests
     ? await Promise.all(list.map(async a => [a.slug, await ipcRenderer.invoke('agent-definitions:export', a.slug)] as const).map(p => p.catch(() => null)))
     : [];
@@ -184,6 +192,7 @@ function applyCatalog(list: Agent[], details: Awaited<ReturnType<typeof readDeta
   const nextKey = catalogSignature(list);
   if (nextKey !== catalogKey) { agents.value = list; catalogKey = nextKey; }
   if (details.nextManifests) manifests.value = details.nextManifests;
+  catalogLoaded.value = true;
   refreshNotice.value = ''; error.value = '';
 }
 function onRoutingStatus(_: unknown, providers: RoutingProviderInfo[]): void {
@@ -196,7 +205,7 @@ function onRoutingStatus(_: unknown, providers: RoutingProviderInfo[]): void {
 const readCatalog = (): Promise<Agent[]> => ipcRenderer.invoke('agent-definitions:list', { strict: true });
 const REFRESH_FAILED = 'Could not refresh agents; showing the last loaded list.';
 /** True only when this read's fresh catalog was applied. */
-async function load(): Promise<boolean> { if (disposed) return false; const ticket = nextCatalogRead(); const routingStatusVersion = providerStatusVersion; latestLoad = ticket; let applied = false; loading.value = true; error.value = ''; try { const list = await readCatalog(); const details = await readDetails(list, true, routingStatusVersion); if (!disposed && ticket === latestCatalogRead && catalogReads.tryApply(ticket)) { applyCatalog(list, details); applied = true; } } catch (e) { if (!disposed && ticket === latestCatalogRead && !catalogReads.hasAppliedNewerThan(ticket)) { if (catalogKey) refreshNotice.value = REFRESH_FAILED; else error.value = e instanceof Error ? e.message : String(e); } } finally { if (latestLoad === ticket) loading.value = false; } return applied; }
+async function load(): Promise<boolean> { if (disposed) return false; const ticket = nextCatalogRead(); const routingStatusVersion = providerStatusVersion; latestLoad = ticket; let applied = false; loading.value = true; error.value = ''; try { const list = await readCatalog(); const details = await readDetails(list, true, routingStatusVersion); if (!disposed && ticket === latestCatalogRead && catalogReads.tryApply(ticket)) { applyCatalog(list, details); applied = true; } } catch (e) { if (!disposed && ticket === latestCatalogRead && !catalogReads.hasAppliedNewerThan(ticket)) { if (catalogLoaded.value) refreshNotice.value = REFRESH_FAILED; else if (!loadPolicy.isTransient(e)) error.value = e instanceof Error ? e.message : String(e); } } finally { if (latestLoad === ticket) loading.value = false; } return applied; }
 /** Native tabs stay mounted while hidden (v-show), so the document being visible is not enough. */
 function pageVisible(): boolean {
   if (document.hidden || !pageRef.value?.isConnected) return false;
@@ -208,15 +217,18 @@ function pageVisible(): boolean {
 }
 /** Read-only inventory check while visible; routing is refreshed each time, manifests only when the inventory changes. */
 async function refreshCatalog() {
-  if (disposed || refreshing || loading.value || saving.value || !pageVisible()) return;
+  if (disposed || refreshing || loading.value || saving.value || error.value || !pageVisible()) return;
   refreshing = true; const ticket = nextCatalogRead(); const routingStatusVersion = providerStatusVersion;
   try {
     const list = await readCatalog();
     if (disposed || ticket !== latestCatalogRead || catalogReads.hasAppliedNewerThan(ticket)) return;
     const details = await readDetails(list, catalogSignature(list) !== catalogKey, routingStatusVersion);
     if (!disposed && ticket === latestCatalogRead && catalogReads.tryApply(ticket)) applyCatalog(list, details);
-  } catch {
-    if (!disposed && ticket === latestCatalogRead && !catalogReads.hasAppliedNewerThan(ticket)) refreshNotice.value = REFRESH_FAILED;
+  } catch (cause) {
+    if (!disposed && ticket === latestCatalogRead && !catalogReads.hasAppliedNewerThan(ticket)) {
+      if (catalogLoaded.value) refreshNotice.value = REFRESH_FAILED;
+      else if (!loadPolicy.isTransient(cause)) error.value = cause instanceof Error ? cause.message : String(cause);
+    }
   } finally { refreshing = false; }
 }
 let refreshTimer: ReturnType<typeof setInterval> | undefined;

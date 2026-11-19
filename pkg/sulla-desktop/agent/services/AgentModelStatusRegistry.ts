@@ -15,5 +15,18 @@ export class AgentModelStatusRegistry {
     if (this.statuses.size > 1024) this.statuses.delete(this.statuses.keys().next().value!);
   }
 
+  private static readonly responses = new Map<string, AgentModelStatusValue[]>();
+  static recordResponse(threadId: string, models: AgentModelStatusValue[]): void {
+    const previous = this.responses.get(threadId);
+    if (previous?.length === models.length && previous.every((item, i) => item.model === models[i].model && item.provider === models[i].provider && item.effort === models[i].effort && JSON.stringify(item.fallbackFrom) === JSON.stringify(models[i].fallbackFrom))) return;
+    this.responses.delete(threadId);
+    this.responses.set(threadId, models);
+    if (this.responses.size > 1024) this.responses.delete(this.responses.keys().next().value!);
+    for (const listener of this.listeners) listener();
+  }
+  static responsesFor(threadId?: string | null): AgentModelStatusValue[] | undefined {
+    return threadId ? this.responses.get(threadId) : undefined;
+  }
+
   static get(threadId?: string | null): AgentModelStatusValue | undefined { return threadId ? this.statuses.get(threadId) : undefined }
 }

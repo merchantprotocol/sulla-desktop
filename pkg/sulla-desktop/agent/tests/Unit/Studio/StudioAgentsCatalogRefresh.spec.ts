@@ -32,7 +32,7 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: {
       f.listArgs.push(args[0]);
       // The production list function behind the IPC channel, with its real database read guard.
       if (f.realHandler) { const { listAgentDefinitions } = await import('@pkg/main/agentsIpc'); return listAgentDefinitions(args[0]) }
-      if (f.failList) throw new Error('database unavailable');
+      if (f.failList) throw new Error('Agent definitions are temporarily unavailable while the database reconnects.');
       if (f.holdList) { const held = f.holdList; f.holdList = undefined; return held.promise }
       return structuredClone(f.agents);
     }
@@ -169,10 +169,11 @@ describe('Agents page catalog while it stays mounted', () => {
     f.failList = true;
     const wrapper = await openPage();
     await wrapper.findAll('button').find(button => button.text() === 'Manage')!.trigger('click');
-    expect(wrapper.text()).toContain('database unavailable');
+    expect(wrapper.get('[role=status]').text()).toBe('Loading agents…');
+    expect(wrapper.find('[role=alert]').exists()).toBe(false);
     f.failList = false;
     await tick();
-    expect(wrapper.text()).not.toContain('database unavailable');
+    expect(wrapper.find('[role=status]').exists()).toBe(false);
     expect(installed(wrapper)).toBe('16');
   });
 
@@ -286,11 +287,12 @@ describe('Agents page catalog during a database outage (real list handler and re
     databaseDown = true;
     const wrapper = await openPage();
     await wrapper.findAll('button').find(button => button.text() === 'Manage')!.trigger('click');
-    expect(wrapper.text()).toMatch(/temporarily unavailable/);
+    expect(wrapper.get('[role=status]').text()).toBe('Loading agents…');
+    expect(wrapper.find('[role=alert]').exists()).toBe(false);
     databaseDown = false;
     await tick();
     expect(installed(wrapper)).toBe('17');
-    expect(wrapper.text()).not.toMatch(/temporarily unavailable/);
+    expect(wrapper.find('[role=status]').exists()).toBe(false);
   });
 });
 

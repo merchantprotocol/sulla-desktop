@@ -132,7 +132,7 @@ function normalize(saved: Partial<EditableState>, defaults: EditableState): Edit
   };
 }
 
-async function migrateLegacy(): Promise<EditableState> {
+async function migrateLegacy(persist: boolean): Promise<EditableState> {
   const state = recommendedState();
   const primary = await SullaSettingsModel.get('primaryProvider', '');
   const primaryModel = await SullaSettingsModel.get('activeModelId', '');
@@ -153,7 +153,7 @@ async function migrateLegacy(): Promise<EditableState> {
   seed(subconscious || primary, subconsciousModel, state.subconsciousList);
   if (!state.agentsList.length) state.agentsList = recommendedState().agentsList;
   if (!state.subconsciousList.length) state.subconsciousList = recommendedState().subconsciousList;
-  await SullaSettingsModel.set(SETTING, state, 'json');
+  if (persist) await SullaSettingsModel.set(SETTING, state, 'json');
   return state;
 }
 
@@ -173,8 +173,10 @@ export class ModelRouter {
   onStatusChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private emit(): void { for (const listener of this.listeners) listener() }
   async getEditableState(): Promise<EditableState> {
+    // A missing key in the bootstrap file says nothing about the database.
+    const canMigrate = SullaSettingsModel.ready;
     const saved = await SullaSettingsModel.get(SETTING, null);
-    return saved && typeof saved === 'object' ? normalize(saved, recommendedState()) : migrateLegacy();
+    return saved && typeof saved === 'object' ? normalize(saved, recommendedState()) : migrateLegacy(canMigrate);
   }
 
   validatePatch(patch: Partial<EditableState>): void {

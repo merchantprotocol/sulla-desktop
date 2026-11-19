@@ -149,10 +149,12 @@ export class VaultViewIpc implements MainProcessIpcStep {
         parentWindow,
         target.toString(),
         bounds,
-        tabHostView ?? undefined,
-        tabHostView ? listener => agentWindowFromSender(event.sender) === parentWindow
-          ? internalTabViews.onHostDisposed(event.sender, listener)
-          : null : undefined,
+        tabHostView ? {
+          observeLayout: listener => internalTabViews.observeHostLayout(event.sender, listener),
+          onDisposed: listener => agentWindowFromSender(event.sender) === parentWindow
+            ? internalTabViews.onHostDisposed(event.sender, listener)
+            : null,
+        } : undefined,
         hint?.theme,
       );
       if (!opened) {
@@ -161,6 +163,12 @@ export class VaultViewIpc implements MainProcessIpcStep {
       }
       vaultStatus.startPolling();
       return { state: 'opened', expiresAt: humanSession.expiresAt };
+    });
+
+    ipc.handle('vault:view-owned', (event: Electron.IpcMainInvokeEvent, ownerId: string) => {
+      const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
+      return vaultViewManager.hasOwnerView(senderWindow, ownerId);
     });
 
     ipc.handle('vault:view-theme', async(event: Electron.IpcMainInvokeEvent, ownerId: string, theme: unknown) => {

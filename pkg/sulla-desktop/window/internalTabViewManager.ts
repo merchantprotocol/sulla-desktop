@@ -5,7 +5,10 @@
 import Electron, { WebContentsView } from 'electron';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { agentWindowUrl } from './agentWindowUrl';
+import { STARTUP_BACKGROUND } from '@pkg/config/theme';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
+
+type HostLayoutListener = (bounds: Electron.Rectangle | null, raised: boolean) => void;
 
 interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; running?: boolean; descriptor?: unknown }
 
@@ -13,6 +16,7 @@ interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow
 export class InternalTabViewManager {
   private static instance: InternalTabViewManager;
   private readonly tabs = new Map<string, InternalTabView>();
+  private readonly hostLayoutListeners = new Map<InternalTabView, Set<HostLayoutListener>>();
   private readonly hostDisposalListeners = new Map<string, Set<() => void>>();
   private readonly chromeReadyOwners = new Set<number>();
   private shuttingDown = false;
@@ -27,6 +31,7 @@ export class InternalTabViewManager {
     let tab = this.tabs.get(tabId);
     if (!tab) {
       const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
+      view.setBackgroundColor(STARTUP_BACKGROUND);
       // The descriptor must be stored before the renderer loads: the host reads it synchronously at boot.
       tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
       this.tabs.set(tabId, tab);
@@ -87,6 +92,7 @@ export class InternalTabViewManager {
     if (this.shuttingDown || tab.owner.isDestroyed() || tab.crashed || !tab.visible) return;
     tab.owner.contentView.addChildView(tab.view);
     tab.view.setBounds(tab.bounds);
+    this.notifyHostLayout(tab, true);
   }
 
   setBounds(owner: Electron.BrowserWindow, tabId: string, bounds: Electron.Rectangle): void {
@@ -94,6 +100,7 @@ export class InternalTabViewManager {
     if (!tab || tab.owner !== owner) return;
     tab.bounds = bounds;
     if (tab.visible) tab.view.setBounds(bounds);
+    this.notifyHostLayout(tab);
   }
 
   notifyTabUpdate(sender: Electron.WebContents, tabId: string, descriptor: unknown): void {
@@ -161,7 +168,10 @@ export class InternalTabViewManager {
     if (!tab || tab.owner !== owner) return;
     tab.visible = visible;
     if (visible) { if (this.chromeReadyOwners.has(owner.id)) this.attach(tab); }
-    else owner.contentView.removeChildView(tab.view);
+    else {
+      this.notifyHostLayout(tab);
+      owner.contentView.removeChildView(tab.view);
+    }
   }
 
   reload(owner: Electron.BrowserWindow, tabId: string): void {
@@ -203,7 +213,35 @@ export class InternalTabViewManager {
     return null;
   }
 
-  /** Subscribe to terminal host disposal; ordinary tab switches keep children attached. */
+  /** Report the tab's window-relative rectangle while its native view is attached. */
+  observeHostLayout(sender: Electron.WebContents, listener: HostLayoutListener): () => void {
+    const tab = [...this.tabs.values()].find(candidate => candidate.view.webContents === sender);
+    if (!tab || sender.isDestroyed()) {
+      listener(null, false);
+      return () => {};
+    }
+    const listeners = this.hostLayoutListeners.get(tab) ?? new Set();
+    listeners.add(listener);
+    this.hostLayoutListeners.set(tab, listeners);
+    listener(this.hostBounds(tab), false);
+
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.hostLayoutListeners.delete(tab);
+    };
+  }
+
+  private hostBounds(tab: InternalTabView): Electron.Rectangle | null {
+    return !this.shuttingDown && tab.visible && !tab.crashed && this.chromeReadyOwners.has(tab.owner.id)
+      ? tab.bounds
+      : null;
+  }
+
+  private notifyHostLayout(tab: InternalTabView, raised = false): void {
+    for (const listener of this.hostLayoutListeners.get(tab) ?? []) listener(this.hostBounds(tab), raised);
+  }
+
+  /** Subscribe to terminal host disposal without treating a tab switch as closure. */
   onHostDisposed(sender: Electron.WebContents, listener: () => void): (() => void) | null {
     const tabId = [...this.tabs].find(([, tab]) => tab.view.webContents === sender)?.[0];
     if (!tabId || sender.isDestroyed()) return null;
@@ -241,6 +279,7 @@ export class InternalTabViewManager {
   beginShutdown(): void {
     this.stopReadinessFallbacks();
     for (const tab of this.tabs.values()) {
+      this.notifyHostLayout(tab);
       if (tab.owner.isDestroyed()) continue;
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
     }

@@ -680,6 +680,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         }
     }
 
+    // This labels existing handoffs. The agent keeps its own prompt, tools, and decisions.
+    const workflowGuidance = agentId === 'account-manager' && !state.metadata.isSubAgent
+      ? 'For feature handoffs, set workflowStep on agents/spawn_agent: mockup for UI design, build for the coding lead, and acceptance for UI acceptance. Omit it for other assignments.'
+      : state.metadata.productOwnerWorkflowStep === 'build'
+        ? 'For this build, set workflowStep to implementation on coding handoffs and review on independent code review. For review, pass the exact implementation result as followUpOf. Omit the field for other assignments.'
+        : '';
+    if (workflowGuidance) {
+      agentConfig = { ...agentConfig, prompt: [agentConfig?.prompt, workflowGuidance].filter(Boolean).join('\n\n') };
+    }
+
     // Refresh template variables from the effective loaded config. The graph
     // usually preloads metadata.agent, but agent files can also be discovered
     // here; prompt/tool guidance must reflect the final config either way.
@@ -1342,6 +1352,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       let lastRecovery = classifyLLMFailure(err);
       const recoveryPolicy = new ModelRecoveryPolicy();
       const failedFirst = candidates[0];
+      const firstFailureKind = lastRecovery.kind;
       firstRunTrace('chat', 'provider call failed', { provider: failedFirst.provider, model: failedFirst.model, recoveryKind: lastRecovery.kind, error: redactLLMFailureMessage(err) });
       if (!recoveryPolicy.canAdvance(lastRecovery) && !lastRecovery.retryPrimary) throw err;
 
@@ -1384,7 +1395,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
               signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
               profileId: (state.metadata as any).profileId,
-            }, nodeRunContext, service);
+            }, nodeRunContext, service, index > 0 ? { provider: failedFirst.provider, model: failedFirst.model, reason: firstFailureKind } : undefined);
             if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) throw new Error(`LLM returned empty response (provider=${ candidate.provider }, model=${ candidate.model })`);
             if (index > 0) {
               (reply.metadata as any).fallback_used = true;
@@ -1617,6 +1628,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     options: any,
     nodeRunContext: any,
     provider: BaseLanguageModel = this.llm!,
+    fallbackFrom?: NonNullable<import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue['fallbackFrom']>,
   ): Promise<NormalizedResponse | null> {
     const controller = this.getChatController();
     const ctx = controller.buildContext(state);
@@ -1843,6 +1855,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     if (!reply) {
       return null;
+    }
+
+    if (reply.content?.trim() || reply.metadata.tool_calls?.length) {
+      const used = { model: reply.metadata.model || provider.getModel(), provider: provider.getProviderId?.() || provider.getProviderName(), effort: provider.getEffort?.() ?? null, source: 'resolved' as const };
+      const prior = state.metadata.workflowResponseModels ?? [];
+      const sameModel = (model: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue) => model.provider === used.provider && model.model === used.model && model.effort === used.effort;
+      const fallback = fallbackFrom ?? prior.find(sameModel)?.fallbackFrom;
+      const models = [...prior.filter(model => !sameModel(model)), { ...used, ...(fallback ? { fallbackFrom: fallback } : {}) }];
+      state.metadata.workflowResponseModels = models;
+      AgentModelStatusRegistry.recordResponse(state.metadata.threadId, models);
     }
 
     if (streamingWsSent) {

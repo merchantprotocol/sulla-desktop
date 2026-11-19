@@ -55,6 +55,8 @@ export interface AgentJobResult {
 }
 
 export interface AgentJobTask extends ResultTracking {
+  workflowStep?: import('../../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
+  responseModels?: import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue[];
   agentId:    string;
   label:      string;
   prompt:     string;

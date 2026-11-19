@@ -73,6 +73,7 @@ export class ParkedAgentRehydrator {
     state.metadata.modelSlot = 'primary';
     state.metadata.subAgentDepth = Number(identity.task.depth) || 1;
     state.metadata.delegatedJobId = identity.job.jobId;
+    state.metadata.productOwnerWorkflowStep = identity.task.workflowStep;
     state.metadata.workflowParentChannel = identity.job.parentChannel;
     state.metadata.delegatedRunActive = false;
     const persistenceKey = delegatedContainerPersistenceKey(identity);

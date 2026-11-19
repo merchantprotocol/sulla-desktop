@@ -42,6 +42,9 @@ export interface AgentStateRow extends ResultTracking {
  /** Explicit existing Projects task assignment. */
  taskId?:            string;
  modelStatus?:       AgentModelStatusValue;
+ /** Optional Workflow projection, absent on older snapshots. */
+ workflowStep?:      import('../productOwnerWorkflow').DelegatedWorkflowStep;
+ responseModels?:    AgentModelStatusValue[];
  label: string;
  visibility: 'hidden' | 'tab';
  state: AgentRowState;

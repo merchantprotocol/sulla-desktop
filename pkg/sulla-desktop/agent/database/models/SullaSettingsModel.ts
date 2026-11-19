@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import * as fs from 'fs/promises';
 
 import { ServiceSecretGenerator } from '../../app/Services/ServiceSecret/ServiceSecretGenerator';
+import { assertWorkflowWrite } from '../../services/WorkflowWriteAuthority';
 import { assertWorkerBindingsUnchanged } from '../../languagemodels/workerBindingAuthority';
 import { assertConfirmedCliUpdate } from '../../../shared/providerCliUpdateAuthority';
 import { BaseModel } from '../BaseModel';
@@ -388,6 +389,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    * @returns
    */
   public static async setSetting(property: string, value: any, cast?: string): Promise<void> {
+    assertWorkflowWrite(property);
     if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
     if (property === 'modelRouting') {
       const previous = await this.get(property, null);
@@ -460,6 +462,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // ──────────────────────────────────────────────
 
   public static async delete(property: string): Promise<void> {
+    assertWorkflowWrite(property);
     if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
     if (property === 'modelRouting') assertWorkerBindingsUnchanged((await this.get(property, null))?.workerBindings, undefined);
     if (isRendererProcess()) {

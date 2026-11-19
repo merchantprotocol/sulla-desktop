@@ -24,6 +24,9 @@ import store from './store';
 import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { ThemeStore } from '@pkg/composables/useTheme';
+
+ThemeStore.shared().applyCachedTheme();
 
 const windowBootStartedAt = Date.now();
 console.info(`[WindowBoot] renderer entry started at ${ windowBootStartedAt }`);

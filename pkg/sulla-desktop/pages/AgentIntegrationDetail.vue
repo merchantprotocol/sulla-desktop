@@ -83,15 +83,22 @@
               <div class="integration-detail-nav-item">
                 <b>03</b>Setup guide
               </div>
-              <div class="integration-detail-nav-state">
+              <div v-if="!configurationLoading && !configurationError && integration"
+                class="integration-detail-nav-state">
                 <i :class="integration?.connected ? 'integration-detail-state-on' : ''" />
-                {{ integration?.connected ? 'Connected' : 'Not connected' }}
+                {{ vaultLocked ? 'Password Vault locked' : integration?.connected ? 'Connected' : 'Not connected' }}
               </div>
             </div>
           </div>
 
+          <ConfigurationLoadState
+            v-if="configurationLoading || configurationError"
+            label="Loading integration settings…"
+            :error="configurationError ? 'Couldn’t load integration settings.' : ''"
+            @retry="loadConfiguration"
+          />
           <div
-            v-if="integration"
+            v-else-if="integration"
             class="grid grid-cols-1 gap-8 lg:grid-cols-2 integration-detail-main"
           >
             <!-- Main Content -->
@@ -232,7 +239,7 @@
                         :class="integration.connected ? 'bg-[var(--status-success)] integration-detail-status-on' : 'bg-[var(--bg-surface-hover)]'"
                       />
                       <span class="text-xs text-[var(--text-muted)] ">
-                        {{ integration.connected
+                        {{ vaultLocked ? 'Password Vault locked' : integration.connected
                           ? (connectedAccounts.length > 1
                             ? `${connectedAccounts.length} accounts connected`
                             : (connectedAccounts.length === 1 ? `Connected to ${connectedAccounts[0].label}` : 'Connected'))
@@ -1002,10 +1009,13 @@ import { useRoute, useRouter } from 'vue-router';
 
 import AgentHeader from './agent/AgentHeader.vue';
 
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
+
 import { integrations, type Integration } from '@pkg/agent/integrations/catalog';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService, type IntegrationAccount } from '@pkg/agent/services/IntegrationService';
 import type { ClaudeReconnectRequiredEvent } from '@pkg/agent/languagemodels/credentials/ClaudeAuthFailureCoordinator';
+import { ConfigurationLoadPolicy, useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 import { useOAuthConnection } from '@pkg/composables/useOAuthConnection';
 import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -1075,6 +1085,8 @@ const oauthError = ref('');
 const oauthSuccess = ref('');
 const connectMessage = ref('');
 const accountError = ref('');
+const vaultLocked = ref(false);
+const loadPolicy = new ConfigurationLoadPolicy();
 const accountBusy = ref(false);
 const visibleProperties = computed(() => integration.value?.properties?.filter(property => property.key !== 'llm_access') ?? []);
 
@@ -1175,9 +1187,9 @@ const previousImage = () => {
   }
 };
 
-const refreshAccounts = async() => {
+const refreshAccounts = async(strict = false) => {
   if (!integration.value) return;
-  accounts.value = await integrationService.getAccounts(integration.value.id);
+  accounts.value = await integrationService.getAccounts(integration.value.id, { strict });
   // With no accounts there is no active one (the vault-backed lookup throws).
   activeAccountId.value = accounts.value.length
     ? await integrationService.getActiveAccountId(integration.value.id)
@@ -1288,15 +1300,6 @@ const setAccountActive = async(accountId: string) => {
     accountError.value = `Couldn't switch the active account: ${ error instanceof Error ? error.message : String(error) }`;
   } finally {
     accountBusy.value = false;
-  }
-};
-
-/** Load this integration's accounts for the "Your accounts" list; failures are shown, not swallowed. */
-const loadAccounts = async() => {
-  try {
-    await refreshAccounts();
-  } catch (error) {
-    accountError.value = `Couldn't load your accounts: ${ error instanceof Error ? error.message : String(error) }`;
   }
 };
 
@@ -1607,8 +1610,7 @@ function onReconnectRequired(_event: unknown, payload: ClaudeReconnectRequiredEv
   oauthError.value = payload.message;
 }
 
-onMounted(async() => {
-  ipcRenderer.on('provider-auth:reconnect-required' as any, onReconnectRequired);
+const { loading: configurationLoading, error: configurationError, start: loadConfiguration } = useConfigurationLoad(async() => {
   // Initialize integration service
   await integrationService.initialize();
 
@@ -1658,6 +1660,16 @@ onMounted(async() => {
     return;
   }
 
+  try {
+    await refreshAccounts(true);
+    integration.value.connected = accounts.value.some(account => account.connected);
+    vaultLocked.value = false;
+  } catch (cause) {
+    if (!loadPolicy.isVaultLocked(cause)) throw cause;
+    vaultLocked.value = true;
+    accountError.value = 'Unlock Password Vault to see saved accounts.';
+  }
+
   // Start with a blank form for new account creation
   // Fetch select options for any select fields
   try {
@@ -1674,7 +1686,10 @@ onMounted(async() => {
     loadClaudeUsage().catch(() => { /* ignore */ });
   }
 
-  await loadAccounts();
+});
+onMounted(() => {
+  ipcRenderer.on('provider-auth:reconnect-required' as any, onReconnectRequired);
+  void loadConfiguration();
 });
 onBeforeUnmount(() => ipcRenderer.removeListener('provider-auth:reconnect-required' as any, onReconnectRequired));
 </script>

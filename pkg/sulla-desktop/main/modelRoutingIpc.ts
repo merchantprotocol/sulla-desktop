@@ -9,6 +9,9 @@ import { withConfirmedCliUpdate } from '../shared/providerCliUpdateAuthority';
 
 import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ModelClass, type ModelRoutingState } from '../agent/languagemodels/modelRoutingTypes';
 
+import { agentWindowFromSender } from '../window/agentWindowTrust';
+import type { WorkflowSaveInput } from '../shared/productOwnerWorkflow';
+
 import type { IpcController, IpcMainRegistrar } from './ipc/IpcController';
 
 /** The modelRouter surface this controller uses. */
@@ -25,6 +28,7 @@ export interface ModelRoutingRouter {
 
 export interface ModelRoutingDependencies {
   router: ModelRoutingRouter;
+  whenReady?(): Promise<void>;
   recommendedState(): any;
   /** All agent definitions (name, enabled flag, model choice); workers() keeps only enabled, non-archived ones. */
   listAgents(): Promise<{ id?: string; slug?: string; status?: string; run_location?: string; name: string; enabled: boolean; model_choice?: any }[]>;
@@ -62,6 +66,7 @@ export class ModelRoutingIpcController implements IpcController {
   }
 
   async state(): Promise<ModelRoutingState> {
+    await this.deps.whenReady?.();
     const router = this.deps.router;
     const [editable, providers, catalog, users] = await Promise.all([router.getEditableState(), router.providerInfo(), router.catalogReport(), this.classUsers()]);
 
@@ -69,6 +74,32 @@ export class ModelRoutingIpcController implements IpcController {
   }
 
   register(): void {
+    // Restricted to the local app main frame, including its registered tab hosts.
+    const requireWorkflowOwner = (event: Electron.IpcMainInvokeEvent) => {
+      if (!event?.sender || event.sender.mainFrame !== event.senderFrame || !agentWindowFromSender(event.sender)) throw new Error('Untrusted Workflow caller.');
+      const url = new URL(event.sender.getURL());
+      if (url.protocol !== 'app:' || url.host !== '.' || url.pathname !== '/agent.html') throw new Error('Untrusted Workflow caller.');
+    };
+    this.ipc.removeHandler('chat-workflow:get');
+    this.ipc.removeHandler('chat-workflow:save');
+    this.ipc.removeHandler('chat-workflow:execution');
+    this.ipc.removeHandler('chat-workflow:history');
+    this.ipc.handle('chat-workflow:history', async(event, threadId: string) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.readWorkflowHistory(threadId);
+    });
+    this.ipc.handle('chat-workflow:get', async(event, threadId: string) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.getProductOwnerWorkflow(threadId);
+    });
+    this.ipc.handle('chat-workflow:save', async(event, input: WorkflowSaveInput) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.saveProductOwnerWorkflow(input);
+    });
+    this.ipc.handle('chat-workflow:execution', async(event, threadId: string, reference: unknown) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.readWorkflowExecution(threadId, reference);
+    });
     const { router } = this.deps;
     this.ipc.removeHandler(MODEL_ROUTING_IPC.get);
     this.ipc.removeHandler(MODEL_ROUTING_IPC.set);
@@ -77,12 +108,14 @@ export class ModelRoutingIpcController implements IpcController {
     this.ipc.handle(MODEL_ROUTING_IPC.get, () => this.state());
     this.ipc.handle(MODEL_ROUTING_IPC.set, async(_event, patch) => {
       if (patch && Object.prototype.hasOwnProperty.call(patch, 'workerBindings')) throw new Error('Save an individual worker mapping through its dedicated control.');
+      await this.deps.whenReady?.();
       await router.set(patch || {});
 
       return this.state();
     });
     this.ipc.handle(MODEL_ROUTING_IPC.reset, async(_event, target) => {
       if (!target || !['agents', 'subconscious', 'classes'].includes(target.section)) throw new Error('Invalid model routing reset target');
+      await this.deps.whenReady?.();
       await router.reset(target);
 
       return this.state();
@@ -91,6 +124,7 @@ export class ModelRoutingIpcController implements IpcController {
   let workerWrite = Promise.resolve();
   this.ipc.handle(MODEL_ROUTING_IPC.workerSet, async(_event, input) => {
     const operation = workerWrite.then(async() => {
+      await this.deps.whenReady?.();
       // Record the stored same-slug entry before any async check, so a slug deleted and reused by
       // another agent meanwhile is never overwritten or removed by this stale save.
       const observed = (await router.getEditableState()).workerBindings?.[input?.slug];
@@ -124,12 +158,14 @@ export class ModelRoutingIpcController implements IpcController {
     return operation;
   });
     this.ipc.handle(MODEL_ROUTING_IPC.refresh, async() => {
+      await this.deps.whenReady?.();
       await router.refreshCatalog();
 
       return this.state();
     });
     this.ipc.removeHandler(MODEL_ROUTING_IPC.cliCheck);
     this.ipc.handle(MODEL_ROUTING_IPC.cliCheck, async() => {
+      await this.deps.whenReady?.();
       const { checkProviderCliVersions } = await import('../backend/providerCliUpdates');
       const providers = await router.providerInfo();
       return checkProviderCliVersions(providers.filter((provider: any) => provider.connected).map((provider: any) => provider.id));
@@ -140,6 +176,7 @@ export class ModelRoutingIpcController implements IpcController {
       const version = typeof input?.version === 'string' ? input.version : '';
       if (!provider || !version) throw new Error('Choose one provider and exact version to update.');
       if (!this.deps.confirmCliUpdate) throw new Error('Native confirmation is unavailable; no CLI was updated.');
+      await this.deps.whenReady?.();
       const connected = (await router.providerInfo()).some((row: any) => row.id === provider && row.connected);
       if (!connected) throw new Error('This provider is no longer connected. Refresh AI Models before updating.');
       const { checkProviderCliVersions, installConfirmedProviderCli } = await import('../backend/providerCliUpdates');
@@ -150,10 +187,13 @@ export class ModelRoutingIpcController implements IpcController {
       await withConfirmedCliUpdate(() => installConfirmedProviderCli(provider, version));
       return checkProviderCliVersions([provider]);
     });
-    const pushStatus = () => void router.providerInfo().then(providers => this.deps.broadcast(MODEL_ROUTING_IPC.status, providers));
+    const pushStatus = async() => {
+      await this.deps.whenReady?.();
+      this.deps.broadcast(MODEL_ROUTING_IPC.status, await router.providerInfo());
+    };
     router.onStatusChange(pushStatus);
     this.deps.onIntegrationValueChange((value) => {
-      if (value.property === 'connection_status' || value.property === 'model') pushStatus();
+      if (value.property === 'connection_status' || value.property === 'model') void pushStatus();
     });
   }
 }

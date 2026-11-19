@@ -260,6 +260,11 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'chat-workflow:get': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:save': (input: import('@pkg/shared/productOwnerWorkflow').WorkflowSaveInput) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:history': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowRunRow[];
+  'chat-workflow:execution': (threadId: string, reference: { jobId: string; taskIndex: number } | null) => import('@pkg/shared/agentState/AgentModelStatus').AgentModelStatusValue[];
+
   'chat:run-state': (channelId: string, threadId: string) => boolean;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
@@ -499,6 +504,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; needsPassword?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; retryAfter?: number; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-settings:wait-for-backends': (payload: { startupId: string; windowKey: string }) => void;
+  'vault:view-owned': (ownerId: string) => boolean;
+  'vault:view-open': (bounds: Electron.Rectangle, hint?: Record<string, unknown>) => { state: 'opened'; expiresAt: number } | { state: 'cancelled' };
   'sulla-startup:stage': (payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => boolean;
 
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
@@ -784,8 +791,8 @@ export interface IpcMainInvokeEvents {
   'workflow-check-updated': (workflowId: string, editorUpdatedAt: string) => { changed: boolean; diskUpdatedAt: string };
 
   // DB-backed workflow reads (Phase 1 verification path for the Postgres cutover)
-  'workflow-db-list':     () => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
-  'workflow-db-get':      (workflowId: string) => any;
+  'workflow-db-list':     (options?: { strict?: boolean }) => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
+  'workflow-db-get':      (workflowId: string, options?: { strict?: boolean }) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
   'workflow-run-summaries': () => import('@pkg/main/workflowRunSummaries').WorkflowRunSummaries;
   'workflow-run-detail':    (executionId: string) => import('@pkg/main/workflowRunSummaries').WorkflowRunDetail | null;

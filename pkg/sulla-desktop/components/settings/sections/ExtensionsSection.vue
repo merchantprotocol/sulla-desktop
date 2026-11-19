@@ -6,17 +6,17 @@
 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import ConfigurationLoadState from '../ConfigurationLoadState.vue';
 import PrefCard from '../PrefCard.vue';
 import PrefRow from '../PrefRow.vue';
 import PrefToggle from '../PrefToggle.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
+import { useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 
 type HookName = 'before_tool_call'|'after_tool_call'|'before_model_call'|'after_model_response'|'on_user_message'|'on_memory_write'|'on_workflow_node_start'|'on_workflow_node_finish'|'on_agent_job_start'|'on_agent_job_finish';
 interface ExtensionInfo { extensionId:string; name:string; description:string; publisher:string; version:string|null; hooks:HookName[]; grants:Partial<Record<HookName,boolean>>; ui:Array<{slot:string;label:string}>; integration?:{id:string;version:string;permissions:string[];granted:boolean} }
 interface AuditEvent { extensionId:string; hook:HookName; outcome:'ok'|'denied'|'error'|'timeout'|'permission_denied'; durationMs:number; timestamp:number; detail?:string }
-/** loading: DB list in flight. unavailable: DB still starting, toggles locked. ready: grants known. */
-type PermissionsState = 'loading'|'ready'|'unavailable';
 const copy:Record<HookName,{title:string;kind:string}> = {
   on_user_message:{title:'Read your messages',kind:'Sees only'}, after_model_response:{title:'Read Sulla’s replies',kind:'Sees only'},
   after_tool_call:{title:'See tool results',kind:'Sees only'}, on_memory_write:{title:'See what Sulla saves to memory',kind:'Sees only'},
@@ -25,15 +25,19 @@ const copy:Record<HookName,{title:string;kind:string}> = {
   before_tool_call:{title:'Check tool calls before they run',kind:'Can change or stop'}, before_model_call:{title:'Check what Sulla sends to the AI model',kind:'Can change or stop'},
 };
 const extensions=ref<ExtensionInfo[]>([]); const audit=ref<AuditEvent[]>([]); const problems=ref(false); const busy=ref(false); const error=ref('');
-const permissionsState=ref<PermissionsState>('loading');
-const permissionsReady=computed(()=>permissionsState.value==='ready');
-const pendingHint=computed(()=>permissionsState.value==='loading'?'Loading…':'Available when Sulla finishes starting');
+const permissionsReady=ref(false);
+const pendingHint=computed(()=>permissionsLoadError.value ? 'Permissions unavailable' : 'Loading permissions…');
 const activity=computed(()=>audit.value.filter(e=>!problems.value||e.outcome!=='ok').slice().sort((a,b)=>b.timestamp-a.timestamp));
 const names=computed(()=>Object.fromEntries(extensions.value.map(e=>[e.extensionId,e.name])));
 // Paints the installed list from disk. Skipped once the DB list has landed, so it never overwrites grants.
 async function loadLocal(){ try { const local=await ipcRenderer.invoke('extension-permissions:local'); if(!permissionsReady.value) extensions.value=local; } catch(e){ error.value=String(e) } }
-// Fills in grants. null means the DB is still starting; the renderer reloads on database:available.
-async function loadPermissions(){ try { const rows=await ipcRenderer.invoke('extension-permissions:list'); if(!rows){ permissionsState.value='unavailable'; return } extensions.value=rows; permissionsState.value='ready' } catch(e){ permissionsState.value='unavailable'; error.value=String(e) } }
+const { error: permissionsLoadError, start: loadPermissions } = useConfigurationLoad(async() => {
+  const rows = await ipcRenderer.invoke('extension-permissions:list');
+  if (!rows) { permissionsReady.value = false; return false }
+  extensions.value = rows;
+  permissionsReady.value = true;
+  void loadAudit();
+});
 // Audit is independent: it never blocks the installed list.
 async function loadAudit(){ try { audit.value=await ipcRenderer.invoke('extension-permissions:audit') } catch(e){ error.value=String(e) } }
 async function setHook(ext:ExtensionInfo,hook:HookName,granted:boolean){if(!permissionsReady.value)return;busy.value=true;try{await ipcRenderer.invoke('extension-permissions:set-hook',{extensionId:ext.extensionId,hook,granted});ext.grants[hook]=granted}catch(e){error.value=String(e)}finally{busy.value=false}}
@@ -42,12 +46,13 @@ async function revoke(extensionId?:string){if(!permissionsReady.value)return;bus
 function result(e:AuditEvent){return e.outcome==='ok'?'Allowed':e.outcome==='permission_denied'||e.outcome==='denied'?'Denied':e.outcome==='timeout'?'Timed out':'Failed'}
 function time(ts:number){return new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(ts)}
 useDatabaseAvailableReload(loadPermissions,'ExtensionsSection');
-onMounted(()=>{ void loadLocal(); void loadPermissions(); void loadAudit(); });
+onMounted(()=>{ void loadLocal(); void loadPermissions(); });
 </script>
 <template><div>
   <div class="ph"><div><h1>Extensions</h1><p>What each extension can see and change. Turn anything off at any time.</p></div><div class="r"><button class="btn danger" type="button" :disabled="busy || !permissionsReady" @click="revoke()">Revoke all</button></div></div>
   <p v-if="error" class="note badc">{{error}}</p>
-  <PrefCard v-if="!extensions.length" title="Installed extensions" subtitle="Extensions with hooks or interface permissions appear here."><p class="note">{{ permissionsState==='loading' ? 'Loading extensions…' : 'No extension permissions to show.' }}</p></PrefCard>
+  <ConfigurationLoadState v-if="!permissionsReady" label="Loading extension permissions…" :error="permissionsLoadError ? 'Couldn’t load extension permissions.' : ''" @retry="loadPermissions" />
+  <PrefCard v-else-if="!extensions.length" title="Installed extensions" subtitle="Extensions with hooks or interface permissions appear here."><p class="note">No extension permissions to show.</p></PrefCard>
   <PrefCard v-for="ext in extensions" :key="ext.extensionId" :title="ext.name" :subtitle="`${ext.publisher}${ext.version ? ` · ${ext.version}` : ''}`">
     <template #actions><span v-if="!permissionsReady" class="note">{{ pendingHint }}</span><button v-else-if="ext.hooks.some(h=>ext.grants[h]) || ext.integration?.granted" class="btn danger" type="button" :disabled="busy" @click="revoke(ext.extensionId)">Revoke all</button><span v-else class="note">Everything off</span></template>
     <PrefRow v-for="hook in ext.hooks" :key="hook" :title="copy[hook].title" :subtitle="`${copy[hook].kind} · ${hook}`" :off="permissionsReady && !ext.grants[hook]"><PrefToggle :model-value="!!ext.grants[hook]" :disabled="busy || !permissionsReady" :label="copy[hook].title" @update:model-value="setHook(ext,hook,$event)"/><span v-if="!permissionsReady" class="note pending">{{ pendingHint }}</span></PrefRow>

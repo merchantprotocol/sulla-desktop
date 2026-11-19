@@ -91,7 +91,10 @@ const CONTRACT_REMINDER = '[Return contract reminder]\nYou ended your turn witho
   'Call `agents/return_result` now with a result that matches the contract in your brief. ' +
   'If you cannot finish, return what you have and say why.';
 
+type DelegatedWorkflowStep = import('../../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
+
 interface SpawnTask {
+  workflowStep?: DelegatedWorkflowStep;
   followUpOf?:    ResultReference;
   agentId?:   string;
   model?: string;
@@ -207,7 +210,7 @@ export class SpawnAgentWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     // ── Validate tasks ──────────────────────────────────────────
-    const tasks: SpawnTask[] = input.tasks;
+    const tasks: SpawnTask[] = Array.isArray(input.tasks) ? input.tasks.map((task: SpawnTask) => ({ ...task })) : input.tasks;
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return {
@@ -237,6 +240,13 @@ export class SpawnAgentWorker extends BaseTool {
     const plans: TabPlan[] = [];
     const callerIsHiddenJob = Number((this.state as any)?.metadata?.subAgentDepth ?? 0) > 0;
 
+    // A step is scoped by the canonical job owner and its root chat, never by a title.
+    const actor = resolveAgentIdentity(this.state?.metadata);
+    const workflowRequested = tasks.some(task => task.workflowStep !== undefined || (actor === 'account-manager'
+      && ['mockup-designer', 'coding-manager', 'ui-test-manager'].includes(taskAgentSelector(task) ?? '')));
+    const workflow = parentThreadId && workflowRequested ? (await import('../../services/ProductOwnerWorkflow')).productOwnerWorkflow : undefined;
+    const workflowScope = workflow && parentThreadId ? await workflow.productOwnerDelegationScope(actor, parentThreadId) : undefined;
+
     for (let i = 0; i < tasks.length; i++) {
       if (tasks[i].followUpOf !== undefined) {
         try { await (await trackingService()).validateFollowUp(tasks[i].followUpOf!, parentThreadId ?? '') } catch (error) { return { successBoolean: false, responseString: (error as Error).message } }
@@ -248,7 +258,23 @@ export class SpawnAgentWorker extends BaseTool {
         };
       }
 
-      const workerRoute = await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
+      let configuredRoute: WorkerModelRoute | undefined;
+      try {
+        const task = tasks[i];
+        const settings = workflowScope
+          ? await workflow!.productOwnerDelegation(workflowScope, taskAgentSelector(task), task.workflowStep, task.followUpOf)
+          : undefined;
+        task.workflowStep = settings?.step;
+        if (settings?.slug) {
+          // Preserve implicit labels used by the existing spawn dedupe guard.
+          task.label ||= taskAgentSelector(task) || parentChannel;
+          task.agentId = settings.slug;
+        }
+        configuredRoute = settings?.route;
+      } catch (error) {
+        return { successBoolean: false, responseString: `Task ${ i }: ${ (error as Error).message }` };
+      }
+      const workerRoute = configuredRoute ?? await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
       if (workerRoute) this.workerRoutes.set(tasks[i], workerRoute);
       if (tasks[i].effort !== undefined && !workerRoute) {
         try {
@@ -402,7 +428,7 @@ export class SpawnAgentWorker extends BaseTool {
    * (the root human chat, when the caller is a hidden child).
    */
   private async launchTab(task: SpawnTask, childAgent: RoutableAgent, parentDepth: number, decision: TabVisibilityDecision): Promise<LaunchedTab> {
-    const workerRoute = await workerModelRouting.newRoute(childAgent.graphAgentId);
+    const workerRoute = this.workerRoutes.get(task) ?? await workerModelRouting.newRoute(childAgent.graphAgentId);
     const { captureProviderCliSnapshot } = await import('../../../backend/providerCliUpdates');
     const providerCliSnapshot = await captureProviderCliSnapshot();
     const metadata = (this.state as any)?.metadata;
@@ -427,6 +453,7 @@ export class SpawnAgentWorker extends BaseTool {
       followUpOf:       task.followUpOf,
       provider: task.provider, model: task.model, effort:           task.effort,
       workerModelRoute: workerRoute,
+      workflowStep:     task.workflowStep,
       providerCliSnapshot,
       prompt:     task.prompt,
       taskId:     task.projectTaskId?.trim(),
@@ -485,6 +512,7 @@ export class SpawnAgentWorker extends BaseTool {
         prompt:           `[Agent tab launched by ${ parentName }]\n\n${ task.prompt }\n\n${ contractFooter({ jobId: job.jobId, contract, visibility: 'tab' }) }`,
         activityKeys:     RunActivity.inherit(metadata, job.jobId, `${ job.jobId }#0`),
         workerModelRoute: workerRoute,
+        workflowStep:     task.workflowStep,
         providerCliSnapshot,
         runOverrides: { model: task.model, provider: task.provider, effort: task.effort, runLocation: task.runLocation },
       });
@@ -532,6 +560,7 @@ export class SpawnAgentWorker extends BaseTool {
         label:      task.label || agentId || `task-${ index }`,
         prompt:           task.prompt,
         workerModelRoute: this.workerRoutes.get(task),
+        workflowStep:     task.workflowStep,
         providerCliSnapshot,
         provider:         task.provider?.trim() || undefined,
         model:      task.model?.trim() || undefined,
@@ -642,6 +671,7 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.modelSlot = 'primary';
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
+        subState.metadata.productOwnerWorkflowStep = task.workflowStep;
         subState.metadata.delegatedJobId = activityJobId;
         subState.metadata.delegatedTaskIndex = index;
         subState.metadata.managerAgentId = parentAgentId || parentChannel;
