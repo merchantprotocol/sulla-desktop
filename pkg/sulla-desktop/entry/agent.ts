@@ -55,7 +55,13 @@ const router = createRouter({
 
 const tabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
 const hostedTabId = new URLSearchParams(window.location.search).get('tabId') || '';
-const TabHost = { name: 'InternalTabHost', render: () => h(BrowserTab, { tabId: hostedTabId, isVisible: true }) };
+// BrowserTab sizes itself from its parent (height: 100%). In the main window that
+// parent is AgentRouter's absolutely positioned tab layer; a tab host has no such
+// layer, so without this viewport-filling frame every page collapses to zero height.
+const TabHost = {
+  name:   'InternalTabHost',
+  render: () => h('div', { class: 'internal-tab-host', style: { position: 'fixed', inset: '0' } }, [h(BrowserTab, { tabId: hostedTabId, isVisible: true })]),
+};
 const app = createApp(tabHost ? TabHost : AgentRouter);
 
 // Live Agents (Studio) and the chat sub-agent drawer inject this client; this

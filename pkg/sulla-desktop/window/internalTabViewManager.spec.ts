@@ -118,4 +118,19 @@ describe('InternalTabViewManager', () => {
     expect(owner.contentView.addChildView).toHaveBeenCalledTimes(2);
     expect(tab.view.webContents.reload).toHaveBeenCalledOnce();
   });
+
+  it('hands a tab its descriptor only through its own renderer', () => {
+    // risk: a new tab host boots before the tab list is saved and must still learn its tab
+    const owner = ownerWindow(6);
+    const instance = manager() as any;
+    const bounds = { x: 0, y: 0, width: 20, height: 20 };
+    instance.activate(owner, 'one', 'main', bounds, { id: 'one', mode: 'chat' });
+    instance.activate(owner, 'two', 'main', bounds, { id: 'two', mode: 'files' });
+    const one = instance.tabs.get('one').view.webContents;
+    expect(instance.descriptorFor(one, 'one')).toEqual({ id: 'one', mode: 'chat' });
+    expect(instance.descriptorFor(one, 'two')).toBeNull();
+    expect(instance.descriptorFor(owner.webContents, 'one')).toBeNull();
+    instance.notifyTabUpdate(one, 'one', { id: 'one', mode: 'paper' });
+    expect(instance.descriptorFor(one, 'one')).toEqual({ id: 'one', mode: 'paper' });
+  });
 });

@@ -76,6 +76,7 @@ export interface SullaFileReference {
  */
 export interface IpcMainEvents {
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
+  'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
   'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
   'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -404,7 +405,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
   'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
-  'internal-tab-view:activate': (tabId: string, windowKey: string, bounds: Electron.Rectangle) => void;
+  'internal-tab-view:activate': (tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown) => void;
   'internal-tab-view:bounds': (tabId: string, bounds: Electron.Rectangle) => void;
   'internal-tab-view:visible': (tabId: string, visible: boolean) => void;
   'internal-tab-view:close': (tabId: string) => void;

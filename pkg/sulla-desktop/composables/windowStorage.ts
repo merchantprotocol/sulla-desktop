@@ -31,6 +31,19 @@ export const shouldStartFresh = (search: string, session: SessionFlags): boolean
   return true;
 };
 
+/**
+ * A tab-host renderer shows one tab, and its owner window is the authority on
+ * that tab. The saved tab list is written on a delay and leaves out some tabs,
+ * so a host that starts right after its tab was opened would not find it there.
+ */
+export const withHostedTab = <T extends { id: string }>(restored: T[], hostedId: string | null, descriptor: unknown): T[] => {
+  const hosted = descriptor as T | null | undefined;
+  if (!hostedId || !hosted || typeof hosted !== 'object' || hosted.id !== hostedId) return restored;
+  const index = restored.findIndex(tab => tab.id === hostedId);
+  if (index < 0) return [...restored, hosted];
+  return restored.map((tab, i) => (i === index ? { ...tab, ...hosted } : tab));
+};
+
 const legacyTabKeys = ['browser-tabs', 'closed-tabs', 'tab-order', 'pinned-tabs', 'active-tab'];
 
 export class WindowStorageMigrator {
