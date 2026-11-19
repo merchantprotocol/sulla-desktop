@@ -92,8 +92,8 @@ describe('TabTransferService', () => {
     expect(source.webContents.destroyedListeners).toHaveLength(1);
   });
 
-  it('opens a new window for an outside multi-tab drop but moves a single-tab source window', async() => {
-    // risk: tab ownership and window geometry at drag-drop boundaries
+  it('opens a new window for an outside drop, including the source window\'s only tab', async() => {
+    // risk: a one-tab tear-off must preserve tab ownership and close the emptied source
     const ipc = new FakeIpc(); const actions: string[] = [];
     const source = new FakeWindow(1, actions, { x: 0, y: 0, width: 800, height: 600 }, ipc);
     let windows = [source]; let opened = 0;
@@ -101,15 +101,13 @@ describe('TabTransferService', () => {
     const views = { ownsTab: () => true, markTransferring: () => {}, moveViewToWindow: () => true } as any;
     const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 2000, y: 1000 }) } as any, () => source as any, () => windows as any, () => { opened++; windows = [source, target]; ipc.emit('tabs:transfer-ready', { sender: target.webContents }); return target as any; }, views);
     service.install();
-    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-a', descriptor: { id: 'tab-a' }, tabCount: 2 });
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-a', descriptor: { id: 'tab-a' }, tabCount: 1 });
     ipc.emit('tabs:drag-end', { sender: source.webContents }, { tabId: 'tab-a', screenX: 2000, screenY: 1000 });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(opened).toBe(1);
-
-    const oneTabService = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 2000, y: 1000 }) } as any, () => source as any, () => [source] as any, () => target as any, views);
-    oneTabService.install();
-    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-b', descriptor: { id: 'tab-b' }, tabCount: 1 });
-    ipc.emit('tabs:drag-end', { sender: source.webContents }, { tabId: 'tab-b', screenX: 2000, screenY: 1000 });
-    expect(source.bounds.x).toBe(1600);
+    expect(actions).toContain('tabs:release');
+    expect(actions).toContain('tabs:adopt');
+    expect(actions).toContain('tabs:release-finalize');
+    expect(actions).not.toContain('move-window');
   });
 });
