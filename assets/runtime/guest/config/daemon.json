@@ -6,7 +6,9 @@
       "enabled": true,
       "defaultKeepStorage": "1GB",
       "policy": [
-        { "reservedSpace": "1GB", "keepDuration": ["168h"] }
+        { "reservedSpace": "1GB", "keepDuration": ["168h"] },
+        { "reservedSpace": "1GB" },
+        { "reservedSpace": "1GB", "all": true }
       ]
     }
   },
