@@ -4,10 +4,11 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
   <div class="support-session">
     <div v-if="loading" class="state">Opening secure support session…</div>
-    <div v-else-if="error" class="state error"><b>{{ errorTitle }}</b><span>{{ error }}</span></div>
+    <div v-else-if="error && !session" class="state error"><b>{{ errorTitle }}</b><span>{{ error }}</span><button @click="manualRefresh">Retry</button></div>
     <template v-else-if="session">
       <header class="session-head">
-        <div class="title-row"><div><b>Support · {{ session.user?.name || session.device?.name || 'User' }}</b><span class="pill" :class="active ? 'active' : 'ended'">{{ active ? 'Connected' : session.status }}</span></div><div class="actions"><button class="ghost" @click="manualRefresh">Refresh</button><button v-if="active" class="danger" @click="endSession">End session</button></div></div>
+        <div class="title-row"><div><b>Support · {{ session.user?.name || session.device?.name || 'User' }}</b><span class="pill" :class="active ? 'active' : 'ended'">{{ active ? 'Connected' : session.status }}</span></div><div class="actions"><button class="ghost" :disabled="refreshing" @click="manualRefresh">{{ refreshing ? 'Refreshing…' : 'Refresh' }}</button><button v-if="active" class="danger" :disabled="ending" @click="confirmEnd = true">{{ ending ? 'Ending…' : 'End session' }}</button></div></div>
+        <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
         <div class="request"><span class="avatar">{{ initials }}</span><div><small>User's request</small><p>{{ session.message || 'No message supplied.' }}</p></div></div>
         <div v-if="toolWaiting" class="waiting">Waiting for the computer… {{ toolWaitingSeconds }}s</div>
         <div class="strip">
@@ -31,7 +32,7 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
           <ol v-if="path==='a'">
             <li class="done"><b>Ad hoc fix</b><span>Sulla can use the allowlisted runtime tools in this chat.</span></li>
             <li><b>Verify</b><button @click="seedPrompt('Verify the fix with diagnostics, container status, AI connection status, and recent errors.')">Run checks</button></li>
-            <li><b>Mark resolved</b><button @click="markResolved">Mark resolved</button></li>
+            <li><b>Mark resolved</b><button :disabled="ending" @click="markResolved">{{ ending ? 'Resolving…' : 'Mark resolved' }}</button></li>
           </ol>
           <ol v-else>
             <li><b>Code fix PR</b><input v-model="prUrl" placeholder="PR link" /></li>
@@ -44,24 +45,25 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
           <div class="scope">Scope: <b>Sulla runtime VM only.</b> The user's Mac, Files, vault and chats are out of reach. Every action is logged.</div>
         </aside>
       </div>
+      <div v-if="confirmEnd" class="confirm-backdrop" role="presentation"><section class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="end-title"><b id="end-title">End this support session?</b><p>The user's remote support tools will be disconnected.</p><div><button class="ghost" :disabled="ending" @click="confirmEnd = false">Cancel</button><button class="danger" :disabled="ending" @click="endSession">{{ ending ? 'Ending…' : 'End session' }}</button></div></section></div>
     </template>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ChatPage from './chat/ChatPage.vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const props=defineProps<{tabId:string;sessionId:string;isVisible:boolean}>();
 const toolNames=['support.logs.tail','support.diagnostics.snapshot','support.containers.list','support.containers.restart','support.containers.logs','support.containers.set_memory_limit','support.ai.retry_connection','support.update.set_channel','support.update.check_and_install','support.update.status'];
-const session=ref<any>(null), loading=ref(true), error=ref(''), errorTitle=ref('Could not open support session'), path=ref<'a'|'b'>('a'), prUrl=ref(''); let timer:any;
+const session=ref<any>(null), loading=ref(true), error=ref(''), errorTitle=ref('Could not open support session'), path=ref<'a'|'b'>('a'), prUrl=ref(''), refreshing=ref(false), ending=ref(false), confirmEnd=ref(false); let timer:any;
 const active=computed(()=>session.value?.status==='active' && (!session.value.expiresAt || Date.parse(session.value.expiresAt)>Date.now()));
 const initials=computed(()=>String(session.value?.user?.name||'User').split(/\s+/).map((x:string)=>x[0]).slice(0,2).join('').toUpperCase());
 const approvalLeft=computed(()=>{const n=session.value?.approvalSecondsRemaining ?? (session.value?.expiresAt ? Math.max(0,Math.floor((Date.parse(session.value.expiresAt)-Date.now())/1000)):0); return active.value ? `${Math.floor(n/3600)} h left` : 'Ended';});
 const aiStatus=computed(()=>session.value?.aiStatus || (session.value?.runtimeHealth==='healthy'?'Connected':'Needs attention'));
 const healthClass=computed(()=>session.value?.runtimeHealth==='healthy'?'good':'warn');
 async function refresh(){try{const r:any=await ipcRenderer.invoke('support-session:get' as any,props.sessionId); session.value=r.session; error.value='';}catch(e:any){error.value=e?.message||String(e); if(e?.status===403||/super_admin_required|not authorized/i.test(error.value)) errorTitle.value='Not authorized';}finally{loading.value=false;}}
-async function endSession(){await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'ended_by_supporter'); await refresh();}
-async function markResolved(){await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'resolved'); await refresh();}
+async function endSession(){if(ending.value)return; ending.value=true; try{const result:any=await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'ended_by_supporter'); if(result?.session)session.value=result.session; else await refresh(); error.value=''; confirmEnd.value=false;}catch(e:any){error.value=e?.message||String(e);}finally{ending.value=false;}}
+async function markResolved(){if(ending.value)return; ending.value=true; try{const result:any=await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'resolved'); if(result?.session)session.value=result.session; else await refresh(); error.value='';}catch(e:any){error.value=e?.message||String(e);}finally{ending.value=false;}}
 function seedPrompt(text:string){window.dispatchEvent(new CustomEvent('sulla:support-chat-prompt',{detail:{tabId:props.tabId,text}}));}
 
 // ─── Device presence pill ──────────────────────────────────────────
@@ -79,7 +81,7 @@ const presenceLabel=computed(()=>{
   return presence.value.online?'Online':`Offline · last seen ${minutesAgo(presence.value.lastSeenAt)}`;
 });
 async function refreshPresence(){try{presence.value=await ipcRenderer.invoke('support-session:presence' as any,props.sessionId);}catch{/* keep last-known presence on a transient fetch failure */}}
-async function manualRefresh(){error.value=''; await Promise.all([refresh(),refreshPresence()]);}
+async function manualRefresh(){if(refreshing.value)return; refreshing.value=true; await Promise.all([refresh(),refreshPresence()]); refreshing.value=false;}
 
 // ─── "Waiting for the computer…" while a support tool call is in flight ───
 // ChatPage/PersonaAdapter already dispatch sulla:chat-running for this tab
@@ -98,12 +100,13 @@ onBeforeUnmount(()=>window.removeEventListener('sulla:chat-running',onChatRunnin
 onMounted(()=>{
   void refresh();
   void refreshPresence();
-  timer=setInterval(refresh,30000);
+  const resetPoll=()=>{clearInterval(timer); timer=setInterval(()=>void refresh(),active.value?30000:10000);};
+  watch(active,resetPoll,{immediate:true});
   presenceTimer=setInterval(()=>{if(props.isVisible)void refreshPresence();},10000);
   waitingTickTimer=setInterval(()=>{if(toolWaiting.value)toolWaitingSeconds.value=Math.floor((Date.now()-toolWaitingStartedAt)/1000);},1000);
 });
 onBeforeUnmount(()=>{clearInterval(timer); clearInterval(presenceTimer); clearInterval(waitingTickTimer);});
 </script>
 <style scoped>
-.support-session{height:100%;display:flex;flex-direction:column;background:var(--background,var(--bg-page));color:var(--body-text,var(--text-primary))}.state{margin:auto;display:flex;flex-direction:column;gap:8px}.error{color:var(--status-error)}.session-head{padding:16px 20px 12px;background:var(--body-bg,var(--bg-surface));border-bottom:1px solid var(--border,var(--border-default))}.title-row{display:flex;justify-content:space-between;align-items:center}.title-row>div{display:flex;gap:10px;align-items:center}.pill{font-size:11px;padding:3px 8px;border-radius:99px;background:var(--bg-surface-alt)}.pill.active{background:var(--status-success-soft);color:var(--status-success)}.pill.ended{color:var(--text-muted)}.actions{display:flex;gap:8px}.danger{border:1px solid var(--status-error);color:var(--status-error);background:transparent;border-radius:6px;padding:6px 10px}.ghost{border:1px solid var(--border-default);color:var(--text-muted);background:transparent;border-radius:6px;padding:6px 10px}.waiting{margin:0 0 10px;font-size:11px;color:var(--status-warning)}.request{display:flex;gap:10px;margin:12px 0}.avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#6b7ca5;color:var(--text-on-accent);font-size:11px}.request small,.strip small{display:block;color:var(--text-muted);font-size:10px;text-transform:uppercase}.request p{margin:2px 0}.strip{display:flex;gap:0;border:1px solid var(--border,var(--border-default));border-radius:8px;overflow:hidden}.strip span{padding:8px 12px;border-right:1px solid var(--border,var(--border-default));display:flex;gap:4px;align-items:baseline}.strip span:last-child{border:0}.strip b{font-size:12px}.strip em{font-size:10px;color:var(--text-muted)}.good{color:var(--status-success)}.warn{color:var(--status-warning)}.body{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0;flex:1}.chat-wrap{min-width:0;overflow:hidden}.fix{border-left:1px solid var(--border,var(--border-default));padding:16px;background:var(--body-bg,var(--bg-surface));overflow:auto}.fix h3{margin:0}.fix p,.fix small,.scope{font-size:11px;color:var(--text-muted);line-height:1.5}.paths{display:flex;margin:14px 0}.paths button{flex:1;padding:7px;border:1px solid var(--border-default);background:transparent}.paths .on{background:var(--accent-dim);color:var(--accent)}.fix ol{padding-left:24px}.fix li{padding:9px 0;border-bottom:1px solid var(--border-subtle)}.fix li span,.fix li small{display:block}.fix button{margin-top:5px;border:1px solid var(--border-strong);background:var(--bg-surface);border-radius:5px;padding:5px 8px}.fix input{width:100%;box-sizing:border-box;margin-top:5px;padding:6px}.scope{margin-top:16px;padding-top:12px;border-top:1px solid var(--border-subtle)}.ended-state{padding:10px 20px;background:color-mix(in srgb, var(--bg-surface) 24%, transparent);color:var(--status-warning);display:flex;gap:10px}
+.support-session{height:100%;display:flex;flex-direction:column;background:var(--background,var(--bg-page));color:var(--body-text,var(--text-primary))}.state{margin:auto;display:flex;flex-direction:column;gap:8px}.error{color:var(--status-error)}.inline-error{margin-top:8px;color:var(--status-error);font-size:12px}.session-head{padding:16px 20px 12px;background:var(--body-bg,var(--bg-surface));border-bottom:1px solid var(--border,var(--border-default))}.title-row{display:flex;justify-content:space-between;align-items:center}.title-row>div{display:flex;gap:10px;align-items:center}.pill{font-size:11px;padding:3px 8px;border-radius:99px;background:var(--bg-surface-alt)}.pill.active{background:var(--status-success-soft);color:var(--status-success)}.pill.ended{color:var(--text-muted)}.actions{display:flex;gap:8px}.danger{border:1px solid var(--status-error);color:var(--status-error);background:transparent;border-radius:6px;padding:6px 10px}.ghost{border:1px solid var(--border-default);color:var(--text-muted);background:transparent;border-radius:6px;padding:6px 10px}.waiting{margin:0 0 10px;font-size:11px;color:var(--status-warning)}.request{display:flex;gap:10px;margin:12px 0}.avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:#6b7ca5;color:var(--text-on-accent);font-size:11px}.request small,.strip small{display:block;color:var(--text-muted);font-size:10px;text-transform:uppercase}.request p{margin:2px 0}.strip{display:flex;gap:0;border:1px solid var(--border,var(--border-default));border-radius:8px;overflow:hidden}.strip span{padding:8px 12px;border-right:1px solid var(--border,var(--border-default));display:flex;gap:4px;align-items:baseline}.strip span:last-child{border:0}.strip b{font-size:12px}.strip em{font-size:10px;color:var(--text-muted)}.good{color:var(--status-success)}.warn{color:var(--status-warning)}.body{display:grid;grid-template-columns:minmax(0,1fr) 330px;min-height:0;flex:1}.chat-wrap{min-width:0;overflow:hidden}.fix{border-left:1px solid var(--border,var(--border-default));padding:16px;background:var(--body-bg,var(--bg-surface));overflow:auto}.fix h3{margin:0}.fix p,.fix small,.scope{font-size:11px;color:var(--text-muted);line-height:1.5}.paths{display:flex;margin:14px 0}.paths button{flex:1;padding:7px;border:1px solid var(--border-default);background:transparent}.paths .on{background:var(--accent-dim);color:var(--accent)}.fix ol{padding-left:24px}.fix li{padding:9px 0;border-bottom:1px solid var(--border-subtle)}.fix li span,.fix li small{display:block}.fix button{margin-top:5px;border:1px solid var(--border-strong);background:var(--bg-surface);border-radius:5px;padding:5px 8px}.fix input{width:100%;box-sizing:border-box;margin-top:5px;padding:6px}.scope{margin-top:16px;padding-top:12px;border-top:1px solid var(--border-subtle)}.ended-state{padding:10px 20px;background:color-mix(in srgb, var(--bg-surface) 24%, transparent);color:var(--status-warning);display:flex;gap:10px}.confirm-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);display:grid;place-items:center;z-index:1000}.confirm-dialog{background:var(--body-bg,var(--bg-surface));border:1px solid var(--border-default);border-radius:10px;padding:20px;max-width:360px;box-shadow:0 12px 40px rgba(0,0,0,.24)}.confirm-dialog p{font-size:13px;color:var(--text-muted)}.confirm-dialog>div{display:flex;justify-content:flex-end;gap:8px}
 </style>

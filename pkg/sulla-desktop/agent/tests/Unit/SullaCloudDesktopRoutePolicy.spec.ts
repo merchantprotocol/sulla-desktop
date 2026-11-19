@@ -62,6 +62,18 @@ const reviewedDynamicCallSites = [
 ];
 
 describe('Sulla Cloud desktop route policy', () => {
+  it('allows only the supporter session read and action routes used by the session tab', () => {
+    // risk: permissions — preserve the super-admin checked endpoints while denying unrelated session writes.
+    const allowed: Array<[string, string]> = [
+      ['GET', '/super-admin/support/sessions'],
+      ['GET', '/super-admin/support/sessions/session_123/presence'],
+      ['POST', '/super-admin/support/sessions/session_123/end'],
+      ['POST', '/super-admin/support/sessions/session_123/extend'],
+    ];
+    for (const [method, route] of allowed) expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
+    expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest('DELETE', '/super-admin/support/sessions/session_123/end')).toBe(false);
+  });
+
   it('allows only the methods Desktop uses for device, memory-sync, and Slack routes', () => {
     const allowed: Array<[string, string]> = [
       ['GET', '/devices'], ['GET', '/devices/device-01'], ['PATCH', '/devices/device-01'], ['DELETE', '/devices/device-01'],

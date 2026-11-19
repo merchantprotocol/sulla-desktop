@@ -46,6 +46,17 @@ describe('PersonaAdapter send feedback reconciliation', () => {
     expect(adapter.hasNewAssistantText([...history, { id: 'new', role: 'assistant', kind: 'streaming', content: 'new token' }], history.length)).toBe(true);
   });
 
+  it('applies support-session activation to subsequent chat sends without remounting', () => {
+    // risk: permissions — activating the session live must bind the allowlisted remote tools before the next send.
+    const adapter = Object.create(PersonaAdapter.prototype) as any;
+    adapter.supportOptions = { tabId: 'support-tab' };
+    expect(adapter.supportSessionMetadata()).toEqual({});
+    adapter.setSupportSessionContext('session_12345678', ['support.logs.tail']);
+    expect(adapter.supportSessionMetadata()).toMatchObject({ supportSessionId: 'session_12345678', allowedToolNames: ['support.logs.tail'] });
+    adapter.setSupportSessionContext(undefined, []);
+    expect(adapter.supportSessionMetadata()).toEqual({});
+  });
+
   it('removes the optimistic bubble and shows the no-AI notice when disconnected', () => {
     // risk: availability — a failed connection must not leave a false delivered bubble.
     const adapter = Object.create(PersonaAdapter.prototype) as any;
