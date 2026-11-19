@@ -5,6 +5,18 @@ const mocks = vi.hoisted(() => ({
   cloudRequest: vi.fn(),
 }));
 
+// supportRemote lazily require()s these; vi.mock only covers ESM imports, so stub them at the Node loader.
+vi.hoisted(() => {
+  const Module = require('node:module');
+  const stubs: Record<string, unknown> = {
+    '@pkg/main/update/UpdateManager': { supportUpdateApi: { status: () => ({ channel: 'stable' }) } },
+    '@pkg/window': { send: () => undefined, getWindow: () => undefined },
+    '@pkg/window/agentWindows': {},
+  };
+  const load = Module._load;
+  Module._load = function(request: string, ...rest: unknown[]) { return request in stubs ? stubs[request] : load.call(this, request, ...rest) };
+});
+
 vi.mock('electron', () => ({ app: { getPath: () => '/user-data', getVersion: () => '1.0.0' }, ipcMain: {}, powerSaveBlocker: { start: () => 1, isStarted: () => true, stop: vi.fn() } }));
 vi.mock('ws', () => ({ default: class WebSocket {} }));
 vi.mock('@pkg/main/support/supportCloud', () => ({ supportCloudRequest: mocks.cloudRequest }));
