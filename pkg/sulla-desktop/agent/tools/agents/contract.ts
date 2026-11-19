@@ -213,6 +213,9 @@ export function contractFooter(opts: {
   } else {
     lines.push('Send `{ "status": "completed" | "blocked" | "failed", "summary": "<one paragraph>", "output": <the deliverable> }`.');
   }
+  // Workers kept breaking their own shell quoting (an apostrophe inside a single-quoted JSON argument),
+  // then concluded the Sulla CLI was unavailable. Stdin needs no quoting.
+  lines.push('Sulla CLI calls: pass the JSON on stdin with a quoted heredoc so text with quotes or apostrophes never breaks the shell, e.g. `sulla agents/report_progress - <<\'JSON\'` then the JSON, then `JSON`. If a `sulla` call fails, read its error output and retry with this form; never conclude the CLI is unavailable until `sulla meta/browse_tools - <<<\'{"query":"ping"}\'` also fails.');
   lines.push(visibility === 'tab'
     ? 'This is a live chat tab: ending a turn does not finish the job. Only return_result closes it. Call `agents/report_progress` at milestones.'
     : contract.schema
