@@ -86,19 +86,19 @@ export class ModelRoutingIpcController implements IpcController {
     this.ipc.removeHandler('chat-workflow:history');
     this.ipc.handle('chat-workflow:history', async(event, threadId: string) => {
       requireWorkflowOwner(event);
-      return (await import('../agent/services/ProductOwnerWorkflow')).readWorkflowHistory(threadId);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.readWorkflowHistory(threadId);
     });
     this.ipc.handle('chat-workflow:get', async(event, threadId: string) => {
       requireWorkflowOwner(event);
-      return (await import('../agent/services/ProductOwnerWorkflow')).getProductOwnerWorkflow(threadId);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.getProductOwnerWorkflow(threadId);
     });
     this.ipc.handle('chat-workflow:save', async(event, input: WorkflowSaveInput) => {
       requireWorkflowOwner(event);
-      return (await import('../agent/services/ProductOwnerWorkflow')).saveProductOwnerWorkflow(input);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.saveProductOwnerWorkflow(input);
     });
     this.ipc.handle('chat-workflow:execution', async(event, threadId: string, reference: unknown) => {
       requireWorkflowOwner(event);
-      return (await import('../agent/services/ProductOwnerWorkflow')).readWorkflowExecution(threadId, reference);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.readWorkflowExecution(threadId, reference);
     });
     const { router } = this.deps;
     this.ipc.removeHandler(MODEL_ROUTING_IPC.get);

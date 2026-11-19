@@ -1506,7 +1506,7 @@ export class BackendGraphWebSocketService {
         let route;
         if (!(state.metadata as any).workerModelChatOverride) {
           const leadRoute = agentId === 'account-manager' && channelId === SULLA_DESKTOP_CHANNEL_ID && !decisionTurn
-            ? await (await import('./ProductOwnerWorkflow')).productOwnerLeadRoute(threadId) : undefined;
+            ? await (await import('./ProductOwnerWorkflow')).productOwnerWorkflow.productOwnerLeadRoute(threadId) : undefined;
           route = leadRoute ?? await workerModelRouting.newRoute(agentId);
         }
         assertDecisionOwner();

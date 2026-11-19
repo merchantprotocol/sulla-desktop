@@ -109,7 +109,7 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     const { withWorkflowWrite } = await import('../../../services/WorkflowWriteAuthority');
     const { HiddenAgentTaskRunner } = await import('../../../services/HiddenAgentTaskRunner');
     const { AgentModelStatusRegistry } = await import('../../../services/AgentModelStatusRegistry');
-    const { readWorkflowHistory } = await import('../../../services/ProductOwnerWorkflow');
+    const { productOwnerWorkflow } = await import('../../../services/ProductOwnerWorkflow');
     const findAgent = vi.mocked(agentDefinitionService.findBySlug);
     const restore = findAgent.getMockImplementation()!;
     findAgent.mockImplementation(async(slug) => ({
@@ -144,7 +144,7 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
       expect(runner).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         task: expect.objectContaining({ agentId: 'sonnet-worker', workflowStep: 'implementation', workerModelRoute: expect.objectContaining({ candidates: [sol, sonnet], editToken: 'workflow-acceptance' }) }),
       }));
-      const rows = await readWorkflowHistory(root);
+      const rows = await productOwnerWorkflow.readWorkflowHistory(root);
       expect(rows.find(row => row.label === 'Next assignment')).toMatchObject({ agentId: 'sonnet-worker', state: 'done', responseModels: [{ ...sonnet, source: 'resolved' }] });
     } finally {
       runner.mockRestore();

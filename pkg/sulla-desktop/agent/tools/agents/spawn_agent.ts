@@ -244,7 +244,7 @@ export class SpawnAgentWorker extends BaseTool {
     const actor = resolveAgentIdentity(this.state?.metadata);
     const workflowRequested = tasks.some(task => task.workflowStep !== undefined || (actor === 'account-manager'
       && ['mockup-designer', 'coding-manager', 'ui-test-manager'].includes(taskAgentSelector(task) ?? '')));
-    const workflow = parentThreadId && workflowRequested ? await import('../../services/ProductOwnerWorkflow') : undefined;
+    const workflow = parentThreadId && workflowRequested ? (await import('../../services/ProductOwnerWorkflow')).productOwnerWorkflow : undefined;
     const workflowScope = workflow && parentThreadId ? await workflow.productOwnerDelegationScope(actor, parentThreadId) : undefined;
 
     for (let i = 0; i < tasks.length; i++) {
