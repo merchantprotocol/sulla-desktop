@@ -13,6 +13,7 @@
  */
 
 import { ref, onUnmounted } from 'vue';
+import paths from '@pkg/utils/paths';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import type { QualityPreset } from './useMediaSources';
@@ -21,7 +22,6 @@ const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const paths = require('@pkg/utils/paths').default;
 
 interface StreamEntry {
   id:           string;

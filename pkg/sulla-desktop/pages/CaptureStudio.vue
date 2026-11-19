@@ -513,6 +513,8 @@ mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen
 mediaSources.acquireScreenForSource = captureLifecycle.protect(mediaSources.acquireScreenForSource);
 mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
 mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
+mediaSources.acquireCameraForSource = captureLifecycle.protect(mediaSources.acquireCameraForSource);
+mediaSources.switchCameraForSource = captureLifecycle.protect(mediaSources.switchCameraForSource);
 mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
 mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
 mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
@@ -1278,8 +1280,9 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
 
   if (isVideo) {
     if (payload.type === 'screen') {
-      deviceIdMap[newSrc.name] = payload.deviceId;
-      try { await mediaSources.acquireScreenForSource(id, payload.deviceId); }
+      const screenId = deviceIdMap[payload.deviceId] || payload.deviceId;
+      deviceIdMap[newSrc.name] = screenId;
+      try { await mediaSources.acquireScreenForSource(id, screenId); }
       catch (e: any) { newSrc.on = false; console.error('[CaptureStudio] Failed to start added screen:', e.message); }
     }
     if (payload.type === 'camera') {
