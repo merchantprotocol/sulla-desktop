@@ -24,3 +24,16 @@ export function agentWindowFromSender(sender: Electron.WebContents): Electron.Br
   if (!isAgentWindowSender(sender)) return null;
   try { return Electron.BrowserWindow.fromWebContents(sender) ?? null } catch { return null }
 }
+
+/** Validate the renderer identity and boot tuple used by startup-only IPC. */
+export function isTrustedStartupSender(sender: Electron.WebContents, windowKey: string | undefined, startupId: string, browserSession: Electron.Session): boolean {
+  if (!windowKey || !/^[a-zA-Z0-9_:-]{1,100}$/.test(windowKey)) return false;
+  const owner = agentWindowFromSender(sender);
+  if (!owner || sender.session === browserSession) return false;
+  try {
+    const url = new URL(sender.getURL());
+    const query = url.searchParams;
+    return url.protocol === 'app:' && url.host === '.' && query.get('windowKey') === windowKey
+      && query.get('startupId') === startupId && (query.get('tabHost') !== '1' || owner.webContents !== sender);
+  } catch { return false }
+}
