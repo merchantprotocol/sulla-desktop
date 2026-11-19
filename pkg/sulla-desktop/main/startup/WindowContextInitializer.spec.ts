@@ -51,3 +51,17 @@ describe('WindowContextInitializer', () => {
     expect(deps.initializeExtensions).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('WindowContextInitializer in the main process', () => {
+  it('can be constructed where window is undefined', () => {
+    // risk: SullaStartup builds one at import time in main; reading window eagerly crashed boot with no window
+    const saved = globalThis.window;
+    // @ts-expect-error simulate the Electron main process
+    delete globalThis.window;
+    try {
+      expect(() => new WindowContextInitializer()).not.toThrow();
+    } finally {
+      globalThis.window = saved;
+    }
+  });
+});
