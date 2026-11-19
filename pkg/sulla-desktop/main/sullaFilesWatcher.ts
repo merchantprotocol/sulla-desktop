@@ -36,6 +36,7 @@ import { DEFAULT_IGNORES, NATIVE_POLL_ACTIVE_MS, NATIVE_POLL_IDLE_MAX_MS, UNLOCK
 import { SullaFilesWatcherRequestService } from './SullaFilesWatcherRequestService';
 import { SullaFilesWatcherTrackedRoots, type SullaFilesTrackedRoot } from './SullaFilesWatcherTrackedRoots';
 import { SullaFilesWatcherOperations } from './SullaFilesWatcherOperations';
+import { SullaFilesGenerationRun } from './SullaFilesGenerationRun';
 
 export class SullaFilesWatcher {
   readonly folder = resolveSullaFilesUserRoot().activePath;
@@ -67,7 +68,7 @@ export class SullaFilesWatcher {
   private lockPromise?: Promise<void>;
   private readonly bootstrap = new SullaFilesBootstrapFacade();
   private filesRecoveryRun?:Promise<void>;
-  private ensureUnlockedRun?:Promise<void>;
+  private readonly ensureUnlockedRuns = new SullaFilesGenerationRun();
   private readonly startup:VaultFilesStartup;
   private readonly nativeSourceRevalidator:NativeSourceRevalidator;
   private readonly nativeBroker = new SullaFilesNativeBroker({
@@ -170,6 +171,10 @@ export class SullaFilesWatcher {
       } catch (error) {
         if (epoch !== this.unlockRetryEpoch || this.stopped || !await this.appUnlocked()) throw error;
         const reason = error instanceof Error ? error.message : String(error);
+        if (reason === 'Files unlock was superseded') {
+          failures--;
+          continue;
+        }
         const delay = UNLOCK_RETRY_DELAYS_MS[Math.min(failures, UNLOCK_RETRY_DELAYS_MS.length - 1)];
 
         if (reason !== lastReason || (failures + 1) % 5 === 0) {
@@ -195,15 +200,10 @@ export class SullaFilesWatcher {
   }
 
   private ensureUnlocked():Promise<void> {
-    if (this.ensureUnlockedRun) return this.ensureUnlockedRun;
-    const run = this.performEnsureUnlocked().finally(() => { if (this.ensureUnlockedRun === run) this.ensureUnlockedRun = undefined });
-    this.ensureUnlockedRun = run;
-    return run;
+    return this.ensureUnlockedRuns.run(this.lockGeneration, generation => this.performEnsureUnlocked(generation));
   }
 
-  private async performEnsureUnlocked(): Promise<void> {
-    const generation = this.lockGeneration;
-
+  private async performEnsureUnlocked(generation:number): Promise<void> {
     this.assertUnlockGeneration(generation);
     await this.requireAppUnlocked();
     this.startup.filesUnlocking();
@@ -287,7 +287,8 @@ export class SullaFilesWatcher {
   }
 
   private assertUnlockGeneration(generation:number):void {
-    if (!this.unlockPermitted || generation !== this.lockGeneration || this.stopped) throw new Error('Files is shutting down');
+    if (!this.unlockPermitted || this.stopped) throw new Error('Files is shutting down');
+    if (generation !== this.lockGeneration) throw new Error('Files unlock was superseded');
   }
 
   async initialize():Promise<void> {
