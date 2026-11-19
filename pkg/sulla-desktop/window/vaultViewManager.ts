@@ -80,6 +80,11 @@ export class VaultViewManager {
     return !!state && state.ownerId === reservation.ownerId && state.generation === reservation.generation;
   }
 
+  hasOwnerView(window: Electron.BrowserWindow, ownerId: string): boolean {
+    const state = this.windows.get(window.id);
+    return !!state && state.attachedOwnerId === ownerId && !!state.view && !state.view.webContents.isDestroyed();
+  }
+
   hasActiveOwner(): boolean {
     return [...this.windows.values()].some(state => state.ownerId !== null);
   }

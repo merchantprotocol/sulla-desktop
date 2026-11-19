@@ -165,6 +165,12 @@ export class VaultViewIpc implements MainProcessIpcStep {
       return { state: 'opened', expiresAt: humanSession.expiresAt };
     });
 
+    ipc.handle('vault:view-owned', (event: Electron.IpcMainInvokeEvent, ownerId: string) => {
+      const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
+      return vaultViewManager.hasOwnerView(senderWindow, ownerId);
+    });
+
     ipc.handle('vault:view-theme', async(event: Electron.IpcMainInvokeEvent, ownerId: string, theme: unknown) => {
       const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
       if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault theme caller');

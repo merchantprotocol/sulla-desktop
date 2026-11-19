@@ -78,6 +78,8 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 303, y: 95, width: 40, height: 400 });
 
     layout(null, false);
+    expect(manager.hasOwnerView(window, 'tab-owner')).toBe(true);
+    expect(manager.hasOwnerView(window, 'another-tab')).toBe(false);
     expect(window.contentView.removeChildView).toHaveBeenCalledOnce();
     expect(window.setContentProtection).toHaveBeenLastCalledWith(false);
     expect(view.webContents.close).not.toHaveBeenCalled();
@@ -88,6 +90,7 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(manager.hide('tab-owner', window)).toBe(true);
     expect(window.contentView.removeChildView).toHaveBeenCalledTimes(2);
     expect(stopLayout).toHaveBeenCalledOnce();
+    expect(manager.hasOwnerView(window, 'tab-owner')).toBe(false);
     expect(view.webContents.close).toHaveBeenCalledOnce();
     expect(session.clearStorageData).toHaveBeenCalledOnce();
     expect(disposed).toBeDefined();

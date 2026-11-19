@@ -66,8 +66,17 @@ function retryWhenVisible(): void {
   retryTimer = setTimeout(() => { retryTimer = null; void open() }, 2_000);
 }
 
-function onVisibilityChange(): void {
-  if (canOpen() && !opening && !retryTimer && (loading.value || starting.value)) void open();
+async function onVisibilityChange(): Promise<void> {
+  if (!canOpen() || opening || retryTimer || error.value) return;
+  if (loading.value || starting.value) {
+    await open();
+    return;
+  }
+  // Another Vault tab may have replaced the window's protected view while
+  // this tab was hidden. Keep the existing session when it still owns it.
+  const generation = lifecycleGeneration;
+  const owned = await ipcRenderer.invoke('vault:view-owned', ownerId).catch(() => false);
+  if (!owned && generation === lifecycleGeneration && canOpen() && !opening) await open();
 }
 
 function bounds(): { x: number; y: number; width: number; height: number } | null {

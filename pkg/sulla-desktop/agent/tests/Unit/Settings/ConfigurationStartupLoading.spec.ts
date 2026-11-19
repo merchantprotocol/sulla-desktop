@@ -130,6 +130,26 @@ describe('configuration startup', () => {
     expect(vault.find('[role=status]').exists()).toBe(false);
   });
 
+  it('reattaches a displaced Vault tab and reuses a view that still belongs to it', async() => {
+    openVault.mockResolvedValue({ state: 'opened' });
+    vault = mount(VaultPage);
+    await flushPromises();
+    const ownerId = openVault.mock.calls[0][1].ownerId;
+
+    for (const stillOwnsView of [true, false]) {
+      invoke.mockResolvedValueOnce(stillOwnsView);
+      setDocumentHidden(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      setDocumentHidden(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await flushPromises();
+
+      expect(invoke).toHaveBeenLastCalledWith('vault:view-owned', ownerId);
+      expect(openVault).toHaveBeenCalledTimes(stillOwnsView ? 1 : 2);
+      expect(vault.find('[role=status]').exists()).toBe(false);
+    }
+  });
+
   it('loads saved workflows after startup instead of presenting the unavailable list as empty', async() => {
     invoke.mockRejectedValueOnce(new Error('Workflows are temporarily unavailable while the database reconnects.'))
       .mockResolvedValueOnce([{ id: 'saved-workflow', name: 'Saved workflow', status: 'draft', updatedAt: new Date().toISOString() }]);
