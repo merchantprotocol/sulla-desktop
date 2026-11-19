@@ -31,6 +31,7 @@ import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type Artifact
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
+import { A2aCardMarkup } from '../messages/a2aCardMarkup';
 
 import type { ChatController } from '../controller/ChatController';
 import type {
@@ -67,6 +68,7 @@ export class PersonaAdapter {
   // starvation: no paint means no callback, while Stop appears to fix it only
   // because the completion path flushes synchronously.
   private readonly messageSyncScheduler = new StreamUpdateScheduler(() => this.syncMessages());
+  private readonly pendingA2aStatuses = new Map<string, NonNullable<BackendMessage['a2aDeliveryStatus']>>();
 
   /**
    * Mirrors ChatInterface.hasMessages — true once the user has sent their
@@ -694,6 +696,19 @@ export class PersonaAdapter {
         indexById.set(mapped.id, this.controller.thread.value.messages.length - 1);
       }
     }
+    this.applyPendingA2aStatuses();
+  }
+
+  private applyPendingA2aStatuses(): void {
+    if (!this.pendingA2aStatuses.size) return;
+    const markup = new A2aCardMarkup();
+    for (const message of this.controller.thread.value.messages) {
+      if (message.kind !== 'sulla' && message.kind !== 'streaming') continue;
+      if (!message.text.includes('⟦SULLA_A2A:')) continue;
+      let text = message.text;
+      for (const status of this.pendingA2aStatuses.values()) text = markup.updateStatus(text, status);
+      if (text !== message.text) this.controller.updateMessage(message.id, { text } as any);
+    }
   }
 
   private async acknowledgeAndHydrateAgentTab(contractId: string, threadId: string): Promise<void> {
@@ -784,6 +799,13 @@ export class PersonaAdapter {
   private mapBackendMessage(b: BackendMessage): Message | null {
     const id = asMessageId(b.id);
     const createdAt = this.stableCreatedAt(b.id);
+
+    if (b.kind === 'a2a_delivery_status' && b.a2aDeliveryStatus) {
+      this.pendingA2aStatuses.set(b.a2aDeliveryStatus.messageId, b.a2aDeliveryStatus);
+      while (this.pendingA2aStatuses.size > 500) this.pendingA2aStatuses.delete(this.pendingA2aStatuses.keys().next().value!);
+      this.applyPendingA2aStatuses();
+      return null;
+    }
 
     // Workflow node events drive a workflow artifact in the sidebar — they
     // should NOT appear as transcript messages.
@@ -986,6 +1008,9 @@ export class PersonaAdapter {
         agent:   b.channelMeta?.senderId || 'Agent',
         channel,
         text:    b.content ?? '',
+        senderLabel: b.channelMeta?.senderLabel,
+        senderThreadId: b.channelMeta?.fromThreadId,
+        senderJobId: b.channelMeta?.senderJobId,
       } satisfies ChannelMessage;
     }
 

@@ -947,3 +947,22 @@
     transition: none;
   }
 }
+/* Durable inline cards inserted where an assistant emitted an a2a channel tag. */
+.a2a-inline-card {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-dim);
+  border-left: 3px solid var(--accent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface));
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: normal;
+}
+.a2a-inline-head { display: flex; align-items: center; gap: 9px; color: var(--text-muted); font-size: 11px; }
+.a2a-inline-head b { color: var(--accent); }
+.a2a-inline-status { margin-left: auto; text-transform: capitalize; color: var(--text-muted); }
+.a2a-inline-status.a2a-delivered { color: var(--status-success); }
+.a2a-inline-status.a2a-failed { color: var(--status-error); }
+.a2a-inline-body { margin-top: 5px; color: var(--text-primary); white-space: pre-wrap; }

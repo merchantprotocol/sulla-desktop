@@ -31,7 +31,7 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
-import { isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
+import { a2aMarkersToText, isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsForUi, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
@@ -1446,7 +1446,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     const mergedMessages: ChatMessage[] = [
-      ...(state.messages || []).filter(msg => msg.role !== 'system').map(msg => ({ ...msg })),
+      ...(state.messages || []).filter(msg => msg.role !== 'system').map(msg => ({
+        ...msg,
+        content: typeof msg.content === 'string'
+          ? a2aMarkersToText(msg.content)
+          : Array.isArray(msg.content)
+            ? msg.content.map((block: any) => block?.type === 'text' && typeof block.text === 'string' ? { ...block, text: a2aMarkersToText(block.text) } : block)
+            : msg.content,
+      })),
       systemMessage,
     ];
 
@@ -1518,12 +1525,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (hasToolUseBlocks) {
       messageContent = rawProviderContent.map((block: any) => {
         if (block?.type === 'text' && typeof block.text === 'string') {
-          return { ...block, text: isOverheardProtocolTurn(block.text) ? block.text.trim() : stripProtocolTags(block.text) };
+          return { ...block, text: isOverheardProtocolTurn(block.text) ? block.text.trim() : stripProtocolTagsForUi(block.text) };
         }
         return block;
       });
     } else {
-      messageContent = keepPrivateOverheardContext ? contentStr.trim() : normalizedContent;
+      messageContent = keepPrivateOverheardContext ? contentStr.trim() : stripProtocolTagsForUi(contentStr);
     }
 
     const messageMeta: Record<string, any> = {
@@ -1592,6 +1599,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Text streaming state — throttle at ~50ms to avoid flooding the WebSocket
     let contentBuffer = '';
+    let displayBuffer = '';
     let lastStreamFlush = 0;
     let streamingWsSent = false;
     const STREAM_THROTTLE_MS = 50;
@@ -1634,6 +1642,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       // Run token through all active extractors (speak extraction, etc.)
       const cleaned = controller.processChunk(token, ctx);
+      displayBuffer += cleaned;
 
       // Non-voice mode: stream accumulated text to the UI progressively.
       // Use the streaming-aware strip so a half-streamed opening wrapper
@@ -1644,7 +1653,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const now = Date.now();
         if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
           lastStreamFlush = now;
-          const stripped = stripProtocolTagsStreaming(contentBuffer);
+          const stripped = stripProtocolTagsStreaming(displayBuffer);
           if (stripped.trim()) {
             sendStreamingUpdate(stripped);
             streamingWsSent = true;
@@ -1676,13 +1685,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
       if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(contentBuffer);
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
         if (stripped.trim()) {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         contentBuffer = '';
+        displayBuffer = '';
       }
 
       const parentWsCh = (state.metadata as any).parentWsChannel;
@@ -1713,13 +1723,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
       if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(contentBuffer);
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
         if (stripped.trim()) {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         contentBuffer = '';
+        displayBuffer = '';
       }
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
@@ -1782,12 +1793,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // this is a no-op when nothing is open.
       if (!isVoiceMode) {
         if (contentBuffer.trim()) {
-          const stripped = stripProtocolTagsStreaming(contentBuffer);
+          const stripped = stripProtocolTagsStreaming(displayBuffer);
           if (stripped.trim()) {
             sendStreamingUpdate(stripped);
             streamingWsSent = true;
           }
           contentBuffer = '';
+          displayBuffer = '';
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         this.wsChatMessage(state, '', 'assistant', 'thinking_complete');

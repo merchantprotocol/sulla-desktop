@@ -71,6 +71,12 @@ const CALENDAR_CHANNEL_ID = 'calendar_event';
 // Responses emitted by the agent land back on this channel; the relay
 // client subscribes and forwards them up to Cloudflare → mobile.
 const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
+
+export function mapInboxReceiptToA2aStatus(receipt: AgentInboxDeliveryReceipt | 'delivered' | 'queued' | 'duplicate'): { status: 'delivered' | 'failed'; reason?: string } {
+  if (receipt === 'failed') return { status: 'failed', reason: 'delivery failed' };
+  if (receipt === 'deferred' || receipt === 'queued') return { status: 'delivered', reason: 'queued' };
+  return { status: 'delivered' };
+}
 const CONVERSATION_CONTAINER_IDLE_MS = 30 * 60_000;
 const CONVERSATION_CONTAINER_SWITCH_WAIT_MS = 10 * 60_000;
 
@@ -780,6 +786,10 @@ export class BackendGraphWebSocketService {
           const senderChannel = String(envelope.senderChannel || '');
           const senderThreadId = String(envelope.senderThreadId || '');
           if (senderChannel && senderThreadId) {
+            this.emitMessage(senderChannel, 'subconscious_message', {
+              content: `a2a delivery ${ envelope.ids.messageId } failed`, role: 'assistant', kind: 'a2a_delivery_status', thread_id: senderThreadId,
+              a2aDeliveryStatus: { messageId: envelope.ids.messageId, status: 'failed', reason: error.message },
+            });
             await this.agentInbox.receive({
               envelope: { from: channelId, kind: 'blocker', body: `Peer message was not delivered: ${error.message} Re-address the message using <channel:${channelId}#threadId-or-jobId>... if needed.`, senderChannel: channelId, ids: { messageId: nextMessageId() } },
               target: { channel: senderChannel, threadId: senderThreadId, agentId: senderChannel },
@@ -789,10 +799,46 @@ export class BackendGraphWebSocketService {
         }
         throw error;
       }
-      await this.agentInbox.receive({
-        envelope,
-        target,
+      let receipt: Awaited<ReturnType<AgentInbox['receive']>> | AgentInboxDeliveryReceipt;
+      try {
+        receipt = await this.agentInbox.receive({ envelope, target });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        const senderChannel = String(envelope.senderChannel || '');
+        const senderThreadId = String(envelope.senderThreadId || '');
+        if (senderChannel && senderThreadId) {
+          this.emitMessage(senderChannel, 'subconscious_message', {
+            content: `a2a delivery ${envelope.ids.messageId} failed`, role: 'assistant', kind: 'a2a_delivery_status', thread_id: senderThreadId,
+            a2aDeliveryStatus: { messageId: envelope.ids.messageId, status: 'failed', reason },
+          });
+          await this.agentInbox.receive({
+            envelope: { from: channelId, kind: 'blocker', body: `Peer message was not delivered: ${reason} Re-address the message using <channel:${channelId}#threadId-or-jobId>... if needed.`, senderChannel: channelId, ids: { messageId: nextMessageId() } },
+            target: { channel: senderChannel, threadId: senderThreadId, agentId: senderChannel },
+          });
+        }
+        return;
+      }
+      this.emitMessage(channelId, 'subconscious_message', {
+        content: envelope.body, role: 'assistant', kind: 'channel_message',
+        thread_id: target.threadId,
+        senderId: envelope.from,
+        senderChannel: envelope.senderChannel,
+        senderLabel: envelope.senderLabel,
+        senderJobId: envelope.senderJobId,
+        fromThreadId: envelope.senderThreadId,
+        targetId: envelope.targetId,
       });
+      if (envelope.senderChannel && envelope.senderThreadId) {
+        const delivery = mapInboxReceiptToA2aStatus(receipt);
+        this.emitMessage(envelope.senderChannel, 'subconscious_message', {
+          content: `a2a delivery ${ envelope.ids.messageId } ${ delivery.status }${ delivery.reason ? ` (${delivery.reason})` : '' }`, role: 'assistant', kind: 'a2a_delivery_status', thread_id: envelope.senderThreadId,
+          a2aDeliveryStatus: { messageId: envelope.ids.messageId, ...delivery },
+        });
+        if (delivery.status === 'failed') await this.agentInbox.receive({
+          envelope: { from: channelId, kind: 'blocker', body: `Peer message was not delivered: ${delivery.reason || 'delivery failed'}. Re-address the message using <channel:${channelId}#threadId-or-jobId>... if needed.`, senderChannel: channelId, ids: { messageId: nextMessageId() } },
+          target: { channel: envelope.senderChannel, threadId: envelope.senderThreadId, agentId: envelope.senderChannel },
+        });
+      }
       return;
     }
 

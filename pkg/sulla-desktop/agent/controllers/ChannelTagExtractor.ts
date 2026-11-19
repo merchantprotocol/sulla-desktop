@@ -3,27 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/**
- * ChannelTagExtractor — extracts <channel:NAME>…</channel:NAME> tags from
- * LLM output and routes the body to the target agent's IPC channel.
- *
- * Pattern (from ActiveAgentsRegistry.buildContextBlock):
- *   <channel:heartbeat>Are you online?</channel:heartbeat>
- *   <channel:sulla-desktop>The status update is ready</channel:sulla-desktop>
- *
- * Legacy wake/interrupt modifiers are accepted for compatibility but scheduling is
- * owned by AgentInbox: every peer message wakes an idle receiver and queues behind
- * an active run without interrupting it.
- *
- * Lifecycle per LLM call:
- *   • processChunk: strips any fully-closed channel blocks from the visible
- *     stream and dispatches each to its target channel via IpcMessageBus.
- *     Also truncates after a partially-streamed opening tag so `<channel:…`
- *     never leaks into the chat bubble.
- *   • processComplete: final sweep over the full content — catches any
- *     blocks that were split across chunk boundaries.
- */
-
 import * as crypto from 'crypto';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
@@ -31,184 +10,122 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import type { Extractor, StreamContext } from './Extractor';
 import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
-// ─── Regex ──────────────────────────────────────────────────────
+const OPEN = '<channel:';
+const BLOCK = /<channel:([\w.-]+(?:#[\w.-]+)?)([^>]*)>([\s\S]*?)<\/channel:[\w.-]+(?:#[\w.-]+)?>/i;
+const MAX_HOLDBACK = 200;
+export const A2A_CARD_MARKER = '⟦SULLA_A2A:';
 
-// Matches the whole block (DOTALL).
-// Group 1 = channel name, Group 2 = optional attribute string, Group 3 = body.
-const CHANNEL_BLOCK_RE = /<channel:([\w.-]+(?:#[\w.-]+)?)([^>]*)>([\s\S]*?)<\/channel:[\w.-]+(?:#[\w.-]+)?>/gi;
+interface ChannelCard { id: string; to: string; targetId?: string; body: string; status: 'sent'; }
 
-// Matches a partial opening tag mid-stream, so we can truncate the
-// streamed buffer before the tag surfaces in the chat bubble.
-const CHANNEL_OPEN_PARTIAL_RE = /<channel:[\w.-]*(?:#[\w.-]*)?$|<channel:[\w.-]+(?:#[\w.-]+)?[^>]*>[\s\S]*$/i;
+function marker(card: ChannelCard): string {
+  return `${ A2A_CARD_MARKER }${ Buffer.from(JSON.stringify(card)).toString('base64url') }⟧`;
+}
 
+/** Incremental, code-aware channel-tag parser. Only incomplete trailing openers are buffered. */
 export class ChannelTagExtractor implements Extractor {
   readonly name = 'channel';
+  private pending = '';
+  private fenced = false;
+  private inlineTicks = 0;
+  private dispatchedBodies = new Map<string, string>();
 
-  // Accumulated content for cross-chunk block detection.
-  private buffer = '';
-
-  // Record of what we've already dispatched (by start-index in full content).
-  // Prevents double-sending when the final sweep re-scans.
-  private dispatchedBodies = new Set<string>();
-
-  enrichPrompt(systemPrompt: string): string {
-    // ActiveAgentsRegistry already injects the channel protocol into the
-    // prompt on every LLM call — don't duplicate it here.
-    return systemPrompt;
-  }
+  enrichPrompt(systemPrompt: string): string { return systemPrompt; }
 
   processChunk(chunk: string, ctx: StreamContext): string {
-    this.buffer += chunk;
-
-    let visible = this.buffer;
-
-    // 1) Dispatch + strip any fully-closed channel blocks.
-    visible = visible.replace(CHANNEL_BLOCK_RE, (_full, name: string, attrs: string, body: string) => {
-      const [rawTarget, targetId] = String(name).trim().split('#', 2);
-      const target = rawTarget.toLowerCase();
-      const text = String(body).trim();
-      const key = `${ target }#${ targetId || '' }::${ text }`;
-      if (!text || this.dispatchedBodies.has(key)) return '';
-      this.dispatchedBodies.add(key);
-      this.dispatchChannel(ctx, target, text, String(attrs), targetId);
-      return '';
-    });
-
-    // 2) Truncate at a partial opening tag so `<channel:foo` or
-    //    `<channel:foo>unfinished…` doesn't leak into the stream.
-    const partial = visible.match(CHANNEL_OPEN_PARTIAL_RE);
-    if (partial && partial.index !== undefined) {
-      visible = visible.slice(0, partial.index);
-    }
-
-    // We've emitted `visible` so far — rebase the buffer to what remains
-    // unrendered (the truncated partial tag, if any).
-    const remainder = this.buffer.replace(CHANNEL_BLOCK_RE, '');
-    const partialRemainder = remainder.match(CHANNEL_OPEN_PARTIAL_RE);
-    this.buffer = partialRemainder ? remainder.slice(partialRemainder.index ?? 0) : '';
-
-    // Return only the delta that hasn't been emitted yet. The controller
-    // already concatenated `chunk` into its own buffer, so we must return
-    // only the text the caller should *keep* from this chunk.
-    //
-    // Simpler + safe: compute the portion of `chunk` that survives the
-    // stripping. We do this by stripping the same patterns from `chunk`
-    // directly (plus truncating its partial-open tail).
-    return stripFromDelta(chunk);
+    this.pending += chunk;
+    const { output, remainder } = this.consume(this.pending, ctx, false);
+    this.pending = remainder.slice(-MAX_HOLDBACK);
+    return output;
   }
 
   processComplete(reply: NormalizedResponse, ctx: StreamContext): string {
-    // Final sweep on the full response — catches blocks that straddled
-    // chunk boundaries during streaming.
-    reply.content = reply.content.replace(CHANNEL_BLOCK_RE, (_full, name: string, attrs: string, body: string) => {
-      const [rawTarget, targetId] = String(name).trim().split('#', 2);
-      const target = rawTarget.toLowerCase();
-      const text = String(body).trim();
-      const key = `${ target }#${ targetId || '' }::${ text }`;
-      if (text && !this.dispatchedBodies.has(key)) {
-        this.dispatchedBodies.add(key);
-        this.dispatchChannel(ctx, target, text, String(attrs), targetId);
-      }
-      return '';
-    });
-
-    // Also strip any unclosed opening tag leftover (including attribute variants).
-    reply.content = reply.content.replace(/<channel:[\w.-]+[^>]*>[\s\S]*$/i, '').trim();
-
+    const input = reply.content;
+    this.pending = '';
+    this.fenced = false;
+    this.inlineTicks = 0;
+    const { output } = this.consume(input, ctx, true);
+    reply.content = output.trim();
     return reply.content;
   }
 
   reset(): void {
-    this.buffer = '';
+    this.pending = '';
+    this.fenced = false;
+    this.inlineTicks = 0;
     this.dispatchedBodies.clear();
   }
 
-  // ─── Internal ───────────────────────────────────────────────
+  private consume(input: string, ctx: StreamContext, final: boolean): { output: string; remainder: string } {
+    let output = '';
+    let i = 0;
+    while (i < input.length) {
+      if (!this.inlineTicks && input.startsWith('```', i)) {
+        this.fenced = !this.fenced;
+        output += '```'; i += 3; continue;
+      }
+      if (!this.fenced && input[i] === '`') {
+        let ticks = 1;
+        while (input[i + ticks] === '`') ticks++;
+        this.inlineTicks = this.inlineTicks ? (this.inlineTicks === ticks ? 0 : this.inlineTicks) : ticks;
+        output += '`'.repeat(ticks); i += ticks; continue;
+      }
+      if (!this.fenced && !this.inlineTicks && input[i] === '<') {
+        const tail = input.slice(i);
+        if (OPEN.startsWith(tail.toLowerCase()) && !final) return { output, remainder: tail };
+        if (tail.toLowerCase().startsWith(OPEN)) {
+          const match = BLOCK.exec(tail);
+          if (match && match.index === 0) {
+            const quote = input[i - 1];
+            const isQuotedExample = (quote === '"' || quote === "'") && input[i + match[0].length] === quote;
+            if (isQuotedExample) {
+              output += match[0];
+              i += match[0].length;
+              continue;
+            }
+            const [rawTarget, targetId] = String(match[1]).trim().split('#', 2);
+            const target = rawTarget.toLowerCase();
+            const body = String(match[3]).trim();
+            const key = `${target}#${targetId || ''}::${body}`;
+            if (body) {
+              let cardMarker = this.dispatchedBodies.get(key);
+              if (!cardMarker) {
+                const messageId = crypto.randomUUID();
+                cardMarker = marker({ id: messageId, to: target, targetId, body, status: 'sent' });
+                this.dispatchedBodies.set(key, cardMarker);
+                this.dispatchChannel(ctx, target, body, String(match[2]), targetId, messageId);
+              }
+              output += cardMarker;
+            } else output += match[0];
+            i += match[0].length;
+            continue;
+          }
+          if (!final && !tail.includes('>') && tail.length <= MAX_HOLDBACK) return { output, remainder: tail };
+        }
+      }
+      output += input[i++];
+    }
+    return { output, remainder: '' };
+  }
 
-  private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string, targetId?: string): void {
+  private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string, targetId?: string, messageId = crypto.randomUUID()): void {
     try {
       const senderChannel = ctx.channel || (ctx.state as any)?.metadata?.wsChannel || 'unknown';
       const senderId = resolveAgentIdentity((ctx.state as any)?.metadata) || senderChannel;
-      const isWake = /\bwake\b/i.test(attrs);
-      const isInterrupt = /\binterrupt\b/i.test(attrs);
-
-      // fromThreadId — the sender's current conversation thread.
-      // toThreadId  — the thread on the sender's channel that expects the reply.
-      //   For outgoing messages: this is the thread that should receive replies.
-      //   For incoming wake responses: the receiver's ChannelTagExtractor reads
-      //   state.metadata.replyToThread (set by BackendGraphWebSocketService when
-      //   processing a wake user_message) and echoes it here.
-      const fromThreadId: string = ctx.threadId || '';
       const metadata = (ctx.state as any)?.metadata || {};
       const senderJobId = String(metadata.delegatedJobId || metadata.jobId || '');
       const senderLabel = String(metadata.delegatedTaskLabel || metadata.agentLabel || metadata.agent?.name || senderId);
       const replyToThread: string = metadata.replyToThread || '';
+      const fromThreadId: string = ctx.threadId || '';
       // A spawned child reports to its parent's exact session thread, not a same-channel sibling.
       const parentThreadId: string = metadata.isSubAgent
         && String(metadata.workflowParentChannel || '') === targetChannel
         ? String(metadata.parentConversationId || '')
         : '';
       const replyThreadId: string = parentThreadId || replyToThread;
-      // toThreadId is the thread that should receive the reply — if this agent
-      // was woken by someone else (or is a child of that channel's session), reply to
-      // that thread; otherwise no specific target.
-      const toThreadId: string = replyThreadId || fromThreadId || '';
-
       const ws = getWebSocketClientService();
-
-      // Always send a display-only message so the body appears in the target's UI.
-      void ws.send(targetChannel, {
-        type: 'chat_message',
-        data: {
-          content:       body,
-          kind:          'channel_message',
-          role:          'assistant',
-          senderId,
-          senderChannel,
-          targetId,
-          fromThreadId:  fromThreadId || undefined,
-          toThreadId:    toThreadId   || undefined,
-        },
-      });
-
-      // Every peer message enters the durable inbox. The receiver decides whether
-      // to wake immediately or batch it after its active turn; senders never interrupt.
-      const messageId = crypto.randomUUID();
-      void ws.send(targetChannel, {
-        type: 'agent_inbox_message',
-        data: {
-          receiverChannel: targetChannel,
-          targetThreadId: !targetId && parentThreadId ? parentThreadId : undefined,
-          envelope: {
-            from: senderId,
-            kind: 'peer',
-            body,
-            senderChannel,
-            senderThreadId: fromThreadId || undefined,
-            senderJobId: senderJobId || undefined,
-            senderLabel,
-            targetId,
-            replyToThreadId: !targetId && replyThreadId ? replyThreadId : undefined,
-            ids: { messageId, threadId: fromThreadId || undefined, jobId: senderJobId || undefined },
-          },
-        },
-      });
-
-      const action = isInterrupt || isWake ? 'inbox (legacy modifier ignored)' : 'inbox';
-      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } toThread=${ toThreadId.slice(-8) } chars=${ body.length }`);
-    } catch (err) {
-      console.warn('[ChannelTagExtractor] dispatch failed:', err);
-    }
+      void ws.send(targetChannel, { type: 'agent_inbox_message', data: { receiverChannel: targetChannel, targetThreadId: !targetId && parentThreadId ? parentThreadId : undefined, envelope: { from: senderId, kind: 'peer', body, senderChannel, senderThreadId: fromThreadId || undefined, senderJobId: senderJobId || undefined, senderLabel, targetId, replyToThreadId: !targetId && replyThreadId ? replyThreadId : undefined, ids: { messageId, threadId: fromThreadId || undefined, jobId: senderJobId || undefined } } } });
+      const action = /\b(?:interrupt|wake)\b/i.test(attrs) ? 'inbox (legacy modifier ignored)' : 'inbox';
+      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } replyThread=${ replyThreadId.slice(-8) } chars=${ body.length }`);
+    } catch (err) { console.warn('[ChannelTagExtractor] dispatch failed:', err); }
   }
-}
-
-// Helper: strip full blocks + truncate partial opening tag from a raw
-// delta chunk. Used so processChunk returns a display-safe delta.
-function stripFromDelta(chunk: string): string {
-  let out = chunk.replace(CHANNEL_BLOCK_RE, '');
-  const partial = out.match(CHANNEL_OPEN_PARTIAL_RE);
-  if (partial && partial.index !== undefined) {
-    out = out.slice(0, partial.index);
-  }
-  return out;
 }

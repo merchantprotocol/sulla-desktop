@@ -35,10 +35,29 @@ const ABORT_WORKFLOW_RE = /<ABORT_WORKFLOW>([\s\S]*?)<\/ABORT_WORKFLOW>/gi;
 // a CitationRow in the transcript; never shown as visible text.
 const CITATIONS_RE = /<citations>([\s\S]*?)<\/citations>/gi;
 
-// Channel routing blocks — extracted by ChannelTagExtractor and dispatched
-// over IPC to the target agent. Defense-in-depth strip so a straggler
-// never leaks into user-visible content.
-const CHANNEL_RE = /<channel:[\w.-]+>([\s\S]*?)<\/channel:[\w.-]+>/gi;
+const A2A_MARKER_RE = /⟦SULLA_A2A:([A-Za-z0-9_-]+)⟧/g;
+
+/** Replace UI-only durable A2A card payloads with readable conversation text. */
+export function a2aMarkersToText(text: string | null | undefined): string {
+  if (!text) return '';
+  return text.replace(A2A_MARKER_RE, (marker, encoded: string) => {
+    try {
+      const json = Buffer.from(encoded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+      const card = JSON.parse(json);
+      const destination = `${card.to || 'agent'}${card.targetId ? `#${card.targetId}` : ''}`;
+      return `[a2a → ${destination}: ${String(card.body || '')}]`;
+    } catch { return marker; }
+  });
+}
+
+/** Strip protocol wrappers for durable UI history without flattening A2A cards. */
+export function stripProtocolTagsForUi(text: string | null | undefined): string {
+  if (!text) return '';
+  const markers: string[] = [];
+  const preserved = text.replace(A2A_MARKER_RE, marker => `\u0000A2A${markers.push(marker) - 1}\u0000`);
+  return stripProtocolTags(preserved).replace(/\u0000A2A(\d+)\u0000/g, (_placeholder, index: string) => markers[Number(index)] ?? '');
+}
+
 
 // Inner tags (can appear standalone if the LLM partially formats)
 const KEY_RESULT_RE = /<\/?KEY_RESULT>/gi;
@@ -60,13 +79,13 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(OVERHEARD_RE, '')
     .replace(ABORT_WORKFLOW_RE, '')
     .replace(CITATIONS_RE, '')
-    .replace(CHANNEL_RE, '')
     .replace(SPEAK_RE, '')
     .replace(KEY_RESULT_RE, '')
     .replace(BLOCKER_REASON_RE, '')
     .replace(UNBLOCK_REQUIREMENTS_RE, '')
     .replace(STATUS_REPORT_RE, '')
     .replace(STATUS_MESSAGE_RE, '')
+    .replace(A2A_MARKER_RE, marker => a2aMarkersToText(marker))
     .trim();
 }
 
@@ -74,7 +93,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
  *  tag is an internal control payload the user must never see. The opening
  *  tag alone is a complete signal to stop rendering, even before the close
  *  arrives. */
-const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|overheard|speak|citations|channel:[\w.-]+)\b/i;
+const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|overheard|speak|citations)\b/i;
 
 /**
  * Streaming-aware strip. Runs the same pair-removal as `stripProtocolTags`
@@ -96,7 +115,7 @@ export function stripProtocolTagsStreaming(text: string | null | undefined): str
   return holdBackPartialOpener(cleaned);
 }
 
-const WRAPPER_OPENERS = ['<agent_done', '<agent_blocked', '<agent_continue', '<abort_workflow', '<overheard', '<speak', '<citations', '<channel:'];
+const WRAPPER_OPENERS = ['<agent_done', '<agent_blocked', '<agent_continue', '<abort_workflow', '<overheard', '<speak', '<citations'];
 
 /** A flush can land mid-tag (`…answer. <AGE`). Emitting that and then the
  *  truncated `…answer.` on the next flush shrinks the stream, and consumers
