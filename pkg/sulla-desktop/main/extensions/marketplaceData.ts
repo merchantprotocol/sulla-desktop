@@ -5,6 +5,7 @@
 
 import yaml from 'yaml';
 
+import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.extensions;
@@ -50,12 +51,14 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
   inFlightFetch = (async() => {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    AppStartupTelemetry.emit('marketplace-fetch', 'start');
     try {
       const fetchAndParse = async(): Promise<MarketplaceEntry[]> => {
         const response = await fetch(MARKETPLACE_URL, { signal: controller.signal });
 
         if (!response.ok) {
           console.error(`Failed to fetch marketplace data: ${ response.status } ${ response.statusText }`);
+          AppStartupTelemetry.emit('marketplace-fetch', 'failure', 'main-process', { httpStatus: response.status });
 
           return cachedData ?? [];
         }
@@ -66,6 +69,7 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
         cachedData = parsed.plugins ?? [];
         cacheExpiresAt = Date.now() + CACHE_TTL_MS;
         console.log(`Fetched ${ cachedData.length } extensions from remote marketplace`);
+        AppStartupTelemetry.emit('marketplace-fetch', 'end');
 
         return cachedData;
       };
@@ -79,7 +83,8 @@ export async function fetchMarketplaceData(): Promise<MarketplaceEntry[]> {
         }),
       ]);
     } catch (ex) {
-      console.error(`Error fetching marketplace data: ${ ex }`);
+      console.error('Error fetching marketplace data');
+      AppStartupTelemetry.emit('marketplace-fetch', 'failure', 'main-process', { errorType: ex instanceof Error ? ex.name : 'unknown' });
 
       return cachedData ?? [];
     } finally {

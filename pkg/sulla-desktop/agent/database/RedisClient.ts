@@ -10,6 +10,8 @@
 import Redis, { Pipeline, ChainableCommander } from 'ioredis';
 import { hostPort } from '@pkg/utils/instance';
 
+type ReadinessAttemptReporter = (status: 'start' | 'end' | 'failure', attempt: number, retrying?: boolean, errorType?: string) => void;
+
 const REDIS_URL = process.env.SULLA_REDIS_URL ?? `redis://127.0.0.1:${ hostPort(30117) }`;
 
 export class RedisClient {
@@ -274,8 +276,9 @@ export class RedisClient {
    * Wait until Redis is actually reachable from the host.
    * Called by ServiceLifecycleManager before any service that needs Redis.
    */
-  async waitForReady(maxAttempts = 60, intervalMs = 2000): Promise<void> {
+  async waitForReady(maxAttempts = 60, intervalMs = 2000, reportAttempt?: ReadinessAttemptReporter): Promise<void> {
     for (let i = 1; i <= maxAttempts; i++) {
+      reportAttempt?.('start', i);
       try {
         if (this.client.status === 'end') {
           this.client = this.createClient();
@@ -286,10 +289,12 @@ export class RedisClient {
         await this.client.ping();
         this.connected = true;
         this.connectionAttempts = 0;
+        reportAttempt?.('end', i);
         console.log(`[RedisClient] Host Redis port reachable (attempt ${ i })`);
 
         return;
-      } catch {
+      } catch (error: unknown) {
+        reportAttempt?.('failure', i, i !== maxAttempts, error instanceof Error ? error.name : 'unknown');
         if (i === maxAttempts) {
           throw new Error(`Redis not reachable after ${ maxAttempts } attempts`);
         }

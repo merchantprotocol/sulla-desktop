@@ -9,10 +9,12 @@ const console = Logging.sulla;
 /** Correlates startup diagnostics within a single renderer window. */
 export class WindowBootTelemetry {
   readonly startupId: string;
+  readonly windowKey: string;
   private readonly startedAt = performance.now();
 
-  constructor(private readonly sendToMain?: (event: string, status: 'start' | 'end' | 'failure', elapsedMs: number) => Promise<unknown>) {
-    this.startupId = crypto.randomUUID();
+  constructor(startupId: string, windowKey: string, private readonly sendToMain?: (event: string, status: 'start' | 'end' | 'failure', elapsedMs: number) => Promise<unknown>) {
+    this.startupId = startupId;
+    this.windowKey = windowKey;
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => requestAnimationFrame(() => this.emit('first-content-frame')));
     }
@@ -22,6 +24,7 @@ export class WindowBootTelemetry {
     const elapsedMs = Math.round(performance.now() - this.startedAt);
     const record = {
       startupId: this.startupId,
+      windowKey: this.windowKey,
       event,
       status,
       timestamp: new Date().toISOString(),

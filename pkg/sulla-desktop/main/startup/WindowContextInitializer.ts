@@ -12,9 +12,11 @@ const console = Logging.sulla;
 
 /** Renderer-side settings and extension hydration for a window. */
 export class WindowContextInitializer {
-  private readonly telemetry = new WindowBootTelemetry((event, status, elapsedMs) => {
+  private readonly query = new URLSearchParams(window.location.search);
+  private readonly windowKey = this.query.get('windowKey') || 'main';
+  private readonly telemetry = new WindowBootTelemetry(this.query.get('startupId') || crypto.randomUUID(), this.windowKey, (event, status, elapsedMs) => {
     const { ipcRenderer } = require('electron');
-    return ipcRenderer.invoke('sulla-startup:stage', { startupId: this.telemetry.startupId, event, status, elapsedMs });
+    return ipcRenderer.invoke('sulla-startup:stage', { startupId: this.telemetry.startupId, windowKey: this.telemetry.windowKey, event, status, elapsedMs });
   });
 
   /** Start window hydration without making it a prerequisite for first paint. */
@@ -33,7 +35,7 @@ export class WindowContextInitializer {
     // This function serves as the explicit initialization hook
     console.log('[WindowContext] Sulla window context initialized');
 
-    const windowKey = new URLSearchParams(window.location.search).get('windowKey') || 'main';
+    const windowKey = this.windowKey;
 
     // Get the user data path from main process
     const { ipcRenderer } = require('electron');
@@ -51,7 +53,7 @@ export class WindowContextInitializer {
       // bootstrap as soon as the main process reports database readiness.
       let activeStage = 'wait-for-backends';
       this.telemetry.emit('wait-for-backends', 'start');
-      const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends', this.telemetry.startupId);
+      const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends', { startupId: this.telemetry.startupId, windowKey: this.telemetry.windowKey });
       void backendsReady.then(async() => {
         this.telemetry.emit('wait-for-backends', 'end');
         activeStage = 'settings-bootstrap';

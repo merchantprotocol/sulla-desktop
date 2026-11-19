@@ -48,6 +48,7 @@ import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
+import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 import { Help } from '@pkg/config/help';
 import * as settings from '@pkg/config/settings';
@@ -1946,22 +1947,28 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 // Renderer settings use their own model instance, but must not bootstrap until
 // the authoritative main-process lifecycle has observed both Postgres and Redis.
 const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
-const trustedStartupSender = (event: Electron.IpcMainInvokeEvent): boolean => {
+const trustedStartupSender = (event: Electron.IpcMainInvokeEvent, windowKey: string | undefined): boolean => {
+  if (!windowKey || !/^[a-zA-Z0-9_:-]{1,100}$/.test(windowKey)) return false;
   if (!agentWindowFromSender(event.sender)) return false;
-  try { return new URL(event.sender.getURL()).searchParams.get('tabHost') !== '1' } catch { return false }
+  try {
+    const query = new URL(event.sender.getURL()).searchParams;
+    return query.get('tabHost') !== '1' && query.get('windowKey') === windowKey;
+  } catch { return false }
 };
 
-ipcMainProxy.handle('sulla-startup:stage', (event, payload: { startupId: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => {
-  if (!trustedStartupSender(event) || !/^[0-9a-f-]{36}$/i.test(payload?.startupId ?? '') || !startupEvents.has(payload?.event) || !['start', 'end', 'failure'].includes(payload?.status) || !Number.isFinite(payload?.elapsedMs)) return false;
-  console.info(`[WindowBoot] ${ JSON.stringify({ startupId: payload.startupId, event: payload.event, status: payload.status, timestamp: new Date().toISOString(), elapsedMs: Math.round(payload.elapsedMs) }) }`);
+ipcMainProxy.handle('sulla-startup:stage', (event, payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => {
+  if (!trustedStartupSender(event, payload?.windowKey) || payload?.startupId !== AppStartupTelemetry.startupId || !startupEvents.has(payload?.event) || !['start', 'end', 'failure'].includes(payload?.status) || !Number.isFinite(payload?.elapsedMs)) return false;
+  console.info(`[WindowBoot] ${ JSON.stringify({ startupId: payload.startupId, windowKey: payload.windowKey, event: payload.event, status: payload.status, timestamp: new Date().toISOString(), elapsedMs: Math.round(payload.elapsedMs) }) }`);
   return true;
 });
 
-ipcMainProxy.handle('sulla-settings:wait-for-backends', async(event, startupId: string) => {
-  if (!trustedStartupSender(event) || !/^[0-9a-f-]{36}$/i.test(startupId ?? '')) throw new Error('Untrusted startup readiness request');
+ipcMainProxy.handle('sulla-settings:wait-for-backends', async(event, payload: { startupId: string; windowKey: string }) => {
+  const startupId = payload?.startupId;
+  const windowKey = payload?.windowKey;
+  if (!trustedStartupSender(event, windowKey) || startupId !== AppStartupTelemetry.startupId) throw new Error('Untrusted startup readiness request');
   const beganAt = Date.now();
   const lifecycle = getServiceLifecycleManager();
-  const report = (name: string, status: string, attempts?: number) => console.info(`[WindowBoot] ${ JSON.stringify({ startupId, event: name, status, timestamp: new Date().toISOString(), elapsedMs: Date.now() - beganAt, ...(attempts === undefined ? {} : { attempts }) }) }`);
+  const report = (name: string, status: string, attempts?: number) => console.info(`[WindowBoot] ${ JSON.stringify({ startupId, windowKey, event: name, status, timestamp: new Date().toISOString(), elapsedMs: Date.now() - beganAt, ...(attempts === undefined ? {} : { attempts }) }) }`);
   const reportReadiness = (state: { name: string; status: string; attempts: number }) => {
     if (['postgres', 'redis', 'database-manager'].includes(state.name)) report(`${ state.name }-readiness`, state.status, state.attempts);
   };

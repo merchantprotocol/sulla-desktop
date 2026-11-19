@@ -489,8 +489,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-code-start':      (email: string) => { ok: boolean; error?: string };
   'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; needsPassword?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; retryAfter?: number; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-settings:wait-for-backends': (startupId: string) => void;
-  'sulla-startup:stage': (payload: { startupId: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => boolean;
+  'sulla-settings:wait-for-backends': (payload: { startupId: string; windowKey: string }) => void;
+  'sulla-startup:stage': (payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => boolean;
 
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
   'sulla-cloud-chat:get-link': (conversationId: string) => Record<string, any> | null;
