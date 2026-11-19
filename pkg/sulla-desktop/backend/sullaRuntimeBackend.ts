@@ -220,6 +220,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   #hostPreparationDeferred = false;
   #backendStartSettled?: Promise<void>;
   #managedServicesGeneration = 0;
+  /** One opportunistic cache/image trim per successful managed-services start. */
+  #startupBuildCacheGcGeneration?: number;
   /** FUSE adapter services whose dead mount was drained; restart the process in-place. */
   #staleFilesAdapters = new Set<string>();
   #lastFilesFuseRestartMs?: number;
@@ -783,6 +785,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       await this.reconcileManagedServicesWithRetries(generation, config);
       console.log(`[startup-perf] sulla-runtime managed services ready: ${ Date.now() - t }ms`);
       logStartupPhase('sulla-services', t, 'status=ready runtime=sulla');
+      this.runStartupBuildCacheGc(generation);
       await SullaSettingsModel.set('firstKubernetesIsInstalled', true, 'boolean');
     })().catch((error) => {
       if (!(error instanceof ManagedServicesReconciliationCancelled)) {
@@ -790,6 +793,41 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       }
     });
     logStartupPhase('backend-ready', backendStartTotal, 'scope=docker-api services=streaming runtime=sulla');
+  }
+
+  /** Run low-priority, best-effort Docker cleanup after readiness; never gates startup. */
+  private runStartupBuildCacheGc(generation: number): void {
+    if (this.#startupBuildCacheGcGeneration === generation) return;
+    this.#startupBuildCacheGcGeneration = generation;
+    void (async() => {
+      const startedAt = Date.now();
+      try {
+        // Agent builds use the guest Docker CLI. Avoid pruning while one is active.
+        const building = await this.execCommand({ capture: true, root: true }, 'sh', '-c',
+          'needle="docker"" build"; for p in /proc/[0-9]*/cmdline; do cmd=$(tr "\\000" " " < "$p" 2>/dev/null) || continue; case "$cmd" in *"$needle"*) echo active; exit 0;; esac; done; exit 0');
+        if (building.trim()) {
+          console.log('[startup-perf] build-cache-gc skipped: agent container build active');
+          return;
+        }
+        let reclaimedBytes = 0;
+        for (const args of [
+          // buildx 0.30 (Docker 29 guest) takes --reserved-space; --keep-storage is gone.
+          ['builder', 'prune', '-f', '--reserved-space', '1GB', '--filter', 'until=168h'],
+          ['image', 'prune', '-f'],
+        ]) {
+          const output = await this.execCommand({ capture: true, root: true }, 'sh', '-c',
+            'if command -v ionice >/dev/null 2>&1; then nice -n 19 ionice -c3 docker \"$@\"; else nice -n 19 docker \"$@\"; fi', 'sh', ...args);
+          const matches = [...output.matchAll(/Total(?: reclaimed space)?:\s*([0-9.]+)\s*(B|kB|KB|MB|GB)/gi)];
+          for (const [, amount, unit] of matches) {
+            const factor = ({ B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as Record<string, number>)[unit.toUpperCase()];
+            reclaimedBytes += Math.round(Number(amount) * factor);
+          }
+        }
+        console.log(`[startup-perf] build-cache-gc elapsed=${ Date.now() - startedAt }ms bytes-reclaimed=${ reclaimedBytes }`);
+      } catch (error) {
+        console.warn(`[startup-perf] build-cache-gc failed non-fatally after ${ Date.now() - startedAt }ms`, error);
+      }
+    })();
   }
 
   /**
