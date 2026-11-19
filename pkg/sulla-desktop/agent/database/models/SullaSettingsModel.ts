@@ -148,6 +148,9 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // ──────────────────────────────────────────────
 
   private static isReady = false;
+  // Writes made while the renderer is using its file snapshot must win over
+  // the older snapshot when the database becomes available.
+  private static readonly pendingBootstrapWrites = new Map<string, unknown>();
 
   // Redis is the shared cache, but every read still used to query PostgreSQL
   // for cast metadata. Keep a short local cache to avoid per-second hot loops
@@ -254,6 +257,15 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
           // do not delete the fallback file. it acts as our installation lock file
           console.log('SullaSettingsModel: full bootstrap complete');
+        }
+
+        // A setting can be changed before the DB gate opens even on an
+        // already-installed profile. Reconcile just those user writes (not
+        // the whole fallback snapshot) exactly once into the authoritative DB.
+        const pendingWrites = [...this.pendingBootstrapWrites.entries()];
+        for (const [property, value] of pendingWrites) {
+          await this.setSetting(property, value);
+          if (this.pendingBootstrapWrites.get(property) === value) this.pendingBootstrapWrites.delete(property);
         }
 
         return; // success
@@ -394,6 +406,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       return;
     }
 
+    this.pendingBootstrapWrites.set(property, value);
     await this.writeBootstrapSetting(property, value);
   }
 

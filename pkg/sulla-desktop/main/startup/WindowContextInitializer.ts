@@ -61,6 +61,12 @@ export class WindowContextInitializer {
       SullaSettingsModel.setFallbackFilePath(fallbackPath);
       console.log('[WindowContext] Fallback path set to:', fallbackPath);
 
+      // Settings reads already fall back to this local snapshot until the DB
+      // model is ready. Read it now so the UI path is explicitly warmed and
+      // measurable rather than hidden behind the backend lifecycle gate.
+      await SullaSettingsModel.readBootstrapFile();
+      this.telemetry.emit('settings-ready-from-fallback');
+
       // Every window waits on the same backend lifecycle gate. Bootstrapping
       // secondary windows immediately races cold Redis/Postgres and exhausts
       // the settings model's short retry budget before the backends start.

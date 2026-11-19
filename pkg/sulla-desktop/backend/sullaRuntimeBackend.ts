@@ -172,6 +172,9 @@ function bootFailure(error: unknown): SullaRuntimeBootError {
  * `sulla-runtime` host binary. Guest commands run through
  * `sulla-runtime exec`.
  */
+/** Bundled image names (packaging/bundled-images.yaml) that Postgres and Redis run from; loaded and started first. */
+const DATABASE_IMAGE_NAMES = new Set(['sulla-postgres', 'redis']);
+
 export default class SullaRuntimeBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture) {
     super();
@@ -959,11 +962,22 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
+    // The DB images must exist in the guest before Compose is allowed to start
+    // these services; otherwise a fresh install can trigger a network pull.
+    await this.loadBundledImages(image => DATABASE_IMAGE_NAMES.has(image.name));
+    this.assertManagedServicesGeneration(generation);
+
+    // Start readiness gates early, alongside non-DB image import and proxy
+    // preparation. Keep the promise observed so a failed early start cannot
+    // become an unhandled rejection while those operations are in flight.
+    const databaseStart = this.startDatabaseServices(generation);
+    void databaseStart.catch(() => undefined);
+
     // Every service image (threat proxy included) must be in the guest before
     // the agent network/egress setup and compose; agents depend on the proxy.
     await this.progressTracker.action('Loading bundled container images', 40, async() => {
       t = Date.now();
-      await this.loadBundledImages(image => !image.onDemand);
+      await this.loadBundledImages(image => !image.onDemand && !DATABASE_IMAGE_NAMES.has(image.name));
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
     });
@@ -978,6 +992,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
+      await databaseStart;
       await this.applySullaCompose(generation);
       console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
@@ -994,13 +1009,19 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
   }
 
+  private async startDatabaseServices(generation: number): Promise<void> {
+    this.assertManagedServicesGeneration(generation);
+    await this.execCommand({ root: true }, 'docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d', 'postgres', 'redis');
+    this.assertManagedServicesGeneration(generation);
+  }
+
 
   /**
    * Load the app's bundled images the guest does not have yet (first boot, or
    * after an app update shipped new ones). Without a bundle (development) this
    * does nothing and compose pulls as before.
    */
-  private async loadBundledImages(filter: (image: { onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
+  private async loadBundledImages(filter: (image: { name: string; onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
     const lock = currentBundledImageLock();
     const imagesDir = bundledImagesDir();
 
