@@ -5,6 +5,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('electron', () => ({ app: { getPath: () => '/tmp', isPackaged: false }, ipcMain: { handle: vi.fn() }, shell: {}, systemPreferences: { getMediaAccessStatus: () => 'granted' } }));
+
 import { FilesApiError } from './sullaFilesClient';
 import { SullaFilesIpcSharingHandlers } from './SullaFilesIpcSharingHandlers';
 import type { SullaFilesIpcRegistrar } from './SullaFilesIpcSupport';

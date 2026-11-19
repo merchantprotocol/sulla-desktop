@@ -24,6 +24,8 @@ export class ScreenRecordingPermission {
   blockedReason():string | undefined {
     if (this.platform !== 'darwin') return undefined;
 
-    return this.readStatus() === 'granted' ? undefined : SCREEN_RECORDING_PERMISSION_MESSAGE;
+    const status = this.readStatus();
+    // not-determined must fall through so macOS can show its own permission prompt on first capture.
+    return status === 'denied' || status === 'restricted' ? SCREEN_RECORDING_PERMISSION_MESSAGE : undefined;
   }
 }
