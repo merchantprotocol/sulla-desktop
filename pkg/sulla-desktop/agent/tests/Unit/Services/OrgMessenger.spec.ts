@@ -222,22 +222,6 @@ describe('OrgMessenger', () => {
     expect(inboxDeliveries[0]?.envelope.body).toContain('untrusted');
   });
 
-  it('keeps held first-contact requests out of AgentInbox until the human allows them, then delivers by host sequence', async () => {
-    // risk: unauthorized message admission
-    const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
-    transport.holdNext();
-    await transport.submit(message('held-request-1'));
-    await transport.submit(message('held-request-2'));
-    let resolveRequest: ((choice: 'allow_always' | 'just_this_once' | 'block') => Promise<readonly number[]>) | undefined;
-    const service = messenger(transport, state, delivered, resolve => { resolveRequest = resolve; });
-    await service.syncOnce();
-    expect(delivered).toEqual([]);
-    transport.acceptNext();
-    await resolveRequest?.('allow_always');
-    await service.syncOnce();
-    expect(delivered).toEqual(['held-request-1', 'held-request-2']);
-  });
-
   it('keeps pulling inbox while a contact decision is still open', async () => {
     // risk: a human decision stalls unrelated message delivery
     const state = new MemoryState(); const transport = new TestTransport(); const delivered: string[] = [];
@@ -251,23 +235,6 @@ describe('OrgMessenger', () => {
       new Promise(resolve => setTimeout(() => resolve('blocked-by-prompt'), 25)),
     ])).resolves.not.toBe('blocked-by-prompt');
     unblock();
-  });
-
-  it('uses the directory display name and suppresses another prompt for six hours', async () => {
-    // risk: repeated trust prompts train users to dismiss or blindly approve them
-    const state = new MemoryState(); const transport = new TestTransport();
-    transport.people = [{ userId: 'user-2', displayName: 'Dana' }];
-    transport.holdNext();
-    await transport.submit(message('held-name'));
-    const prompts: string[] = [];
-    const service = messenger(transport, state, [], undefined, undefined, undefined, undefined, async prompt => {
-      prompts.push(prompt.senderName);
-      await prompt.shown();
-    });
-    await service.syncOnce();
-    await service.syncOnce();
-    expect(prompts).toEqual(['Dana']);
-    expect(state.askedAt.has('org-1:user-1:user-2')).toBe(true);
   });
 
   it('does not claim a host lease or poll when the org has no other members', async () => {

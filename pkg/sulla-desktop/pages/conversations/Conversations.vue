@@ -73,12 +73,6 @@ const snapshot = computed<LiveSnapshot | null>(() => {
   const threadViews: ThreadView[] = threads.value.map(thread => views.thread(thread));
   const bodies: Record<string, MessageView[]> = {};
   for (const thread of threads.value) bodies[thread.id] = thread.messages.map(message => views.message(message));
-  const requests: RequestView[] = [];
-  for (const request of data.requests) {
-    const existing = requests.find(view => view.senderId === request.from.userId);
-    if (existing) { existing.count += 1; continue; }
-    requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
-  }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
   return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, invited: data.invited.map(entry => views.invitation(entry)), threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
 });
