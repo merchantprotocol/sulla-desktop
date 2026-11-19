@@ -113,6 +113,13 @@ export class VaultKeyIpc implements MainProcessIpcStep {
       return true;
     });
 
+    ipc.handle('vault:unlock-required', async() => {
+      const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
+      setUserLoggedIn(false);
+      tabViewManager.setFocusedTab(null);
+      return true;
+    });
+
     ipc.handle('vault:lock-vault', async() => {
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
       const filesLock = getSullaFilesWatcher().lockService();
