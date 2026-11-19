@@ -32,4 +32,27 @@ describe('ConversationServersCloudClient', () => {
     const client = new ConversationServersCloudClient(async () => new Response('{}', { status: 503 }));
     await expect(client.list()).rejects.toThrow('Conversation servers unavailable (503)');
   });
+
+  it('uses the channel message, cursor and unread contracts without accepting invalid sends or cursors', async () => {
+    // risk: message delivery and read-state accuracy; sends must be scoped and invalid cursors must never advance read state
+    const calls: { method: string; path: string; body?: string }[] = [];
+    const client = new ConversationServersCloudClient(async (method, path, init) => {
+      calls.push({ method, path, body: init?.body as string | undefined });
+      return new Response(JSON.stringify({ messages: [{ id: 'm1', seq: 9, body: 'hello' }], latestSeq: 9 }), { status: 200 });
+    });
+    await client.messages('server/1', 'channel 2', 12);
+    await client.sendMessage('server/1', 'channel 2', ' hello ');
+    await client.markRead('server/1', 'channel 2', 9);
+    await client.unread('server/1');
+    expect(calls.map(({ method, path }) => [method, path])).toEqual([
+      ['GET', '/conversation-servers/server%2F1/channels/channel%202/messages?limit=50&before=12'],
+      ['POST', '/conversation-servers/server%2F1/channels/channel%202/messages'],
+      ['POST', '/conversation-servers/server%2F1/channels/channel%202/read'],
+      ['GET', '/conversation-servers/server%2F1/unread'],
+    ]);
+    expect(JSON.parse(calls[1].body ?? 'null')).toEqual({ body: 'hello' });
+    expect(JSON.parse(calls[2].body ?? 'null')).toEqual({ seq: 9 });
+    expect(() => client.sendMessage('s', 'c', '   ')).toThrow('between 1 and 4000');
+    expect(() => client.markRead('s', 'c', -1)).toThrow('Invalid read cursor');
+  });
 });

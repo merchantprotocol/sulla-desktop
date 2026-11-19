@@ -8,6 +8,7 @@ export type ConversationServerNotificationLevel = 'all' | 'mentions' | 'nothing'
 type CloudRequester = typeof cloudRequest;
 type ConversationServerDto = { id: string; name: string; visibility: 'public' | 'organization'; orgId?: string; ownerUserId: string; notificationDefault: ConversationServerNotificationLevel };
 type ConversationChannelDto = { id: string; serverId: string; name: string; kind: 'text' | 'a2a' | 'announcement'; private: boolean; memberUserIds?: string[] };
+export type ConversationChannelMessage = { id: string; seq: number; authorUserId: string; authorAgentId?: string | null; kind: string; body: string; createdAt: string };
 type ConversationServerMemberDto = { userId: string; role: string };
 
 /** Reads server/channel contracts over the same brokered Cloud request path as the other Desktop clients. */
@@ -43,7 +44,29 @@ export class ConversationServersCloudClient {
     return this.request('PUT', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/notification-preference`, { level });
   }
 
-  private async request(method: 'GET' | 'PATCH' | 'PUT', path: string, body?: unknown): Promise<Record<string, unknown>> {
+  async messages(serverId: string, channelId: string, before?: number): Promise<{ messages: ConversationChannelMessage[]; nextBefore?: number | null; latestSeq?: number }> {
+    const query = new URLSearchParams({ limit: '50' });
+    if (before !== undefined) query.set('before', String(before));
+    const result = await this.request('GET', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/messages?${query}`);
+    return { ...result, messages: Array.isArray(result.messages) ? result.messages as ConversationChannelMessage[] : [] };
+  }
+
+  sendMessage(serverId: string, channelId: string, body: string): Promise<Record<string, unknown>> {
+    const text = body.trim();
+    if (!text || text.length > 4000) throw new Error('Message must be between 1 and 4000 characters');
+    return this.request('POST', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/messages`, { body: text });
+  }
+
+  markRead(serverId: string, channelId: string, seq: number): Promise<Record<string, unknown>> {
+    if (!Number.isSafeInteger(seq) || seq < 0) throw new Error('Invalid read cursor');
+    return this.request('POST', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/read`, { seq });
+  }
+
+  unread(serverId: string): Promise<Record<string, unknown>> {
+    return this.request('GET', `/conversation-servers/${encodeURIComponent(serverId)}/unread`);
+  }
+
+  private async request(method: 'GET' | 'POST' | 'PATCH' | 'PUT', path: string, body?: unknown): Promise<Record<string, unknown>> {
     const response = await this.cloud(method, path, { headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) });
     if (!response.ok) throw new Error(`Conversation servers unavailable (${response.status})`);
     return response.json() as Promise<Record<string, unknown>>;
