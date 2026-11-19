@@ -111,7 +111,7 @@ export class InternalTabViewManager {
     for (const [tabId, tab] of this.tabs) {
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
       if (!tab.view.webContents.isDestroyed()) {
-        try { tab.view.webContents.close({ waitForBeforeUnload: false }); } catch { try { tab.view.webContents.destroy(); } catch { /* already gone */ } }
+        try { tab.view.webContents.close({ waitForBeforeUnload: false }); } catch { /* already gone */ }
       }
       this.tabs.delete(tabId);
     }
