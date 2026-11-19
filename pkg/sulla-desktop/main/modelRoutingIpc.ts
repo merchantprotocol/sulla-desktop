@@ -28,6 +28,7 @@ export interface ModelRoutingRouter {
 
 export interface ModelRoutingDependencies {
   router: ModelRoutingRouter;
+  whenReady?(): Promise<void>;
   recommendedState(): any;
   /** All agent definitions (name, enabled flag, model choice); workers() keeps only enabled, non-archived ones. */
   listAgents(): Promise<{ id?: string; slug?: string; status?: string; run_location?: string; name: string; enabled: boolean; model_choice?: any }[]>;
@@ -65,6 +66,7 @@ export class ModelRoutingIpcController implements IpcController {
   }
 
   async state(): Promise<ModelRoutingState> {
+    await this.deps.whenReady?.();
     const router = this.deps.router;
     const [editable, providers, catalog, users] = await Promise.all([router.getEditableState(), router.providerInfo(), router.catalogReport(), this.classUsers()]);
 
@@ -106,12 +108,14 @@ export class ModelRoutingIpcController implements IpcController {
     this.ipc.handle(MODEL_ROUTING_IPC.get, () => this.state());
     this.ipc.handle(MODEL_ROUTING_IPC.set, async(_event, patch) => {
       if (patch && Object.prototype.hasOwnProperty.call(patch, 'workerBindings')) throw new Error('Save an individual worker mapping through its dedicated control.');
+      await this.deps.whenReady?.();
       await router.set(patch || {});
 
       return this.state();
     });
     this.ipc.handle(MODEL_ROUTING_IPC.reset, async(_event, target) => {
       if (!target || !['agents', 'subconscious', 'classes'].includes(target.section)) throw new Error('Invalid model routing reset target');
+      await this.deps.whenReady?.();
       await router.reset(target);
 
       return this.state();
@@ -120,6 +124,7 @@ export class ModelRoutingIpcController implements IpcController {
   let workerWrite = Promise.resolve();
   this.ipc.handle(MODEL_ROUTING_IPC.workerSet, async(_event, input) => {
     const operation = workerWrite.then(async() => {
+      await this.deps.whenReady?.();
       // Record the stored same-slug entry before any async check, so a slug deleted and reused by
       // another agent meanwhile is never overwritten or removed by this stale save.
       const observed = (await router.getEditableState()).workerBindings?.[input?.slug];
@@ -153,12 +158,14 @@ export class ModelRoutingIpcController implements IpcController {
     return operation;
   });
     this.ipc.handle(MODEL_ROUTING_IPC.refresh, async() => {
+      await this.deps.whenReady?.();
       await router.refreshCatalog();
 
       return this.state();
     });
     this.ipc.removeHandler(MODEL_ROUTING_IPC.cliCheck);
     this.ipc.handle(MODEL_ROUTING_IPC.cliCheck, async() => {
+      await this.deps.whenReady?.();
       const { checkProviderCliVersions } = await import('../backend/providerCliUpdates');
       const providers = await router.providerInfo();
       return checkProviderCliVersions(providers.filter((provider: any) => provider.connected).map((provider: any) => provider.id));
@@ -169,6 +176,7 @@ export class ModelRoutingIpcController implements IpcController {
       const version = typeof input?.version === 'string' ? input.version : '';
       if (!provider || !version) throw new Error('Choose one provider and exact version to update.');
       if (!this.deps.confirmCliUpdate) throw new Error('Native confirmation is unavailable; no CLI was updated.');
+      await this.deps.whenReady?.();
       const connected = (await router.providerInfo()).some((row: any) => row.id === provider && row.connected);
       if (!connected) throw new Error('This provider is no longer connected. Refresh AI Models before updating.');
       const { checkProviderCliVersions, installConfirmedProviderCli } = await import('../backend/providerCliUpdates');
@@ -179,10 +187,13 @@ export class ModelRoutingIpcController implements IpcController {
       await withConfirmedCliUpdate(() => installConfirmedProviderCli(provider, version));
       return checkProviderCliVersions([provider]);
     });
-    const pushStatus = () => void router.providerInfo().then(providers => this.deps.broadcast(MODEL_ROUTING_IPC.status, providers));
+    const pushStatus = async() => {
+      await this.deps.whenReady?.();
+      this.deps.broadcast(MODEL_ROUTING_IPC.status, await router.providerInfo());
+    };
     router.onStatusChange(pushStatus);
     this.deps.onIntegrationValueChange((value) => {
-      if (value.property === 'connection_status' || value.property === 'model') pushStatus();
+      if (value.property === 'connection_status' || value.property === 'model') void pushStatus();
     });
   }
 }

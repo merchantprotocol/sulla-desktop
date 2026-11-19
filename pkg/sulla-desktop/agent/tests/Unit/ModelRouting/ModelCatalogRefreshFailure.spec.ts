@@ -2,12 +2,13 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 import { ModelRouter, type EditableState } from '../../../languagemodels/modelRouter';
 
 vi.mock('../../../languagemodels/index', () => ({ PROVIDER_FACTORIES: { codex: {} } }));
+afterEach(() => vi.restoreAllMocks());
 
 const saved: EditableState = {
   agentsList:       [{ provider: 'codex', class: 'standard', enabled: true }],
@@ -46,4 +47,22 @@ describe('model catalog refresh failure preservation', () => {
       agentsList: [{ provider: 'codex', class: 'standard', enabled: true }],
     });
   });
+});
+
+it('does not write inferred model routing from the startup snapshot over saved choices', async() => {
+  let ready = false;
+  vi.spyOn(SullaSettingsModel, 'ready', 'get').mockImplementation(() => ready);
+  vi.spyOn(SullaSettingsModel, 'get').mockImplementation(async(key: string, fallback: unknown) => {
+    if (key === 'modelRouting') return ready ? saved : null;
+    if (key === 'primaryProvider') return 'codex';
+    if (key === 'activeModelId') return 'gpt-legacy';
+    return fallback;
+  });
+  const write = vi.spyOn(SullaSettingsModel, 'set').mockResolvedValue(undefined as never);
+  const router = new ModelRouter();
+
+  await router.getEditableState();
+  expect(write).not.toHaveBeenCalled();
+  ready = true;
+  await expect(router.getEditableState()).resolves.toMatchObject(saved);
 });

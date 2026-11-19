@@ -192,6 +192,44 @@ describe('IpcController delegation', () => {
     expect(router.reset).not.toHaveBeenCalled();
   });
 
+  it('model routing: a cold settings page waits for saved choices and its catalog', async() => {
+    const ipc = new FakeIpc();
+    let markReady!: () => void;
+    const startup = new Promise<void>(resolve => { markReady = resolve; });
+    const saved = { classes: { coding: [{ provider: 'codex', model: 'gpt-6.2-sol', effort: 'high' }] } };
+    const router = { getEditableState: vi.fn(async() => saved), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), replaceWorkerBinding: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
+    new ModelRoutingIpcController(ipc, { router, whenReady: () => startup, recommendedState: vi.fn(), listAgents: async() => [], onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
+
+    const firstPaint = ipc.invoke('model-routing:get', {});
+    await Promise.resolve();
+    expect(router.getEditableState).not.toHaveBeenCalled();
+    expect(router.providerInfo).not.toHaveBeenCalled();
+    markReady();
+    await expect(firstPaint).resolves.toMatchObject(saved);
+  });
+
+  it('model routing: edits and refreshes during startup wait for saved settings', async() => {
+    const ipc = new FakeIpc();
+    let markReady!: () => void;
+    const startup = new Promise<void>(resolve => { markReady = resolve; });
+    const router = { getEditableState: vi.fn(async() => ({})), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), replaceWorkerBinding: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
+    new ModelRoutingIpcController(ipc, { router, whenReady: () => startup, recommendedState: vi.fn(), listAgents: async() => [], onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
+
+    const patch = { neverUse: [] };
+    const edit = ipc.invoke('model-routing:set', {}, patch);
+    const refresh = ipc.invoke('model-routing:refresh', {});
+    const reset = ipc.invoke('model-routing:reset', {}, { section: 'classes', class: 'coding' });
+    await Promise.resolve();
+    expect(router.set).not.toHaveBeenCalled();
+    expect(router.refreshCatalog).not.toHaveBeenCalled();
+    expect(router.reset).not.toHaveBeenCalled();
+    markReady();
+    await Promise.all([edit, refresh, reset]);
+    expect(router.set).toHaveBeenCalledWith(patch);
+    expect(router.refreshCatalog).toHaveBeenCalledOnce();
+    expect(router.reset).toHaveBeenCalledWith({ section: 'classes', class: 'coding' });
+  });
+
   it('chat heartbeat: register requires a thread id; set reports unregistered threads', () => {
     const ipc = new FakeIpc();
     const service = { register: vi.fn(() => 'on'), configure: vi.fn(() => null), updateBusy: vi.fn(), unregister: vi.fn() };
