@@ -1,6 +1,15 @@
 {
   "min-api-version": "1.41",
   "features": { "containerd-snapshotter": true },
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultKeepStorage": "1GB",
+      "policy": [
+        { "reservedSpace": "1GB", "keepDuration": ["168h"] }
+      ]
+    }
+  },
   "iptables": true,
   "storage-driver": "overlayfs",
   "userland-proxy": true,
