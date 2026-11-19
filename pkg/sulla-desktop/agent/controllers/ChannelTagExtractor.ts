@@ -143,9 +143,16 @@ export class ChannelTagExtractor implements Extractor {
       const senderJobId = String(metadata.delegatedJobId || metadata.jobId || '');
       const senderLabel = String(metadata.delegatedTaskLabel || metadata.agentLabel || metadata.agent?.name || senderId);
       const replyToThread: string = metadata.replyToThread || '';
+      // A spawned child reports to its parent's exact session thread, not a same-channel sibling.
+      const parentThreadId: string = metadata.isSubAgent
+        && String(metadata.workflowParentChannel || '') === targetChannel
+        ? String(metadata.parentConversationId || '')
+        : '';
+      const replyThreadId: string = parentThreadId || replyToThread;
       // toThreadId is the thread that should receive the reply — if this agent
-      // was woken by someone else, reply to their thread; otherwise no specific target.
-      const toThreadId: string = replyToThread || fromThreadId || '';
+      // was woken by someone else (or is a child of that channel's session), reply to
+      // that thread; otherwise no specific target.
+      const toThreadId: string = replyThreadId || fromThreadId || '';
 
       const ws = getWebSocketClientService();
 
@@ -171,6 +178,7 @@ export class ChannelTagExtractor implements Extractor {
         type: 'agent_inbox_message',
         data: {
           receiverChannel: targetChannel,
+          targetThreadId: !targetId && parentThreadId ? parentThreadId : undefined,
           envelope: {
             from: senderId,
             kind: 'peer',
@@ -180,7 +188,7 @@ export class ChannelTagExtractor implements Extractor {
             senderJobId: senderJobId || undefined,
             senderLabel,
             targetId,
-            replyToThreadId: !targetId && replyToThread ? replyToThread : undefined,
+            replyToThreadId: !targetId && replyThreadId ? replyThreadId : undefined,
             ids: { messageId, threadId: fromThreadId || undefined, jobId: senderJobId || undefined },
           },
         },

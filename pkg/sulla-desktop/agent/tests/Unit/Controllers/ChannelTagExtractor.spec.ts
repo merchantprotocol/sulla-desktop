@@ -48,4 +48,28 @@ describe('ChannelTagExtractor', () => {
     expect(send.mock.calls[1][1].data.envelope.targetId).toBe('thread-a');
     expect(send.mock.calls[3][1].data.envelope.targetId).toBe('thread-b');
   });
+
+  it('routes a spawned child channel message to its parent session thread, not another same-channel session', () => { // risk: cross-session message isolation
+    const extractor = new ChannelTagExtractor();
+    const response = { content: '<channel:sulla-desktop>status for parent</channel:sulla-desktop>' } as any;
+    extractor.processComplete(response, {
+      channel: 'sulla-desktop', threadId: 'child-thread', state: { metadata: { isSubAgent: true, workflowParentChannel: 'sulla-desktop', parentConversationId: 'session-a', agentId: 'coding-manager-sol', wsChannel: 'sulla-desktop' } },
+    } as any);
+
+    expect(send.mock.calls[0][1].data).toMatchObject({ toThreadId: 'session-a' });
+    expect(send.mock.calls[1][1].data).toMatchObject({ targetThreadId: 'session-a' });
+  });
+
+  it('keeps ordinary peer channel routing unchanged for a spawned child', () => { // risk: peer routing compatibility
+    const extractor = new ChannelTagExtractor();
+    const response = { content: '<channel:reviewer>peer finding</channel:reviewer>' } as any;
+    extractor.processComplete(response, {
+      channel: 'sulla-desktop', threadId: 'child-thread', state: { metadata: { isSubAgent: true, workflowParentChannel: 'sulla-desktop', parentConversationId: 'session-a', agentId: 'coding-manager-sol', wsChannel: 'sulla-desktop' } },
+    } as any);
+
+    expect(send.mock.calls[0][0]).toBe('reviewer');
+    expect(send.mock.calls[0][1].data).toMatchObject({ toThreadId: 'child-thread' });
+    // Only a parent-channel reply is pinned to a thread; ordinary peers resolve by name, as on main.
+    expect(send.mock.calls[1][1].data.targetThreadId).toBeUndefined(); // risk: delivery to a thread on the wrong channel
+  });
 });

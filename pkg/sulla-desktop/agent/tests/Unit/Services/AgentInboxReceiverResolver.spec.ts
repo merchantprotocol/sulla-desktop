@@ -24,6 +24,14 @@ describe('DurableAgentInboxReceiverResolver', () => {
     }
   });
 
+  it('honors an explicit parent thread even when the channel has multiple live sessions', async () => { // risk: cross-session message isolation
+    const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => [
+      { channel: 'sulla-desktop', threadId: 'session-a', label: 'chat' },
+      { channel: 'sulla-desktop', threadId: 'session-b', label: 'chat' },
+    ]);
+    await expect(resolver.resolve('sulla-desktop', 'session-a')).resolves.toEqual({ channel: 'sulla-desktop', threadId: 'session-a', agentId: 'sulla-desktop', label: 'chat' });
+  });
+
   it('routes exact job and thread selectors to their matching thread', async () => { // risk: delivery to the wrong manager instance
     const resolver = new DurableAgentInboxReceiverResolver(jobs, () => []);
     await expect(resolver.resolve('coding-manager', 'job-b')).resolves.toMatchObject({ threadId: 'manager-b', jobId: 'job-b' });

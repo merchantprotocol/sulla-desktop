@@ -774,7 +774,7 @@ export class BackendGraphWebSocketService {
       if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
       let target: AgentInboxTarget;
       try {
-        target = await this.inboxReceiverResolver.resolve(channelId, envelope.targetId, envelope.replyToThreadId);
+        target = await this.inboxReceiverResolver.resolve(channelId, envelope.targetId, envelope.replyToThreadId ?? data?.targetThreadId);
       } catch (error) {
         if (error instanceof AmbiguousAgentInboxTargetError || error instanceof NoAgentInboxTargetError) {
           const senderChannel = String(envelope.senderChannel || '');
