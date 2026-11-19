@@ -8,6 +8,7 @@ import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpc
 import { VaultIpcInputPolicy } from './VaultIpcInputPolicy';
 import { VaultStatusMonitor } from './VaultStatusMonitor';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
+import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
 
 /** Vault status polling, metadata-only integration bridges and the isolated vault view. */
 export class VaultViewIpc implements MainProcessIpcStep {
@@ -16,6 +17,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
   async register(ctx: MainProcessIpcContext): Promise<void> {
     const { ipc, window, vaultViewManager } = ctx;
     const tabViewManager = ctx.tabs();
+    const internalTabViews = InternalTabViewManager.getInstance();
     const policy = new VaultIpcInputPolicy(window);
 
     // ── Vault: key management IPC handlers (main-process only — safeStorage) ──
@@ -129,7 +131,15 @@ export class VaultViewIpc implements MainProcessIpcStep {
         target.pathname = '/vault/popup.html';
         if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
       }
-      const opened = await vaultViewManager.show(reservation, parentWindow, target.toString(), bounds);
+      const tabHostView = internalTabViews.hostViewForSender(event.sender);
+      const opened = await vaultViewManager.show(
+        reservation,
+        parentWindow,
+        target.toString(),
+        bounds,
+        tabHostView ?? undefined,
+        tabHostView ? listener => internalTabViews.onHostDisposed(event.sender, listener) : undefined,
+      );
       if (!opened) return { state: 'cancelled' };
       vaultStatus.startPolling();
       return { state: 'opened', expiresAt: humanSession.expiresAt };
