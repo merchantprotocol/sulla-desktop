@@ -47,7 +47,8 @@ import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
-import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
+import { agentWindowFromSender, isTrustedStartupSender } from '@pkg/window/agentWindowTrust';
+import { BROWSER_SESSION_PARTITION } from '@pkg/main/browserTabs/browserSession';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 import { Help } from '@pkg/config/help';
@@ -1983,12 +1984,9 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 // the authoritative main-process lifecycle has observed both Postgres and Redis.
 const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'settings-ready-from-fallback', 'extensions-ready-from-local', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
 const trustedStartupSender = (event: Electron.IpcMainInvokeEvent, windowKey: string | undefined): boolean => {
-  if (!windowKey || !/^[a-zA-Z0-9_:-]{1,100}$/.test(windowKey)) return false;
-  if (!agentWindowFromSender(event.sender)) return false;
-  try {
-    const query = new URL(event.sender.getURL()).searchParams;
-    return query.get('tabHost') !== '1' && query.get('windowKey') === windowKey;
-  } catch { return false }
+  // Internal tab-host renderers are trusted only through registered ownership;
+  // browser-tab session content and unknown renderers remain untrusted.
+  return isTrustedStartupSender(event.sender, windowKey, AppStartupTelemetry.startupId, Electron.session.fromPartition(BROWSER_SESSION_PARTITION));
 };
 
 ipcMainProxy.handle('sulla-startup:stage', (event, payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => {
