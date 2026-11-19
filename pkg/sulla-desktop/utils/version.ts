@@ -18,6 +18,7 @@ export class AppVersionService {
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly runFile: SpawnFile = (command, args, options) => spawnFile(command, args, options),
+    private readonly isPackaged: () => boolean = () => Electron.app.isPackaged === true,
   ) {}
 
   getProductionVersion(): string {
@@ -47,7 +48,8 @@ export class AppVersionService {
       return this.env.SULLA_MOCK_VERSION;
     }
 
-    if (this.env.NODE_ENV === 'production' || this.env.SULLA_MOCK_FOR_SCREENSHOTS) {
+    // Packaged builds read app.getVersion(); git describe only exists in a dev checkout.
+    if (this.isPackaged() || this.env.SULLA_MOCK_FOR_SCREENSHOTS) {
       return this.getProductionVersion();
     }
 

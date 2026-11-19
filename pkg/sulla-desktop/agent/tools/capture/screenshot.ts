@@ -9,6 +9,7 @@ import path from 'node:path';
 import { desktopCapturer, screen as electronScreen } from 'electron';
 
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
+import { ScreenRecordingPermission } from '@pkg/utils/screenRecordingPermission';
 
 import { BaseTool, ToolResponse } from '../base';
 
@@ -22,6 +23,10 @@ export class ScreenshotWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
+    // Without Screen Recording, desktopCapturer returns blank sources; say what to enable instead.
+    const denied = new ScreenRecordingPermission().deniedMessage();
+    if (denied) return { successBoolean: false, responseString: denied };
+
     const sourceId = typeof input.sourceId === 'string' ? input.sourceId.trim() : '';
     const kind = sourceId.startsWith('window:') ? 'window'
       : sourceId.startsWith('screen:') ? 'screen'

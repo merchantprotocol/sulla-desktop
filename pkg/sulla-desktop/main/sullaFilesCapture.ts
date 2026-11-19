@@ -15,6 +15,7 @@ import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher, type RecentSullaFile, type SullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
+import { ScreencaptureExit, ScreenRecordingPermission } from '@pkg/utils/screenRecordingPermission';
 
 export type ScreenshotMode = 'area' | 'window' | 'full';
 export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string; reference?:ChatFilesReference }
@@ -62,11 +63,16 @@ async function withCaptureTemp<T>(extension:string, work:(temporaryPath:string) 
   try { return await work(temporaryPath) } finally { await fs.promises.rm(directory, { recursive: true, force: true }) }
 }
 
-function runMacScreenshot(args:string[]):Promise<void> {
+function runMacScreenshot(mode:ScreenshotMode, args:string[]):Promise<void> {
   return new Promise((resolve, reject) => {
     const process = spawn('/usr/sbin/screencapture', args, { stdio: 'ignore' });
     process.once('error', reject);
-    process.once('exit', code => code === 0 ? resolve() : reject(Object.assign(new Error(code === 1 ? 'Screenshot cancelled' : `screencapture exited ${ code }`), { cancelled: code === 1 })));
+    process.once('exit', code => {
+      if (code === 0) return resolve();
+      // Non-cancel failures carry cancelled:false so callers log them.
+      const cancelled = ScreencaptureExit.isCancel(mode, code);
+      reject(Object.assign(new Error(cancelled ? 'Screenshot cancelled' : `screencapture exited ${ code }`), { cancelled }));
+    });
   });
 }
 
@@ -86,8 +92,10 @@ export class SullaFilesCaptureService {
   async screenshot(mode:ScreenshotMode):Promise<CaptureResult> {
     return withCaptureTemp('.png', async temporaryPath => {
       if (process.platform === 'darwin') {
+        const denied = new ScreenRecordingPermission().deniedMessage();
+        if (denied) throw new Error(denied);
         const args = mode === 'full' ? ['-x', '-o', '-t', 'png', temporaryPath] : mode === 'window' ? ['-iW', '-o', '-t', 'png', temporaryPath] : ['-i', '-o', '-t', 'png', temporaryPath];
-        await runMacScreenshot(args);
+        await runMacScreenshot(mode, args);
       } else {
         await electronScreenshot(temporaryPath, mode === 'window' ? 'window' : 'screen');
       }

@@ -30,13 +30,21 @@ describe('AppVersionService', () => {
     expect(service.parseDocsVersion('garbage')).toBe('next');
   });
 
-  it('prefers the mock version, then production, then git describe', async() => {
+  it('prefers the mock version, then packaged app version, then git describe', async() => {
     const runFile = vi.fn().mockResolvedValue({ stdout: 'v2.0.0-4-gabc\n' });
 
     expect(await new AppVersionService({ SULLA_MOCK_VERSION: '7.7.7' }, runFile).getVersion()).toBe('7.7.7');
-    expect(await new AppVersionService({ NODE_ENV: 'production' }, runFile).getVersion()).toBe('9.9.9');
+    expect(await new AppVersionService({}, runFile, () => true).getVersion()).toBe('9.9.9');
     expect(runFile).not.toHaveBeenCalled();
-    expect(await new AppVersionService({}, runFile).getVersion()).toBe('v2.0.0-4-gabc');
+    expect(await new AppVersionService({}, runFile, () => false).getVersion()).toBe('v2.0.0-4-gabc');
+  });
+
+  // risk: a packaged build with no NODE_ENV showed "v?" because it ran git describe outside a checkout
+  it('reads app.getVersion() in packaged builds without calling git describe', async() => {
+    const runFile = vi.fn().mockRejectedValue(new Error('no git'));
+
+    expect(await new AppVersionService({}, runFile, () => true).getVersion()).toBe('9.9.9');
+    expect(runFile).not.toHaveBeenCalled();
   });
 
   it('returns ? when git describe fails', async() => {
