@@ -4,6 +4,7 @@
 
 import Electron, { WebContentsView } from 'electron';
 import { agentWindowUrl } from './agentWindowUrl';
+import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean }
 
@@ -30,7 +31,7 @@ export class InternalTabViewManager {
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
       });
-      const url = agentWindowUrl(`tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }`);
+      const url = agentWindowUrl(`tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }&startupId=${ encodeURIComponent(AppStartupTelemetry.startupId) }`);
       void view.webContents.loadURL(url);
     } else if (tab.owner !== owner) {
       this.moveToWindow(tabId, owner);
