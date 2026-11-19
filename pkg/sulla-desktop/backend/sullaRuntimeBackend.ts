@@ -959,17 +959,22 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
-    // PostgreSQL and Redis gate every database-backed renderer and service.
-    // Ask Compose to start them as soon as its generated file exists, while
-    // image import and threat-proxy preparation continue below. The full
-    // reconcile later still owns health checks and all optional services.
+    // The DB images must exist in the guest before Compose is allowed to start
+    // these services; otherwise a fresh install can trigger a network pull.
+    await this.loadBundledImages(image => image.name === 'postgres' || image.name === 'redis');
+    this.assertManagedServicesGeneration(generation);
+
+    // Start readiness gates early, alongside non-DB image import and proxy
+    // preparation. Keep the promise observed so a failed early start cannot
+    // become an unhandled rejection while those operations are in flight.
     const databaseStart = this.startDatabaseServices(generation);
+    void databaseStart.catch(() => undefined);
 
     // Every service image (threat proxy included) must be in the guest before
     // the agent network/egress setup and compose; agents depend on the proxy.
     await this.progressTracker.action('Loading bundled container images', 40, async() => {
       t = Date.now();
-      await this.loadBundledImages(image => !image.onDemand);
+      await this.loadBundledImages(image => !image.onDemand && image.name !== 'postgres' && image.name !== 'redis');
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
     });
