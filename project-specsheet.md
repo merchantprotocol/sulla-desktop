@@ -729,3 +729,10 @@ On macOS an isolated Vault view can finish loading inside a tab host while the h
 The Vault console's main pane uses its own `--content-bg` token. The Desktop theme bridge maps that token to `--bg-page` on the root and body, so the pane follows the same page color as the surrounding app in light and dark themes. Standalone console defaults stay available when Desktop does not supply a theme.
 
 The Agent window and hosted tabs use a dark native startup canvas. The Agent HTML starts with the default dark class and the renderer applies the locally cached theme before mounting. The existing saved theme still takes precedence when settings load. The protected Vault view loads offscreen and applies its presentation colors before attaching to the window, so its own light defaults cannot flash over the loading pane.
+
+
+### Sulla Files agent cache refresh
+
+The native Files adapter in `services/sulla-files-fuse/sulla_files_fuse.py` consumes `/v1/fuse/changes` from the Files service. The path event marks cached rows stale before notifying the kernel. The next lookup or inode attribute request refreshes the row through the existing Files entry endpoint. A remote edit updates cached attributes and bytes while preserving the inode for open handles.
+
+For an older source install showing HTTP 404 at this endpoint, check that the local Files service image contains the change-feed route and that its migration ledger includes the Files change journal. Rehearse the migrations on an isolated copy, then replace the affected service while agents are idle. Run the adapter tests with a private umask. For live QA, warm a disposable file in an agent container, save a new version through Desktop Files, and verify the same container sees the new size and bytes before the attribute cache would expire.
