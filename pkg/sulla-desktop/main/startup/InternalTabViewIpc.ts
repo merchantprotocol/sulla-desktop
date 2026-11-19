@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import Electron from 'electron';
+
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
@@ -22,6 +24,7 @@ export class InternalTabViewIpc implements MainProcessIpcStep {
     ipc.handle('internal-tab-view:visible', (event: Electron.IpcMainInvokeEvent, tabId: string, visible: boolean) => manager.setVisible(owner(event), tabId, visible));
     ipc.handle('internal-tab-view:close', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.destroy(owner(event), tabId));
     ipc.handle('internal-tab-view:reload', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.reload(owner(event), tabId));
-    ipc.on('internal-tab-view:update', (event: Electron.IpcMainEvent, tabId: string, descriptor: unknown) => manager.notifyTabUpdate(event.sender, tabId, descriptor));
+    // One-way renderer updates need ipcMain.on; the proxy registrar only guarantees handle().
+    Electron.ipcMain.on('internal-tab-view:update', (event: Electron.IpcMainEvent, tabId: string, descriptor: unknown) => manager.notifyTabUpdate(event.sender, tabId, descriptor));
   }
 }
