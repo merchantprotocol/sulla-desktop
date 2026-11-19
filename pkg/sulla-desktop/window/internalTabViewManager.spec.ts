@@ -10,7 +10,7 @@ vi.mock('electron', () => ({
   WebContentsView: class {
     webContents = {
       loadURL: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn((event: string, listener: (...args: any[]) => void) => { (this as any).listeners[event] = listener; }),
+      on: vi.fn((event: string, listener: (...args: any[]) => void) => { (this as any).webContents.listeners[event] = listener; }),
       listeners: {} as Record<string, (...args: any[]) => void>,
       isDestroyed: () => false,
       close: vi.fn(),
