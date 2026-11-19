@@ -76,15 +76,6 @@
         <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Age</span><span />
       </div>
 
-      <button
-        v-if="decisionStore.openCount.value"
-        type="button"
-        class="ta-btn"
-        @click="decisionStore.show()"
-      >
-        Open For You · {{ decisionStore.openCount.value }}
-      </button>
-
       <!-- Agents launched from this thread. -->
       <div
         v-for="node in agentNodes"
@@ -185,7 +176,6 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
 
 import ThreadAgentActions from './ThreadAgentActions.vue';
-import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
 import { chatActivityByTab } from '../../messages/chatActivityStore';
 import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
@@ -226,20 +216,18 @@ const heartbeatMinutes = computed(() => controller.heartbeat.value.intervalMinut
 const humanMessages = computed(() => controller.messages.value.filter((msg): msg is ToolQuestionMessage | ToolApprovalMessage =>
   (msg.kind === 'tool_question' && msg.status === 'pending') || (msg.kind === 'tool_approval' && msg.decision === 'pending')));
 
-const decisionStore = ChatDecisions.useChatDecisions();
-const activity = computed(() => {
-  const base = deriveThreadActivity({
-    running:          controller.isRunning.value,
-    messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),
-    agents:           liveRows.value,
-    heartbeatMinutes: heartbeatMinutes.value,
-  }); return decisionStore.openCount.value ? { ...base, state: 'you' as const, lead: 'Needs you', parts: [`${ decisionStore.openCount.value } ${ decisionStore.openCount.value === 1 ? 'request' : 'requests' } in For You`, ...(base.state === 'idle' ? [] : base.parts)] } : base;
-});
-const hasItems = computed(() => decisionStore.openCount.value + agentNodes.value.length > 0 || !!heartbeatMinutes.value);
+// For You requests live in the side dock's For You tab, not on this line (Jonathon, 2026-11-19).
+const activity = computed(() => deriveThreadActivity({
+  running:          controller.isRunning.value,
+  messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),
+  agents:           liveRows.value,
+  heartbeatMinutes: heartbeatMinutes.value,
+}));
+const hasItems = computed(() => agentNodes.value.length > 0 || !!heartbeatMinutes.value);
 const stalledRows = computed(() => liveRows.value.filter(row => row.state === 'quiet' && row.canMessage));
 const ageText = computed(() => {
   if (activity.value.state === 'idle') return '';
-  const items = decisionStore.openCount.value + agentNodes.value.length;
+  const items = agentNodes.value.length;
   const last = activity.value.lastActivityAt;
   if (activity.value.state === 'working' && last) return `last activity ${ activityAge(now.value - last) } ago`;
   return items ? `${ items } item${ items === 1 ? '' : 's' }` : '';
