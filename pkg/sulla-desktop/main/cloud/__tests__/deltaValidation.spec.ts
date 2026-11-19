@@ -84,3 +84,11 @@ test('metadata-only items (no body) pass through unchanged', () => {
   assert.equal(verdict.ok, true);
   assert.equal(verdict.item.ciphertext, undefined);
 });
+
+// risk: data accuracy. A driver returning Date objects must not cause every message to be skipped.
+test('a Date createdAt is accepted and normalised', () => {
+  const v = new DeltaValidator();
+  const verdict = v.check(validItem({ createdAt: new Date('2026-11-18T17:00:00Z') as unknown as string }));
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.item.createdAt, '2026-11-18T17:00:00.000Z');
+});

@@ -54,6 +54,8 @@ export class DeltaValidator {
    * "2026-11-18 17:00:00+00" and naive "2026-11-18 17:00:00" (treated as UTC).
    */
   static normalizeCreatedAt(raw: unknown): string | null {
+    // Postgres drivers can hand back timestamptz as a Date despite the string type.
+    if (raw instanceof Date) return Number.isFinite(raw.getTime()) ? raw.toISOString() : null;
     if (typeof raw !== 'string' || raw.trim() === '') return null;
     const direct = Date.parse(raw);
     if (Number.isFinite(direct)) return new Date(direct).toISOString();
