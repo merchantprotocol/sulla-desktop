@@ -394,25 +394,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, provide } from 'vue';
 
-import AgentCalendar from './AgentCalendar.vue';
-import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
-import AgentIntegrations from './AgentIntegrations.vue';
+// Eager: the default tab for a new window is chat, so ChatPage, the welcome page
+// and the header are needed for first paint. Everything else is lazy below.
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
 // Old implementation at ./BrowserTabChat.vue is kept for rollback.
-import FilesPage from './FilesPage.vue';
-import DocumentPage from './DocumentPage.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
-import HistoryTab from './HistoryTab.vue';
-import LabsPage from './LabsPage.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
-import DecidePage from './DecidePage.vue';
-import RoutinesHome from './RoutinesHome.vue';
-import Conversations from './conversations/Conversations.vue';
-import VaultPage from './VaultPage.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
+import { lazyScreen } from './agent/lazyScreen';
 
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
@@ -424,15 +416,27 @@ import { useTheme } from '@pkg/composables/useTheme';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-// Heavy, rarely-open tab bodies load on first use instead of with the main
-// window: Monaco (file editor), xterm (terminal) and Vue Flow (routines
-// canvas). Each is only rendered inside its own v-if branch below.
-const AgentRoutines = defineAsyncComponent(() => import('./AgentRoutines.vue'));
-const FileEditorTab = defineAsyncComponent(() => import('./FileEditorTab.vue'));
-const SupportSessionTab = defineAsyncComponent(() => import('./SupportSessionTab.vue'));
-const TerminalTab = defineAsyncComponent(() => import('./TerminalTab.vue'));
-const PreferencesPage = defineAsyncComponent(() => import('./Preferences.vue'));
-const DockerPage = defineAsyncComponent(() => import('./Docker.vue'));
+// Tab bodies load on first use instead of with the agent window: each screen
+// is only rendered inside its own v-if branch below, so its code (and heavy
+// deps such as Monaco, xterm and Vue Flow) stays out of the first-paint bundle.
+// lazyScreen() adds a delayed loading pane and a Retry error pane.
+const AgentCalendar = lazyScreen(() => import('./AgentCalendar.vue'), 'AgentCalendar');
+const AgentIntegrationDetail = lazyScreen(() => import('./AgentIntegrationDetail.vue'), 'AgentIntegrationDetail');
+const AgentIntegrations = lazyScreen(() => import('./AgentIntegrations.vue'), 'AgentIntegrations');
+const FilesPage = lazyScreen(() => import('./FilesPage.vue'), 'FilesPage');
+const DocumentPage = lazyScreen(() => import('./DocumentPage.vue'), 'DocumentPage');
+const HistoryTab = lazyScreen(() => import('./HistoryTab.vue'), 'HistoryTab');
+const LabsPage = lazyScreen(() => import('./LabsPage.vue'), 'LabsPage');
+const DecidePage = lazyScreen(() => import('./DecidePage.vue'), 'DecidePage');
+const RoutinesHome = lazyScreen(() => import('./RoutinesHome.vue'), 'RoutinesHome');
+const Conversations = lazyScreen(() => import('./conversations/Conversations.vue'), 'Conversations');
+const VaultPage = lazyScreen(() => import('./VaultPage.vue'), 'VaultPage');
+const AgentRoutines = lazyScreen(() => import('./AgentRoutines.vue'), 'AgentRoutines');
+const FileEditorTab = lazyScreen(() => import('./FileEditorTab.vue'), 'FileEditorTab');
+const SupportSessionTab = lazyScreen(() => import('./SupportSessionTab.vue'), 'SupportSessionTab');
+const TerminalTab = lazyScreen(() => import('./TerminalTab.vue'), 'TerminalTab');
+const PreferencesPage = lazyScreen(() => import('./Preferences.vue'), 'PreferencesPage');
+const DockerPage = lazyScreen(() => import('./Docker.vue'), 'DockerPage');
 
 const MODE_TITLES: Record<BrowserTabMode, string> = {
   welcome:       'New Tab',
