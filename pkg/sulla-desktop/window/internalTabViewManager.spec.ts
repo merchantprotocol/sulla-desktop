@@ -61,6 +61,19 @@ describe('InternalTabViewManager', () => {
     expect(instance.tabs.has('one')).toBe(false);
   });
 
+  it('destroys every internal tab host during final application shutdown', () => {
+    // risk: lingering tab-host renderers can keep the process alive after quit
+    const owner = ownerWindow(9);
+    const instance = manager() as any;
+    instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 10, height: 10 });
+    instance.activate(owner, 'two', 'main', { x: 0, y: 0, width: 10, height: 10 });
+    const views = [...instance.tabs.values()].map((tab: any) => tab.view);
+    instance.destroyAll();
+    expect(instance.tabs.size).toBe(0);
+    for (const view of views) expect(view.webContents.close).toHaveBeenCalledWith({ waitForBeforeUnload: false });
+    expect(owner.contentView.removeChildView).toHaveBeenCalledTimes(2);
+  });
+
   it('moves the existing view between windows without reloading it', () => {
     // risk: unsaved editor text and running tab work must survive tear-off
     const source = ownerWindow(3);

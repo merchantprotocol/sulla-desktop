@@ -1298,7 +1298,8 @@ Electron.app.on('before-quit', async(event) => {
     })();
   }, SHUTDOWN_DEADLINE_MS);
 
-  forceExitTimer.unref(); // don't let this timer keep the process alive on its own
+  // Keep this referenced: otherwise the safety deadline cannot rescue a process
+  // whose remaining handles are all owned by Chromium/native teardown.
 
   // ── Helper: wrap a promise with a timeout ──
   const withTimeout = <T>(label: string, ms: number, promise: Promise<T>): Promise<T | void> => {
@@ -1452,24 +1453,58 @@ Electron.app.on('before-quit', async(event) => {
     if (process.env['APPIMAGE']) {
       await integrationManager.removeSymlinksOnly();
     }
+    const exitStartedAt = Date.now();
     if (isRestartRequested()) {
       completeRestart();
+      console.log(`[Shutdown] phase=restart-handoff ms=${ Date.now() - exitStartedAt } result=started`);
     } else {
-      Electron.app.quit();
+      // Do not use app.quit() here: it performs another cancellable before-quit
+      // pass and waits for renderer/webContents teardown. All data-safe phases
+      // have completed, so release Chromium owners and bypass that wait.
+      // app.exit() skips will-quit and Chromium's storage flush, so do both
+      // first (bounded): will-quit stops the Files provider, the stranded
+      // scheduler and sleep prevention; localStorage holds window/tab layout.
+      const willQuitStartedAt = Date.now();
+      try {
+        await withTimeout('will-quit handlers', 3_000, (async() => {
+          const willQuitEvent = { preventDefault: () => undefined, defaultPrevented: false } as unknown as Electron.Event;
+          Electron.app.emit('will-quit', willQuitEvent);
+        })());
+        console.log(`[Shutdown] phase=will-quit.emit ms=${ Date.now() - willQuitStartedAt } result=ok`);
+      } catch (error) {
+        console.warn('[Shutdown] will-quit handlers failed:', error);
+      }
+      const flushStartedAt = Date.now();
+      await withTimeout('storage flush', 3_000, Promise.allSettled([
+        Promise.resolve(Electron.session.defaultSession.flushStorageData()),
+        Electron.session.defaultSession.cookies.flushStore(),
+        Electron.session.fromPartition('persist:sulla-browser').cookies.flushStore(),
+      ]));
+      console.log(`[Shutdown] phase=storage.flush ms=${ Date.now() - flushStartedAt } result=ok`);
+      const closeStartedAt = Date.now();
+      try {
+        const { InternalTabViewManager } = await import('@pkg/window/internalTabViewManager');
+        InternalTabViewManager.getInstance().destroyAll();
+        console.log(`[Shutdown] phase=internal-tab-views.destroyAll ms=${ Date.now() - closeStartedAt } result=ok`);
+      } catch (error) {
+        console.warn('[Shutdown] Internal tab view teardown failed:', error);
+        console.log(`[Shutdown] phase=internal-tab-views.destroyAll ms=${ Date.now() - closeStartedAt } result=error`);
+      }
+      const contentStartedAt = Date.now();
+      for (const contents of Electron.webContents.getAllWebContents()) {
+        if (!contents.isDestroyed()) {
+          try { contents.close({ waitForBeforeUnload: false }); } catch { /* already gone */ }
+        }
+      }
+      console.log(`[Shutdown] phase=webContents.close ms=${ Date.now() - contentStartedAt } result=ok`);
+      const windowsStartedAt = Date.now();
+      for (const win of Electron.BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) { try { win.destroy(); } catch { /* already closing */ } }
+      }
+      console.log(`[Shutdown] phase=BrowserWindows.destroy ms=${ Date.now() - windowsStartedAt } result=ok`);
+      console.log(`[Shutdown] phase=app.exit ms=${ Date.now() - exitStartedAt } result=started`);
+      Electron.app.exit(0);
     }
-
-    // Replace the overall deadline with a post-quit backstop.
-    // If app.quit() doesn't terminate the process within 15s (lingering
-    // handles from postgres/redis/k8s), force-exit cleanly.
-    clearTimeout(forceExitTimer);
-    const postQuitTimer = setTimeout(() => {
-      sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 15s — force-exiting' });
-      console.warn('[Shutdown] Post-quit backstop: process still alive after 15s — force-exiting');
-      if (isRestartRequested()) completeRestart();
-      else process.exit(0);
-    }, 15_000);
-
-    postQuitTimer.unref();
   }
 });
 
