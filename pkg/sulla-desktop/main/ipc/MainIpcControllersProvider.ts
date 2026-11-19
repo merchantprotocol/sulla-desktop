@@ -93,7 +93,7 @@ export class MainIpcControllersProvider {
       broadcast:   broadcastToWindows,
     });
     this.integrationGrant = new IntegrationGrantIpcController(raw, new IntegrationGrantPackageStore());
-    this.supportSession = new SupportSessionIpcController(proxy, new SupportSessionCloudClient((method, path, init) => cloudRequest(method, path, init)));
+    this.supportSession = new SupportSessionIpcController(proxy, new SupportSessionCloudClient((method, path, init) => cloudRequest(method, path, init)), (message, details) => log.error(message, details));
     this.agentTabContract = new AgentTabContractIpcController(raw, { acknowledgeReady: acknowledgeAgentTabReady, snapshot: getAgentTabThreadSnapshot });
     this.tabs = new TabsIpcController(raw, tabRegistry as any, {
       allWebContents: () => webContents.getAllWebContents(),

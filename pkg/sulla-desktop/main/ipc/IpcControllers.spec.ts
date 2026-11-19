@@ -123,9 +123,11 @@ describe('IpcController delegation', () => {
   it('support session: cloud errors carry code and status; end posts the reason', async() => {
     const ipc = new FakeIpc();
     const cloudRequest = vi.fn(async() => ({ ok: false, status: 403, json: async() => ({ error: 'forbidden' }) }) as any);
-    new SupportSessionIpcController(ipc, new SupportSessionCloudClient(cloudRequest)).register();
+    const supportLog = vi.fn();
+    new SupportSessionIpcController(ipc, new SupportSessionCloudClient(cloudRequest), supportLog).register();
     await expect(ipc.invoke('support-session:end', {}, 'a b')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
     expect(cloudRequest).toHaveBeenCalledWith('POST', '/super-admin/support/sessions/a%20b/end', expect.objectContaining({ body: JSON.stringify({ reason: 'resolved' }) }));
+    expect(supportLog).toHaveBeenCalledWith('[support-session] request failed', { channel: 'support-session:end', code: 'forbidden', status: 403 });
   });
 
   it('conversation messages: store failures return success:false with safe defaults', async() => {
