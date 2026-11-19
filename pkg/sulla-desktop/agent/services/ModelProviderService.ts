@@ -249,6 +249,19 @@ class ModelProviderService {
     // Vault-metadata lookups run in parallel so opening the window is fast.
     const results = await Promise.allSettled(candidates.map(async(integration) => {
       const selected = await this.selectedAccount(integration.id);
+      // Custom discovery has no provider-owned default endpoint. A saved key
+      // without a base URL cannot be called, so do not advertise it as connected.
+      if (integration.id === 'custom' && selected.account?.connected) {
+        try {
+          const values = await getIntegrationService().getFormValues('custom', selected.account.accountId);
+          const endpointConfigured = values.some(value => value.property === 'base_url' && typeof value.value === 'string' && value.value.trim().length > 0);
+          if (!endpointConfigured) {
+            return { id: integration.id, name: integration.name, connected: false, accessMethod: 'unknown', accessLabel: 'No endpoint configured', selectable: false } as ProviderInfo;
+          }
+        } catch {
+          return { id: integration.id, name: integration.name, connected: false, accessMethod: 'unknown', accessLabel: 'Connection unavailable', selectable: false } as ProviderInfo;
+        }
+      }
       let cliInstalled = false;
       // OpenCode and Cursor own credentials in their CLIs. A runnable CLI is
       // enough to show the provider; spawn-time errors give the exact login step.
