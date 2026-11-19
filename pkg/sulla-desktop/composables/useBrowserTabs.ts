@@ -82,6 +82,11 @@ const windowKey = new URLSearchParams(window.location.search).get('windowKey') |
 let adoptPending = new URLSearchParams(window.location.search).get('adoptPending') === '1';
 let adoptFallback: ReturnType<typeof setTimeout> | null = null;
 let closingAfterTransfer = false;
+const pendingTransferredTabIds = new Set<string>();
+
+export function isBrowserTabTransferPending(tabId: string): boolean {
+  return pendingTransferredTabIds.has(tabId);
+}
 
 export function shouldEnsureOneTab(): boolean {
   return !closingAfterTransfer;
@@ -969,6 +974,7 @@ export async function releaseTransferredTab(
 ): Promise<void> {
   const index = store.tabs.findIndex(tab => tab.id === tabId);
   if (index < 0) return;
+  window.dispatchEvent(new CustomEvent('sulla:browser-tab-transfer-release', { detail: { tabId } }));
   if (getPersistedActiveTabId() === tabId) {
     const neighbour = store.tabs[index + 1] ?? store.tabs[index - 1];
     if (neighbour) window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: neighbour.id } }));
@@ -987,9 +993,12 @@ ipcRenderer.on('tabs:release', (_event: unknown, transferId: string, tabId: stri
 });
 ipcRenderer.on('tabs:adopt', (_event: unknown, transferId: string, descriptor: Record<string, unknown>, transient?: Record<string, unknown>, screenX?: number) => {
   const tabId = String(descriptor.id || '');
+  pendingTransferredTabIds.add(tabId);
   applyTransferAdoption(value => adoptTransferredTab(transferTabs, value, transient, screenX), descriptor, () => ipcRenderer.send('tabs:transfer-adopted', transferId, tabId));
 });
 ipcRenderer.on('tabs:activate', (_event: unknown, _transferId: string, tabId: string) => {
+  pendingTransferredTabIds.delete(tabId);
+  window.dispatchEvent(new CustomEvent('sulla:browser-tab-transfer-activated', { detail: { tabId } }));
   if (transferTabs.tabs.some(tab => tab.id === tabId)) {
     persistActiveTabId(tabId);
     window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId } }));

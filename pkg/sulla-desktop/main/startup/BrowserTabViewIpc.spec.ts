@@ -16,14 +16,14 @@ vi.mock('electron', () => {
 import { focusTabForOwner } from './BrowserTabViewIpc';
 
 describe('browser-tab focus ownership', () => {
-  it('ignores an unowned tab id but rejects another window’s tab', () => {
+  it('ignores unowned and stale cross-window focus updates', () => {
     // risk: startup IPC noise and cross-window focus/ownership isolation
     const caller = {} as Electron.BrowserWindow;
     const other = {} as Electron.BrowserWindow;
     const setFocused = vi.fn();
     expect(() => focusTabForOwner(setFocused, 'not-created-yet', caller, null)).not.toThrow();
     expect(setFocused).not.toHaveBeenCalled();
-    expect(() => focusTabForOwner(setFocused, 'foreign-tab', caller, other)).toThrow('not owned by this window');
+    expect(() => focusTabForOwner(setFocused, 'foreign-tab', caller, other)).not.toThrow();
     expect(setFocused).not.toHaveBeenCalled();
   });
 });

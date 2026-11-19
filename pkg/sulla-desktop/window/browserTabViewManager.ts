@@ -540,16 +540,20 @@ export class BrowserTabViewManager {
    * bounds get pushed to the native view; unfocused tabs have no
    * on-screen presence to position.
    */
-  setBounds(tabId: string, bounds: Electron.Rectangle, ownerWindow?: Electron.BrowserWindow): void {
+  setBounds(tabId: string, bounds: Electron.Rectangle, ownerWindow?: Electron.BrowserWindow): boolean {
     const view = this.views.get(tabId);
-    if (!view) return;
+    if (!view) return false;
     const owner = this.ownerFor(tabId);
-    if (ownerWindow && owner !== ownerWindow) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
+    if (ownerWindow && owner !== ownerWindow) {
+      console.debug(`[BrowserTabView] ignored stale bounds from non-owner window=${ ownerWindow.id } tabId=${ tabId }`);
+      return false;
+    }
     this.latestBounds.set(tabId, bounds);
     this.awaitingOwnerBounds.delete(tabId);
     if (owner && this.focusedFor(owner) === tabId) {
       this.reconcileVisibility(owner);
     }
+    return true;
   }
 
   /**

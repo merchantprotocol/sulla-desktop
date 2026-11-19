@@ -62,6 +62,22 @@ describe('BrowserTabViewManager window ownership', () => {
     expect(webContents.reload).not.toHaveBeenCalled();
   });
 
+  it('ignores stale bounds from the former window without changing the view placement', () => {
+    // risk: cross-window tab control; late IPC must never reposition another window's view
+    const oldOwner = ownerWindow(31);
+    const newOwner = ownerWindow(32);
+    const view = { webContents: { id: 93 }, setBounds: vi.fn() };
+    const manager = managerWith('transferred-tab', view, newOwner);
+    manager.reconcileVisibility = vi.fn();
+    const oldBounds = { x: 12, y: 24, width: 640, height: 480 };
+    const staleBounds = { x: 90, y: 110, width: 900, height: 700 };
+
+    expect(manager.setBounds('transferred-tab', staleBounds, oldOwner)).toBe(false);
+    expect(manager.latestBounds.get('transferred-tab')).toEqual(oldBounds);
+    expect(manager.reconcileVisibility).not.toHaveBeenCalled();
+    expect(view.setBounds).not.toHaveBeenCalled();
+  });
+
   it('keeps focus independent per owner and refuses another window focusing a tab', () => {
     // risk: cross-window tab control and focus isolation
     const first = ownerWindow(11);
