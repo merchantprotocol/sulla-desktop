@@ -13,7 +13,6 @@
       v-if="!isTabHost"
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
-      :can-toggle-mode="canToggleMode"
     />
 
     <div v-if="browserActionError" role="alert" class="mx-4 rounded border border-red-500 p-2 text-sm">
@@ -480,12 +479,8 @@ const props = defineProps<{
   isVisible: boolean;
 }>();
 
-const { isDark, toggleTheme, currentScheme, availableThemes } = useTheme();
+const { isDark, toggleTheme } = useTheme();
 
-const canToggleMode = computed(() => {
-  const schemeThemes = availableThemes.filter(t => t.scheme === currentScheme.value);
-  return schemeThemes.some(t => t.mode === 'light') && schemeThemes.some(t => t.mode === 'dark');
-});
 const { updateTab, getTab, createTab, promoteTab } = useBrowserTabs();
 const { findByUrl, addBookmark } = useBookmarks();
 const { showOverlay } = useStartupProgress();
