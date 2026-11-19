@@ -1946,7 +1946,7 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 
 // Renderer settings use their own model instance, but must not bootstrap until
 // the authoritative main-process lifecycle has observed both Postgres and Redis.
-const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
+const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'settings-ready-from-fallback', 'extensions-ready-from-local', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
 const trustedStartupSender = (event: Electron.IpcMainInvokeEvent, windowKey: string | undefined): boolean => {
   if (!windowKey || !/^[a-zA-Z0-9_:-]{1,100}$/.test(windowKey)) return false;
   if (!agentWindowFromSender(event.sender)) return false;

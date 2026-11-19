@@ -959,6 +959,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
     });
 
+    // PostgreSQL and Redis gate every database-backed renderer and service.
+    // Ask Compose to start them as soon as its generated file exists, while
+    // image import and threat-proxy preparation continue below. The full
+    // reconcile later still owns health checks and all optional services.
+    const databaseStart = this.startDatabaseServices(generation);
+
     // Every service image (threat proxy included) must be in the guest before
     // the agent network/egress setup and compose; agents depend on the proxy.
     await this.progressTracker.action('Loading bundled container images', 40, async() => {
@@ -978,6 +984,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await this.progressTracker.action('Deploying Sulla services with Docker Compose', 50, async() => {
       this.progressTracker.numeric('Deploying Sulla services with Docker Compose', 20, 100);
       t = Date.now();
+      await databaseStart;
       await this.applySullaCompose(generation);
       console.log(`[startup-perf] applySullaCompose: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Sulla services deployed', 35, 100);
@@ -992,6 +999,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     this.progressTracker.numeric('Sulla deployment completed', 100, 100);
     console.log(`[startup-perf] sullaStepDockerEnvironment total: ${ Date.now() - dockerEnvTotal }ms`);
+  }
+
+  private async startDatabaseServices(generation: number): Promise<void> {
+    this.assertManagedServicesGeneration(generation);
+    await this.execCommand({ root: true }, 'docker', 'compose', '-f', '/tmp/sulla-docker-compose.yml', '-p', 'sulla', 'up', '-d', 'postgres', 'redis');
+    this.assertManagedServicesGeneration(generation);
   }
 
 
