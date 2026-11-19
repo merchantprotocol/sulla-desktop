@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 import { ModelRouter, type EditableState } from '../../../languagemodels/modelRouter';
 
-vi.mock('../../../languagemodels/index', () => ({ PROVIDER_FACTORIES: { codex: {} } }));
+vi.mock('../../../languagemodels/index', () => ({ PROVIDER_FACTORIES: { codex: {}, openai: {}, alibaba: {} } }));
 
 const saved: EditableState = {
   agentsList:       [{ provider: 'codex', class: 'standard', enabled: true }],
@@ -62,6 +62,18 @@ describe('model catalog refresh failure preservation', () => {
 
     await expect(router.refreshCatalog()).resolves.toMatchObject({
       checks: [{ provider: 'openai', status: 'unavailable', reason: 'API key rejected (401)' }],
+    });
+  });
+  it('reports Codex as unavailable when live discovery failed and only the Auto fallback came back', async() => {
+    const codexCatalog = await import('../../../languagemodels/codexModelCatalog');
+    vi.spyOn(codexCatalog, 'getLastCodexModelCatalogFailure').mockReturnValue('Codex model request timed out');
+    const router = new ModelRouter(() => ({
+      getAvailableProviders: () => Promise.resolve([{ id: 'codex', connected: true }]),
+      getModelsForProvider:  () => Promise.resolve([{ id: 'codex', name: 'Auto (CLI default)' }]),
+    }));
+
+    await expect(router.refreshCatalog()).resolves.toMatchObject({
+      checks: [{ provider: 'codex', status: 'unavailable', reason: 'Codex model request timed out' }],
     });
   });
 });

@@ -310,12 +310,12 @@ class ModelProviderService {
   async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean; forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
     const integration = integrations[providerId];
     if (!integration) {
-      return this.getCliProviderModels(providerId);
+      return this.getCliProviderModels(providerId, queryOptions);
     }
 
     const modelProp = integration.properties?.find(p => p.key === 'model');
     if (!modelProp?.selectBoxId) {
-      return this.getCliProviderModels(providerId);
+      return this.getCliProviderModels(providerId, queryOptions);
     }
 
     try {
@@ -350,7 +350,7 @@ class ModelProviderService {
     }
   }
 
-  private async getCliProviderModels(providerId: string): Promise<ProviderModelInfo[]> {
+  private async getCliProviderModels(providerId: string, queryOptions: { forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
     if (providerId === 'claude-code') {
       // No hardcoded claude-code model list — read the live catalog from
       // Anthropic's /v1/models using the signed-in account's credentials.

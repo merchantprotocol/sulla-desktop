@@ -512,8 +512,8 @@ export class ModelRouter {
       const reported = p.models.filter(model => !model.unverified && !['claude-code', 'codex', 'cursor', 'opencode'].includes(model.id));
       // Codex's Auto sentinel is a valid selectable CLI route; it is intentionally
       // excluded from concrete catalog diffs, but must not turn a successful refresh
-      // into an unavailable-provider error.
-      const autoAvailable = id === 'codex' && p.models.some(model => model.id === 'codex');
+      // into an unavailable-provider error. Auto-only after a failed live lookup is still a failure.
+      const autoAvailable = id === 'codex' && !p.discoveryReason && p.models.some(model => model.id === 'codex');
       const reason = p.discoveryReason || (reported.length || autoAvailable ? undefined : 'provider returned no selectable models');
       checks.push({ provider: id, status: reported.length || autoAvailable ? 'refreshed' : 'unavailable', ...(reason ? { reason } : {}) });
       if (reported.length) lists[id] = p.models.map(m => m.id);
