@@ -13,9 +13,9 @@ describe('FilesErrorHandlers Cloud share recovery metadata', () => {
     const response = { status: vi.fn().mockReturnThis(), json: vi.fn() };
     new FilesErrorHandlers({ isConnectionLoss: () => false } as any).register(app);
 
-    middleware.at(-1)!({ status: 502, code: 'SULLA_CLOUD_CONTENT_NOT_FOUND', message: 'Sulla Cloud returned 404' }, { path: '/v1/links' }, response, vi.fn());
+    middleware.at(-1)!({ status: 502, code: 'SULLA_CLOUD_CONTENT_NOT_FOUND', message: 'Sulla Cloud returned 404 for PUT /shares/:id/content' }, { path: '/v1/links' }, response, vi.fn());
 
     expect(response.status).toHaveBeenCalledWith(502);
-    expect(response.json).toHaveBeenCalledWith({ error: 'Sulla Cloud returned 404', code: 'SULLA_CLOUD_CONTENT_NOT_FOUND' });
+    expect(response.json).toHaveBeenCalledWith({ error: 'Sulla Cloud returned 404 for PUT /shares/:id/content', code: 'SULLA_CLOUD_CONTENT_NOT_FOUND' });
   });
 });

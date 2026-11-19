@@ -31,7 +31,8 @@ export class ShareCloudGateway {
     const result = await this.broker.execute(path, method, body, new Headers(init.headers).get('Content-Type') ?? undefined);
     if (![200, 201, 202, 204, ...acceptedStatuses].includes(result.status)) {
       const missingCloudCopy = result.status === 404 && method === 'PUT' && /^\/shares\/[A-Za-z0-9._~-]{1,200}\/content$/.test(path);
-      throw Object.assign(new Error(`Sulla Cloud returned ${ result.status }`), {
+      const safePath = path.replace(/^\/shares\/[^/]+/, '/shares/:id');
+      throw Object.assign(new Error(`Sulla Cloud returned ${ result.status } for ${ method } ${ safePath }`), {
         status: 502,
         ...(missingCloudCopy ? { code: 'SULLA_CLOUD_CONTENT_NOT_FOUND' } : {}),
       });
