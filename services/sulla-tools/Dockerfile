@@ -15,9 +15,10 @@ COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
-# A dependency-free module the Files read tools import (FilesListingPager ships with agent/ above). Copy exact files only;
+# Dependency-free modules the Files read tools import (FilesListingPager ships with agent/ above). Copy exact files only;
 # the rest of shared/ and main/ stay out of the container.
 COPY pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts ./pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts
+COPY pkg/sulla-desktop/shared/filesReferences.ts ./pkg/sulla-desktop/shared/filesReferences.ts
 # Preserve the root ESM package boundary for TypeScript imported from pkg/.
 # Without it, tsx loads those modules as CommonJS and named imports fail.
 COPY package.json ./package.json
