@@ -71,10 +71,6 @@ const TabHost = {
   render: () => h('div', { class: 'internal-tab-host', style: { position: 'fixed', inset: '0' } }, [h(BrowserTab, { tabId: hostedTabId, isVisible: true })]),
 };
 const app = createApp(tabHost ? TabHost : AgentRouter);
-if (!tabHost) {
-  ipcRenderer.once('internal-tab-view:chrome-ready' as any, () => window.dispatchEvent(new Event('sulla:chrome-ready')));
-}
-
 // Live Agents (Studio) and the chat sub-agent drawer inject this client; this
 // window hosts both, so it must provide it (entry/index.ts does the same).
 const agentStateClient = new AgentStateClient(ipcRenderer as any, window as any);
@@ -92,8 +88,5 @@ requestAnimationFrame(() => requestAnimationFrame(() => {
   console.info(`[WindowBoot] first content frame after ${ Date.now() - windowBootStartedAt }ms`);
   if (!tabHost) {
     window.dispatchEvent(new Event('sulla:chrome-ready'));
-    void ipcRenderer.invoke('internal-tab-view:chrome-ready' as any).catch(error => {
-      console.warn('[WindowBoot] unable to signal chrome readiness', error);
-    });
   }
 }));

@@ -91,9 +91,11 @@ describe('InternalTabViewManager', () => {
     const instance = manager() as any;
     instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
     expect(owner.contentView.addChildView).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(5 * 60_000 - 1);
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     expect(owner.contentView.addChildView).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('readiness timed out'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('startup readiness timed out after 5 minutes'));
     warn.mockRestore();
     vi.useRealTimers();
   });

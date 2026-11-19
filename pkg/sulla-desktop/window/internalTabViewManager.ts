@@ -75,9 +75,9 @@ export class InternalTabViewManager {
     const timer = setTimeout(() => {
       this.chromeReadyTimers.delete(owner.id);
       if (owner.isDestroyed() || this.chromeReadyOwners.has(owner.id)) return;
-      console.warn(`[InternalTabViewManager] shell chrome readiness timed out for window ${ owner.id }; revealing tabs`);
+      console.warn(`[InternalTabViewManager] shell startup readiness timed out after 5 minutes for window ${ owner.id }; revealing tabs`);
       this.markChromeReady(owner);
-    }, 30_000);
+    }, 5 * 60_000);
     (timer as any).unref?.();
     this.chromeReadyTimers.set(owner.id, timer);
   }
