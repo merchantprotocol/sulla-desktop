@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { ConversationServersData, type ConversationChannel, type ConversationServer, type ConversationServerMember, type NotificationLevel } from '../ConversationServersData';
 import { DirectoryPersonNormalizer } from '../DirectoryPersonNormalizer';
+import { ConversationServersLiveUpdateHandler } from '../ConversationServersLiveUpdateHandler';
 
 const props = defineProps<{ orgId: string; currentUserId: string; people: { userId: string; displayName: string }[] }>();
 defineEmits<{ (event: 'close'): void }>();
@@ -103,7 +104,13 @@ async function send(): Promise<void> {
 }
 function insertMention(userId: string): void { draft.value += `${draft.value && !draft.value.endsWith(' ') ? ' ' : ''}${domain.mentionToken(userId)} `; }
 function unreadLabel(item: ConversationChannel): string { const data = unreadByChannel.value[item.id]; if (!data || item.notificationLevel === 'nothing') return ''; const count = item.notificationLevel === 'mentions' ? (data.mentionCount ?? data.mentions ?? 0) : (data.unreadCount ?? data.unread ?? 0); return domain.badge(item.notificationLevel, data.unreadCount ?? data.unread ?? 0, data.mentionCount ?? data.mentions ?? 0); }
-function onChannelChanged(_event: Electron.IpcRendererEvent, update: { channelId: string }): void { if (update?.channelId === selectedChannel.value) { void loadMessages().catch(cause => { error.value = cause instanceof Error ? cause.message : 'Could not refresh messages'; }); } }
+const liveUpdateHandler = new ConversationServersLiveUpdateHandler({
+  selectedChannelId: () => selectedChannel.value,
+  hasChannel: channelId => channels.value.some(item => item.id === channelId),
+  refreshMessages: () => loadMessages(),
+  refreshUnread: () => loadUnread(),
+});
+function onChannelChanged(_event: Electron.IpcRendererEvent, update: { channelId: string }): void { void liveUpdateHandler.refresh(update?.channelId).catch(cause => { error.value = cause instanceof Error ? cause.message : 'Could not refresh conversations'; }); }
 watch(() => [selectedServer.value, selectedChannel.value], () => { messages.value = []; draft.value = ''; if (channel.value) void loadMessages().catch(cause => { error.value = cause instanceof Error ? cause.message : 'Could not load messages'; }); });
 function serverDefault(): NotificationLevel { return server.value?.notificationDefault ?? 'all'; }
 function selectServer(serverId: string): void {
