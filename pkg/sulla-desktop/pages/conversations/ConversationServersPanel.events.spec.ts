@@ -41,6 +41,32 @@ describe('ConversationServersPanel composer events', () => {
     invoke.mockImplementation((channel: string, arg?: unknown) => Promise.resolve(invokeResult(channel, arg)));
   });
 
+  it('keeps DMs as the starting view and groups public servers before organization servers', async () => {
+    // risk: navigation; an organization server must not appear in the public group or replace DMs on entry
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] }, slots: { default: '<div data-test="dm-view">DM inbox</div>' } });
+    await flushPromises();
+    expect(wrapper.find('[data-test="dm-view"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="Direct messages and People"]').classes()).toContain('selected');
+    expect(wrapper.find('.cs-group').text()).toBe('Public');
+    expect(wrapper.findAll('.cs-server-icon.cs-public').map(button => button.attributes('aria-label'))).toEqual(['Public server']);
+    expect(wrapper.findAll('.cs-server-icon.cs-org').map(button => button.attributes('aria-label'))).toEqual(['Organization server']);
+    expect(wrapper.find('[aria-label="Create server"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('opens the selected server channel view and pins Back to the bottom of the rail', async () => {
+    // risk: navigation; server selection must load that server's channels without losing the rail exit
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    await wrapper.get('[aria-label="Organization server"]').trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('[aria-label="Channels"]').exists()).toBe(true));
+    expect(wrapper.get('[aria-label="team, notifications All messages"]').exists()).toBe(true);
+    expect(wrapper.get('.cs-rail').element.lastElementChild?.getAttribute('aria-label')).toBe('Back');
+    await wrapper.get('[aria-label="Back"]').trigger('click');
+    expect(wrapper.emitted('exit')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it('sends Enter to the composer source channel even after selection changes', async () => {
     // risk: privacy; an async channel switch must not redirect a message to a different destination
     let finishSend!: () => void;
@@ -49,6 +75,7 @@ describe('ConversationServersPanel composer events', () => {
       : Promise.resolve(invokeResult(channel, arg)));
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
     await flushPromises();
+    await selectServer(wrapper, 'Public');
     const textarea = wrapper.get('textarea');
     await textarea.setValue('private message');
     await textarea.trigger('keydown', { key: 'Enter' });
@@ -69,6 +96,7 @@ describe('ConversationServersPanel composer events', () => {
     // risk: draft integrity; late input from a public composer must not overwrite an organization draft
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
     await flushPromises();
+    await selectServer(wrapper, 'Public');
     const oldTextarea = wrapper.get('textarea').element as HTMLTextAreaElement;
     await selectServer(wrapper, 'Organization');
     const currentTextarea = wrapper.get('textarea');

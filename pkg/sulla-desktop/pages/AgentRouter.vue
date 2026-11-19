@@ -6,7 +6,7 @@
 -->
 <template>
   <div class="agent-router-root">
-    <div class="agent-router-body" :class="{ 'has-titlebar': hasTitlebar }">
+    <div class="agent-router-body" :class="{ 'has-titlebar': hasTitlebar, 'conversations-fullscreen': activeTabMode === 'conversations' }">
       <!--
         Global ModeRail — lives at the window level so it stays visible
         across every tab and every mode (chat, browser, secretary,
@@ -14,6 +14,7 @@
         that the active BrowserTab listens for.
       -->
       <ModeRail
+        v-if="conversationShellPolicy.showsDesktopRail(activeTabMode)"
         class="agent-router-rail"
         :active="activeTabMode"
         :active-sub-tab="activeSubTab"
@@ -188,6 +189,7 @@ import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { ConversationShellPolicy } from './conversations/ConversationShellPolicy';
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
@@ -392,6 +394,7 @@ const activeTabMode = computed(() => {
 
   return active?.mode === 'secretary' ? 'conversations' : active?.mode;
 });
+const conversationShellPolicy = new ConversationShellPolicy();
 
 // Which ModeRail icon a Workflows / Use Cases tab lights up, from the
 // Studio sidebar page it is showing.
@@ -504,6 +507,11 @@ function onBookmarksShortcut(event: KeyboardEvent) {
 /** Lets banners elsewhere in the window open a mode tab, e.g. the Password Vault to unlock it. */
 function onOpenMode(event: CustomEvent<{ mode?: string }>) {
   if (event.detail?.mode === 'vault') onModeRailSelect('vault');
+}
+
+function onConversationsExit(): void {
+  const back = (router.options.history.state as { back?: string | null }).back;
+  conversationShellPolicy.exit(typeof back === 'string' && !!back, () => router.back(), () => onModeRailSelect('chat'));
 }
 
 function onModeRailSelect(mode: string, subTab?: string) {
@@ -915,6 +923,7 @@ onMounted(async() => {
   // Register sub-tab change listener
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.addEventListener('sulla:open-mode', onOpenMode as EventListener);
+  window.addEventListener('sulla:conversations-exit', onConversationsExit);
   window.addEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.addEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.addEventListener('sulla:chat-files-state-changed', onChatFilesStateChanged as EventListener);
@@ -980,6 +989,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.removeEventListener('sulla:open-mode', onOpenMode as EventListener);
+  window.removeEventListener('sulla:conversations-exit', onConversationsExit);
   window.removeEventListener('sulla:navigate-agent-parent', onNavigateAgentParent as EventListener);
   window.removeEventListener('sulla:bookmarks-reveal', onRevealBookmark as EventListener);
   window.removeEventListener('sulla:chat-files-state-changed', onChatFilesStateChanged as EventListener);
@@ -1019,6 +1029,9 @@ onUnmounted(() => {
   min-height: 0;
   overflow: hidden;
 }
+
+.agent-router-body.conversations-fullscreen { --rail-width: 0px; }
+.agent-router-body.conversations-fullscreen.has-titlebar::before { display: none; }
 
 .agent-router-body:has(.agent-router-rail.expanded) {
   --rail-width: 212px;

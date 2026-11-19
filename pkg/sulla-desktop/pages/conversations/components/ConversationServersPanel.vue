@@ -8,7 +8,7 @@ import { ConversationServersLiveUpdateHandler } from '../ConversationServersLive
 import { ConversationChannelComposer, type ConversationChannelTarget } from '../ConversationChannelComposer';
 
 const props = defineProps<{ orgId: string; currentUserId: string; people: { userId: string; displayName: string }[] }>();
-defineEmits<{ (event: 'close'): void }>();
+defineEmits<{ (event: 'exit'): void }>();
 const domain = new ConversationServersData();
 const composer = new ConversationChannelComposer();
 const composerRevision = ref(0);
@@ -20,6 +20,8 @@ const loadingOlder = ref(false), sending = ref(false);
 const orgMembers = ref<{ userId: string; role?: string; displayName?: string }[]>([]);
 const selectedServer = ref(''), selectedChannel = ref(''), error = ref(''), loading = ref(false), openMenu = ref('');
 const server = computed(() => servers.value.find(item => item.id === selectedServer.value));
+const publicServers = computed(() => servers.value.filter(item => item.visibility === 'public'));
+const organizationServers = computed(() => servers.value.filter(item => item.visibility === 'organization'));
 const channel = computed(() => channels.value.find(item => item.id === selectedChannel.value));
 const canManageServer = computed(() => !!props.currentUserId && (server.value?.ownerUserId === props.currentUserId || members.value.some(member => member.userId === props.currentUserId && ['owner', 'admin'].includes(member.role))));
 const visibleMembers = computed(() => channel.value?.private
@@ -41,7 +43,7 @@ async function load(): Promise<void> {
     const all = [...publicServers, ...orgServers.flat()];
     if (loadId !== latestLoad) return;
     servers.value = all.filter((item, index) => all.findIndex(other => other.id === item.id) === index);
-    if (!servers.value.some(item => item.id === selectedServer.value)) selectedServer.value = servers.value[0]?.id ?? '';
+    if (!servers.value.some(item => item.id === selectedServer.value)) selectedServer.value = '';
     if (!selectedServer.value) { channels.value = []; members.value = []; selectedChannel.value = ''; return; }
     const [nextChannels, nextMembers] = await Promise.all([
       ipcRenderer.invoke('conversation-servers:channels', selectedServer.value) as Promise<ConversationChannel[]>,
@@ -141,6 +143,10 @@ function selectServer(serverId: string): void {
   channels.value = []; members.value = []; memberNames.value = []; orgMembers.value = []; selectedChannel.value = '';
   void load();
 }
+function showDirectMessages(): void {
+  selectedServer.value = '';
+  channels.value = []; members.value = []; memberNames.value = []; orgMembers.value = []; selectedChannel.value = '';
+}
 async function setDefault(level: NotificationLevel): Promise<void> {
   if (!server.value) return;
   try { await ipcRenderer.invoke('conversation-servers:set-default', { serverId: server.value.id, level }); await load(); }
@@ -163,12 +169,20 @@ onBeforeUnmount(() => ipcRenderer.removeListener('conversation-servers:changed',
 </script>
 
 <template>
-  <section class="cs-shell" aria-label="Servers and channels">
+  <section class="cs-shell" :class="{ 'has-server': !!server }" aria-label="Conversations">
     <nav class="cs-rail" aria-label="Servers">
-      <button class="cs-server-icon cs-dm" title="Direct messages and People" aria-label="Direct messages and People" @click="$emit('close')">DM</button>
-      <button v-for="item in servers" :key="item.id" class="cs-server-icon" :class="{ selected: selectedServer === item.id }" :title="item.name" :aria-label="`${item.name} server`" @click="selectServer(item.id)">{{ item.name.slice(0, 2).toUpperCase() }}</button>
-      <span v-if="loading" class="cs-muted" aria-live="polite">…</span>
+      <button class="cs-server-icon cs-dm" :class="{ selected: !selectedServer }" title="Direct messages and People" aria-label="Direct messages and People" @click="showDirectMessages">DM</button>
+      <span class="cs-divider" />
+      <span class="cs-group">Public</span>
+      <button v-for="item in publicServers" :key="item.id" class="cs-server-icon cs-public" :class="{ selected: selectedServer === item.id }" :title="item.name" :aria-label="`${item.name} server`" @click="selectServer(item.id)">{{ item.name.slice(0, 2).toUpperCase() }}</button>
+      <span v-if="organizationServers.length" class="cs-divider" />
+      <span v-if="organizationServers.length" class="cs-group">Orgs</span>
+      <button v-for="item in organizationServers" :key="item.id" class="cs-server-icon cs-org" :class="{ selected: selectedServer === item.id }" :title="item.name" :aria-label="`${item.name} server`" @click="selectServer(item.id)">{{ item.name.slice(0, 2).toUpperCase() }}</button>
+      <span v-if="loading" class="cs-loading" aria-live="polite">…</span>
+      <button class="cs-exit" title="Back" aria-label="Back" @click="$emit('exit')"><span aria-hidden="true">↩</span><small>Exit</small></button>
     </nav>
+    <slot v-if="!server" />
+    <template v-else>
     <aside class="cs-channel-list" aria-label="Channels">
       <header><b>{{ server?.name ?? 'Servers' }}</b><small>{{ server?.visibility === 'organization' ? 'Organization server' : 'Public server' }}</small></header>
       <button v-if="server && canManageServer" class="cs-default" @click="openMenu = openMenu === 'default' ? '' : 'default'">Server default · {{ levels.find(level => level.id === server.notificationDefault)?.label ?? 'All messages' }}</button>
@@ -191,9 +205,17 @@ onBeforeUnmount(() => ipcRenderer.removeListener('conversation-servers:changed',
       </section>
       <aside class="cs-members"><b>Members · {{ visibleMembers.length }}</b><div v-for="member in visibleMembers" :key="member.userId">{{ displayName(member.userId) }} <small v-if="member.role">{{ member.role }}</small></div></aside>
     </main>
+    </template>
   </section>
 </template>
 
 <style scoped>
 .cs-shell{display:grid;grid-template-columns:62px 240px minmax(300px,1fr);position:absolute;inset:0;background:var(--bg,#17191d);color:var(--text,#eee);z-index:5;font:13px system-ui}.cs-rail{display:flex;flex-direction:column;align-items:center;gap:9px;padding:12px 8px;background:var(--surface-1,#202329);border-right:1px solid var(--border,#363a43)}.cs-server-icon{position:relative;width:40px;height:40px;border:0;border-radius:14px;background:var(--surface-2,#2b2f36);color:var(--text-muted,#bec3cb);font-weight:700;cursor:pointer}.cs-server-icon.selected{border-radius:12px;box-shadow:0 0 0 2px var(--surface-1,#202329),0 0 0 4px var(--accent,#5096b3)}.cs-server-icon.selected::before{content:"";position:absolute;left:-11px;width:3px;height:28px;border-radius:0 3px 3px 0;background:var(--accent,#5096b3)}.cs-dm{border-radius:50%;background:var(--surface-2,#2b2f36)}.cs-channel-list{position:relative;padding:14px 10px;background:var(--surface-1,#202329);border-right:1px solid var(--border,#363a43);overflow:auto}.cs-channel-list header,.cs-content>header{display:flex;flex-direction:column;padding:4px 8px 14px;border-bottom:1px solid var(--border,#363a43)}.cs-channel-list small,.cs-content header span{color:var(--text-muted,#a4a9b2);margin-top:4px}.cs-default,.cs-channel,.cs-menu button{width:100%;border:0;background:none;color:inherit;text-align:left;padding:9px 8px;border-radius:6px;cursor:pointer}.cs-default{color:var(--text-muted,#a4a9b2);font-size:11px}.cs-channel{display:flex;align-items:center;gap:8px;color:var(--text-muted,#a4a9b2);border-radius:6px}.cs-channel.active{background:var(--surface-2,#2b2f36);color:var(--text,#eee)}.cs-channel-select{display:flex;gap:8px;align-items:center;flex:1;padding:9px 8px;border:0;background:none;color:inherit;text-align:left;cursor:pointer}.cs-bell{color:inherit;border:0;background:none;cursor:pointer;padding:5px}.cs-bell svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;display:block}.cs-bell:disabled{opacity:.4;cursor:not-allowed}.cs-menu{padding:4px;background:var(--surface-2,#2b2f36);border:1px solid var(--border,#363a43);border-radius:7px}.cs-menu button:hover,.cs-channel:hover{background:var(--surface-3,#393e47)}.cs-content{position:relative;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) 220px}.cs-content>header{grid-column:1/-1;display:block;padding:16px 18px}.cs-content>header span{margin-left:12px}.cs-empty{padding:22px}.cs-timeline{padding:12px 18px 18px;overflow:auto;display:flex;flex-direction:column;gap:10px}.cs-message{padding:10px;border-bottom:1px solid var(--border,#363a43)}.cs-message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}.cs-message small{color:var(--text-dim,#888)}.cs-composer{margin-top:auto;padding:12px;border:1px solid var(--border,#363a43);border-radius:8px}.cs-composer textarea{width:100%;min-height:64px;resize:vertical;background:transparent;color:inherit;border:0;font:inherit}.cs-compose-tools{display:flex;justify-content:space-between}.cs-compose-tools select,.cs-compose-tools button,.cs-older{background:var(--surface-2,#2b2f36);color:inherit;border:1px solid var(--border,#363a43);border-radius:5px;padding:7px}.cs-badge{margin-left:auto;color:var(--accent,#5096b3)}.cs-empty p,.cs-muted{color:var(--text-muted,#a4a9b2)}.cs-members{padding:16px 12px;border-left:1px solid var(--border,#363a43);color:var(--text-muted,#a4a9b2)}.cs-members>b{display:block;color:var(--text,#eee);margin-bottom:12px}.cs-members div{padding:5px 0}.cs-members small{float:right}.cs-error{color:var(--danger,#f66)}@media(max-width:900px){.cs-shell{grid-template-columns:56px 200px minmax(220px,1fr)}.cs-content{grid-template-columns:minmax(0,1fr)}.cs-members{display:none}}
+.cs-shell{--cs-rail-width:72px;--cs-channel-width:244px;--cs-active:#3a7fa0;position:relative;z-index:2;display:grid;grid-template-columns:var(--cs-rail-width) minmax(0,1fr);width:100%;height:100%;min-height:0;overflow:hidden;background:var(--paper,#f4f7fb);color:var(--text,#1a2332);font:13px var(--sans,system-ui)}
+.cs-shell.has-server{grid-template-columns:var(--cs-rail-width) var(--cs-channel-width) minmax(0,1fr)}
+.cs-rail{gap:8px;min-height:0;overflow-y:auto;padding:12px 0;background:var(--paper-2,#eaf0f6);border-color:var(--line,rgba(26,35,50,.09))}.cs-group{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--dim,#8a94a3);text-transform:uppercase;margin-top:4px}.cs-divider{width:32px;height:2px;border-radius:2px;background:var(--line-2,rgba(26,35,50,.14));margin:2px 0}
+.cs-server-icon{flex:none;width:44px;height:44px;background:var(--card-solid,#fff);color:#3d4b59;box-shadow:0 1px 1px rgba(26,35,50,.04),0 2px 8px -2px rgba(26,35,50,.08);transition:border-radius .15s}.cs-server-icon:hover{border-radius:11px}.cs-server-icon.selected{border-radius:11px;box-shadow:0 0 0 2px var(--paper,#f4f7fb),0 0 0 4px var(--cs-active)}.cs-server-icon.selected::before{left:-14px;top:50%;width:4px;height:32px;margin-top:-16px;background:var(--cs-active)}.cs-dm{background:#cfd8e0}.cs-public{background:color-mix(in srgb,var(--accent,#3a7fa0) 11%,var(--card-solid,#fff));color:var(--accent-2,#2f6a86)}.cs-org{background:color-mix(in srgb,#8394a5 15%,var(--card-solid,#fff));color:#526273}
+.cs-loading{color:var(--dim,#8a94a3)}.cs-exit{display:grid;place-items:center;gap:2px;margin-top:auto;width:50px;padding:6px 0;border:0;border-radius:9px;background:transparent;color:var(--muted,#5b6778);font-size:18px}.cs-exit:hover{background:var(--ink-05,rgba(26,35,50,.05));color:var(--text,#1a2332)}.cs-exit small{font-size:10px}
+.cs-channel-list{background:var(--nav-bg,rgba(255,255,255,.55));border-color:var(--line,rgba(26,35,50,.09))}.cs-channel-list header,.cs-content>header{border-color:var(--line,rgba(26,35,50,.09))}.cs-channel-list small,.cs-content header span{color:var(--muted,#5b6778)}.cs-channel{color:var(--muted,#5b6778)}.cs-channel.active{background:var(--accent-soft,rgba(58,127,160,.1));color:var(--accent-2,#2f6a86)}.cs-channel-select{padding:2px 0}.cs-content{min-height:0;grid-template-columns:minmax(0,1fr) 264px;background:var(--paper,#f4f7fb)}.cs-content>header{padding:16px 18px}.cs-timeline{min-height:0}.cs-message{border-color:var(--line,rgba(26,35,50,.09))}.cs-message small{color:var(--dim,#8a94a3)}.cs-composer{border-color:var(--line-2,rgba(26,35,50,.14));background:var(--card-solid,#fff)}.cs-compose-tools select,.cs-compose-tools button,.cs-older{background:var(--paper-2,#eaf0f6);border-color:var(--line-2,rgba(26,35,50,.14))}.cs-members{background:var(--nav-bg,rgba(255,255,255,.55));border-color:var(--line,rgba(26,35,50,.09))}.cs-members>b{color:var(--text,#1a2332)}.cs-shell>:slotted(.app){grid-column:2;min-width:0;min-height:0;width:100%;height:100%}
+@media(max-width:1000px){.cs-shell{--cs-rail-width:64px;--cs-channel-width:205px}.cs-content{grid-template-columns:minmax(0,1fr)}.cs-members{display:none}}
 </style>
