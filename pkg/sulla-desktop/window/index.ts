@@ -520,7 +520,9 @@ export function openCaptureStudio(): void {
     !!value && typeof value === 'object' && (value as { mode?: unknown }).mode === 'capture-studio');
   if (existing && !existing.isDestroyed()) {
     restoreWindow(existing);
-    existing.webContents.send('agent-command', { command: 'open-tab', mode: 'capture-studio' });
+    const focusStudioTab = () => existing.webContents.send('agent-command', { command: 'open-tab', mode: 'capture-studio' });
+    if (existing.webContents.isLoading()) existing.webContents.once('did-finish-load', focusStudioTab);
+    else focusStudioTab();
     return;
   }
   sendToMain({ command: 'open-tab', mode: 'capture-studio' });
