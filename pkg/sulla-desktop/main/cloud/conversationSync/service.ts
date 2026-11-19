@@ -18,7 +18,8 @@ import { getCloudPreferences } from '../cloudSettings';
 import { getDesktopDeviceId } from '../../deviceIdentity';
 import { normalizeMobileContent, persistMobileAttachments, transcriptText } from '../../mobileRelayContent';
 import { CloudCallBackoff, CloudTransportError } from './cloudCallBackoff';
-import { safeDelta, type EncryptedBody, type LinkPrivacyMode } from './privacy';
+import { safeDelta, type EncryptedBody, type LinkPrivacyMode, type SafeDelta } from './privacy';
+import { DeltaValidator } from './deltaValidation';
 
 const console = Logging.background;
 type Role = 'user' | 'assistant';
@@ -46,6 +47,7 @@ class ConversationSyncServiceImpl {
   private linkRetryAt = 0;
   private linkRetryTimer:ReturnType<typeof setTimeout>|null = null;
   private lastLinkAt = 0;
+  private readonly deltaValidator = new DeltaValidator();
   // A broker or network failure is not specific to one chat: stop the pass and
   // back off instead of repeating the call (and a stack trace) for every link.
   private readonly linkBackoff = new CloudCallBackoff('conversation linking', console);
@@ -241,12 +243,33 @@ class ConversationSyncServiceImpl {
       let before:string|number|undefined;const pending:any[]=[];
       do{const rows=await ConversationMessagesModel.list(conv,{limit:250,beforeSeq:before,includeDeleted:true});pending.unshift(...rows.filter(m=>Number(m.seq)>Number(link.upload_cursor)));before=rows.length===250&&Number(rows[0].seq)>Number(link.upload_cursor)?rows[0].seq:undefined}while(before);
       for(let i=0;i<pending.length;i+=100){
-        const items=(await Promise.all(pending.slice(i,i+100).map(m=>safeDelta(m,link.privacy_mode,async body=>this.encrypt(conv,m.role,m.id,body))))).filter(Boolean);
-        if(!items.length)continue;
-        const pushed=await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(link.id)}/deltas`,{headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
-        if(!pushed.ok){console.warn(`[ConversationSync] delta rejected (${pushed.status})`);break}
+        const built=await Promise.all(pending.slice(i,i+100).map(m=>safeDelta(m,link.privacy_mode,async body=>this.encrypt(conv,m.role,m.id,body))));
+        const prepared=this.deltaValidator.prepare(built.filter((item):item is SafeDelta=>item!==null));
+        for(const skip of prepared.skipped) console.warn(`[ConversationSync] skipped message ${skip.id} (${skip.reason})`);
+        if(!prepared.items.length)continue;
+        if(!await this.pushDeltas(link,prepared.items))break;
       }
     }
+  }
+  /**
+   * Sends one batch. Cloud rejects a batch when any item fails, and names the
+   * failing item by index. That item is dropped and the rest resent, so one bad
+   * message never stops the chat. Returns false when the chat should retry later.
+   */
+  private async pushDeltas(link:Link,items:SafeDelta[]):Promise<boolean>{
+    let batch=items;
+    while(batch.length){
+      const pushed=await cloudRequest('POST',`/cloud-chat-links/${encodeURIComponent(link.id)}/deltas`,{headers:{'Content-Type':'application/json'},body:JSON.stringify({items:batch})});
+      if(pushed.ok)return true;
+      const rejection=await pushed.json().catch(()=>null) as {error?:unknown;index?:unknown}|null;
+      const code=typeof rejection?.error==='string'?rejection.error:undefined;
+      console.warn(`[ConversationSync] delta rejected (${pushed.status}${code?`: ${code}`:''})`);
+      const at=typeof rejection?.index==='number'?rejection.index:-1;
+      if(pushed.status!==400||!Number.isInteger(at)||at<0||at>=batch.length)return false;
+      console.warn(`[ConversationSync] skipped message ${batch[at].id} (${code??'rejected_by_cloud'})`);
+      batch=batch.filter((_,j)=>j!==at);
+    }
+    return true;
   }
   /** Append confirmed Cloud-fallback turns that ran while this Desktop was offline, then ack them. */
   private async pullCloudResults(link:Link) {
