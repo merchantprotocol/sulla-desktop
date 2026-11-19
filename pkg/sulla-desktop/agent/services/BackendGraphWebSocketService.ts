@@ -36,7 +36,7 @@ import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionH
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
-import { DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
+import { AmbiguousAgentInboxTargetError, NoAgentInboxTargetError, DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
 import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
 import { postgresClient } from '../database/PostgresClient';
 
@@ -285,7 +285,7 @@ export class BackendGraphWebSocketService {
     this.inboxRunGuard = dependencies.inboxRunGuard ?? new ReceiverRunGuard();
     this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(
       agentJobProvider.jobs,
-      channel => this.inboxThread({ channel }) ?? GraphRegistry.findThreadByChannel(channel),
+      channel => GraphRegistry.findThreadsByChannel(channel).map(candidate => ({ ...candidate, executing: this.hasActiveRun(channel, candidate.threadId) || this.inboxRunGuard.isActive({ channel, threadId: candidate.threadId }) })),
     );
     this.agentInbox = new AgentInbox(repository, {
       isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
@@ -771,7 +771,23 @@ export class BackendGraphWebSocketService {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const envelope = data?.envelope;
       if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
-      const target = await this.inboxReceiverResolver.resolve(channelId);
+      let target: AgentInboxTarget;
+      try {
+        target = await this.inboxReceiverResolver.resolve(channelId, envelope.targetId, envelope.replyToThreadId);
+      } catch (error) {
+        if (error instanceof AmbiguousAgentInboxTargetError || error instanceof NoAgentInboxTargetError) {
+          const senderChannel = String(envelope.senderChannel || '');
+          const senderThreadId = String(envelope.senderThreadId || '');
+          if (senderChannel && senderThreadId) {
+            await this.agentInbox.receive({
+              envelope: { from: channelId, kind: 'blocker', body: `Peer message was not delivered: ${error.message} Re-address the message using <channel:${channelId}#threadId-or-jobId>... if needed.`, senderChannel: channelId, ids: { messageId: nextMessageId() } },
+              target: { channel: senderChannel, threadId: senderThreadId, agentId: senderChannel },
+            });
+          } else console.warn('[BackendGraphWS] peer routing error could not wake sender: sender thread/channel missing', { senderChannel, senderThreadId });
+          return;
+        }
+        throw error;
+      }
       await this.agentInbox.receive({
         envelope,
         target,
