@@ -132,6 +132,7 @@
           @open="emit('open-detail', $event)"
           @detail="emit('open-detail', $event)"
           @install="emit('install', $event)"
+          @buy="emit('buy', $event)"
           @filter="(key, value) => emit('filter', key, value)"
         />
       </div>
@@ -148,7 +149,7 @@ import MarketplaceResultRow from './MarketplaceResultRow.vue';
 import type { MarketplaceFacet, MarketplaceSearchState } from '../../composables/MarketplaceSearchService';
 import type { MarketplaceBrowseRow } from '../../typings/electron-ipc';
 const props = defineProps<{ rows: MarketplaceBrowseRow[]; facets: MarketplaceFacet[]; state: MarketplaceSearchState; loading: boolean; installState?: (row: MarketplaceBrowseRow) => string; installingId: string | null }>();
-const emit = defineEmits<{ 'update:state': [state: MarketplaceSearchState]; 'open-detail': [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow]; filter: [key: 'topic' | 'type', value: string]; close: [] }>();
+const emit = defineEmits<{ 'update:state': [state: MarketplaceSearchState]; 'open-detail': [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow]; buy: [row: MarketplaceBrowseRow]; filter: [key: 'topic' | 'type', value: string]; close: [] }>();
 const filterDialog = ref<HTMLElement | null>(null); const filterTrigger = ref<HTMLButtonElement | null>(null); const filterCloseButton = ref<HTMLButtonElement | null>(null);
 let previousFocus: HTMLElement | null = null; let previousBodyOverflow = ''; let previousHtmlOverflow = '';
 

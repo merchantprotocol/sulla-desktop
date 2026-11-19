@@ -49,10 +49,10 @@
       <button
         class="primary"
         type="button"
-        :disabled="Boolean(installStatus)"
-        @click="$emit('install', row)"
+        :disabled="purchasePolicy.shouldBuy(row) ? false : Boolean(installStatus)"
+        @click="purchasePolicy.shouldBuy(row) ? $emit('buy', row) : $emit('install', row)"
       >
-        {{ installStatus === 'installed' ? 'Added to Sulla' : installStatus === 'installing' ? 'Adding…' : 'Add to Sulla' }}
+        {{ purchasePolicy.shouldBuy(row) ? `Buy${presentation.price ? ` · ${presentation.price}` : ''}` : installStatus === 'installed' ? 'Added to Sulla' : installStatus === 'installing' ? 'Adding…' : 'Add to Sulla' }}
       </button><button
         type="button"
         @click="$emit('detail', row)"
@@ -68,11 +68,13 @@ import { computed, ref, watch } from 'vue';
 import UseCaseIcon from './UseCaseIcon.vue';
 
 import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListingPresenter';
+import { MarketplacePurchasePolicy } from '@pkg/composables/MarketplacePurchasePolicy';
 
 import type { MarketplaceBrowseRow } from '../../typings/electron-ipc';
 const props = defineProps<{ row: MarketplaceBrowseRow; installStatus?: string }>();
 const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
-const emit = defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow]; filter: [key: 'topic' | 'type', value: string] }>();
+const purchasePolicy = new MarketplacePurchasePolicy();
+const emit = defineEmits<{ open: [row: MarketplaceBrowseRow]; detail: [row: MarketplaceBrowseRow]; install: [row: MarketplaceBrowseRow]; buy: [row: MarketplaceBrowseRow]; filter: [key: 'topic' | 'type', value: string] }>();
 const image = computed(() => presentation.value.image);
 const imageFailed = ref(false);
 watch(image, () => { imageFailed.value = false });

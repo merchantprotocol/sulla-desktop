@@ -47,6 +47,8 @@ export interface MarketplaceBrowseRow {
   // Optional listing facets from the browse API. Missing = no data; never invented.
   price_cents?:             number | null;
   currency?:                string | null;
+  is_paid?:                 boolean;
+  owned?:                   boolean;
   video_url?:               string | null;
   video_duration_seconds?:  number | null;
   poster_url?:              string | null;
@@ -930,6 +932,8 @@ export interface IpcMainInvokeEvents {
   'marketplace-detail':  (id: string) => {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
   } | { error: string };
+  'marketplace-checkout': (id: string) => { url: string; sessionId: string } | { error: string };
+  'marketplace-entitlements': () => { entitlements: { template_id?: string; templateId?: string }[] } | { error: string };
   'marketplace-install': (id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
     kind:              'package' | 'routine' | 'skill' | 'function' | 'agent' | 'recipe' | 'integration';
     slug:              string;

@@ -88,10 +88,10 @@
       <button
         type="button"
         class="btn ghost"
-        :disabled="installing || installState === 'installed'"
-        @click="$emit('install')"
+        :disabled="!purchasePolicy.shouldBuy(row) && (installing || installState === 'installed')"
+        @click="purchasePolicy.shouldBuy(row) ? $emit('buy') : $emit('install')"
       >
-        {{ installButtonLabel }}
+        {{ purchasePolicy.shouldBuy(row) ? `Buy${price ? ` · ${price}` : ''}` : installButtonLabel }}
       </button>
     </div>
   </div>
@@ -102,6 +102,8 @@ import { computed } from 'vue';
 
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 import { marketplaceKindInfo, marketplaceKindLabel } from '@pkg/composables/marketplaceKinds';
+import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListingPresenter';
+import { MarketplacePurchasePolicy } from '@pkg/composables/MarketplacePurchasePolicy';
 
 const props = defineProps<{
   row:           MarketplaceBrowseRow;
@@ -112,11 +114,14 @@ const props = defineProps<{
 defineEmits<{
   (e: 'open'): void;
   (e: 'install'): void;
+  (e: 'buy'): void;
 }>();
 
 const MAX_VISIBLE_TAGS = 3;
 const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
 const kindColor = computed(() => marketplaceKindInfo(props.row.kind)?.color ?? '#8a94a6');
+const price = computed(() => new MarketplaceListingPresenter().present(props.row).price);
+const purchasePolicy = new MarketplacePurchasePolicy();
 
 const initials = computed(() => {
   const source = props.row.name || props.row.slug || '??';
