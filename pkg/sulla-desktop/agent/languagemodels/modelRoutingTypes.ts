@@ -33,7 +33,7 @@ export interface ClassModel {
 
 /** What changed in the providers' live model lists at the last Refresh models. */
 export interface ModelCatalogReport {
- checks?: { provider: string; status: 'refreshed' | 'unavailable' }[];
+ checks?: { provider: string; status: 'refreshed' | 'unavailable'; reason?: string }[];
  checkedAt: string | null;
  added: ClassModel[]; // models a provider lists now that it did not list at the previous check
  removed: ClassModel[]; // models a provider no longer lists

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 import { ModelRouter, type EditableState } from '../../../languagemodels/modelRouter';
 
-vi.mock('../../../languagemodels/index', () => ({ PROVIDER_FACTORIES: { codex: {} } }));
+vi.mock('../../../languagemodels/index', () => ({ PROVIDER_FACTORIES: { codex: {}, openai: {}, alibaba: {} } }));
 
 const saved: EditableState = {
   agentsList:       [{ provider: 'codex', class: 'standard', enabled: true }],
@@ -33,17 +33,47 @@ describe('model catalog refresh failure preservation', () => {
     vi.spyOn(SullaSettingsModel, 'set').mockResolvedValue(undefined as never);
   });
 
-  it('marks Codex unavailable and leaves the saved model lists and choices untouched', async() => {
+  it('treats Codex Auto as a usable route and leaves saved model lists and choices untouched', async() => {
+    const getModelsForProvider = vi.fn(() => Promise.resolve([{ id: 'codex', name: 'Auto (CLI default)' }]));
+    const router = new ModelRouter(() => ({
+      getAvailableProviders: () => Promise.resolve([{ id: 'codex', connected: true }]),
+      getModelsForProvider,
+    }));
+
+    await expect(router.refreshCatalog()).resolves.toMatchObject({ checks: [{ provider: 'codex', status: 'refreshed' }] });
+    expect(getModelsForProvider).toHaveBeenCalledWith('codex', { liveOnly: true, forceRefresh: true });
+    expect(SullaSettingsModel.set).toHaveBeenCalledWith('modelCatalogCheck', expect.objectContaining({ lists: { codex: ['gpt-saved', 'gpt-saved-fast'] } }), 'json');
+    await expect(router.getEditableState()).resolves.toMatchObject({
+      classes:    { standard: [{ provider: 'codex', model: 'gpt-saved' }], fast: [{ provider: 'codex', model: 'gpt-saved-fast' }] },
+      agentsList: [{ provider: 'codex', class: 'standard', enabled: true }],
+    });
+  });
+
+  it('records a safe provider discovery reason and omits disconnected providers', async() => {
+    const router = new ModelRouter(() => ({
+      getAvailableProviders: () => Promise.resolve([
+        { id: 'openai', connected: true },
+        { id: 'alibaba', connected: false },
+      ]),
+      getModelsForProvider: () => Promise.resolve([]),
+    }));
+    const { modelDiscoveryService } = await import('../../../languagemodels/ModelDiscoveryService');
+    vi.spyOn(modelDiscoveryService, 'getLastFailure').mockReturnValue('API key rejected (401)');
+
+    await expect(router.refreshCatalog()).resolves.toMatchObject({
+      checks: [{ provider: 'openai', status: 'unavailable', reason: 'API key rejected (401)' }],
+    });
+  });
+  it('reports Codex as unavailable when live discovery failed and only the Auto fallback came back', async() => {
+    const codexCatalog = await import('../../../languagemodels/codexModelCatalog');
+    vi.spyOn(codexCatalog, 'getLastCodexModelCatalogFailure').mockReturnValue('Codex model request timed out');
     const router = new ModelRouter(() => ({
       getAvailableProviders: () => Promise.resolve([{ id: 'codex', connected: true }]),
       getModelsForProvider:  () => Promise.resolve([{ id: 'codex', name: 'Auto (CLI default)' }]),
     }));
 
-    await expect(router.refreshCatalog()).resolves.toMatchObject({ checks: [{ provider: 'codex', status: 'unavailable' }] });
-    expect(SullaSettingsModel.set).toHaveBeenCalledWith('modelCatalogCheck', expect.objectContaining({ lists: { codex: ['gpt-saved', 'gpt-saved-fast'] } }), 'json');
-    await expect(router.getEditableState()).resolves.toMatchObject({
-      classes:    { standard: [{ provider: 'codex', model: 'gpt-saved' }], fast: [{ provider: 'codex', model: 'gpt-saved-fast' }] },
-      agentsList: [{ provider: 'codex', class: 'standard', enabled: true }],
+    await expect(router.refreshCatalog()).resolves.toMatchObject({
+      checks: [{ provider: 'codex', status: 'unavailable', reason: 'Codex model request timed out' }],
     });
   });
 });

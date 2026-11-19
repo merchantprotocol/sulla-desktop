@@ -249,6 +249,19 @@ class ModelProviderService {
     // Vault-metadata lookups run in parallel so opening the window is fast.
     const results = await Promise.allSettled(candidates.map(async(integration) => {
       const selected = await this.selectedAccount(integration.id);
+      // Custom discovery has no provider-owned default endpoint. A saved key
+      // without a base URL cannot be called, so do not advertise it as connected.
+      if (integration.id === 'custom' && selected.account?.connected) {
+        try {
+          const values = await getIntegrationService().getFormValues('custom', selected.account.accountId);
+          const endpointConfigured = values.some(value => value.property === 'base_url' && typeof value.value === 'string' && value.value.trim().length > 0);
+          if (!endpointConfigured) {
+            return { id: integration.id, name: integration.name, connected: false, accessMethod: 'unknown', accessLabel: 'No endpoint configured', selectable: false } as ProviderInfo;
+          }
+        } catch {
+          return { id: integration.id, name: integration.name, connected: false, accessMethod: 'unknown', accessLabel: 'Connection unavailable', selectable: false } as ProviderInfo;
+        }
+      }
       let cliInstalled = false;
       // OpenCode and Cursor own credentials in their CLIs. A runnable CLI is
       // enough to show the provider; spawn-time errors give the exact login step.
@@ -294,15 +307,15 @@ class ModelProviderService {
     return providers;
   }
 
-  async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean } = {}): Promise<ProviderModelInfo[]> {
+  async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean; forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
     const integration = integrations[providerId];
     if (!integration) {
-      return this.getCliProviderModels(providerId);
+      return this.getCliProviderModels(providerId, queryOptions);
     }
 
     const modelProp = integration.properties?.find(p => p.key === 'model');
     if (!modelProp?.selectBoxId) {
-      return this.getCliProviderModels(providerId);
+      return this.getCliProviderModels(providerId, queryOptions);
     }
 
     try {
@@ -337,7 +350,7 @@ class ModelProviderService {
     }
   }
 
-  private async getCliProviderModels(providerId: string): Promise<ProviderModelInfo[]> {
+  private async getCliProviderModels(providerId: string, queryOptions: { forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
     if (providerId === 'claude-code') {
       // No hardcoded claude-code model list — read the live catalog from
       // Anthropic's /v1/models using the signed-in account's credentials.
@@ -352,7 +365,7 @@ class ModelProviderService {
       // CLI (through Sulla, so vault OAuth creds are injected). Degrades to the
       // "Auto" sentinel on any failure. See codexModelCatalog.ts.
       const { listCodexModels } = await import('../languagemodels/codexModelCatalog');
-      return (await listCodexModels()).map(model => this.modelInfo(providerId, model));
+      return (await listCodexModels({ force: queryOptions.forceRefresh === true })).map(model => this.modelInfo(providerId, model));
     }
 
     if (providerId === 'opencode') {

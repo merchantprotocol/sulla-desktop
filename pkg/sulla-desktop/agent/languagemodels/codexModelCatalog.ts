@@ -33,6 +33,9 @@ const AUTO_SENTINEL: CodexCatalogModel = {
 
 let catalogGeneration = 0;
 let catalogFlight: { generation: number; force: boolean; promise: Promise<CodexCatalogModel[]> } | undefined;
+let lastDiscoveryFailure: string | undefined;
+
+export function getLastCodexModelCatalogFailure(): string | undefined { return lastDiscoveryFailure; }
 
 export function clearCodexModelCatalogCache(): void {
   catalogGeneration++;
@@ -145,8 +148,17 @@ async function fetchBrokeredModels(force: boolean): Promise<CodexCatalogModel[] 
       return url.toString();
     });
     const models = dynamicModels(body);
+    lastDiscoveryFailure = models.length ? undefined : 'Codex returned no selectable models';
     return models.length ? models : null;
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    lastDiscoveryFailure = /version is unavailable|selection is invalid/i.test(message)
+      ? 'Codex CLI version unavailable or invalid'
+      : /(?:401|unauthorized|authentication)/i.test(message)
+        ? 'Codex account authentication failed'
+        : /timeout|timed out|abort/i.test(message)
+          ? 'Codex model request timed out'
+          : 'Codex live model discovery failed';
     return null;
   }
 }

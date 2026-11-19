@@ -406,9 +406,10 @@ export class ModelRouter {
       const connected = available.get(id)?.connected === true;
       const connectionUnknown = available.get(id)?.connectionUnknown === true;
       let models: RoutingModelInfo[] = [];
+      let discoveryReason: string | undefined;
       if (connected && mps?.getModelsForProvider) {
         try {
-          models = (await mps.getModelsForProvider(id, { liveOnly: true })).map((model: any) => ({
+          models = (await mps.getModelsForProvider(id, { liveOnly: true, forceRefresh: id === 'codex' })).map((model: any) => ({
             id:    String(model.id),
             label: String(model.name || model.label || model.id),
             ...(Array.isArray(model.efforts) && model.efforts.length ? { efforts: model.efforts } : {}),
@@ -417,9 +418,16 @@ export class ModelRouter {
             ...(model.unverified ? { unverified: true } : {}),
             ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
           }));
-        } catch { /* discovery is best effort */ }
+          if (id !== 'codex' && id !== 'claude-code' && id !== 'cursor' && id !== 'opencode') {
+            const { modelDiscoveryService } = await import('./ModelDiscoveryService');
+            discoveryReason = modelDiscoveryService.getLastFailure(id);
+          } else if (id === 'codex') {
+            const { getLastCodexModelCatalogFailure } = await import('./codexModelCatalog');
+            discoveryReason = getLastCodexModelCatalogFailure();
+          }
+        } catch { discoveryReason = 'model discovery failed'; }
       }
-      return [id, { connected, connectionUnknown, accessMethod: available.get(id)?.accessMethod, accessLabel: available.get(id)?.accessLabel, models }] as const;
+      return [id, { connected, connectionUnknown, accessMethod: available.get(id)?.accessMethod, accessLabel: available.get(id)?.accessLabel, models, discoveryReason }] as const;
     }));
     return new Map(entries);
   }
@@ -502,7 +510,12 @@ export class ModelRouter {
     for (const [id, p] of live) {
       if (!p.connected) continue;
       const reported = p.models.filter(model => !model.unverified && !['claude-code', 'codex', 'cursor', 'opencode'].includes(model.id));
-      checks.push({ provider: id, status: reported.length ? 'refreshed' : 'unavailable' });
+      // Codex's Auto sentinel is a valid selectable CLI route; it is intentionally
+      // excluded from concrete catalog diffs, but must not turn a successful refresh
+      // into an unavailable-provider error. Auto-only after a failed live lookup is still a failure.
+      const autoAvailable = id === 'codex' && !p.discoveryReason && p.models.some(model => model.id === 'codex');
+      const reason = p.discoveryReason || (reported.length || autoAvailable ? undefined : 'provider returned no selectable models');
+      checks.push({ provider: id, status: reported.length || autoAvailable ? 'refreshed' : 'unavailable', ...(reason ? { reason } : {}) });
       if (reported.length) lists[id] = p.models.map(m => m.id);
     }
     const saved = await SullaSettingsModel.get(CATALOG_SETTING, null) as { lists?: Record<string, string[]> } | null;

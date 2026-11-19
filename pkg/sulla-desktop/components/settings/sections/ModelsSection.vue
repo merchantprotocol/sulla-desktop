@@ -127,7 +127,7 @@ async function refreshModels() {
     now.value = Date.now();
     const checks = state.value.catalog?.checks ?? [];
     const failed = checks.filter(check => check.status === 'unavailable');
-    if (failed.length) showError(`Could not refresh models for ${ failed.map(check => check.provider).join(', ') }.`, 'Couldn’t refresh model catalogs', 'Saved model choices were preserved.');
+    if (failed.length) showError(`Could not refresh models for ${ failed.map(check => `${ check.provider }: ${ check.reason || 'model discovery failed' }`).join('; ') }.`, 'Couldn’t refresh model catalogs', 'Saved model choices were preserved.');
     toast(`${ checks.filter(check => check.status === 'refreshed').length } provider model lists refreshed.`);
     await checkCliVersions();
   } catch (e) {
