@@ -1175,6 +1175,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // prompt. Settling on that result failed the turn as "claude produced
         // no output" while the CLI went on to answer the real prompt unseen.
         let promptConsumed = false;
+        let textDeltaCount = 0;
+        let firstTextDeltaAt = 0;
 
         // ── Perf: per-tool execution timing inside the claude CLI ──────────
         // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
@@ -1546,6 +1548,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               stopHeartbeat();
               if (!firstContentAt) firstContentAt = Date.now();
               if (!firstTokenAt) { firstTokenAt = Date.now(); logRunPhase() }
+              textDeltaCount++;
+              if (!firstTextDeltaAt) firstTextDeltaAt = Date.now();
               textCollected += ev.delta.text;
               try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
               return;
@@ -1638,6 +1642,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
           // Final result event — capture full text and record usage/cost.
           if (parsed.type === 'result' && !promptConsumed && !parsed.is_error) {
+            perf.log(`[StreamHop:Claude] convId=${ convId } promptConsumed=false textDeltaCount=${ textDeltaCount } firstTextDeltaMs=${ firstTextDeltaAt ? firstTextDeltaAt - runStartedAt : -1 } resultFallback=false ignoredPrePromptResult=true`);
             log.log(`[ClaudeCodeService] ignoring result of a CLI-initiated turn that ran before this turn's prompt (convId=${ convId })`);
             textCollected = '';
             return;
@@ -1645,6 +1650,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
           if (parsed.type === 'result') {
             if (options.signal?.aborted) return;
+            const resultFallback = !parsed.is_error && typeof parsed.result === 'string' && !textCollected;
+            perf.log(`[StreamHop:Claude] convId=${ convId } promptConsumed=${ promptConsumed } textDeltaCount=${ textDeltaCount } firstTextDeltaMs=${ firstTextDeltaAt ? firstTextDeltaAt - runStartedAt : -1 } resultFallback=${ resultFallback } ignoredPrePromptResult=false`);
             sawTerminalResult = true;
             lastUsage = parsed.usage;
             // Perf summary: split the run into tool-execution time vs the rest

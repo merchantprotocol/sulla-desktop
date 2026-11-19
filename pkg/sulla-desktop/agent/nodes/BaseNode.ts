@@ -1600,6 +1600,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let firstTextSeen = false;
     let firstActivitySeen = false;
     let providerToolStarted = false;
+    const streamStartedAt = Date.now();
+    let firstDeltaAt = 0;
+    let lastDeltaAt = 0;
+    let providerDeltaCount = 0;
+    let suppressedDeltaCount = 0;
+    let wsStreamingSendCount = 0;
+    let lastWsStreamingSendAt = 0;
+    const sendStreamingUpdate = (content: string): void => {
+      wsStreamingSendCount++;
+      lastWsStreamingSendAt = Date.now();
+      this.wsChatMessage(state, content, 'assistant', 'streaming');
+    };
 
     const onToken = (token: string): void => {
       if (token && !firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
@@ -1608,6 +1620,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         firstTokenSeen = true;
         console.log(`[VoiceTrace] ${ JSON.stringify({ turnId: voiceTurnId, stage: 'first_token', ts: new Date().toISOString(), durationMs: Date.now() - voiceStartedAt, size: token.length }) }`);
       }
+      const tokenAt = Date.now();
+      if (!firstDeltaAt) firstDeltaAt = tokenAt;
+      lastDeltaAt = tokenAt;
+      providerDeltaCount++;
       contentBuffer += token;
       new TurnOutputCounter(state.metadata as any).recordToken(token);
 
@@ -1623,13 +1639,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Use the streaming-aware strip so a half-streamed opening wrapper
       // like `<AGENT_DONE` (closing tag hasn't arrived yet) is truncated
       // immediately instead of leaking into the bubble.
+      if (!cleaned) suppressedDeltaCount++;
       if (!isVoiceMode && cleaned) {
         const now = Date.now();
         if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
           lastStreamFlush = now;
           const stripped = stripProtocolTagsStreaming(contentBuffer);
           if (stripped.trim()) {
-            this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+            sendStreamingUpdate(stripped);
             streamingWsSent = true;
           }
         }
@@ -1661,7 +1678,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (!isVoiceMode && contentBuffer.trim()) {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
-          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+          sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
@@ -1698,7 +1715,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (!isVoiceMode && contentBuffer.trim()) {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
-          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+          sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
@@ -1767,7 +1784,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         if (contentBuffer.trim()) {
           const stripped = stripProtocolTagsStreaming(contentBuffer);
           if (stripped.trim()) {
-            this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+            sendStreamingUpdate(stripped);
             streamingWsSent = true;
           }
           contentBuffer = '';
@@ -1775,6 +1792,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }
+      const endedAt = Date.now();
+      console.log(`[StreamHop] threadId=${ state.metadata.threadId } provider=${ provider.getProviderId?.() ?? 'unknown' } voice=${ isVoiceMode } firstDeltaMs=${ firstDeltaAt ? firstDeltaAt - streamStartedAt : -1 } deltaCount=${ providerDeltaCount } suppressedDeltaCount=${ suppressedDeltaCount } wsStreamingSendCount=${ wsStreamingSendCount } lastWsSendMs=${ lastWsStreamingSendAt ? lastWsStreamingSendAt - streamStartedAt : -1 } lastDeltaMs=${ lastDeltaAt ? lastDeltaAt - streamStartedAt : -1 } totalMs=${ endedAt - streamStartedAt }`);
     }
 
     if (!reply) {
