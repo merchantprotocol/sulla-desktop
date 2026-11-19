@@ -54,7 +54,8 @@ export function lazyScreen(loader: ScreenLoader, name: string): Component {
         // Reading attempt makes the computed rebuild the async component on Retry.
         void attempt.value;
         return defineAsyncComponent({
-          loader,
+          // Accept a module namespace or a bare `{ default }` object, not only real ES modules.
+          loader: () => loader().then(mod => ('default' in (mod as object) ? (mod as { default: Component }).default : mod as Component)),
           delay:            LAZY_SCREEN_DELAY_MS,
           loadingComponent: LazyScreenLoading,
           errorComponent:   LazyScreenError,
