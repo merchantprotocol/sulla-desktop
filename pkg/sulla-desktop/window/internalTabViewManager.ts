@@ -4,7 +4,7 @@
 
 import Electron, { WebContentsView } from 'electron';
 
-interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean }
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean }
 
 /** Owns one isolated Electron renderer for each mounted internal tab. */
 export class InternalTabViewManager {
@@ -20,11 +20,12 @@ export class InternalTabViewManager {
     let tab = this.tabs.get(tabId);
     if (!tab) {
       const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
-      tab = { view, owner, bounds, visible: true };
+      tab = { view, owner, bounds, visible: true, crashed: false };
       this.tabs.set(tabId, tab);
       this.trackOwner(owner);
       view.webContents.on('render-process-gone', () => {
         tab!.visible = false;
+        tab!.crashed = true;
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
       });
@@ -35,6 +36,7 @@ export class InternalTabViewManager {
       tab = this.tabs.get(tabId)!;
     }
     tab.bounds = bounds;
+    if (tab.crashed) return;
     tab.visible = true;
     tab.owner.contentView.addChildView(tab.view);
     tab.view.setBounds(bounds);
@@ -65,6 +67,7 @@ export class InternalTabViewManager {
   reload(owner: Electron.BrowserWindow, tabId: string): void {
     const tab = this.tabs.get(tabId);
     if (tab?.owner === owner && !tab.view.webContents.isDestroyed()) {
+      tab.crashed = false;
       tab.visible = true;
       tab.owner.contentView.addChildView(tab.view);
       tab.view.setBounds(tab.bounds);

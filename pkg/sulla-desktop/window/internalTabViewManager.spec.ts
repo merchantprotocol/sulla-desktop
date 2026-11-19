@@ -84,7 +84,10 @@ describe('InternalTabViewManager', () => {
     tab.view.webContents.listeners['render-process-gone']();
     expect(owner.webContents.send).toHaveBeenCalledWith('internal-tab-view:crashed', 'one');
     expect(owner.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
+    instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    expect(owner.contentView.addChildView).toHaveBeenCalledOnce();
     instance.reload(owner, 'one');
+    expect(owner.contentView.addChildView).toHaveBeenCalledTimes(2);
     expect(tab.view.webContents.reload).toHaveBeenCalledOnce();
   });
 });
