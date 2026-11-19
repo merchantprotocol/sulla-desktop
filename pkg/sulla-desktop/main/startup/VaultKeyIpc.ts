@@ -113,10 +113,15 @@ export class VaultKeyIpc implements MainProcessIpcStep {
       return true;
     });
 
-    ipc.handle('vault:unlock-required', async() => {
+    ipc.handle('vault:unlock-required', async(event: Electron.IpcMainInvokeEvent) => {
       const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
       setUserLoggedIn(false);
-      tabViewManager.setFocusedTab(null);
+      // Every window raises its own overlay, so detach the native tab in the window that asked,
+      // not just the active one, or a second window's browser view would cover its unlock screen.
+      const { BrowserWindow } = await import('electron');
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      if (owner) tabViewManager.setFocusedTab(null, undefined, undefined, owner);
+      else tabViewManager.setFocusedTab(null);
       return true;
     });
 
