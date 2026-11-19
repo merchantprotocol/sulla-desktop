@@ -41,6 +41,15 @@ export const availableThemes: ThemeOption[] = [
   { id: 'studio-light', scheme: 'studio', mode: 'light', label: 'Studio', isDark: false },
 ];
 
+/** Keep the switch useful for single-mode schemes by falling back to Default. */
+export function oppositeModeTheme(theme: string): ThemeName {
+  const current = availableThemes.find(candidate => candidate.id === theme);
+  if (!current) return 'default-light';
+  const mode = current.mode === 'dark' ? 'light' : 'dark';
+  return availableThemes.find(candidate => candidate.scheme === current.scheme && candidate.mode === mode)?.id
+    ?? (mode === 'dark' ? 'default-dark' : 'default-light');
+}
+
 export const themeGroups: ThemeGroup[] = [
   { scheme: 'default', label: 'Default', themes: availableThemes.filter(t => t.scheme === 'default') },
   { scheme: 'ocean', label: 'Ocean', themes: availableThemes.filter(t => t.scheme === 'ocean') },
@@ -207,17 +216,7 @@ export function useTheme() {
 
   /** Toggle between light and dark mode within the current scheme. */
   function toggleTheme(): void {
-    const current = availableThemes.find(t => t.id === currentTheme.value);
-    if (!current) {
-      setTheme('default-light');
-      return;
-    }
-    const newMode = current.mode === 'dark' ? 'light' : 'dark';
-    const target = availableThemes.find(t => t.scheme === current.scheme && t.mode === newMode);
-    // If the opposite mode doesn't exist for this scheme, stay put
-    if (target) {
-      setTheme(target.id);
-    }
+    setTheme(oppositeModeTheme(currentTheme.value));
   }
 
   // Apply theme class to document.documentElement whenever theme changes
