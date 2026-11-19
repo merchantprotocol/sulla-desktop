@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { SullaFilesIpcUploadService } from './SullaFilesIpcUploadService';
+import { FilesApiError } from './sullaFilesClient';
 import type { SullaFilesIpcApi, SullaFilesIpcRegistrar, SullaFilesIpcServices } from './SullaFilesIpcSupport';
 import type { CreateShareInput } from './sullaFilesLinkService';
 
@@ -20,7 +21,7 @@ export class SullaFilesIpcSharingHandlers {
     ipc.handle('sulla-files:shares', (_event, input:{ collectionId:string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, {}, true));
     ipc.handle('sulla-files:share', (_event, input:{ collectionId:string; folderPath:string; principalType:'user' | 'group'; principalId:string; role:'view' | 'edit' }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
     ipc.handle('sulla-files:unshare', (_event, input:{ collectionId:string; folderPath:string; principalType:'user' | 'group'; principalId:string }) => json(`/v1/collections/${ encodeURIComponent(input.collectionId) }/shares`, { method: 'DELETE', body: JSON.stringify(input) }, true));
-    ipc.handle('sulla-files:file-shares', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, {}, true));
+    ipc.handle('sulla-files:file-shares', (_event, input:{ fileId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, {}, true).catch(error => this.notFoundAsEmpty(error, [])));
     ipc.handle('sulla-files:share-file', (_event, input:{ fileId:string; principalType:'user' | 'group'; principalId:string; role:'view' | 'edit' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares`, { method: 'POST', body: JSON.stringify(input) }, true));
     ipc.handle('sulla-files:update-file-share', (_event, input:{ fileId:string; shareId:string; role:'view' | 'edit' }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares/${ encodeURIComponent(input.shareId) }`, { method: 'PATCH', body: JSON.stringify({ role: input.role }) }, true));
     ipc.handle('sulla-files:unshare-file', (_event, input:{ fileId:string; shareId:string }) => json(`/v1/files/${ encodeURIComponent(input.fileId) }/shares/${ encodeURIComponent(input.shareId) }`, { method: 'DELETE' }, true));
@@ -40,13 +41,25 @@ export class SullaFilesIpcSharingHandlers {
     ipc.handle('files-ui:status', () => this.services.watcher().status());
   }
 
+  /** An older or unconfigured Files server has no such route; that means an empty answer, not a failure. */
+  private notFoundAsEmpty<T>(error:unknown, empty:T):T {
+    if (error instanceof FilesApiError && error.status === 404) return empty;
+    throw error;
+  }
+
+  private residencyReason(error:unknown):string {
+    if (error instanceof FilesApiError && error.status === 404) return 'Not configured on this install';
+
+    return error instanceof Error ? error.message : 'Online-only residency is unavailable.';
+  }
+
   async capabilities():Promise<Record<string, unknown>> {
     const [status, cloudAvailable, residencyResult] = await Promise.all([
       this.services.watcher().status(),
       this.upload.cloudFilesAvailable(),
       this.api.json('/v1/residency-capabilities')
         .then((residency:Record<string, unknown>) => ({ residency, reason: '' }))
-        .catch((error) => ({ residency: undefined, reason: error instanceof Error ? error.message : 'Online-only residency is unavailable.' })),
+        .catch((error) => ({ residency: undefined, reason: this.residencyReason(error) })),
     ]);
     const { residency, reason: onlineOnlyReason } = residencyResult;
     const onlineOnly = residency?.onlineOnly === true && residency.keepOnComputer === true &&
