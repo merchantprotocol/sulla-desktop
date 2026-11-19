@@ -136,6 +136,24 @@ describe('Sulla Cloud desktop route policy', () => {
     }
   });
 
+  it('allows only Conversations server reads and notification preference writes used by the channel UI', () => {
+    // risk: permissions and tenant isolation; keep the new Cloud capability scoped to P2 read/preferences routes
+    const allowed: Array<[string, string]> = [
+      ['GET', '/conversation-servers'], ['GET', '/conversation-servers/server-1'],
+      ['GET', '/conversation-servers/server-1/channels'], ['GET', '/conversation-servers/server-1/members'],
+      ['PATCH', '/conversation-servers/server-1/notification-default'],
+      ['GET', '/conversation-servers/server-1/channels/channel-1/notification-preference'],
+      ['PUT', '/conversation-servers/server-1/channels/channel-1/notification-preference'],
+    ];
+    for (const [method, route] of allowed) expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(true);
+    const denied: Array<[string, string]> = [
+      ['POST', '/conversation-servers'], ['POST', '/conversation-servers/server-1/channels'],
+      ['GET', '/conversation-servers/server-1/channels/channel-1/notification-preference/extra'],
+      ['DELETE', '/conversation-servers/server-1/members/member-1'],
+    ];
+    for (const [method, route] of denied) expect(SullaCloudDesktopRoutePolicy.allowsSullaCloudDesktopRequest(method, route), `${method} ${route}`).toBe(false);
+  });
+
   it('denies invitation writes and near-miss paths for memberships and invitations', () => {
     // risk: permissions; an invitation write or a sibling device route must never pass the desktop allowlist
     const denied: Array<[string, string]> = [
