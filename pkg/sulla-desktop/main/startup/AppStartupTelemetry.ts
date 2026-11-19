@@ -21,6 +21,7 @@ export class AppStartupTelemetry {
       status,
       timestamp: new Date().toISOString(),
       elapsedMs: Math.round(performance.now() - this.startedAt),
+      elapsedSource: 'main',
       ...details,
     }) }`);
   }

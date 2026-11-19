@@ -29,6 +29,7 @@ export class WindowBootTelemetry {
       status,
       timestamp: new Date().toISOString(),
       elapsedMs,
+      elapsedSource: 'renderer',
     };
     console.info(`[WindowBoot] ${ JSON.stringify(record) }`);
     void this.sendToMain?.(event, status, elapsedMs).catch(() => undefined);
