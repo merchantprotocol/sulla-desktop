@@ -248,6 +248,11 @@ function reloadInternalTab(tabId: string) {
   void ipcRenderer.invoke('internal-tab-view:reload' as any, tabId).catch(() => undefined);
 }
 const internalTabRoute = (id: string) => route.path === `/Browser/${ id }` && browserTabs.some(tab => tab.id === id && tab.mode !== 'browser');
+// Sent with activation so a new tab's renderer knows its tab before the tab list is saved.
+function internalTabDescriptor(id: string): unknown {
+  const tab = browserTabs.find(candidate => candidate.id === id);
+  try { return tab ? JSON.parse(JSON.stringify(tab)) : null } catch { return null }
+}
 function internalTabBounds(element: HTMLElement) {
   const rect = element.getBoundingClientRect();
   return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) };
@@ -274,7 +279,7 @@ watch(() => route.path, async(path, previous) => {
   openedTabIds.add(id);
   await nextTick();
   const element = internalTabElements.get(id);
-  if (element) void ipcRenderer.invoke('internal-tab-view:activate' as any, id, new URLSearchParams(window.location.search).get('windowKey') || 'main', internalTabBounds(element)).catch(() => undefined);
+  if (element) void ipcRenderer.invoke('internal-tab-view:activate' as any, id, new URLSearchParams(window.location.search).get('windowKey') || 'main', internalTabBounds(element), internalTabDescriptor(id)).catch(() => undefined);
 }, { immediate: true });
 watch(() => browserTabs.map(tab => tab.id).join(','), (joined, old) => {
   if (!processPerTab) return;

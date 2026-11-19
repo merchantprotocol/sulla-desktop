@@ -6,7 +6,7 @@ import Electron, { WebContentsView } from 'electron';
 import { agentWindowUrl } from './agentWindowUrl';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
-interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean }
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; descriptor?: unknown }
 
 /** Owns one isolated Electron renderer for each mounted internal tab. */
 export class InternalTabViewManager {
@@ -18,11 +18,12 @@ export class InternalTabViewManager {
     return this.instance;
   }
 
-  activate(owner: Electron.BrowserWindow, tabId: string, windowKey: string, bounds: Electron.Rectangle): void {
+  activate(owner: Electron.BrowserWindow, tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown): void {
     let tab = this.tabs.get(tabId);
     if (!tab) {
       const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
-      tab = { view, owner, bounds, visible: true, crashed: false, transferring: false };
+      // The descriptor must be stored before the renderer loads: the host reads it synchronously at boot.
+      tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
       this.tabs.set(tabId, tab);
       this.trackOwner(owner);
       view.webContents.on('render-process-gone', () => {
@@ -38,6 +39,7 @@ export class InternalTabViewManager {
       tab = this.tabs.get(tabId)!;
     }
     tab.bounds = bounds;
+    if (descriptor !== undefined) tab.descriptor = descriptor;
     if (tab.crashed) return;
     tab.visible = true;
     tab.owner.contentView.addChildView(tab.view);
@@ -54,8 +56,18 @@ export class InternalTabViewManager {
   notifyTabUpdate(sender: Electron.WebContents, tabId: string, descriptor: unknown): void {
     const tab = this.tabs.get(tabId);
     if (tab && tab.view.webContents === sender && !tab.owner.isDestroyed()) {
+      tab.descriptor = descriptor;
       tab.owner.webContents.send('internal-tab-view:updated', tabId, descriptor);
     }
+  }
+
+  /**
+   * The tab a host renderer was created for, as its owner window last described it.
+   * Only that tab's own renderer may read it.
+   */
+  descriptorFor(sender: Electron.WebContents, tabId: string): unknown {
+    const tab = this.tabs.get(tabId);
+    return tab && tab.view.webContents === sender ? tab.descriptor ?? null : null;
   }
 
   setVisible(owner: Electron.BrowserWindow, tabId: string, visible: boolean): void {

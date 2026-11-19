@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { shouldRunGc, shouldStartFresh, WindowStorageMigrator } from './windowStorage';
+import { shouldRunGc, shouldStartFresh, WindowStorageMigrator, withHostedTab } from './windowStorage';
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -69,5 +69,25 @@ describe('shouldStartFresh', () => {
     expect(shouldStartFresh('?windowKey=main', session)).toBe(false);
     expect(shouldStartFresh('?windowKey=main&freshAgentTab=1', session)).toBe(true);
     expect(shouldStartFresh('?windowKey=main&freshAgentTab=1', session)).toBe(false);
+  });
+});
+
+describe('withHostedTab', () => {
+  it('adds the hosted tab when the saved list does not have it yet', () => {
+    // risk: a tab host that starts before the debounced save shows the wrong page
+    const saved = [{ id: 'a', mode: 'chat' }];
+    expect(withHostedTab(saved, 'b', { id: 'b', mode: 'chat' })).toEqual([{ id: 'a', mode: 'chat' }, { id: 'b', mode: 'chat' }]);
+  });
+
+  it('prefers the owner window over the saved copy of the hosted tab', () => {
+    const saved = [{ id: 'a', mode: 'chat', title: 'Old' }];
+    expect(withHostedTab(saved, 'a', { id: 'a', mode: 'files', title: 'New' })).toEqual([{ id: 'a', mode: 'files', title: 'New' }]);
+  });
+
+  it('leaves the list alone outside a tab host or for a mismatched descriptor', () => {
+    const saved = [{ id: 'a', mode: 'chat' }];
+    expect(withHostedTab(saved, null, { id: 'b', mode: 'chat' })).toBe(saved);
+    expect(withHostedTab(saved, 'b', null)).toBe(saved);
+    expect(withHostedTab(saved, 'b', { id: 'c', mode: 'chat' })).toBe(saved);
   });
 });

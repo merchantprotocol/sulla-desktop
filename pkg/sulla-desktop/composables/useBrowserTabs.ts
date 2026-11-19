@@ -7,7 +7,7 @@ import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator } from './windowStorage';
+import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
 
 export function shouldPersistTabList(search: string): boolean { return new URLSearchParams(search).get('tabHost') !== '1'; }
 
@@ -206,7 +206,18 @@ const MAX_AGENT_TABS = 10;
 const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 
-const restoredTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
+const persistedTabs = shouldStartFresh(window.location.search, sessionStorage) ? [] : loadPersistedTabs();
+// A tab host takes its own tab from the owner window (see withHostedTab).
+function hostedTabDescriptor(): { id: string | null; descriptor: unknown } {
+  const query = new URLSearchParams(window.location.search);
+  const id = query.get('tabHost') === '1' ? query.get('tabId') : null;
+  if (!id) return { id: null, descriptor: null };
+  try {
+    return { id, descriptor: ipcRenderer.sendSync('internal-tab-view:descriptor' as any, id) };
+  } catch { return { id, descriptor: null } }
+}
+const hostedTab = hostedTabDescriptor();
+const restoredTabs = withHostedTab(persistedTabs, hostedTab.id, hostedTab.descriptor);
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
 // Enforce the agent-tab cap. Called synchronously from the write paths that

@@ -19,12 +19,16 @@ export class InternalTabViewIpc implements MainProcessIpcStep {
       if (!win || win.isDestroyed()) throw new Error('Untrusted internal tab caller');
       return win;
     };
-    ipc.handle('internal-tab-view:activate', (event: Electron.IpcMainInvokeEvent, tabId: string, windowKey: string, bounds: Electron.Rectangle) => manager.activate(owner(event), tabId, windowKey, bounds));
+    ipc.handle('internal-tab-view:activate', (event: Electron.IpcMainInvokeEvent, tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown) => manager.activate(owner(event), tabId, windowKey, bounds, descriptor));
     ipc.handle('internal-tab-view:bounds', (event: Electron.IpcMainInvokeEvent, tabId: string, bounds: Electron.Rectangle) => manager.setBounds(owner(event), tabId, bounds));
     ipc.handle('internal-tab-view:visible', (event: Electron.IpcMainInvokeEvent, tabId: string, visible: boolean) => manager.setVisible(owner(event), tabId, visible));
     ipc.handle('internal-tab-view:close', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.destroy(owner(event), tabId));
     ipc.handle('internal-tab-view:reload', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.reload(owner(event), tabId));
     // One-way renderer updates need ipcMain.on; the proxy registrar only guarantees handle().
+    // A host renderer reads its own tab synchronously at boot, before it builds its tab list.
+    Electron.ipcMain.on('internal-tab-view:descriptor', (event: Electron.IpcMainEvent, tabId: string) => {
+      event.returnValue = manager.descriptorFor(event.sender, tabId);
+    });
     Electron.ipcMain.on('internal-tab-view:update', (event: Electron.IpcMainEvent, tabId: string, descriptor: unknown) => manager.notifyTabUpdate(event.sender, tabId, descriptor));
   }
 }
