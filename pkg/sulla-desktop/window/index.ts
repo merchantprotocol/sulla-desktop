@@ -90,6 +90,14 @@ export function createWindow(name: string, url: string, options: Electron.Browse
   console.log('[createWindow] Creating NEW window:', name, 'url:', url);
 
   window = new BrowserWindow(options);
+  const windowBootCreatedAt = Date.now();
+  console.info(`[WindowBoot] ${ name } created at ${ windowBootCreatedAt }`);
+  window.once('ready-to-show', () => {
+    console.info(`[WindowBoot] ${ name } ready-to-show after ${ Date.now() - windowBootCreatedAt }ms`);
+  });
+  window.webContents.once('did-finish-load', () => {
+    console.info(`[WindowBoot] ${ name } did-finish-load after ${ Date.now() - windowBootCreatedAt }ms`);
+  });
   window.webContents.on('console-message', (event) => {
     const { level, lineNumber, message } = event;
     const method = level === 'warning' ? 'warn' : level;

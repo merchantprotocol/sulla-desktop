@@ -7,8 +7,8 @@
  * This is the entry point for the Agent window.
  */
 // hoping this is the absolute earliest we can run in the renderer context
-import { initiateWindowContext } from '@pkg/sulla';
-import '@pkg/composables/useBrowserTabs'; // register transfer IPC before the startup await
+import { startWindowContextHydration } from '@pkg/sulla';
+import '@pkg/composables/useBrowserTabs'; // register transfer IPC before renderer startup
 
 import { createApp } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
@@ -27,12 +27,18 @@ import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+const windowBootStartedAt = Date.now();
+console.info(`[WindowBoot] renderer entry started at ${ windowBootStartedAt }`);
+
 // BrowserTab is rendered persistently in AgentRouter (outside keep-alive)
 // so iframes are never removed from the DOM.  This stub just lets the
 // router match /Browser/:id for route.path / route.params without
 // rendering a duplicate component through router-view.
 const BrowserTabStub = { name: 'BrowserTabStub', render: () => null };
-await initiateWindowContext();
+// Settings, vault-backed services and extensions are not prerequisites for
+// painting the agent shell. Hydrate them after mounting so a cold backend can
+// never leave a newly-created window blank.
+startWindowContextHydration();
 // Bridge is now owned by main-process TabRegistry + GuestBridge; there is
 // no renderer-side bridge to initialise.
 
@@ -62,3 +68,7 @@ app.use(router);
 app.use(store);
 
 app.mount('#app');
+console.info(`[WindowBoot] renderer mounted after ${ Date.now() - windowBootStartedAt }ms`);
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  console.info(`[WindowBoot] first content frame after ${ Date.now() - windowBootStartedAt }ms`);
+}));
