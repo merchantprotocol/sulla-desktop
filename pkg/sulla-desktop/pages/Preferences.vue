@@ -79,7 +79,6 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
 };
 
 const STORAGE_KEY = 'sulla.preferences.section';
-const loaded = ref(false);
 const loadFailed = ref(false);
 const query = ref('');
 const current = ref<PreferencesSectionId>(resolvePreferencesSection(localStorage.getItem(STORAGE_KEY)) ?? 'general');
@@ -126,26 +125,33 @@ function onUpdaterState(_event: unknown, state: { currentVersion: string, update
 }
 
 async function load() {
-  loaded.value = false;
+  // Preferences are usable before the runtime backend is ready: render each
+  // section immediately from its current/local values, then hydrate the store
+  // when credentials and the settings API become available.
+  loadFailed.value = false;
   try {
     await store.dispatch('credentials/fetchCredentials');
-    await store.dispatch('preferences/fetchPreferences');
-    await store.dispatch('preferences/fetchLocked');
-    loadFailed.value = !!store.getters['preferences/hasError'];
+    const results = await Promise.allSettled([
+      store.dispatch('preferences/fetchPreferences'),
+      store.dispatch('preferences/fetchLocked'),
+    ]);
+    loadFailed.value = results.some(result => result.status === 'rejected')
+      || !!store.getters['preferences/hasError'];
   } catch {
     loadFailed.value = true;
   }
-  loaded.value = true;
 }
 
 onBeforeMount(() => {
   ipcRenderer.on('updater:state', onUpdaterState);
+  ipcRenderer.on('database:available', load);
   void load();
   ipcRenderer.invoke('updater:get-state').then(state => onUpdaterState(null, state)).catch(() => undefined);
 });
 
 onBeforeUnmount(() => {
   ipcRenderer.removeListener('updater:state', onUpdaterState);
+  ipcRenderer.removeListener('database:available', load);
   // Closing the tab drops changes still waiting to restart Docker, as closing the window did.
   if (engine.held.value) {
     void engine.discardHeld();
@@ -222,13 +228,7 @@ onBeforeUnmount(() => {
           :class="{ narrow: current !== 'models' }"
         >
           <div
-            v-if="!loaded"
-            class="loading"
-          >
-            Loading preferences…
-          </div>
-          <div
-            v-else-if="loadFailed"
+            v-if="loadFailed"
             class="alert"
           >
             <PrefIcon name="alert" />
@@ -248,7 +248,6 @@ onBeforeUnmount(() => {
           </div>
           <component
             :is="sectionComponent"
-            v-else
             @go="go"
           />
         </div>
