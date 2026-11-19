@@ -10,6 +10,7 @@
     :class="{ dark: isDark }"
   >
     <AgentHeader
+      v-if="!isTabHost"
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
       :can-toggle-mode="canToggleMode"
@@ -461,6 +462,8 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   docker:        'Docker',
   'support-session': 'Support session',
 };
+
+const isTabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
 
 const props = defineProps<{
   tabId:     string;

@@ -39,7 +39,8 @@ const rendererConsoleLog = Logging['renderer-console'];
 export const windowMapping: Record<string, number> = {};
 setAgentWindowMapping(windowMapping);
 
-export const webRoot = 'app://.';
+export { webRoot, mainUrl, agentWindowUrl } from './agentWindowUrl';
+import { webRoot, mainUrl } from './agentWindowUrl';
 
 /**
  * Restore or focus a window if it is already open
@@ -169,7 +170,6 @@ export function createWindow(name: string, url: string, options: Electron.Browse
   return window;
 }
 
-const mainUrl = `${ webRoot }/agent.html`;
 /** The main window's last position and size, kept across restarts. */
 const mainBounds = new WindowBoundsStore(path.join(paths.config, 'main-window-bounds.json'));
 let agentWindowPersistence: AgentWindowPersistence | undefined;

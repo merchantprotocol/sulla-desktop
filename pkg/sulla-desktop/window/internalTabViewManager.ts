@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Electron, { WebContentsView } from 'electron';
+import { agentWindowUrl } from './agentWindowUrl';
 
-interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean }
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean }
 
 /** Owns one isolated Electron renderer for each mounted internal tab. */
 export class InternalTabViewManager {
@@ -20,7 +21,7 @@ export class InternalTabViewManager {
     let tab = this.tabs.get(tabId);
     if (!tab) {
       const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
-      tab = { view, owner, bounds, visible: true, crashed: false };
+      tab = { view, owner, bounds, visible: true, crashed: false, transferring: false };
       this.tabs.set(tabId, tab);
       this.trackOwner(owner);
       view.webContents.on('render-process-gone', () => {
@@ -29,7 +30,7 @@ export class InternalTabViewManager {
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
       });
-      const url = `app://./agent.html?tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }`;
+      const url = agentWindowUrl(`tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }`);
       void view.webContents.loadURL(url);
     } else if (tab.owner !== owner) {
       this.moveToWindow(tabId, owner);
@@ -87,9 +88,19 @@ export class InternalTabViewManager {
     return true;
   }
 
+  resolveOwner(sender: Electron.WebContents): Electron.BrowserWindow | null {
+    for (const tab of this.tabs.values()) if (tab.view.webContents === sender && !tab.owner.isDestroyed()) return tab.owner;
+    return null;
+  }
+
+  markTransferring(tabId: string, transferring: boolean): void {
+    const tab = this.tabs.get(tabId);
+    if (tab) tab.transferring = transferring;
+  }
+
   destroy(owner: Electron.BrowserWindow, tabId: string): void {
     const tab = this.tabs.get(tabId);
-    if (!tab || tab.owner !== owner) return;
+    if (!tab || tab.owner !== owner || tab.transferring) return;
     try { owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     this.tabs.delete(tabId);

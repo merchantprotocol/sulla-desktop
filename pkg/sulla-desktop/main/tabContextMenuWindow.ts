@@ -23,7 +23,8 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
-import { getActiveAgentWindow, isAgentWebContents } from '@pkg/window/agentWindows';
+import { getActiveAgentWindow } from '@pkg/window/agentWindows';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
@@ -70,7 +71,7 @@ async function onShow(
   const { screenX, screenY, items, tabData } = payload;
 
   pendingTabData = tabData;
-  openerWindow = isAgentWebContents(_event.sender) ? BrowserWindow.fromWebContents(_event.sender) : null;
+  openerWindow = agentWindowFromSender(_event.sender);
 
   // Detect theme for proper styling
   const themeId = await getTheme();

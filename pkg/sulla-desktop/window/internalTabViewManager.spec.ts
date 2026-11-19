@@ -75,6 +75,21 @@ describe('InternalTabViewManager', () => {
     expect(tab.owner).toBe(target);
   });
 
+  it('keeps a released view alive until transfer finishes', () => {
+    // risk: a close notification from the source renderer must not destroy a tab mid-tear-off
+    const owner = ownerWindow(6);
+    const instance = manager() as any;
+    instance.activate(owner, 'moving', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const tab = instance.tabs.get('moving');
+    instance.markTransferring('moving', true);
+    instance.destroy(owner, 'moving');
+    expect(tab.view.webContents.close).not.toHaveBeenCalled();
+    expect(instance.tabs.has('moving')).toBe(true);
+    instance.markTransferring('moving', false);
+    instance.destroy(owner, 'moving');
+    expect(tab.view.webContents.close).toHaveBeenCalledOnce();
+  });
+
   it('isolates a renderer crash to its tab and exposes reload', () => {
     // risk: one tab crash must not blank or terminate the agent shell
     const owner = ownerWindow(5);

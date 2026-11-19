@@ -22,12 +22,13 @@ import { createUseCaseSuggestionIpcRegistrar } from './useCaseSuggestionIpc';
 
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 import type { SullaFilesIpcDesktop, SullaFilesIpcServices } from './SullaFilesIpcSupport';
 
 /** Electron-backed desktop surface for the Files IPC handlers. */
 export class SullaFilesIpcElectronDesktop implements SullaFilesIpcDesktop {
-  ownerWindow(sender:WebContents):BrowserWindow | undefined { return BrowserWindow.fromWebContents(sender) ?? undefined }
+  ownerWindow(sender:WebContents):BrowserWindow | undefined { return agentWindowFromSender(sender) ?? undefined }
   showOpenDialog(owner:BrowserWindow | undefined, options:OpenDialogOptions) { return owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options) }
   showSaveDialog(owner:BrowserWindow | undefined, options:SaveDialogOptions) { return owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options) }
   openPath(target:string):Promise<string> { return shell.openPath(target) }
