@@ -13,10 +13,12 @@
  * Supports source switching via right-click context menus.
  */
 
-import { ref, inject, type Ref } from 'vue';
+import { ref, inject, reactive, type Ref } from 'vue';
 
 import { cameraEffectsKey } from '../effects/CameraEffectsComposition';
 import { CameraStreamService } from '../effects/CameraStreamService';
+import { CameraStreamRegistry } from '../services/CameraStreamRegistry';
+import { ScreenStreamRegistry } from '../services/ScreenStreamRegistry';
 
 const { ipcRenderer } = require('electron');
 
@@ -46,37 +48,53 @@ export const QUALITY_PRESETS: Record<Exclude<QualityPreset, 'auto'>, QualityConf
 
 export function useMediaSources() {
   const screenStream: Ref<MediaStream | null> = ref(null);
+  const screenStreams = reactive<Record<string, MediaStream>>({});
+  const screenRegistry = new ScreenStreamRegistry();
   const cameraStream: Ref<MediaStream | null> = ref(null);
+  const cameraStreams = reactive<Record<string, MediaStream>>({});
+  const cameraDeviceIds = reactive<Record<string, string>>({});
   const activeScreenName = ref('');
   const activeScreenSourceId = ref('');
   const activeCameraName = ref('');
   const activeCameraDeviceId = ref('');
   const screenQuality: Ref<QualityPreset> = ref('auto');
   const cameraQuality: Ref<QualityPreset> = ref('720p');
+  const cameraQualities = reactive<Record<string, QualityPreset>>({});
   const effects = inject(cameraEffectsKey);
   if (!effects) throw new Error('Capture Studio camera effects composition is missing');
   const cameraEffectError = ref('');
   const cameraEffectsRevision = ref(0);
-  const camera = new CameraStreamService(effects, constraints => navigator.mediaDevices.getUserMedia(constraints), stream => {
-    cameraStream.value = stream;
-    if (!stream) { activeCameraName.value = ''; activeCameraDeviceId.value = ''; }
-  }, error => {
-    cameraEffectError.value = 'Camera effects unavailable. Original camera video is being used.';
-    console.warn('[CameraEffects]', error);
-  }, () => {
-    const options = camera.effectOptions;
-    if (options.autoFrame || options.soften || options.backgroundBlur) cameraEffectError.value = '';
-    cameraEffectsRevision.value++;
-  });
-  let rawScreenStream: MediaStream | null = null;
-  let cropTimer: ReturnType<typeof setInterval> | null = null;
+  function createCameraService(sourceKey: string): CameraStreamService {
+    return new CameraStreamService(effects!, constraints => navigator.mediaDevices.getUserMedia(constraints), stream => {
+      if (stream) cameraStreams[sourceKey] = stream;
+      else delete cameraStreams[sourceKey];
+      if (sourceKey === 'cam') {
+        cameraStream.value = stream;
+        if (!stream) { activeCameraName.value = ''; activeCameraDeviceId.value = ''; }
+      }
+    }, error => {
+      cameraEffectError.value = 'Camera effects unavailable. Original camera video is being used.';
+      console.warn('[CameraEffects]', sourceKey, error);
+    }, () => {
+      if (sourceKey === 'cam') {
+        const options = cameras.get('cam').effectOptions;
+        if (options.autoFrame || options.soften || options.backgroundBlur) cameraEffectError.value = '';
+      }
+      cameraEffectsRevision.value++;
+    });
+  }
+  const cameras = new CameraStreamRegistry(createCameraService);
+  const camera = cameras.get('cam');
+  function cameraForSource(sourceKey = 'cam'): CameraStreamService { return cameras.get(sourceKey); }
+  const rawScreenStreams = new Map<string, MediaStream>();
+  const cropTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   /**
    * Acquire a specific screen/window source via desktopCapturer.
    * If no sourceId is given, picks the first available screen.
    */
-  async function acquireScreen(sourceId?: string, crop?: CropRegion): Promise<MediaStream> {
-    releaseScreen();
+  async function acquireScreen(sourceId?: string, crop?: CropRegion, sourceKey = 'screen'): Promise<MediaStream> {
+    releaseScreen(sourceKey);
 
     // If no source specified, pick the first screen
     if (!sourceId) {
@@ -113,7 +131,7 @@ export function useMediaSources() {
       throw new Error('Screen capture returned no video tracks');
     }
 
-    rawScreenStream = stream;
+    const rawStream = stream;
     if (crop && crop.width > 0 && crop.height > 0) {
       const video = document.createElement('video');
       video.srcObject = stream;
@@ -134,19 +152,20 @@ export function useMediaSources() {
       // A timer, not requestAnimationFrame: rAF stops while the studio window
       // is minimized or covered, which would freeze the recording.
       draw();
-      cropTimer = setInterval(draw, 1000 / 30);
+      cropTimers.set(sourceKey, setInterval(draw, 1000 / 30));
       stream = canvas.captureStream(30);
     }
-    screenStream.value = stream;
-    activeScreenSourceId.value = sourceId;
+    screenRegistry.set(sourceKey, stream);
+    screenStreams[sourceKey] = stream;
+    if (sourceKey === 'screen') screenStream.value = stream;
+    rawScreenStreams.set(sourceKey, rawStream);
+    if (sourceKey === 'screen') activeScreenSourceId.value = sourceId;
 
     const videoTrack = stream.getVideoTracks()[0];
-    activeScreenName.value = videoTrack?.label || 'Screen';
+    if (sourceKey === 'screen') activeScreenName.value = videoTrack?.label || 'Screen';
 
     videoTrack?.addEventListener('ended', () => {
-      screenStream.value = null;
-      activeScreenName.value = '';
-      activeScreenSourceId.value = '';
+      if (screenStreams[sourceKey] === stream) releaseScreen(sourceKey);
     });
 
     return stream;
@@ -159,33 +178,44 @@ export function useMediaSources() {
     return acquireScreen(sourceId);
   }
 
-  function releaseScreen() {
-    if (cropTimer !== null) {
-      clearInterval(cropTimer);
-      cropTimer = null;
-    }
-    if (screenStream.value) {
-      screenStream.value.getTracks().forEach(t => t.stop());
+  async function acquireScreenForSource(sourceKey: string, sourceId: string, crop?: CropRegion): Promise<MediaStream> {
+    return acquireScreen(sourceId, crop, sourceKey);
+  }
+
+  function releaseScreen(sourceKey = 'screen') {
+    const cropTimer = cropTimers.get(sourceKey);
+    if (cropTimer !== undefined) { clearInterval(cropTimer); cropTimers.delete(sourceKey); }
+    const stream = screenStreams[sourceKey];
+    screenRegistry.release(sourceKey);
+    delete screenStreams[sourceKey];
+    if (sourceKey === 'screen') {
       screenStream.value = null;
       activeScreenName.value = '';
       activeScreenSourceId.value = '';
     }
-    if (rawScreenStream && rawScreenStream !== screenStream.value) rawScreenStream.getTracks().forEach(t => t.stop());
-    rawScreenStream = null;
+    const raw = rawScreenStreams.get(sourceKey);
+    if (raw && raw !== stream) raw.getTracks().forEach(t => t.stop());
+    rawScreenStreams.delete(sourceKey);
+  }
+
+  function releaseAllScreens() {
+    for (const sourceKey of [...screenRegistry.entries().map(([key]) => key)]) releaseScreen(sourceKey);
   }
 
   /**
    * Acquire camera capture.
    */
-  async function acquireCamera(deviceId?: string): Promise<MediaStream> {
-    camera.assertMutable();
+  async function acquireCamera(deviceId?: string, sourceKey = 'cam'): Promise<MediaStream> {
+    const sourceCamera = cameraForSource(sourceKey);
+    sourceCamera.assertMutable();
 
     const videoConstraint: MediaTrackConstraints | boolean =
       deviceId ? { deviceId: { exact: deviceId } } : {};
 
     // Apply quality constraints for camera (unless 'auto' = device default)
-    if (cameraQuality.value !== 'auto' && typeof videoConstraint === 'object') {
-      const preset = QUALITY_PRESETS[cameraQuality.value];
+    const sourceQuality = sourceKey === 'cam' ? cameraQuality.value : cameraQualities[sourceKey] || cameraQuality.value;
+    if (sourceQuality !== 'auto' && typeof videoConstraint === 'object') {
+      const preset = QUALITY_PRESETS[sourceQuality];
       videoConstraint.width = { ideal: preset.width };
       videoConstraint.height = { ideal: preset.height };
       videoConstraint.frameRate = { ideal: preset.frameRate };
@@ -198,7 +228,7 @@ export function useMediaSources() {
 
     let stream: MediaStream;
     try {
-      stream = await camera.acquire(constraints);
+      stream = await sourceCamera.acquire(constraints);
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
         throw new Error('Camera permission denied. Please enable camera access in System Preferences.');
@@ -211,13 +241,16 @@ export function useMediaSources() {
       throw new Error('Camera capture returned no video tracks');
     }
 
-    const raw = camera.rawStream;
+    const raw = sourceCamera.rawStream;
     const track = raw?.getVideoTracks()[0];
     const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
-    if (camera.rawStream !== raw) return stream;
-    activeCameraDeviceId.value = track?.getSettings().deviceId || deviceId || '';
-    const device = devices.find(d => d.deviceId === activeCameraDeviceId.value);
-    activeCameraName.value = device?.label || track?.label || 'Camera';
+    if (sourceCamera.rawStream !== raw) return stream;
+    cameraDeviceIds[sourceKey] = track?.getSettings().deviceId || deviceId || '';
+    if (sourceKey === 'cam') {
+      activeCameraDeviceId.value = cameraDeviceIds[sourceKey];
+      const device = devices.find(d => d.deviceId === activeCameraDeviceId.value);
+      activeCameraName.value = device?.label || track?.label || 'Camera';
+    }
 
     return stream;
   }
@@ -229,7 +262,25 @@ export function useMediaSources() {
     return acquireCamera(deviceId);
   }
 
-  function releaseCamera(): Promise<void> { return camera.release(); }
+  async function acquireCameraForSource(sourceKey: string, deviceId?: string): Promise<MediaStream> {
+    return acquireCamera(deviceId, sourceKey);
+  }
+
+  async function switchCameraForSource(sourceKey: string, deviceId: string): Promise<MediaStream> {
+    return acquireCamera(deviceId, sourceKey);
+  }
+
+  async function releaseCamera(sourceKey = 'cam'): Promise<void> {
+    await cameraForSource(sourceKey).release();
+    delete cameraDeviceIds[sourceKey];
+  }
+  function assertCameraMutable(sourceKey = 'cam'): void { cameraForSource(sourceKey).assertMutable(); }
+  async function beginAllCameraRecordings(): Promise<void> {
+    try { await Promise.all(cameras.values().map(service => service.beginRecording())); }
+    catch (error) { endAllCameraRecordings(); throw error; }
+  }
+  function endAllCameraRecordings(): void { for (const service of cameras.values()) service.endRecording(); }
+  async function releaseAllCameras(): Promise<void> { await cameras.disposeAll(); }
 
   /**
    * Change screen quality preset.
@@ -245,12 +296,14 @@ export function useMediaSources() {
    * possible so the feed never drops.  Falls back to re-acquire if
    * applyConstraints isn't supported or fails.
    */
-  async function setCameraQuality(preset: QualityPreset): Promise<void> {
-    camera.assertMutable();
-    cameraQuality.value = preset;
-    if (!cameraStream.value) return;
+  async function setCameraQuality(preset: QualityPreset, sourceKey = 'cam'): Promise<void> {
+    const sourceCamera = cameraForSource(sourceKey);
+    sourceCamera.assertMutable();
+    cameraQualities[sourceKey] = preset;
+    if (sourceKey === 'cam') cameraQuality.value = preset;
+    if (!cameraStreams[sourceKey]) return;
 
-    const track = camera.rawStream?.getVideoTracks()[0];
+    const track = sourceCamera.rawStream?.getVideoTracks()[0];
     if (!track) return;
 
     if (preset === 'auto') {
@@ -282,9 +335,9 @@ export function useMediaSources() {
     }
 
     // Fallback: full re-acquire (saves deviceId before release clears it)
-    const deviceId = activeCameraDeviceId.value || undefined;
+    const deviceId = cameraDeviceIds[sourceKey] || undefined;
     try {
-      await acquireCamera(deviceId);
+      await acquireCamera(deviceId, sourceKey);
     } catch (e: any) {
       console.error('[useMediaSources] Camera re-acquire failed:', e.message);
     }
@@ -312,20 +365,33 @@ export function useMediaSources() {
   return {
     cameraEffectError, cameraEffectsRevision,
     camera,
+    cameraForSource,
     screenStream,
+    screenStreams,
     cameraStream,
+    cameraStreams,
+    cameraDeviceIds,
     activeScreenName,
     activeScreenSourceId,
     activeCameraName,
     activeCameraDeviceId,
     screenQuality,
     cameraQuality,
+    cameraQualities,
     acquireScreen,
+    acquireScreenForSource,
     switchScreen,
     releaseScreen,
+    releaseAllScreens,
     acquireCamera,
+    acquireCameraForSource,
+    switchCameraForSource,
     switchCamera,
     releaseCamera,
+    assertCameraMutable,
+    beginAllCameraRecordings,
+    endAllCameraRecordings,
+    releaseAllCameras,
     setScreenQuality,
     setCameraQuality,
     listScreenSources,

@@ -13,6 +13,7 @@
  */
 
 import { ref, onUnmounted } from 'vue';
+import paths from '@pkg/utils/paths';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import type { QualityPreset } from './useMediaSources';
@@ -21,7 +22,6 @@ const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const paths = require('@pkg/utils/paths').default;
 
 interface StreamEntry {
   id:           string;
@@ -49,6 +49,24 @@ const STREAM_FILENAMES: Record<StreamEntry['type'], string> = {
   mic:            'mic.webm',
   'system-audio': 'speaker.webm',
 };
+
+/** Keep historic primary filenames and give every additional video source its own file. */
+export function recordingFilename(type: StreamEntry['type'], id: string): string {
+  if ((type !== 'screen' || id === 'screen') && (type !== 'camera' || id === 'cam')) return STREAM_FILENAMES[type];
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${ type }-${ safeId || 'extra' }.webm`;
+}
+
+export interface RecorderManifestStream {
+  id: string; type: string; filename: string; format: string; startOffset: number; bytes: number;
+}
+
+export function toRecorderManifestStream(entry: Pick<StreamEntry, 'id' | 'type' | 'filename' | 'startOffset' | 'bytesWritten'>): RecorderManifestStream {
+  return {
+    id: entry.id, type: entry.type, filename: entry.filename,
+    format: 'webm', startOffset: Math.round(entry.startOffset), bytes: entry.bytesWritten,
+  };
+}
 
 export interface CaptureEvent {
   type:    'click' | 'keystroke' | 'window-focus' | 'scroll';
@@ -156,7 +174,7 @@ export function useRecorder(
     for (const src of streams) {
       const hasVideo = src.stream.getVideoTracks().length > 0;
       const mimeType = pickMimeType(hasVideo ? 'video' : 'audio');
-      const filename = STREAM_FILENAMES[src.type];
+      const filename = recordingFilename(src.type, src.id);
       const filePath = path.join(sessionDir, filename);
 
       let ws: any;
@@ -364,14 +382,7 @@ export function useRecorder(
 
     // Write manifest (includes both MediaRecorder and external streams)
     let allStreams = [
-      ...entries.map(e => ({
-        id:          e.id,
-        type:        e.type,
-        filename:    e.filename,
-        format:      'webm',
-        startOffset: Math.round(e.startOffset),
-        bytes:       e.bytesWritten,
-      })),
+      ...entries.map(toRecorderManifestStream),
       ...externalEntries.map(e => {
         let bytes = 0;
         try { bytes = e.getBytesWritten() } catch (err: any) {

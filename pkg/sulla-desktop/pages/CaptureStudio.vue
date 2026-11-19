@@ -61,6 +61,7 @@
         :primary-source="primarySource"
         :pip-source="pipSource"
         :audio-only-sources="audioOnlySources"
+        :channels="splitChannels"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
         @show-audio-menu="showAudioContextMenu"
@@ -83,7 +84,7 @@
         @update:camera-shape="cameraShape = $event"
         @swap="swapAssignments"
         @show-screen-menu="showScreenContextMenu"
-        @show-camera-menu="showCameraContextMenu"
+        @show-camera-menu="showCameraContextMenu($event, pipSource?.id)"
       />
 
       <LayoutBar
@@ -509,8 +510,11 @@ const recording = ref(false);
 const captureLifecycle = new CaptureSessionLifecycle();
 // All entry points (UI, setup and RPC) share the parent teardown barrier.
 mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen);
+mediaSources.acquireScreenForSource = captureLifecycle.protect(mediaSources.acquireScreenForSource);
 mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
 mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
+mediaSources.acquireCameraForSource = captureLifecycle.protect(mediaSources.acquireCameraForSource);
+mediaSources.switchCameraForSource = captureLifecycle.protect(mediaSources.switchCameraForSource);
 mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
 mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
 mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
@@ -627,6 +631,15 @@ const canvasClass = computed(() => {
 });
 
 const videoSources = computed(() => sources.filter(s => s.isVideo && s.on));
+const splitChannels = computed(() => sources.filter(source => source.on).map(source => ({
+  id: source.id,
+  type: source.type,
+  name: source.name,
+  stream: source.type === 'screen' ? mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null)
+    : source.type === 'camera' ? mediaSources.cameraStreams[source.id] || (source.id === 'cam' ? mediaSources.cameraStream.value : null) : null,
+  level: source.type === 'mic' ? audioDriver.micLevel.value
+    : source.type === 'system' ? (speakerCapture.level.value || audioDriver.speakerLevel.value) : 0,
+})));
 
 const primarySource = computed(() => sources.find(s => s.id === assign.primary && s.on) || null);
 const pipSource = computed(() => sources.find(s => s.id === assign.pip && s.on) || null);
@@ -638,7 +651,7 @@ const primaryStream = ref<MediaStream | null>(null);
 const pipStream = ref<MediaStream | null>(null);
 
 // Both preview slots and recorder read the same published camera output.
-watch([primarySource, pipSource, mediaSources.screenStream, mediaSources.cameraStream],
+watch([primarySource, pipSource, mediaSources.screenStreams, mediaSources.screenStream, mediaSources.cameraStreams, mediaSources.cameraStream],
   () => updateStreamAssignments(), { flush: 'sync' });
 
 function updateStreamAssignments() {
@@ -646,9 +659,9 @@ function updateStreamAssignments() {
   if (!primary) {
     primaryStream.value = null;
   } else if (primary.type === 'screen') {
-    primaryStream.value = mediaSources.screenStream.value;
+    primaryStream.value = mediaSources.screenStreams[primary.id] || (primary.id === 'screen' ? mediaSources.screenStream.value : null);
   } else if (primary.type === 'camera') {
-    primaryStream.value = mediaSources.cameraStream.value;
+    primaryStream.value = mediaSources.cameraStreams[primary.id] || (primary.id === 'cam' ? mediaSources.cameraStream.value : null);
   } else {
     primaryStream.value = null;
   }
@@ -657,9 +670,9 @@ function updateStreamAssignments() {
   if (!pip) {
     pipStream.value = null;
   } else if (pip.type === 'screen') {
-    pipStream.value = mediaSources.screenStream.value;
+    pipStream.value = mediaSources.screenStreams[pip.id] || (pip.id === 'screen' ? mediaSources.screenStream.value : null);
   } else if (pip.type === 'camera') {
-    pipStream.value = mediaSources.cameraStream.value;
+    pipStream.value = mediaSources.cameraStreams[pip.id] || (pip.id === 'cam' ? mediaSources.cameraStream.value : null);
   } else {
     pipStream.value = null;
   }
@@ -802,7 +815,7 @@ async function toggleSrc(src: Source) {
   return captureLifecycle.track(async() => {
   if (captureLifecycle.isClosing) return;
   if (src.type === 'camera') {
-    try { mediaSources.camera.assertMutable(); }
+    try { mediaSources.assertCameraMutable(src.id); }
     catch (error: any) { statusMessage.value = error.message; return; }
   }
   console.log('[CaptureStudio] toggleSrc:', src.id, src.type, 'currently on:', src.on, '→', !src.on);
@@ -811,12 +824,13 @@ async function toggleSrc(src: Source) {
   if (src.on) {
     try {
       if (src.type === 'screen') {
-        await mediaSources.acquireScreen();
+        await mediaSources.acquireScreenForSource(src.id, deviceIdMap[src.name]);
         console.log('[CaptureStudio] Screen acquired, stream:', mediaSources.screenStream.value ? 'active' : 'null', 'tracks:', mediaSources.screenStream.value?.getVideoTracks().length);
         if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'camera') {
-        await mediaSources.acquireCamera();
-        console.log('[CaptureStudio] Camera acquired, stream:', mediaSources.cameraStream.value ? 'active' : 'null', 'tracks:', mediaSources.cameraStream.value?.getVideoTracks().length);
+        await mediaSources.acquireCameraForSource(src.id, deviceIdMap[src.name]);
+        const stream = mediaSources.cameraStreams[src.id];
+        console.log('[CaptureStudio] Camera acquired:', src.id, stream ? 'active' : 'null', 'tracks:', stream?.getVideoTracks().length);
         if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'mic') {
         await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
@@ -829,9 +843,9 @@ async function toggleSrc(src: Source) {
     }
   } else {
     if (src.type === 'screen') {
-      mediaSources.releaseScreen();
+      mediaSources.releaseScreen(src.id);
     } else if (src.type === 'camera') {
-      await mediaSources.releaseCamera();
+      await mediaSources.releaseCamera(src.id);
     } else if (src.type === 'mic') {
       await audioDriver.stopMic();
     } else if (src.type === 'system') {
@@ -987,8 +1001,8 @@ async function toggleRecord() {
 
     // Lock camera lifecycle before asynchronous recorder/audio startup.
     try {
-      await mediaSources.camera.beginRecording();
-      if (captureLifecycle.isClosing) { mediaSources.camera.endRecording(); return; }
+      await mediaSources.beginAllCameraRecordings();
+      if (captureLifecycle.isClosing) { mediaSources.endAllCameraRecordings(); return; }
     }
     catch (error: any) { statusMessage.value = error.message; return; }
 
@@ -999,15 +1013,15 @@ async function toggleRecord() {
     // mic-pcm-socket (PCM) or mic-socket (WebM). Not a MediaRecorder stream.
 
     // Screen — video only, no mic audio muxed in
-    const screenVal = mediaSources.screenStream.value;
-    if (screenVal?.active) {
-      streams.push({ id: 'screen', type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
+    for (const source of sources.filter(candidate => candidate.type === 'screen' && candidate.on)) {
+      const screenVal = mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null);
+      if (screenVal?.active) streams.push({ id: source.id, type: 'screen', stream: screenVal, quality: mediaSources.screenQuality.value });
     }
 
     // Camera — video only, no mic audio muxed in
-    const camVal = mediaSources.cameraStream.value;
-    if (camVal?.active) {
-      streams.push({ id: 'cam', type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
+    for (const source of sources.filter(candidate => candidate.type === 'camera' && candidate.on)) {
+      const camVal = mediaSources.cameraStreams[source.id] || (source.id === 'cam' ? mediaSources.cameraStream.value : null);
+      if (camVal?.active) streams.push({ id: source.id, type: 'camera', stream: camVal, quality: mediaSources.cameraQuality.value });
     }
 
     const systemAudioVal = speakerCapture.nativeStream.value;
@@ -1016,7 +1030,7 @@ async function toggleRecord() {
     }
 
     if (streams.length === 0 && !audioDriver.micRunning.value && !audioDriver.speakerRunning.value) {
-      mediaSources.camera.endRecording();
+      mediaSources.endAllCameraRecordings();
       statusMessage.value = 'Enable at least one source to record';
       setTimeout(() => { statusMessage.value = '' }, 3000);
       return;
@@ -1026,7 +1040,7 @@ async function toggleRecord() {
     try {
       sessionId = recorder.startSession(streams);
     } catch (e: any) {
-      mediaSources.camera.endRecording();
+      mediaSources.endAllCameraRecordings();
       console.error('[CaptureStudio] Failed to start recording session:', e.message || e);
       statusMessage.value = 'Failed to start recording: ' + (e.message || 'unknown error');
       setTimeout(() => { statusMessage.value = '' }, 5000);
@@ -1034,7 +1048,7 @@ async function toggleRecord() {
     }
 
     if (!sessionId) {
-      mediaSources.camera.endRecording();
+      mediaSources.endAllCameraRecordings();
       statusMessage.value = recorder.error.value || 'Failed to start recording';
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
@@ -1077,7 +1091,7 @@ async function toggleRecord() {
       console.error('[CaptureStudio] Failed to attach audio stream:', e.message || e);
       await Promise.all([micRecording.stop(), speakerCapture.mode.value === 'blackhole' ? speakerCapture.stop() : Promise.resolve('')]);
       await recorder.stopSession();
-      mediaSources.camera.endRecording();
+      mediaSources.endAllCameraRecordings();
       statusMessage.value = `Failed to start recording audio: ${ e.message || 'unknown error' }`;
       setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
@@ -1085,7 +1099,7 @@ async function toggleRecord() {
 
     if (captureLifecycle.isClosing) {
       await recorder.stopSession();
-      mediaSources.camera.endRecording();
+      mediaSources.endAllCameraRecordings();
       return;
     }
     recording.value = true;
@@ -1110,7 +1124,7 @@ async function toggleRecord() {
     if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
     await recorder.stopSession();
     lastSessionDir.value = capturedSessionDir;
-    mediaSources.camera.endRecording();
+    mediaSources.endAllCameraRecordings();
     recording.value = false;
     diskSpace.stopMonitoring();
     statusMessage.value = 'Recording saved';
@@ -1265,6 +1279,17 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
   }
 
   if (isVideo) {
+    if (payload.type === 'screen') {
+      const screenId = deviceIdMap[payload.deviceId] || payload.deviceId;
+      deviceIdMap[newSrc.name] = screenId;
+      try { await mediaSources.acquireScreenForSource(id, screenId); }
+      catch (e: any) { newSrc.on = false; console.error('[CaptureStudio] Failed to start added screen:', e.message); }
+    }
+    if (payload.type === 'camera') {
+      deviceIdMap[newSrc.name] = deviceIdMap[payload.deviceId] || payload.deviceId;
+      try { await mediaSources.acquireCameraForSource(id, deviceIdMap[newSrc.name]); }
+      catch (e: any) { newSrc.on = false; console.error('[CaptureStudio] Failed to start added camera:', e.message); }
+    }
     autoAssign();
     updateStreamAssignments();
     if (currentLayout.value === 'screenonly' || currentLayout.value === 'camonly') {
@@ -1278,10 +1303,20 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
 function removeSource(id: string) {
   // Stop mic via controller if this was a mic source
   const src = sources.find(s => s.id === id);
+  if (recording.value && (src?.type === 'camera' || src?.type === 'screen')) {
+    statusMessage.value = 'Stop recording before removing a video source';
+    return;
+  }
   if (src?.type === 'mic') {
     audioDriver.stopMic().catch(() => {});
   } else if (src?.type === 'system') {
     disableSystemAudio().catch(() => {});
+  } else if (src?.type === 'screen') {
+    mediaSources.releaseScreen(id);
+    delete deviceIdMap[src.name];
+  } else if (src?.type === 'camera') {
+    mediaSources.releaseCamera(id).catch(() => {});
+    delete deviceIdMap[src.name];
   }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
@@ -1464,30 +1499,40 @@ async function showScreenContextMenu(e: MouseEvent) {
 }
 
 const effectsMenuRevision = ref(0);
-const cameraEffectsMenu = new CameraEffectsMenu(
-  mediaSources.camera, () => recording.value || captureLifecycle.isClosing,
-  message => { statusMessage.value = message; },
-  () => { effectsMenuRevision.value++; },
-);
+const activeCameraMenuSourceId = ref('cam');
+const cameraEffectsMenus = new Map<string, CameraEffectsMenu>();
+function cameraEffectsMenuFor(sourceId: string): CameraEffectsMenu {
+  let menu = cameraEffectsMenus.get(sourceId);
+  if (!menu) {
+    menu = new CameraEffectsMenu(
+      mediaSources.cameraForSource(sourceId), () => recording.value || captureLifecycle.isClosing,
+      message => { statusMessage.value = message; },
+      () => { effectsMenuRevision.value++; },
+    );
+    cameraEffectsMenus.set(sourceId, menu);
+  }
+  return menu;
+}
 const cameraContextItems = computed(() => {
   // Service notifications invalidate active indicators on initialization/inference failure.
   void effectsMenuRevision.value;
   void mediaSources.cameraEffectsRevision.value;
-  return ctxMenu.title === 'Camera' ? [...ctxMenu.items, ...cameraEffectsMenu.items()] : ctxMenu.items;
+  return ctxMenu.title === 'Camera' ? [...ctxMenu.items, ...cameraEffectsMenuFor(activeCameraMenuSourceId.value).items()] : ctxMenu.items;
 });
 watch(mediaSources.cameraEffectError, message => { if (message) statusMessage.value = message; });
 
-async function showCameraContextMenu(e: MouseEvent) {
+async function showCameraContextMenu(e: MouseEvent, sourceId = 'cam') {
   try {
+    activeCameraMenuSourceId.value = sourceId;
     const cameras = await mediaSources.listVideoDevices();
 
     const deviceChildren: CtxMenuItem[] = cameras.map(cam => ({
       id:     cam.deviceId,
       label:  cam.label,
-      active: cam.deviceId === mediaSources.activeCameraDeviceId.value,
+      active: cam.deviceId === mediaSources.cameraDeviceIds[sourceId],
       action: async() => {
         try {
-          await mediaSources.switchCamera(cam.deviceId);
+          await mediaSources.switchCameraForSource(sourceId, cam.deviceId);
           if (!captureLifecycle.isClosing) updateStreamAssignments();
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch camera:', err);
@@ -1496,7 +1541,7 @@ async function showCameraContextMenu(e: MouseEvent) {
     }));
 
     const qualityChildren = buildQualityChildren(
-      mediaSources.cameraQuality.value, mediaSources.setCameraQuality,
+      mediaSources.cameraQualities[sourceId] || mediaSources.cameraQuality.value, preset => mediaSources.setCameraQuality(preset, sourceId),
       ['1080p', '720p', '480p'], 'Auto (device default)',
     );
 
@@ -1574,7 +1619,7 @@ function showSourceContextMenu(src: Source, e: MouseEvent) {
   if (src.type === 'screen') {
     showScreenContextMenu(e);
   } else if (src.type === 'camera') {
-    showCameraContextMenu(e);
+    showCameraContextMenu(e, src.id);
   } else if (src.type === 'mic') {
     showAudioContextMenu(e);
   } else if (src.type === 'system') {
@@ -1915,6 +1960,11 @@ onMounted(async() => {
   // 2. Enumerate devices
   loadingMessage.value = 'Detecting devices...';
   try {
+    const screens = await mediaSources.listScreenSources();
+    if (screens.length) {
+      deviceOptions.screen = screens.map(screen => screen.name);
+      for (const screen of screens) deviceIdMap[screen.name] = screen.id;
+    }
     const { inputs } = await listAudioDevices();
     if (inputs.length > 0) {
       deviceOptions.mic = inputs.map(d => d.label);
@@ -1980,7 +2030,7 @@ async function cleanupCaptureStudio() {
   if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
   inputTracker.stopTracking();
   await recorder.stopSession();
-  mediaSources.camera.endRecording();
+  mediaSources.endAllCameraRecordings();
   recording.value = false;
   diskSpace.stopMonitoring();
 
@@ -1996,8 +2046,8 @@ async function cleanupCaptureStudio() {
   await recorder.stopSession();
 
   // Release all media streams (screen + camera)
-  mediaSources.releaseScreen();
-  await mediaSources.camera.dispose();
+  mediaSources.releaseAllScreens();
+  await mediaSources.releaseAllCameras();
   speakerCapture.releaseNative();
 
   // Disconnect from controllers
@@ -2159,8 +2209,16 @@ html, body {
 
 /* Layout: side-by-side */
 .canvas.layout-sidebyside { gap: 12px; }
-.canvas.layout-sidebyside .screen-preview { width: 44%; }
-.canvas.layout-sidebyside .sbs-camera { width: 44%; opacity: 1; transform: scale(1); pointer-events: auto; }
+.canvas.layout-sidebyside .screen-preview,
+.canvas.layout-sidebyside .sbs-camera { display: none; }
+.sbs-grid { width: min(96%, 1500px); height: min(90%, 950px); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 12px; align-content: center; }
+.sbs-tile { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; aspect-ratio: 16/9; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); box-shadow: 0 8px 40px rgba(0,0,0,.4); }
+.sbs-tile video { width: 100%; height: 100%; object-fit: contain; }
+.sbs-tile .placeholder { color: var(--text-dim); }
+.sbs-label { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 9px; border-radius: 6px; color: var(--text-primary); background: rgba(0,0,0,.65); font-size: 11px; }
+.sbs-audio-meter { display: flex; align-items: center; justify-content: center; gap: 3px; width: 76%; height: 58px; }
+.sbs-audio-meter span { width: 4px; min-height: 3px; border-radius: 3px; background: var(--status-success); opacity: .85; transition: height 80ms linear; }
+@media (max-width: 680px) { .sbs-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 7px; } .sbs-label { left: 6px; bottom: 6px; font-size: 9px; } }
 .canvas.layout-sidebyside .cam-container { opacity: 0; pointer-events: none; }
 
 /* Layout: screen only */
