@@ -243,13 +243,17 @@ function onInternalTabCrashed(_event: unknown, tabId: string) { crashedInternalT
 function onInternalTabUpdated(_event: unknown, tabId: string, descriptor: BrowserTabDescriptor) {
   if (descriptor?.id === tabId) updateTab(tabId, descriptor);
 }
-function onInternalTabLoaded(_event: unknown, tabId: string) {
+function refreshInternalTabBounds(tabId: string): void {
   const element = internalTabElements.get(tabId);
   if (!element || !internalTabRoute(tabId)) return;
   requestAnimationFrame(() => {
     if (internalTabElements.get(tabId) !== element || !internalTabRoute(tabId)) return;
     void ipcRenderer.invoke('internal-tab-view:bounds' as any, tabId, internalTabBounds(element)).catch(() => undefined);
   });
+}
+function onInternalTabLoaded(_event: unknown, tabId: string) { refreshInternalTabBounds(tabId); }
+function onInternalTabsWindowResize() {
+  for (const tabId of internalTabElements.keys()) refreshInternalTabBounds(tabId);
 }
 function reloadInternalTab(tabId: string) {
   crashedInternalTabIds.delete(tabId);
@@ -877,6 +881,7 @@ onMounted(async() => {
   ipcRenderer.on('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.on('internal-tab-view:updated' as any, onInternalTabUpdated as any);
   ipcRenderer.on('internal-tab-view:loaded' as any, onInternalTabLoaded as any);
+  window.addEventListener('resize', onInternalTabsWindowResize);
   ipcRenderer.on('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.on('database:available', onDatabaseAvailable);
   void refreshRailExtensions().catch(err => console.warn('[AgentRouter] extension rail load failed:', err));
@@ -938,6 +943,7 @@ onUnmounted(() => {
   ipcRenderer.removeListener('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.removeListener('internal-tab-view:updated' as any, onInternalTabUpdated as any);
   ipcRenderer.removeListener('internal-tab-view:loaded' as any, onInternalTabLoaded as any);
+  window.removeEventListener('resize', onInternalTabsWindowResize);
   ipcRenderer.removeListener('extension-permission-needed', onPermissionNeeded);
   ipcRenderer.removeListener('database:available', onDatabaseAvailable);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
