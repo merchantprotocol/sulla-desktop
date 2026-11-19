@@ -14,9 +14,10 @@ const console = Logging.sulla;
 export class WindowContextInitializer {
   private readonly query = new URLSearchParams(window.location.search);
   private readonly windowKey = this.query.get('windowKey') || 'main';
-  private readonly telemetry = new WindowBootTelemetry(this.query.get('startupId') || crypto.randomUUID(), this.windowKey, (event, status, elapsedMs) => {
+  private readonly startupId = this.query.get('startupId') || crypto.randomUUID();
+  private readonly telemetry: WindowBootTelemetry = new WindowBootTelemetry(this.startupId, this.windowKey, (event, status, elapsedMs): Promise<unknown> => {
     const { ipcRenderer } = require('electron');
-    return ipcRenderer.invoke('sulla-startup:stage', { startupId: this.telemetry.startupId, windowKey: this.telemetry.windowKey, event, status, elapsedMs });
+    return ipcRenderer.invoke('sulla-startup:stage', { startupId: this.startupId, windowKey: this.windowKey, event, status, elapsedMs });
   });
 
   /** Start window hydration without making it a prerequisite for first paint. */
