@@ -167,32 +167,6 @@ export class OrgMessenger {
     return requests.map(request => request.data);
   }
 
-  async checkContactRequests(): Promise<void> {
-    const [orgId, userId] = await Promise.all([this.session.orgId(), this.session.userId()]);
-    const requests = await this.transport.contactRequests(orgId, userId);
-    const orgName = await this.orgName(orgId);
-    const directory = await this.loadDirectoryIfDue();
-    const senders = new Map<string, MessageEnvelope[]>();
-    for (const request of requests) {
-      const sender = request.data.from.userId;
-      const group = senders.get(sender) ?? [];
-      group.push(request);
-      senders.set(sender, group);
-    }
-    for (const [sender, messages] of senders) {
-      const lastAsked = await this.state.lastContactPrompt(orgId, userId, sender);
-      if (lastAsked !== undefined && Date.now() - lastAsked < this.promptCooldownMs) continue;
-      const person = directory.people.find(raw => {
-        const entry = raw as { userId?: string; id?: string };
-        return (entry.userId ?? entry.id) === sender;
-      }) as { displayName?: string; name?: string } | undefined;
-      void this.contactPrompter.request({
-        orgId, orgName, senderUserId: sender, senderName: person?.displayName || person?.name || sender, messages,
-        shown: () => this.state.recordContactPrompt(orgId, userId, sender, Date.now()),
-        resolve: choice => this.transport.resolveContactRequest(orgId, userId, sender, choice),
-      }).catch(error => console.warn('[OrgMessenger] Could not show contact request prompt:', error));
-    }
-  }
 
   /** Local inbox id for a remote org message; remote ids are only unique within one organization. */
   static localMessageId(orgId: string, remoteMessageId: string): string {
@@ -254,7 +228,6 @@ export class OrgMessenger {
 
   async syncOnce(): Promise<{ sent: number; delivered: number }> {
     const sent = await this.flushOutbox();
-    await this.checkContactRequests();
     const delivered = await this.pullInbox();
     return { sent, delivered };
   }

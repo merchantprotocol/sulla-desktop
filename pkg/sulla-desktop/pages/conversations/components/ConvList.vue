@@ -75,17 +75,6 @@ function createGroup(): void {
     </div>
     <div class="list-body">
       <template v-if="store.s.listTab === 'people'">
-        <template v-if="!picking && store.requests().length">
-          <div class="lgrp">Contact requests · {{ store.requests().length }}</div>
-          <div v-for="request in store.requests()" :key="request.senderId" class="row">
-            <ConvAvatar :ini="request.initials" size="lg" />
-            <div class="tx">
-              <div class="t1"><b>{{ request.name }}</b><span class="pill warn">{{ request.count }} request{{ request.count === 1 ? '' : 's' }}</span><time>{{ request.time }}</time></div>
-              <div class="t2">{{ request.latest }}</div>
-            </div>
-            <div class="acts"><button class="btn sm" disabled title="Coming soon">Allow</button><button class="btn sm ghost" disabled title="Coming soon">Not now</button></div>
-          </div>
-        </template>
         <template v-if="me && !picking">
           <div class="lgrp">You</div>
           <div class="row">
