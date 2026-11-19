@@ -67,14 +67,15 @@
           visibility:hidden + pointer-events:none so the iframe stays
           fully rendered and composited in the background.
         -->
-        <BrowserTab
-          v-for="tab in browserTabs"
-          :key="tab.id"
-          class="browser-tab-layer"
-          :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
-          :tab-id="tab.id"
-          :is-visible="route.path === `/Browser/${tab.id}`"
-        />
+        <template v-for="tab in browserTabs" :key="tab.id">
+          <BrowserTab
+            v-if="openedTabIds.has(tab.id)"
+            class="browser-tab-layer"
+            :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
+            :tab-id="tab.id"
+            :is-visible="route.path === `/Browser/${tab.id}`"
+          />
+        </template>
       </div>
     </div>
 
@@ -210,6 +211,13 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+// Keep a tab's page tree unmounted until the user first opens it. Once opened,
+// retain its existing renderer-local state while switching between tabs.
+const openedTabIds = reactive(new Set<string>());
+watch(() => route.path, (path) => {
+  const match = /^\/Browser\/(.+)$/.exec(path);
+  if (match) openedTabIds.add(match[1]);
+}, { immediate: true });
 // Only the browser tab and these named pages render AgentHeader. Defaulting
 // unknown/full-screen routes to false avoids relying on kept-alive DOM nodes.
 const hasTitlebar = computed(() => isBrowserRoute.value || [
