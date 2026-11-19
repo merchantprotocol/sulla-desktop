@@ -1,0 +1,104 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+import Electron, { WebContentsView } from 'electron';
+
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean }
+
+/** Owns one isolated Electron renderer for each mounted internal tab. */
+export class InternalTabViewManager {
+  private static instance: InternalTabViewManager;
+  private readonly tabs = new Map<string, InternalTabView>();
+
+  static getInstance(): InternalTabViewManager {
+    this.instance ??= new InternalTabViewManager();
+    return this.instance;
+  }
+
+  activate(owner: Electron.BrowserWindow, tabId: string, windowKey: string, bounds: Electron.Rectangle): void {
+    let tab = this.tabs.get(tabId);
+    if (!tab) {
+      const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
+      tab = { view, owner, bounds, visible: true };
+      this.tabs.set(tabId, tab);
+      this.trackOwner(owner);
+      view.webContents.on('render-process-gone', () => {
+        tab!.visible = false;
+        try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
+        tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
+      });
+      const url = `app://./agent.html?tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }`;
+      void view.webContents.loadURL(url);
+    } else if (tab.owner !== owner) {
+      this.moveToWindow(tabId, owner);
+      tab = this.tabs.get(tabId)!;
+    }
+    tab.bounds = bounds;
+    tab.visible = true;
+    tab.owner.contentView.addChildView(tab.view);
+    tab.view.setBounds(bounds);
+  }
+
+  setBounds(owner: Electron.BrowserWindow, tabId: string, bounds: Electron.Rectangle): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.owner !== owner) return;
+    tab.bounds = bounds;
+    if (tab.visible) tab.view.setBounds(bounds);
+  }
+
+  notifyTabUpdate(sender: Electron.WebContents, tabId: string, descriptor: unknown): void {
+    const tab = this.tabs.get(tabId);
+    if (tab && tab.view.webContents === sender && !tab.owner.isDestroyed()) {
+      tab.owner.webContents.send('internal-tab-view:updated', tabId, descriptor);
+    }
+  }
+
+  setVisible(owner: Electron.BrowserWindow, tabId: string, visible: boolean): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.owner !== owner) return;
+    tab.visible = visible;
+    if (visible) { owner.contentView.addChildView(tab.view); tab.view.setBounds(tab.bounds); }
+    else owner.contentView.removeChildView(tab.view);
+  }
+
+  reload(owner: Electron.BrowserWindow, tabId: string): void {
+    const tab = this.tabs.get(tabId);
+    if (tab?.owner === owner && !tab.view.webContents.isDestroyed()) {
+      tab.visible = true;
+      tab.owner.contentView.addChildView(tab.view);
+      tab.view.setBounds(tab.bounds);
+      tab.view.webContents.reload();
+    }
+  }
+
+  moveToWindow(tabId: string, target: Electron.BrowserWindow): boolean {
+    const tab = this.tabs.get(tabId);
+    if (!tab || target.isDestroyed()) return false;
+    if (tab.owner !== target) {
+      try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+      tab.owner = target;
+      this.trackOwner(target);
+    }
+    if (tab.visible) { target.contentView.addChildView(tab.view); tab.view.setBounds(tab.bounds); }
+    return true;
+  }
+
+  destroy(owner: Electron.BrowserWindow, tabId: string): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.owner !== owner) return;
+    try { owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    this.tabs.delete(tabId);
+  }
+
+  private readonly owners = new Set<number>();
+  private trackOwner(owner: Electron.BrowserWindow): void {
+    if (this.owners.has(owner.id)) return;
+    this.owners.add(owner.id);
+    owner.once('closed', () => {
+      this.owners.delete(owner.id);
+      for (const [id, tab] of this.tabs) if (tab.owner === owner) this.destroy(owner, id);
+    });
+  }
+}

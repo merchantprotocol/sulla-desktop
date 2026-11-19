@@ -75,6 +75,7 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
   'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
   'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -400,6 +401,11 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
   'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
+  'internal-tab-view:activate': (tabId: string, windowKey: string, bounds: Electron.Rectangle) => void;
+  'internal-tab-view:bounds': (tabId: string, bounds: Electron.Rectangle) => void;
+  'internal-tab-view:visible': (tabId: string, visible: boolean) => void;
+  'internal-tab-view:close': (tabId: string) => void;
+  'internal-tab-view:reload': (tabId: string) => void;
   'browser-tab-view:reclaim-chrome-focus': () => boolean;
 
   // #region Bookmarks
@@ -1321,6 +1327,8 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'internal-tab-view:crashed': (tabId: string) => void;
+  'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'conversation-servers:changed': (event: { channelId: string }) => void;
   'tabs:release': (transferId: string, tabId: string) => void;
   'tabs:release-finalize': (transferId: string, tabId: string) => void;

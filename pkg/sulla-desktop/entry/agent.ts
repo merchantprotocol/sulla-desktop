@@ -10,12 +10,13 @@
 import { startWindowContextHydration } from '@pkg/sulla';
 import '@pkg/composables/useBrowserTabs'; // register transfer IPC before renderer startup
 
-import { createApp } from 'vue';
+import { createApp, h } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 
 import './agent-tailwind.css';
 
 import AgentRouter from '../pages/AgentRouter.vue';
+import BrowserTab from '../pages/BrowserTab.vue';
 import { lazyScreen } from '../pages/agent/lazyScreen';
 
 import store from './store';
@@ -52,7 +53,10 @@ const router = createRouter({
   ],
 });
 
-const app = createApp(AgentRouter);
+const tabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
+const hostedTabId = new URLSearchParams(window.location.search).get('tabId') || '';
+const TabHost = { name: 'InternalTabHost', render: () => h(BrowserTab, { tabId: hostedTabId, isVisible: true }) };
+const app = createApp(tabHost ? TabHost : AgentRouter);
 
 // Live Agents (Studio) and the chat sub-agent drawer inject this client; this
 // window hosts both, so it must provide it (entry/index.ts does the same).

@@ -243,6 +243,9 @@ function flushPersistTabs(): void {
     persistTimer = null;
   }
   persistTabs([...tabs]);
+  if (new URLSearchParams(window.location.search).get('tabHost') === '1') {
+    for (const tab of tabs) ipcRenderer.send('internal-tab-view:update' as any, tab.id, { ...tab });
+  }
 }
 
 watch(tabs, () => {

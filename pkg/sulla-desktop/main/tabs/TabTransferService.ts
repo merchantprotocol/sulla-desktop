@@ -5,6 +5,7 @@
 import type { BrowserWindow, IpcMain, IpcMainEvent, Screen } from 'electron';
 
 import type { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
+import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
 import type { AgentWindowOptions } from '@pkg/window/agentWindows';
 
 interface TransferPayload {
@@ -113,6 +114,7 @@ export class TabTransferService {
       await this.waitForRendererReady(target);
       await this.sendAndWait('adopt', target, transferId, state.tabId, state.descriptor, state.transient, screenX, screenY);
       this.views.moveViewToWindow(state.tabId, target, { focus: true });
+      InternalTabViewManager.getInstance().moveToWindow(state.tabId, target);
       this.views.markTransferring(state.tabId, false);
       target.webContents.send('tabs:activate', transferId, state.tabId);
       if (this.getAgentWindowsByFocusOrder().includes(state.source) && state.source.isVisible()) {
