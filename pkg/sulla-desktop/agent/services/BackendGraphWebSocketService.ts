@@ -36,7 +36,7 @@ import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionH
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
-import { DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
+import { AmbiguousAgentInboxTargetError, DurableAgentInboxReceiverResolver, type AgentInboxReceiverResolver } from './AgentInboxReceiverResolver';
 import { DesktopPostgresConnection } from '../app/Database/DesktopPostgresConnection';
 import { postgresClient } from '../database/PostgresClient';
 
@@ -285,7 +285,7 @@ export class BackendGraphWebSocketService {
     this.inboxRunGuard = dependencies.inboxRunGuard ?? new ReceiverRunGuard();
     this.inboxReceiverResolver = dependencies.inboxReceiverResolver ?? new DurableAgentInboxReceiverResolver(
       agentJobProvider.jobs,
-      channel => this.inboxThread({ channel }) ?? GraphRegistry.findThreadByChannel(channel),
+      channel => GraphRegistry.findThreadsByChannel(channel),
     );
     this.agentInbox = new AgentInbox(repository, {
       isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
@@ -771,7 +771,20 @@ export class BackendGraphWebSocketService {
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const envelope = data?.envelope;
       if (!envelope?.ids?.messageId || !envelope?.body || envelope?.kind !== 'peer') return;
-      const target = await this.inboxReceiverResolver.resolve(channelId);
+      let target;
+      try {
+        target = await this.inboxReceiverResolver.resolve(channelId, envelope.targetId);
+      } catch (error) {
+        if (error instanceof AmbiguousAgentInboxTargetError || error instanceof Error) {
+          const senderChannel = String(envelope.senderChannel || '');
+          if (senderChannel) this.emitMessage(senderChannel, 'assistant_message', {
+            role: 'system', kind: 'channel_delivery_error', content: error.message,
+            thread_id: envelope.senderThreadId, toThreadId: envelope.senderThreadId,
+          });
+          return;
+        }
+        throw error;
+      }
       await this.agentInbox.receive({
         envelope,
         target,

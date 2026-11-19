@@ -648,6 +648,16 @@ ${ feedbackJson }`);
     return latest ? String((latest[1].state.metadata as any)?.threadId || latest[0]).trim() : undefined;
   },
 
+  findThreadsByChannel(channel: string): Array<{ channel: string; threadId: string; label: string; jobId?: string }> {
+    return [...registry.entries()].flatMap(([key, record]) => {
+      const metadata = record.state?.metadata as any;
+      if (String(metadata?.agentId || metadata?.wsChannel || '').trim() !== channel) return [];
+      const threadId = String(metadata?.threadId || key || '').trim();
+      if (!threadId) return [];
+      return [{ channel, threadId, label: String(metadata?.delegatedTaskLabel || metadata?.agentLabel || metadata?.agent?.name || metadata?.agentId || channel), jobId: String(metadata?.delegatedJobId || metadata?.jobId || '') || undefined }];
+    });
+  },
+
   /**
    * Best-effort lookup of the live sulla-desktop chat the user is looking
    * at. Used by the interactive `ask_user_question` tool when it is invoked

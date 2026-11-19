@@ -45,6 +45,19 @@ export class ListAgentsWorker extends BaseTool {
         statusNote:  a.statusNote && a.statusNote !== 'idle' ? a.statusNote : undefined,
       }));
 
+    try {
+      const { getAllJobs } = await import('./jobRegistry');
+      for (const job of await getAllJobs()) {
+        for (const task of job.tasks) {
+          if (!task.threadId || !['running', 'parked'].includes(task.status)) continue;
+          rows.push({ name: task.label, channel: task.agentId, address: `${task.agentId}#${task.threadId}`, threadId: task.threadId, jobId: job.jobId, label: task.label, status: task.status, uptimeMins: 0, idleMins: 0, description: task.label });
+        }
+        if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)) {
+          rows.push({ name: `Manager ${job.parentAgentId}`, channel: job.parentAgentId, address: `${job.parentAgentId}#${job.parentThreadId}`, threadId: job.parentThreadId, jobId: job.jobId, label: `Manager ${job.parentAgentId}`, status: job.status, uptimeMins: 0, idleMins: 0, description: 'Manager instance' });
+        }
+      }
+    } catch { /* Job instances may be unavailable in minimal runtimes. */ }
+
     if (rows.length === 0) {
       return {
         successBoolean: true,
@@ -57,7 +70,7 @@ export class ListAgentsWorker extends BaseTool {
       responseString: JSON.stringify({
         count:  rows.length,
         agents: rows,
-        hint:   'Message any of these with <channel:CHANNEL>text</channel:CHANNEL> (fire-and-forget; reply arrives on a later turn).',
+        hint:   'Use <channel:CHANNEL#threadId-or-jobId>text</channel:CHANNEL#threadId-or-jobId> for a precise instance; bare channel names work only when unique.',
       }, null, 2),
     };
   }

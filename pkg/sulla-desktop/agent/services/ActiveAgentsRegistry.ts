@@ -225,6 +225,27 @@ export class ActiveAgentsRegistry {
           : '';
         return `${ a.name || a.agentId }@${ a.channel } (${ a.status }, ${ age }m)${ note }`;
       });
+    try {
+      const { GraphRegistry } = await import('./GraphRegistry');
+      for (const agent of agents.filter(a => a.type !== 'human')) {
+        for (const instance of GraphRegistry.findThreadsByChannel(agent.channel)) {
+          if (!agentParts.some(line => line.includes(`#${instance.threadId}`))) {
+            agentParts.push(`${instance.label}@${instance.channel}#${instance.threadId}${instance.jobId ? ` (job ${instance.jobId})` : ''}`);
+          }
+        }
+      }
+    } catch { /* live graph instances unavailable */ }
+    try {
+      const { getAllJobs } = await import('../tools/agents/jobRegistry');
+      for (const job of await getAllJobs()) {
+        for (const task of job.tasks) if (task.threadId && ['running', 'parked'].includes(task.status)) {
+          agentParts.push(`${task.label}@${task.agentId}#${task.threadId} (job ${job.jobId}, ${task.status})`);
+        }
+        if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)) {
+          agentParts.push(`Manager ${job.parentAgentId}@${job.parentAgentId}#${job.parentThreadId} (job ${job.jobId}, ${job.status})`);
+        }
+      }
+    } catch { /* delegated-job roster unavailable */ }
     if (agentParts.length > 0) {
       lines.push(`agents: ${ agentParts.join(' | ') }`);
     }
