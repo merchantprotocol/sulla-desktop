@@ -12,6 +12,7 @@ interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow
 export class InternalTabViewManager {
   private static instance: InternalTabViewManager;
   private readonly tabs = new Map<string, InternalTabView>();
+  private readonly hostDisposalListeners = new Map<string, Set<() => void>>();
 
   static getInstance(): InternalTabViewManager {
     this.instance ??= new InternalTabViewManager();
@@ -30,6 +31,7 @@ export class InternalTabViewManager {
         tab!.visible = false;
         tab!.crashed = true;
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
+        this.notifyHostDisposed(tabId);
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
       });
       const url = agentWindowUrl(`tabHost=1&tabId=${ encodeURIComponent(tabId) }&windowKey=${ encodeURIComponent(windowKey) }&startupId=${ encodeURIComponent(AppStartupTelemetry.startupId) }`);
@@ -93,6 +95,7 @@ export class InternalTabViewManager {
     const tab = this.tabs.get(tabId);
     if (!tab || target.isDestroyed()) return false;
     if (tab.owner !== target) {
+      this.notifyHostDisposed(tabId);
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
       tab.owner = target;
       this.trackOwner(target);
@@ -106,6 +109,31 @@ export class InternalTabViewManager {
     return null;
   }
 
+  /** Resolve only the registered tab host that owns this renderer. */
+  hostViewForSender(sender: Electron.WebContents): WebContentsView | null {
+    for (const tab of this.tabs.values()) if (tab.view.webContents === sender && !sender.isDestroyed()) return tab.view;
+    return null;
+  }
+
+  /** Subscribe to terminal host disposal; ordinary tab switches keep children attached. */
+  onHostDisposed(sender: Electron.WebContents, listener: () => void): (() => void) | null {
+    const tabId = [...this.tabs].find(([, tab]) => tab.view.webContents === sender)?.[0];
+    if (!tabId || sender.isDestroyed()) return null;
+    let listeners = this.hostDisposalListeners.get(tabId);
+    if (!listeners) this.hostDisposalListeners.set(tabId, listeners = new Set());
+    listeners.add(listener);
+    return () => {
+      listeners?.delete(listener);
+      if (!listeners?.size) this.hostDisposalListeners.delete(tabId);
+    };
+  }
+
+  private notifyHostDisposed(tabId: string): void {
+    const listeners = this.hostDisposalListeners.get(tabId);
+    this.hostDisposalListeners.delete(tabId);
+    for (const listener of listeners ?? []) listener();
+  }
+
   markTransferring(tabId: string, transferring: boolean): void {
     const tab = this.tabs.get(tabId);
     if (tab) tab.transferring = transferring;
@@ -115,6 +143,7 @@ export class InternalTabViewManager {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.owner !== owner || tab.transferring) return;
     try { owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+    this.notifyHostDisposed(tabId);
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     this.tabs.delete(tabId);
   }
@@ -123,6 +152,7 @@ export class InternalTabViewManager {
   destroyAll(): void {
     for (const [tabId, tab] of this.tabs) {
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+      this.notifyHostDisposed(tabId);
       if (!tab.view.webContents.isDestroyed()) {
         try { tab.view.webContents.close({ waitForBeforeUnload: false }); } catch { /* already gone */ }
       }

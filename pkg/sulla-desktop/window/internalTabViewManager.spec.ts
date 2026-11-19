@@ -49,6 +49,25 @@ describe('InternalTabViewManager', () => {
     expect(tab.view.setBounds).toHaveBeenLastCalledWith({ ...bounds, width: 700 });
   });
 
+  it('keeps child views with a background tab and notifies only when its host is disposed', () => {
+    // risk: switching tabs must hide a vault child without leaving it on top of the next tab
+    const owner = ownerWindow(10);
+    const instance = manager() as any;
+    instance.activate(owner, 'vault-tab', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const host = instance.tabs.get('vault-tab').view;
+    const sender = host.webContents;
+    const disposed = vi.fn();
+    expect(instance.hostViewForSender(sender)).toBe(host);
+    expect(instance.onHostDisposed(sender, disposed)).toEqual(expect.any(Function));
+    instance.setVisible(owner, 'vault-tab', false);
+    expect(disposed).not.toHaveBeenCalled();
+    instance.setVisible(owner, 'vault-tab', true);
+    expect(disposed).not.toHaveBeenCalled();
+    instance.destroy(owner, 'vault-tab');
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(instance.hostViewForSender(sender)).toBeNull();
+  });
+
   it('destroys only the closed tab view', () => {
     // risk: closing a tab must release its isolated Chromium renderer
     const owner = ownerWindow(2);
