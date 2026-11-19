@@ -26,6 +26,13 @@ export class InternalTabViewManager {
       tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
       this.tabs.set(tabId, tab);
       this.trackOwner(owner);
+      view.webContents.on('did-finish-load', () => {
+        // The shell can still be settling its layout while the isolated host boots.
+        // Ask it to re-read the live DOM rect rather than trusting activation bounds.
+        if (this.tabs.get(tabId) === tab && !tab!.owner.isDestroyed()) {
+          tab!.owner.webContents.send('internal-tab-view:loaded', tabId);
+        }
+      });
       view.webContents.on('render-process-gone', () => {
         tab!.visible = false;
         tab!.crashed = true;
