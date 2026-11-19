@@ -117,7 +117,7 @@ describe('InternalTabViewManager', () => {
     expect(owner.contentView.addChildView).not.toHaveBeenCalled();
   });
 
-  it('keeps child views with a background tab and notifies only when its host is disposed', () => {
+  it('reports native layout and tab switches without disposing the host', () => {
     // risk: switching tabs must hide a vault child without leaving it on top of the next tab
     const owner = ownerWindow(10);
     const instance = manager() as any;
@@ -128,9 +128,20 @@ describe('InternalTabViewManager', () => {
     const disposed = vi.fn();
     expect(instance.hostViewForSender(sender)).toBe(host);
     expect(instance.onHostDisposed(sender, disposed)).toEqual(expect.any(Function));
+    const layout = vi.fn();
+    const stop = instance.observeHostLayout(sender, layout);
+    expect(layout).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 20, height: 20 }, false);
     instance.setVisible(owner, 'vault-tab', false);
+    expect(layout).toHaveBeenLastCalledWith(null, false);
+    const moved = { x: 200, y: 60, width: 450, height: 340 };
+    instance.setBounds(owner, 'vault-tab', moved);
+    expect(layout).toHaveBeenLastCalledWith(null, false);
     expect(disposed).not.toHaveBeenCalled();
     instance.setVisible(owner, 'vault-tab', true);
+    expect(layout).toHaveBeenLastCalledWith(moved, true);
+    instance.beginShutdown();
+    expect(layout).toHaveBeenLastCalledWith(null, false);
+    stop();
     expect(disposed).not.toHaveBeenCalled();
     instance.destroy(owner, 'vault-tab');
     expect(disposed).toHaveBeenCalledOnce();

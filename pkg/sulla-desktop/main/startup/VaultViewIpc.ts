@@ -149,10 +149,12 @@ export class VaultViewIpc implements MainProcessIpcStep {
         parentWindow,
         target.toString(),
         bounds,
-        tabHostView ?? undefined,
-        tabHostView ? listener => agentWindowFromSender(event.sender) === parentWindow
-          ? internalTabViews.onHostDisposed(event.sender, listener)
-          : null : undefined,
+        tabHostView ? {
+          observeLayout: listener => internalTabViews.observeHostLayout(event.sender, listener),
+          onDisposed: listener => agentWindowFromSender(event.sender) === parentWindow
+            ? internalTabViews.onHostDisposed(event.sender, listener)
+            : null,
+        } : undefined,
         hint?.theme,
       );
       if (!opened) {

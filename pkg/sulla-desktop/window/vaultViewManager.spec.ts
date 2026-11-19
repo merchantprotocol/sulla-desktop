@@ -41,7 +41,7 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(window.contentView.removeChildView).toHaveBeenCalledWith(view);
   });
 
-  it('attaches with tab-relative bounds and detaches from that host on hide', async() => {
+  it('places the protected view above its tab and follows visibility and window bounds', async() => {
     // risk: the vault must not overlay the sidebar or remain attached to the window when opened in a tab
     const manager = new VaultViewManager() as any;
     const view = makeView();
@@ -51,25 +51,43 @@ describe('VaultViewManager tab-host attachment', () => {
       id: 1, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(),
       contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
     };
-    const host = { addChildView: vi.fn(), removeChildView: vi.fn() };
+    let layout!: (bounds: Electron.Rectangle | null, raised: boolean) => void;
     let disposed: (() => void) | undefined;
-    const onDisposed = (callback: () => void) => { disposed = callback; return vi.fn() };
+    const stopLayout = vi.fn();
+    const host = {
+      observeLayout: (listener: typeof layout) => { layout = listener; layout(null, false); return stopLayout },
+      onDisposed: (callback: () => void) => { disposed = callback; return vi.fn() },
+    };
     const bounds = { x: 123, y: 45, width: 500, height: 400 };
     const reservation = manager.reserve(window, 'tab-owner');
 
     const theme = { dark: true, colors: Object.fromEntries(VAULT_THEME_TOKENS.map(token => [token, 'rgb(10, 25, 41)'])) };
-    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', bounds, host, onDisposed, theme)).resolves.toBe(true);
+    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', bounds, host, theme)).resolves.toBe(true);
     const ready = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1];
     expect(ready).toBeTypeOf('function');
     ready();
     await vi.waitFor(() => expect(view.webContents.insertCSS).toHaveBeenCalledWith(expect.stringContaining('color-scheme:dark')));
-    expect(host.addChildView).toHaveBeenCalledWith(view);
-    expect(view.setBounds).toHaveBeenCalledWith(bounds);
     expect(window.contentView.addChildView).not.toHaveBeenCalled();
+    layout({ x: 180, y: 50, width: 600, height: 480 }, true);
+    expect(window.contentView.addChildView).toHaveBeenCalledWith(view);
+    expect(window.setContentProtection).toHaveBeenLastCalledWith(true);
+    expect(window.setContentProtection.mock.invocationCallOrder[0]).toBeLessThan(window.contentView.addChildView.mock.invocationCallOrder[0]);
+    // The view keeps within the host bounds even when its renderer has not yet resized.
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 303, y: 95, width: 477, height: 400 });
+    manager.setBounds('tab-owner', { ...bounds, width: 40 }, window);
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 303, y: 95, width: 40, height: 400 });
 
+    layout(null, false);
+    expect(window.contentView.removeChildView).toHaveBeenCalledOnce();
+    expect(window.setContentProtection).toHaveBeenLastCalledWith(false);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+
+    layout({ x: 199, y: 70, width: 700, height: 500 }, true);
+    expect(window.contentView.addChildView).toHaveBeenCalledTimes(2);
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 322, y: 115, width: 40, height: 400 });
     expect(manager.hide('tab-owner', window)).toBe(true);
-    expect(host.removeChildView).toHaveBeenCalledWith(view);
-    expect(window.contentView.removeChildView).not.toHaveBeenCalled();
+    expect(window.contentView.removeChildView).toHaveBeenCalledTimes(2);
+    expect(stopLayout).toHaveBeenCalledOnce();
     expect(view.webContents.close).toHaveBeenCalledOnce();
     expect(session.clearStorageData).toHaveBeenCalledOnce();
     expect(disposed).toBeDefined();
@@ -85,7 +103,7 @@ describe('VaultViewManager tab-host attachment', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const theme = { dark: true, colors: Object.fromEntries(VAULT_THEME_TOKENS.map(token => [token, 'color(srgb 1 0 0)'])) };
 
-    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 400, height: 300 }, undefined, undefined, theme)).resolves.toBe(true);
+    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 400, height: 300 }, undefined, theme)).resolves.toBe(true);
     expect(manager.createView).toHaveBeenCalledOnce();
     expect(window.contentView.addChildView).toHaveBeenCalledWith(view);
     expect(view.webContents.loadURL).toHaveBeenCalledWith('https://vault.test/vault/home');
@@ -99,14 +117,19 @@ describe('VaultViewManager tab-host attachment', () => {
     const view = makeView();
     manager.createView = vi.fn().mockResolvedValue({ view, session: { clearStorageData: vi.fn() } });
     const window = { id: 2, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
-    const host = { addChildView: vi.fn(), removeChildView: vi.fn() };
     let disposed!: () => void;
+    const host = {
+      observeLayout: (listener: (bounds: Electron.Rectangle, raised: boolean) => void) => {
+        listener({ x: 110, y: 60, width: 530, height: 440 }, false);
+        return vi.fn();
+      },
+      onDisposed: (listener: () => void) => { disposed = listener; return vi.fn() },
+    };
     const reservation = manager.reserve(window, 'crashed-tab');
-    await manager.show(reservation, window, 'https://vault.test/vault/home', { x: 1, y: 2, width: 300, height: 200 }, host,
-      (listener: () => void) => { disposed = listener; return vi.fn() });
+    await manager.show(reservation, window, 'https://vault.test/vault/home', { x: 1, y: 2, width: 300, height: 200 }, host);
 
     disposed();
-    expect(host.removeChildView).toHaveBeenCalledWith(view);
+    expect(window.contentView.removeChildView).toHaveBeenCalledWith(view);
     expect(view.webContents.close).toHaveBeenCalledOnce();
     expect(manager.hasActiveOwner()).toBe(false);
   });

@@ -26,9 +26,15 @@ export interface VaultViewReservation {
   generation: number;
 }
 
+interface VaultTabHost {
+  observeLayout(listener: (bounds: Electron.Rectangle | null, raised: boolean) => void): () => void;
+  onDisposed(listener: () => void): (() => void) | null;
+}
+
 interface VaultWindowState {
   view: WebContentsView | null;
-  parentView: Electron.View | null;
+  bounds: Electron.Rectangle | null;
+  hostBounds: Electron.Rectangle | null | undefined;
   hostCleanup: (() => void) | null;
   attached: boolean;
   isolatedSession: Electron.Session | null;
@@ -53,7 +59,7 @@ export class VaultViewManager {
   private stateFor(window: Electron.BrowserWindow): VaultWindowState {
     let state = this.windows.get(window.id);
     if (!state) {
-      state = { view: null, parentView: null, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
+      state = { view: null, bounds: null, hostBounds: undefined, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve() };
       this.windows.set(window.id, state);
       window.once('closed', () => { this.destroyWindow(window.id) });
     }
@@ -83,12 +89,12 @@ export class VaultViewManager {
     window: Electron.BrowserWindow,
     url: string,
     bounds: Electron.Rectangle,
-    parentView?: Electron.View,
-    onParentDisposed?: (listener: () => void) => (() => void) | null,
+    host?: VaultTabHost,
     theme?: unknown,
   ): Promise<boolean> {
     if (!this.isCurrent(reservation)) return false;
     const target = this.validateUrl(url);
+    const placement = this.validateBounds(bounds);
     const state = this.windows.get(reservation.windowId);
     if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
     state.themeCss = this.themeCssOrUnthemed(theme, 'open');
@@ -97,10 +103,8 @@ export class VaultViewManager {
       this.discardCreatedView(created);
       return false;
     }
-    const hostCleanup = parentView && onParentDisposed
-      ? onParentDisposed(() => this.hide(reservation.ownerId, window))
-      : null;
-    if (parentView && !hostCleanup) {
+    const dispose = host?.onDisposed(() => this.hide(reservation.ownerId, window));
+    if (host && !dispose) {
       this.discardCreatedView(created);
       return false;
     }
@@ -108,15 +112,18 @@ export class VaultViewManager {
     state.view = view;
     state.isolatedSession = created.session;
     state.attachedOwnerId = reservation.ownerId;
-    state.parentView = parentView ?? null;
-    state.hostCleanup = hostCleanup;
+    state.bounds = placement;
     view.webContents.on('dom-ready', () => { void this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error)) });
-    view.setBounds(this.validateBounds(bounds));
-    (parentView ?? window.contentView).addChildView(view);
-    state.attached = true;
-    // Defense in depth for ordinary OS capture paths. The stronger guarantee
-    // is that this view is absent from every browser/agent automation registry.
-    window.setContentProtection(true);
+    if (host) {
+      const unsubscribe = host.observeLayout((hostBounds, raised) => {
+        if (!this.isCurrent(reservation)) return;
+        state.hostBounds = hostBounds;
+        this.placeView(state, raised);
+      });
+      state.hostCleanup = () => { unsubscribe(); dispose?.() };
+    } else {
+      this.placeView(state);
+    }
     try {
       await view.webContents.loadURL(target.toString());
     } catch (error) {
@@ -164,7 +171,8 @@ export class VaultViewManager {
   setBounds(ownerId: string, bounds: Electron.Rectangle, window: Electron.BrowserWindow): void {
     const state = this.windows.get(window.id);
     if (state?.attachedOwnerId !== ownerId) return;
-    state.view?.setBounds(this.validateBounds(bounds));
+    state.bounds = this.validateBounds(bounds);
+    this.placeView(state);
   }
 
   hide(ownerId: string, window: Electron.BrowserWindow): boolean {
@@ -183,13 +191,42 @@ export class VaultViewManager {
     return released;
   }
 
+  private placeView(state: VaultWindowState, raised = false): void {
+    const { window, view, bounds, hostBounds } = state;
+    if (!view || !bounds || window.isDestroyed()) return;
+
+    // A nested WebContentsView can load yet remain behind its host on macOS.
+    // Place the isolated view in the window and clip it to its owner's tab.
+    const x = hostBounds ? Math.max(0, bounds.x) : bounds.x;
+    const y = hostBounds ? Math.max(0, bounds.y) : bounds.y;
+    const width = hostBounds ? Math.min(hostBounds.width, bounds.x + bounds.width) - x : bounds.width;
+    const height = hostBounds ? Math.min(hostBounds.height, bounds.y + bounds.height) - y : bounds.height;
+    if (hostBounds === null || width < 1 || height < 1) {
+      this.detachView(state);
+      return;
+    }
+    view.setBounds({ x: x + (hostBounds?.x ?? 0), y: y + (hostBounds?.y ?? 0), width, height });
+    if (!state.attached || raised) {
+      if (!state.attached) window.setContentProtection(true);
+      window.contentView.addChildView(view);
+      state.attached = true;
+    }
+  }
+
+  private detachView(state: VaultWindowState): void {
+    if (state.attached && state.view && !state.window.isDestroyed()) {
+      state.window.contentView.removeChildView(state.view);
+      state.window.setContentProtection(false);
+    }
+    state.attached = false;
+  }
+
   private releaseAttachedView(state: VaultWindowState): void {
     state.hostCleanup?.();
     state.hostCleanup = null;
-    if (!state.window.isDestroyed() && state.view && state.attached) (state.parentView ?? state.window.contentView).removeChildView(state.view);
-    state.parentView = null;
-    state.attached = false;
-    if (!state.window.isDestroyed()) state.window.setContentProtection(false);
+    this.detachView(state);
+    state.bounds = null;
+    state.hostBounds = undefined;
     if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();
     state.view = null;
     state.themeKey = null;
