@@ -106,6 +106,17 @@ export class InternalTabViewManager {
     this.tabs.delete(tabId);
   }
 
+  /** Release every tab-host renderer after the graceful shutdown phases finish. */
+  destroyAll(): void {
+    for (const [tabId, tab] of this.tabs) {
+      try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+      if (!tab.view.webContents.isDestroyed()) {
+        try { tab.view.webContents.close({ waitForBeforeUnload: false }); } catch { try { tab.view.webContents.destroy(); } catch { /* already gone */ } }
+      }
+      this.tabs.delete(tabId);
+    }
+  }
+
   private readonly owners = new Set<number>();
   private trackOwner(owner: Electron.BrowserWindow): void {
     if (this.owners.has(owner.id)) return;
