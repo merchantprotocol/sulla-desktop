@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: {} }));
 vi.mock('@pkg/composables/useTypography', () => ({ startTypography: vi.fn() }));
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { on: vi.fn() } }));
 import { availableThemes, oppositeModeTheme } from '@pkg/composables/useTheme';
 
 describe('theme mode switch', () => {

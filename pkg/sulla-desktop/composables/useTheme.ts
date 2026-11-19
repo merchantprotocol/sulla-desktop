@@ -8,6 +8,7 @@ import { ref, computed, onMounted, watch, type Ref } from 'vue';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { startTypography } from '@pkg/composables/useTypography';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light' | 'noir-dark' | 'noir-light' | 'studio-light';
 
@@ -105,6 +106,7 @@ export class ThemeStore {
 
   readonly currentTheme: Ref<ThemeName> = ref<ThemeName>(DEFAULT_THEME);
   initialized = false;
+  private listeningForThemeChanges = false;
 
   constructor(private readonly settings: ThemeSettings) {}
 
@@ -168,18 +170,20 @@ export class ThemeStore {
 
   /** Follow theme changes another window writes to localStorage. */
   listenForOtherWindows(): void {
-    window.addEventListener('storage', (e) => {
-      if (e.key === THEME_STORAGE_KEY) {
-        if (ThemeStore.isValidTheme(e.newValue)) {
-          this.currentTheme.value = e.newValue;
-        } else {
-          const migrated = ThemeStore.migrateLegacyTheme(e.newValue);
-          if (migrated) {
-            this.currentTheme.value = migrated;
-          }
-        }
-      }
+    if (this.listeningForThemeChanges) return;
+    this.listeningForThemeChanges = true;
+    const receive = (value: unknown) => {
+      const theme = ThemeStore.isValidTheme(value) ? value : ThemeStore.migrateLegacyTheme(value);
+      if (!theme) return;
+      this.currentTheme.value = theme;
+      this.applyThemeClass(theme);
+      // Receiving must not persist: that would rebroadcast the same change.
+    };
+    window.addEventListener('storage', (event) => {
+      if (event.key === THEME_STORAGE_KEY) receive(event.newValue);
     });
+    // Hosted tabs can have a different storage partition from the shell.
+    ipcRenderer.on('sulla:theme-changed', (_event, theme) => receive(theme));
   }
 }
 
@@ -236,7 +240,7 @@ export function useTheme() {
   });
 
   // Listen for cross-window localStorage changes
-  if (typeof window !== 'undefined' && !store.initialized) {
+  if (typeof window !== 'undefined') {
     store.listenForOtherWindows();
   }
 
