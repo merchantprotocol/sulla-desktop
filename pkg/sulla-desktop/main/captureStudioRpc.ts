@@ -29,7 +29,7 @@
 
 import { BrowserWindow, WebContents, desktopCapturer, ipcMain, screen } from 'electron';
 
-import { getWindow, openCaptureStudio } from '@pkg/window';
+import { openCaptureStudio } from '@pkg/window';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -65,6 +65,10 @@ let recordingState = false;
 const pending = new Map<string, PendingRpc>();
 const registerWaiters: Array<() => void> = [];
 
+export function getCaptureStudioContents(): WebContents | null {
+  return activeContents && !activeContents.isDestroyed() ? activeContents : null;
+}
+
 export function isCaptureStudioReady(): boolean {
   return !!activeContents && !activeContents.isDestroyed();
 }
@@ -97,12 +101,7 @@ export async function callCaptureStudio<T = unknown>(
     // Bring up the window if it's missing. openCaptureStudio() creates
     // or focuses. Either way, the renderer will dispatch RPC_REGISTER
     // once it mounts.
-    const existing = getWindow('capture-studio');
-    if (!existing || existing.isDestroyed()) {
-      openCaptureStudio();
-    } else if (!existing.isVisible()) {
-      existing.show();
-    }
+    openCaptureStudio();
     await waitForRegister(openWaitMs);
   }
 

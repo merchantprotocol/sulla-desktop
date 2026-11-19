@@ -972,6 +972,7 @@ const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
   marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
   terminal:     'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
   usage:        'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
+  'capture-studio': 'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
 };
 
 /** Build the unordered set of all tabs from their sources */
