@@ -33,4 +33,30 @@ describe('installed-extension prompt snapshot', () => {
     await vi.advanceTimersByTimeAsync(3_001);
     await expect(pending).resolves.toEqual([]);
   });
+
+  it('times out marketplace requests, keeps the last good cache, and permits a later retry', async () => {
+    // risk: a stalled third-party index must not hang startup extension hydration or discard known-good data
+    vi.useFakeTimers();
+    const service = new ExtensionService();
+    const entry = { slug: 'known-good', version: '1.0', containerd_compatible: true, labels: {}, title: 'Known', logo: '', publisher: 'Sulla', short_description: '' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, text: async () => 'plugins:\n  - slug: known-good\n    version: "1.0"\n    containerd_compatible: true\n    labels: {}\n    title: Known\n    logo: ""\n    publisher: Sulla\n    short_description: ""\n' })
+      .mockImplementation(() => new Promise((_resolve, reject) => {
+        // Abort is the observable contract of the bounded fetch.
+        const signal = (fetchMock.mock.calls.at(-1)?.[1] as RequestInit | undefined)?.signal;
+        signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(service.fetchMarketplaceData()).resolves.toEqual([entry]);
+    await vi.advanceTimersByTimeAsync(60_001);
+    const firstTimedFetch = service.fetchMarketplaceData();
+    await vi.advanceTimersByTimeAsync(10_001);
+    await expect(firstTimedFetch).resolves.toEqual([entry]);
+
+    const retry = service.fetchMarketplaceData();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(10_001);
+    await expect(retry).resolves.toEqual([entry]);
+  });
 });

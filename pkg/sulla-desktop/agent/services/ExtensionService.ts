@@ -13,6 +13,7 @@ import { Integration } from '../integrations/catalog';
 import { ExtensionMetadata } from '@pkg/main/extensions/types';
 import paths from '@pkg/utils/paths';
 import { loopbackOrigin } from '@pkg/utils/instance';
+import { WindowBootTelemetry } from '@pkg/agent/startup/WindowBootTelemetry';
 
 const MARKETPLACE_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
 const CACHE_TTL_MS = 1 * 60 * 1000;
@@ -81,6 +82,7 @@ export function getExtensionService(): ExtensionService {
 }
 
 export class ExtensionService {
+  private startupTelemetry?: WindowBootTelemetry;
   private backendUrl = loopbackOrigin('http', 6107);
   private extensionsMetadata:       LocalExtensionMetadata[] = [];
   private headerMenuItems:          HeaderMenuItem[] = [];
@@ -95,6 +97,10 @@ export class ExtensionService {
 
   constructor() {
     // Constructor doesn't load, call initialize() later
+  }
+
+  setStartupTelemetry(telemetry: WindowBootTelemetry): void {
+    this.startupTelemetry = telemetry;
   }
 
   async initialize(): Promise<void> {
@@ -208,25 +214,43 @@ export class ExtensionService {
     }
 
     this.inFlightMarketplaceFetch = (async() => {
+      const controller = new AbortController();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      this.startupTelemetry?.emit('marketplace-fetch', 'start');
       try {
-        const response = await fetch(MARKETPLACE_URL);
+        const fetchAndParse = async(): Promise<MarketplaceEntry[]> => {
+          const response = await fetch(MARKETPLACE_URL, { signal: controller.signal });
 
-        if (!response.ok) {
-          console.error(`[ExtensionService] Failed to fetch marketplace: ${ response.status }`);
-          return this.cachedMarketplace ?? [];
-        }
+          if (!response.ok) {
+            console.error(`[ExtensionService] Failed to fetch marketplace: ${ response.status }`);
+            this.startupTelemetry?.emit('marketplace-fetch', 'failure');
+            return this.cachedMarketplace ?? [];
+          }
 
-        const text = await response.text();
-        const parsed = yaml.parse(text) as { plugins?: MarketplaceEntry[] };
+          const text = await response.text();
+          const parsed = yaml.parse(text) as { plugins?: MarketplaceEntry[] };
 
-        this.cachedMarketplace = parsed.plugins ?? [];
-        this.marketplaceCacheExpires = Date.now() + CACHE_TTL_MS;
+          this.cachedMarketplace = parsed.plugins ?? [];
+          this.marketplaceCacheExpires = Date.now() + CACHE_TTL_MS;
+          this.startupTelemetry?.emit('marketplace-fetch', 'end');
 
-        return this.cachedMarketplace;
-      } catch (ex) {
-        console.error(`[ExtensionService] Error fetching marketplace: ${ ex }`);
+          return this.cachedMarketplace;
+        };
+        return await Promise.race([
+          fetchAndParse(),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Marketplace fetch timed out'));
+            }, 10_000);
+          }),
+        ]);
+      } catch {
+        console.error('[ExtensionService] Error fetching marketplace');
+        this.startupTelemetry?.emit('marketplace-fetch', 'failure');
         return this.cachedMarketplace ?? [];
       } finally {
+        if (timeout) clearTimeout(timeout);
         this.inFlightMarketplaceFetch = undefined;
       }
     })();

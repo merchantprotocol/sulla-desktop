@@ -48,6 +48,7 @@ import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
 import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
+import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 import { Help } from '@pkg/config/help';
 import * as settings from '@pkg/config/settings';
@@ -1945,8 +1946,47 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 
 // Renderer settings use their own model instance, but must not bootstrap until
 // the authoritative main-process lifecycle has observed both Postgres and Redis.
-ipcMainProxy.handle('sulla-settings:wait-for-backends', async() => {
-  await getServiceLifecycleManager().waitUntilStarted('database-manager', 3 * 60_000);
+const startupEvents = new Set(['first-content-frame', 'window-context-hydration', 'user-data-path', 'wait-for-backends', 'settings-bootstrap', 'settings-ready', 'extension-initialization', 'extensions-ready', 'marketplace-fetch', 'renderer-settings-bootstrap']);
+const trustedStartupSender = (event: Electron.IpcMainInvokeEvent, windowKey: string | undefined): boolean => {
+  if (!windowKey || !/^[a-zA-Z0-9_:-]{1,100}$/.test(windowKey)) return false;
+  if (!agentWindowFromSender(event.sender)) return false;
+  try {
+    const query = new URL(event.sender.getURL()).searchParams;
+    return query.get('tabHost') !== '1' && query.get('windowKey') === windowKey;
+  } catch { return false }
+};
+
+ipcMainProxy.handle('sulla-startup:stage', (event, payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => {
+  if (!trustedStartupSender(event, payload?.windowKey) || payload?.startupId !== AppStartupTelemetry.startupId || !startupEvents.has(payload?.event) || !['start', 'end', 'failure'].includes(payload?.status) || !Number.isFinite(payload?.elapsedMs)) return false;
+  // The renderer's clock is a different process clock: log it under its own name and source so it is never mistaken for a main-process elapsedMs.
+  console.info(`[WindowBoot] ${ JSON.stringify({ startupId: payload.startupId, windowKey: payload.windowKey, event: payload.event, status: payload.status, timestamp: new Date().toISOString(), rendererElapsedMs: Math.round(payload.elapsedMs), elapsedSource: 'renderer' }) }`);
+  return true;
+});
+
+ipcMainProxy.handle('sulla-settings:wait-for-backends', async(event, payload: { startupId: string; windowKey: string }) => {
+  const startupId = payload?.startupId;
+  const windowKey = payload?.windowKey;
+  if (!trustedStartupSender(event, windowKey) || startupId !== AppStartupTelemetry.startupId) throw new Error('Untrusted startup readiness request');
+  // Monotonic main-process clock: performance.now() never jumps with wall-clock changes. Never subtract it from a renderer or other-process value.
+  const beganAt = performance.now();
+  const lifecycle = getServiceLifecycleManager();
+  const report = (name: string, status: string, attempts?: number) => console.info(`[WindowBoot] ${ JSON.stringify({ startupId, windowKey, event: name, status, timestamp: new Date().toISOString(), elapsedMs: Math.round(performance.now() - beganAt), elapsedSource: 'main', ...(attempts === undefined ? {} : { attempts }) }) }`);
+  const reportReadiness = (state: { name: string; status: string; attempts: number }) => {
+    if (['postgres', 'redis', 'database-manager'].includes(state.name)) report(`${ state.name }-readiness`, state.status, state.attempts);
+  };
+  lifecycle.serviceStatuses().forEach(reportReadiness);
+  const onServiceStatus = (state: { name: string; status: string; attempts: number }) => reportReadiness(state);
+  lifecycle.on('service:status', onServiceStatus);
+  report('database-manager-readiness', 'start');
+  try {
+    await lifecycle.waitUntilStarted('database-manager', 3 * 60_000);
+    report('database-manager-readiness', 'end');
+  } catch (error) {
+    report('database-manager-readiness', 'failure');
+    throw error;
+  } finally {
+    lifecycle.off('service:status', onServiceStatus);
+  }
 });
 
 // ── Capture Studio IPC ──────────────────────────────────────────────────

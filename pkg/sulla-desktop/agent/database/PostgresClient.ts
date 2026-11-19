@@ -12,6 +12,8 @@ import { hostPort } from '@pkg/utils/instance';
 
 import { DatabaseOutageState, DatabaseUnavailableClassifier } from './DatabaseAvailability';
 
+type ReadinessAttemptReporter = (status: 'start' | 'end' | 'failure', attempt: number, retrying?: boolean, errorType?: string) => void;
+
 // Node's AsyncLocalStorage is unsafe in an Electron renderer: there the async
 // context slot is shared with Blink, so getStore() can read a Blink object and
 // V8 aborts the whole renderer (it took down the password vault on its first
@@ -242,12 +244,16 @@ export class PostgresClient {
    * slow cold start. Callers that need a bounded probe can still pass an
    * explicit maxAttempts value.
    */
-  async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000): Promise<void> {
+  async waitForReady(maxAttempts = Number.POSITIVE_INFINITY, intervalMs = 1000, reportAttempt?: ReadinessAttemptReporter): Promise<void> {
     for (let i = 1; i <= maxAttempts; i++) {
       let probe: Pool | null = null;
+      reportAttempt?.('start', i);
       // Outside the try: a secret that cannot be resolved rejects at once, as
       // before. Read per attempt so a secret that changes mid-wait is used.
-      const password = await this.servicePassword();
+      const password = await this.servicePassword().catch((error: unknown) => {
+        reportAttempt?.('failure', i, false, error instanceof Error ? error.name : 'unknown');
+        throw error;
+      });
 
       try {
         probe = new Pool({
@@ -263,10 +269,12 @@ export class PostgresClient {
         // UncaughtException; the probe is ended right after anyway.
         probe.on('error', () => { /* probe is disposable */ });
         await probe.query('SELECT 1');
+        reportAttempt?.('end', i);
         console.log(`[PostgresClient] Host database port reachable (attempt ${ i })`);
 
         return;
       } catch (error: unknown) {
+        reportAttempt?.('failure', i, i !== maxAttempts, error instanceof Error ? error.name : 'unknown');
         const reason = this.describeConnectFailure(error);
 
         if (i === maxAttempts) {

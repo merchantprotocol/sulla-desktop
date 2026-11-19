@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Logging from '@pkg/utils/logging';
+import { AppStartupTelemetry } from './AppStartupTelemetry';
 
 const console = Logging.sulla;
 
@@ -72,25 +73,41 @@ export class VaultStateCoordinator {
 
   expectContainer(): void {
     if (this.resolveContainerReady) return;
+    AppStartupTelemetry.emit('vault-container-expect', 'start');
     this.containerReady = new Promise<void>((resolve) => { this.resolveContainerReady = resolve });
   }
 
   markContainerReady(): void {
+    const wasExpected = Boolean(this.resolveContainerReady);
+    AppStartupTelemetry.emit('vault-container-mark', 'end', 'main-process', { expected: wasExpected });
     this.resolveContainerReady?.();
     this.resolveContainerReady = null;
     if (!this.lifecycleInitialized) return;
+    AppStartupTelemetry.emit('vault-container-reinitialize', 'start');
     void (async() => {
       const unlocked = await this.deps.initializeVaultKey();
       console.log(`[Background] Vault container replaced; re-initialized: ${ unlocked ? 'unlocked' : 'locked' }`);
       await this.publish(unlocked);
-    })().catch(error => console.warn('[Vault] Re-initialize after container replacement failed:', error));
+      AppStartupTelemetry.emit('vault-container-reinitialize', 'end', 'main-process', { outcome: unlocked ? 'unlocked' : 'locked' });
+    })().catch(error => {
+      AppStartupTelemetry.emit('vault-container-reinitialize', 'failure', 'main-process', { errorType: error instanceof Error ? error.name : 'unknown' });
+      console.warn('[Vault] Re-initialize after container replacement failed:', error);
+    });
   }
 
   async waitForContainer(timeoutMs = 90_000): Promise<void> {
-    if (!this.containerReady) return;
+    const startedAt = performance.now();
+    if (!this.containerReady) {
+      AppStartupTelemetry.emit('vault-container-wait', 'end', 'main-process', { outcome: 'not-expected', timeoutMs });
+      return;
+    }
     let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([this.containerReady, new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs) })]);
+    const outcome = await Promise.race([
+      this.containerReady.then(() => 'ready' as const),
+      new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), timeoutMs) }),
+    ]);
     if (timer) clearTimeout(timer);
+    AppStartupTelemetry.emit('vault-container-wait', outcome === 'ready' ? 'end' : 'failure', 'main-process', { outcome, timeoutMs, waitMs: Math.round(performance.now() - startedAt) });
   }
 
   /** The 'vault' lifecycle stage started (true) or stopped (false). */

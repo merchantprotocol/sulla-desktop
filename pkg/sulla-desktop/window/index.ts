@@ -27,6 +27,7 @@ import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { isFirstRunTestInstance } from '@pkg/utils/instance';
+import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
@@ -91,13 +92,20 @@ export function createWindow(name: string, url: string, options: Electron.Browse
   console.log('[createWindow] Creating NEW window:', name, 'url:', url);
 
   window = new BrowserWindow(options);
-  const windowBootCreatedAt = Date.now();
-  console.info(`[WindowBoot] ${ name } created at ${ windowBootCreatedAt }`);
+  const windowBootCreatedAt = Date.now(); // wall-clock timestamp for the created-at log
+  const windowBootStartedAt = performance.now(); // monotonic start for elapsed durations
+  const startupWindowKey = name === 'main-agent' ? 'main' : name.startsWith('agent:') ? name.slice('agent:'.length) : undefined;
+  if (startupWindowKey) AppStartupTelemetry.emit('window-created', 'end', startupWindowKey);
+  else console.info(`[WindowBoot] ${ name } created at ${ windowBootCreatedAt }`);
   window.once('ready-to-show', () => {
-    console.info(`[WindowBoot] ${ name } ready-to-show after ${ Date.now() - windowBootCreatedAt }ms`);
+    const durationMs = Math.round(performance.now() - windowBootStartedAt);
+    if (startupWindowKey) AppStartupTelemetry.emit('window-ready-to-show', 'end', startupWindowKey, { durationMs, elapsedSource: 'main' });
+    else console.info(`[WindowBoot] ${ name } ready-to-show after ${ durationMs }ms`);
   });
   window.webContents.once('did-finish-load', () => {
-    console.info(`[WindowBoot] ${ name } did-finish-load after ${ Date.now() - windowBootCreatedAt }ms`);
+    const durationMs = Math.round(performance.now() - windowBootStartedAt);
+    if (startupWindowKey) AppStartupTelemetry.emit('window-did-finish-load', 'end', startupWindowKey, { durationMs, elapsedSource: 'main' });
+    else console.info(`[WindowBoot] ${ name } did-finish-load after ${ durationMs }ms`);
   });
   window.webContents.on('console-message', (event) => {
     const { level, lineNumber, message } = event;
@@ -201,7 +209,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
 
   console.log('[openMain] Creating window with name: main-agent, url:', mainUrl);
   const knownKeys = getAgentWindowPersistence().all().map(record => record.windowKey);
-  const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
+  const url = `${ mainUrl }?windowKey=${ encodeURIComponent(windowKey) }&startupId=${ encodeURIComponent(AppStartupTelemetry.startupId) }&knownWindowKeys=${ encodeURIComponent(JSON.stringify([...knownKeys, windowKey])) }`;
   const windowURL = `${ url }${ initialTabsQuery(initialTabs) }`;
   const window = createWindow(
     name,

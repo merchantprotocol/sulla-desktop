@@ -14,7 +14,7 @@ vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsM
   setFallbackFilePath: deps.setFallbackFilePath,
   bootstrap: deps.bootstrap,
 } }));
-vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: deps.initializeExtensions }) }));
+vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: deps.initializeExtensions, setStartupTelemetry: vi.fn() }) }));
 vi.mock('@pkg/agent/extensions/ExtensionLoader', () => ({ reloadExtensionHooks: deps.reloadExtensionHooks }));
 vi.mock('@pkg/utils/logging', () => ({ default: { sulla: { info: vi.fn(), log: vi.fn(), error: vi.fn() } } }));
 
@@ -23,7 +23,7 @@ import { WindowContextInitializer } from './WindowContextInitializer';
 describe('WindowContextInitializer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    window.history.replaceState({}, '', '/agent.html?windowKey=secondary');
+    window.history.replaceState({}, '', '/agent.html?windowKey=secondary&startupId=11111111-1111-4111-8111-111111111111');
     deps.invoke.mockImplementation((channel: string) => Promise.resolve(channel === 'get-user-data-path' ? '/user-data' : undefined));
     deps.bootstrap.mockResolvedValue(undefined);
     deps.initializeExtensions.mockResolvedValue(undefined);
@@ -38,6 +38,10 @@ describe('WindowContextInitializer', () => {
 
     await new WindowContextInitializer().initialize();
     expect(deps.setFallbackFilePath).toHaveBeenCalledWith('/user-data/sulla-settings-fallback.json');
+    expect(deps.invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends', {
+      startupId: '11111111-1111-4111-8111-111111111111',
+      windowKey: 'secondary',
+    });
     expect(deps.bootstrap).not.toHaveBeenCalled();
     expect(deps.initializeExtensions).not.toHaveBeenCalled();
 
