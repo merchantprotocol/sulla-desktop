@@ -64,6 +64,25 @@ describe('InternalTabViewManager', () => {
     ]);
   });
 
+  it('does not reattach hidden, reloaded, or transferred views before their destination shell is ready', () => {
+    // risk: restored, lazy-opened, or torn-off tab content must not bypass the startup cover
+    const source = ownerWindow(103);
+    const target = ownerWindow(104);
+    const instance = manager() as any;
+    instance.activate(source, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const tab = instance.tabs.get('one');
+    instance.setVisible(source, 'one', false);
+    instance.setVisible(source, 'one', true);
+    instance.reload(source, 'one');
+    expect(instance.moveToWindow('one', target)).toBe(true);
+    expect(source.contentView.addChildView).not.toHaveBeenCalled();
+    expect(target.contentView.addChildView).not.toHaveBeenCalled();
+    expect(tab.view.webContents.reload).toHaveBeenCalledOnce();
+    instance.markChromeReady(target);
+    expect(target.contentView.addChildView).toHaveBeenCalledOnce();
+    expect(target.contentView.addChildView).toHaveBeenCalledWith(tab.view);
+  });
+
   it('reveals tabs after the readiness safety timeout and logs the fallback', () => {
     // risk: a missed renderer readiness signal must not leave the window unusable
     vi.useFakeTimers();
