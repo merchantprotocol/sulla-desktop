@@ -67,7 +67,7 @@ export class ChannelTagExtractor implements Extractor {
       const [rawTarget, targetId] = String(name).trim().split('#', 2);
       const target = rawTarget.toLowerCase();
       const text = String(body).trim();
-      const key = `${ target }::${ text }`;
+      const key = `${ target }#${ targetId || '' }::${ text }`;
       if (!text || this.dispatchedBodies.has(key)) return '';
       this.dispatchedBodies.add(key);
       this.dispatchChannel(ctx, target, text, String(attrs), targetId);
@@ -104,7 +104,7 @@ export class ChannelTagExtractor implements Extractor {
       const [rawTarget, targetId] = String(name).trim().split('#', 2);
       const target = rawTarget.toLowerCase();
       const text = String(body).trim();
-      const key = `${ target }::${ text }`;
+      const key = `${ target }#${ targetId || '' }::${ text }`;
       if (text && !this.dispatchedBodies.has(key)) {
         this.dispatchedBodies.add(key);
         this.dispatchChannel(ctx, target, text, String(attrs), targetId);
@@ -142,7 +142,8 @@ export class ChannelTagExtractor implements Extractor {
       const metadata = (ctx.state as any)?.metadata || {};
       const senderJobId = String(metadata.delegatedJobId || metadata.jobId || '');
       const senderLabel = String(metadata.delegatedTaskLabel || metadata.agentLabel || metadata.agent?.name || senderId);
-      const replyToThread: string = (ctx.state as any)?.metadata?.replyToThread || '';
+      const replyToThread: string = metadata.replyToThread || '';
+      if (!targetId && replyToThread) targetId = replyToThread;
       // toThreadId is the thread that should receive the reply — if this agent
       // was woken by someone else, reply to their thread; otherwise no specific target.
       const toThreadId: string = replyToThread || fromThreadId || '';

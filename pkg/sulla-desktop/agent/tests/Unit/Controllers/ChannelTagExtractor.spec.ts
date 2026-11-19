@@ -31,4 +31,20 @@ describe('ChannelTagExtractor', () => {
     expect(send.mock.calls[1][1].data.targetId).toBe('Thread-AbC');
     expect(send.mock.calls[1][1].data.receiverChannel).toBe('coding-manager');
   });
+
+  it('targets replies to the exact peer thread from replyToThread metadata', () => { // risk: peer reply misdelivery
+    const extractor = new ChannelTagExtractor();
+    const response = { content: '<channel:heartbeat>reply</channel:heartbeat>' } as any;
+    extractor.processComplete(response, { channel: 'worker', threadId: 'worker-thread', state: { metadata: { agentId: 'worker', replyToThread: 'origin-thread' } } } as any);
+    expect(send.mock.calls[1][1].data.envelope.targetId).toBe('origin-thread');
+  });
+
+  it('deduplicates identical bodies independently per explicit target instance', () => {
+    const extractor = new ChannelTagExtractor();
+    const response = { content: '<channel:manager#thread-a>same</channel:manager#thread-a><channel:manager#thread-b>same</channel:manager#thread-b>' } as any;
+    extractor.processComplete(response, { channel: 'worker', threadId: 'sender', state: { metadata: { agentId: 'worker' } } } as any);
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.calls[1][1].data.envelope.targetId).toBe('thread-a');
+    expect(send.mock.calls[3][1].data.envelope.targetId).toBe('thread-b');
+  });
 });

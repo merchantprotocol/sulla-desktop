@@ -225,11 +225,13 @@ export class ActiveAgentsRegistry {
           : '';
         return `${ a.name || a.agentId }@${ a.channel } (${ a.status }, ${ age }m)${ note }`;
       });
+    const seenThreads = new Set<string>();
     try {
       const { GraphRegistry } = await import('./GraphRegistry');
       for (const agent of agents.filter(a => a.type !== 'human')) {
         for (const instance of GraphRegistry.findThreadsByChannel(agent.channel)) {
-          if (!agentParts.some(line => line.includes(`#${instance.threadId}`))) {
+          if (!seenThreads.has(instance.threadId)) {
+            seenThreads.add(instance.threadId);
             agentParts.push(`${instance.label}@${instance.channel}#${instance.threadId}${instance.jobId ? ` (job ${instance.jobId})` : ''}`);
           }
         }
@@ -237,14 +239,18 @@ export class ActiveAgentsRegistry {
     } catch { /* live graph instances unavailable */ }
     try {
       const { getAllJobs } = await import('../tools/agents/jobRegistry');
+      const byThread = new Map<string, { task: any; job: any; manager: boolean }>();
       for (const job of await getAllJobs()) {
         for (const task of job.tasks) if (task.threadId && ['running', 'parked'].includes(task.status)) {
-          agentParts.push(`${task.label}@${task.agentId}#${task.threadId} (job ${job.jobId}, ${task.status})`);
+          const previous = byThread.get(task.threadId);
+          if (!previous || Number(job.createdAt) > Number(previous.job.createdAt)) byThread.set(task.threadId, { task, job, manager: false });
         }
         if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)) {
-          agentParts.push(`Manager ${job.parentAgentId}@${job.parentAgentId}#${job.parentThreadId} (job ${job.jobId}, ${job.status})`);
+          const previous = byThread.get(job.parentThreadId);
+          if (!previous || Number(job.createdAt) > Number(previous.job.createdAt)) byThread.set(job.parentThreadId, { task: { label: `Manager ${job.parentAgentId}`, agentId: job.parentAgentId, status: job.status }, job, manager: true });
         }
       }
+      for (const [threadId, item] of byThread) if (!seenThreads.has(threadId)) agentParts.push(`${item.task.label}@${item.task.agentId}#${threadId} (job ${item.job.jobId}, ${item.task.status})`);
     } catch { /* delegated-job roster unavailable */ }
     if (agentParts.length > 0) {
       lines.push(`agents: ${ agentParts.join(' | ') }`);

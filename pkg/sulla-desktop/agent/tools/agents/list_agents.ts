@@ -47,15 +47,20 @@ export class ListAgentsWorker extends BaseTool {
 
     try {
       const { getAllJobs } = await import('./jobRegistry');
+      const byThread = new Map<string, { row: Record<string, any>; createdAt: number }>();
       for (const job of await getAllJobs()) {
         for (const task of job.tasks) {
           if (!task.threadId || !['running', 'parked'].includes(task.status)) continue;
-          rows.push({ name: task.label, channel: task.agentId, address: `${task.agentId}#${task.threadId}`, threadId: task.threadId, jobId: job.jobId, label: task.label, status: task.status, uptimeMins: 0, idleMins: 0, description: task.label });
+          const row = { name: task.label, channel: task.agentId, address: `${task.agentId}#${task.threadId}`, threadId: task.threadId, jobId: job.jobId, label: task.label, status: task.status, uptimeMins: 0, idleMins: 0, description: task.label };
+          if (!byThread.has(task.threadId) || Number(job.createdAt) > byThread.get(task.threadId)!.createdAt) byThread.set(task.threadId, { row, createdAt: Number(job.createdAt) || 0 });
         }
         if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)) {
-          rows.push({ name: `Manager ${job.parentAgentId}`, channel: job.parentAgentId, address: `${job.parentAgentId}#${job.parentThreadId}`, threadId: job.parentThreadId, jobId: job.jobId, label: `Manager ${job.parentAgentId}`, status: job.status, uptimeMins: 0, idleMins: 0, description: 'Manager instance' });
+          const row = { name: `Manager ${job.parentAgentId}`, channel: job.parentAgentId, address: `${job.parentAgentId}#${job.parentThreadId}`, threadId: job.parentThreadId, jobId: job.jobId, label: `Manager ${job.parentAgentId}`, status: job.status, uptimeMins: 0, idleMins: 0, description: 'Manager instance' };
+          if (!byThread.has(job.parentThreadId) || Number(job.createdAt) > byThread.get(job.parentThreadId)!.createdAt) byThread.set(job.parentThreadId, { row, createdAt: Number(job.createdAt) || 0 });
         }
       }
+      const listedThreads = new Set(rows.map(row => row.threadId).filter(Boolean));
+      for (const [threadId, item] of byThread) if (!listedThreads.has(threadId)) rows.push(item.row);
     } catch { /* Job instances may be unavailable in minimal runtimes. */ }
 
     if (rows.length === 0) {

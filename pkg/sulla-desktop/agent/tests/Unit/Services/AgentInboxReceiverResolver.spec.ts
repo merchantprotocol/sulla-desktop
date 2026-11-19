@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { AmbiguousAgentInboxTargetError, DurableAgentInboxReceiverResolver } from '../../../services/AgentInboxReceiverResolver';
+import { AmbiguousAgentInboxTargetError, DurableAgentInboxReceiverResolver, NoAgentInboxTargetError } from '../../../services/AgentInboxReceiverResolver';
 
 describe('DurableAgentInboxReceiverResolver', () => {
   const jobs = { allJobs: async () => [
@@ -28,5 +28,27 @@ describe('DurableAgentInboxReceiverResolver', () => {
     const resolver = new DurableAgentInboxReceiverResolver(jobs, () => []);
     await expect(resolver.resolve('coding-manager', 'job-b')).resolves.toMatchObject({ threadId: 'manager-b', jobId: 'job-b' });
     await expect(resolver.resolve('coding-manager', 'manager-a')).resolves.toMatchObject({ threadId: 'manager-a' });
+  });
+
+  it('keeps legacy latest-thread routing for multiple idle cached chats', async () => { // risk: peer delivery availability
+    const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => [
+      { channel: 'sulla-desktop', threadId: 'old', label: 'chat' },
+      { channel: 'sulla-desktop', threadId: 'latest', label: 'chat' },
+      { channel: 'sulla-desktop', threadId: 'newest', label: 'chat' },
+    ]);
+    await expect(resolver.resolve('sulla-desktop')).resolves.toMatchObject({ threadId: 'newest' });
+  });
+
+  it('uses an executing graph in preference to idle cached chats', async () => { // risk: peer delivery availability
+    const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => [
+      { channel: 'sulla-desktop', threadId: 'idle', label: 'chat' },
+      { channel: 'sulla-desktop', threadId: 'live', label: 'chat', executing: true },
+    ]);
+    await expect(resolver.resolve('sulla-desktop')).resolves.toMatchObject({ threadId: 'live' });
+  });
+
+  it('returns a typed no-match error for an invalid explicit address', async () => { // risk: peer delivery recovery
+    const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => []);
+    await expect(resolver.resolve('coding-manager', 'missing')).rejects.toBeInstanceOf(NoAgentInboxTargetError);
   });
 });
