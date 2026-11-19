@@ -1047,8 +1047,9 @@ onUnmounted(() => {
   position: relative;
   z-index: 3;
 }
+/* Match the 44px AgentHeader titlebar; 56px left a visible 12px strip. */
 .internal-browser-tab-layer {
-  top: 56px;
+  top: 44px;
 }
 
 .internal-tab-reload {
