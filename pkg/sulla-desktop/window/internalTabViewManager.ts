@@ -14,6 +14,8 @@ export class InternalTabViewManager {
   private static instance: InternalTabViewManager;
   private readonly tabs = new Map<string, InternalTabView>();
   private readonly hostDisposalListeners = new Map<string, Set<() => void>>();
+  private readonly chromeReadyOwners = new Set<number>();
+  private readonly chromeReadyTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   static getInstance(): InternalTabViewManager {
     this.instance ??= new InternalTabViewManager();
@@ -28,6 +30,7 @@ export class InternalTabViewManager {
       tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
       this.tabs.set(tabId, tab);
       this.trackOwner(owner);
+      this.armChromeReadyFallback(owner);
       view.webContents.on('did-finish-load', () => {
         // The shell can still be settling its layout while the isolated host boots.
         // Ask it to re-read the live DOM rect rather than trusting activation bounds.
@@ -53,8 +56,36 @@ export class InternalTabViewManager {
     if (descriptor !== undefined) tab.descriptor = descriptor;
     if (tab.crashed) return;
     tab.visible = true;
+    if (this.chromeReadyOwners.has(owner.id)) this.attach(tab);
+  }
+
+  /** Called after the shell chrome has mounted and its first frame has painted. */
+  markChromeReady(owner: Electron.BrowserWindow): void {
+    if (owner.isDestroyed()) return;
+    this.chromeReadyOwners.add(owner.id);
+    const timer = this.chromeReadyTimers.get(owner.id);
+    if (timer) clearTimeout(timer);
+    this.chromeReadyTimers.delete(owner.id);
+    owner.webContents.send('internal-tab-view:chrome-ready');
+    for (const tab of this.tabs.values()) if (tab.owner === owner && tab.visible && !tab.crashed) this.attach(tab);
+  }
+
+  private armChromeReadyFallback(owner: Electron.BrowserWindow): void {
+    if (this.chromeReadyOwners.has(owner.id) || this.chromeReadyTimers.has(owner.id)) return;
+    const timer = setTimeout(() => {
+      this.chromeReadyTimers.delete(owner.id);
+      if (owner.isDestroyed() || this.chromeReadyOwners.has(owner.id)) return;
+      console.warn(`[InternalTabViewManager] shell chrome readiness timed out for window ${ owner.id }; revealing tabs`);
+      this.markChromeReady(owner);
+    }, 30_000);
+    (timer as any).unref?.();
+    this.chromeReadyTimers.set(owner.id, timer);
+  }
+
+  private attach(tab: InternalTabView): void {
+    if (tab.owner.isDestroyed() || tab.crashed || !tab.visible) return;
     tab.owner.contentView.addChildView(tab.view);
-    tab.view.setBounds(bounds);
+    tab.view.setBounds(tab.bounds);
   }
 
   setBounds(owner: Electron.BrowserWindow, tabId: string, bounds: Electron.Rectangle): void {
@@ -128,7 +159,7 @@ export class InternalTabViewManager {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.owner !== owner) return;
     tab.visible = visible;
-    if (visible) { owner.contentView.addChildView(tab.view); tab.view.setBounds(tab.bounds); }
+    if (visible) { if (this.chromeReadyOwners.has(owner.id)) this.attach(tab); }
     else owner.contentView.removeChildView(tab.view);
   }
 
@@ -138,8 +169,7 @@ export class InternalTabViewManager {
       this.clearChatRunning(tabId, tab);
       tab.crashed = false;
       tab.visible = true;
-      tab.owner.contentView.addChildView(tab.view);
-      tab.view.setBounds(tab.bounds);
+      if (this.chromeReadyOwners.has(owner.id)) this.attach(tab);
       tab.view.webContents.reload();
     }
   }
@@ -156,7 +186,8 @@ export class InternalTabViewManager {
       this.trackOwner(target);
       if (running) this.notifyChatRunning(tab.view.webContents, tabId, true);
     }
-    if (tab.visible) { target.contentView.addChildView(tab.view); tab.view.setBounds(tab.bounds); }
+    this.armChromeReadyFallback(target);
+    if (tab.visible && this.chromeReadyOwners.has(target.id)) this.attach(tab);
     return true;
   }
 
@@ -223,6 +254,10 @@ export class InternalTabViewManager {
     this.owners.add(owner.id);
     owner.once('closed', () => {
       this.owners.delete(owner.id);
+      this.chromeReadyOwners.delete(owner.id);
+      const timer = this.chromeReadyTimers.get(owner.id);
+      if (timer) clearTimeout(timer);
+      this.chromeReadyTimers.delete(owner.id);
       for (const [id, tab] of this.tabs) if (tab.owner === owner) this.destroy(owner, id);
     });
   }

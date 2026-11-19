@@ -102,6 +102,11 @@
     <!-- Startup progress overlay -->
     <StartupOverlay />
 
+    <div v-if="!chromeReady" class="window-starting-overlay" role="status" aria-live="polite">
+      <span class="window-starting-spinner" aria-hidden="true" />
+      <span>Sulla is starting</span>
+    </div>
+
     <!-- A locked or not-yet-configured vault blocks every tab and route. -->
     <VaultUnlockScreen v-if="vaultUnlockVisible" />
 
@@ -231,6 +236,8 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+const chromeReady = ref(false);
+const onChromeReady = () => { chromeReady.value = true; };
 // Keep a tab's page tree unmounted until the user first opens it. Once opened,
 // retain its existing renderer-local state while switching between tabs.
 const openedTabIds = reactive(new Set<string>());
@@ -882,6 +889,7 @@ const presenceTracker = getHumanPresenceTracker();
 
 
 onMounted(async() => {
+  window.addEventListener('sulla:chrome-ready', onChromeReady, { once: true });
   ipcRenderer.on('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.on('internal-tab-view:updated' as any, onInternalTabUpdated as any);
   ipcRenderer.on('internal-tab-view:loaded' as any, onInternalTabLoaded as any);
@@ -944,6 +952,7 @@ onMounted(async() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('sulla:chrome-ready', onChromeReady);
   window.removeEventListener('sulla:no-ai-banner', onNoAiBannerChange);
   ipcRenderer.removeListener('internal-tab-view:crashed' as any, onInternalTabCrashed as any);
   ipcRenderer.removeListener('internal-tab-view:updated' as any, onInternalTabUpdated as any);
@@ -974,6 +983,29 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.window-starting-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: var(--bg-surface-alt);
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+.window-starting-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-subtle);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: window-starting-spin 0.8s linear infinite;
+}
+@keyframes window-starting-spin { to { transform: rotate(360deg); } }
+
 .agent-router-root {
   display: flex;
   flex-direction: column;

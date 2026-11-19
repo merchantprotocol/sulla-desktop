@@ -41,6 +41,8 @@ describe('InternalTabViewManager', () => {
     instance.activate(owner, 'one', 'main', bounds);
     const tab = instance.tabs.get('one');
     expect(tab.view.webContents.loadURL).toHaveBeenCalledWith(expect.stringMatching(/^app:\/\/\.\/agent\.html\?tabHost=1&tabId=one&windowKey=main&startupId=/));
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
+    instance.markChromeReady(owner);
     expect(owner.contentView.addChildView).toHaveBeenCalledWith(tab.view);
     instance.setVisible(owner, 'one', false);
     expect(owner.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
@@ -49,11 +51,59 @@ describe('InternalTabViewManager', () => {
     expect(tab.view.setBounds).toHaveBeenLastCalledWith({ ...bounds, width: 700 });
   });
 
+  it('keeps activated views detached until chrome readiness and attaches them together on signal', () => {
+    // risk: startup tab content must not cover the rail and tab strip before the shell paints
+    const owner = ownerWindow(101);
+    const instance = manager() as any;
+    instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    instance.activate(owner, 'two', 'main', { x: 20, y: 0, width: 20, height: 20 });
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
+    instance.markChromeReady(owner);
+    expect(owner.contentView.addChildView.mock.calls.map(([view]: any[]) => view)).toEqual([
+      instance.tabs.get('one').view, instance.tabs.get('two').view,
+    ]);
+  });
+
+  it('does not reattach hidden, reloaded, or transferred views before their destination shell is ready', () => {
+    // risk: restored, lazy-opened, or torn-off tab content must not bypass the startup cover
+    const source = ownerWindow(103);
+    const target = ownerWindow(104);
+    const instance = manager() as any;
+    instance.activate(source, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const tab = instance.tabs.get('one');
+    instance.setVisible(source, 'one', false);
+    instance.setVisible(source, 'one', true);
+    instance.reload(source, 'one');
+    expect(instance.moveToWindow('one', target)).toBe(true);
+    expect(source.contentView.addChildView).not.toHaveBeenCalled();
+    expect(target.contentView.addChildView).not.toHaveBeenCalled();
+    expect(tab.view.webContents.reload).toHaveBeenCalledOnce();
+    instance.markChromeReady(target);
+    expect(target.contentView.addChildView).toHaveBeenCalledOnce();
+    expect(target.contentView.addChildView).toHaveBeenCalledWith(tab.view);
+  });
+
+  it('reveals tabs after the readiness safety timeout and logs the fallback', () => {
+    // risk: a missed renderer readiness signal must not leave the window unusable
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const owner = ownerWindow(102);
+    const instance = manager() as any;
+    instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    expect(owner.contentView.addChildView).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(30_000);
+    expect(owner.contentView.addChildView).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('readiness timed out'));
+    warn.mockRestore();
+    vi.useRealTimers();
+  });
+
   it('keeps child views with a background tab and notifies only when its host is disposed', () => {
     // risk: switching tabs must hide a vault child without leaving it on top of the next tab
     const owner = ownerWindow(10);
     const instance = manager() as any;
     instance.activate(owner, 'vault-tab', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    instance.markChromeReady(owner);
     const host = instance.tabs.get('vault-tab').view;
     const sender = host.webContents;
     const disposed = vi.fn();
@@ -73,6 +123,7 @@ describe('InternalTabViewManager', () => {
     const owner = ownerWindow(11);
     const instance = manager() as any;
     instance.activate(owner, 'one', 'main', { x: 0, y: 56, width: 800, height: 600 });
+    instance.markChromeReady(owner);
     const tab = instance.tabs.get('one');
 
     tab.view.webContents.listeners['did-finish-load']();
@@ -89,6 +140,7 @@ describe('InternalTabViewManager', () => {
     const owner = ownerWindow(2);
     const instance = manager() as any;
     instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 10, height: 10 });
+    instance.markChromeReady(owner);
     const view = instance.tabs.get('one').view;
     instance.destroy(owner, 'one');
     expect(owner.contentView.removeChildView).toHaveBeenCalledWith(view);
@@ -115,6 +167,8 @@ describe('InternalTabViewManager', () => {
     const target = ownerWindow(4);
     const instance = manager() as any;
     instance.activate(source, 'one', 'main', { x: 1, y: 2, width: 30, height: 40 });
+    instance.markChromeReady(source);
+    instance.markChromeReady(target);
     const tab = instance.tabs.get('one');
     expect(instance.moveToWindow('one', target)).toBe(true);
     expect(source.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
@@ -143,6 +197,7 @@ describe('InternalTabViewManager', () => {
     const owner = ownerWindow(5);
     const instance = manager() as any;
     instance.activate(owner, 'one', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    instance.markChromeReady(owner);
     const tab = instance.tabs.get('one');
     tab.view.webContents.listeners['render-process-gone']();
     expect(owner.webContents.send).toHaveBeenCalledWith('internal-tab-view:crashed', 'one');

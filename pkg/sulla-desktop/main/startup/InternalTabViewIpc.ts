@@ -20,6 +20,7 @@ export class InternalTabViewIpc implements MainProcessIpcStep {
       return win;
     };
     ipc.handle('internal-tab-view:activate', (event: Electron.IpcMainInvokeEvent, tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown) => manager.activate(owner(event), tabId, windowKey, bounds, descriptor));
+    ipc.handle('internal-tab-view:chrome-ready', (event: Electron.IpcMainInvokeEvent) => manager.markChromeReady(owner(event)));
     ipc.handle('internal-tab-view:bounds', (event: Electron.IpcMainInvokeEvent, tabId: string, bounds: Electron.Rectangle) => manager.setBounds(owner(event), tabId, bounds));
     ipc.handle('internal-tab-view:visible', (event: Electron.IpcMainInvokeEvent, tabId: string, visible: boolean) => manager.setVisible(owner(event), tabId, visible));
     ipc.handle('internal-tab-view:close', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.destroy(owner(event), tabId));

@@ -408,6 +408,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:activate': (tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown) => void;
+  'internal-tab-view:chrome-ready': () => void;
   'internal-tab-view:bounds': (tabId: string, bounds: Electron.Rectangle) => void;
   'internal-tab-view:visible': (tabId: string, visible: boolean) => void;
   'internal-tab-view:close': (tabId: string) => void;
