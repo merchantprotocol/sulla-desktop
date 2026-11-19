@@ -739,11 +739,17 @@ func (a *agent) shutdown() {
 	syscall.Sync()
 	logStep("sync", step, "complete")
 	step = time.Now()
+	diskClean := true
 	if err := unmountDataDisk(); err != nil {
+		diskClean = false
 		logStep("data-disk-unmount", step, "failed")
 		a.log.Printf("shutdown data disk could not be made read-only: %v", err)
 	} else {
 		logStep("data-disk-unmount", step, "clean")
+	}
+	if !diskClean {
+		a.emit("shutdown-incomplete", "", "data disk neither unmounted nor remounted read-only; awaiting host timeout", "")
+		return
 	}
 	if os.Getpid() == 1 {
 		step = time.Now()
