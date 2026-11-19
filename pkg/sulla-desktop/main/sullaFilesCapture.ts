@@ -13,7 +13,7 @@ import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from '
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
-import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
+import { CloudShareContentNotFoundError, getSullaFilesLinkService, SharingUnavailableError, type CreateShareInput, type ShareLink, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher, type RecentSullaFile, type SullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { ScreenRecordingPermission } from '@pkg/utils/screenRecordingPermission';
 
@@ -87,6 +87,12 @@ async function electronScreenshot(target:string, sourceType:'screen'|'window'):P
 
 export class SullaFilesCaptureService {
   private readonly recordingImports = new Map<string, Promise<CaptureResult>>();
+  constructor(
+    private readonly resolveLinks:() => Pick<import('@pkg/main/sullaFilesLinkService').LinkService, 'create'> = getSullaFilesLinkService,
+    private readonly readExpiryDays:() => Promise<unknown> = () => SullaSettingsModel.get('sullaFilesCaptureExpiryDays', 30),
+    private readonly writeClipboard:(value:string) => void = value => clipboard.writeText(value),
+  ) {}
+
   recordingState():boolean { return getCaptureStudioRecordingState() }
 
   async screenshot(mode:ScreenshotMode):Promise<CaptureResult> {
@@ -157,18 +163,20 @@ export class SullaFilesCaptureService {
     return captureResult(importedReference(await importChatFiles([picked.filePaths[0]], 'Uploads')), 'upload');
   }
 
-  async share(capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }):Promise<{ url?:string; unavailable?:boolean; message:string }> {
+  async share(capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }):Promise<{ url?:string; unavailable?:boolean; retryWithoutCloudCopy?:boolean; message:string }> {
     const file = capture.fileId ? { id: capture.fileId } : await waitForFile(capture.relativePath);
     if (!file?.id) return { message: 'Saved to Files. Waiting for the container to finish versioning before sharing.' };
-    const expiryDays = Number(await SullaSettingsModel.get('sullaFilesCaptureExpiryDays', 30));
+    const expiryDays = Number(await this.readExpiryDays());
     const expiresAt = expiryDays > 0 ? new Date(Date.now() + expiryDays * 86_400_000).toISOString() : undefined;
     try {
-      const link = await getSullaFilesLinkService().create({ fileId: file.id, mode: options.mode, keepAvailable: options.keepAvailable, expiresAt, capture: capture.kind !== 'upload', captureMetadata: { kind: capture.kind, sourcePath: capture.relativePath } });
-      clipboard.writeText(link.url);
+      const input:CreateShareInput = { fileId: file.id, mode: options.mode, keepAvailable: options.keepAvailable, expiresAt, capture: capture.kind !== 'upload', captureMetadata: { kind: capture.kind, sourcePath: capture.relativePath } };
+      const link:ShareLink = await this.resolveLinks().create(input);
+      this.writeClipboard(link.url);
 
       return { url: link.url, message: 'Link copied' };
     } catch (error) {
       if (error instanceof SharingUnavailableError) return { unavailable: true, message: 'Sharing comes online when links ship. The file is safely saved in Sulla Files.' };
+      if (options.keepAvailable && error instanceof CloudShareContentNotFoundError) return { retryWithoutCloudCopy: true, message: 'Sulla Cloud could not keep a copy. You can try a link that works while this Mac is on.' };
       throw error;
     }
   }

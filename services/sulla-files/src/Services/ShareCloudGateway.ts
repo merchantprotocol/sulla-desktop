@@ -27,8 +27,15 @@ export class ShareCloudGateway {
   async request(path: string, init: RequestInit = {}, acceptedStatuses:number[] = []):Promise<any> {
     const body = init.body instanceof Uint8Array ? init.body : init.body;
     if (!this.broker) throw Object.assign(new Error('Sulla Cloud broker is unavailable'), { status: 503 });
-    const result = await this.broker.execute(path, (init.method ?? 'GET').toUpperCase(), body, new Headers(init.headers).get('Content-Type') ?? undefined);
-    if (![200, 201, 202, 204, ...acceptedStatuses].includes(result.status)) throw Object.assign(new Error(`Sulla Cloud returned ${ result.status }`), { status: 502 });
+    const method = (init.method ?? 'GET').toUpperCase();
+    const result = await this.broker.execute(path, method, body, new Headers(init.headers).get('Content-Type') ?? undefined);
+    if (![200, 201, 202, 204, ...acceptedStatuses].includes(result.status)) {
+      const missingCloudCopy = result.status === 404 && method === 'PUT' && /^\/shares\/[A-Za-z0-9._~-]{1,200}\/content$/.test(path);
+      throw Object.assign(new Error(`Sulla Cloud returned ${ result.status }`), {
+        status: 502,
+        ...(missingCloudCopy ? { code: 'SULLA_CLOUD_CONTENT_NOT_FOUND' } : {}),
+      });
+    }
     return result.body ?? {};
   }
 

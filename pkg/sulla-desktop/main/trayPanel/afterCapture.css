@@ -64,6 +64,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .choice.default .tag{display:inline-block}
 .choice.on .tag{background:var(--accent-soft);color:var(--accent-2)}
 .choice:disabled{cursor:default;opacity:.6}
+.choice.fallback{border-color:var(--accent-line);background:var(--accent-soft)}
 .pkeep{display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--line);background:rgba(244,247,251,.7)}
 .pkeep .n{flex:1;min-width:0}
 .pkeep .n b{display:block;font-size:12px;font-weight:600}

@@ -50,11 +50,17 @@ function showToast(title, detail, success) {
 
 function scheduleClose(ms) { clearTimeout(closeTimer); closeTimer = setTimeout(close, ms) }
 
-async function share() {
+async function share(keepAvailable = $('keep').classList.contains('on')) {
   if (!capture || working || done) return;
-  working = true; clearInterval(timer); $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
+  working = true; clearInterval(timer); $('share-live-only').hidden = true; $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
   try {
-    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view', keepAvailable: $('keep').classList.contains('on') });
+    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view', keepAvailable });
+    if (result.retryWithoutCloudCopy) {
+      $('countdown').textContent = result.message;
+      $('share-live-only').hidden = false;
+      fitWindow();
+      return;
+    }
     done = true;
     if (result.url) showToast('Link copied', result.url.replace(/^https?:\/\//, ''), true);
     else showToast('Saved to Files', result.message, false);
@@ -78,7 +84,7 @@ function beginCountdown(action) {
 function stopCountdown() { if (!working && !done) { clearInterval(timer); $('countdown').textContent = '' } }
 
 ipcRenderer.on('files-after-capture:show', async(_event, value) => {
-  capture = value; done = false;
+  capture = value; done = false; $('share-live-only').hidden = true;
   try { preferences = await ipcRenderer.invoke('tray-panel:files-preferences-get') } catch { preferences = {} }
   const folders = String(capture.relativePath || '').split('/').slice(0, -1);
   $('capture-title').textContent = capture.kind === 'recording' ? 'Recording captured' : capture.kind === 'upload' ? 'File added to Files' : 'Screenshot captured';
@@ -96,6 +102,10 @@ ipcRenderer.on('files-after-capture:show', async(_event, value) => {
 });
 
 $('share').addEventListener('click', share);
+$('share-live-only').addEventListener('click', () => {
+  $('keep').classList.remove('on'); $('keep').setAttribute('aria-checked', 'false');
+  share(false);
+});
 $('save').addEventListener('click', close);
 $('close').addEventListener('click', close);
 $('keep').addEventListener('click', () => { $('keep').classList.toggle('on'); $('keep').setAttribute('aria-checked', String($('keep').classList.contains('on'))); stopCountdown() });
