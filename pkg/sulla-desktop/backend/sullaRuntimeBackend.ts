@@ -172,6 +172,9 @@ function bootFailure(error: unknown): SullaRuntimeBootError {
  * `sulla-runtime` host binary. Guest commands run through
  * `sulla-runtime exec`.
  */
+/** Bundled image names (packaging/bundled-images.yaml) that Postgres and Redis run from; loaded and started first. */
+const DATABASE_IMAGE_NAMES = new Set(['sulla-postgres', 'redis']);
+
 export default class SullaRuntimeBackend extends events.EventEmitter implements VMBackend, VMExecutor {
   constructor(arch: Architecture) {
     super();
@@ -961,7 +964,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
     // The DB images must exist in the guest before Compose is allowed to start
     // these services; otherwise a fresh install can trigger a network pull.
-    await this.loadBundledImages(image => image.name === 'postgres' || image.name === 'redis');
+    await this.loadBundledImages(image => DATABASE_IMAGE_NAMES.has(image.name));
     this.assertManagedServicesGeneration(generation);
 
     // Start readiness gates early, alongside non-DB image import and proxy
@@ -974,7 +977,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     // the agent network/egress setup and compose; agents depend on the proxy.
     await this.progressTracker.action('Loading bundled container images', 40, async() => {
       t = Date.now();
-      await this.loadBundledImages(image => !image.onDemand && image.name !== 'postgres' && image.name !== 'redis');
+      await this.loadBundledImages(image => !image.onDemand && !DATABASE_IMAGE_NAMES.has(image.name));
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] loadBundledImages: ${ Date.now() - t }ms`);
     });
@@ -1018,7 +1021,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
    * after an app update shipped new ones). Without a bundle (development) this
    * does nothing and compose pulls as before.
    */
-  private async loadBundledImages(filter: (image: { onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
+  private async loadBundledImages(filter: (image: { name: string; onDemand?: boolean }) => boolean, reportProgress = true): Promise<void> {
     const lock = currentBundledImageLock();
     const imagesDir = bundledImagesDir();
 
