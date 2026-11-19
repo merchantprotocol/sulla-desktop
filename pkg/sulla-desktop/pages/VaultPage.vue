@@ -70,9 +70,9 @@ function onVisibilityChange(): void {
   if (canOpen() && !opening && !retryTimer && (loading.value || starting.value)) void open();
 }
 
-function bounds(): { x: number; y: number; width: number; height: number } {
+function bounds(): { x: number; y: number; width: number; height: number } | null {
   const rect = host.value?.getBoundingClientRect();
-  if (!rect) return { x: 0, y: 0, width: 1, height: 1 };
+  if (!rect || rect.width < 1 || rect.height < 1) return null;
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
 
@@ -84,9 +84,15 @@ async function open(): Promise<void> {
   error.value = '';
   await nextTick();
   if (!canOpen() || generation !== lifecycleGeneration) return;
+  const rect = bounds();
+  // A restored tab can mount before the shell gives its native host a size.
+  if (!rect) {
+    retryWhenVisible();
+    return;
+  }
   opening = true;
   try {
-    const result = await ipcRenderer.invoke('vault:view-open', bounds(), {
+    const result = await ipcRenderer.invoke('vault:view-open', rect, {
       integrationId: props.integrationId,
       accountId:     props.accountId,
       surface:       props.surface,
@@ -150,7 +156,8 @@ function deactivate(): void {
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange);
   observer = new ResizeObserver(() => {
-    if (props.active) void ipcRenderer.invoke('vault:view-bounds', ownerId, bounds());
+    const rect = bounds();
+    if (rect && canOpen()) void ipcRenderer.invoke('vault:view-bounds', ownerId, rect);
   });
   if (host.value) observer.observe(host.value);
   stopActiveWatch = watch(() => props.active, (active) => {

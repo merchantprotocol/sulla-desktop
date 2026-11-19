@@ -22,6 +22,7 @@ describe('configuration startup', () => {
   let vault: VueWrapper | undefined;
   let setDocumentHidden: (hidden: boolean) => void;
   let pageScope: ReturnType<typeof effectScope>;
+  let hostWidth: number;
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -29,6 +30,8 @@ describe('configuration startup', () => {
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
     setDocumentHidden = (value) => { hidden.mockReturnValue(value) };
     pageScope = effectScope();
+    hostWidth = 800;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new DOMRect(0, 0, hostWidth, 600));
   });
 
   afterEach(() => {
@@ -95,6 +98,21 @@ describe('configuration startup', () => {
     expect(vault.find('[role=status]').exists()).toBe(false);
     expect(vault.find('[role=alert]').exists()).toBe(false);
     expect(openVault).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits for the restored Vault tab to have a usable size before opening the native view', async() => {
+    hostWidth = 0;
+    openVault.mockResolvedValueOnce({ state: 'opened' });
+    vault = mount(VaultPage);
+    await flushPromises();
+
+    expect(vault.get('[role=status]').text()).toBe('Waiting for Password Vault…');
+    expect(openVault).not.toHaveBeenCalled();
+    hostWidth = 800;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(openVault).toHaveBeenCalledOnce();
+    expect(openVault).toHaveBeenCalledWith({ x: 0, y: 0, width: 800, height: 600 }, expect.any(Object));
+    expect(vault.find('[role=status]').exists()).toBe(false);
   });
 
   it('does not reopen the native Vault while the tab is hidden', async() => {
