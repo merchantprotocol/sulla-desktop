@@ -48,9 +48,14 @@ describe('thinking work log', () => {
     const block = mount(ThinkingGroup, { props: { messages: log }, global });
 
     expect(block.find('.wb-title').text()).toBe('Ran 2 steps · read PR, merge PR');
-    expect(block.find('.wb-by').text()).toBe('PProduct Owneropus-5.5');
+    expect(block.find('.wb-by').text()).toBe('PProduct Owneropus-5.5 · Effort not reported');
     expect(block.find('.wb-meta').text()).toBe('52s · 2 steps');
     expect(block.find('.wb-body').exists()).toBe(false);
+  });
+
+  it('shows the resolved effort beside the model rather than a current picker default', () => {
+    const block = mount(ThinkingGroup, { props: { messages: [{ ...log[0], by: { agent: 'product-owner', model: 'gpt-6-luna', modelStatus: { model: 'gpt-6-luna', effort: 'max', source: 'resolved' } } }] }, global });
+    expect(block.find('.wb-by').text()).toContain('gpt-6-luna · Max');
   });
 
   it('expands to readable steps, each with its raw command, and the full log', async() => {

@@ -55,6 +55,40 @@ describe('unsaved model choices are visible and survive leaving the page', () =>
     again.unmount();
   });
 
+  it('shows refreshed saved routing without creating an unsaved draft', async() => {
+    const w = mountLedger();
+    const refreshed = state();
+    refreshed.classes.coding[0].model = 'gpt-6-sol';
+
+    await w.setProps({ state: refreshed });
+
+    expect(w.find('.ld-model').text()).toBe('GPT-6 Sol');
+    expect(bar()).toBeNull();
+    expect(w.emitted('save')).toBeUndefined();
+
+    await w.find('.ld-seg button[aria-checked="false"]').trigger('click');
+    expect(bar()?.textContent).toContain('1 unsaved change');
+    expect(refreshed.classes.coding[0].effort).toBeUndefined();
+    w.unmount();
+  });
+
+  it('preserves an edited role while adopting refreshed settings for untouched roles', async() => {
+    const initial = state();
+    initial.classes.frontier = [{ provider: 'codex', model: 'gpt-6-luna', chosen: true }];
+    const w = mountLedger(initial);
+    await w.find('[aria-label$="effort for Coding"] button[aria-checked="false"]').trigger('click');
+
+    const refreshed = state();
+    refreshed.classes.frontier = [{ provider: 'codex', model: 'gpt-6-sol', chosen: true }];
+    await w.setProps({ state: refreshed });
+
+    expect(w.find('[aria-label*="model for Frontier"]').text()).toBe('GPT-6 Sol');
+    expect(bar()?.textContent).toContain('1 unsaved change');
+    expect(bar()?.textContent).toContain('Coding');
+    expect(w.emitted('save')).toBeUndefined();
+    w.unmount();
+  });
+
   it('drops the kept edit once the saved settings changed underneath it', async() => {
     const first = mountLedger();
     await first.find('.ld-seg button[aria-checked="false"]').trigger('click');

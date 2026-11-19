@@ -75,6 +75,7 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
+  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -405,6 +406,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
   'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string, sentAt?: number) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
+  'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:activate': (tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown) => void;
   'internal-tab-view:bounds': (tabId: string, bounds: Electron.Rectangle) => void;
   'internal-tab-view:visible': (tabId: string, visible: boolean) => void;
@@ -535,10 +537,10 @@ export interface IpcMainInvokeEvents {
 
   // #region Model Provider Service (source of truth)
   'model-provider:get-state':              () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote'; secondaryModelId: string; heartbeatModelId: string; subconsciousModelId: string };
-  'model-provider:get-providers':          () => { id: string; name: string; connected: boolean }[];
+  'model-provider:get-providers':          () => { id: string; name: string; connected: boolean; connectionStatus?: 'unknown'; accessMethod?: import('@pkg/shared/providerAccess').ProviderAccessMethod; accessLabel?: string; selectable?: boolean }[];
   'model-provider:get-accounts':           (providerId: string) => { accountId: string; label: string; active: boolean; connected: boolean }[];
   'model-provider:set-active-account':     (providerId: string, accountId: string) => void;
-  'model-provider:get-models':             (providerId: string) => { id: string; name: string; description?: string }[];
+  'model-provider:get-models':             (providerId: string) => { id: string; name: string; description?: string; selectionMode?: import('@pkg/shared/providerAccess').ModelSelectionMode }[];
   'model-provider:select-model':           (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote'; secondaryModelId: string; heartbeatModelId: string; subconsciousModelId: string };
   'model-provider:set-secondary':          (providerId: string) => void;
   'model-provider:set-secondary-model':    (modelId: string) => void;
@@ -652,6 +654,10 @@ export interface IpcMainInvokeEvents {
   'files-backups:add': (input:{kind:'local'|'nas'|'s3';label:string;config:Record<string,unknown>}) => unknown;
   'files-backups:run': (id:string) => { runId:string };
   'files-backups:remove': (id:string) => void;
+  'files-storage-cleanup:inventory': () => import('@pkg/main/storageCleanup/StorageCleanupService').StorageCleanupInventory;
+  'files-storage-cleanup:prepared-plan': () => import('@pkg/main/storageCleanup/StorageCleanupService').StorageCleanupPlan | undefined;
+  'files-storage-cleanup:plan': (input:{ targetIds:string[] }) => import('@pkg/main/storageCleanup/StorageCleanupService').StorageCleanupPlan;
+  'files-storage-cleanup:confirm': (input:{ planId:string }) => import('@pkg/main/storageCleanup/StorageCleanupService').StorageCleanupReceipt;
   'sulla-files:collections':     () => any[];
   'sulla-files:folders': (input: { collectionId:string; details?:boolean }) => (string | import('@pkg/sulla-desktop/pages/files/types').FilesFolderState)[];
   'sulla-files:operation-capabilities': (input: { collectionId:string }) => {
@@ -734,20 +740,26 @@ export interface IpcMainInvokeEvents {
   'git-show-staged':               (dirPath: string, file: string) => string;
   'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
+  'agents:result-tracking':          (ownerThread: string) => import('@pkg/shared/agentResults/AgentResultCard').ResultActivityRecord[];
   'agents:state-snapshot':         () => import('@pkg/shared/agentState/AgentStateSnapshot').AgentStateSnapshot;
   'agents:message-job':            (jobId: string, taskIndex: number, message: string) => import('@pkg/shared/agentState/AgentStateSnapshot').AgentActionResult;
   'agents:stop-job':               (jobId: string) => import('@pkg/shared/agentState/AgentStateSnapshot').AgentActionResult;
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
-  'agent-definitions:list':        () => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
-  'agent-definitions:create':      (input: { slug: string; name: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
-  'agent-definitions:update':      (id: string, patch: { name?: string; description?: string; provider?: string; modelSlot?: import('@pkg/agent/database/models/AgentDefinitionModel').AgentModelSlot; modelChoice?: import('@pkg/agent/languagemodels/modelRoutingTypes').AgentModelChoice; prompt?: string }) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
+  'agent-definitions:list':        (options?: import('@pkg/main/agentsIpc').AgentDefinitionsListOptions) => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
+  'agent-definitions:create':      (input: import('@pkg/shared/agentEditor').AgentEditorCreateRequest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:update':      (id: string, patch: import('@pkg/shared/agentEditor').AgentEditorPatch) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
   'agent-definitions:import':      (manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
   'agent-definitions:publish-check': (slug: string) => { secret: string | null; warnings: string[] } | { error: string };
   'agent-definitions:publish':     (slug: string) => import('@pkg/main/marketplace/publish').PublishResult | { error: string };
   // Model routing (Preferences → AI models); contract in agent/languagemodels/modelRoutingTypes.ts.
+  'model-routing:cli-check': () => import('@pkg/backend/providerCliUpdates').ProviderCliVersion[];
+  'model-routing:cli-update': (input: { provider: string; version: string }) => import('@pkg/backend/providerCliUpdates').ProviderCliVersion[];
+  'model-defaults:get': () => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
+  'model-defaults:set': (patch: Partial<import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaults>) => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
+  'model-defaults:reset': () => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
   'model-routing:get':   () => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'model-routing:set':   (patch: Partial<Pick<import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder'>>) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'model-routing:reset': (target: { section: 'agents' | 'subconscious' | 'classes'; class?: import('@pkg/agent/languagemodels/modelRoutingTypes').ModelClass }) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
@@ -779,10 +791,12 @@ export interface IpcMainInvokeEvents {
 
   // Approval gate — renderer resolves a pending user-approval request
   // that a backend tool parked via ApprovalService.
+  'decisions:conversation': (conversationId: string, before?: { at: number; id: string }) => import('@pkg/shared/decisions').DecisionRecord[];
+  'decisions:dismiss':      (id: string, conversationId: string) => { settled: boolean };
   'decisions:list': () => import('@pkg/shared/decisions').DecisionRecord[];
-  'decisions:resolve': (response: import('@pkg/shared/decisions').DecisionResponse) => { settled: boolean; conversationId?: string; reason?: string };
+  'decisions:resolve': (response: import('@pkg/shared/decisions').DecisionResponse) => { settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean };
   'decisions:policies': () => { name: string; category: string; description: string; required: boolean }[];
-  'decisions:set-policy': (name: string, required: boolean) => { saved: boolean };
+  'decisions:set-policy':   (name: string, required: boolean) => { saved: boolean };
   'approval:resolve': (payload: {
     approvalId: string;
     decision:   'approved' | 'denied';
@@ -1333,6 +1347,8 @@ export interface IpcMainInvokeEvents {
  */
 export interface IpcRendererEvents {
   'internal-tab-view:crashed': (tabId: string) => void;
+  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:loaded': (tabId: string) => void;
   'conversation-servers:changed': (event: { channelId: string }) => void;
@@ -1493,6 +1509,7 @@ export interface IpcRendererEvents {
   // #endregion
 
   // #region Model Provider Service
+  'model-defaults:changed': (state: import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState) => void;
   'model-provider:state-changed': (state: { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote'; secondaryModelId: string; heartbeatModelId: string; subconsciousModelId: string }) => void;
   // #endregion
 

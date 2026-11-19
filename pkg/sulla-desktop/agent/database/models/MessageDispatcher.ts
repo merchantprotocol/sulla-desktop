@@ -23,6 +23,7 @@ import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/too
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
+import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
@@ -176,6 +177,13 @@ export class MessageDispatcher {
     const handler = this.handlers.get(msg.type);
     if (handler) {
       handler(ctx, agentId, threadId, msg);
+      const data = msg.data as any;
+      if (data?.modelStatus && typeof data.modelStatus.model === 'string' && !data.readinessWaitId) {
+        for (let index = ctx.messages.length - 1; index >= 0; index--) {
+          const message = ctx.messages[index];
+          if (message.channelId === agentId && message.threadId === threadId) { message.modelStatus = data.modelStatus; break }
+        }
+      }
     } else {
       console.log('[MessageDispatcher] Unhandled message type:', msg.type);
     }
@@ -185,6 +193,7 @@ export class MessageDispatcher {
 // ─── Handler: chat / assistant / system messages ────────────────
 
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
+  if (msg.data && typeof msg.data === 'object' && AgentReadinessStatus.apply(ctx.messages, agentId, msgThreadId, msg.data as Record<string, unknown>)) return;
   // Only the primary orchestration loop's emissions affect run-state.
   // Subconscious agents emit on the `subconscious_message` wire type
   // (see SubconsciousAgentNode + BaseNode.wsChatMessage's messageType

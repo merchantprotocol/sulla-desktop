@@ -14,12 +14,28 @@
  *   - pre-existing non-built-in row identical to the bundle → adopt as built-in
  *   - any other existing row                      → keep its content
  * The only write to an edited or non-built-in row is filling directory-card
- * fields that are still empty; that adds a card without overwriting anything.
- * The front-door flag works the same way: it is filled only while unset.
+ * fields that are still empty. can_call [] is the default unrestricted team,
+ * not a missing card, so it is never filled. A hashed built-in whose managed
+ * content no longer matches builtin_hash is left alone, including cleared
+ * routing strings. A row with no hash yet, and a non-built-in row, can still
+ * receive blank string cards.
+ * The front-door flag is filled only while unset. An explicit null is stored
+ * outside the hash as config.frontDoorChosen, so a null-only edit survives
+ * even when the managed hash still matches and prompt upgrades still run.
+ * Refresh copies that marker onto the new bundle config. A customized hashed
+ * built-in is not filled either. A non-built-in row is filled only when it
+ * has no marker.
  *
  * "Untouched" means the row's live managed content still hashes to the
  * builtin_hash the seeder last wrote, so edits from any path (UI, SQL, tools)
- * are detected without hooks. Status and enabled always stay the human's.
+ * are detected without hooks. Both sides hash only what AgentDefinitionModel
+ * stores: the model category policy rewrites provider/model/model_slot/
+ * model_priority and config.modelChoice, so those are left out and the agent's
+ * model choice survives a refresh. Rows that still carry an older 'sha256:'
+ * hash of the raw bundle are never refreshed or front-door filled: one that
+ * already equals the current bundle only has its hash re-stamped, and any other
+ * stays exactly as it is, so existing instructions are not upgraded behind the
+ * user's back. Status and enabled always stay the human's.
  *
  * Agents the bundle stops shipping are listed in its "retired" array;
  * retireBuiltinAgents switches off its own untouched copy once, never deletes.
@@ -31,6 +47,7 @@ import os from 'node:os';
 
 import {
   BUILTIN_CARD_FIELDS,
+  FRONT_DOOR_CHOSEN_KEY,
   getBuiltinAgentSpecs,
   getRetiredBuiltinSlugs,
   hashManagedContent,
@@ -56,15 +73,35 @@ export type BuiltinSeedAction =
   | { kind: 'fill-cards'; patch: AgentDefinitionPatch }
   | { kind: 'kept' };
 
-function isEmptyCardValue(value: unknown): boolean {
+function isEmptyCardValue(field: typeof BUILTIN_CARD_FIELDS[number], value: unknown): boolean {
+  // [] is a saved default team. Only a missing (non-array) can_call is unfilled.
+  if (field === 'can_call') return !Array.isArray(value);
   if (Array.isArray(value)) return value.length === 0;
   return value == null || String(value).trim() === '';
+}
+
+/** True when an editor save explicitly chose front door "not set". */
+export function hasExplicitFrontDoorChoice(config: unknown): boolean {
+  return !!config && typeof config === 'object' && Object.prototype.hasOwnProperty.call(config, FRONT_DOOR_CHOSEN_KEY);
+}
+
+/**
+ * Fill the bundle front door only while the column is unset, the bundle names
+ * a boolean, and nobody has saved an explicit null or customized this built-in.
+ * A matching managed hash is not enough: front door is outside that hash.
+ */
+export function shouldFillBuiltinFrontDoor(row: AgentDefinition | null, bundleFrontDoor: unknown): boolean {
+  if (!row || row.front_door !== null || typeof bundleFrontDoor !== 'boolean') return false;
+  if (hasExplicitFrontDoorChoice(row.config)) return false;
+  // Only a row still matching its own hash; an older 'sha256:' row never does, so it is left alone.
+  if (row.is_builtin && row.builtin_hash && hashManagedContent(row) !== row.builtin_hash) return false;
+  return true;
 }
 
 /** Card fields that are empty on the row but present in the bundle. */
 export function cardFillPatch(row: AgentDefinition, content: BuiltinManagedContent): AgentDefinitionPatch {
   const patch: AgentDefinitionPatch = {};
-  const fill = (field: typeof BUILTIN_CARD_FIELDS[number]) => isEmptyCardValue(row[field]) && !isEmptyCardValue(content[field]);
+  const fill = (field: typeof BUILTIN_CARD_FIELDS[number]) => isEmptyCardValue(field, row[field]) && !isEmptyCardValue(field, content[field]);
   if (fill('when_to_call')) patch.whenToCall = content.when_to_call;
   if (fill('when_not_to_call')) patch.whenNotToCall = content.when_not_to_call;
   if (fill('send')) patch.send = content.send;
@@ -104,6 +141,10 @@ export function decideBuiltinSeedAction(
       return row.builtin_hash === bundleHash ? { kind: 'unchanged' } : { kind: 'adopt', patch: { builtinHash: bundleHash } };
     }
     if (row.builtin_hash && liveHash === row.builtin_hash) return { kind: 'refresh' };
+    // Hash no longer matches a seeded built-in: the person saved it, or it carries
+    // an older 'sha256:' hash and differs from the bundle. Leave it wholly as is;
+    // do not put bundle card text back over a cleared field. Not-yet-hashed rows still fill.
+    if (row.builtin_hash) return { kind: 'kept' };
     return hasFill ? { kind: 'fill-cards', patch: fill } : { kind: 'kept' };
   }
 
@@ -193,11 +234,15 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
         });
         summary.inserted++;
         break;
-      case 'refresh':
+      case 'refresh': {
         // Compare-and-set: a human edit that lands mid-boot wins.
-        if (await AgentDefinitionModel.update(row!.id, contentPatch(content, bundleHash), row!.updated_at)) summary.refreshed++;
+        // contentPatch replaces config, so an explicit null front door has to be copied back.
+        const patch = contentPatch(content, bundleHash);
+        if (hasExplicitFrontDoorChoice(row?.config)) patch.config = { ...(patch.config ?? {}), [FRONT_DOOR_CHOSEN_KEY]: null };
+        if (await AgentDefinitionModel.update(row!.id, patch, row!.updated_at)) summary.refreshed++;
         else summary.kept++;
         break;
+      }
       case 'adopt':
         if (await AgentDefinitionModel.update(row!.id, action.patch, row!.updated_at)) summary.adopted++;
         else summary.kept++;
@@ -212,8 +257,9 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
       }
 
       if (action.kind !== 'deleted-by-human') {
-        if (row?.front_door === null && typeof spec.card?.frontDoor === 'boolean') {
-          await AgentDefinitionModel.fillFrontDoor(spec.slug, spec.card.frontDoor);
+        const bundleFrontDoor = spec.card?.frontDoor;
+        if (typeof bundleFrontDoor === 'boolean' && shouldFillBuiltinFrontDoor(row, bundleFrontDoor)) {
+          await AgentDefinitionModel.fillFrontDoor(spec.slug, bundleFrontDoor);
         }
         await markSeen(spec.slug);
       }

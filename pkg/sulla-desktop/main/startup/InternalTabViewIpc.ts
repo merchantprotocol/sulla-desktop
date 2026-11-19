@@ -24,6 +24,12 @@ export class InternalTabViewIpc implements MainProcessIpcStep {
     ipc.handle('internal-tab-view:visible', (event: Electron.IpcMainInvokeEvent, tabId: string, visible: boolean) => manager.setVisible(owner(event), tabId, visible));
     ipc.handle('internal-tab-view:close', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.destroy(owner(event), tabId));
     ipc.handle('internal-tab-view:reload', (event: Electron.IpcMainInvokeEvent, tabId: string) => manager.reload(owner(event), tabId));
+    ipc.handle('internal-tab-view:open-workspace-tab', (event: Electron.IpcMainInvokeEvent, request: unknown) => {
+      manager.openWorkspaceTab(event.sender, request);
+    });
+    Electron.ipcMain.on('internal-tab-view:chat-running', (event: Electron.IpcMainEvent, tabId: string, running: boolean) => {
+      if (typeof running === 'boolean') manager.notifyChatRunning(event.sender, tabId, running);
+    });
     // One-way renderer updates need ipcMain.on; the proxy registrar only guarantees handle().
     // A host renderer reads its own tab synchronously at boot, before it builds its tab list.
     Electron.ipcMain.on('internal-tab-view:descriptor', (event: Electron.IpcMainEvent, tabId: string) => {

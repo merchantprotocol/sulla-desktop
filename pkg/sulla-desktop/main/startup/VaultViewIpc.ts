@@ -10,6 +10,14 @@ import { VaultStatusMonitor } from './VaultStatusMonitor';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
 
+/**
+ * How long opening the vault view waits for the lifecycle 'vault' service. A cold
+ * start registers lifecycle services only after the VM is up (about 26s observed),
+ * past the lifecycle's general 15s default. The wait ends as soon as the service is
+ * ready, and still ends early on a final start failure or shutdown.
+ */
+export const VAULT_VIEW_READY_TIMEOUT_MS = 90_000;
+
 /** Vault status polling, metadata-only integration bridges and the isolated vault view. */
 export class VaultViewIpc implements MainProcessIpcStep {
   readonly name = 'vault-view';
@@ -84,16 +92,17 @@ export class VaultViewIpc implements MainProcessIpcStep {
     ipc.handle('vault:view-open', async(
       event: Electron.IpcMainInvokeEvent,
       bounds: Electron.Rectangle,
-      hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean; connect?: unknown },
+      hint?: { integrationId?: string; accountId?: string; surface?: 'page' | 'popup'; siteUrl?: string; tabId?: string; ownerId?: string; restoreFiles?: boolean; connect?: unknown; theme?: unknown },
     ) => {
       const parentWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
       if (!parentWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
       const safeMetadata = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(value) ? value : undefined;
       const ownerId = typeof hint?.ownerId === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(hint.ownerId) ? hint.ownerId : undefined;
       if (!ownerId) throw new Error('Invalid vault view owner');
+      const tabHostView = internalTabViews.hostViewForSender(event.sender);
       const reservation = vaultViewManager.reserve(parentWindow, ownerId);
       try {
-        await getServiceLifecycleManager().waitUntilStarted('vault');
+        await getServiceLifecycleManager().waitUntilStarted('vault', VAULT_VIEW_READY_TIMEOUT_MS);
       } catch (error) {
         if (!vaultViewManager.isCurrent(reservation)) return { state: 'cancelled' };
         vaultViewManager.hide(ownerId, parentWindow);
@@ -131,18 +140,33 @@ export class VaultViewIpc implements MainProcessIpcStep {
         target.pathname = '/vault/popup.html';
         if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
       }
-      const tabHostView = internalTabViews.hostViewForSender(event.sender);
+      if (tabHostView && agentWindowFromSender(event.sender) !== parentWindow) {
+        vaultViewManager.hide(ownerId, parentWindow);
+        return { state: 'cancelled' };
+      }
       const opened = await vaultViewManager.show(
         reservation,
         parentWindow,
         target.toString(),
         bounds,
         tabHostView ?? undefined,
-        tabHostView ? listener => internalTabViews.onHostDisposed(event.sender, listener) : undefined,
+        tabHostView ? listener => agentWindowFromSender(event.sender) === parentWindow
+          ? internalTabViews.onHostDisposed(event.sender, listener)
+          : null : undefined,
+        hint?.theme,
       );
-      if (!opened) return { state: 'cancelled' };
+      if (!opened) {
+        if (vaultViewManager.isCurrent(reservation)) vaultViewManager.hide(ownerId, parentWindow);
+        return { state: 'cancelled' };
+      }
       vaultStatus.startPolling();
       return { state: 'opened', expiresAt: humanSession.expiresAt };
+    });
+
+    ipc.handle('vault:view-theme', async(event: Electron.IpcMainInvokeEvent, ownerId: string, theme: unknown) => {
+      const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault theme caller');
+      await vaultViewManager.setTheme(ownerId, theme, senderWindow);
     });
 
     ipc.handle('vault:view-bounds', async(event: Electron.IpcMainInvokeEvent, ownerId: string, bounds: Electron.Rectangle) => {

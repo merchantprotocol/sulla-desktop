@@ -180,7 +180,8 @@ import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
-import { openDocumentTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
+import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
@@ -242,6 +243,9 @@ const crashedInternalTabIds = reactive(new Set<string>());
 function onInternalTabCrashed(_event: unknown, tabId: string) { crashedInternalTabIds.add(tabId); }
 function onInternalTabUpdated(_event: unknown, tabId: string, descriptor: BrowserTabDescriptor) {
   if (descriptor?.id === tabId) updateTab(tabId, descriptor);
+}
+function onWorkspaceTabRequested(_event: unknown, request: WorkspaceTabRequest) {
+  void openWorkspaceTab(request).catch(error => console.error('[AgentRouter] Could not open workspace tab', error));
 }
 function refreshInternalTabBounds(tabId: string): void {
   const element = internalTabElements.get(tabId);
@@ -922,6 +926,7 @@ onMounted(async() => {
 
   ipcRenderer.on('route' as any, onRoute);
   ipcRenderer.on('agent-command' as any, onAgentCommand);
+  ipcRenderer.on('internal-tab-view:open-workspace-tab', onWorkspaceTabRequested);
   ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.on('k8s-progress' as any, onK8sProgress);
   ipcRenderer.on('conversation-history:show-all' as any, onHistoryShowAll);
@@ -959,6 +964,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', onBookmarksShortcut);
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
+  ipcRenderer.removeListener('internal-tab-view:open-workspace-tab', onWorkspaceTabRequested);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
   ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
   ipcRenderer.removeListener('conversation-history:show-all' as any, onHistoryShowAll);

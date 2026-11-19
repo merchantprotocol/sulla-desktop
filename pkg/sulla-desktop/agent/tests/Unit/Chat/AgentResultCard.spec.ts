@@ -6,12 +6,16 @@
 
 import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computed } from 'vue';
+import { computed, ref, nextTick } from 'vue';
 
 import ProactiveCard from '@pkg/pages/chat/components/proactive/ProactiveCard.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
+const decisions = ref<any[]>([]);
+vi.mock('@pkg/composables/useDecisions', () => ({ useDecisions: () => ({ records: decisions }) }));
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn(() => Promise.resolve([])) } }));
 
 const merge: AgentResultItem = {
   jobId:        'j1',
@@ -43,18 +47,24 @@ const review: AgentResultItem = {
   report:    'Review report.',
 };
 
-function render(msg: Record<string, unknown>, openConversation = vi.fn(), chat: { messages?: any[]; running?: boolean } = {}) {
+const mounted: { unmount(): void }[] = [];
+function tracked<T extends { unmount(): void }>(card: T): T { mounted.push(card); return card }
+function render(msg: Record<string, unknown>, openConversation = vi.fn(), chat: { messages?: any[]; running?: boolean; rows?: any[] } = {}) {
+  const snapshot = ref({ rows: chat.rows ?? [] });
+  const messageList = ref(chat.messages ?? []);
   return {
+    snapshot,
+    messageList,
     openConversation,
-    card: mount(ProactiveCard, {
+    card: tracked(mount(ProactiveCard, {
       attachTo: document.body,
       props:    { msg: { id: 'p1', kind: 'proactive', createdAt: 1, headline: 'Background agents finished', body: 'Task ready.', ...msg } as any },
-      global:   { provide: { [ChatControllerKey as symbol]: { thread: computed(() => ({ id: 'thread-1' })), messages: computed(() => chat.messages ?? []), isRunning: computed(() => !!chat.running) }, 'chat:open-subagent-conversation': openConversation } },
-    }),
+      global:   { provide: { 'chat:activity-context': { backendThreadId: ref('parent') }, [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot, error: ref('') }, [ChatControllerKey as symbol]: { thread: computed(() => ({ id: 'thread-1' })), messages: messageList, isRunning: computed(() => !!chat.running) }, 'chat:open-subagent-conversation': openConversation } },
+    })),
   };
 }
 
-afterEach(() => { document.body.innerHTML = ''; localStorage.clear() });
+afterEach(() => { mounted.splice(0).forEach(card => card.unmount()); document.body.innerHTML = ''; localStorage.clear(); decisions.value = [] });
 
 describe('a finished background agent in the chat', () => {
   // risk: the notice told the user to run check_agent_jobs(...) and never said what happened
@@ -64,7 +74,7 @@ describe('a finished background agent in the chat', () => {
     expect(card.text()).toContain('All 11 PRs are on main and staging deployed ea0d945.');
     expect(card.text()).toContain('#4320');
     expect(card.text()).toContain('Deployed');
-    expect(card.text()).toContain('codex-sol-worker · 2h 19m');
+    expect(card.text()).toContain('codex-sol-worker · Model / effort not reported · 2h 19m');
     expect(card.text()).not.toContain('check_agent_jobs');
   });
 
@@ -95,6 +105,14 @@ describe('a finished background agent in the chat', () => {
     expect(card.text()).not.toContain('All 11 PRs are on main');
   });
 
+  it('keeps an earlier changes-requested review neutral without hiding its recorded verdict', () => {
+    const { card } = render({ result: { items: [review] } });
+    expect(card.find('.ar-chip').text()).toBe('Earlier report');
+    expect(card.find('.ar-chip').classes()).toContain('ar-dim');
+    expect(card.find('details.ar-original summary').text()).toBe('Original report · Changes needed');
+    expect(card.find('details.ar-original').attributes('open')).toBeUndefined();
+  });
+
   it('keeps the plain notice for anything that is not a finished-agent notice', () => {
     expect(render({ headline: 'Heartbeat insight' }).card.text()).toContain('Task ready.');
     expect(readAgentResultCard({ items: [{ ...merge, tone: 'rainbow' }] })).toBeUndefined();
@@ -115,46 +133,78 @@ describe('a finished background agent in the chat', () => {
       report:    'Both review-fix commits are pushed.\nCI is green on #4329.\nBLOCKER: #4330 needs an owner sign-off on 25 catalog routes before merge.',
     };
 
-    it('leads with the blocker, keeps progress secondary, and shows the end of the report', () => {
+    it('keeps the original blocker behind a neutral, collapsed history disclosure', () => {
       const { card } = render({ result: { items: [blocked] } });
 
-      expect(card.find('.ar-problem').text()).toBe('Blocked: #4330 needs an owner sign-off on 25 catalog routes before merge.');
-      expect(card.find('.ar-outcome').classes()).toContain('ar-secondary');
-      expect(card.find('.ar-tail').text()).toContain('CI is green on #4329.');
+      expect(card.find('.ar-chip').text()).toBe('Earlier report');
+      expect(card.find('details.ar-original').attributes('open')).toBeUndefined();
+      expect(card.find('.ar-problem').text()).toBe('Reported then: #4330 needs an owner sign-off on 25 catalog routes before merge.');
+      expect(card.find('.ar-history-note').text()).toContain('not a request for your answer');
+      expect(card.find('.ar-tail').exists()).toBe(false);
+      expect(card.text()).toContain('CI is green on #4329.');
     });
 
-    it('drafts a resolve message for a blocked agent and a retry for a failed one', async() => {
+    it('drafts a status check rather than inventing a new decision or retry', async() => {
       const drafts: string[] = [];
       window.addEventListener('chat:draft', e => drafts.push((e as CustomEvent).detail.text));
-      const failed = { ...blocked, jobId: 'j4', status: 'error' as const, verdict: 'Failed', tone: 'bad' as const, report: 'Tests could not run: the container lost its workspace.' };
-
       const one = render({ result: { items: [blocked] } }).card;
-      await one.findAll('button').find(b => b.text() === 'Resolve with Sulla')!.trigger('click');
-      const two = render({ result: { items: [failed] } }).card;
-      expect(two.findAll('button').map(b => b.text())).toEqual(expect.arrayContaining(['Ask why it failed', 'Retry']));
-      await two.findAll('button').find(b => b.text() === 'Retry')!.trigger('click');
-
-      expect(drafts[0]).toBe('Unblock "Fix · Fable/Opus findings": #4330 needs an owner sign-off on 25 catalog routes before merge. What are my options?');
-      expect(drafts[1]).toBe('Relaunch "Fix · Fable/Opus findings" with the same task, and handle this first: Tests could not run: the container lost its workspace.');
+      await one.findAll('button').find(b => b.text() === 'Draft status check')!.trigger('click');
+      expect(drafts[0]).toContain('job j3, task 0');
+      expect(drafts[0]).toContain('Do not duplicate work');
+      expect(drafts[0]).not.toContain('What are my options?');
     });
 
-    it('says whose move it is from what follows the card', () => {
-      const card = { id: 'card-1', kind: 'proactive' };
-      const question = { id: 'q1', kind: 'tool_question', status: 'pending' };
-      const reply = { id: 's1', kind: 'sulla' };
-      const at = (messages: any[], running = false) => render({ id: 'card-1', result: { items: [blocked] } }, vi.fn(), { messages, running }).card.find('.ar-whonext').text();
+    it('does not claim a reply or unrelated question means this result needs the user', () => {
+      const { card } = render({ id: 'card-1', result: { items: [blocked] } }, vi.fn(), { messages: [{ id: 'card-1', kind: 'proactive' }, { id: 's1', kind: 'sulla' }, { id: 'q1', kind: 'tool_question', status: 'pending' }], running: true });
+      expect(card.find('.ar-history-note').text()).toContain('earlier attempt');
+      expect(card.find('.ar-acts .ar-pri').exists()).toBe(false);
+      expect(card.text()).not.toContain('Waiting on you');
+      expect(card.findAll('button').map(b => b.text())).not.toContain('View question');
+    });
 
-      expect(at([card, reply, question])).toBe('Needs your decision: answer the question below.');
-      expect(at([card], true)).toBe('Sulla is working on it now.');
-      expect(at([card, reply])).toMatch(/^Sulla replied below/);
-      expect(at([card])).toMatch(/^Waiting on you/);
+    it('updates the existing card live and opens only the linked pending question', async() => {
+      const follow = { key: 'new:0', jobId: 'new', taskIndex: 0, state: 'working', rootThreadId: 'parent', threadId: 'new-thread', label: 'Finish prechecks', followUpOf: { jobId: 'j3', taskIndex: 0 } };
+      const messages = [{ id: 'actual-question', kind: 'tool_question', questionId: 'real-q', status: 'pending' }];
+      const { card, snapshot, messageList } = render({ result: { items: [blocked] } }, vi.fn(), { rows: [follow], messages });
+      expect(card.find('.ar-chip').text()).toBe('Sulla handling');
+      expect(card.find('.ar-whonext').text()).toBe('Finish prechecks');
+      expect(card.find('.ar-history-note').exists()).toBe(false);
+      expect(card.find('details.ar-original').attributes('open')).toBeUndefined();
+      expect(card.findAll('button').map(b => b.text())).not.toContain('Draft status check');
+      snapshot.value = { rows: [{ ...follow, state: 'parked', waitReason: 'GitHub CI tests running' }] };
+      await nextTick();
+      expect(card.find('.ar-chip').text()).toBe('Waiting for checks');
+      decisions.value = [{ id: 'unrelated', conversationId: 'parent', status: 'pending', expiresAt: Date.now() + 10000 }];
+      await nextTick();
+      expect(card.findAll('button').map(b => b.text())).not.toContain('View question');
+      decisions.value = [{ id: 'real-q', conversationId: 'new-thread', title: 'Choose scope', status: 'pending', expiresAt: Date.now() + 10000 }];
+      await nextTick();
+      expect(card.find('.ar-chip').text()).toBe('Needs your answer');
+      const jumps: unknown[] = [];
+      window.addEventListener('chat:jump-to-message', e => jumps.push((e as CustomEvent).detail));
+      await card.findAll('button').find(b => b.text() === 'View question')!.trigger('click');
+      expect(jumps).toEqual([{ messageId: 'actual-question' }]);
+      decisions.value = [{ ...decisions.value[0], status: 'answered' }];
+      await nextTick();
+      expect(card.find('.ar-chip').text()).toBe('Waiting for checks');
+      messageList.value = [...messages, { id: 'returned', kind: 'proactive', result: { items: [{ ...blocked, jobId: 'new', status: 'completed', followUpOf: { jobId: 'j3', taskIndex: 0 } }] } }];
+      snapshot.value = { rows: [{ ...follow, state: 'done' }] };
+      await nextTick();
+      expect(card.find('.ar-chip').text()).toBe('Follow-up completed');
+      expect(card.text()).toContain('does not by itself verify');
+    });
+
+    it('keeps quoted workspace-retention metadata in Details instead of the blocker', () => {
+      const { card } = render({ result: { items: [{ ...blocked, problem: 'Checkout retained to recover blocked work in bounded job workspace.\",', report: 'Work handed off.\nCheckout retained to recover blocked work in bounded job workspace.' }] } });
+      expect(card.find('.ar-problem').exists()).toBe(false);
+      expect(card.find('.ar-report').text()).toContain('Checkout retained');
     });
 
     it('collapses to one line when marked handled, and can be undone', async() => {
       const { card } = render({ result: { items: [blocked] } });
 
-      await card.findAll('button').find(b => b.text() === 'Mark handled')!.trigger('click');
-      expect(card.find('.ar-handled').text()).toContain('Handled');
+      await card.findAll('button').find(b => b.text() === 'Hide report')!.trigger('click');
+      expect(card.find('.ar-handled').text()).toContain('Hidden on this device');
       expect(card.find('.ar-problem').exists()).toBe(false);
 
       await card.find('.ar-handled button').trigger('click');

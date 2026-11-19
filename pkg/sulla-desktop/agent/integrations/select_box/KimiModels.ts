@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
+import { modelDiscoveryService } from '../../languagemodels/ModelDiscoveryService';
 
 // Offline fallback only — used when the live Moonshot /models call fails or the
 // user hasn't supplied an api_key yet. The authoritative list is fetched live.
@@ -17,39 +18,16 @@ export class KimiModels extends SelectBoxProvider {
   readonly id = 'kimi_models';
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
-    const apiKey = context.formValues.api_key;
     const baseUrl = context.formValues.region === 'international'
       ? 'https://api.moonshot.ai/v1'
       : 'https://api.moonshot.cn/v1';
-
-    if (!apiKey) {
-      return KIMI_FALLBACK;
-    }
-
-    try {
-      const response = await fetch(`${ baseUrl }/models`, {
-        headers: { Authorization: `Bearer ${ apiKey }` },
-      });
-
-      if (!response.ok) {
-        console.warn(`[KimiModels] API call failed: ${ response.status } ${ response.statusText }`);
-        return KIMI_FALLBACK;
-      }
-
-      const body = await response.json() as { data?: { id: string }[] };
-
-      if (body.data && body.data.length > 0) {
-        console.log(`[KimiModels] Got ${ body.data.length } models from Moonshot API`);
-        return body.data
-          .sort((a, b) => a.id.localeCompare(b.id))
-          .map(m => ({ value: m.id, label: m.id }));
-      }
-
-      console.warn('[KimiModels] API returned no data');
-    } catch (err) {
-      console.error('[KimiModels] API call failed:', err);
-    }
-
-    return KIMI_FALLBACK;
+    const models = await modelDiscoveryService.fetchModelsForProvider('kimi', context.formValues.api_key || '', {
+      accountId: context.accountId,
+      baseUrl,
+      region: context.formValues.region,
+      liveOnly: context.liveOnly,
+    });
+    if (models.length) return models.sort((a, b) => a.id.localeCompare(b.id)).map(model => ({ value: model.id, label: model.name || model.id }));
+    return context.liveOnly ? [] : KIMI_FALLBACK;
   }
 }

@@ -16,6 +16,8 @@ const noGrace = new AgentJobLivenessPolicy(0);
 class InMemoryAgentStateStore implements AgentStateStore {
   readonly durable = new Map<string, AgentJob>();
   readonly observedActivity: Array<number | null> = [];
+  liveJobs?: AgentStateStore['liveJobs'];
+  jobsForParentThread?: AgentStateStore['jobsForParentThread'];
   jobsForProjection?: (recentMs: number) => Promise<AgentJob[]>;
   lineageForParentThread?: (parentThreadId: string, limit?: number) => Promise<AgentJob[]>;
   constructor(jobs: AgentJob[]) { for (const job of jobs) this.durable.set(job.jobId, structuredClone(job)); }
@@ -44,6 +46,20 @@ function harness(jobs: AgentJob[], now = 10_000) {
 }
 
 describe('authoritative live agent state', () => {
+  it('uses full task records rather than compact list rows during restart recovery', async() => {
+    const original = job('recover-full', [task({ threadId: 'recover-thread' })]);
+    const { states, store } = harness([original]);
+    vi.spyOn(store, 'jobsForList').mockResolvedValue([{ ...original, tasks: [] }]);
+    const result = await states.claimInterruptedJobs();
+    expect(result.resumable).toHaveLength(1);
+    expect(result.resumable[0].tasks[0].threadId).toBe('recover-thread');
+  });
+  it('does not spend the restart budget while a live owner or decision makes a job ineligible', async() => {
+    const { states, store } = harness([job('still-owned', [task({ threadId: 'one' })])]);
+    expect((await states.claimInterruptedJob('still-owned', 2, () => Promise.resolve(false))).resumable).toEqual([]);
+    expect(store.durable.get('still-owned')?.restartResumeCount).toBeUndefined();
+  });
+
   it('returns an empty snapshot when indexed history has no candidates', async() => {
     // risk: empty-account state throws or fabricates an agent row
     const { states, store } = harness([]);
@@ -306,6 +322,16 @@ describe('authoritative live agent state', () => {
   });
 
   // risk: right after a restart every running agent read "silent · it may have stopped" because in-memory activity was empty
+  it('shows requested effort until the selected runtime service reports its setting', async() => {
+    const { AgentModelStatusRegistry } = await import('../../../services/AgentModelStatusRegistry');
+    const { states } = harness([job('effort-display', [task({ threadId: 'effort-display-thread', taskId: 'explicit-project-task', model: 'gpt-6-luna', provider: 'codex', effort: 'max' })])]);
+    const projector = new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000);
+    expect((await projector.snapshot()).rows[0].taskId).toBe('explicit-project-task');
+    expect((await projector.snapshot()).rows[0].modelStatus).toMatchObject({ model: 'gpt-6-luna', effort: 'max', source: 'requested' });
+    AgentModelStatusRegistry.record('effort-display-thread', { model: 'gpt-6-luna', provider: 'codex', effort: 'max', source: 'resolved' });
+    expect((await projector.snapshot()).rows[0].modelStatus).toMatchObject({ model: 'gpt-6-luna', effort: 'max', source: 'resolved' });
+  });
+
   it('does not count the time before a restart as silence', async() => {
     const { states } = harness([job('resumed', [task({ startedAt: 1_000 })])]);
     const justStarted = new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000, { quietAfterMs: 5_000 }, undefined, undefined, 8_000);

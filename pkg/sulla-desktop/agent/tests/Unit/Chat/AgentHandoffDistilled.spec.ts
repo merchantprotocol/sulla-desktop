@@ -15,6 +15,8 @@ import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController'
 import { LegacyAgentNotices } from '@pkg/pages/chat/messages/legacyAgentNotice';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
+vi.mock('@pkg/composables/useDecisions', () => ({ useDecisions: () => ({ records: ref([]), error: ref('') }) }));
+
 const job = 'agent-job-1794718661746-9';
 const resultCard = {
   id:       'card-1',
@@ -86,7 +88,7 @@ describe('one agent, one handoff line and one result', () => {
       global: { provide: provide([sent], [{ jobId: job, taskIndex: 0, state: 'working' }]) },
     });
 
-    expect(line.find('.sx-text').text()).toBe('Sent to codex-sol-worker · Lane 0 · golden dataset seeder (staging + QBO sandbox)');
+    expect(line.find('.sx-text').text()).toBe('Sent to codex-sol-worker · Lane 0 · golden dataset seeder (staging + QBO sandbox) Model / effort not reported');
     expect(line.find('.sx-status').text()).toBe('Working');
     expect(line.find('.sx-detail').exists()).toBe(false);
     await line.find('.sx-link').trigger('click');
@@ -118,7 +120,7 @@ describe('technical details stay reachable', () => {
 
     expect(facts).toEqual({
       Job:             `${ job } · task 0`,
-      'Agent · model': 'codex-sol-worker · gpt-5.6-sol',
+      'Agent · model': 'codex-sol-worker · gpt-5.6-sol · Effort not reported (requested)',
       Ran:             '22:57 → 0:04 (1h 7m) · container',
       Thread:          'spawn-agent-lane-0',
       Workspace:       '/mnt/data/sulla/runtime/conversations/037d/workspace',

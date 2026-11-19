@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { BrowserWindow, ipcMain, webContents } from 'electron';
+import { BrowserWindow, dialog, ipcMain, webContents } from 'electron';
 import * as fs from 'fs/promises';
 
 import { AgentTabContractIpcController } from '../agentTabContractIpc';
@@ -18,6 +18,7 @@ import { ExtensionUiIpcController } from '../extensionUiIpc';
 import { IntegrationGrantIpcController, IntegrationGrantPackageStore } from '../integrationGrantIpc';
 import { getIpcMainProxy } from '../ipcMain';
 import { MessageBusIpcController } from '../messageBusIpc';
+import { awaitDatabaseReady } from '../dbBootGate';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { ModelDefaultsIpcController } from '../modelDefaultsIpc';
 import { ModelRoutingIpcController } from '../modelRoutingIpc';
@@ -34,6 +35,7 @@ import { ConversationHistoryModel } from '@pkg/agent/database/models/Conversatio
 import { ConversationMessagesModel } from '@pkg/agent/database/models/ConversationMessagesModel';
 import { ConversationThreadStore } from '@pkg/agent/database/models/ConversationThreadStore';
 import { modelDefaultsState, resetModelDefaults, setModelDefaults } from '@pkg/agent/languagemodels/modelDefaults';
+import { initializeMainClaudeModelCatalogBoundary } from '@pkg/agent/languagemodels/claudeModelCatalog';
 import { modelRouter, recommendedState } from '@pkg/agent/languagemodels/modelRouter';
 import { acknowledgeAgentTabReady, getAgentTabThreadSnapshot } from '@pkg/agent/services/AgentTabOpener';
 import { configureChatArtifactBookmarkSync, configureChatArtifactFilesRegistration, getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
@@ -77,6 +79,7 @@ export class MainIpcControllersProvider {
   readonly sullaPatch:           SullaPatchIpcController;
 
   constructor(raw: IpcMainRegistrar = ipcMain as unknown as IpcMainRegistrar, proxy: IpcRegistrar = getIpcMainProxy(Logging.background) as unknown as IpcRegistrar) {
+    initializeMainClaudeModelCatalogBoundary();
     const log = Logging.background;
     const broadcastToWindows = (channel: string, payload: unknown) => {
       for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);
@@ -107,8 +110,22 @@ export class MainIpcControllersProvider {
       listAgents:               async() => (await import('@pkg/agent/database/models/AgentDefinitionModel')).AgentDefinitionModel.list() as any,
       onIntegrationValueChange: listener => getIntegrationService().onValueChange(listener as any),
       broadcast:                broadcastToWindows,
+      confirmCliUpdate:         async(provider, version) => {
+        const options = {
+          type: 'question' as const,
+          buttons: ['Update', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+          title: 'Confirm provider CLI update',
+          message: `Update ${ provider } for new workers to version ${ version }?`,
+          detail: 'The release will be installed into a versioned read-only worker path. Existing running and parked jobs keep the CLI selection saved when they were created.',
+        };
+        const focused = BrowserWindow.getFocusedWindow();
+        const result = focused ? await dialog.showMessageBox(focused, options) : await dialog.showMessageBox(options);
+        return result.response === 0;
+      },
     });
-    this.modelDefaults = new ModelDefaultsIpcController(raw, { state: modelDefaultsState, set: setModelDefaults as any, reset: resetModelDefaults });
+    this.modelDefaults = new ModelDefaultsIpcController(raw, { state: modelDefaultsState, set: setModelDefaults as any, reset: resetModelDefaults, broadcast: broadcastToWindows, whenReady: awaitDatabaseReady });
     this.orgConversations = new OrgConversationsIpcController(raw, () => {
       const { getBackendGraphWebSocketService } = require('@pkg/agent/services/BackendGraphWebSocketService');
       return getBackendGraphWebSocketService();

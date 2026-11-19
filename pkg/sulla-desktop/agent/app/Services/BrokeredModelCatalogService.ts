@@ -66,7 +66,9 @@ export class BrokeredModelCatalogService extends Service {
         const code = (error as { code?: string })?.code;
         const reason = code ?? (error instanceof Error ? error.message : 'unknown');
         this.logger.warn(`[brokeredModelList] ${request.providerId} model list unavailable (${String(reason).slice(0, 80)}); returning no models`);
-        return { value: null, ttlMs: FAILURE_TTL_MS };
+        // Codex can be queried during cold startup before the vault broker is ready.
+        // Do not let that transient failure poison the first post-readiness request.
+        return { value: null, ttlMs: request.providerId === 'codex' ? 0 : FAILURE_TTL_MS };
       }
     }) as Promise<T | null>;
   }
@@ -75,6 +77,7 @@ export class BrokeredModelCatalogService extends Service {
     providerId: string,
     preferredAccountId?: string,
     extraHeaders?: (lane: ModelListLane) => Record<string, string>,
+    requestUrl?: (lane: ModelListLane) => string,
   ): Promise<{ body: T | null; lane: ModelListLane | null }> {
     const strategy = this.strategies.get(providerId);
     if (!strategy) return { body: null, lane: null };
@@ -93,7 +96,7 @@ export class BrokeredModelCatalogService extends Service {
     const body = await this.fetch<T>({
       providerId,
       accountId: account.account_id,
-      url: lane.url,
+      url: requestUrl?.(lane) ?? lane.url,
       injections: lane.injections,
       headers: { ...(lane.headers ?? {}), ...providerHeaders, ...(extraHeaders?.(lane) ?? {}) },
     });

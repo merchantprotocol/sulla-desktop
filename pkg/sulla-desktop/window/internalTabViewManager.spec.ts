@@ -154,6 +154,43 @@ describe('InternalTabViewManager', () => {
     expect(tab.view.webContents.reload).toHaveBeenCalledOnce();
   });
 
+  it('opens verified reports and agent Try chats in the owning shell', () => {
+    const owner = ownerWindow(12);
+    const other = ownerWindow(13);
+    const instance = manager() as any;
+    const bounds = { x: 0, y: 0, width: 20, height: 20 };
+    instance.activate(owner, 'chat', 'main', bounds);
+    instance.activate(other, 'studio', 'other', bounds);
+    const chat = instance.tabs.get('chat').view.webContents;
+    const studio = instance.tabs.get('studio').view.webContents;
+    const report = { mode: 'paper', documentFile: { fileId: 'audit', path: 'Projects/audit.md', collectionId: 'files' } };
+    const review = { mode: 'chat', title: 'Reviewer · Chat', initialAgentId: 'reviewer' };
+    instance.openWorkspaceTab(chat, report);
+    instance.openWorkspaceTab(studio, review);
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:open-workspace-tab', report);
+    expect(other.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:open-workspace-tab', review);
+    expect(() => instance.openWorkspaceTab(owner.webContents, report)).toThrow('Invalid workspace tab request');
+    expect(() => instance.openWorkspaceTab(chat, { mode: 'browser', url: 'file:///private/report.md' })).toThrow('Invalid workspace tab request');
+  });
+
+  it('keeps hosted chat activity with its current owner and clears it on renderer loss', () => {
+    const owner = ownerWindow(14);
+    const other = ownerWindow(15);
+    const instance = manager() as any;
+    instance.activate(owner, 'chat', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const chat = instance.tabs.get('chat').view.webContents;
+    instance.notifyChatRunning(owner.webContents, 'chat', true);
+    expect(owner.webContents.send).not.toHaveBeenCalled();
+    instance.notifyChatRunning(chat, 'chat', true);
+    instance.notifyChatRunning(chat, 'chat', true);
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:chat-running', 'chat', true);
+    instance.moveToWindow('chat', other);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', false);
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', true);
+    chat.listeners['render-process-gone']();
+    expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-running', 'chat', false);
+  });
+
   it('hands a tab its descriptor only through its own renderer', () => {
     // risk: a new tab host boots before the tab list is saved and must still learn its tab
     const owner = ownerWindow(6);

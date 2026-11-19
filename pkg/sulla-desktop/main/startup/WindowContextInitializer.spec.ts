@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -5,6 +6,7 @@ const deps = vi.hoisted(() => ({
   invoke: vi.fn(),
   setFallbackFilePath: vi.fn(),
   bootstrap: vi.fn(),
+  readBootstrapFile: vi.fn(),
   initializeExtensions: vi.fn(),
   reloadExtensionHooks: vi.fn(),
 }));
@@ -13,6 +15,7 @@ vi.mock('electron', () => ({ ipcRenderer: { invoke: deps.invoke } }));
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: {
   setFallbackFilePath: deps.setFallbackFilePath,
   bootstrap: deps.bootstrap,
+  readBootstrapFile: deps.readBootstrapFile,
 } }));
 vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: deps.initializeExtensions, setStartupTelemetry: vi.fn() }) }));
 vi.mock('@pkg/agent/extensions/ExtensionLoader', () => ({ reloadExtensionHooks: deps.reloadExtensionHooks }));
@@ -36,7 +39,10 @@ describe('WindowContextInitializer', () => {
     const backendsReady = new Promise<void>(resolve => { markBackendsReady = resolve; });
     deps.invoke.mockImplementation((channel: string) => channel === 'get-user-data-path' ? Promise.resolve('/user-data') : backendsReady);
 
-    await new WindowContextInitializer().initialize();
+    const initializer = new WindowContextInitializer(() => ({ invoke: deps.invoke }));
+    expect(initializer.startForFirstPaint()).toBeUndefined();
+    await vi.waitFor(() => expect(deps.invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends', expect.anything()));
+    expect(deps.readBootstrapFile).toHaveBeenCalledTimes(1);
     expect(deps.setFallbackFilePath).toHaveBeenCalledWith('/user-data/sulla-settings-fallback.json');
     expect(deps.invoke).toHaveBeenCalledWith('sulla-settings:wait-for-backends', {
       startupId: '11111111-1111-4111-8111-111111111111',

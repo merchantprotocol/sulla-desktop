@@ -7,7 +7,8 @@ import path from 'node:path';
 
 import { FilesListingPager } from '../agent/files/FilesListingPager';
 
-import type { BrowserWindow, IpcMainInvokeEvent, OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveDialogReturnValue, WebContents } from 'electron';
+import type { StorageCleanupService } from './storageCleanup/StorageCleanupService';
+import type { BrowserWindow, IpcMainInvokeEvent, MessageBoxOptions, MessageBoxReturnValue, OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveDialogReturnValue, WebContents } from 'electron';
 import type { SullaFilesCaptureService } from './sullaFilesCapture';
 import type { SullaFilesClient } from './sullaFilesClient';
 import type { LinkService } from './sullaFilesLinkService';
@@ -34,6 +35,7 @@ export interface SullaFilesIpcDesktop {
   ownerWindow(sender:WebContents):BrowserWindow | undefined;
   showOpenDialog(owner:BrowserWindow | undefined, options:OpenDialogOptions):Promise<OpenDialogReturnValue>;
   showSaveDialog(owner:BrowserWindow | undefined, options:SaveDialogOptions):Promise<SaveDialogReturnValue>;
+  showMessageBox(owner:BrowserWindow | undefined, options:MessageBoxOptions):Promise<MessageBoxReturnValue>;
   openPath(target:string):Promise<string>;
   showItemInFolder(target:string):void;
   startAccessingSecurityScopedResource(bookmark:string):() => void;
@@ -54,6 +56,7 @@ export interface SullaFilesIpcServices {
   mountManager():Pick<SullaFilesMountManager, 'on' | 'status'>;
   backups():{ remove(id:string):unknown };
   cloudSync():SullaFilesIpcCloudSync;
+  storageCleanup():Pick<StorageCleanupService, 'inventory' | 'plan' | 'review' | 'cancel' | 'execute' | 'takePreparedPreview'>;
 }
 
 export interface SullaFilesIpcCloudSync {

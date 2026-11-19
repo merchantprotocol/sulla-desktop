@@ -66,3 +66,39 @@ In the runtime directory (`~/Library/Application Support/Sulla/runtime`, or `$SU
 The mutable ext4 data disk is `/dev/vda` (`sulla.data=vda`); the read-only `/usr` image is `/dev/vdb` (`sulla.usr=vdb`). The initramfs is the rest of the immutable root and stays in RAM, so it holds only what runs before `/usr` is mounted. Agent logs are duplicated to `/dev/hvc0` and `/var/lib/sulla-runtime/logs/sulla-agent.log`.
 
 On shutdown the agent stops dockerd first (up to 45 s, while it stops containers), then containerd (up to 10 s), syncs, unmounts the data disk and powers off. The host waits up to 60 s before forcing the VM off.
+
+## Optional credit-limited transport envelope
+
+Guest HELLO may advertise `flowControl: true`; a supporting host includes
+`flowControl: true` on its initial `set-time` request. Absence is confirmed legacy
+mode, not a reason to change the existing application protocol. New streams wait
+for that initial capability exchange rather than racing into raw mode.
+
+For a negotiated host-initiated stream the host opens vsock 1026 and writes one
+JSON line: `{"version":1,"port":2376}`. Allowed target ports remain 1025 (exec),
+2375 (Docker) and 2376 (published loopback forwarding). The guest acknowledges
+`{"flowControl":1}` and dispatches the existing target handler. Guest-initiated
+Mac loopback requests add `"flowControl":1` to their existing port header only
+when the host capability is known; the host sends the same acknowledgment.
+
+Thereafter each frame is one kind byte and a big-endian unsigned 32-bit integer:
+
+- Kind 0: DATA, integer payload size, followed by 1–8192 opaque bytes.
+- Kind 1: CREDIT, integer bytes consumed, no payload.
+- Kind 2: END, integer zero, no payload. This half-closes only its sending side.
+
+Each direction starts with 32768 credits. Sending DATA spends those credits;
+the receiving application accepting bytes returns them. Neither a credit
+increment beyond the initial window nor DATA beyond the receive window is
+valid. Frames after END, malformed sizes and unexpected wire EOF abort only
+that connection. A protocol-complete EOF is graceful and does not cancel a
+still-finishing application copy. END follows acknowledgment of all earlier
+DATA so final exec output/status and upload/response tails are retained.
+Wire EOF after the peer's END, once every received byte was delivered and every
+sent byte acknowledged, is also graceful (exec closes after its status). If a
+local application stops accepting one direction, that direction's remaining
+DATA is acknowledged and dropped until END; the opposite direction still drains.
+
+Old/new artifact pairs retain legacy interoperability but cannot provide this
+isolation until both sides are upgraded. No TCP service addresses, application
+payloads, authentication scopes or agent lifecycle rules change.

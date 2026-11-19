@@ -2,9 +2,10 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-
+import { savedWorkerModelStatus } from '../../languagemodels/workerModelBindings';
+import { AgentModelStatusRegistry } from '../AgentModelStatusRegistry';
 import { AgentResultGrounding } from './AgentResultGrounding';
-import { findProblem } from '../../../shared/agentResults/AgentResultCard';
+import { findProblem, resultTracking } from '../../../shared/agentResults/AgentResultCard';
 
 import type {
   AgentResultCardData, AgentResultEnvironment, AgentResultFinding, AgentResultItem, AgentResultPurpose, AgentResultStatus, AgentResultTone,
@@ -99,6 +100,7 @@ export class AgentResultCardBuilder {
       threadId:    result.threadId || task?.threadId || undefined,
       durationMs:  started && ended && ended > started ? ended - started : undefined,
       model:       task?.model || undefined,
+      modelStatus: AgentModelStatusRegistry.get(task?.threadId) ?? savedWorkerModelStatus(task?.workerModelRoute) ?? (task?.model ? { model: task.model, provider: task.provider, effort: task.effort ?? null, source: 'requested' } : undefined),
       runLocation: task?.runLocation,
       workspace:   task?.workspacePath || undefined,
       startedAt:   started || undefined,
@@ -109,6 +111,7 @@ export class AgentResultCardBuilder {
       outcome:     this.firstSentence(report) || `${ STATUS_CHIP[status].verdict }.`,
       ...(status !== 'completed' ? { problem: findProblem(report) } : {}),
       report,
+      ...resultTracking(task),
     };
   }
 

@@ -57,8 +57,12 @@ onMounted(autogrow);
 
 function autogrow(): void {
   const el = taRef.value; if (!el) return;
+  el.style.overflowY = 'hidden';
   el.style.height = 'auto';
-  el.style.height = Math.min(160, el.scrollHeight) + 'px';
+  // scrollHeight includes padding, but a border-box height also needs the border.
+  const borderHeight = el.offsetHeight - el.clientHeight;
+  el.style.height = Math.min(160, el.scrollHeight + borderHeight) + 'px';
+  el.style.overflowY = el.scrollHeight > el.clientHeight ? 'auto' : 'hidden';
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -80,6 +84,7 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
    mono font + bright white on every textarea in the app. */
 .input {
   flex: 1;
+  box-sizing: border-box;
   font-family: var(--font-display) !important; font-style: italic !important;
   font-size: 18px !important; color: var(--text-primary) !important;
   background: transparent; border: none; outline: none;

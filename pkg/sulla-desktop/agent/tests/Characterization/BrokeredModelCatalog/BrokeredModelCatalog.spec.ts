@@ -47,8 +47,7 @@ const connected = (accountId: string, active = false): IntegrationAccount => ({
   label: `Synthetic ${accountId}`,
   connected: true,
   active,
-  created_at: '2026-01-01T00:00:00.000Z',
-  updated_at: '2026-01-01T00:00:00.000Z',
+  connected_at: new Date('2026-01-01T00:00:00.000Z'),
 });
 
 describe('brokered model catalog characterization', () => {
@@ -96,6 +95,14 @@ describe('brokered model catalog characterization', () => {
       injections: [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }], oauth: false,
     },
     {
+      provider: 'codex', account: 'synthetic-codex-subscription', preferred: undefined,
+      url: 'https://chatgpt.com/backend-api/codex/models?client_version=0.170.0', headers: { originator: 'codex_cli_rs', 'x-fixture': 'codex' },
+      injections: [
+        { field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' },
+        { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+      ], oauth: true,
+    },
+    {
       provider: 'grok', account: 'oauth', preferred: undefined,
       url: 'https://cli-chat-proxy.grok.com/v1/models', headers: { 'x-fixture': 'grok' },
       injections: [{ field: 'access_token', target: 'header', name: 'authorization', scheme: 'Bearer' }], oauth: true,
@@ -116,11 +123,14 @@ describe('brokered model catalog characterization', () => {
       fixture.provider,
       fixture.preferred,
       lane => ({ 'x-fixture': fixture.provider, authorization: 'must-be-stripped', 'x-api-key': 'must-be-stripped' }),
+      fixture.provider === 'codex' ? lane => `${ lane.url }?client_version=0.170.0` : undefined,
     );
 
     expect(result).toEqual({
       body: { provider: fixture.provider, models: ['synthetic-model'] },
-      lane: { url: fixture.url, injections: fixture.injections, headers: fixture.headers['anthropic-version']
+      lane: { url: fixture.provider === 'codex' ? fixture.url.split('?')[0] : fixture.url, injections: fixture.injections, headers: fixture.provider === 'codex'
+        ? { originator: 'codex_cli_rs' }
+        : fixture.headers['anthropic-version']
         ? Object.fromEntries(Object.entries(fixture.headers).filter(([key]) => key.startsWith('anthropic-') && key !== 'anthropic-workspace-id'))
         : undefined, oauth: fixture.oauth },
     });

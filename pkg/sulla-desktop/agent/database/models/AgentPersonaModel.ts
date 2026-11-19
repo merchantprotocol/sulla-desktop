@@ -6,7 +6,7 @@
 // AgentPersonaService.ts
 import { computed, reactive, ref } from 'vue';
 
-import { createMessageDispatcher, type DispatchContext } from './MessageDispatcher';
+import { createMessageDispatcher, type DispatchContext, type SpeakListener } from './MessageDispatcher';
 import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
@@ -98,7 +98,7 @@ export class AgentPersonaService {
    * Direct speak event listeners — allows VoicePipeline to receive speak events
    * without watching the messages array (lower latency, no deep watcher overhead).
    */
-  private readonly speakListeners: ((text: string, threadId: string, pipelineSequence: number | null) => void)[] = [];
+  private readonly speakListeners: SpeakListener[] = [];
 
   graphRunning = ref(false);
   waitingForUser = ref(false);
@@ -365,7 +365,7 @@ export class AgentPersonaService {
    * Register a listener for direct speak event delivery.
    * Returns an unsubscribe function.
    */
-  addSpeakListener(cb: (text: string, threadId: string, pipelineSequence: number | null) => void): () => void {
+  addSpeakListener(cb: SpeakListener): () => void {
     this.speakListeners.push(cb);
 
     return () => {

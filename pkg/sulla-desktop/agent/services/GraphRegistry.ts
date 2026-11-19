@@ -633,6 +633,17 @@ ${ feedbackJson }`);
     registry.delete(threadId);
   },
 
+  /** Interrupt live runners before their dependencies are stopped. */
+  abortRuntimeRuns(): void {
+    for (const [, { state }] of registry.entries()) {
+      const metadata = state.metadata as any;
+      if (metadata?.runtimeRunnerActive || metadata?.delegatedRunActive || !metadata?.cycleComplete) {
+        metadata.runtimeInterrupted = true;
+        metadata.options?.abort?.abort();
+      }
+    }
+  },
+
   clearAll(): void {
     registry.clear();
   },

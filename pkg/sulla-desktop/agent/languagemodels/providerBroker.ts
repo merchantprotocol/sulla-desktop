@@ -6,6 +6,7 @@
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../../vault-broker';
 import { getIntegrationService } from '../services/IntegrationService';
 import { providerFailureFromHttp } from './failures';
+import { assertWorkerSubscription } from './workerSubscriptionGuard';
 
 import type { BrokerInjection } from '../../vault-broker';
 import type { BaseThreadState } from '../nodes/Graph';
@@ -78,6 +79,10 @@ interface ProviderFetchOptions {
   injections?:   BrokerInjection[];
   operation?:    'provider.inference' | 'provider.discovery' | 'provider.audio';
   responseType?: 'json' | 'stream' | 'binary-stream' | 'base64';
+  /** Trusted graph state and resolved service route for exact worker-map enforcement. */
+  state?: BaseThreadState;
+  model?: string;
+  authMode?: 'api-key'|'oauth';
 }
 
 export async function providerFetch(
@@ -91,6 +96,19 @@ export async function providerFetch(
     if (!response.ok && !options.preserveHttpErrors) throw providerFailureFromHttp(providerId, response.status);
     return response;
   };
+  const meta = options.state?.metadata as any;
+  if (providerId === 'grok' && meta?.workerModelRoute && !meta.workerModelChatOverride) {
+    const scope = ctx?.credential_scope;
+    let requestedModel: string | undefined;
+    if (typeof init.body === 'string') {
+      try {
+        const body = JSON.parse(init.body);
+        requestedModel = typeof body?.model === 'string' ? body.model : undefined;
+      } catch { /* malformed payload fails closed below */ }
+    }
+    if (!requestedModel || (options.model && requestedModel !== options.model)) throw new Error('The Grok request model does not match its mapped worker model.');
+    assertWorkerSubscription(options.state, providerId, scope?.integration_id ?? '', scope?.account_id ?? '', options.authMode, { model: requestedModel, url });
+  }
   if (['lm-studio', 'local-server'].includes(providerId)) {
     const target = new URL(url);
     const host = target.hostname.toLowerCase();

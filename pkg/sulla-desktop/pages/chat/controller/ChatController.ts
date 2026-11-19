@@ -144,6 +144,8 @@ export class ChatController {
   on = this.bus.on.bind(this.bus);
 
   private readonly persister?: ThreadPersister;
+  /** Set while this chat holds only a tail-only browser-cache view of a longer DB thread. */
+  private partialHistory = false;
   private readonly channelId:  string;
   private readonly tabId?:     string;
   private sendHandler?:        SendHandler;
@@ -163,7 +165,7 @@ export class ChatController {
 
     const initial: ThreadState = opts.hydrateFrom ?? this.fresh();
 
-    const initialMessages = new MessageWindow().trim(initial.thread.messages);
+    const initialMessages = initial.partialHistory ? initial.thread.messages : new MessageWindow().trim(initial.thread.messages);
     this.thread = ref(initialMessages.length === initial.thread.messages.length
       ? initial.thread
       : { ...initial.thread, messages: initialMessages });
@@ -180,6 +182,7 @@ export class ChatController {
     this.sidebar = ref(initial.sidebar);
     this.connection = ref(initial.connection);
     this.model = ref(initial.model);
+    this.partialHistory = initial.partialHistory === true;
     this.usage = ref(emptyTokenUsage());
     this.heartbeat = ref(initial.heartbeat ?? defaultChatHeartbeatConfig());
 
@@ -204,6 +207,7 @@ export class ChatController {
   newChat(): void {
     const blank = this.fresh();
     this.olderPagesLoaded = 0;
+    this.partialHistory = false;
     this.thread.value = blank.thread;
     this.runState.value = blank.runState;
     this.queue.value = [];
@@ -236,6 +240,8 @@ export class ChatController {
       this.staged.value = [];
       this.autoTitleFromFirstUserMessage(trimmed);
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('sulla:send-hop-controller', { detail: performance.now() }));
+      // Save the accepted title and cleared staging; otherwise a cached "New chat" wins at restart.
+      this.persist();
       this.sendHandler(trimmed || '(attached)', attachments, opts);
       return;
     }
@@ -284,6 +290,8 @@ export class ChatController {
       ...(opts.agentId ? { agentId: opts.agentId } : {}),
     };
     this.queue.value = [...this.queue.value, q];
+    const submitted = new Set(attachments.map(attachment => attachment.id));
+    this.staged.value = this.staged.value.filter(attachment => !submitted.has(attachment.id));
     this.persist();
   }
 
@@ -888,9 +896,26 @@ export class ChatController {
       connection:       this.connection.value,
       model:            this.model.value,
       heartbeat:        this.heartbeat.value,
+      ...(this.partialHistory ? { partialHistory: true } : {}),
     };
     this.bus.emit({ kind: 'threadSerialized', threadId: this.thread.value.id });
     return state;
+  }
+
+  /**
+   * Fill in canonical history (e.g. the full DB thread) behind a tail-only cached copy.
+   * Messages already here win, since they may be newer or edited; messages the canonical
+   * list does not have yet stay after it. Nothing else in the chat changes.
+   */
+  mergeCanonicalHistory(canonical: readonly Message[]): void {
+    const current = this.thread.value.messages;
+    const byId = new Map(current.map(message => [message.id, message]));
+    const canonicalIds = new Set(canonical.map(message => message.id));
+    const merged = [...canonical.map(message => byId.get(message.id) ?? message), ...current.filter(message => !canonicalIds.has(message.id))];
+    // The full history is now known, so later saves are complete snapshots again.
+    this.partialHistory = false;
+    if (merged.length === current.length) return;
+    this.thread.value = { ...this.thread.value, messages: merged };
   }
 
   hydrate(state: ThreadState): void {
@@ -916,6 +941,7 @@ export class ChatController {
     this.sidebar.value = state.sidebar;
     this.connection.value = state.connection;
     this.model.value = state.model;
+    this.partialHistory = state.partialHistory === true;
     this.heartbeat.value = state.heartbeat ?? defaultChatHeartbeatConfig();
     this.bus.emit({ kind: 'threadHydrated', threadId: state.thread.id });
   }

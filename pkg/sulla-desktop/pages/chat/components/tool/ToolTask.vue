@@ -68,7 +68,8 @@
       <button
         type="button"
         class="tk-btn tk-pri"
-        @click="TaskAsks.done(controller, msg)"
+        :disabled="sending"
+        @click="done"
       >
         Done
       </button>
@@ -84,7 +85,7 @@
         <button
           type="button"
           class="tk-btn"
-          :disabled="!text.trim()"
+          :disabled="sending || !text.trim()"
           @click="sendReply"
         >
           Send
@@ -110,7 +111,8 @@ import { TaskAsks } from '../../messages/taskAsk';
 
 import type { ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: ToolQuestionMessage }>();
+const props = defineProps<{ msg: ToolQuestionMessage; submitAnswer?: (value: string) => Promise<void>; draft?: { other: string[] } }>();
+const sending = ref(false);
 const controller = useChatController();
 
 const item = computed(() => TaskAsks.item(props.msg));
@@ -124,10 +126,22 @@ const stateText = computed(() => {
 });
 const askedAt = computed(() => new Date(props.msg.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
 
-const replying = ref(false);
-const text = ref('');
-function sendReply(): void {
-  TaskAsks.reply(controller, props.msg, text.value);
+const replying = ref(!!props.draft?.other[0]);
+const localText = ref('');
+// The parent-owned draft intentionally persists across tab remounts.
+// eslint-disable-next-line vue/no-mutating-props
+const text = computed({ get: () => props.draft?.other[0] ?? localText.value, set: value => { if (props.draft) props.draft.other[0] = value; else localText.value = value; } });
+async function done(): Promise<void> {
+  if (!props.submitAnswer) { TaskAsks.done(controller, props.msg); return }
+  if (sending.value) return; sending.value = true;
+  try { await props.submitAnswer('Done') } catch { /* The inbox displays the error and preserves the draft. */ } finally { sending.value = false }
+}
+async function sendReply(): Promise<void> {
+  if (!text.value.trim() || sending.value) return;
+  if (props.submitAnswer) {
+    sending.value = true;
+    try { await props.submitAnswer(text.value) } catch { return } finally { sending.value = false }
+  } else TaskAsks.reply(controller, props.msg, text.value);
   text.value = '';
   replying.value = false;
 }

@@ -97,6 +97,10 @@ const PROXIED_CHANNELS = [
   'files-backups:add',
   'files-backups:remove',
   'files-backups:run',
+  'files-storage-cleanup:inventory',
+  'files-storage-cleanup:prepared-plan',
+  'files-storage-cleanup:plan',
+  'files-storage-cleanup:confirm',
   'files-ui:set-paused',
   'files-ui:open-folder',
   'files-ui:create-folder',
@@ -126,6 +130,8 @@ const PROXIED_CHANNELS = [
   'files-experiment:publish-native-source',
   'files-ui:upload-paths',
   'files-ui:import-path-references',
+  'files:preview:open',
+  'files:preview:revoke',
 ];
 const LIVE_CHANNELS = ['sulla-files:live-join', 'sulla-files:live-start', 'sulla-files:live-sync', 'sulla-files:live-leave'];
 
@@ -145,6 +151,7 @@ function harness() {
   const desktop = {
     ownerWindow: vi.fn(), showOpenDialog: vi.fn(), showSaveDialog: vi.fn(), openPath: vi.fn(), showItemInFolder: vi.fn(),
     startAccessingSecurityScopedResource: vi.fn(), userDataPath: vi.fn(() => '/tmp'), broadcast: vi.fn(), onceWillQuit: vi.fn(),
+    showMessageBox: vi.fn(),
   };
   const protocol = { isProtocolHandled: vi.fn(() => false), handle: vi.fn() };
   const registerUseCaseSuggestions = vi.fn();
@@ -155,6 +162,7 @@ function harness() {
     services: {
       watcher: vi.fn(() => ({ id: 'watcher' })), rootRegistry: vi.fn(), isProtectedTrackedPath: vi.fn(), linkService: vi.fn(), capture: vi.fn(),
       sourceGateway: vi.fn(), fileProvider: () => fileProvider, mountManager: () => mountManager, backups: vi.fn(), cloudSync: vi.fn(),
+      storageCleanup: vi.fn(),
     },
     chatImport: { importChatFiles: vi.fn(), pickAndImportChatFiles: vi.fn() },
     cachePath:  () => '/tmp',

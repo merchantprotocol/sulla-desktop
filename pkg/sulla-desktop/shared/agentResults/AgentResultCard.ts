@@ -13,6 +13,22 @@ export type AgentResultPurpose = 'merge' | 'qa' | 'review' | 'fix' | 'other';
 export type AgentResultTone = 'ok' | 'warn' | 'bad' | 'info' | 'dim';
 export type AgentResultStatus = 'completed' | 'blocked' | 'error' | 'stopped';
 
+export interface ResultReference { jobId: string; taskIndex: number }
+/** Explicit presentation links. These never affect task settlement or question delivery. */
+export interface ResultTracking { followUpOf?: ResultReference; decisionIds?: string[] }
+export interface ResultActivityRecord extends ResultReference, ResultTracking {
+  threadId?: string;
+  status:    string;
+}
+export function resultTracking(value: unknown): ResultTracking {
+  const data = value as ResultTracking | undefined;
+  const ref = data?.followUpOf;
+  return {
+    ...(ref && typeof ref.jobId === 'string' && ref.jobId.trim() && Number.isInteger(ref.taskIndex) && ref.taskIndex >= 0 ? { followUpOf: { jobId: ref.jobId, taskIndex: ref.taskIndex } } : {}),
+    ...(Array.isArray(data?.decisionIds) ? { decisionIds: [...new Set(data.decisionIds.filter(id => typeof id === 'string' && id.trim()))].slice(0, 20) } : {}),
+  };
+}
+
 export interface AgentResultMerge { pr: string; title?: string; sha?: string }
 export interface AgentResultEnvironment { name: string; detail?: string; state: 'deployed' | 'failed' | 'pending' | 'held' }
 export interface AgentResultCheck { name: string; detail?: string; passed: boolean }
@@ -29,7 +45,7 @@ export interface AgentResultChange {
 }
 export interface AgentResultLink { label: string; url: string }
 
-export interface AgentResultItem {
+export interface AgentResultItem extends ResultTracking {
   jobId:         string;
   taskIndex:     number;
   label:         string;
@@ -48,6 +64,7 @@ export interface AgentResultItem {
   problem?:      string;
   /** Technical details for the card's Details section. */
   model?:        string;
+  modelStatus?:  import('../agentState/AgentModelStatus').AgentModelStatusValue;
   runLocation?:  'vm' | 'container';
   workspace?:    string;
   startedAt?:    number;
@@ -93,7 +110,7 @@ export function readAgentResultCard(value: unknown): AgentResultCardData | undef
     typeof item.label === 'string' && typeof item.verdict === 'string' && typeof item.outcome === 'string' &&
     typeof item.report === 'string' && PURPOSES.includes(item.purpose) && TONES.includes(item.tone) && STATUSES.includes(item.status));
 
-  return valid.length === items.length ? { items: valid } : undefined;
+  return valid.length === items.length ? { items: valid.map(item => ({ ...item, followUpOf: undefined, decisionIds: undefined, ...resultTracking(item) })) } : undefined;
 }
 
 const PROBLEM = /\b(blocker|blocked|blocking|failed|failure|error|cannot|can't|could not|couldn't|unable|needs? (?:a |an |the )?(?:human|owner|approval|sign-off|decision))\b/i;
@@ -115,13 +132,17 @@ export function withoutSystemNotes(report: string): string {
 }
 
 /** A housekeeping note is never the problem, whoever recorded it as one. */
-export function isSystemNote(text: string | undefined): boolean { return !!text && SYSTEM_NOTE.test(text.trim()) }
+export function isSystemNote(text: string | undefined): boolean {
+  if (!text) return false;
+  const line = text.trim().replace(/^["']/, '');
+  return SYSTEM_NOTE.test(line) || /^(?:(?:checkout|guest workspace|workspace) retained\b|(?:workspaceDecisionReason|recoveryWorkspacePath|retainedGuestPaths|removedGuestPaths|cleanupReceipt)["']?\s*:)/i.test(line);
+}
 
 export function findProblem(report: string): string | undefined {
   const sentences = withoutSystemNotes(report)
     .split(/\n+|(?<=[.!?])\s+(?=[A-Z])/)
     .map(part => part.replace(/^[#>*\-\s]+/, '').trim())
-    .filter(part => part.length >= 12);
+    .filter(part => part.length >= 12 && !isSystemNote(part));
   const found = [...sentences].reverse().find(sentence => PROBLEM.test(sentence));
   if (!found) return undefined;
   // The card labels it "Blocked:" itself; the agent's own "[BLOCKED]" tag would repeat it.

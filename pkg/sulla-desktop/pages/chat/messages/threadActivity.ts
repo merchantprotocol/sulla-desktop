@@ -155,16 +155,20 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     state = 'stalled';
     // One silent agent must not hide the rest: say what else is still moving.
     const working = count('working');
-    parts = [`${ plural(count('stalled'), 'agent') } stopped responding`, ...(working ? [`${ plural(working, 'agent') } still working`] : [])];
+    const waiting = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent').length;
+    parts = [`${ plural(count('stalled'), 'agent') } stopped responding`, ...(working ? [`${ plural(working, 'agent') } still working`] : []), ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : []), ...(count('quiet') ? [`${ plural(count('quiet'), 'agent') } quiet`] : [])];
   } else if (input.running || has('working')) {
     state = 'working';
     parts = [count('working') ? `${ plural(count('working'), 'agent') } running` : 'Sulla is replying'];
     const lead = items.find(item => item.state === 'working');
     if (lead) parts.push(lead.title);
     if (has('quiet')) parts.push(`${ count('quiet') } quiet`);
+    const waiting = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent').length;
+    if (waiting) parts.push(`${ plural(waiting, 'agent') } waiting`);
   } else if (has('quiet')) {
     state = 'quiet';
-    parts = [`${ plural(count('quiet'), 'agent') } quiet`, 'still running'];
+    const waiting = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent').length;
+    parts = [`${ plural(count('quiet'), 'agent') } quiet`, 'still running', ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : [])];
   } else if (has('waiting')) {
     state = 'waiting';
     const parked = input.agents.filter(row => row.state === 'parked' && parkedActivity(row).state === 'waiting');
@@ -173,6 +177,7 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     parts = [
       ...(onGitHub ? [`${ plural(onGitHub, 'agent') } waiting on GitHub checks`] : []),
       ...(others ? [`${ plural(others, 'agent') } waiting on ${ onGitHub ? 'other work' : 'others' }`] : []),
+      ...(input.agents.some(row => row.state === 'blocked') ? [`${ plural(input.agents.filter(row => row.state === 'blocked').length, 'agent') } waiting on Sulla`] : []),
     ];
     // When the next of them looks again, so a quiet thread reads as scheduled, not stuck.
     const next = parked.map(row => (row.wakeAt ? Date.parse(row.wakeAt) : NaN)).filter(Number.isFinite).sort((a, b) => a - b)[0];
@@ -203,4 +208,14 @@ export function activityAge(ms: number): string {
   if (seconds < 60) return `${ seconds }s`;
   if (seconds < 3600) return `${ Math.floor(seconds / 60) }m`;
   return `${ Math.floor(seconds / 3600) }h`;
+}
+
+/** Same agent-only breakdown for group counts and the expanded status view. */
+export function agentCountSummary(rows: readonly AgentStateRow[]): string {
+  const items = rows.map(agentItem).filter((item): item is ThreadActivityItem => item !== null);
+  const labels: [ThreadActivityState, string][] = [['working', 'working'], ['waiting', 'waiting'], ['quiet', 'quiet'], ['stalled', 'stopped responding']];
+  const parts = labels.flatMap(([state, label]) => { const count = items.filter(item => item.state === state).length; return count ? [`${ count } ${ label }`] : [] });
+  const idle = rows.filter(row => row.state === 'parked' && parkedActivity(row).state === 'idle').length;
+  if (idle) parts.push(`${ idle } idle`);
+  return parts.join(' · ');
 }

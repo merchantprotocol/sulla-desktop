@@ -29,6 +29,8 @@ export interface ClaudeCredentialResolveOptions {
   execution?:      boolean;
   conversationId?: string;
   state?:          BaseThreadState;
+  /** Propagate vault metadata faults. Routing sets this; catalog and status callers leave it unset. */
+  strictMetadata?: boolean;
 }
 
 /** The only precedence and account-selection policy for Claude credentials. */
@@ -48,12 +50,13 @@ export class ClaudeCredentialResolver {
     const integrations = getIntegrationService();
     if (usesContainerVaultAuthority()) {
       try {
-        const accounts = await integrations.getAccounts('claude-code');
-        const activeId = await integrations.getActiveAccountId('claude-code');
+        const strict = options.strictMetadata ? { strict: true } : undefined;
+        const accounts = await integrations.getAccounts('claude-code', strict);
+        const activeId = await integrations.getActiveAccountId('claude-code', strict);
         const account = accounts.find(candidate => candidate.account_id === activeId && candidate.connected)
           ?? accounts.find(candidate => candidate.connected);
         if (!account) return { kind: 'none', accountId: activeId, source: 'vault-broker' };
-        const metadata = await integrations.getMetadataValues('claude-code', account.account_id);
+        const metadata = await integrations.getMetadataValues('claude-code', account.account_id, strict);
         const workspaceId = metadata.find(value => value.property === 'workspace_id')?.value.trim() || undefined;
         if (!options.execution) {
           return account.account_id === 'oauth'
@@ -69,7 +72,8 @@ export class ClaudeCredentialResolver {
             ? { kind: 'oauth-capability', accountId: account.account_id, source: 'vault-broker', oauthToken: bridge.oauthToken, baseUrl: bridge.baseUrl, lease: bridge.lease, workspaceId }
             : { kind: 'api-key', accountId: account.account_id, source: 'vault-broker', apiKey: bridge.apiKey, baseUrl: bridge.baseUrl, lease: bridge.lease, workspaceId };
         }
-      } catch {
+      } catch (error) {
+        if (options.strictMetadata) throw error;
         // A locked/unavailable authority is not permission to read stale legacy secrets.
         return { kind: 'none', accountId: null, source: 'vault-broker', unavailable: true };
       }

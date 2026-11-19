@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import bundle from './builtin-agents.json';
+import { AgentModelCategoryPolicy } from '../languagemodels/AgentModelCategoryPolicy';
 
 import type { AgentCostTier, AgentDefinition, AgentModelSlot, ModelPriorityEntry } from '../database/models/AgentDefinitionModel';
 
@@ -35,8 +36,11 @@ export interface BuiltinAgentCard {
   costTier:      AgentCostTier | null;
   canCall:       string[];
   /**
-   * This agent may be selected as the first persona for a new chat. Not managed content:
-   * the seeder only fills it while the row's front_door is still unset.
+   * This agent may be selected as the first persona for a new chat. Not managed content.
+   * An explicit editor choice of null is stored as config.frontDoorChosen, which the
+   * managed hash ignores, so a null-only edit still matches builtin_hash and prompt
+   * upgrades continue. The seeder fills front_door only while it is unset and that
+   * marker is absent.
    */
   frontDoor?:    boolean;
 }
@@ -99,6 +103,9 @@ export interface GitIdentity {
 }
 
 export const BUILTIN_CARD_FIELDS = ['when_to_call', 'when_not_to_call', 'send', 'returns', 'cost_tier', 'can_call'] as const;
+
+/** Explicit "front door not set" recorded on config. Absent from the managed hash. */
+export const FRONT_DOOR_CHOSEN_KEY = 'frontDoorChosen';
 
 const MANAGED_FIELDS: (keyof BuiltinManagedContent)[] = [
   'name', 'description', 'system_prompt', 'prompt_content', 'soul_content', 'goals_content', 'prompt_files',
@@ -212,12 +219,47 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-/** Stable hash of the managed content of a rendered spec or a live DB row. */
+/**
+ * Managed fields AgentDefinitionModel never stores as written: the model category
+ * policy nulls provider, model and model_slot and empties model_priority on every
+ * create, update and read. The agent's model lives in model_choice/config.modelChoice
+ * (and any owner worker binding), which the seeder preserves and never hashes.
+ */
+const POLICY_REWRITTEN_FIELDS = new Set<string>(['provider', 'model', 'model_slot', 'model_priority']);
+
+/**
+ * Current builtin_hash format: content as the definition model stores and returns it.
+ * Older 'sha256:' hashes covered the raw bundle and never equal a stored row's hash,
+ * so those rows are never refreshed; the seeder only re-stamps one that already
+ * equals the current bundle.
+ */
+const MANAGED_HASH_PREFIX = 'sha256-v2:';
+
+function sha256(picked: Record<string, unknown>): string {
+  return createHash('sha256').update(canonicalJson(picked)).digest('hex');
+}
+
+/** config as the definition model stores it, without the policy's modelChoice or the front-door marker. */
+function managedConfig(config: unknown): Record<string, unknown> {
+  const base = config && typeof config === 'object' && !Array.isArray(config) ? config as Record<string, unknown> : {};
+  const stored = new AgentModelCategoryPolicy().config(base, { mode: 'class', class: 'standard' });
+  // modelChoice is the agent's model, not managed content. A null-only front-door
+  // edit must keep hashing as the bundled row, so prompt upgrades still run.
+  const { modelChoice: _modelChoice, [FRONT_DOOR_CHOSEN_KEY]: _frontDoorChoice, ...rest } = stored;
+  return rest;
+}
+
+/**
+ * Stable hash of the managed content of a rendered spec or a live DB row. Both sides
+ * are reduced to what AgentDefinitionModel actually stores, so an untouched seeded
+ * row hashes exactly like the bundle content it was created from.
+ */
 export function hashManagedContent(content: BuiltinManagedContent | AgentDefinition): string {
   const picked: Record<string, unknown> = {};
   for (const field of MANAGED_FIELDS) {
+    if (POLICY_REWRITTEN_FIELDS.has(field)) continue;
     const value = (content as any)[field];
-    picked[field] = field === 'provider' || field === 'model' || field === 'model_slot' || field === 'cost_tier' ? (value || null) : value;
+    picked[field] = field === 'config' ? managedConfig(value) : field === 'cost_tier' ? (value || null) : value;
   }
-  return `sha256:${ createHash('sha256').update(canonicalJson(picked)).digest('hex') }`;
+  return `${ MANAGED_HASH_PREFIX }${ sha256(picked) }`;
 }

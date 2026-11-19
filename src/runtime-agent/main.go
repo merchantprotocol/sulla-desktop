@@ -61,14 +61,41 @@ type vsockAddr string
 func (a vsockAddr) Network() string { return "vsock" }
 func (a vsockAddr) String() string  { return string(a) }
 
-type vsockConn struct{ *os.File }
+type vsockConn struct {
+	*os.File
+	closeOnce sync.Once
+}
+
+func (c *vsockConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		// A blocking os.File.Close cannot wake its own in-flight socket syscall.
+		// Control pins this descriptor until shutdown, avoiding fd-reuse races.
+		if raw, e := c.File.SyscallConn(); e == nil {
+			_ = raw.Control(func(fd uintptr) { _ = syscall.Shutdown(int(fd), syscall.SHUT_RDWR) })
+		}
+		err = c.File.Close()
+	})
+	return err
+}
 
 func (c *vsockConn) LocalAddr() net.Addr                { return vsockAddr("local") }
 func (c *vsockConn) RemoteAddr() net.Addr               { return vsockAddr("peer") }
 func (c *vsockConn) SetDeadline(t time.Time) error      { return c.File.SetDeadline(t) }
 func (c *vsockConn) SetReadDeadline(t time.Time) error  { return c.File.SetReadDeadline(t) }
 func (c *vsockConn) SetWriteDeadline(t time.Time) error { return c.File.SetWriteDeadline(t) }
-func (c *vsockConn) CloseWrite() error                  { return syscall.Shutdown(int(c.Fd()), syscall.SHUT_WR) }
+func (c *vsockConn) CloseWrite() error {
+	raw, err := c.File.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var shutdownErr error
+	err = raw.Control(func(fd uintptr) { shutdownErr = syscall.Shutdown(int(fd), syscall.SHUT_WR) })
+	if err != nil {
+		return err
+	}
+	return shutdownErr
+}
 
 type vsockRawListener struct {
 	fd   int
@@ -83,7 +110,7 @@ func (l *vsockRawListener) Accept() (net.Conn, error) {
 	if errno != 0 {
 		return nil, errno
 	}
-	return &vsockConn{os.NewFile(fd, "vsock-peer")}, nil
+	return &vsockConn{File: os.NewFile(fd, "vsock-peer")}, nil
 }
 func (l *vsockRawListener) Close() error   { return syscall.Close(l.fd) }
 func (l *vsockRawListener) Addr() net.Addr { return vsockAddr(fmt.Sprintf("any:%d", l.port)) }
@@ -135,6 +162,8 @@ func main() {
 	configureUser(a.log)
 	configureNetwork(a.log)
 	configureHostLoopback(a.log)
+	flowAvailable := a.startFlowServer()
+	flowSupported.Store(flowAvailable)
 	go a.controlServer()
 	go a.dockerProxy()
 	go a.execServer()
@@ -551,7 +580,7 @@ func (a *agent) controlServer() {
 func (a *agent) control(c net.Conn) {
 	defer c.Close()
 	a.log.Printf("control connection accepted")
-	_ = writeFrame(c, map[string]any{"type": "hello", "protocol": 1, "agentVersion": version, "bootUptimeMs": uptime()})
+	_ = writeFrame(c, map[string]any{"type": "hello", "protocol": 1, "agentVersion": version, "bootUptimeMs": uptime(), "flowControl": flowSupported.Load()})
 	for _, e := range a.state.replay() {
 		_ = writeFrame(c, e)
 	}
@@ -570,9 +599,10 @@ func (a *agent) control(c net.Conn) {
 	r := bufio.NewReaderSize(c, maxMessage)
 	for {
 		var req struct {
-			ID     int64  `json:"id"`
-			Method string `json:"method"`
-			UnixMS int64  `json:"unixMs"`
+			ID          int64  `json:"id"`
+			Method      string `json:"method"`
+			UnixMS      int64  `json:"unixMs"`
+			FlowControl bool   `json:"flowControl"`
 		}
 		if readFrame(r, &req) != nil {
 			return
@@ -581,6 +611,8 @@ func (a *agent) control(c net.Conn) {
 		case "status":
 			_ = writeFrame(c, map[string]any{"id": req.ID, "result": a.status()})
 		case "set-time":
+			hostFlowEnabled.Store(req.FlowControl)
+			hostFlowKnown.Do(func() { close(hostFlowReady) })
 			// Host is the authoritative time source; report drift on every
 			// boot/resume/periodic sample and avoid needless wall-clock steps.
 			if req.UnixMS <= 0 {
@@ -669,18 +701,7 @@ func proxyDocker(host net.Conn) {
 		return
 	}
 	defer guest.Close()
-	done := make(chan struct{}, 2)
-	copyHalf := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
-		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-		done <- struct{}{}
-	}
-	go copyHalf(guest, host)
-	go copyHalf(host, guest)
-	<-done
-	<-done
+	splice(host, guest)
 }
 
 // stopUnit sends SIGTERM to a supervised unit and waits for it to exit.

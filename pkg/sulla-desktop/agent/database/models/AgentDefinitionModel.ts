@@ -229,6 +229,26 @@ function required(value: string, field: string): string {
   return normalized;
 }
 
+/**
+ * Same string as builtinAgents FRONT_DOOR_CHOSEN_KEY. Inlined so this model
+ * does not load the built-in catalog. Tests lock the two spellings together.
+ * Presence with value null means the editor saved front door "not set".
+ */
+const FRONT_DOOR_CHOSEN = 'frontDoorChosen';
+
+function configForFrontDoorChoice(config: Record<string, unknown> | undefined, frontDoor: boolean | null): Record<string, unknown> | undefined {
+  const base = config ?? {};
+  const chosen = Object.prototype.hasOwnProperty.call(base, FRONT_DOOR_CHOSEN);
+  if (frontDoor === null) {
+    if (chosen && base[FRONT_DOOR_CHOSEN] === null) return undefined;
+    return { ...base, [FRONT_DOOR_CHOSEN]: null };
+  }
+  if (!chosen) return undefined;
+  const rest = { ...base };
+  delete rest[FRONT_DOOR_CHOSEN];
+  return rest;
+}
+
 function validateModelPriority(entries: ModelPriorityEntry[] = []): ModelPriorityEntry[] {
   return entries.map(entry => ({
     provider: required(entry.provider, 'model_priority.provider'),
@@ -259,6 +279,11 @@ export class AgentDefinitionModel {
     const categoryPolicy = new AgentModelCategoryPolicy();
     const category = categoryPolicy.resolve({ choice: input.modelChoice, model: input.model, slot: input.modelSlot, slug: input.slug });
     input = { ...input, modelChoice: category, provider: null, model: null, modelSlot: null, modelPriority: [], config: categoryPolicy.config(input.config ?? {}, category) };
+    // Stamp after the policy rewrite so an explicit null is not dropped. Undefined stays fillable.
+    if (input.frontDoor === null) {
+      const marked = configForFrontDoorChoice(input.config, null);
+      if (marked) input = { ...input, config: marked };
+    }
     const slug = required(input.slug, 'slug');
     const name = required(input.name, 'name');
     const row = await postgresClient.queryOne(`
@@ -304,6 +329,16 @@ export class AgentDefinitionModel {
       const policy = new AgentModelCategoryPolicy();
       const choice = policy.resolve({ choice: patch.modelChoice ?? current.model_choice, model: patch.model, slot: patch.modelSlot, slug: current.slug });
       patch = { ...patch, modelChoice: choice, provider: null, model: null, modelSlot: null, modelPriority: [], config: policy.config(patch.config ?? current.config, choice) };
+    }
+    if (patch.frontDoor !== undefined) {
+      let base = patch.config;
+      if (!base) {
+        const current = await this.get(id);
+        if (!current) return null;
+        base = current.config;
+      }
+      const marked = configForFrontDoorChoice(base, patch.frontDoor);
+      if (marked) patch = { ...patch, config: marked };
     }
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -364,13 +399,14 @@ export class AgentDefinitionModel {
   }
 
   /**
-   * Set front_door only while it is still unset (NULL), so a human's choice
-   * always wins. Returns true when the row was filled.
+   * Set front_door only while it is still unset. The explicit-null marker is
+   * checked in this UPDATE, so a save that lands after the seed read still wins.
+   * Returns true when the row was filled.
    */
   static async fillFrontDoor(slug: string, frontDoor: boolean): Promise<boolean> {
     const row = await postgresClient.queryOne(
-      'UPDATE agent_definitions SET front_door = $2 WHERE slug = $1 AND front_door IS NULL RETURNING id',
-      [slug, frontDoor],
+      'UPDATE agent_definitions SET front_door = $2 WHERE slug = $1 AND front_door IS NULL AND NOT jsonb_exists(config, $3) RETURNING id',
+      [slug, frontDoor, FRONT_DOOR_CHOSEN],
     );
     return !!row;
   }

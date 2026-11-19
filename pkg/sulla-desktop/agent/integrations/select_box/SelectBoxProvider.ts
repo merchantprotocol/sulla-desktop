@@ -10,6 +10,8 @@ export interface SelectOption {
 }
 
 export interface SelectBoxContext {
+  /** AI Models requires provider-reported entries, never a static fallback. */
+  liveOnly?: boolean;
   integrationId: string;
   accountId:     string;
   /** Current form values for sibling properties (keyed by property key) */

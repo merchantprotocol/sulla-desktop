@@ -3,11 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { ProviderAccessMethod } from '@pkg/shared/providerAccess';
 import type { RoutingModelInfo } from './modelRoutingTypes';
 
 export interface LiveProviderState {
   connected: boolean;
   connectionUnknown: boolean;
+  accessMethod?: ProviderAccessMethod;
+  accessLabel?: string;
   models: RoutingModelInfo[];
 }
 

@@ -291,6 +291,9 @@ export abstract class BaseLanguageModel {
     this.model = model;
   }
 
+  /** Effective service setting; null means this service does not report effort. */
+  getEffort(): string | null { return null }
+
   getBaseUrl(): string {
     return this.baseUrl;
   }

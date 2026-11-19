@@ -91,9 +91,7 @@ export class DesktopVaultTransport {
     private readonly pinSession: (session: Electron.Session) => Promise<void> = async(session) => {
       // Loaded only in Electron main. Keeping this require lazy avoids importing
       // Electron-only TLS code when the same broker package starts in tools.
-      const { configureVaultPinnedSession } = require('@pkg/main/vaultTls') as {
-        configureVaultPinnedSession(session: Electron.Session): Promise<void>;
-      };
+      const { configureVaultPinnedSession } = await import('@pkg/main/vaultTls');
       await configureVaultPinnedSession(session);
     },
     nodeFetch: typeof undiciFetch = undiciFetch,
@@ -104,7 +102,10 @@ export class DesktopVaultTransport {
   }
 
   readonly fetch: VaultBrokerFetch = async(input, init) => {
-    const session = await this.getPinnedSession(true);
+    const pathname = new URL(input).pathname;
+    const execution = pathname === '/v1/broker/execute' || pathname === '/v1/broker/execute-stream' ||
+      /^\/v1\/broker\/relay\/[^/]+\/events$/.test(pathname);
+    const session = await this.getPinnedSession(!execution);
     const response = await session.fetch(input, init);
     if (response.status === 401 || response.status === 423) this.identities.invalidate();
     return response;

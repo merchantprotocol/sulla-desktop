@@ -43,6 +43,7 @@
         type="button"
         role="tab"
         class="sdk-tab"
+        :class="{ 'sdk-attention': tab.id === 'decisions' && openCount > 0 }"
         :aria-selected="current === tab.id"
         @click="pick(tab.id)"
       >
@@ -75,11 +76,11 @@
       role="tabpanel"
     >
       <AgentLanes v-if="current === 'sulla'" />
-      <ResultsPanel v-else-if="current === 'results'" />
-      <DecisionsPanel
-        v-else-if="current === 'decisions'"
-        :decisions="decisions"
+      <ResultsPanel
+        v-else-if="current === 'results'"
+        @show-activity="current = 'sulla'"
       />
+      <ForYouPanel v-else-if="current === 'decisions'" />
       <div
         v-else-if="current === 'files'"
         class="sdk-embed"
@@ -100,12 +101,11 @@
 import { computed, inject, ref, watch, type Ref } from 'vue';
 
 import AgentLanes from './AgentLanes.vue';
-import DecisionsPanel from './DecisionsPanel.vue';
+import ForYouPanel from './ForYouPanel.vue';
 import ResultsPanel from './ResultsPanel.vue';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { DockPositions, SIDE_RATIO_DEFAULT } from '../../composables/useDockPosition';
 import { useChatController } from '../../controller/useChatController';
-import { groupResults } from '../../messages/sideDock';
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
@@ -143,26 +143,24 @@ function startDrag(event: PointerEvent): void {
   handle.addEventListener('pointercancel', end);
 }
 function nudge(delta: number): void { setSideRatio(sideRatio.value + delta) }
-const { decisions, openCount } = ChatDecisions.useChatDecisions();
+const decisionStore = ChatDecisions.useChatDecisions();
+const { openCount } = decisionStore;
 const client = inject(AGENT_STATE_CLIENT_KEY, null);
 const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
 const current = ref<TabId>('sulla');
 
-const needsYou = computed(() => controller.messages.value.filter(msg =>
-  (msg.kind === 'tool_question' && msg.status === 'pending') || (msg.kind === 'tool_approval' && msg.decision === 'pending')).length);
 const working = computed(() => {
   if (!client || !context.backendThreadId.value) return false;
   const nodes = new AgentTreeBuilder([]).flatten(new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value));
   return controller.isRunning.value || nodes.some(node => ['queued', 'working'].includes(node.row.state));
 });
-const needsAction = computed(() => groupResults(controller.messages.value).needsAction.length);
 const artifactCount = computed(() => controller.artifacts.value.list.length);
 
 const tabs = computed(() => [
-  { id: 'sulla' as const, label: 'Sulla', badge: needsYou.value ? { text: String(needsYou.value), tone: 'you' } : undefined, pulse: working.value },
-  { id: 'results' as const, label: 'Results', badge: needsAction.value ? { text: String(needsAction.value), tone: 'bad' } : undefined },
-  { id: 'decisions' as const, label: 'Decisions', badge: openCount.value ? { text: String(openCount.value), tone: 'you' } : undefined },
+  { id: 'sulla' as const, label: 'Sulla', pulse: working.value },
+  { id: 'results' as const, label: 'Results' },
+  { id: 'decisions' as const, label: 'For You', badge: openCount.value ? { text: String(openCount.value), tone: 'you' } : undefined },
   { id: 'files' as const, label: 'Files' },
   ...(artifactCount.value ? [{ id: 'artifacts' as const, label: 'Artifacts', badge: { text: String(artifactCount.value), tone: 'n' } }] : []),
 ] as { id: TabId; label: string; badge?: { text: string; tone: string }; pulse?: boolean }[]);
@@ -199,8 +197,11 @@ defineExpose({ selectTab });
   transition: background-color .15s cubic-bezier(.22, 1, .36, 1), color .15s cubic-bezier(.22, 1, .36, 1);
 }
 .sdk-tab:hover { background: var(--bg-surface); color: var(--text-primary); }
-.sdk-tab[aria-selected="true"] { height: 35px; margin-bottom: -1px; background: var(--bg-surface); color: var(--text-primary); font-weight: 650; }
-.sdk-tab[aria-selected="true"]::after { content: ""; position: absolute; top: -1px; left: 8px; right: 8px; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent); }
+.sdk-tab[aria-selected="true"] { height: 35px; margin-bottom: -1px; background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); color: var(--text-primary); font-weight: 700; }
+.sdk-tab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 1px; left: 8px; right: 8px; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent); }
+.sdk-tab.sdk-attention { color: var(--status-warning); border-color: color-mix(in srgb, var(--status-warning) 65%, var(--border-strong)); background: color-mix(in srgb, var(--status-warning) 9%, var(--bg-page)); }
+.sdk-tab.sdk-attention::after { background: var(--status-warning); }
+.sdk-tab.sdk-attention[aria-selected="true"] { background: color-mix(in srgb, var(--status-warning) 16%, var(--bg-surface)); color: var(--text-primary); }
 .sdk-tab:focus-visible, .sdk-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sdk-badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; font: 700 10.5px/1 var(--font-body); }
 .sdk-badge-you { background: var(--status-warning); color: var(--bg-page); }

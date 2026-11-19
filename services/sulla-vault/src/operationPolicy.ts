@@ -21,6 +21,7 @@ const TRANSCRIPTION_REQUEST_BYTES = 17 * 1024 * 1024;
 const FILES_SYNC_TRANSFER_BYTES = 6 * 1024 * 1024;
 // Fits a full-screen Retina capture; base64 in the 36 MB desktop JSON body limit.
 const SHARE_CONTENT_REQUEST_BYTES = 25 * 1024 * 1024;
+const CODEX_CLIENT_VERSION = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
 
 /** The only operation that may use responseType 'base64' and the 6 MiB Files sync limits. */
 export const FILES_SYNC_OPERATION = 'sulla-cloud.files-sync';
@@ -94,6 +95,13 @@ export class OperationPolicy {
     }
     const pathPattern = binding?.pathPattern ?? policy.pathPattern;
     if (pathPattern && !pathPattern.test(new URL(input.url).pathname)) throw new Error('path_denied');
+    if (input.operation === 'provider.models' && input.ref.integrationId === 'codex') {
+      const url = new URL(input.url);
+      const versions = url.searchParams.getAll('client_version');
+      if (url.searchParams.size !== 1 || versions.length !== 1 || !CODEX_CLIENT_VERSION.test(versions[0])) {
+        throw new Error('query_denied');
+      }
+    }
     const allowedInjections = binding?.injections ?? policy.injections;
     for (const injection of input.injections) {
       if (!allowedInjections.some(candidate => this.exactInjection(candidate, injection))) throw new Error('injection_denied');

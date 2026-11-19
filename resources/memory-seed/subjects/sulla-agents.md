@@ -37,6 +37,7 @@ Sulla launches bounded agent jobs with `meta/spawn_agent`. The live directory de
 - DO: Treat about 15 minutes without a useful check-in, or an ended task without a result, as a recovery signal. Why: dead work should not strand the goal.
 - DO: Resume from the pushed branch or retained workspace and re-brief the exact gap. Why: recovery should preserve completed work.
 - DO: Review the diff and acceptance evidence before integrating. Why: a worker's summary and a valid contract are not proof.
+- DO: For code review, prefer a capable reviewer from a different model company than the model(s) that wrote the code when available. Check the actual model company, not the agent name, and ask for review without edits. If unavailable or unverified, keep the existing review path and state the limitation.
 - DO: Use a different agent to review high-stakes work. Why: independent review catches correlated mistakes.
 - DON'T: Poll running jobs. Why: completion wakes the parent and needless polling wastes time.
 - DON'T: Hand ownership of the goal to a worker. Why: the launching agent remains accountable for integration, verification, and cleanup.

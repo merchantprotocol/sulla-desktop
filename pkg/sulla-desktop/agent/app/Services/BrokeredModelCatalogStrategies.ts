@@ -7,6 +7,8 @@ import type { IntegrationAccount } from '../../services/IntegrationService';
 
 const ANTHROPIC_API_KEY: BrokerInjection = { field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' };
 const ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=1000';
+export const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models';
+const CODEX_ORIGINATOR = 'codex_cli_rs';
 
 export interface ModelListLane {
   url: string;
@@ -94,6 +96,22 @@ export class OpenAiCatalogStrategy extends BaseProviderCatalogStrategy {
   }
 }
 
+export class CodexCatalogStrategy extends BaseProviderCatalogStrategy {
+  readonly providerId = 'codex';
+
+  lane(): ModelListLane {
+    return {
+      url: CODEX_MODELS_URL,
+      injections: [
+        this.bearer('access_token'),
+        { field: 'chatgpt_account_id', target: 'header', name: 'chatgpt-account-id', scheme: 'raw' },
+      ],
+      headers: { originator: CODEX_ORIGINATOR },
+      oauth: true,
+    };
+  }
+}
+
 export class GrokCatalogStrategy extends BaseProviderCatalogStrategy {
   readonly providerId = 'grok';
 
@@ -126,6 +144,7 @@ export class ProviderCatalogStrategyRegistry {
       new AnthropicCatalogStrategy(),
       new ClaudeCodeCatalogStrategy(),
       new OpenAiCatalogStrategy(),
+      new CodexCatalogStrategy(),
       new GrokCatalogStrategy(),
     ]);
   }

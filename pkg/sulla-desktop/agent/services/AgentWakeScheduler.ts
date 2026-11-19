@@ -18,15 +18,33 @@ export class AgentWakeScheduler {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly failedAttempts = new Map<string, number>();
   private started = false;
-  constructor(private readonly waits: AgentTaskWaitRepository, private readonly wake: AgentWakeHandler, private readonly now = () => Date.now()) {}
+  private stopping = new AbortController();
+  private starting?: Promise<void>;
+  constructor(private readonly waits: AgentTaskWaitRepository, private readonly wake: AgentWakeHandler, private readonly now = () => Date.now(),
+    private readonly beforeClaim: (signal: AbortSignal) => Promise<void> = () => Promise.resolve()) {}
 
   async start(): Promise<void> {
     if (this.started) return;
-    this.started = true;
-    for (const wait of await this.waits.scheduled()) this.schedule(wait);
+    if (this.stopping.signal.aborted) this.stopping = new AbortController();
+    if (this.starting) return this.starting;
+    this.starting = (async() => {
+      const waits = await this.waits.scheduled();
+      if (this.stopping.signal.aborted) return;
+      for (const wait of waits) this.schedule(wait);
+      this.started = true;
+    })().finally(() => { this.starting = undefined });
+    return this.starting;
+  }
+
+  stop(): void {
+    this.stopping.abort();
+    this.started = false;
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
   }
 
   schedule(wait: AgentTaskWait): void {
+    if (this.stopping.signal.aborted) return;
     const key = `${ wait.jobId }:${ wait.taskIndex }`;
     const prior = this.timers.get(key);
     if (prior) clearTimeout(prior);
@@ -47,6 +65,14 @@ export class AgentWakeScheduler {
   private async fire(jobId: string, taskIndex: number): Promise<void> {
     const key = `${ jobId }:${ taskIndex }`;
     this.cancel(jobId, taskIndex);
+    const signal = this.stopping.signal;
+    try { await this.beforeClaim(signal) } catch (error: any) {
+      if (error?.name === 'AbortError' || signal.aborted) return;
+      // No durable claim or attempt has been spent while infrastructure is unavailable.
+      this.schedule({ jobId, taskIndex, wakeAt: new Date(this.now() + AgentWakeScheduler.RETRY_DELAY_MS), reason: '', state: 'scheduled' });
+      return;
+    }
+    if (signal.aborted) return;
     const claimed = await this.waits.claim(jobId, taskIndex);
     if (!claimed) return;
     let delivered = false;

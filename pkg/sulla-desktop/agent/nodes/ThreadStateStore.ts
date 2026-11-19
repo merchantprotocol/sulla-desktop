@@ -8,7 +8,9 @@ import { redisClient } from '../database/RedisClient';
 import type { BaseThreadState } from './Graph';
 
 export async function saveThreadState(state: BaseThreadState): Promise<void> {
-  return threadStateProvider.repository.save(state);
+  // Process-local abort callbacks and run ownership cannot survive a restart.
+  const metadata = { ...state.metadata, options: { ...state.metadata.options, abort: undefined } };
+  return threadStateProvider.repository.save({ ...state, metadata: Object.assign(metadata, { delegatedRunActive: false, runtimeRunnerActive: false, runtimeInterrupted: false }) });
 }
 
 export async function loadThreadState(threadId: string): Promise<BaseThreadState | null> {

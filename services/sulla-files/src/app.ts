@@ -339,7 +339,6 @@ export class FilesApplication {
     new FileFeedRoutes(accessGate, core.filesFeed).register(app);
     new FileListingRoutes(accessGate, new FileListingRepository(db, FILE_COLUMNS_SQL), new FileListingQuery()).register(app);
     fileWrites.registerConflictAndReindex(app);
-    new FileDetailRoutes(db, config, store, accessGate, new FileDetailRepository(db), requestAudit, contentReadFailures).register(app);
     new FileContentWriteRoutes(db, config, store, accessGate, versionWriter, transactions, fileWriteRows, textMerger, automergeTexts, liveText, requestAudit, databaseFailures).register(app);
     fileWrites.registerTrash(app);
     new TrashRoutes(db, accessGate, new TrashListingRepository(db, FILE_COLUMNS_SQL), operationAccess, store, manager).register(app);
@@ -351,6 +350,9 @@ export class FilesApplication {
       deleteChunk:(collectionId,chunkId)=>store.delete(collectionId,chunkId),
       ...(manager?{disposeTrashReceipt:(receiptId:string)=>manager.disposeTrashReceipt(receiptId)}:{}),
     });
+    // Last, so the dynamic GET /v1/files/:id family never captures a static path such as
+    // GET /v1/files/publish-requests. No later route overlaps it.
+    new FileDetailRoutes(db, config, store, accessGate, new FileDetailRepository(db), requestAudit, contentReadFailures).register(app);
   }
 }
 

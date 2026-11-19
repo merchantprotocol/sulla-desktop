@@ -11,12 +11,6 @@
  * Features: Caching, error handling, provider-specific endpoint mapping
  */
 
-import {
-  issueServiceProviderExecutionContext,
-  loadProviderRuntimeConfig,
-  providerFetch,
-} from './providerBroker';
-import { getIntegrationService } from '../services/IntegrationService';
 import { usesContainerVaultAuthority } from '../../vault-broker';
 import { OPENAI_COMPATIBLE_PROVIDERS, providerBaseUrl, type OpenAICompatibleProviderDefinition } from './openAICompatibleProviders';
 import { alibabaBaseUrl, kimiBaseUrl } from './providerEndpoints';
@@ -375,18 +369,21 @@ export class ModelDiscoveryService {
     },
   };
 
+  supportsProvider(providerId: string): boolean { return Object.prototype.hasOwnProperty.call(this.providers, providerId); }
+
   /**
    * Fetch available models for a specific provider
    */
-  async fetchModelsForProvider(providerId: string, apiKey = '', options: { baseUrl?: string; region?: string } = {}): Promise<ModelInfo[]> {
+  async fetchModelsForProvider(providerId: string, apiKey = '', options: { accountId?: string; baseUrl?: string; region?: string; liveOnly?: boolean } = {}): Promise<ModelInfo[]> {
     // A key supplied by the Connect form is intentionally used for a direct
     // verification request. Saved accounts have no renderer-visible key and
     // therefore take the brokered provider.discovery lane below.
     const containerAuthority = usesContainerVaultAuthority() && !['ollama', 'lm-studio', 'local-server'].includes(providerId) && !apiKey;
-    const runtime = containerAuthority ? await loadProviderRuntimeConfig(providerId) : null;
-    const cacheKey = containerAuthority
+    const broker = containerAuthority ? await import('./providerBroker') : null;
+    const runtime = broker ? await broker.loadProviderRuntimeConfig(providerId, options.accountId) : null;
+    const cacheKey = (containerAuthority
       ? `${ providerId }-${ runtime!.accountId }`
-      : `${ providerId }-${ apiKey.slice(-8) }-${ options.baseUrl || '' }-${ options.region || '' }`;
+      : `${ providerId }-${ apiKey.slice(-8) }-${ options.baseUrl || '' }-${ options.region || '' }`) + (options.liveOnly ? '-live' : '-fallback');
     const cached = this.cache.get(cacheKey);
 
     // Return cached results if still valid
@@ -398,7 +395,7 @@ export class ModelDiscoveryService {
     if (!provider) {
       throw new Error(`Unsupported provider: ${ providerId }`);
     }
-    if (!provider.modelsEndpoint) return provider.staticModels ?? [];
+    if (!provider.modelsEndpoint) return options.liveOnly ? [] : provider.staticModels ?? [];
 
     // Always attempt live discovery first for every provider so newly released
     // models appear automatically. Any `staticModels` array is treated purely as
@@ -416,7 +413,7 @@ export class ModelDiscoveryService {
             ? alibabaBaseUrl(savedValues)
             : provider.baseUrl;
       const baseUrl = (options.baseUrl || runtime?.values.base_url || configuredBaseUrl).replace(/\/+$/, '');
-      if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return provider.staticModels ?? [];
+      if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return options.liveOnly ? [] : provider.staticModels ?? [];
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint
         : `${ baseUrl }${ provider.modelsEndpoint }`;
@@ -440,6 +437,7 @@ export class ModelDiscoveryService {
         let workspaceId = runtime?.values.workspace_id || '';
         if (!workspaceId) {
           try {
+            const { getIntegrationService } = await import('../services/IntegrationService');
             const values = await getIntegrationService().getFormValues('anthropic');
             workspaceId = values.find((value: { property: string; value: string }) => value.property === 'workspace_id')?.value || '';
             const { getPendingCredential } = await import('../../main/firstRun/pendingCredentials');
@@ -454,7 +452,7 @@ export class ModelDiscoveryService {
         ? [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }]
         : [{ field: 'api_key', target: 'header', name: provider.authHeader.toLowerCase(), scheme: 'raw' }];
       const executionContext = containerAuthority
-        ? await issueServiceProviderExecutionContext('model-discovery', providerId, runtime!.accountId)
+        ? await broker!.issueServiceProviderExecutionContext('model-discovery', providerId, runtime!.accountId)
         : undefined;
       const requestInit: RequestInit = {
         method: 'GET',
@@ -462,7 +460,7 @@ export class ModelDiscoveryService {
         signal: AbortSignal.timeout(10000), // 10 second timeout
       };
       const response = containerAuthority
-        ? await providerFetch(providerId, url, requestInit, executionContext, {
+        ? await broker!.providerFetch(providerId, url, requestInit, executionContext, {
           streaming: false,
           operation: 'provider.discovery',
           injections,
@@ -484,7 +482,7 @@ export class ModelDiscoveryService {
 
       // If the endpoint responded but yielded no usable models, fall back to the
       // offline static list (if any) rather than caching an empty catalog.
-      const resolved = models.length > 0 ? models : (provider.staticModels ?? []);
+      const resolved = models.length > 0 ? models : (options.liveOnly ? [] : provider.staticModels ?? []);
 
       // Cache the results
       this.cache.set(cacheKey, { models: resolved, timestamp: Date.now() });
@@ -494,12 +492,12 @@ export class ModelDiscoveryService {
       console.warn(`[ModelDiscovery] Failed to fetch models for ${ providerId }:`, error);
 
       // Return cached results if available, even if expired
-      if (cached) {
+      if (cached && !options.liveOnly) {
         return cached.models;
       }
 
       // Fall back to a static list when the live fetch fails (keeps the picker populated)
-      if (provider.staticModels?.length) {
+      if (provider.staticModels?.length && !options.liveOnly) {
         return provider.staticModels;
       }
 

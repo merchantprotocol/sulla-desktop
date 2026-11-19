@@ -63,10 +63,12 @@ import { computed, inject, ref } from 'vue';
 import { ModelSelectorKey } from '../../controller/useChatController';
 import { LineTimes } from '../../messages/lineTime';
 
+import { AgentModelStatus, type AgentModelStatusValue } from '@pkg/shared/agentState/AgentModelStatus';
+
 const props = withDefaults(defineProps<{
   icon:         string;
   tone:         'think' | 'patch' | 'tool' | 'err';
-  by?:          { agent?: string; model?: string };
+  by?:          { agent?: string; model?: string; modelStatus?: AgentModelStatusValue };
   live?:        boolean;
   defaultOpen?: boolean;
   /** The transcript line this block is, for its time. */
@@ -83,7 +85,7 @@ const authorName = computed(() => {
 });
 
 /** "Default" and "Auto" are picker labels, not models; older blocks were stamped with them. */
-const model = computed(() => (props.by?.model && !/^(default|auto)$/i.test(props.by.model) ? props.by.model : ''));
+const model = computed(() => props.by?.modelStatus ? AgentModelStatus.label(props.by.modelStatus) : (props.by?.model && !/^(default|auto)$/i.test(props.by.model) ? `${ props.by.model } · Effort not reported` : ''));
 const lineTime = LineTimes.useLineTime();
 const when = computed(() => (props.lineId ? lineTime(props.lineId) : undefined));
 

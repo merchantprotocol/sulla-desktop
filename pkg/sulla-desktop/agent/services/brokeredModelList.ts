@@ -35,8 +35,9 @@ export function listProviderModelsBrokered<T = unknown>(
   providerId: string,
   preferredAccountId?: string,
   extraHeaders?: (lane: ModelListLane) => Record<string, string>,
+  requestUrl?: (lane: ModelListLane) => string,
 ): Promise<{ body: T | null; lane: ModelListLane | null }> {
-  return brokeredModelCatalogProvider.catalog.list<T>(providerId, preferredAccountId, extraHeaders);
+  return brokeredModelCatalogProvider.catalog.list<T>(providerId, preferredAccountId, extraHeaders, requestUrl);
 }
 
 export { modelListLane };

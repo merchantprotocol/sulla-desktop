@@ -120,6 +120,7 @@
       "agents/return_result",
       "agents/send_agent_message",
       "agents/send_job_message",
+      "agents/link_result",
       "agents/start_agent_conversation",
       "agents/stop_agent_job",
       "agents/wait",

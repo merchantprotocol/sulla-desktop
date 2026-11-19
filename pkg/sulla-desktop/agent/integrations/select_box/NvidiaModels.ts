@@ -12,7 +12,7 @@ export class NvidiaModels extends SelectBoxProvider {
     const apiKey = context.formValues.api_key;
 
     if (!apiKey) {
-      return this.getStaticModels();
+      return this.getStaticModels(context);
     }
 
     try {
@@ -21,7 +21,7 @@ export class NvidiaModels extends SelectBoxProvider {
       });
 
       if (!response.ok) {
-        return this.getStaticModels();
+        return this.getStaticModels(context);
       }
 
       const body = await response.json() as { data?: { id: string }[] };
@@ -33,10 +33,11 @@ export class NvidiaModels extends SelectBoxProvider {
       // Fall back to static list
     }
 
-    return this.getStaticModels();
+    return this.getStaticModels(context);
   }
 
-  private getStaticModels(): SelectOption[] {
+  private getStaticModels(context: SelectBoxContext): SelectOption[] {
+    if (context.liveOnly) return [];
     return [
       { value: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct' },
       { value: 'meta/llama-3.1-405b-instruct', label: 'Llama 3.1 405B Instruct' },

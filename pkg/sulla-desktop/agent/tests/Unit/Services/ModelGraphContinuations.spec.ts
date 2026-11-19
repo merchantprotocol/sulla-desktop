@@ -19,7 +19,7 @@ class ContinuationService extends OpenAICompatibleService {
 }
 class SearchService extends GrokService {
   constructor() { super({ id: 'grok', model: 'fixture', baseUrl: 'https://example.invalid', apiKey: 'synthetic' }, false, true); this.setRetryCount(0); }
-  stream() { return this.sendStreamRequest([{ role: 'user', content: 'fixture' }], {}); }
+  stream(options = {}) { return this.sendStreamRequest([{ role: 'user', content: 'fixture' }], options); }
 }
 afterEach(() => vi.restoreAllMocks());
 
@@ -55,6 +55,15 @@ describe('model graph continuation integrity', () => {
     vi.mocked(providerFetch).mockResolvedValueOnce(new Response('expired', { status: 401 })).mockResolvedValueOnce(success);
     expect(await service.stream()).toBe(success);
     expect(service.refreshCredentials).toHaveBeenCalledTimes(1);
+  });
+  it('requests JSON using the Responses API text format', async() => {
+    vi.mocked(providerFetch).mockResolvedValueOnce(new Response('fixture'));
+    await new SearchService().stream({ format: 'json' });
+    const [, url, payload] = vi.mocked(providerFetch).mock.calls.at(-1)!;
+    const body = JSON.parse(String(payload.body));
+    expect(url).toMatch(/\/responses$/);
+    expect(body.text).toEqual({ format: { type: 'json_object' } });
+    expect(body).not.toHaveProperty('response_format');
   });
   it('retries streaming native-search rejection without unsupported search tools', async () => {
     const success = new Response('fixture');

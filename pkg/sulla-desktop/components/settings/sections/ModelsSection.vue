@@ -23,11 +23,13 @@ import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ModelClass, type ModelRoutingSta
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Patch = Partial<Pick<ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder' | 'neverUse'>>;
+type Patch = Partial<Pick<ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder' | 'neverUse' | 'workerBindings'>>;
 
 const state = ref<ModelRoutingState | null>(null);
 const unavailable = ref(false);
 const error = ref('');
+const errorTitle = ref('Couldn’t save model routing');
+const errorRecovery = ref('Your last saved settings are back on screen.');
 const saved = ref(false);
 const toastText = ref('');
 const toastOn = ref(false);
@@ -46,6 +48,12 @@ let snapshot = '';
 function clone<T>(x: T): T { return JSON.parse(JSON.stringify(x)); }
 function flashSaved() { saved.value = true; clearTimeout(savedTimer); savedTimer = setTimeout(() => { saved.value = false; }, 1600); }
 function toast(message: string) { toastText.value = message; toastOn.value = true; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastOn.value = false; }, 2800); }
+function showError(message: string, title = 'Couldn’t save model routing', recovery = 'Your last saved settings are back on screen.') {
+  error.value = message;
+  errorTitle.value = title;
+  errorRecovery.value = recovery;
+}
+function clearError() { error.value = ''; }
 
 async function load() {
   try {
@@ -71,7 +79,7 @@ function save(patch: Patch) {
       flashSaved();
     } catch (e) {
       state.value = JSON.parse(snapshot);
-      error.value = e instanceof Error ? e.message : String(e);
+      showError(e instanceof Error ? e.message : String(e));
     }
   }, 300);
 }
@@ -92,6 +100,23 @@ function saveLanes(patch: Pick<ModelRoutingState, 'classes' | 'followProviderOrd
   Object.assign(state.value, clone(patch));
   save(patch);
 }
+const cliVersions = ref<import('@pkg/backend/providerCliUpdates').ProviderCliVersion[]>([]);
+const updatingCli = ref('');
+async function checkCliVersions() { cliVersions.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.cliCheck); }
+async function updateCli(row: import('@pkg/backend/providerCliUpdates').ProviderCliVersion) {
+  if (!row.updateAvailable || !row.updateSupported || !row.latest || updatingCli.value) return;
+  updatingCli.value = row.provider;
+  error.value = '';
+  try {
+    const [updated] = await ipcRenderer.invoke(MODEL_ROUTING_IPC.cliUpdate, { provider: row.provider, version: row.latest });
+    if (updated) cliVersions.value = cliVersions.value.map(current => current.provider === row.provider ? updated : current);
+    if (updated?.installedVersion === row.latest) toast(`${ row.provider } is selected for new workers at ${ row.latest }.`);
+  } catch (e) {
+    showError(e instanceof Error ? e.message : String(e), 'Couldn’t update provider CLI', 'The current CLI selection was preserved.');
+  } finally {
+    updatingCli.value = '';
+  }
+}
 const refreshing = ref(false);
 async function refreshModels() {
   if (!state.value || refreshing.value) return;
@@ -100,9 +125,13 @@ async function refreshModels() {
     state.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.refresh);
     snapshot = JSON.stringify(state.value);
     now.value = Date.now();
-    toast('Model lists refreshed from every connected provider.');
+    const checks = state.value.catalog?.checks ?? [];
+    const failed = checks.filter(check => check.status === 'unavailable');
+    if (failed.length) showError(`Could not refresh models for ${ failed.map(check => check.provider).join(', ') }.`, 'Couldn’t refresh model catalogs', 'Saved model choices were preserved.');
+    toast(`${ checks.filter(check => check.status === 'refreshed').length } provider model lists refreshed.`);
+    await checkCliVersions();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    showError(e instanceof Error ? e.message : String(e), 'Couldn’t refresh model catalogs', 'Saved model choices were preserved.');
   } finally {
     refreshing.value = false;
   }
@@ -118,11 +147,16 @@ async function reset(section: 'agents' | 'subconscious' | 'classes', modelClass?
       : section === 'subconscious' ? 'Subconscious is back to the default: on this Mac first, then the cheapest online providers, all on Fast.'
         : `${ modelClass ? modelClass[0].toUpperCase() + modelClass.slice(1) : 'Every class' } is back on the recommended models, in provider order.`);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    showError(e instanceof Error ? e.message : String(e));
   }
 }
 function onStatus(_: unknown, providers: RoutingProviderInfo[]) {
-  if (state.value) state.value.providers = providers;
+  if (state.value) {
+    const before = state.value.providers.filter(provider => provider.connected).map(provider => provider.id).sort().join('|');
+    const after = providers.filter(provider => provider.connected).map(provider => provider.id).sort().join('|');
+    state.value.providers = providers;
+    if (before !== after) void checkCliVersions().catch(e => { showError(e instanceof Error ? e.message : String(e)); });
+  }
   now.value = Date.now();
 }
 
@@ -150,15 +184,20 @@ function watchConnections() {
     if (!state.value || state.value.providers.some(p => p.connected) || ++tries > 24) { clearInterval(connectTimer); return }
     try {
       const next: ModelRoutingState = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get);
-      if (state.value) { state.value.providers = next.providers; state.value.catalog = next.catalog }
+      if (state.value) {
+        const before = state.value.providers.filter(provider => provider.connected).map(provider => provider.id).sort().join('|');
+        const after = next.providers.filter(provider => provider.connected).map(provider => provider.id).sort().join('|');
+        state.value.providers = next.providers; state.value.catalog = next.catalog;
+        if (before !== after) void checkCliVersions().catch(e => { showError(e instanceof Error ? e.message : String(e)); });
+      }
     } catch { /* try again on the next tick */ }
   }, 5_000);
 }
 
 onMounted(() => {
-  load().then(watchConnections).catch(() => undefined);
+  load().then(async() => { watchConnections(); await checkCliVersions() }).catch(() => undefined);
   ipcRenderer.on(MODEL_ROUTING_IPC.status, onStatus);
-  clock = setInterval(() => { now.value = Date.now(); }, 30_000);
+  clock = setInterval(() => { now.value = Date.now() }, 30_000);
 });
 onBeforeUnmount(() => {
   clearTimeout(saveTimer); clearTimeout(savedTimer); clearTimeout(toastTimer); clearInterval(clock); clearInterval(connectTimer);
@@ -171,7 +210,6 @@ onBeforeUnmount(() => {
     <div class="ph">
       <div>
         <h1>AI models</h1>
-        <p>What each kind of work runs on, and which model each provider uses for each role.</p>
       </div>
       <span
         class="mr-saved"
@@ -187,14 +225,14 @@ onBeforeUnmount(() => {
     >
       <RoutingIcon name="alert" />
       <div class="x">
-        <b>Couldn’t save model routing</b>
-        <span>{{ error }} Your last saved settings are back on screen.</span>
+        <b>{{ errorTitle }}</b>
+        <span>{{ error }} {{ errorRecovery }}</span>
       </div>
       <div class="r">
         <button
           type="button"
           class="btn sm"
-          @click="error = ''"
+          @click="clearError"
         >
           Dismiss
         </button>
@@ -207,22 +245,21 @@ onBeforeUnmount(() => {
     >
       <RoutingIcon name="info" />
       <div class="x">
-        <b>Model routing needs the latest Sulla backend.</b>
-        <span>Update Sulla, then come back here to set up your provider lists.</span>
+        <b>Update Sulla to manage model routing.</b>
       </div>
     </div>
     <div
       v-else-if="!state"
       class="loading"
     >
-      Loading your provider lists…
+      Loading models…
     </div>
     <template v-else>
       <DefaultsCard
         :state="state"
         :now="now"
         @saved="flashSaved"
-        @error="error = $event"
+        @error="showError($event)"
         @toast="toast"
       />
       <RoleLedger
@@ -232,12 +269,21 @@ onBeforeUnmount(() => {
         @save="saveLanes"
         @refresh="refreshModels"
       />
+      <section v-if="cliVersions.length" class="cli-versions" aria-label="Provider CLI versions">
+        <h3>Provider CLI versions</h3>
+        <div v-for="row in cliVersions" :key="row.provider" class="cli-version">
+          <div><strong>{{ row.provider }}</strong><small>Worker image: {{ row.imageInstalled || 'Not installed in worker image' }}</small><small>Selected for new workers: {{ row.installed || 'Image default' }}<template v-if="row.latest"> · Latest {{ row.latest }}</template></small><small v-if="row.vmInstalled">VM CLI: {{ row.vmInstalled }}</small><small v-if="row.error">{{ row.error }}</small></div>
+          <button v-if="row.updateAvailable && row.updateSupported" type="button" :disabled="!!updatingCli" @click="updateCli(row)">
+            {{ updatingCli === row.provider ? 'Updating…' : `Review update to ${row.latest}` }}
+          </button>
+        </div>
+      </section>
       <RoutingList
         list-key="agents"
         title="Agents"
-        subtitle="Your main agents try these top to bottom, each on its own model class. Drag to reorder."
+        subtitle="Tried top to bottom. Drag to reorder."
         reset-label="Reset to default order"
-        foot-hint="Add a provider again on a cheaper class to use it as a fallback."
+        foot-hint="The same provider can serve more than one class."
         :state="state"
         :rows="state.agentsList"
         :now="now"
@@ -247,13 +293,13 @@ onBeforeUnmount(() => {
         @toast="toast"
       />
       <details class="mr-more">
-        <summary>More routing settings <small>Subconscious agents, how a request is routed, retries and timeouts</small></summary>
+        <summary>More routing settings</summary>
       <RoutingList
         list-key="subconscious"
         title="Subconscious agents"
-        subtitle="Background agents that read and organize your conversations. Keep these cheap and fast so they never compete with your main agents for usage limits."
+        subtitle="Models for memory and background tasks."
         reset-label="Reset to default"
-        foot-hint="On this Mac first, then the cheapest online providers."
+        foot-hint=""
         :who="['Memory curators', 'Observers', 'Background watchers', 'The Brain']"
         :state="state"
         :rows="state.subconsciousList"
@@ -270,7 +316,7 @@ onBeforeUnmount(() => {
       <PrefMore label="Request settings">
         <PrefRow
           title="Retries per provider"
-          subtitle="How many times Sulla retries a failed request before moving to the next row."
+          subtitle="Before trying the next provider."
         >
           <input
             class="inp sm mr-num"
@@ -284,7 +330,7 @@ onBeforeUnmount(() => {
         </PrefRow>
         <PrefRow
           title="Request timeout"
-          subtitle="Seconds to wait for an answer before trying the next row."
+          subtitle="Wait time before trying the next provider."
         >
           <input
             class="inp sm mr-num"
@@ -681,4 +727,13 @@ onBeforeUnmount(() => {
 @keyframes mr-in { to { opacity: 1; transform: none; } }
 @keyframes mr-pop { from { opacity: 0; transform: translateY(-4px) scale(.985); } }
 @keyframes mr-in-next { to { opacity: .6; transform: none; } }
+</style>
+
+<style scoped>
+.cli-versions { padding: 20px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); }
+.cli-versions h3 { margin: 0 0 8px; font-size: 15px; }
+.cli-version small { color: var(--text-muted); font-size: 12px; }
+.cli-version { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border-subtle); }
+.cli-version small { display: block; margin-top: 4px; }
+.cli-version button { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 6px 10px; color: var(--text-primary); background: var(--bg-surface); }
 </style>

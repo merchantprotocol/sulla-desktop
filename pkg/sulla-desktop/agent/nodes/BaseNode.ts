@@ -8,13 +8,13 @@ import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import { prepareProviderMessages } from './contextBudget';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
-import { extensionHooks } from '../extensions/HookRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getServiceByProvider } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
-import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
+import { extensionHooks } from '../extensions/HookRegistry';
 import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
+import { issueProviderExecutionContext } from '../languagemodels/providerBroker';
 import { classifyLLMFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { modelRouter, type ModelCandidate } from '../languagemodels/modelRouter';
 import { findVaultFailure, ProviderFailure, VaultUnreachable } from '../languagemodels/failures';
@@ -23,17 +23,22 @@ import { VaultUnreachableRecovery } from '../languagemodels/vaultGate';
 import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
-import { throwIfAborted } from '../services/AbortService';
+import { isAbortSignal, throwIfAborted } from '../services/AbortService';
 import { agentDefinitionService } from '../services/AgentDefinitionService';
+import { agentExecutionReadiness } from '../services/AgentExecutionReadiness';
+import { AgentModelStatusRegistry } from '../services/AgentModelStatusRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { RunActivity } from '../services/RunActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
+import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { a2aMarkersToText, isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsForUi, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
+
+import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
@@ -453,6 +458,12 @@ export async function loadAgentPromptData(agentId: string, templateVarsPromise?:
     const genericSections: string[] = [];
     let totalChars = 0;
 
+    // Same rule as GraphRegistry.loadAgentConfig: with no usable .md prompt file, the definition's
+    // own prompt_content is the agent prompt (processed like a prompt file below).
+    if (!mdFiles.some(([, content]) => String(content).trim()) && definition.prompt_content) {
+      mdFiles.push(['prompt_content', definition.prompt_content]);
+    }
+
     for (const [fileName, rawContent] of mdFiles) {
       let content = String(rawContent).trim();
       if (!content) continue;
@@ -544,9 +555,26 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /** Resolve the provider that owns this graph turn. */
   protected async resolveLoopProvider(state: BaseThreadState): Promise<BaseLanguageModel> {
+    const workerRoute = !(state.metadata as any).workerModelChatOverride && (state.metadata as any).workerModelRoute;
+    if (workerRoute) {
+      // Same handle contract as throwIfAborted: an AbortService or a raw AbortSignal.
+      const runAbort = state.metadata?.options?.abort as any;
+      this.routingCandidates = await workerModelRouting.resolveRoute(workerRoute, isAbortSignal(runAbort) ? runAbort : runAbort?.signal);
+      const selected = this.routingCandidates[0];
+      await workerModelRouting.persistSelection(state, selected);
+      return getServiceByProvider(selected.provider, selected.model, selected.effort);
+    }
     const resolved = await turnProviderResolver.resolve(state);
     this.routingCandidates = resolved.candidates;
     return resolved.provider;
+  }
+
+  private recordModelStatus(state: BaseThreadState, service: BaseLanguageModel): void {
+    const modelStatus = { ...((state.metadata as any).workerModelRoute && !(state.metadata as any).workerModelChatOverride ? { mapping: 'Worker mapping' } : {}), model: service.getModel(), provider: service.getProviderName(), effort: service.getEffort?.() ?? null, source: 'resolved' as const };
+    (state.metadata as any).resolvedModel = modelStatus.model;
+    (state.metadata as any).resolvedProvider = modelStatus.provider;
+    (state.metadata as any).resolvedModelStatus = modelStatus;
+    AgentModelStatusRegistry.record(state.metadata.threadId, modelStatus);
   }
 
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
@@ -616,7 +644,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       try { return await work; } finally { timing[key] = Date.now() - started; }
     };
     const templateVarsPromise = measured('templateVars', getTemplateVariables(String(state.metadata.threadId || 'unknown')));
-    const definitionPromise = agentId ? turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId)) : undefined;
+    const definitionPromise = agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID ? turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId)) : undefined;
 
     // These independent reads dominate prompt setup on cold turns. Start them
     // together; their results are still applied in the original order below.
@@ -999,6 +1027,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
     TurnHopTiming.mark(state, 'BaseNode.normalizedChat.start');
+    if (agentExecutionReadiness.active) {
+      await AgentReadinessStatus.wait(agentExecutionReadiness.wait.bind(agentExecutionReadiness), state.metadata?.options?.abort?.signal,
+        (content, status) => this.wsChatMessage(state, content, 'assistant', 'progress', { ...status }));
+    }
     // Agent-definition override first: an agent whose config.yaml declares
     // model/provider gets its own service instance regardless of role slot.
     // Otherwise route by graph-stamped model slot: work-executing sub-agents
@@ -1009,8 +1041,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     TurnHopTiming.mark(state, 'resolveLoopProvider.start');
     this.llm = await this.resolveLoopProvider(state);
     TurnHopTiming.mark(state, 'resolveLoopProvider.end');
-    (state.metadata as any).resolvedModel = this.llm.getModel();
-    (state.metadata as any).resolvedProvider = this.llm.getProviderName();
+    this.recordModelStatus(state, this.llm);
 
     TurnHopTiming.mark(state, 'createNodeRunContext.start');
     const nodeRunContext = this.createNodeRunContext(state, {
@@ -1347,6 +1378,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             const retryMessages = attempt > 0 || index === 0
               ? this.buildReducedRetryMessages(messages)
               : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
+            await workerModelRouting.persistSelection(state, candidate);
+            this.recordModelStatus(state, service);
             const reply = await this.callLLMStreaming(state, retryMessages, {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
               signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
@@ -1961,7 +1994,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = kind === 'citation' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
+    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }
@@ -2017,15 +2050,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         content,
         role,
         kind,
-        thread_id: threadId,
-        timestamp: Date.now(),
+        thread_id:   threadId,
+        timestamp:   Date.now(),
+        modelStatus: (state.metadata as any).resolvedModelStatus,
         ...(extras ?? {}),
       },
     });
 
     if (!sent) {
       console.warn(`[Agent:${ this.name }] Failed to send chat message via WebSocket (kind=${ kind })`);
-    } else {
+    } else if (!extras?.readinessWaitId) {
       state.metadata.hadUserMessages = true;
     }
     // If this agent is running inside a workflow, also emit a node_thinking
@@ -2036,13 +2070,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const workflowNodeId = (state.metadata as any).workflowNodeId;
     const workflowParentChannel = (state.metadata as any).workflowParentChannel;
     const workflowThinkingLabel = (state.metadata as any).workflowThinkingLabel;
-    if (workflowNodeId && workflowParentChannel) {
+    if (workflowNodeId && workflowParentChannel && !extras?.readinessWaitId) {
       console.log(`[BaseNode:wsChatMessage] Emitting node_thinking → channel="${ workflowParentChannel }", nodeId="${ workflowNodeId }", content="${ content.trim().slice(0, 80) }"`);
       try {
         const ws = getWebSocketClientService();
         ws.send(workflowParentChannel, {
           type: 'workflow_execution_event',
           data: {
+            modelStatus:   (state.metadata as any).resolvedModelStatus,
             type:          'node_thinking',
             nodeId:        workflowNodeId,
             content:       content.trim(),

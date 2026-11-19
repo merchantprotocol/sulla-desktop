@@ -21,8 +21,9 @@ export class HumanDecisionRepository {
   /** Rows from another process session, or past their deadline, are expired as evidence. */
   async expireForeignOrOverdue(sessionId: string, now: number): Promise<void> {
     await this.client.query(`UPDATE human_decisions SET status = 'expired',
-      record = jsonb_set(record, '{status}', '"expired"'), updated_at = NOW()
-      WHERE status IN ('pending', 'deferred') AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)`, [sessionId, now]);
+      record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
+      WHERE status IN ('pending', 'deferred') AND NOT (record->>'kind'='question' AND COALESCE(record#>>'{payload,answerRoute}','')='inbox')
+        AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)`, [sessionId, now]);
   }
 
   async listRecent(): Promise<DecisionRecord[]> {
@@ -40,7 +41,7 @@ export class HumanDecisionRepository {
   }
 
   async expirePending(id: string): Promise<void> {
-    await this.client.query(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(record, '{status}', '"expired"'), updated_at = NOW()
+    await this.client.query(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
         WHERE id = $1 AND status IN ('pending', 'deferred')`, [id]);
   }
 }

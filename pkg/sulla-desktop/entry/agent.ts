@@ -55,6 +55,14 @@ const router = createRouter({
 
 const tabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
 const hostedTabId = new URLSearchParams(window.location.search).get('tabId') || '';
+if (tabHost && hostedTabId) {
+  window.addEventListener('sulla:chat-running', event => {
+    const detail = (event as CustomEvent<{ tabId: string; running: boolean }>).detail;
+    if (detail?.tabId === hostedTabId && typeof detail.running === 'boolean') {
+      ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.running);
+    }
+  });
+}
 // BrowserTab sizes itself from its parent (height: 100%). In the main window that
 // parent is AgentRouter's absolutely positioned tab layer; a tab host has no such
 // layer, so without this viewport-filling frame every page collapses to zero height.

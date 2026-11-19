@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <div class="studio-page">
+  <div ref="pageRef" class="studio-page">
     <StudioTopbar
       ref="topbarRef"
       :crumbs="active ? ['Agents', active.name || 'New agent'] : directoryDetail ? ['Agents', directoryDetail.name] : ['Agents']"
@@ -15,13 +15,16 @@
     ><template #actions><button v-if="!active && !directoryDetail" class="btn pri" @click="newAgent">＋ New agent</button></template></StudioTopbar>
     <div class="studio-content">
       <template v-if="!active">
-        <div v-if="!directoryDetail" class="tb"><h1>Agents</h1><span>{{ agents.length }} installed on this Sulla</span></div>
+        <div v-if="!directoryDetail" class="tb"><h1>Agents</h1><span>{{ agents.length }} installed on this Sulla</span><span v-if="refreshNotice" role="status">{{ refreshNotice }}</span></div>
         <div v-if="!directoryDetail" class="seg-tabs" ref="tabsRef">
           <i ref="tabIndRef" />
           <button :class="{ on: innerTab === 'dir' }" @click="selectTab('dir')">Directory</button>
           <button :class="{ on: innerTab === 'manage' }" @click="selectTab('manage')">Manage</button>
         </div>
-        <AgentDirectoryTab v-if="innerTab === 'dir'" ref="directoryRef" :agents="agents" :loading="loading" v-model:search="search" @detail-change="directoryDetail = $event" @edit="editDirectoryAgent" />
+        <AgentDirectoryTab
+          v-if="innerTab === 'dir'" ref="directoryRef" :agents="agents"
+          :model-labels="configuredModelLabels" :loading="loading" v-model:search="search" @detail-change="directoryDetail = $event" @edit="editDirectoryAgent"
+        />
         <template v-else>
           <div class="filters"><button :class="{ on: provider === 'all' }" @click="provider = 'all'">All {{ agents.length }}</button><button v-for="p in providers" :key="p.name" :class="{ on: provider === p.name }" @click="provider = p.name">{{ p.name }} {{ p.count }}</button></div>
           <div v-if="error" class="banner error"><div>{{ error }}</div><button class="btn sm" @click="load">Try again</button></div>
@@ -32,10 +35,24 @@
       </template>
       <template v-else>
         <button class="back" @click="closeDetail">‹ Agents</button>
-        <div class="card hero"><span class="fi blue big">◉</span><div><h1>{{ form.name || 'New agent' }}</h1><p>{{ form.description || 'Configure a custom agent.' }}</p><div class="meta"><span>{{ choiceLabel(formModelChoice(), routing) }}</span><span>{{ activeSkills.length }} skills</span><span>{{ active.id ? sourceLabel(active.sourceKind) : 'You' }}</span></div></div><div class="acts"><button class="btn pri" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button></div></div>
+        <div class="card hero"><span class="fi blue big">◉</span><div><h1>{{ form.name || 'New agent' }}</h1><p>{{ form.description || 'Configure a custom agent.' }}</p><div class="meta"><span>{{ editorSummary }}</span><span>{{ activeSkills.length }} skills</span><span>{{ form.enabled ? 'Enabled' : 'Disabled for new work' }}</span><span>{{ active.id ? sourceLabel(active.sourceKind) : 'You' }}</span></div></div><div class="acts"><button v-if="active.id" class="btn" :disabled="!canTry" :title="tryHint" @click="tryAgent">Try</button><button class="btn pri" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save' }}</button></div></div>
         <div v-if="detailMessage" class="banner" :class="{ error: detailError }"><div>{{ detailMessage }}</div></div>
-        <div class="dgrid"><div><div class="tabs"><button :class="{ on: tab === 'profile' }" @click="tab = 'profile'">Profile</button><button :class="{ on: tab === 'prompt' }" @click="tab = 'prompt'">Prompt</button></div><div v-if="tab === 'profile'" class="card box"><div class="frow"><div class="field"><label>Name</label><input v-model="form.name"></div><div class="field"><label>Slug</label><input v-model="form.slug" class="mono" :readonly="!!active.id"></div></div><div class="field"><label>Description</label><textarea v-model="form.description" rows="3" /></div><div class="field model-choice"><label>Model</label><div class="mc"><div class="mc-set"><div class="mc-l"><small>By default an agent walks your Agents list. Ask for a class to walk that class’s model list instead.</small><div class="mc-resolve" :class="{ warn: !form.pinned && modelNow.warn }"><template v-if="form.pinned">Ignored while a model is pinned.</template><template v-else-if="!routing">Set the Agents list in Preferences → AI models.</template><template v-else>Right now: <code v-if="modelNow.model">{{ modelNow.model }}</code> {{ modelNow.text }}</template></div></div><select v-model="form.modelBase" class="mc-sel" aria-label="Model" :disabled="form.pinned"><option value="list">Agents list (default)</option><option v-for="c in MODEL_CLASSES" :key="c" :value="c">Class: {{ CLASS_LABELS[c] }}</option></select></div><div class="mc-set"><div class="mc-l"><b>Pin a specific model</b><small>Optional. Use one exact model every time.</small></div><button type="button" class="mc-tog" :class="{ on: form.pinned }" role="switch" :aria-checked="form.pinned" aria-label="Pin a specific model" @click="togglePin" /></div><div class="mc-pin" :class="{ open: form.pinned }" v-bind="form.pinned ? {} : { inert: '' }"><div><div class="mc-set"><div class="mc-l"><b>Pinned model</b><small>Only connected providers are listed.</small></div><div class="mc-c"><select v-model="form.pinProvider" class="mc-sel" aria-label="Pinned provider" @change="form.pinModel = pinModels[0]?.id ?? ''"><option v-for="p in pinProviders" :key="p.id" :value="p.id">{{ providerName(routing, p.id) }}</option></select><select v-model="form.pinModel" class="mc-sel" aria-label="Pinned model"><option v-for="m in pinModels" :key="m.id" :value="m.id">{{ m.label }}</option></select></div></div><div v-if="pinNow" class="mc-warn"><span aria-hidden="true">⚠</span><span>{{ pinNow.text }}</span></div></div></div><div class="mc-note"><span aria-hidden="true">ⓘ</span><span>Subconscious agents (memory curators, observers, background watchers and the Brain) use the <b>Subconscious</b> list instead.</span></div></div></div><div class="field"><label>Skills</label><div><span v-for="skill in activeSkills" :key="skill" class="chipx">{{ skill }}</span><span v-if="activeSkills.length === 0" class="tag">No skills configured</span></div></div></div><div v-else class="card box"><h2>System prompt</h2><textarea v-model="form.prompt" class="editor" /></div></div>
-          <aside class="card side"><h3>Details</h3><div class="kv"><span>Slug</span><b class="mono">{{ form.slug || '—' }}</b></div><div class="kv"><span>Source</span><b>{{ active.id ? sourceLabel(active.sourceKind) : 'You' }}</b></div><div v-if="active.marketplaceVersion" class="kv"><span>Version</span><b class="mono">{{ active.marketplaceVersion }}</b></div><div v-if="active.id" class="side-foot"><button class="btn" @click="exportAgent">⤓ Export</button><button class="btn" :disabled="publishing" @click="publishAgent">↑ Publish</button><button class="btn danger" @click="deleteAgent">Delete</button></div></aside>
+        <div class="dgrid"><div>
+          <div class="tabs"><button :class="{ on: tab === 'profile' }" @click="tab = 'profile'">Profile</button><button :class="{ on: tab === 'routing' }" @click="tab = 'routing'">Routing</button><button :class="{ on: tab === 'prompt' }" @click="tab = 'prompt'">Prompt</button><button :class="{ on: tab === 'capabilities' }" @click="tab = 'capabilities'">Capabilities</button></div>
+          <div v-if="tab === 'profile'" class="card box">
+            <div class="frow"><div class="field"><label>Name</label><input v-model="form.name"></div><div class="field"><label>Slug</label><input v-model="form.slug" class="mono" :readonly="!!active.id"></div></div>
+            <div class="field"><label>Description</label><textarea v-model="form.description" rows="3" /></div>
+            <div class="field model-choice"><label>Model</label><AgentModelControls v-if="routing" v-model="editorChoice" v-model:fallbacks="editorFallbacks" :base-choice="editorBase" :state="routing" /><p v-else role="alert">Model settings could not be loaded. <button type="button" class="btn sm" @click="load">Retry</button></p></div>
+            <label class="mt-4 flex items-center gap-2 text-sm"><input v-model="form.enabled" type="checkbox"><span>Enabled for new work</span><span class="text-xs text-content-muted">Existing jobs keep their launch settings.</span></label>
+          </div>
+          <div v-else-if="tab === 'routing'" class="card box"><AgentRoutingFields v-model="routingDraft" :agents="agents" /></div>
+          <div v-else-if="tab === 'prompt'" class="card box"><h2>System prompt</h2><textarea v-model="form.prompt" class="editor" /></div>
+          <div v-else class="card box"><AgentCapabilitiesFields v-model:allowed-tools="form.allowedTools" v-model:skill-refs="form.skillRefs" v-model:routine-refs="form.routineRefs" /></div>
+        </div>
+          <aside class="space-y-4">
+            <AgentSetupSummary :form="form" :saved="!!active.id" :has-unsaved-edits="hasUnsavedEdits" :model-status="editorSummary" />
+            <div class="card side"><h3>Details</h3><div class="kv"><span>Slug</span><b class="mono">{{ form.slug || '—' }}</b></div><div class="kv"><span>Source</span><b>{{ active.id ? sourceLabel(active.sourceKind) : 'You' }}</b></div><div class="kv"><span>Team</span><b>{{ teamLabel }}</b></div><div v-if="active.marketplaceVersion" class="kv"><span>Version</span><b class="mono">{{ active.marketplaceVersion }}</b></div><div v-if="active.id" class="side-foot"><button class="btn" @click="exportAgent">⤓ Export</button><button class="btn" :disabled="publishing" @click="publishAgent">↑ Publish to marketplace</button><button class="btn danger" @click="deleteAgent">Delete</button></div></div>
+          </aside>
         </div>
       </template>
     </div>
@@ -43,17 +60,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
-import { MODEL_CLASSES, MODEL_ROUTING_IPC, type AgentModelChoice, type ModelClass, type ModelRoutingState } from '@pkg/agent/languagemodels/modelRoutingTypes';
-import { CLASS_LABELS, choiceLabel, modelName, providerName, providerOrder, resolveChoice } from '@pkg/components/settings/sections/modelRouting/routingLogic';
-import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import AgentDirectoryTab from './AgentDirectoryTab.vue';
+import AgentCapabilitiesFields from './AgentCapabilitiesFields.vue';
+import AgentRoutingFields from './AgentRoutingFields.vue';
+import AgentSetupSummary from './AgentSetupSummary.vue';
+import { AgentModelConfiguration } from './AgentModelConfiguration';
+import AgentModelControls from './AgentModelControls.vue';
+import {
+  editorCreateFromForm,
+  editorDraftSignature,
+  editorFormFromAgent,
+  editorPatchFromForm,
+  emptyAgentEditorForm,
+  editorSnapshotSavedModel,
+  editorSnapshotWithForm,
+  editorSnapshotWithModel,
+  normalizedModelChain,
+  validateEditorDraft,
+  type AgentEditorFormState,
+} from './AgentEditorForm';
 import StudioTopbar from './StudioTopbar.vue';
+import type { ModelCandidate } from '@pkg/agent/languagemodels/modelRouter';
+import { MODEL_ROUTING_IPC, type AgentModelChoice, type ModelRoutingState, type RoutingProviderInfo } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import { choiceLabel } from '@pkg/components/settings/sections/modelRouting/routingLogic';
+import { useDatabaseAvailableReload } from '@pkg/composables/useDatabaseAvailableReload';
+import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
+import { agentEditorTeamLabel, agentTryTabPayload, cloneModelCandidates, type AgentEditorRoutingFields } from '@pkg/shared/agentEditor';
+import { RefreshSequencer } from './live/RefreshSequencer';
+import type { AgentDefinitionResponse } from '@pkg/main/agentsIpc';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Agent = AgentDefinitionResponse & { modelChoice?: AgentModelChoice }; type Manifest = Awaited<ReturnType<typeof ipcRenderer.invoke<'agent-definitions:export'>>>;
-const agents = ref<Agent[]>([]); const routing = ref<ModelRoutingState | null>(null); const manifests = ref(new Map<string, Manifest>()); const search = ref(''); const provider = ref('all'); const loading = ref(true); const error = ref(''); const active = ref<Agent | null>(null); const tab = ref<'profile'|'prompt'>('profile'); const saving = ref(false); const publishing = ref(false); const detailMessage = ref(''); const detailError = ref(false);
+type Agent = AgentDefinitionResponse & { modelChoice?: AgentModelChoice };
+type Manifest = Awaited<ReturnType<typeof ipcRenderer.invoke<'agent-definitions:export'>>>;
+const agents = ref<Agent[]>([]); const routing = ref<ModelRoutingState | null>(null); const manifests = ref(new Map<string, Manifest>()); const search = ref(''); const provider = ref('all'); const loading = ref(true); const error = ref(''); const active = ref<Agent | null>(null); const tab = ref<'profile'|'routing'|'prompt'|'capabilities'>('profile'); const saving = ref(false); const publishing = ref(false); const detailMessage = ref(''); const detailError = ref(false);
 const innerTab = ref<'dir' | 'manage'>('dir');
 const topbarRef = ref<InstanceType<typeof StudioTopbar> | null>(null);
 const directoryRef = ref<InstanceType<typeof AgentDirectoryTab> | null>(null);
@@ -79,33 +119,275 @@ function onKeydown(e: KeyboardEvent) {
 }
 onMounted(() => { document.addEventListener('keydown', onKeydown); window.addEventListener('resize', moveTabIndicator); nextTick(moveTabIndicator); });
 onBeforeUnmount(() => { document.removeEventListener('keydown', onKeydown); window.removeEventListener('resize', moveTabIndicator); });
-const form = reactive({ slug: '', name: '', description: '', provider: '', modelSlot: 'secondary' as 'primary'|'secondary'|'subconscious', modelBase: 'list' as 'list' | ModelClass, pinned: false, pinProvider: '', pinModel: '', prompt: '' });
-type PinOption = { id: string; models: { id: string; label: string }[] };
-/** Connected providers in Agents-list order, plus the agent's current pin if it isn't connected any more. */
-const pinProviders = computed<PinOption[]>(() => { const r = routing.value; const list: PinOption[] = r ? providerOrder(r).flatMap(id => { const p = r.providers.find(x => x.id === id); return p?.connected ? [{ id, models: p.models.map(m => ({ id: m.id, label: modelName(r, id, m.id) })) }] : []; }) : []; if (form.pinProvider && !list.some(p => p.id === form.pinProvider)) list.push({ id: form.pinProvider, models: [] }); return list; });
-const pinModels = computed(() => { const models = pinProviders.value.find(p => p.id === form.pinProvider)?.models ?? []; return form.pinModel && !models.some(m => m.id === form.pinModel) ? [{ id: form.pinModel, label: form.pinModel }, ...models] : models; });
-function baseChoice(): AgentModelChoice { return form.modelBase === 'list' ? { mode: 'list' } : { mode: 'class', class: form.modelBase }; }
-function formModelChoice(): AgentModelChoice { return form.pinned && form.pinProvider && form.pinModel ? { mode: 'pin', provider: form.pinProvider, model: form.pinModel } : baseChoice(); }
-const modelNow = computed(() => routing.value ? resolveChoice(routing.value, baseChoice()) : { text: '', model: undefined, warn: false });
-const pinNow = computed(() => routing.value && form.pinProvider ? resolveChoice(routing.value, { mode: 'pin', provider: form.pinProvider, model: form.pinModel }) : null);
-function togglePin() { form.pinned = !form.pinned; if (!form.pinned) return; if (!form.pinProvider) form.pinProvider = pinProviders.value[0]?.id ?? ''; if (!form.pinModel) form.pinModel = pinModels.value[0]?.id ?? ''; }
+const form = reactive<AgentEditorFormState>(emptyAgentEditorForm());
+const editorChoice = ref<AgentModelChoice>({ mode: 'list' });
+const editorBase = ref<AgentModelChoice>({ mode: 'list' });
+const editorFallbacks = ref<ModelCandidate[]>([]);
+// Unpin restores the latest unpinned class or list from this session, not the choice from open.
+watch(editorChoice, choice => { if (choice.mode !== 'pin') editorBase.value = { ...choice }; });
+const modelConfiguration = shallowRef<AgentModelConfiguration>();
+function formModelChoice(): AgentModelChoice { return { ...editorChoice.value }; }
+function selectionLabel(choice: AgentModelChoice): string { return `${choiceLabel(choice, routing.value)}${choice.mode === 'pin' ? ` · ${choice.effort || 'Provider default'}` : ''}`; }
+const editorSummary = computed(() => selectionLabel(editorChoice.value));
+const configuredModelLabels = computed(() => Object.fromEntries(agents.value.filter(agent => routing.value?.workerBindings?.[agent.slug]?.agentId === agent.id).map(agent => [agent.slug, selectionLabel(new AgentModelConfiguration(agent.id, agent.slug, routing.value).choice(agent.modelChoice ?? { mode: 'list' }))])));
+
 const providers = computed(() => Array.from(new Set(agents.value.map(a => a.provider).filter(Boolean) as string[])).sort().map(name => ({ name, count: agents.value.filter(a => a.provider === name).length })));
 const filtered = computed(() => { const q = search.value.trim().toLowerCase(); return agents.value.filter(a => (provider.value === 'all' || a.provider === provider.value) && (!q || `${a.name} ${a.description} ${a.slug} ${a.provider} ${a.modelSlot}`.toLowerCase().includes(q))); });
-const activeSkills = computed(() => active.value ? skillsFor(active.value) : []);
+const activeSkills = computed(() => form.skillRefs);
+const teamLabel = computed(() => agentEditorTeamLabel(form.canCall));
+const routingDraft = computed<AgentEditorRoutingFields>({
+  get: () => ({ whenToCall: form.whenToCall, whenNotToCall: form.whenNotToCall, send: form.send, returns: form.returns, costTier: form.costTier, canCall: [...form.canCall], frontDoor: form.frontDoor }),
+  set: value => Object.assign(form, { ...value, canCall: [...value.canCall] }),
+});
+const openedEditorSnapshot = ref('');
+const currentEditorSnapshot = computed(() => editorDraftSignature(form, editorChoice.value, editorFallbacks.value));
+const hasUnsavedEdits = computed(() => !!active.value?.id && currentEditorSnapshot.value !== openedEditorSnapshot.value);
+const canTry = computed(() => !!active.value?.id && form.enabled && !hasUnsavedEdits.value && !saving.value);
+const tryHint = computed(() => {
+  if (!active.value?.id) return 'Save this definition before trying it.';
+  if (!form.enabled) return 'Enable and save this definition before trying it.';
+  if (hasUnsavedEdits.value) return 'Save or discard edits before trying it.';
+  return 'Opens a separate empty normal chat with this agent selected.';
+});
 function skillsFor(agent: Agent) { return manifests.value.get(agent.slug)?.spec.skills ?? []; }
 function slotLabel(tier: Agent['modelSlot']) { return tier === 'primary' ? 'Primary' : tier === 'subconscious' ? 'Subconscious' : 'Secondary'; }
-function modelLabel(agent: Agent | null) { if (agent?.modelChoice) return choiceLabel(agent.modelChoice, routing.value); return agent?.model ? `${agent.provider ?? 'Unknown'} / ${agent.model}` : slotLabel(agent?.modelSlot ?? null); }
+function modelLabel(agent: Agent | null) { if (agent && configuredModelLabels.value[agent.slug]) return configuredModelLabels.value[agent.slug]; if (agent?.modelChoice) return choiceLabel(agent.modelChoice, routing.value); return agent?.model ? `${agent.provider ?? 'Unknown'} / ${agent.model}` : slotLabel(agent?.modelSlot ?? null); }
 function sourceLabel(source: string) { return source === 'local' ? 'You' : source === 'builtin' || source === 'built-in' ? 'Built-in' : source || '—'; }
-async function load() { loading.value = true; error.value = ''; try { routing.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get).catch(() => null); agents.value = await ipcRenderer.invoke('agent-definitions:list'); const pairs = await Promise.all(agents.value.map(async a => [a.slug, await ipcRenderer.invoke('agent-definitions:export', a.slug)] as const).map(p => p.catch(() => null))); manifests.value = new Map(pairs.filter((x): x is readonly [string, Manifest] => x !== null)); } catch (e) { error.value = e instanceof Error ? e.message : String(e); } finally { loading.value = false; } }
+// Every catalog read (load, save reload, periodic refresh) takes a ticket; an older read never overwrites a newer one.
+const catalogReads = new RefreshSequencer();
+const pageRef = ref<HTMLElement | null>(null);
+const refreshNotice = ref('');
+let catalogKey = ''; let refreshing = false; let disposed = false; let latestCatalogRead = 0; let latestLoad = 0;
+let providerStatusVersion = 0; let latestProviderStatus: RoutingProviderInfo[] | null = null;
+const catalogSignature = (list: Agent[]) => JSON.stringify(list);
+function nextCatalogRead(): number {
+  latestCatalogRead = catalogReads.next();
+  return latestCatalogRead;
+}
+async function readDetails(list: Agent[], includeManifests = true, routingStatusVersion = providerStatusVersion) {
+  const nextRouting = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get).catch(() => null);
+  const pairs = includeManifests
+    ? await Promise.all(list.map(async a => [a.slug, await ipcRenderer.invoke('agent-definitions:export', a.slug)] as const).map(p => p.catch(() => null)))
+    : [];
+  return { nextRouting, routingStatusVersion, nextManifests: includeManifests ? new Map(pairs.filter((x): x is readonly [string, Manifest] => x !== null)) : undefined };
+}
+function applyRouting(nextRouting: ModelRoutingState | null, routingStatusVersion: number): void {
+  if (!nextRouting) return;
+  const providers = routingStatusVersion !== providerStatusVersion && latestProviderStatus ? latestProviderStatus : nextRouting.providers;
+  latestProviderStatus = providers;
+  // The open editor keeps its revision/token in its own AgentModelConfiguration snapshot, so routing mirrors the server.
+  routing.value = { ...nextRouting, providers };
+  restorePendingEditorModel();
+}
+function applyCatalog(list: Agent[], details: Awaited<ReturnType<typeof readDetails>>) {
+  applyRouting(details.nextRouting, details.routingStatusVersion);
+  const nextKey = catalogSignature(list);
+  if (nextKey !== catalogKey) { agents.value = list; catalogKey = nextKey; }
+  if (details.nextManifests) manifests.value = details.nextManifests;
+  refreshNotice.value = ''; error.value = '';
+}
+function onRoutingStatus(_: unknown, providers: RoutingProviderInfo[]): void {
+  if (disposed || !Array.isArray(providers)) return;
+  providerStatusVersion += 1;
+  latestProviderStatus = providers.slice();
+  if (routing.value) routing.value = { ...routing.value, providers: latestProviderStatus };
+}
+// Strict reads: a database outage is reported as an error, never as an empty catalog.
+const readCatalog = (): Promise<Agent[]> => ipcRenderer.invoke('agent-definitions:list', { strict: true });
+const REFRESH_FAILED = 'Could not refresh agents; showing the last loaded list.';
+/** True only when this read's fresh catalog was applied. */
+async function load(): Promise<boolean> { if (disposed) return false; const ticket = nextCatalogRead(); const routingStatusVersion = providerStatusVersion; latestLoad = ticket; let applied = false; loading.value = true; error.value = ''; try { const list = await readCatalog(); const details = await readDetails(list, true, routingStatusVersion); if (!disposed && ticket === latestCatalogRead && catalogReads.tryApply(ticket)) { applyCatalog(list, details); applied = true; } } catch (e) { if (!disposed && ticket === latestCatalogRead && !catalogReads.hasAppliedNewerThan(ticket)) { if (catalogKey) refreshNotice.value = REFRESH_FAILED; else error.value = e instanceof Error ? e.message : String(e); } } finally { if (latestLoad === ticket) loading.value = false; } return applied; }
+/** Native tabs stay mounted while hidden (v-show), so the document being visible is not enough. */
+function pageVisible(): boolean {
+  if (document.hidden || !pageRef.value?.isConnected) return false;
+  for (let node: Element | null = pageRef.value; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+  }
+  return true;
+}
+/** Read-only inventory check while visible; routing is refreshed each time, manifests only when the inventory changes. */
+async function refreshCatalog() {
+  if (disposed || refreshing || loading.value || saving.value || !pageVisible()) return;
+  refreshing = true; const ticket = nextCatalogRead(); const routingStatusVersion = providerStatusVersion;
+  try {
+    const list = await readCatalog();
+    if (disposed || ticket !== latestCatalogRead || catalogReads.hasAppliedNewerThan(ticket)) return;
+    const details = await readDetails(list, catalogSignature(list) !== catalogKey, routingStatusVersion);
+    if (!disposed && ticket === latestCatalogRead && catalogReads.tryApply(ticket)) applyCatalog(list, details);
+  } catch {
+    if (!disposed && ticket === latestCatalogRead && !catalogReads.hasAppliedNewerThan(ticket)) refreshNotice.value = REFRESH_FAILED;
+  } finally { refreshing = false; }
+}
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+const onDocumentVisibility = () => { void refreshCatalog(); };
+onMounted(() => { refreshTimer = setInterval(() => { void refreshCatalog(); }, 5_000); document.addEventListener('visibilitychange', onDocumentVisibility); ipcRenderer.on(MODEL_ROUTING_IPC.status, onRoutingStatus); });
+onBeforeUnmount(() => { disposed = true; if (refreshTimer) clearInterval(refreshTimer); refreshTimer = undefined; document.removeEventListener('visibilitychange', onDocumentVisibility); ipcRenderer.removeListener(MODEL_ROUTING_IPC.status, onRoutingStatus); });
 function editDirectoryAgent(agent: Agent) { directoryDetail.value = null; innerTab.value = 'manage'; openAgent(agent); }
 function closeCurrentDetail() { if (active.value) closeDetail(); else directoryRef.value?.closeDetail(); }
-function openAgent(agent: Agent) { active.value = agent; const choice = agent.modelChoice ?? { mode: 'list' as const }; Object.assign(form, { slug: agent.slug, name: agent.name, description: agent.description, provider: agent.provider ?? '', modelSlot: agent.modelSlot ?? 'secondary', modelBase: choice.mode === 'class' ? choice.class : 'list', pinned: choice.mode === 'pin', pinProvider: choice.mode === 'pin' ? choice.provider : '', pinModel: choice.mode === 'pin' ? choice.model : '', prompt: agent.prompt }); tab.value = 'profile'; detailMessage.value = ''; }
-function newAgent() { active.value = { id: '', slug: '', name: '', description: '', provider: null, model: null, modelSlot: 'secondary', prompt: '', sourceKind: 'local', marketplaceVersion: null, status: 'production', enabled: true, runLocation: 'vm', whenToCall: '', whenNotToCall: '', send: '', returns: '', costTier: null, canCall: [], isBuiltin: false, frontDoor: null, updatedAt: '', type: null }; Object.assign(form, { slug: '', name: '', description: '', provider: '', modelSlot: 'secondary', modelBase: 'list', pinned: false, pinProvider: '', pinModel: '', prompt: '' }); tab.value = 'profile'; detailMessage.value = ''; }
-function closeDetail() { active.value = null; detailMessage.value = ''; }
-async function save() { if (!active.value || !form.name.trim() || !form.slug.trim()) { detailError.value = true; detailMessage.value = 'Name and slug are required.'; return; } saving.value = true; detailMessage.value = ''; try { if (active.value.id) await ipcRenderer.invoke('agent-definitions:update', active.value.id, { name: form.name, description: form.description, modelSlot: form.modelSlot, modelChoice: formModelChoice(), prompt: form.prompt }); else await ipcRenderer.invoke('agent-definitions:create', { slug: form.slug, name: form.name, description: form.description, modelSlot: form.modelSlot, modelChoice: formModelChoice(), prompt: form.prompt }); await load(); const saved = agents.value.find(a => a.slug === form.slug); if (saved) openAgent(saved); detailError.value = false; detailMessage.value = 'Saved.'; } catch (e) { detailError.value = true; detailMessage.value = e instanceof Error ? e.message : String(e); } finally { saving.value = false; } }
-async function exportAgent() { if (!active.value) return; const manifest = await ipcRenderer.invoke('agent-definitions:export', active.value.slug); const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${active.value.slug}.json`; a.click(); URL.revokeObjectURL(url); }
-async function publishAgent() { if (!active.value) return; publishing.value = true; const check = await ipcRenderer.invoke('agent-definitions:publish-check', active.value.slug); if ('error' in check) { detailError.value = true; detailMessage.value = check.error; publishing.value = false; return; } if (check.warnings.length && !window.confirm(`${check.warnings.join('\n')}\n\nPublish anyway?`)) { publishing.value = false; return; } const res = await ipcRenderer.invoke('agent-definitions:publish', active.value.slug); publishing.value = false; detailError.value = 'error' in res; detailMessage.value = 'error' in res ? res.error : `Submitted as ${res.templateId}.`; }
-async function deleteAgent() { if (!active.value?.id || !window.confirm(`Delete ${active.value.name}?`)) return; await ipcRenderer.invoke('agent-definitions:delete', active.value.id); closeDetail(); await load(); }
+/** Bumped whenever the editor switches agents; a save only touches the editor it started in. */
+let editorGeneration = 0;
+/** Editor generation opened before model settings loaded; its saved model is shown once they arrive. */
+let routingPendingEditor = 0; let openedModelDraft = '';
+const modelDraft = () => JSON.stringify([editorChoice.value, editorFallbacks.value]);
+/** A saved disabled definition is not in the runnable workers list, yet its owner may configure its model chain. */
+const disabledOwnerDefinition = (agent: Agent) => !!agent.id && agent.enabled === false && agent.status !== 'archive';
+function openAgent(agent: Agent) {
+  editorGeneration++;
+  active.value = agent;
+  const configuration = new AgentModelConfiguration(agent.id, agent.slug, routing.value, agent.modelChoice ?? { mode: 'list' }, disabledOwnerDefinition(agent));
+  modelConfiguration.value = configuration;
+  editorBase.value = agent.modelChoice ? { ...agent.modelChoice } : { mode: 'list' };
+  editorChoice.value = configuration.choice(editorBase.value);
+  editorFallbacks.value = cloneModelCandidates(configuration.fallbacks());
+  routingPendingEditor = routing.value ? 0 : editorGeneration; openedModelDraft = modelDraft();
+  Object.assign(form, editorFormFromAgent(agent));
+  openedEditorSnapshot.value = editorDraftSignature(form, editorChoice.value, editorFallbacks.value);
+  tab.value = 'profile'; detailMessage.value = '';
+}
+/** First model settings for an editor opened without them: show the saved model unless the model was already edited. Profile and prompt drafts are never touched. */
+function restorePendingEditorModel(): void {
+  if (!routingPendingEditor || routingPendingEditor !== editorGeneration || !routing.value || !active.value?.id) return;
+  routingPendingEditor = 0;
+  const base = active.value.modelChoice ?? { mode: 'list' };
+  const configuration = new AgentModelConfiguration(active.value.id, active.value.slug, routing.value, base, disabledOwnerDefinition(active.value));
+  if (modelDraft() !== openedModelDraft && JSON.stringify([configuration.choice(base), configuration.fallbacks()]) !== modelDraft()) {
+    detailError.value = true; detailMessage.value = 'Saved model settings loaded after the model was changed here. Your changes are kept; reopen this agent to review the saved model before saving.';
+    return;
+  }
+  modelConfiguration.value = configuration;
+  editorBase.value = base;
+  editorChoice.value = configuration.choice(base);
+  editorFallbacks.value = cloneModelCandidates(configuration.fallbacks());
+  openedEditorSnapshot.value = editorSnapshotWithModel(
+    openedEditorSnapshot.value,
+    editorChoice.value,
+    editorFallbacks.value,
+  );
+}
+function newAgent() {
+  editorGeneration++;
+  active.value = {
+    id: '', slug: '', name: '', description: '', provider: null, model: null, modelSlot: 'secondary', modelChoice: { mode: 'list' }, prompt: '',
+    sourceKind: 'local', marketplaceVersion: null, status: 'production', enabled: true, runLocation: 'vm', whenToCall: '', whenNotToCall: '', send: '', returns: '', costTier: null, canCall: [],
+    isBuiltin: false, frontDoor: null, updatedAt: '', type: null, allowedTools: [], skillRefs: [], routineRefs: [],
+  };
+  Object.assign(form, emptyAgentEditorForm());
+  editorChoice.value = { mode: 'list' }; editorBase.value = { mode: 'list' }; editorFallbacks.value = []; modelConfiguration.value = undefined;
+  openedEditorSnapshot.value = editorDraftSignature(form, editorChoice.value, editorFallbacks.value);
+  tab.value = 'profile'; detailMessage.value = '';
+}
+const MODEL_SETTINGS_UNAVAILABLE = 'Model settings for this agent could not be loaded, so nothing was saved. Your edits are kept; Save again when model settings are available.';
+const MODEL_SETTINGS_CHANGED = 'This agent\'s model settings changed elsewhere, so nothing was saved. Your edits are kept; reopen this agent to review the saved model before saving.';
+/**
+ * A saved agent whose owner model metadata is missing (for example, created while the agent list
+ * could not be read back). Read the routing authority directly and adopt its mapping only if it still
+ * holds exactly the chain this editor's saved baseline records; never a newer or foreign revision.
+ */
+async function recoverModelConfiguration(id: string, slug: string, disabled: boolean): Promise<{ configuration?: AgentModelConfiguration; refusal?: string }> {
+  const saved = editorSnapshotSavedModel(openedEditorSnapshot.value);
+  const statusVersion = providerStatusVersion;
+  const fresh = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get).catch(() => null);
+  if (!fresh || !saved) return { refusal: MODEL_SETTINGS_UNAVAILABLE };
+  applyRouting(fresh, statusVersion);
+  const binding = fresh.workerBindings?.[slug];
+  const owned = binding?.agentId === id ? normalizedModelChain(binding.candidates ?? []) : null;
+  if (JSON.stringify(owned) !== JSON.stringify(saved.chain)) return { refusal: MODEL_SETTINGS_CHANGED };
+  return { configuration: new AgentModelConfiguration(id, slug, fresh, saved.modelChoice, disabled) };
+}
+function closeDetail() { editorGeneration++; active.value = null; openedEditorSnapshot.value = ''; detailMessage.value = ''; }
+async function tryAgent(): Promise<void> {
+  if (!canTry.value || !active.value?.id || !active.value.slug) return;
+  // Chat selection and runtime routing resolve agents by their saved slug, never by definition id.
+  const payload = agentTryTabPayload(active.value.slug, `${ form.name || active.value.name } · Chat`);
+  try {
+    await openWorkspaceTab(payload);
+  } catch (error) {
+    detailMessage.value = error instanceof Error ? error.message : String(error);
+  }
+}
+async function save() {
+  if (!active.value) return;
+  const validationError = validateEditorDraft(form);
+  if (validationError) { detailError.value = true; detailMessage.value = validationError; return; }
+  // Everything this save writes is fixed before its first await: the editor may move to another agent meanwhile.
+  const origin = { editor: editorGeneration, id: active.value.id, slug: form.slug, updatedAt: active.value.updatedAt };
+  const isOriginEditor = () => editorGeneration === origin.editor;
+  const profile = editorPatchFromForm(form);
+  const choice = formModelChoice();
+  const createInput = editorCreateFromForm(form, choice, editorFallbacks.value);
+  const submittedForm = JSON.parse(JSON.stringify(form)) as AgentEditorFormState;
+  const submittedFallbacks = cloneModelCandidates(editorFallbacks.value);
+  /** Move only the persisted parts into the saved baseline; anything edited meanwhile stays unsaved. */
+  const markPersisted = (formPersisted: boolean, modelPersisted: boolean) => {
+    if (!isOriginEditor()) return;
+    let next = openedEditorSnapshot.value;
+    if (formPersisted) next = editorSnapshotWithForm(next, submittedForm);
+    if (modelPersisted) next = editorSnapshotWithModel(next, choice, submittedFallbacks);
+    openedEditorSnapshot.value = next;
+  };
+  let configuration = modelConfiguration.value;
+  const originDisabled = disabledOwnerDefinition(active.value);
+  const draft = () => editorDraftSignature(form, editorChoice.value, editorFallbacks.value);
+  const submitted = draft();
+  // The model portion still equals what is saved: a profile-only save needs no owner model write.
+  const modelUnchanged = editorSnapshotWithForm(openedEditorSnapshot.value, submittedForm) === submitted;
+  saving.value = true; detailMessage.value = '';
+  let modelSaved = false; let profileSaved = false;
+  try {
+    if (origin.id && !configuration) {
+      const recovered = await recoverModelConfiguration(origin.id, origin.slug, originDisabled);
+      if (recovered.configuration) {
+        configuration = recovered.configuration;
+        if (isOriginEditor()) modelConfiguration.value = configuration;
+      } else if (!modelUnchanged || recovered.refusal === MODEL_SETTINGS_CHANGED) {
+        // Never let a saved subscription role bypass its binding through the profile.
+        throw new Error(recovered.refusal);
+      }
+    }
+    // Click-time fallbacks. Edits made while recoverModelConfiguration awaits must not mix into this write.
+    const change = configuration?.change(choice, submittedFallbacks, routing.value);
+    if (change?.candidates) {
+      routing.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.workerSet, change);
+      configuration?.adopt(routing.value); modelSaved = true; markPersisted(false, true);
+    }
+    if (origin.id) {
+      const updated = await ipcRenderer.invoke('agent-definitions:update', origin.id, { ...profile, ...(routing.value && configuration && !configuration.usesBinding(choice, routing.value) ? { modelChoice: choice } : {}), ...(origin.updatedAt ? { expectedUpdatedAt: origin.updatedAt } : {}) });
+      if (!updated) throw new Error('This agent changed elsewhere. Reload before saving to review the conflict.');
+      // Adopt this write's timestamp so the next save's CAS compares against it, even without a fresh readback.
+      if (isOriginEditor() && active.value?.id === origin.id) active.value = { ...active.value, updatedAt: updated.updated_at || active.value.updatedAt };
+      markPersisted(true, change === undefined);
+    }
+    else {
+      const created = await ipcRenderer.invoke('agent-definitions:create', createInput);
+      // Only the editor that created it adopts the persisted identity, so its next save updates instead of creating again.
+      if (created?.id && isOriginEditor() && active.value) {
+        active.value = { ...active.value, id: created.id, slug: created.slug || origin.slug, enabled: created.enabled !== false, updatedAt: created.updated_at || active.value.updatedAt };
+        // Create persists the profile and its whole model chain together.
+        markPersisted(true, true);
+      }
+    }
+    profileSaved = true;
+    if (change?.candidates === null) {
+      routing.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.workerSet, change);
+      configuration?.adopt(routing.value); modelSaved = true; markPersisted(false, true);
+    }
+    const fresh = await load();
+    // The editor now shows another agent: leave its form and message alone.
+    if (!isOriginEditor()) return;
+    // Reopen only from a fresh readback, and only if nothing was edited while saving; otherwise keep the open form.
+    const saved = fresh && draft() === submitted ? agents.value.find(a => a.slug === origin.slug) : undefined; if (saved) openAgent(saved);
+    detailError.value = false; detailMessage.value = `Saved. Model changes apply to new work; running jobs keep their launch settings.${ fresh ? '' : ' The agent list will refresh when the database is reachable.' }`;
+  } catch (e) {
+    if (!isOriginEditor()) return;
+    detailError.value = true;
+    const reason = e instanceof Error ? e.message : String(e);
+    detailMessage.value = `${modelSaved ? 'Model settings were saved; profile could not be saved. ' : profileSaved ? 'Profile was saved; model settings could not be saved. ' : ''}${ reason }`;
+  } finally { saving.value = false; }
+}
+async function exportAgent() { if (!active.value) return; const manifest = await ipcRenderer.invoke('agent-definitions:export', active.value.slug); const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${ active.value.slug }.json`; a.click(); URL.revokeObjectURL(url); }
+async function publishAgent() { if (!active.value) return; publishing.value = true; const check = await ipcRenderer.invoke('agent-definitions:publish-check', active.value.slug); if ('error' in check) { detailError.value = true; detailMessage.value = check.error; publishing.value = false; return; } if (check.warnings.length && !window.confirm(`${ check.warnings.join('\n') }\n\nPublish anyway?`)) { publishing.value = false; return; } const res = await ipcRenderer.invoke('agent-definitions:publish', active.value.slug); publishing.value = false; detailError.value = 'error' in res; detailMessage.value = 'error' in res ? res.error : `Submitted as ${ res.templateId }.`; }
+async function deleteAgent() { if (!active.value?.id || !window.confirm(`Delete ${ active.value.name }?`)) return; await ipcRenderer.invoke('agent-definitions:delete', active.value.id); closeDetail(); await load(); }
 onMounted(load);
 useDatabaseAvailableReload(load, 'StudioAgentsPage');
 </script>
@@ -117,32 +399,4 @@ useDatabaseAvailableReload(load, 'StudioAgentsPage');
 .seg-tabs button { position: relative; z-index: 1; padding: 5px 14px; border: 0; border-radius: 7px; background: transparent; color: var(--uc-muted); font: inherit; cursor: pointer; transition: color 160ms ease; }
 .seg-tabs button.on { color: var(--uc-text); font-weight: 500; }
 .seg-tabs i { position: absolute; top: 3px; bottom: 3px; left: 0; border-radius: 7px; background: var(--uc-card); box-shadow: var(--uc-shadow), inset 0 0 0 1px var(--uc-line); transition: transform 240ms cubic-bezier(.22, 1, .36, 1), width 240ms cubic-bezier(.22, 1, .36, 1); }
-/* Model setting: the approved model routing mockup's agent-settings preview. */
-.mc { overflow: hidden; border: 1px solid var(--uc-line); border-radius: 10px; background: var(--uc-card); }
-.mc-set { display: flex; align-items: center; gap: 24px; padding: 13px 16px; border-top: 1px solid var(--uc-line); }
-.mc-set:first-child { border-top: 0; }
-.mc-l { flex: 1; min-width: 0; }
-.mc-l b { display: block; color: var(--uc-text); font-weight: 600; }
-.mc-l small { display: block; margin-top: 2px; color: var(--uc-dim); font-size: 12px; }
-.mc-resolve { margin-top: 3px; color: var(--uc-dim); font-size: 12px; }
-.mc-resolve code { color: var(--uc-text); font: 11.5px var(--font-mono); }
-.mc-resolve.warn { color: var(--status-warning); }
-.mc-c { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.mc .mc-sel { width: auto; min-width: 180px; max-width: 100%; height: 30px; padding: 0 10px; }
-.mc .mc-sel:disabled { opacity: .5; }
-.mc-tog { position: relative; flex: none; width: 34px; height: 20px; padding: 0; border: 0; border-radius: 999px; background: var(--uc-line-strong); cursor: pointer; transition: background 160ms cubic-bezier(.22, 1, .36, 1); }
-.mc-tog::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg-surface); box-shadow: 0 1px 2px rgb(0 0 0 / 25%); transition: transform 240ms cubic-bezier(.22, 1, .36, 1); }
-.mc-tog.on { background: var(--uc-accent); }
-.mc-tog.on::after { transform: translateX(14px); }
-.mc-tog:focus-visible { outline: 0; box-shadow: 0 0 0 3px var(--uc-accent-soft); }
-.mc-pin { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 480ms cubic-bezier(.22, 1, .36, 1); }
-.mc-pin.open { grid-template-rows: 1fr; }
-.mc-pin > div { overflow: hidden; min-height: 0; }
-.mc-pin .mc-set { opacity: 0; transition: opacity 240ms cubic-bezier(.22, 1, .36, 1); }
-.mc-pin.open .mc-set { opacity: 1; }
-.mc-warn { display: flex; align-items: flex-start; gap: 8px; padding: 0 16px 13px; color: var(--status-warning); font-size: 12px; }
-.mc-note { display: flex; align-items: flex-start; gap: 8px; padding: 11px 16px 13px; border-top: 1px solid var(--uc-line); color: var(--uc-muted); font-size: 12px; }
-.mc-note b { color: var(--uc-text); font-weight: 600; }
-@media (max-width: 720px) { .mc-set { flex-direction: column; align-items: stretch; gap: 10px; } .mc-c { justify-content: flex-start; } }
-@media (prefers-reduced-motion: reduce) { .mc-pin, .mc-pin .mc-set, .mc-tog, .mc-tog::after { transition-duration: 1ms; } }
 </style>

@@ -24,7 +24,7 @@ import {
 } from './laneLogic';
 import { LedgerDrafts } from './ledgerDraft';
 import { LedgerText } from './ledgerText';
-import { CLASS_LABELS, orderedClassModels, providerName } from './routingLogic';
+import { CLASS_LABELS, modelSelectionLabel, orderedClassModels, providerKind, providerName } from './routingLogic';
 
 import { effectiveEffort, isAutoEntry, isBlocked, resolveRule } from '@pkg/agent/languagemodels/modelCatalogRules';
 import { MODEL_CLASSES, type ClassModel, type ModelClass, type ModelRoutingState, type ModelRule, type NeverUsePair } from '@pkg/agent/languagemodels/modelRoutingTypes';
@@ -48,10 +48,14 @@ const changedRoles = computed(() => MODEL_CLASSES.filter(c => laneChanged(saved.
 const neverChanged = computed(() => JSON.stringify(never.value) !== JSON.stringify(props.state.neverUse ?? []));
 const dirty = computed(() => changedRoles.value.length > 0 || neverChanged.value);
 
-watch(() => props.state, () => {
-  if (dirty.value) return;
-  draft.value = savedLanes();
-  never.value = clone(props.state.neverUse ?? []);
+watch([saved, () => props.state.neverUse], ([lanes, blocked], [previousLanes, previousBlocked]) => {
+  // Compare to the previous saved values to distinguish actual edits from a refresh.
+  for (const role of MODEL_CLASSES) {
+    if (!laneChanged(previousLanes[role], draft.value[role])) draft.value[role] = [...lanes[role]];
+  }
+  if (JSON.stringify(never.value) === JSON.stringify(previousBlocked ?? [])) {
+    never.value = clone(blocked ?? []);
+  }
 });
 
 // ── Lookups ────────────────────────────────────────────────────────────────
@@ -182,13 +186,13 @@ function sourceText(c: ModelClass, i: number): string {
 <template>
   <section
     class="card ld"
-    :class="{ pend: dirty }"
+    :class="{ pend: dirty, 'ld-picking': !!menu }"
     aria-label="Models for each role"
   >
     <header class="ld-head">
       <div>
         <h2>Models for each role</h2>
-        <p>Agents ask for a role. Sulla tries that role's providers in order and moves on when one is unavailable or out of usage.</p>
+        <p>Providers are tried in order.</p>
       </div>
       <div class="ld-head-r">
         <span
@@ -225,8 +229,9 @@ function sourceText(c: ModelClass, i: number): string {
         <b>{{ CLASS_LABELS[c] }}</b>
         <span
           class="ld-users"
+          v-if="usedBy(state, c).length"
           :title="usedBy(state, c).join(', ')"
-        >{{ usedBy(state, c).length ? `Used by ${usedBy(state, c).join(', ')}` : 'Used by agents that ask for this role' }}</span>
+        >Used by {{ usedBy(state, c).slice(0, 2).join(', ') }}<template v-if="usedBy(state, c).length > 2"> +{{ usedBy(state, c).length - 2 }}</template></span>
         <button
           type="button"
           class="ld-ghost"
@@ -245,7 +250,7 @@ function sourceText(c: ModelClass, i: number): string {
           v-if="addable(c).length"
           class="ld-row-wrap"
         >
-          <span class="ld-dim">Connected, not in this role:</span>
+          <span class="ld-dim">Available to add</span>
           <button
             v-for="p in addable(c)"
             :key="p"
@@ -258,7 +263,7 @@ function sourceText(c: ModelClass, i: number): string {
         </div>
         <p class="ld-dim">
           <template v-if="hiddenProviders(c).length">
-            Also in this role but not connected, so skipped: {{ hiddenProviders(c).join(', ') }}.
+            Disconnected: {{ hiddenProviders(c).join(', ') }}.
           </template>
           <template v-else-if="notConnected.length">
             Not connected: {{ notConnected.join(', ') }}. Connect them in Integrations.
@@ -270,7 +275,7 @@ function sourceText(c: ModelClass, i: number): string {
         v-if="!lines(c).length"
         class="ld-grid ld-line ld-empty"
       >
-        <span /><span class="ld-empty-t">No connected provider in {{ CLASS_LABELS[c] }}. Agents that ask for it fall back to another role.</span>
+        <span /><span class="ld-empty-t">No connected providers. Agents use another role.</span>
       </p>
 
       <template
@@ -284,7 +289,7 @@ function sourceText(c: ModelClass, i: number): string {
           <span class="ld-ord">{{ k + 1 }}</span>
           <span class="ld-prov">
             <b>{{ providerName(state, m.provider) }}</b>
-            <small :class="{ ac: sourceText(c, i) === 'Unsaved' }">{{ sourceText(c, i) }}<template v-if="!canCheck(m.provider)"> · can't be checked</template></small>
+            <small :class="{ ac: sourceText(c, i) === 'Unsaved' }"><template v-if="sourceText(c, i) !== 'You chose'">{{ sourceText(c, i) }} · </template>{{ providerKind(state, m.provider) }}</small>
           </span>
           <span class="ld-model-wrap">
             <button
@@ -293,7 +298,8 @@ function sourceText(c: ModelClass, i: number): string {
               :class="{ bad: chipHealth(view, m) === 'unlisted' || chipHealth(view, m) === 'blocked', ed: edited(c, i, 'model') }"
               aria-haspopup="listbox"
               :aria-expanded="menu?.c === c && menu.i === i"
-              :aria-label="`${providerName(state, m.provider)} model for ${CLASS_LABELS[c]}: ${label(m.provider, m.model)}`"
+              :aria-label="`${providerName(state, m.provider)} model for ${CLASS_LABELS[c]}: ${label(m.provider, m.model)} (${modelSelectionLabel(state, m.provider, m.model)})`"
+              :title="modelSelectionLabel(state, m.provider, m.model)"
               @click="openMenu(c, i)"
             >
               <span class="ld-lbl">{{ label(m.provider, m.model) }}</span>

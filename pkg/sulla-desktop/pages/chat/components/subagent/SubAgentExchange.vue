@@ -30,7 +30,7 @@
           @click="openConversation"
         >{{ msg.agentId }}</button>
         <b v-else>{{ msg.agentId }}</b>
-        · {{ msg.label }}
+        · {{ msg.label }} <small>{{ modelLabel }}</small>
       </span>
       <time
         v-if="when?.label"
@@ -67,6 +67,7 @@ import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import { LineTimes } from '../../messages/lineTime';
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 
 import type { OpenSubAgentConversation } from './subAgentConversation';
 import type { ProactiveMessage, SubAgentExchangeMessage } from '../../models/Message';
@@ -85,6 +86,8 @@ const sameTask = (jobId?: string, taskIndex?: number) => !!props.msg.jobId && jo
 
 /** The result card for this job, if one is in the chat. */
 const card = computed(() => resultCardFor(props.msg, controller?.messages.value ?? []));
+
+const modelLabel = computed(() => AgentModelStatus.label(live?.snapshot.value.rows.find(entry => sameTask(entry.jobId, entry.taskIndex))?.modelStatus ?? card.value?.modelStatus));
 
 const coveredByCard = computed(() => returnCoveredByCard(props.msg, controller?.messages.value ?? []));
 
@@ -163,4 +166,8 @@ function openConversation(): void {
   .sx-line { grid-template-columns: auto minmax(0, 1fr); }
   .sx-time, .sx-status, .sx-link { grid-column: 2; }
 }
+</style>
+
+<style scoped>
+.sx-text small { display: block; opacity: .8; }
 </style>

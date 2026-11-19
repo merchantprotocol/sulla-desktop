@@ -3,10 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import '../../Support/TestHomeEnv';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { modelRouter, recommendedState } from '../../../languagemodels/modelRouter';
 import { TestDatabase } from '../../Support/TestDatabase';
+import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 import { SpawnAgentWorker } from '../../../tools/agents/spawn_agent';
+import { toolDecisionPort } from '../../../tools/toolDecisionPort';
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../services/ModelProviderService', () => ({
@@ -17,6 +22,7 @@ const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? descri
 
 dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool and repository)', () => {
   const database = new TestDatabase();
+  let settingsDirectory: string | undefined;
   let registry: typeof import('../../../tools/agents/jobRegistry');
 
   // Visible tabs stay off (the production default): allowVisibleTabs is never set here.
@@ -35,6 +41,11 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
   }
 
   beforeAll(async() => {
+    vi.spyOn(toolDecisionPort.resolve(), 'requiresApproval').mockResolvedValue(false);
+    settingsDirectory = await mkdtemp(join(tmpdir(), 'sulla-spawn-qa-'));
+    SullaSettingsModel.setFallbackFilePath(join(settingsDirectory, 'settings.json'));
+    // This legacy-launch fixture has no owner-configured worker bindings.
+    vi.spyOn(modelRouter, 'getEditableState').mockResolvedValue(recommendedState());
     await database.initialize();
     process.env.SULLA_DATABASE_URL = database.appUrl();
     process.env.PGOPTIONS = `-csearch_path=${ database.schema },public`;
@@ -46,11 +57,14 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
     registry = await import('../../../tools/agents/jobRegistry');
     const { agentDefinitionService } = await import('../../../services/AgentDefinitionService');
     vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({
-      slug: 'codex-sol-worker', name: 'Codex SOL Worker', enabled: true, status: 'active', run_location: 'vm',
+      id: 'worker-definition', slug: 'codex-sol-worker', name: 'Codex SOL Worker', enabled: true, status: 'active', run_location: 'vm',
     } as any);
   }, 60_000);
 
-  afterAll(async() => database.dispose());
+  afterAll(async() => {
+    await database.dispose();
+    if (settingsDirectory) await rm(settingsDirectory, { recursive: true, force: true });
+  });
 
   it('downgrades a tab request to hidden with tab_launch_disabled on the response and the stored task', async() => {
     const parent = `downgrade-${ Date.now() }`; // risk: silent downgrade hides why a visible tab did not open
@@ -58,7 +72,7 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
       tasks: [{ agentId: 'codex-sol-worker', label: 'downgraded-tab', prompt: 'do the work', visibility: 'tab' }],
     });
 
-    expect(response.result).toMatchObject({
+    expect(response.result, JSON.stringify(response)).toMatchObject({
       taskVisibility: [{ index: 0, visibility: 'hidden', requestedVisibility: 'tab', downgradeReason: 'tab_launch_disabled' }],
     });
 
@@ -75,9 +89,20 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
       tasks: [{ agentId: 'codex-sol-worker', label: 'plain-hidden', prompt: 'do the work' }],
     });
 
-    expect(response.result).toMatchObject({ taskVisibility: [{ index: 0, visibility: 'hidden' }] });
+    expect(response.result, JSON.stringify(response)).toMatchObject({ taskVisibility: [{ index: 0, visibility: 'hidden' }] });
     expect((response.result as { taskVisibility: Record<string, unknown>[] }).taskVisibility[0]).not.toHaveProperty('downgradeReason');
     const stored = await registry.getJob((response.result as { jobId: string }).jobId);
     expect(stored?.tasks[0]?.requestedVisibility).toBeUndefined();
+  });
+  it('snapshots the named worker mapping instead of a stale caller model and effort', async() => {
+    const route = { agentId: 'worker-definition', revision: 2, editToken: 'fixture-owner-edit', connections: { codex: 'fixture-subscription' }, candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'max' }] };
+    vi.mocked(modelRouter.getEditableState).mockResolvedValue({ ...recommendedState(), workerBindings: { 'coding-manager-sol': route } });
+    vi.spyOn(modelRouter, 'workerLaunchCandidates').mockImplementation(rows => Promise.resolve(rows));
+    const response = await new SpawnHarness().run(`mapped-${ Date.now() }`, { tasks: [{ agentId: 'coding-manager-sol', label: 'mapped-worker', prompt: 'do the work', model: 'obsolete-model', effort: 'unsupported-old-effort' }] });
+    expect(response.success, JSON.stringify(response)).toBe(true);
+    const stored = await registry.getJob((response.result as { jobId: string }).jobId);
+    expect(stored?.tasks[0]).toMatchObject({ agentId: 'coding-manager-sol', workerModelRoute: { ...route, slug: 'coding-manager-sol', version: 1, selected: 0 } });
+    route.candidates[0].effort = 'high';
+    expect((await registry.getJob(stored!.jobId))?.tasks[0].workerModelRoute?.candidates[0].effort).toBe('max');
   });
 });

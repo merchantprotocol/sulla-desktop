@@ -49,14 +49,11 @@
 .ar-kind { font-size: 12px; color: var(--ar-ink-3); white-space: nowrap; }
 .ar-outcome { max-width: 68ch; margin: 10px 16px 0; font-size: 15px; line-height: 1.5; }
 .ar-outcome.ar-secondary { margin-top: 6px; font-size: 13.5px; color: var(--ar-ink-2); }
-.ar-problem {
-  max-width: 72ch; margin: 10px 16px 0; padding: 9px 12px; border-radius: 9px; font-size: 14.5px; line-height: 1.5;
-  border: 1px solid color-mix(in srgb, var(--status-warning) 35%, transparent);
-  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
-}
-.ar-problem b { color: var(--status-warning); font-weight: 650; }
-.ar-problem.ar-failed { border-color: color-mix(in srgb, var(--status-error) 35%, transparent); background: color-mix(in srgb, var(--status-error) 8%, transparent); }
-.ar-problem.ar-failed b { color: var(--status-error); }
+.ar-history-note { margin: 10px 16px 0; color: var(--ar-ink-2); font-size: 13px; line-height: 1.5; }
+.ar-original { margin: 10px 16px 0; padding: 8px 10px; border: 1px solid var(--border-default); border-radius: 8px; }
+.ar-original > summary { cursor: pointer; font-size: 13px; color: var(--ar-ink-2); }
+.ar-original .ar-outcome, .ar-original .ar-body { margin-left: 0; margin-right: 0; }
+.ar-problem { margin: 10px 0 0; font-size: 13px; line-height: 1.5; color: var(--ar-ink-2); overflow-wrap: anywhere; }
 .ar-whonext { margin: 8px 16px 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .ar-tail { margin: 10px 16px 0; padding: 8px 12px; list-style: none; border-radius: 8px; background: var(--ar-raised); font: 12.5px/1.55 var(--font-mono, ui-monospace, monospace); color: var(--ar-ink-2); }
 .ar-tail li { overflow-wrap: anywhere; }

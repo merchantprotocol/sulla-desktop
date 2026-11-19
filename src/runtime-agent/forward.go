@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -42,22 +44,70 @@ const (
 var hostAliases = []string{"host.sulla.internal", "host.docker.internal"}
 
 type portHeader struct {
-	Port int `json:"port"`
+	Port        int `json:"port"`
+	FlowControl int `json:"flowControl,omitempty"`
 }
 
 func splice(left, right net.Conn) {
 	done := make(chan struct{}, 2)
-	half := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
-		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
+	var abort sync.Once
+	fail := func() { abort.Do(func() { _ = left.Close(); _ = right.Close() }) }
+	finished := make(chan struct{})
+	defer close(finished)
+	for _, conn := range []net.Conn{left, right} {
+		if flow, ok := conn.(*flowConn); ok {
+			go func(c *flowConn) {
+				select {
+				case <-c.done:
+					fail()
+				case <-finished:
+				}
+			}(flow)
 		}
-		done <- struct{}{}
+	}
+	half := func(dst, src net.Conn) {
+		defer func() { done <- struct{}{} }()
+		_, err := io.Copy(dst, src)
+		// Only a broken framed wire cancels both directions. An application
+		// error (a service closing while the peer still uploads) ends this half
+		// like the raw transport always has, so the opposite response drains.
+		if err != nil && (flowAborted(dst) || flowAborted(src)) {
+			fail()
+			return
+		}
+		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+			if cerr := cw.CloseWrite(); cerr != nil && flowAborted(dst) {
+				fail()
+				return
+			}
+		}
+		if flow, ok := src.(*flowConn); ok && err != nil {
+			// The sink rejected the rest of this direction: keep acknowledging
+			// and dropping the peer's data until its END, so its producer is not
+			// stranded without credit. Memory stays within one copy buffer.
+			if _, err := io.Copy(io.Discard, flow); err != nil {
+				fail()
+			}
+		}
 	}
 	go half(left, right)
 	go half(right, left)
 	<-done
 	<-done
+}
+
+// flowAborted reports whether conn is a framed stream whose wire was cancelled.
+func flowAborted(conn net.Conn) bool {
+	flow, ok := conn.(*flowConn)
+	if !ok {
+		return false
+	}
+	select {
+	case <-flow.done:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *agent) forwardServer() {
@@ -159,10 +209,37 @@ func (a *agent) hostLoopbackSession(c *net.TCPConn) {
 		return
 	}
 	defer host.Close()
-	if err := writeFrame(host, portHeader{Port: port}); err != nil {
+	// The initial clock/control message identifies new and legacy hosts.
+	// Do not establish an unprotected long-lived connection while it is unknown.
+	select {
+	case <-hostFlowReady:
+	case <-a.ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
 		return
 	}
-	splice(c, host)
+	useFlow := hostFlowEnabled.Load()
+	header := portHeader{Port: port}
+	if useFlow {
+		header.FlowControl = 1
+	}
+	if err := writeFrame(host, header); err != nil {
+		return
+	}
+	if useFlow {
+		r := bufio.NewReaderSize(host, 4096)
+		var reply struct {
+			FlowControl int `json:"flowControl"`
+		}
+		if readFrame(r, &reply) != nil || reply.FlowControl != 1 {
+			return
+		}
+		flow := newFlowConn(host, r)
+		defer flow.Close()
+		splice(c, flow)
+	} else {
+		splice(c, host)
+	}
 }
 
 func originalDestination(c *net.TCPConn) (string, int, error) {
@@ -198,5 +275,5 @@ func dialHostVsock(port uint32) (net.Conn, error) {
 		syscall.Close(fd)
 		return nil, errno
 	}
-	return &vsockConn{os.NewFile(uintptr(fd), "vsock-host")}, nil
+	return &vsockConn{File: os.NewFile(uintptr(fd), "vsock-host")}, nil
 }

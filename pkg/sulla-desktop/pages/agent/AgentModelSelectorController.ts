@@ -15,15 +15,19 @@
 
 import { computed, ref } from 'vue';
 
+import { MODEL_DEFAULTS_CHANGED, MODEL_DEFAULTS_IPC, type ModelDefaultsState } from '@pkg/agent/languagemodels/modelDefaultsTypes';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import type { ModelSelectionMode } from '@pkg/shared/providerAccess';
 import type { ComputedRef, Ref } from 'vue';
 
 export interface ModelOption {
   providerId:       string;
   providerName:     string;
+  providerAccessLabel?: string;
   modelId:          string;
   modelLabel:       string;
+  selectionMode?:   ModelSelectionMode;
   isActiveProvider: boolean;
   isActiveModel:    boolean;
 }
@@ -31,6 +35,7 @@ export interface ModelOption {
 export interface ProviderGroup {
   providerId:       string;
   providerName:     string;
+  accessLabel?:     string;
   isActiveProvider: boolean;
   loading:          boolean;
   models:           ModelOption[];
@@ -63,8 +68,14 @@ export class AgentModelSelectorController {
   readonly providerGroups = ref<ProviderGroup[]>([]);
   readonly agentOptions = ref<AgentOption[]>([]);
   readonly activeAgentId = ref<string | null>(null);
+  readonly chatDefaultAgentName = ref('');
+  private chatDefaultGeneration = 0;
 
   readonly loadingProviders = ref(false);
+  /** During and after availability reads, stale UI events must fail closed. */
+  private providerAvailabilityLoaded = false;
+  /** Only the newest availability read may repopulate the selector. */
+  private providerRefreshGeneration = 0;
 
   readonly activeModelLabel: ComputedRef<string>;
   readonly isRunningValue:   ComputedRef<boolean>;
@@ -100,7 +111,8 @@ export class AgentModelSelectorController {
     ipcRenderer.on('vault:logged-in' as any, this.handleVaultUnlocked);
     // Legacy listener for backward compat with windows not yet migrated
     ipcRenderer.on('model-changed', this.handleLegacyModelChanged);
-    await this.loadActiveSettings();
+    ipcRenderer.on(MODEL_DEFAULTS_CHANGED, this.handleChatDefaultsChanged);
+    await Promise.all([this.loadActiveSettings(), this.loadChatDefault()]);
   }
 
   dispose(): void {
@@ -108,6 +120,8 @@ export class AgentModelSelectorController {
     ipcRenderer.removeListener('model-provider:state-changed', this.handleStateChanged);
     ipcRenderer.removeListener('vault:logged-in' as any, this.handleVaultUnlocked);
     ipcRenderer.removeListener('model-changed', this.handleLegacyModelChanged);
+    ipcRenderer.removeListener(MODEL_DEFAULTS_CHANGED, this.handleChatDefaultsChanged);
+    this.chatDefaultGeneration++;
   }
 
   get showModelMenuValue(): boolean {
@@ -166,6 +180,11 @@ export class AgentModelSelectorController {
 
   /** Select a model for this chat only; global Preferences are never mutated. */
   selectModel(option: ModelOption): void {
+    if (this.providerAvailabilityLoaded) {
+      const group = this.providerGroups.value.find(candidate => candidate.providerId === option.providerId);
+      const available = !!group && !group.loading && group.models.some(model => model.modelId === option.modelId);
+      if (!available) return;
+    }
     try {
       this.hasChatSelection = true;
       this.activeAgentId.value = null;
@@ -202,12 +221,35 @@ export class AgentModelSelectorController {
 
   // ─── Internal ──────────────────────────────────────────────────
 
+  private applyChatDefault(state: ModelDefaultsState): void {
+    const choice = state?.defaults?.chat;
+    this.chatDefaultAgentName.value = choice?.kind === 'agent'
+      ? state.agents.find(agent => agent.slug === choice.agentId)?.name ?? 'Sulla'
+      : '';
+  }
+
+  private handleChatDefaultsChanged = (_event: unknown, state: ModelDefaultsState): void => {
+    this.chatDefaultGeneration++;
+    this.applyChatDefault(state);
+  };
+
+  private async loadChatDefault(): Promise<void> {
+    const generation = ++this.chatDefaultGeneration;
+    try {
+      const state = await ipcRenderer.invoke(MODEL_DEFAULTS_IPC.get);
+      if (generation === this.chatDefaultGeneration) this.applyChatDefault(state);
+    } catch {
+      // An older or still-starting backend may not have the saved default yet.
+    }
+  }
+
   private async loadActiveSettings(): Promise<void> {
     try {
       // The legacy primary slot is provider readiness, not a chat selection.
       // A fresh thread stays Default so Preferences is authoritative.
       await ipcRenderer.invoke('model-provider:get-state');
-      this.applyState({ primaryProvider: '', activeModelId: '' });
+      // A restored or human chat selection made while this loaded stays authoritative.
+      if (!this.hasChatSelection) this.applyState({ primaryProvider: '', activeModelId: '' });
     } catch (err) {
       console.warn('[ModelSelector] Failed to load state from ModelProviderService:', err);
     }
@@ -217,19 +259,30 @@ export class AgentModelSelectorController {
    * Fetch provider groups from ModelProviderService via IPC.
    */
   private async refreshProviderGroups(): Promise<void> {
+    const refreshGeneration = ++this.providerRefreshGeneration;
     this.loadingProviders.value = true;
+    this.providerAvailabilityLoaded = true;
+    // Do not leave a disconnected provider selectable while the fresh
+    // account read is in flight. The chat-local ids remain untouched.
+    this.providerGroups.value = [];
 
     try {
       const providers = await ipcRenderer.invoke('model-provider:get-providers');
+      if (refreshGeneration !== this.providerRefreshGeneration) return;
+      this.providerAvailabilityLoaded = true;
       const groups: ProviderGroup[] = [];
 
       for (const provider of providers) {
-        if (provider.connected === false) continue;
+        // A missing/unknown connection bit is not permission to select a
+        // provider. The main process supplies the safe access label only for
+        // the selected account that is actually connected.
+        if (provider.connected !== true || provider.selectable === false || provider.connectionStatus === 'unknown' || provider.accessMethod === 'unknown') continue;
         const isActive = this.activePrimaryProvider.value === provider.id;
 
         const group: ProviderGroup = {
           providerId:       provider.id,
           providerName:     provider.name,
+          accessLabel:      provider.accessLabel,
           isActiveProvider: isActive,
           loading:          true,
           models:           [],
@@ -243,9 +296,13 @@ export class AgentModelSelectorController {
 
       this.providerGroups.value = groups;
     } catch (err) {
+      if (refreshGeneration !== this.providerRefreshGeneration) return;
       console.warn('[ModelSelector] Failed to refresh provider groups:', err);
+      // A failed availability read is not permission to keep stale choices.
+      this.providerAvailabilityLoaded = true;
+      this.providerGroups.value = [];
     } finally {
-      this.loadingProviders.value = false;
+      if (refreshGeneration === this.providerRefreshGeneration) this.loadingProviders.value = false;
     }
   }
 
@@ -260,11 +317,13 @@ export class AgentModelSelectorController {
     try {
       const models = await ipcRenderer.invoke('model-provider:get-models', group.providerId);
 
-      group.models = models.map((m: { id: string; name: string; description?: string }) => ({
+      group.models = models.map((m: { id: string; name: string; description?: string; selectionMode?: ModelSelectionMode }) => ({
         providerId:       group.providerId,
         providerName:     group.providerName,
+        providerAccessLabel: group.accessLabel,
         modelId:          m.id,
         modelLabel:       m.name,
+        selectionMode:    m.selectionMode ?? 'exact',
         isActiveProvider: isActive,
         isActiveModel:    isActive && m.id === this.activeModelId.value,
       }));
@@ -304,14 +363,16 @@ export class AgentModelSelectorController {
     _event: Electron.IpcRendererEvent,
     state: { primaryProvider: string; activeModelId: string; modelMode?: string },
   ) => {
-    if (this.hasChatSelection) return;
-    this.applyState(state);
-    this.updateActiveFlags(state.primaryProvider, state.activeModelId);
+    if (!this.hasChatSelection) {
+      this.applyState(state);
+      this.updateActiveFlags(state.primaryProvider, state.activeModelId);
+    }
     void this.refreshProviderGroups();
   };
 
   private readonly handleVaultUnlocked = () => {
     void this.refreshProviderGroups();
+    void this.loadChatDefault();
   };
 
   /** Backward-compat listener for legacy model-changed events */

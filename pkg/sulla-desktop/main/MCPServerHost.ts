@@ -49,10 +49,8 @@ import { ContainerExecutionContextFactory, type AgentContainerRuntimeBinding } f
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
-  clampTimeout,
   emitQuestionCardViaWs,
-  formatQuestionResolution,
-  MAX_TIMEOUT_MS,
+  formatQuestionReceipt,
   normalizeQuestions,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
@@ -391,9 +389,9 @@ export class MCPServerHost {
       'ask_user_question',
       {
         description: [
-          'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the Sulla chat (or the timeout elapses).',
-          'Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question.',
-          'Use this WHENEVER you would otherwise ask the user a question or need them to choose between options — it is the only way your question reaches the human and pauses for a real answer.',
+          'Save one or more persistent multiple-choice questions in For You. Returns a saved-question receipt immediately; the user answers later in the original chat.',
+          'The card stays until answered or dismissed. The saved answer arrives through the durable chat mailbox. End the current turn; do not infer a choice or repeat the question.',
+          'Use this whenever the next step requires the user to choose. Continue decision-dependent work only after their saved answer arrives; independent work can continue separately.',
         ].join(' '),
         inputSchema: {
           questions: z.array(z.object({
@@ -407,10 +405,10 @@ export class MCPServerHost {
               description: z.string().optional().describe('Optional one-line explanation of this option.'),
             })).optional().describe('2–4 distinct options the user can choose from. Optional for a task (defaults to Done).'),
           })).describe('1–4 questions to ask the user.'),
-          timeoutMs: z.number().optional().describe('Timeout in ms (min 5000, max 1800000, default 300000 = 5 min).'),
+          timeoutMs: z.number().optional().describe('Legacy compatibility field. Questions no longer expire while waiting for the user.'),
         },
       },
-      async ({ questions, timeoutMs }, extra: { signal?: AbortSignal }) => {
+      async ({ questions }, extra: { signal?: AbortSignal }) => {
         // The claude-code MCP path bypasses BaseNode's in-loop tool filtering,
         // so honor the calling agent's allowlist here. Restricted background
         // agents (heartbeat, subconscious) carry an explicit allowedToolNames
@@ -429,39 +427,17 @@ export class MCPServerHost {
           return { content: [{ type: 'text' as const, text: error }], isError: true };
         }
 
-        // A task (run a command, set a secret) takes longer than a pick: wait the longest unless told otherwise.
-        const clamped = clampTimeout(timeoutMs ?? (normalized.some(q => q.task) ? MAX_TIMEOUT_MS : undefined));
         const { decisionService } = await import('@pkg/agent/services/DecisionService');
-        // Stop waiting when the run stops or when the caller drops this call
-        // (Claude Code abandons a tool that is silent for 300 s; the SDK then
-        // aborts this request). Either way nobody will read the answer here,
-        // so the question must expire instead of staying open and swallowing it.
         const stopSignals = [session.state.metadata.options?.abort?.signal, extra?.signal].filter((signal): signal is AbortSignal => !!signal);
-        const { record, result } = await decisionService.request({
-          kind: 'question', title: normalized[0].question, questions: normalized,
+        const { record, reused } = await decisionService.requestQuestion({
+          title: normalized[0].question, questions: normalized,
           conversationId: session.state.metadata.threadId,
           channel: session.state.metadata.wsChannel || 'sulla-desktop',
-        }, clamped, stopSignals.length ? AbortSignal.any(stopSignals) : undefined);
-        const questionId = record.id;
-
-        const emitted = await emitQuestionCardViaWs(
-          session.state.metadata.wsChannel,
-          session.state.metadata.threadId,
-          questionId,
-          normalized,
-        );
-        if (!emitted) {
-          await decisionService.expire(questionId);
-          return {
-            content: [{ type: 'text' as const, text: 'Failed to surface the question card to the user — chat channel not ready.' }],
-            isError: true,
-          };
-        }
-
-        const outcome = await result;
-        const resolution = { status: outcome.status === 'answered' ? 'answered' as const : 'timed_out' as const, answers: outcome.answers };
+        }, stopSignals.length ? AbortSignal.any(stopSignals) : undefined);
+        // The durable record is authoritative even if the transient transcript notification fails.
+        if (!reused) await emitQuestionCardViaWs(session.state.metadata.wsChannel, session.state.metadata.threadId, record.id, normalized);
         return {
-          content: [{ type: 'text' as const, text: formatQuestionResolution(normalized, resolution, clamped) }],
+          content: [{ type: 'text' as const, text: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? '')) }],
         };
       },
     );

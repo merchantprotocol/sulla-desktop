@@ -3,28 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-// Dynamic Claude Code model catalog.
-//
-// The claude-code provider previously exposed exactly one model choice —
-// "Auto (CLI default)" — because nothing ever queried Anthropic for the real
-// list, unlike codexModelCatalog.ts which shells out to `codex debug models`.
-// The `claude` CLI has no equivalent list-models subcommand (verified against
-// `claude --help` — only `--model <alias-or-id>`, no introspection command),
-// so live discovery here goes straight to Anthropic's own live models
-// endpoint instead of a CLI wrapper.
-//
-// Credentials are resolved exactly like ClaudeCodeService.resolveClaudeCreds
-// (vault `claude-code` integration, SullaSettingsModel fallback): an API key
-// if the user stored one (guaranteed x-api-key auth, same as AnthropicModels
-// .ts's live path), otherwise the Claude Code subscription OAuth token via
-// Bearer + the `oauth-2025-04-20` beta header. The OAuth header combination
-// is the CLI's own auth pattern, and as of 2026-09-25 Anthropic REJECTS it
-// for /v1/models — the endpoint answers 400. The OAuth branch is kept in case
-// that changes; a failed live lookup never substitutes hardcoded model ids.
+// Subscription catalogs come from Claude Code's initialize control response.
+// Discovery sends no user prompt or inference request.
 
 import { claudeCredentialResolver } from './credentials/ClaudeCredentialResolver';
-import { SingleFlightTtlCache } from './SingleFlightTtlCache';
 import Logging from '@pkg/utils/logging';
+import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
+import { fetchClaudeCliModels } from './claudeCliModelDiscovery';
+import { AsyncResource } from 'node:async_hooks';
 
 const log = Logging.background;
 
@@ -41,16 +27,18 @@ export interface ClaudeCatalogModel {
  * Effort levels the installed Claude Code accepts, read from its own `--help`
  * ("--effort <level> … (low, medium, high, xhigh, max)"). Empty when the CLI
  * has no such option, so the page then shows no effort choice for Claude.
+ * Null means discovery failed, not that the CLI lacks effort support.
  */
-async function claudeEffortLevels(): Promise<{ id: string }[]> {
+async function claudeEffortLevels(): Promise<{ id: string }[] | null> {
   try {
     const { runCommand } = await import('../tools/util/CommandRunner');
     const { stdout, exitCode } = await runCommand('claude --help', [], { runInGuest: true, timeoutMs: 15_000, maxOutputChars: 200_000 });
-    if (exitCode !== 0) return [];
+    if (exitCode !== 0 || !stdout.trim()) return null;
     const match = /--effort\s+<level>[\s\S]{0,200}?\(([a-z, ]+)\)/.exec(stdout);
-    return match ? match[1].split(',').map(s => s.trim()).filter(s => /^[a-z]{2,10}$/.test(s)).map(id => ({ id })) : [];
+    if (!match) return /--effort\b/.test(stdout) ? null : [];
+    return match[1].split(',').map(s => s.trim()).filter(s => /^[a-z]{2,10}$/.test(s)).map(id => ({ id }));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -62,10 +50,26 @@ const AUTO_SENTINEL: ClaudeCatalogModel = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const catalogCache = new SingleFlightTtlCache<ClaudeCatalogModel[]>(CACHE_TTL_MS);
+let cache: { at: number; models: ClaudeCatalogModel[] } | null = null;
+let catalogGeneration = 0;
+let catalogFlight: { generation: number; force: boolean; promise: Promise<ClaudeCatalogModel[]> } | undefined;
+let mainCatalogResource: AsyncResource | undefined;
+
+/**
+ * Install the one metadata-only catalog entry point from the Electron main
+ * composition root. AsyncResource preserves the trusted main-process context
+ * when a worker asks for catalog metadata, without clearing or bypassing the
+ * agent-container AsyncLocalStorage globally.
+ */
+export function initializeMainClaudeModelCatalogBoundary(): void {
+  if (currentAgentContainerRuntime()) throw new Error('Claude catalog boundary must be initialized outside an agent container');
+  mainCatalogResource ??= new AsyncResource('SullaMainClaudeModelCatalog');
+}
 
 export function clearClaudeModelCatalogCache(): void {
-  catalogCache.clear();
+  cache = null;
+  catalogGeneration++;
+  catalogFlight = undefined;
 }
 
 interface RawAnthropicModel {
@@ -127,37 +131,48 @@ async function fetchBrokeredModels(): Promise<ClaudeCatalogModel[] | null> {
  * every model Anthropic reports for the signed-in claude-code account. Never
  * throws — on any failure (no credential, unauthorized, network) it returns
  * only the provider-agnostic Auto sentinel. OAuth accounts use the CLI's
- * supported static aliases because Anthropic rejects their token on /v1/models.
+ * initialize control response with the selected subscription account.
  *
  * @param opts.force — bypass the short in-memory cache (used by explicit
  *   "refresh models" actions; the picker's routine reads hit the cache).
  */
 export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<ClaudeCatalogModel[]> {
-  if (!opts?.force) {
-    const cached = catalogCache.fresh();
-    if (cached !== undefined) return cached;
+  // Workers can ask only for this fixed catalog operation. No caller command,
+  // prompt, credentials, or execution context crosses the boundary.
+  if (currentAgentContainerRuntime()) {
+    if (!mainCatalogResource) return cache?.models ?? [AUTO_SENTINEL];
+    return mainCatalogResource.runInAsyncScope(() => loadClaudeCodeModels());
   }
-  return catalogCache.join(loadClaudeCodeModels);
+  return loadClaudeCodeModels(opts);
 }
 
-async function loadClaudeCodeModels(): Promise<ClaudeCatalogModel[]> {
+async function loadClaudeCodeModels(opts?: { force?: boolean }): Promise<ClaudeCatalogModel[]> {
+  const force = opts?.force === true;
+  if (!force && cache && (Date.now() - cache.at) < CACHE_TTL_MS) {
+    return cache.models;
+  }
 
+  if (catalogFlight?.generation === catalogGeneration && (!force || catalogFlight.force)) return catalogFlight.promise;
+  if (force && catalogFlight?.generation === catalogGeneration) {
+    // A refresh supersedes an older in-flight read. Its eventual response may
+    // reach its original caller, but it cannot repopulate the refreshed cache.
+    cache = null;
+    catalogGeneration++;
+  }
+  const generation = catalogGeneration;
+  const flight = { generation, force, promise: undefined as unknown as Promise<ClaudeCatalogModel[]> };
+  flight.promise = loadClaudeCodeModelsUncached(generation).finally(() => {
+    if (catalogFlight === flight) catalogFlight = undefined;
+  });
+  catalogFlight = flight;
+  return flight.promise;
+}
+
+async function loadClaudeCodeModelsUncached(generation: number): Promise<ClaudeCatalogModel[]> {
   const credential = await claudeCredentialResolver.resolve();
   let dynamic: ClaudeCatalogModel[] | null;
   if (credential.kind === 'oauth-capability' || credential.kind === 'oauth-pending') {
-    // Anthropic rejects Claude subscription OAuth on /v1/models. Keep the
-    // supported CLI aliases stable instead of making a request known to fail.
-    // The aliases are Claude Code's own "newest in this family" names, so they stay current without edits here.
-    dynamic = [
-      { id: 'opus', name: 'Newest Opus', description: 'Claude Code picks the latest Opus', unverified: true },
-      { id: 'sonnet', name: 'Newest Sonnet', description: 'Claude Code picks the latest Sonnet', unverified: true },
-      { id: 'haiku', name: 'Newest Haiku', description: 'Claude Code picks the latest Haiku', unverified: true },
-      { id: 'claude-opus-5-5', name: 'Claude Opus 5.5', unverified: true },
-      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', unverified: true },
-      { id: 'claude-opus-5', name: 'Claude Opus 5', unverified: true },
-      { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', unverified: true },
-      { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', unverified: true },
-    ];
+    dynamic = await fetchClaudeCliModels(credential.accountId ?? undefined);
   } else if (credential.kind === 'api-key' && credential.apiKey) {
     dynamic = await fetchLiveModels(credential.apiKey, credential.workspaceId ?? '');
   } else if (credential.kind === 'api-key' && credential.source === 'vault-broker') {
@@ -166,10 +181,13 @@ async function loadClaudeCodeModels(): Promise<ClaudeCatalogModel[]> {
     dynamic = null;
   }
 
-  const efforts = dynamic ? await claudeEffortLevels() : [];
-  const models = [AUTO_SENTINEL, ...(dynamic ?? []).map(m => (efforts.length ? { ...m, efforts } : m))];
+  let efforts = credential.kind === 'api-key' && dynamic ? await claudeEffortLevels() : [];
+  // One bounded, local CLI retry. Never cache an incomplete discovery as unsupported.
+  if (dynamic && efforts === null) efforts = await claudeEffortLevels();
+  const models = [AUTO_SENTINEL, ...(dynamic ?? []).map(m => (efforts?.length ? { ...m, efforts } : m))];
   if (dynamic) {
-    catalogCache.store(models);
+    if (efforts !== null && generation === catalogGeneration) cache = { at: Date.now(), models };
+    else log.warn('[claudeModelCatalog] Effort discovery unavailable; incomplete catalog is not cached');
     log.log(`[claudeModelCatalog] Loaded ${ models.length - 1 } claude models from live catalog`);
   } else {
     log.warn('[claudeModelCatalog] Live model discovery failed — returning Auto only');

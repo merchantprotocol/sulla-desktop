@@ -13,10 +13,17 @@ vi.mock('./vaultPermissionPolicy', () => ({ VaultPermissionPolicy: class { } }))
 vi.mock('@pkg/main/vaultTls', () => ({ configureVaultPinnedSession: vi.fn(), VAULT_HTTPS_ORIGIN: 'https://vault.test' }));
 
 import { VaultViewManager } from './vaultViewManager';
+import { VAULT_THEME_TOKENS } from '@pkg/shared/vaultTheme';
 
 const makeView = () => ({
   setBounds: vi.fn(),
-  webContents: { loadURL: vi.fn().mockResolvedValue(undefined), isDestroyed: () => false, close: vi.fn() },
+  webContents: {
+    loadURL: vi.fn().mockResolvedValue(undefined),
+    isDestroyed: () => false,
+    close: vi.fn(),
+    on: vi.fn(),
+    insertCSS: vi.fn().mockResolvedValue('theme-key'),
+  },
 });
 
 describe('VaultViewManager tab-host attachment', () => {
@@ -50,7 +57,12 @@ describe('VaultViewManager tab-host attachment', () => {
     const bounds = { x: 123, y: 45, width: 500, height: 400 };
     const reservation = manager.reserve(window, 'tab-owner');
 
-    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', bounds, host, onDisposed)).resolves.toBe(true);
+    const theme = { dark: true, colors: Object.fromEntries(VAULT_THEME_TOKENS.map(token => [token, 'rgb(10, 25, 41)'])) };
+    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', bounds, host, onDisposed, theme)).resolves.toBe(true);
+    const ready = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1];
+    expect(ready).toBeTypeOf('function');
+    ready();
+    await vi.waitFor(() => expect(view.webContents.insertCSS).toHaveBeenCalledWith(expect.stringContaining('color-scheme:dark')));
     expect(host.addChildView).toHaveBeenCalledWith(view);
     expect(view.setBounds).toHaveBeenCalledWith(bounds);
     expect(window.contentView.addChildView).not.toHaveBeenCalled();

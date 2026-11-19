@@ -8,6 +8,7 @@
   <SubAgentBubble
     v-if="message.subAgentActivity"
     :activity="message.subAgentActivity"
+    :model-status="message.modelStatus"
     :is-dark="isDark"
   />
 </template>

@@ -21,16 +21,22 @@
   />
   <div v-if="notice" class="document-notice" role="alert" @click="clearNotice">{{ notice }} <button type="button" aria-label="Dismiss notice" @click.stop="clearNotice">×</button></div>
   </template>
+  <div v-else-if="waiting" class="document-unavailable" role="status">
+    {{ waiting === 'connecting' ? 'Connecting to Files…' : 'Opening document…' }}
+  </div>
   <div v-else class="document-unavailable">
-    {{ loadError || 'This file is no longer available' }}
+    <span>{{ loadError || 'This file is no longer available' }}</span>
+    <button v-if="retryable" type="button" class="document-retry" @click="load()">Retry</button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useBrowserTabs, type BrowserTab } from '@pkg/composables/useBrowserTabs';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+import { filesItem, type FilesApiFile } from '../../../services/sulla-files/web-src/filesApiModels';
 import { DesktopFilesDataSource } from './files/DesktopFilesDataSource';
 import DocumentEditorShell from './files/editor/DocumentEditorShell.vue';
 import type { FilesItem } from './files/types';
@@ -42,25 +48,81 @@ const item = ref<FilesItem | null>(null);
 const loadError = ref('');
 const notice = ref('');
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+const waiting = ref<'' | 'opening' | 'connecting'>('');
+const retryable = ref(false);
 const { createTab, tabs, updateTab } = useBrowserTabs();
 const navigation = new HtmlNavigation();
 let navigationInitialized=false;
 
-async function load():Promise<void> {
+let loadGeneration = 0;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * A restored tab can mount before Files has unlocked. These readiness errors clear on their own,
+ * so the read is retried a bounded number of times; permission and not-found errors are final.
+ */
+const FILES_STARTING = /Files is shutting down|Files is locked with the application|No Files collection is available yet/;
+const STARTUP_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+const filesStarting = (error:unknown):boolean => error instanceof Error && FILES_STARTING.test(error.message);
+
+function cancelRetry():void {
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = undefined;
+}
+
+/**
+ * The listing only covers one folder, so a nested document is resolved by its exact id.
+ * It must still belong to the loaded collection and not be deleted; no path guess is made.
+ */
+async function exactDocument(fileId:string, collectionId:string):Promise<FilesItem | null> {
+  const record = await (ipcRenderer.invoke('sulla-files:metadata', { fileId }) as Promise<FilesApiFile & { collection_id?:string; collectionId?:string }>)
+    .catch((error) => { if (filesStarting(error)) throw error; return null });
+  if (!record || record.id !== fileId || (record.collection_id ?? record.collectionId) !== collectionId) return null;
+  const found = filesItem(record);
+  return found.deletedAt ? null : found;
+}
+
+async function load(attempt = 0):Promise<void> {
+  // A newer document switch owns the page; an older load never paints over it.
+  const generation = ++loadGeneration;
+  cancelRetry();
+  const target = { ...props.documentFile };
   item.value = null;
   loadError.value = '';
+  retryable.value = false;
+  if (attempt === 0) waiting.value = 'opening';
   try {
-    if (props.documentFile.collectionId) dataSource.selectCollection(props.documentFile.collectionId);
+    if (target.collectionId) dataSource.selectCollection(target.collectionId);
     const snapshot = await dataSource.load();
-    item.value = await dataSource.resolveFile(props.documentFile, snapshot.files);
-    if (!item.value) return;
-    if(!navigationInitialized){navigation.push(item.value.path);navigationInitialized=true;}
+    if (generation !== loadGeneration) return;
+    // Fail closed if the saved collection is not the one that loaded.
+    if (target.collectionId && snapshot.collection.id !== target.collectionId) { waiting.value = ''; return }
+    const found = snapshot.files.find(file => file.id === target.fileId && !file.deletedAt) ??
+      await exactDocument(target.fileId, snapshot.collection.id);
+    if (generation !== loadGeneration) return;
+    waiting.value = '';
+    if (!found) return;
+    item.value = found;
+    if (!navigationInitialized) {
+      navigation.push(found.path);
+      navigationInitialized = true;
+    }
     updateTab(props.tabId, {
-      title: item.value.path.split('/').at(-1) || 'Paper',
-      documentFile: { fileId: item.value.id, path: item.value.path, collectionId: snapshot.collection.id },
+      title: found.path.split('/').at(-1) || 'Paper',
+      documentFile: { fileId: found.id, path: found.path, collectionId: snapshot.collection.id },
     });
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : 'This file is no longer available';
+    if (generation !== loadGeneration) return;
+    if (filesStarting(error) && attempt < STARTUP_RETRY_DELAYS_MS.length) {
+      waiting.value = 'connecting';
+      retryTimer = setTimeout(() => { retryTimer = undefined; void load(attempt + 1) }, STARTUP_RETRY_DELAYS_MS[attempt]);
+      return;
+    }
+    waiting.value = '';
+    retryable.value = filesStarting(error);
+    loadError.value = retryable.value
+      ? 'Files is still starting. Try again once it is ready.'
+      : error instanceof Error ? error.message : 'This file is no longer available';
   }
 }
 
@@ -120,12 +182,14 @@ function onSaved(saved:FilesItem):void {
   });
 }
 
-watch(() => `${ props.documentFile.collectionId ?? '' }|${ props.documentFile.fileId }`, load);
-onMounted(load);
+watch(() => `${ props.documentFile.collectionId ?? '' }|${ props.documentFile.fileId }`, () => load());
+onMounted(() => load());
+onBeforeUnmount(() => { loadGeneration++; cancelRetry() });
 </script>
 
 <style scoped>
-.document-unavailable { display:grid;place-items:center;height:100%;color:var(--text-muted);font:14px var(--font-body); }
+.document-unavailable { display:grid;place-content:center;justify-items:center;gap:12px;height:100%;color:var(--text-muted);font:14px var(--font-body); }
+.document-retry { padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font:inherit;cursor:pointer; }
 .document-notice { position:fixed;z-index:20;right:20px;bottom:20px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface-1);color:var(--text);font:13px var(--font-body); }
 .document-notice button { margin-left:8px;border:0;background:transparent;color:inherit;cursor:pointer; }
 </style>

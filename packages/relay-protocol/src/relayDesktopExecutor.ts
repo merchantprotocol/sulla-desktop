@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ToolDeadlinePolicy } from '../../runtime-protocol/src/toolDeadlinePolicy.js';
+import { relayRequestFingerprint } from './relayProtocol.js';
 import type { RelayError, RelayToolExecutionContext as ToolExecutionContext, RelayToolResult as ToolResult } from './relayProtocol.js';
 
 export interface RelayDesktopExecutorOptions {
@@ -54,15 +55,7 @@ export class RelayDesktopExecutor {
         },
       );
       const body = await response.json() as { result?: ToolResult; error?: RelayError };
-      if (!response.ok || body.error) {
-        const error = body.error ?? { code: 'INTERNAL' as const, message: `Relay returned HTTP ${ response.status }` };
-        return {
-          success: false,
-          error:   { code: error.code.toLowerCase(), message: error.message, details: { ...(error.details && typeof error.details === 'object' ? error.details as object : {}), retryable: error.retryable === true } },
-        };
-      }
-      if (!body.result) return { success: false, error: { code: 'invalid_response', message: 'Relay returned no tool result' } };
-      return body.result;
+      return this.toToolResult(response.status, response.ok, body);
     } catch (error) {
       if (controller.signal.aborted) {
         return {
@@ -80,5 +73,40 @@ export class RelayDesktopExecutor {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** Retrieve a retained original result without redispatching the tool call. */
+  async retrieveResult(
+    ctx: ToolExecutionContext,
+    category: string,
+    tool: string,
+    args: unknown,
+  ): Promise<ToolResult> {
+    const base = this.options.relayUrl.replace(/\/$/, '');
+    const deviceId = ctx.device_id ?? this.options.deviceId;
+    if (!deviceId) return { success: false, error: { code: 'desktop_unavailable', message: 'No Desktop device is assigned to this capability' } };
+    const fingerprint = relayRequestFingerprint({ deviceId, userId: ctx.sub, ctx, category, tool, args });
+    try {
+      const response = await this.fetchImpl(
+        `${ base }/v1/devices/${ encodeURIComponent(deviceId) }/tools/results/${ encodeURIComponent(ctx.request_id) }`,
+        { method: 'GET', headers: { Authorization: `Bearer ${ this.options.serviceToken }`, 'X-Sulla-Request-Fingerprint': fingerprint } },
+      );
+      const body = await response.json() as { result?: ToolResult; error?: RelayError };
+      return this.toToolResult(response.status, response.ok, body);
+    } catch (error) {
+      return { success: false, error: { code: 'desktop_unavailable', message: error instanceof Error ? error.message : String(error) } };
+    }
+  }
+
+  private toToolResult(status: number, ok: boolean, body: { result?: ToolResult; error?: RelayError }): ToolResult {
+    if (!ok || body.error) {
+      const error = body.error ?? { code: 'INTERNAL' as const, message: `Relay returned HTTP ${ status }` };
+      return {
+        success: false,
+        error:   { code: error.code.toLowerCase(), message: error.message, details: { ...(error.details && typeof error.details === 'object' ? error.details as object : {}), retryable: error.retryable === true } },
+      };
+    }
+    if (!body.result) return { success: false, error: { code: 'invalid_response', message: 'Relay returned no tool result' } };
+    return body.result;
   }
 }

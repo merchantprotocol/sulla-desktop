@@ -26,7 +26,10 @@ export class CoreServiceRegistrations implements LifecycleRegistrationProvider {
         getBackendGraphWebSocketService();
         console.log('[Background] BackendGraphWebSocketService initialized');
       },
-      async() => { /* stateless singleton, no teardown */ },
+      async() => {
+        const { drainAgentExecution } = await import('@pkg/agent/services/BackendGraphWebSocketService');
+        await drainAgentExecution();
+      },
     );
 
     lifecycle.registerOnce('relay-tool-tunnel', [],

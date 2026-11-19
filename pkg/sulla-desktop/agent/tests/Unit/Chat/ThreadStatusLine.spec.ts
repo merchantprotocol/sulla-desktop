@@ -67,6 +67,19 @@ afterEach(() => { document.body.innerHTML = ''; invoke.mockClear(); chatActivity
 
 describe('the activity line above the message box', () => {
   // risk: the main thread showed nothing while agents worked or sat silent
+  it('shows the waiting manager and all three active children without expanding the manager', async() => {
+    const manager = row('parked', { jobId: 'manager', key: 'manager:0', waitingOnChildren: 3, label: 'Manager' });
+    const children = [1, 2, 3].map(index => row('working', { jobId: `child-${ index }`, key: `child-${ index }:0`, parentJobId: 'manager', parentTaskIndex: 0, label: `Child ${ index }` }));
+    const w = mountLine([manager, ...children], { heartbeat: 20 });
+    expect(w.find('.ta-line').text()).toContain('3 agents running');
+    expect(w.find('.ta-line').text()).toContain('1 agent waiting');
+    await w.find('.ta-line').trigger('click');
+    const names = w.findAll('.ta-name').map(name => name.text());
+    expect(names.filter(name => name.startsWith('Manager') || name.startsWith('Child '))).toHaveLength(4);
+    for (const child of children) expect(w.text()).toContain(child.label);
+    w.unmount();
+  });
+
   it('says Idle when nothing is running and nothing can be opened', () => {
     const w = mountLine([]);
     expect(w.find('.ta-line').text()).toContain('Idle');
@@ -124,8 +137,9 @@ describe('the activity line above the message box', () => {
     const w = mountLine([parent, child], { running: true });
     await w.find('.ta-line').trigger('click');
     const names = w.findAll('.ta-name').map(n => n.text());
-    expect(names).toHaveLength(1);
-    expect(names[0].startsWith('Manager')).toBe(true);
+    expect(names).toHaveLength(2);
+    expect(names.filter(name => name.startsWith('Manager'))).toHaveLength(1);
+    expect(names.filter(name => name.startsWith('Worker'))).toHaveLength(1);
     w.unmount();
   });
 

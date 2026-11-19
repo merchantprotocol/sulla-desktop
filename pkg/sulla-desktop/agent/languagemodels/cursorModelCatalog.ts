@@ -22,6 +22,8 @@ const AUTO: CursorCatalogModel = {
 const CACHE_TTL_MS = 5 * 60_000;
 let cache: { at: number; models: CursorCatalogModel[] } | null = null;
 
+export function clearCursorModelCatalogCache(): void { cache = null; }
+
 function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-9;]*m/g, '');
 }

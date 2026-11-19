@@ -31,8 +31,7 @@ const inflight = new Map<GuestCli, Promise<void>>();
 function install(cli: GuestCli): Promise<void> {
   const packageSpec = GUEST_CLI_PACKAGES[cli];
   const pinnedVersion = packageSpec.slice(packageSpec.lastIndexOf('@') + 1);
-  const versionCommand = cli === 'claude' ? 'DISABLE_AUTOUPDATER=1 claude --version' : 'codex --version';
-  const script = `installed="$(${ versionCommand } 2>/dev/null || true)"; case "$installed" in *${ pinnedVersion }*) exit 0;; esac; nice -n 10 sudo npm install --global --no-fund --no-audit ${ packageSpec } && command -v ${ cli }`;
+  const script = `command -v ${ cli } >/dev/null 2>&1 && exit 0; nice -n 10 sudo npm install --global --no-fund --no-audit ${ packageSpec } && command -v ${ cli }`;
   firstRunTrace(cli === 'codex' ? 'codex' : 'claude', 'CLI version check/install started', { pinnedVersion });
 
   return new Promise<void>((resolve, reject) => {

@@ -90,6 +90,7 @@ export class SullaFilesIpcProvider {
     settings.registerBackups(ipc);
     browse.registerFolders(ipc);
     settings.registerCloudBackup(ipc);
+    settings.registerStorageCleanup(ipc);
     references.registerLocal(ipc);
     uploads.registerMedia(ipc);
     new SullaFilesIpcNativeSourceHandlers(api, services, mountManager, desktop).register(ipc);

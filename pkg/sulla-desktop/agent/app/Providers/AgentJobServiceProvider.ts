@@ -82,7 +82,7 @@ export class AgentJobServiceProvider {
     const taskLocator = new JobTaskLocator(this.jobs, this.runtime, recovery);
     const custodyRepository = new AgentJobCustodyRepository(postgresClient);
     const conversations = new GraphRegistryTopLevelConversationRegistry();
-    const ownerPresence = new GraphRegistryOwnerPresence(GraphRegistry);
+    const ownerPresence = new GraphRegistryOwnerPresence({ get: threadId => GraphRegistry.get(threadId) ?? undefined });
     const liveness = new MainCustodyOwnerLiveness(taskLocator, { isTerminal: status => ['completed','blocked','error','stopped','lost'].includes(status) },
       { matches: async owner => ownerPresence.matches(owner) }, new MainStrandedOwnerDetector(taskLocator, this.jobs));
     this.custodyLineage = new JobTaskCustodyLineage(this.jobs, taskLocator, custodyRepository);

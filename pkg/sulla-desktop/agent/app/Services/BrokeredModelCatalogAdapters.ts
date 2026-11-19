@@ -11,6 +11,26 @@ import type { IntegrationAccountCatalogRepository } from './BrokeredModelCatalog
 import type { IdGenerator } from '@sulla/foundation';
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const CODEX_CLIENT_VERSION = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
+
+function codexModelCatalogUrlAllowed(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const versions = parsed.searchParams.getAll('client_version');
+    return parsed.protocol === 'https:' && parsed.hostname === 'chatgpt.com' && parsed.port === '' &&
+      parsed.pathname === '/backend-api/codex/models' && parsed.username === '' && parsed.password === '' &&
+      parsed.hash === '' && parsed.searchParams.size === 1 && versions.length === 1 && CODEX_CLIENT_VERSION.test(versions[0]);
+  } catch {
+    return false;
+  }
+}
+
+/** Codex's subscription catalog is a fixed metadata route, never a caller URL. */
+export function assertBrokeredModelCatalogUrl(request: Pick<BrokeredModelListRequest, 'providerId' | 'url'>): void {
+  if (request.providerId === 'codex' && !codexModelCatalogUrlAllowed(request.url)) {
+    throw new Error('Codex model catalog route is not allowed.');
+  }
+}
 
 export class IntegrationServiceAccountCatalogRepository implements IntegrationAccountCatalogRepository {
   constructor(private readonly integrations: () => IntegrationService) {}
@@ -28,6 +48,7 @@ export class VaultBrokeredModelHttpTransport implements BrokeredModelHttpTranspo
   constructor(private readonly ids: IdGenerator = new RandomUuidGenerator()) {}
 
   async execute(request: BrokeredModelListRequest): Promise<unknown> {
+    assertBrokeredModelCatalogUrl(request);
     const base = await configuredVaultBrokerProvider.issueLocalBrokerContext({
       agentId: 'sulla',
       podId: `sulla-model-list-${this.ids.next()}`,

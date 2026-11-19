@@ -18,7 +18,7 @@ export class CohereModels extends SelectBoxProvider {
     const apiKey = context.formValues.api_key;
 
     if (!apiKey) {
-      return this.getStaticModels();
+      return this.getStaticModels(context);
     }
 
     try {
@@ -30,7 +30,7 @@ export class CohereModels extends SelectBoxProvider {
       });
 
       if (!response.ok) {
-        return this.getStaticModels();
+        return this.getStaticModels(context);
       }
 
       const body = await response.json() as { models?: { name: string; description?: string }[] };
@@ -56,10 +56,11 @@ export class CohereModels extends SelectBoxProvider {
       // Fall back to static list
     }
 
-    return this.getStaticModels();
+    return this.getStaticModels(context);
   }
 
-  private getStaticModels(): SelectOption[] {
+  private getStaticModels(context: SelectBoxContext): SelectOption[] {
+    if (context.liveOnly) return [];
     return [
       // Command A - Latest flagship (supports tool use)
       {

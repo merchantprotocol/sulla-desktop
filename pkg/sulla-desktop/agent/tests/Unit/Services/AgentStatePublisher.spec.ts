@@ -51,6 +51,22 @@ const makeJob = (jobId: string, threadId: string, parentThreadId?: string): Agen
 describe('AgentStatePublisher', () => {
   afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
+  it('reads saved result links by owner after finished lanes expire without exposing prompts', async() => {
+    const saved = makeJob('follow', 'worker', 'manager');
+    saved.status = 'completed'; saved.finishedAt = 2;
+    Object.assign(saved.tasks[0], { status: 'error', completion: { status: 'completed' }, finishedAt: 2, returnedAt: 2, followUpOf: { jobId: 'old', taskIndex: 0 }, decisionIds: ['q'] });
+    const store = new PublisherStore([saved, makeJob('other', 'other-worker', 'another-manager')]);
+    const states = new AgentStateService(store, { jobs: new Map() }, () => 1_000_000);
+    const publisher = new AgentStatePublisher(states, new AgentStateProjector(states, { latest: () => Promise.resolve(null) }, () => 1_000_000));
+    publisher.register();
+    const read = handle.mock.calls.find(call => call[0] === 'agents:result-tracking')![1];
+    const result = await read({}, 'manager');
+    expect(result).toEqual([{ jobId: 'follow', taskIndex: 0, threadId: 'worker', status: 'completed', followUpOf: { jobId: 'old', taskIndex: 0 }, decisionIds: ['q'] }]);
+    expect(JSON.stringify(result)).not.toContain('prompt');
+    expect(store.durable.get('follow')!.tasks[0].status).toBe('error');
+    publisher.dispose();
+  });
+
   it('shares slow IPC and event snapshots and publishes a trailing update', async() => {
     vi.useFakeTimers();
     const states = new AgentStateService(new PublisherStore([]), { jobs: new Map() });

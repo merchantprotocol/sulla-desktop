@@ -64,6 +64,9 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     return [{ field: 'api_key', target: 'header', name: 'authorization', scheme: 'Bearer' }];
   }
 
+  /** Auth lane metadata lets worker mappings reject a Grok API-key request before it leaves Desktop. */
+  protected workerAuthMode(): 'api-key'|'oauth' { return 'api-key' }
+
   /** Credential upkeep before each brokered request (e.g. vault OAuth refresh). */
   protected async beforeProviderRequest(): Promise<void> {}
 
@@ -102,6 +105,9 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           streaming:  false,
           preserveHttpErrors: true,
           injections: this.brokerInjections(),
+          state: options?.state,
+          model: this.model,
+          authMode: this.workerAuthMode(),
         });
 
         if (!res.ok) {
@@ -212,6 +218,9 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           streaming:  true,
           preserveHttpErrors: true,
           injections: this.brokerInjections(),
+          state: options?.state,
+          model: this.model,
+          authMode: this.workerAuthMode(),
         });
 
         if (!res.ok) {
@@ -783,7 +792,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     if (body.response_format) {
-      transformed.response_format = body.response_format;
+      transformed.text = { format: body.response_format };
     }
 
     return transformed;

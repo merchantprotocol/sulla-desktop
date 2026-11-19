@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Electron, { WebContentsView } from 'electron';
+import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { agentWindowUrl } from './agentWindowUrl';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
-interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; descriptor?: unknown }
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; running?: boolean; descriptor?: unknown }
 
 /** Owns one isolated Electron renderer for each mounted internal tab. */
 export class InternalTabViewManager {
@@ -37,6 +38,7 @@ export class InternalTabViewManager {
       view.webContents.on('render-process-gone', () => {
         tab!.visible = false;
         tab!.crashed = true;
+        this.clearChatRunning(tabId, tab!);
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
         this.notifyHostDisposed(tabId);
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
@@ -70,6 +72,49 @@ export class InternalTabViewManager {
     }
   }
 
+  openWorkspaceTab(sender: Electron.WebContents, input: unknown): void {
+    const owner = this.resolveOwner(sender);
+    if (!owner || sender.isDestroyed() || !input || typeof input !== 'object') throw new Error('Invalid workspace tab request');
+    const request = input as WorkspaceTabRequest;
+    const file = request.mode === 'paper' ? request.documentFile : request.mode === 'files' ? request.filesNavigation : null;
+    if (file && typeof file.fileId === 'string' && file.fileId && typeof file.path === 'string' && file.path) {
+      const { fileId, path, collectionId } = file;
+      const identity = { fileId, path, collectionId: typeof collectionId === 'string' ? collectionId : undefined };
+      if (request.mode === 'paper') {
+        owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'paper', documentFile: identity });
+        return;
+      }
+      if (request.mode === 'files' && typeof request.title === 'string') {
+        owner.webContents.send('internal-tab-view:open-workspace-tab', {
+          mode: 'files', title: request.title, filesNavigation: { ...identity, section: 'detail' },
+        });
+        return;
+      }
+    }
+    if (request.mode === 'chat' && typeof request.title === 'string'
+        && typeof request.initialAgentId === 'string' && request.initialAgentId.trim()) {
+      owner.webContents.send('internal-tab-view:open-workspace-tab', {
+        mode: 'chat', title: request.title, initialAgentId: request.initialAgentId,
+      });
+      return;
+    }
+    throw new Error('Invalid workspace tab request');
+  }
+
+  notifyChatRunning(sender: Electron.WebContents, tabId: string, running: boolean): void {
+    const tab = this.tabs.get(tabId);
+    if (tab?.view.webContents !== sender || tab.crashed || tab.owner.isDestroyed()) return;
+    if (Boolean(tab.running) === running) return;
+    tab.running = running;
+    tab.owner.webContents.send('internal-tab-view:chat-running', tabId, running);
+  }
+
+  private clearChatRunning(tabId: string, tab: InternalTabView): void {
+    if (!tab.running) return;
+    tab.running = false;
+    if (!tab.owner.isDestroyed()) tab.owner.webContents.send('internal-tab-view:chat-running', tabId, false);
+  }
+
   /**
    * The tab a host renderer was created for, as its owner window last described it.
    * Only that tab's own renderer may read it.
@@ -90,6 +135,7 @@ export class InternalTabViewManager {
   reload(owner: Electron.BrowserWindow, tabId: string): void {
     const tab = this.tabs.get(tabId);
     if (tab?.owner === owner && !tab.view.webContents.isDestroyed()) {
+      this.clearChatRunning(tabId, tab);
       tab.crashed = false;
       tab.visible = true;
       tab.owner.contentView.addChildView(tab.view);
@@ -104,8 +150,11 @@ export class InternalTabViewManager {
     if (tab.owner !== target) {
       this.notifyHostDisposed(tabId);
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
+      const running = tab.running;
+      this.clearChatRunning(tabId, tab);
       tab.owner = target;
       this.trackOwner(target);
+      if (running) this.notifyChatRunning(tab.view.webContents, tabId, true);
     }
     if (tab.visible) { target.contentView.addChildView(tab.view); tab.view.setBounds(tab.bounds); }
     return true;
@@ -149,6 +198,7 @@ export class InternalTabViewManager {
   destroy(owner: Electron.BrowserWindow, tabId: string): void {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.owner !== owner || tab.transferring) return;
+    this.clearChatRunning(tabId, tab);
     try { owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
     this.notifyHostDisposed(tabId);
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();

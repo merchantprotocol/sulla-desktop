@@ -24,13 +24,13 @@ export class AnthropicModels extends SelectBoxProvider {
       // Container vault: no key in the app — list through the vault broker.
       const { body } = await listProviderModelsBrokered<AnthropicModelsBody>('anthropic', context.accountId);
       const live = parseAnthropicModels(body);
-      return live.length > 0 ? live : this.getStaticModels();
+      return live.length > 0 ? live : this.getStaticModels(context);
     }
 
     const apiKey = context.formValues.api_key;
 
     if (!apiKey) {
-      return this.getStaticModels();
+      return this.getStaticModels(context);
     }
 
     try {
@@ -44,7 +44,7 @@ export class AnthropicModels extends SelectBoxProvider {
       });
 
       if (!response.ok) {
-        return this.getStaticModels();
+        return this.getStaticModels(context);
       }
 
       const body = await response.json() as { data?: { id: string; display_name?: string }[] };
@@ -56,12 +56,13 @@ export class AnthropicModels extends SelectBoxProvider {
       // Fall back to static list
     }
 
-    return this.getStaticModels();
+    return this.getStaticModels(context);
   }
 
   // Last-resort fallback shown when the Anthropic API is unreachable.
   // Model IDs here are aliases (no date suffix) so they self-update on Anthropic's side.
-  private getStaticModels(): SelectOption[] {
+  private getStaticModels(context: SelectBoxContext): SelectOption[] {
+    if (context.liveOnly) return [];
     return [
       { value: 'claude-fable-5-1',  label: 'Claude Fable 5.1',  description: 'Most capable — long-horizon agentic work' },
       { value: 'claude-opus-5-5',   label: 'Claude Opus 5.5',   description: 'Frontier reasoning and complex tasks' },

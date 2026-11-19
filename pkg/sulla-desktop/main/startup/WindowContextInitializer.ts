@@ -3,102 +3,110 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { reloadExtensionHooks } from '@pkg/agent/extensions/ExtensionLoader';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { WindowBootTelemetry } from '@pkg/agent/startup/WindowBootTelemetry';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
 
+interface WindowContextIpc {
+  invoke(channel: string, ...args: unknown[]): Promise<any>;
+}
+
 /** Renderer-side settings and extension hydration for a window. */
 export class WindowContextInitializer {
-  // Created on first use, never at construction: the main process builds one of
-  // these at import time (SullaStartup.windowContext), where `window` does not
-  // exist. Reading window.location eagerly crashed main boot before any window opened.
-  private boot?: { windowKey: string; startupId: string; telemetry: WindowBootTelemetry };
+  private boot?: WindowBootTelemetry;
+  private hydration?: Promise<void>;
 
-  private get context(): { windowKey: string; startupId: string; telemetry: WindowBootTelemetry } {
+  constructor(private readonly ipc: () => WindowContextIpc = () => require('electron').ipcRenderer) {}
+
+  // The main process constructs this class too. Only the renderer reads its URL
+  // when it starts hydration.
+  private get telemetry(): WindowBootTelemetry {
     if (!this.boot) {
-      const query = new URLSearchParams(window.location.search);
+      const query = new URLSearchParams(globalThis.window?.location.search ?? '');
       const windowKey = query.get('windowKey') || 'main';
       const startupId = query.get('startupId') || crypto.randomUUID();
-      const telemetry = new WindowBootTelemetry(startupId, windowKey, (event, status, elapsedMs): Promise<unknown> => {
-        const { ipcRenderer } = require('electron');
-        return ipcRenderer.invoke('sulla-startup:stage', { startupId, windowKey, event, status, elapsedMs });
-      });
-      this.boot = { windowKey, startupId, telemetry };
+      this.boot = new WindowBootTelemetry(startupId, windowKey, (event, status, elapsedMs) =>
+        this.ipc().invoke('sulla-startup:stage', { startupId, windowKey, event, status, elapsedMs }));
     }
     return this.boot;
   }
 
-  private get windowKey(): string { return this.context.windowKey; }
-  private get telemetry(): WindowBootTelemetry { return this.context.telemetry; }
-
   /** Start window hydration without making it a prerequisite for first paint. */
   startForFirstPaint(): void {
-    this.telemetry.emit('window-context-hydration', 'start');
-    void this.initialize().then(() => {
-      this.telemetry.emit('window-context-hydration', 'end');
-    }).catch((error: unknown) => {
-      this.telemetry.emit('window-context-hydration', 'failure');
-      console.error('[WindowBoot] window context hydration failed:', error);
-    });
+    void this.hydrateOnce();
   }
 
+  /** Bound the wait for callers that mount after initialization. Hydration continues in the background. */
   async initialize(): Promise<void> {
-    this.telemetry.emit('renderer-settings-bootstrap', 'start');
-    // This function serves as the explicit initialization hook
-    console.log('[WindowContext] Sulla window context initialized');
-
-    const windowKey = this.windowKey;
-
-    // Get the user data path from main process
-    const { ipcRenderer } = require('electron');
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const userDataPath = await ipcRenderer.invoke('get-user-data-path');
-      this.telemetry.emit('user-data-path', 'end');
+      await Promise.race([
+        this.hydrateOnce(),
+        new Promise<void>(resolve => { timer = setTimeout(resolve, 8_000) }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private hydrateOnce(): Promise<void> {
+    this.hydration ??= this.hydrate().catch((error: unknown) => {
+      console.error('[WindowContext] Window context hydration failed:', error);
+    });
+    return this.hydration;
+  }
+
+  private async hydrate(): Promise<void> {
+    const telemetry = this.telemetry;
+    const { startupId, windowKey } = telemetry;
+    const ipc = this.ipc();
+    telemetry.emit('window-context-hydration', 'start');
+    let stage = 'renderer-settings-bootstrap';
+    let settingsFailed = false;
+    telemetry.emit(stage, 'start');
+    try {
+      const userDataPath = await ipc.invoke('get-user-data-path');
+      telemetry.emit('user-data-path', 'end');
       const fallbackPath = require('path').join(userDataPath, 'sulla-settings-fallback.json');
       SullaSettingsModel.setFallbackFilePath(fallbackPath);
-      console.log('[WindowContext] Fallback path set to:', fallbackPath);
-
-      // Settings reads already fall back to this local snapshot until the DB
-      // model is ready. Read it now so the UI path is explicitly warmed and
-      // measurable rather than hidden behind the backend lifecycle gate.
       await SullaSettingsModel.readBootstrapFile();
-      this.telemetry.emit('settings-ready-from-fallback');
+      telemetry.emit('settings-ready-from-fallback');
+      telemetry.emit(stage, 'end');
 
-      // Every window waits on the same backend lifecycle gate. Bootstrapping
-      // secondary windows immediately races cold Redis/Postgres and exhausts
-      // the settings model's short retry budget before the backends start.
-      // Keep all settings/extension work off the first-paint path; warm windows
-      // bootstrap as soon as the main process reports database readiness.
-      let activeStage = 'wait-for-backends';
-      this.telemetry.emit('wait-for-backends', 'start');
-      const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends', { startupId: this.telemetry.startupId, windowKey: this.telemetry.windowKey });
-      void backendsReady.then(async() => {
-        this.telemetry.emit('wait-for-backends', 'end');
-        activeStage = 'settings-bootstrap';
-        this.telemetry.emit('settings-bootstrap', 'start');
-        await SullaSettingsModel.bootstrap();
-        this.telemetry.emit('settings-bootstrap', 'end');
-        this.telemetry.emit('settings-ready');
+      stage = 'wait-for-backends';
+      telemetry.emit(stage, 'start');
+      await ipc.invoke('sulla-settings:wait-for-backends', { startupId, windowKey });
+      telemetry.emit(stage, 'end');
 
-        const extensionService = getExtensionService();
-        extensionService.setStartupTelemetry(this.telemetry);
-        activeStage = 'extension-initialization';
-        this.telemetry.emit('extension-initialization', 'start');
-        await extensionService.initialize();
-        await reloadExtensionHooks();
-        this.telemetry.emit('extension-initialization', 'end');
-        this.telemetry.emit('extensions-ready');
-      }).catch((error: unknown) => {
-        this.telemetry.emit(activeStage, 'failure');
-        this.telemetry.emit('window-context-hydration', 'failure');
-        console.error(`[WindowContext] Backend-dependent hydration failed for ${ windowKey }:`, error);
-      });
+      stage = 'settings-bootstrap';
+      telemetry.emit(stage, 'start');
+      await SullaSettingsModel.bootstrap();
+      telemetry.emit(stage, 'end');
+      telemetry.emit('settings-ready');
     } catch (error) {
-      this.telemetry.emit('renderer-settings-bootstrap', 'failure');
+      settingsFailed = true;
+      telemetry.emit(stage, 'failure');
       console.error('[WindowContext] Failed to initialize settings:', error);
     }
+
+    stage = 'extension-initialization';
+    telemetry.emit(stage, 'start');
+    try {
+      const extensions = getExtensionService();
+      extensions.setStartupTelemetry(telemetry);
+      await extensions.initialize();
+      await reloadExtensionHooks();
+      telemetry.emit(stage, 'end');
+      telemetry.emit('extensions-ready');
+    } catch (error) {
+      telemetry.emit(stage, 'failure');
+      telemetry.emit('window-context-hydration', 'failure');
+      console.error('[ExtensionService] Failed to initialize:', error);
+      return;
+    }
+    telemetry.emit('window-context-hydration', settingsFailed ? 'failure' : 'end');
   }
 }

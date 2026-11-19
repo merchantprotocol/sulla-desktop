@@ -235,6 +235,18 @@ private func writeAll(_ descriptor: Int32, _ data: Data) {
     }
 }
 
+private func readRelayHeader(_ fd: Int32) -> [String: Any]? {
+    var line = [UInt8](), byte: UInt8 = 0
+    while line.count < 128 {
+        let n = read(fd, &byte, 1)
+        if n < 0 && errno == EINTR { continue }
+        if n != 1 { return nil }
+        if byte == 10 { return (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] }
+        line.append(byte)
+    }
+    return nil
+}
+
 private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
     private let options: StartOptions
     private let startedAt = DispatchTime.now()
@@ -247,6 +259,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     private var guestListener: Int32 = -1
     private let loopbackListener = VZVirtioSocketListener()
     private let stopped = DispatchSemaphore(value: 0)
+    private var flowSupported: Bool?
     private var helloSeen = false
     private var restored = false
     private var configuration: VZVirtualMachineConfiguration!
@@ -530,7 +543,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
         controlLock.lock(); defer { controlLock.unlock() }
         guard liveControl == descriptor else { return }
         let unixMs = Int64(Date().timeIntervalSince1970 * 1000)
-        writeAll(descriptor, Data("{\"id\":0,\"method\":\"set-time\",\"unixMs\":\(unixMs)}\n".utf8))
+        writeAll(descriptor, Data("{\"id\":0,\"method\":\"set-time\",\"unixMs\":\(unixMs),\"flowControl\":true}\n".utf8))
         workers.asyncAfter(deadline: .now() + 60) { [weak self] in self?.syncGuestClock(descriptor) }
     }
 
@@ -558,6 +571,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                           let type = object["type"] as? String else { continue }
                     let elapsed = monotonicMilliseconds(since: self.startedAt)
                     if type == "hello" {
+                        self.queue.async { self.flowSupported = object["flowControl"] as? Bool == true }
                         self.helloSeen = true; print("hello \(elapsed)")
                     } else if type == "event", let name = object["name"] as? String {
                         let detail = object["detail"] as? String ?? ""
@@ -657,20 +671,40 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
     }
 
     private func connectDockerGuest(_ client: Int32) {
+        connectPayload(client, port: 2375, label: "docker")
+    }
+
+    private func connectPayload(_ client: Int32, port: UInt32, label: String, attempt: Int = 0) {
         guard let socketDevice else { close(client); return }
-        socketDevice.connect(toPort: 2375) { [weak self] result in
-            guard let self else { close(client); return }
-            guard case .success(let connection) = result else {
-                if case .failure(let error) = result { fputs("docker vsock connect failed: \(error)\n", stderr) }
-                close(client); return
+        guard let flow = flowSupported else {
+            // Unknown is not legacy. Hold early clients until HELLO names the
+            // peer's mode; never let a startup race create an unprotected stream.
+            if attempt >= 12_000 || machine.state == .stopped { close(client); return }
+            queue.asyncAfter(deadline: .now() + .milliseconds(25)) {
+                self.connectPayload(client, port: port, label: label, attempt: attempt + 1)
             }
+            return
+        }
+        let id = UUID().uuidString
+        let begin = DispatchTime.now()
+        socketDevice.connect(toPort: flow ? 1026 : port) { result in
+            guard case .success(let connection) = result else { close(client); return }
             let guest = dup(connection.fileDescriptor)
             guard guest >= 0 else { close(client); return }
-            let transfers = DispatchGroup()
-            self.relay(from: client, to: guest, group: transfers, label: "docker client->guest")
-            self.relay(from: guest, to: client, group: transfers, label: "docker guest->client")
-            transfers.notify(queue: self.workers) {
-                close(client); close(guest)
+            runOnThread {
+                let connected = monotonicMilliseconds(since: begin)
+                let context = "id=\(id) route=\(label) port=\(port) connectMs=\(connected)"
+                if flow {
+                    var deadline = timeval(tv_sec: 5, tv_usec: 0)
+                    setsockopt(guest, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+                    writeAll(guest, Data("{\"version\":1,\"port\":\(port)}\n".utf8))
+                    guard let reply = readRelayHeader(guest), reply["flowControl"] as? Int == 1 else {
+                        close(client); close(guest); return
+                    }
+                    deadline = timeval(tv_sec: 0, tv_usec: 0)
+                    setsockopt(guest, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+                    FlowRelay(client: client, wire: guest, label: context).start()
+                } else { self.splice(client, guest, label: context) }
             }
         }
     }
@@ -695,13 +729,19 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             close(client); return
         }
         queue.async { [weak self] in
-            guard let self, let socketDevice = self.socketDevice else { close(client); return }
-            socketDevice.connect(toPort: port) { result in
-                guard case .success(let connection) = result else { close(client); return }
-                let guest = dup(connection.fileDescriptor)
-                guard guest >= 0 else { close(client); return }
-                self.splice(client, guest, label: "guest-stream:\(port)")
+            guard let self else { close(client); return }
+            var route = "exec"
+            if port == 2376 {
+                route = "published"
+                var header = [UInt8](repeating: 0, count: 256)
+                let n = recv(client, &header, header.count, MSG_PEEK | MSG_DONTWAIT)
+                if n > 0, let end = header.prefix(n).firstIndex(of: 10),
+                   let metadata = try? JSONSerialization.jsonObject(with: Data(header[..<end])) as? [String: Any],
+                   let destination = metadata["port"] as? Int, (1...65535).contains(destination) {
+                    route += ":\(destination)"
+                }
             }
+            self.connectPayload(client, port: port, label: route)
         }
     }
 
@@ -740,7 +780,10 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                 }
             }
             guard connected == 0 else { close(local); close(guest); return }
-            self.splice(guest, local, label: "loopback:\(port)")
+            if object["flowControl"] as? Int == 1 {
+                writeAll(guest, Data("{\"flowControl\":1}\n".utf8))
+                FlowRelay(client: local, wire: guest, label: "id=\(UUID().uuidString) route=loopback port=\(port)").start()
+            } else { self.splice(guest, local, label: "loopback:\(port)") }
         }
     }
 
@@ -763,7 +806,8 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
             while true {
                 let count = read(source, &buffer, buffer.count)
                 if count < 0 && errno == EINTR { continue }
-                if count <= 0 { shutdown(destination, SHUT_WR); break }
+                if count < 0 { shutdown(source, SHUT_RDWR); shutdown(destination, SHUT_RDWR); return }
+                if count == 0 { shutdown(destination, SHUT_WR); break }
                 totalRead += count
                 var written = 0
                 while written < count {
@@ -774,7 +818,7 @@ private final class RuntimeDaemon: NSObject, VZVirtualMachineDelegate, @unchecke
                     if result <= 0 {
                         let err = errno
                         if result < 0 && (err == EAGAIN || err == EWOULDBLOCK) {
-                            fputs("relay stalled: \(label) peer not reading for \(relayStallSeconds)s, tearing down connection (read \(totalRead) bytes, wrote \(totalWritten + written) bytes, pending \(count - written))\n", stderr)
+                            fputs("relay stalled: \(label) peer not reading for \(relayStallSeconds)s, tearing down connection (read \(totalRead) bytes, wrote \(totalWritten) bytes, pending \(count - written))\n", stderr)
                         }
                         // Wake the sibling relay thread and fail the peer promptly.
                         shutdown(source, SHUT_RDWR); shutdown(destination, SHUT_RDWR)

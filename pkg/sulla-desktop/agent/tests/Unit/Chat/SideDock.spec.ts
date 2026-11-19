@@ -16,7 +16,7 @@ import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController'
 import { activityBins, ActivityTrail, chatDecisions, ciStateOf, groupResults, laneStep } from '@pkg/pages/chat/messages/sideDock';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((): Promise<any> => Promise.resolve([])) }));
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_channel: string): Promise<unknown> => Promise.resolve([])) }));
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke, send: vi.fn(), on: vi.fn(), removeListener: vi.fn() } }));
 
 const NOW = Date.now();
@@ -70,7 +70,7 @@ function mountWith(component: any, { rows = [] as any[], messages = [] as any[],
   });
 }
 
-beforeEach(() => { localStorage.clear(); DockPositions.resetForTests() });
+beforeEach(() => { localStorage.clear(); DockPositions.resetForTests(); invoke.mockResolvedValue([]) });
 afterEach(() => { document.body.innerHTML = ''; invoke.mockClear() });
 
 describe('where the dock lives', () => {
@@ -123,8 +123,10 @@ describe('resizing the side column', () => {
 describe('the side dock tabs', () => {
   // risk: the user could not tell anything needed them from the tab row
   it('badges what needs you and offers Artifacts only when the chat has some', async() => {
+    invoke.mockImplementation(channel => Promise.resolve(channel === 'decisions:conversation' ? [{ id: 'q-m1', conversationId: 'thread-1', kind: 'question', status: 'expired', attention: 'active', createdAt: NOW, expiresAt: 1, title: 'Question', questions: [] }] : []));
     const plain = mountWith(SideDock, { messages: [question('m1')] });
-    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla1', 'Results', 'Decisions', 'Files']);
+    await flushPromises();
+    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'For You1', 'Files']);
     const withArtifacts = mountWith(SideDock, { artifacts: 2 });
     expect(withArtifacts.findAll('.sdk-tab').map(t => t.text())).toContain('Artifacts2');
     await withArtifacts.findAll('.sdk-tab')[1].trigger('click');
@@ -134,21 +136,43 @@ describe('the side dock tabs', () => {
 
 describe('agent lanes', () => {
   // risk: live activity was not recognisable; a child agent looked unrelated to its parent
-  it('shows what needs you first, live agents with their child indented, and folds finished ones', () => {
+  it('links requests to For You, shows live child relationships and folds finished ones', async() => {
+    invoke.mockImplementation(channel => Promise.resolve(channel === 'decisions:conversation' ? [{ id: 'q-m1', conversationId: 'thread-1', kind: 'question', status: 'expired', attention: 'active', createdAt: NOW, expiresAt: 1, title: 'Question', questions: [] }] : []));
     const lanes = mountWith(AgentLanes, {
       messages: [question('m1')],
       rows:     [row('j1:0', 'working'), row('j2:0', 'working', { agentId: 'opus-worker', label: 'Review of the fix', parentJobId: 'j1', parentTaskIndex: 0 }), row('j3:0', 'done', { label: 'Review · Astra #4339' })],
     });
-    // What waits on you comes first, above the lanes, and the summary counts it.
-    expect(lanes.html().indexOf('wy-list')).toBeLessThan(lanes.html().indexOf('ln-list'));
-    expect(lanes.find('.wy-i').text()).toContain('Question');
-    expect(lanes.find('.ln-sum').text()).toMatch(/^Needs you·1 thing·2 agents running/);
+    await flushPromises();
+    expect(lanes.find('.wy-list').exists()).toBe(false);
+    expect(lanes.text()).toContain('For You');
+    expect(lanes.find('.ln-sum').text()).toMatch(/^Needs you·1 request in For You·2 agents running/);
     const rows = lanes.findAll('.ln-row');
     expect(rows[0].find('.ln-av').classes()).toContain('ln-spin');
-    expect(rows[0].find('.ln-step').text()).toBe('running pnpm test');
+    expect(rows[0].find('.ln-step').text()).toContain('running pnpm test');
+    expect(rows[0].find('.ln-step').text()).toContain('Model / effort not reported');
     expect(rows[1].classes()).toContain('ln-child');
     expect(rows[1].find('.ln-av').attributes('title')).toBe('opus-worker · started by codex-luna-worker');
     expect(lanes.find('.ln-fin summary').text()).toContain('Finished · 1');
+  });
+
+  it('groups exact follow-ups, keeps unlinked work separate and preserves collapse while live state changes', async() => {
+    const build = row('build:0', 'working', { label: 'Build invoice' });
+    const review = row('review:0', 'working', { label: 'Review invoice', followUpOf: { jobId: 'build', taskIndex: 0 } });
+    const unrelated = row('other:0', 'working', { label: 'Review invoice' });
+    const lanes = mountWith(AgentLanes, { rows: [build, review, unrelated] });
+    const groups = lanes.findAll('.ln-work');
+    expect(groups).toHaveLength(2);
+    expect(groups[0].find('.ln-work-heading').text()).toContain('Build invoice');
+    expect(groups[0].findAll('.ln-agent')).toHaveLength(2);
+    expect(groups[0].text()).toContain('Follow-up to Build invoice');
+    expect(groups[1].find('.ln-work-heading').text()).toContain('Unlinked work');
+    (groups[0].element as HTMLDetailsElement).open = false; await groups[0].trigger('toggle');
+    const client = lanes.vm.$.appContext.provides[AGENT_STATE_CLIENT_KEY as symbol];
+    client.snapshot.value = { version: 2, rows: [{ ...build, state: 'done' }, review, unrelated] };
+    await flushPromises();
+    expect((lanes.find('.ln-work').element as HTMLDetailsElement).open).toBe(false);
+    expect(lanes.find('.ln-work').text()).toContain('Earlier task · Reported done');
+    expect(lanes.find('.ln-work').findAll('.ln-agent')).toHaveLength(2);
   });
 
   // risk: in a narrow column the agent's name crowded the task out entirely
@@ -156,7 +180,8 @@ describe('agent lanes', () => {
     const lanes = mountWith(AgentLanes, { rows: [row('j1:0', 'working', { agentId: 'codex-sol-worker', lastCheckinSummary: 'Pushed fix commit bb3f01443952aea49f2eff28109f09d6a7954975' })] });
     const lane = lanes.find('.ln-agent');
     expect(lane.find('.ln-l1 .ln-task').text()).toBe('Fix · FE #1358 deep-link scan');
-    expect(lane.find('.ln-av').text()).toBe('CSsol');
+    expect(lane.find('.ln-av').text()).toBe('CS');
+    expect(lane.find('.ln-step').text()).toContain('Model / effort not reported');
     expect(lane.find('.ln-more').exists()).toBe(false);
 
     await lane.find('.ln-step').trigger('click');
@@ -218,7 +243,7 @@ describe('a failure that was retried', () => {
     const groups = groupResults([
       result('j-a', { label: 'Review · Astra #4350 re-review', status: 'blocked', tone: 'warn' }),
       result('j-b', { label: 'Review · Astra #4352 review', status: 'blocked', tone: 'warn' }),
-      result('j-a2', { label: 'Review · Astra #4350 re-review (retry)' }),
+      result('j-a2', { label: 'Review · Astra #4350 re-review (retry)', followUpOf: { jobId: 'j-a', taskIndex: 0 } }),
     ]);
     expect(groups.needsAction.map(e => e.item.jobId)).toEqual(['j-b']);
   });
@@ -226,7 +251,7 @@ describe('a failure that was retried', () => {
   it('a "(final)" rerun settles it too', () => {
     const groups = groupResults([
       result('j-a', { label: 'Review · Astra #4352 round 2', status: 'blocked', tone: 'warn' }),
-      result('j-a2', { label: 'Review · Astra #4352 round 2 (final)' }),
+      result('j-a2', { label: 'Review · Astra #4352 round 2 (final)', followUpOf: { jobId: 'j-a', taskIndex: 0 } }),
     ]);
     expect(groups.needsAction).toEqual([]);
   });

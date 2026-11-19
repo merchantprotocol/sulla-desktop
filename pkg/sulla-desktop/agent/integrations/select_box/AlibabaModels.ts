@@ -57,7 +57,7 @@ export class AlibabaModels extends SelectBoxProvider {
       // Fall back to static list
     }
 
-    return this.getStaticModels();
+    return this.getStaticModels(context);
   }
 
   private toOption(id: string): SelectOption {
@@ -68,7 +68,8 @@ export class AlibabaModels extends SelectBoxProvider {
   }
 
   // Last-resort fallback shown when the DashScope /models endpoint is unreachable.
-  private getStaticModels(): SelectOption[] {
+  private getStaticModels(context: SelectBoxContext): SelectOption[] {
+    if (context.liveOnly) return [];
     return Object.keys(KNOWN).map(id => this.toOption(id));
   }
 }

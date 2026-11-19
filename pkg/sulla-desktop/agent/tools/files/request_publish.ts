@@ -26,10 +26,11 @@ export class FilesRequestPublishWorker extends FilesTool {
     // Check the calling conversation before creating a Files publish request,
     // so a refused call never leaves an orphan request behind.
     const callerMetadata = (this.state as any)?.metadata ?? {};
-    if (!callerMetadata.threadId) throw new Error('Approval requires the original conversation. No action was executed.');
+    const conversationId = this.context(input).thread_id;
+    if (typeof conversationId !== 'string' || !conversationId.trim()) throw new Error('Approval requires the original conversation. No action was executed.');
     const draft = await this.containerJson<{ file?: { path?: string }; content_base64?: string }>(`/v1/agent-files/${ encodeURIComponent(input.file_id) }?versionId=${ encodeURIComponent(input.version_id) }`, input);
     const path = draft.file?.path ?? `file ${ input.file_id }`;
-    const match = /^Sulla\/Use Cases\/(agents|skills|workflows|functions|recipes)\/([^/]+)/.exec(path);
+    const match = /^(?:Sulla\/)?Use Cases\/(agents|skills|workflows|functions|recipes)\/([^/]+)/.exec(path);
     let label = path;
     if (match) {
       let version = 'draft';
@@ -49,6 +50,7 @@ export class FilesRequestPublishWorker extends FilesTool {
     const metadata = (this.state as any)?.metadata ?? {};
     const pending = await this.decisions.pendingApprovalForPayload('filesPublishRequestId', requestId);
     if (pending) {
+      if (pending.conversationId !== conversationId) throw new Error('This file version already has an approval pending in its original conversation. No approval was moved or executed.');
       this.approvalCoordinator.register(pending.id, message => this.emitMessage(message, 'file_publish_result'));
       return { successBoolean: true, responseString: JSON.stringify({ request_id: requestId, decision_id: pending.id, status: 'pending' }) };
     }
@@ -56,8 +58,8 @@ export class FilesRequestPublishWorker extends FilesTool {
       kind: 'approval',
       title: `${ label }?`,
       toolName: 'files_request_publish',
-      conversationId: metadata.threadId || '',
-      channel: metadata.wsChannel || 'sulla-desktop',
+      conversationId,
+      channel: callerMetadata.threadId === conversationId && typeof metadata.wsChannel === 'string' && metadata.wsChannel ? metadata.wsChannel : 'sulla-desktop',
       payload: { filesPublishRequestId: requestId, fileId: input.file_id, versionId: input.version_id },
     }, 30 * 60_000);
     this.approvalCoordinator.register(record.id, message => this.emitMessage(message, 'file_publish_result'));

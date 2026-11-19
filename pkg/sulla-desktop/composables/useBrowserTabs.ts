@@ -6,6 +6,7 @@
 import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
+import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
 
@@ -49,6 +50,8 @@ export interface BrowserTab {
    */
   lastAccessedAt?: number;
   /** Durable launch metadata for a visible agent-owned chat thread. */
+  /** Agent selected for a normal, empty chat opened from the agent editor. */
+  initialAgentId?: string;
   /** Super-admin remote support tab. The session id is opaque and all details are refreshed from Cloud. */
   supportSession?: { sessionId: string };
   /** Temporary dirty editor state carried only across an in-session transfer. */
@@ -71,6 +74,7 @@ export interface ClosedTab {
   title:    string;
   favicon:  string;
   mode:     BrowserTabMode;
+  initialAgentId?: string;
   closedAt: number;
 }
 
@@ -527,7 +531,7 @@ export function useBrowserTabs() {
     docker:       'Docker',
   };
 
-  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string; supportSession?: BrowserTab['supportSession'] }): BrowserTab {
+  function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; initialAgentId?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string; supportSession?: BrowserTab['supportSession'] }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
       id:             generateId(),
@@ -537,6 +541,7 @@ export function useBrowserTabs() {
       loading:        false,
       mode,
       lastAccessedAt: Date.now(),
+      ...(opts?.initialAgentId ? { initialAgentId: opts.initialAgentId } : {}),
       ...(opts?.agentChat ? { agentChat: opts.agentChat } : {}),
       ...(opts?.filesNavigation ? { filesNavigation: opts.filesNavigation } : {}),
       ...(opts?.documentFile ? { documentFile: opts.documentFile } : {}),
@@ -624,6 +629,7 @@ export function useBrowserTabs() {
           title:    removed.title,
           favicon:  removed.favicon,
           mode:     removed.mode,
+          ...(removed.initialAgentId ? { initialAgentId: removed.initialAgentId } : {}),
           closedAt: Date.now(),
         });
         // Trim to max
@@ -689,6 +695,7 @@ export function useBrowserTabs() {
       favicon: entry.favicon,
       loading: false,
       mode:    entry.mode,
+      ...(entry.initialAgentId ? { initialAgentId: entry.initialAgentId } : {}),
     };
 
     tabs.push(tab);
@@ -817,6 +824,20 @@ export function useBrowserTabs() {
   };
 }
 
+/** The shell owns the tab list, including tabs opened from an isolated renderer. */
+export async function openWorkspaceTab(request: WorkspaceTabRequest): Promise<void> {
+  if (!shouldPersistTabList(window.location.search)) {
+    await ipcRenderer.invoke('internal-tab-view:open-workspace-tab', request);
+    return;
+  }
+  if (request.mode === 'paper') {
+    openDocumentTab(request.documentFile);
+    return;
+  }
+  const tab = useBrowserTabs().createTab('about:blank', request);
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+}
+
 /** Open one durable Paper tab per Files identity and focus it. */
 export function openDocumentTab(documentFile: { fileId: string; path: string; collectionId?: string }, focus = true): BrowserTab {
   const { createTab } = useBrowserTabs();
@@ -866,6 +887,7 @@ export function closeTabByAssetId(assetId: string): boolean {
       title:    tab.title,
       favicon:  tab.favicon,
       mode:     tab.mode,
+      ...(tab.initialAgentId ? { initialAgentId: tab.initialAgentId } : {}),
       closedAt: Date.now(),
     });
     if (closedTabs.length > MAX_HISTORY) {

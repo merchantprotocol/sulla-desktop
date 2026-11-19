@@ -49,6 +49,7 @@ export class AgentInbox {
 
   /** Claims across processes and rechecks after each accepted turn so late arrivals cannot strand. */
   async flush(target: AgentInboxTarget): Promise<number> {
+    if (this.delivery.isRunning(target)) return 0;
     // This synchronous reservation closes the gap before the first repository
     // await: replay, recovery and live arrivals cannot start competing turns.
     const reservation = this.runGuard.tryReserve(target);

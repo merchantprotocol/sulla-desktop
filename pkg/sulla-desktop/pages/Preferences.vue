@@ -8,7 +8,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <script setup lang="ts">
-import { computed, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
 import { useStore } from 'vuex';
 
 import PrefIcon from '@pkg/components/settings/PrefIcon.vue';
@@ -116,6 +116,9 @@ watch(() => props.section, (name) => {
 
   if (target) {
     current.value = target;
+    if (target === 'files') {
+      nextTick(() => window.dispatchEvent(new CustomEvent('sulla:storage-cleanup-preview'))).catch(() => undefined);
+    }
   }
   emit('section-consumed');
 }, { immediate: true });

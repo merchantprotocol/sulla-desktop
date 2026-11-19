@@ -28,7 +28,7 @@
                 class="st"
                 :class="statusClass(selected.state)"
                 :title="selected.stateReason || undefined"
-              ><i />{{ statusLabel(selected) }} · {{ elapsed(selected.startedAt) }}</span><span>{{ selected.agentId || 'Agent' }}</span>
+              ><i />{{ statusLabel(selected) }} · {{ elapsed(selected.startedAt) }}</span><span>{{ selected.agentId || 'Agent' }} · {{ AgentModelStatus.label(selected.modelStatus) }}</span>
             </div>
           </div><div class="acts">
             <button
@@ -106,7 +106,7 @@
             </p>
           </div><aside class="card side">
             <h3>Run</h3><div class="kv">
-              <span>Agent</span><b>{{ selected.agentId || 'Agent' }}</b>
+              <span>Agent</span><b>{{ selected.agentId || 'Agent' }}</b><span>Model · effort</span><b>{{ AgentModelStatus.label(selected.modelStatus) }}</b>
             </div><div class="kv">
               <span>Started</span><b>{{ when(selected.startedAt) }}</b>
             </div><div class="kv">
@@ -166,7 +166,7 @@
             :style="{ paddingLeft: `${14 + node.depth * 20}px` }"
             @click="selectRow(node.row)"
           >
-            <span class="tree">{{ node.row.depth ? '└' : '•' }}</span><div><b>{{ node.row.label }}</b><small>{{ node.row.lastCheckinSummary || node.row.stateReason || node.row.agentId }}</small><small v-if="stopAttribution(node.row)">{{ stopAttribution(node.row) }}</small></div><span
+            <span class="tree">{{ node.row.depth ? '└' : '•' }}</span><div><b>{{ node.row.label }}</b><small>{{ AgentModelStatus.label(node.row.modelStatus) }}</small><small>{{ node.row.lastCheckinSummary || node.row.stateReason || node.row.agentId }}</small><small v-if="stopAttribution(node.row)">{{ stopAttribution(node.row) }}</small></div><span
               class="st"
               :class="statusClass(node.row.state)"
               :title="node.row.stateReason || undefined"
@@ -282,6 +282,7 @@ import type { AgentConversationDetail } from '@pkg/main/agentsIpc';
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder, type AgentTreeNode } from '@pkg/services/agentState/AgentTreeBuilder';
+import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 import type { AgentStateRow, AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { LiveAgentsKillController } from './LiveAgentsKillController';

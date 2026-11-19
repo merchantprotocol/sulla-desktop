@@ -20,7 +20,14 @@ export class PostgresAgentInboxRepository implements AgentInboxRepository {
     const rows = await this.connection.select<any>(`WITH candidates AS (
       SELECT message_id FROM agent_inbox_messages WHERE receiver_channel=$1 AND delivered_at IS NULL
         AND ($2::text IS NULL OR receiver_thread_id=$2 OR receiver_thread_id IS NULL)
-        AND (lease_expires_at IS NULL OR lease_expires_at<now()) ORDER BY CASE WHEN kind='org' THEN host_seq END NULLS LAST,created_at,message_id FOR UPDATE SKIP LOCKED)
+        AND (kind <> 'human' OR (receiver_thread_id IS NOT NULL AND receiver_thread_id=$2::text))
+        AND (lease_expires_at IS NULL OR lease_expires_at<now())
+        AND (kind='human') = (SELECT (first.kind='human') FROM agent_inbox_messages first
+          WHERE first.receiver_channel=$1 AND first.delivered_at IS NULL
+            AND ($2::text IS NULL OR first.receiver_thread_id=$2 OR first.receiver_thread_id IS NULL)
+            AND (first.kind<>'human' OR (first.receiver_thread_id IS NOT NULL AND first.receiver_thread_id=$2::text))
+            AND (first.lease_expires_at IS NULL OR first.lease_expires_at<now()) ORDER BY CASE WHEN first.kind='org' THEN first.host_seq END NULLS LAST,first.created_at,first.message_id LIMIT 1)
+        ORDER BY CASE WHEN kind='org' THEN host_seq END NULLS LAST,created_at,message_id FOR UPDATE SKIP LOCKED)
       UPDATE agent_inbox_messages inbox SET lease_owner=$3,lease_expires_at=now()+($4*interval '1 second')
       FROM candidates WHERE inbox.message_id=candidates.message_id RETURNING inbox.*`, [target.channel, target.threadId ?? null, owner, LEASE_SECONDS]);
     return { owner, target, entries: rows.map(row => this.map(row, target)) };
@@ -43,7 +50,7 @@ export class PostgresAgentInboxRepository implements AgentInboxRepository {
     return rows.map(row => ({ channel: row.receiver_channel, threadId: row.receiver_thread_id ?? undefined, agentId: row.receiver_agent_id ?? undefined }));
   }
   private map(row: any, fallback: AgentInboxTarget): AgentInboxEntry {
-    return { target: { channel: row.receiver_channel, threadId: row.receiver_thread_id ?? fallback.threadId, agentId: row.receiver_agent_id ?? fallback.agentId },
+    return { target: { channel: row.receiver_channel, threadId: row.receiver_thread_id ?? fallback.threadId, agentId: row.receiver_agent_id ?? (row.kind === 'human' ? undefined : fallback.agentId) },
       envelope: { from: row.sender, kind: row.kind as AgentMessageKind, body: row.body, ids: row.ids } };
   }
 }

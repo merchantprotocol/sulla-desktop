@@ -4,13 +4,7 @@
   SPDX-License-Identifier: GPL-2.0-or-later
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
-<!--
-  Interactive multiple-choice question card. Emitted by the
-  `ask_user_question` tool (or its MCP twin). While pending, the user picks
-  one option per question (or several when multiSelect), optionally types a
-  free-form "Other", and clicks Submit. On submit the answers round-trip
-  back to the blocked backend tool via ChatController.answerQuestion.
--->
+<!-- Choices reuse the inline answer route or the persistent For You callback. -->
 <template>
   <section
     class="qc"
@@ -65,6 +59,7 @@
 
     <fieldset
       v-for="(q, qi) in msg.questions"
+      v-show="!persistent || currentStep === qi"
       :key="qi"
       :ref="el => { blocks[qi] = el as HTMLElement | null }"
       class="qc-block"
@@ -115,21 +110,58 @@
             >{{ opt.description }}</span>
           </span>
         </button>
+        <div
+          v-if="!locked"
+          class="qc-option qc-custom"
+          :class="{ picked: customSelected[qi], multi: q.multiSelect }"
+          @click.self="selectCustom(qi, true)"
+        >
+          <input
+            class="qc-mark qc-custom-choice"
+            :type="q.multiSelect ? 'checkbox' : 'radio'"
+            :name="`custom-${msg.id}-${qi}`"
+            :checked="customSelected[qi]"
+            :aria-label="`Write your own answer to: ${q.question}`"
+            @change="selectCustom(qi, ($event.target as HTMLInputElement).checked)"
+          >
+          <input
+            v-model="otherText[qi]"
+            class="qc-other"
+            type="text"
+            placeholder="Or write your own answer"
+            :aria-label="`Your own answer to: ${q.question}`"
+            @focus="selectCustom(qi, true)"
+            @input="selectCustom(qi, true)"
+            @keyup.enter="submit"
+          >
+        </div>
       </div>
-
-      <input
-        v-if="!locked"
-        v-model="otherText[qi]"
-        class="qc-other"
-        type="text"
-        placeholder="Or write your own answer"
-        :aria-label="`Your own answer to: ${q.question}`"
-        @keyup.enter="submit"
-      >
     </fieldset>
 
+    <div
+      v-if="persistent && msg.questions.length > 1"
+      class="qc-actions"
+    >
+      <button
+        v-if="currentStep > 0"
+        type="button"
+        class="qc-jump"
+        @click="currentStep--"
+      >
+        Back
+      </button>
+      <span class="qc-hint">{{ currentStep + 1 }} of {{ msg.questions.length }} questions</span>
+      <button
+        v-if="currentStep < msg.questions.length - 1"
+        type="button"
+        class="qc-submit"
+        @click="currentStep++"
+      >
+        Next question
+      </button>
+    </div>
     <footer
-      v-if="!locked"
+      v-if="!locked && (!persistent || currentStep === msg.questions.length - 1)"
       class="qc-actions"
     >
       <button
@@ -177,13 +209,22 @@ import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/M
 import { useChatController } from '../../controller/useChatController';
 import { answerSelection } from '../../messages/questionAnswer';
 
-const props = defineProps<{ msg: ToolQuestionMessage }>();
+const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; draft?: { picks: string[][]; other: string[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
+const currentStep = ref(0);
 
 // Per-question selected option labels and free-text. Index-aligned with
 // msg.questions. reactive so the template updates on toggle.
-const picks = reactive<string[][]>(props.msg.questions.map(() => []));
-const otherText = reactive<string[]>(props.msg.questions.map(() => ''));
+const picks = reactive<string[][]>(props.draft?.picks ?? props.msg.questions.map(() => []));
+const otherText = reactive<string[]>(props.draft?.other ?? props.msg.questions.map(() => ''));
+const customSelected = reactive<boolean[]>(props.msg.questions.map((q, qi) => !!otherText[qi]?.trim() && (!!q.multiSelect || !picks[qi]?.length)));
+
+function selectCustom(qi: number, selected: boolean): void {
+  if (locked.value) return;
+  customSelected[qi] = selected;
+  if (selected && !props.msg.questions[qi].multiSelect) picks[qi] = [];
+}
+function customAnswer(qi: number): string { return customSelected[qi] ? (otherText[qi] ?? '') : '' }
 
 function isPicked(qi: number, label: string): boolean {
   return picks[qi]?.includes(label) ?? false;
@@ -193,7 +234,7 @@ function isPicked(qi: number, label: string): boolean {
 const now = ref(Date.now());
 const ticker = setInterval(() => { now.value = Date.now() }, 1_000);
 onBeforeUnmount(() => clearInterval(ticker));
-const remaining = computed(() => props.msg.status === 'pending' && !sending.value && props.msg.expiresAt ? Math.max(0, props.msg.expiresAt - now.value) : null);
+const remaining = computed(() => !props.persistent && props.msg.status === 'pending' && !sending.value && props.msg.expiresAt ? Math.max(0, props.msg.expiresAt - now.value) : null);
 const countdown = computed(() => {
   const seconds = Math.ceil((remaining.value ?? 0) / 1_000);
   return `${ Math.floor(seconds / 60) }:${ String(seconds % 60).padStart(2, '0') }`;
@@ -202,7 +243,7 @@ const stateText = computed(() => {
   if (props.msg.status === 'answered') return 'Answered';
   if (props.msg.status === 'timed_out') return 'Expired';
   if (props.msg.resolutionError) return 'Not sent';
-  return sending.value ? 'Answer sent' : 'Waiting for your answer';
+  return sending.value ? (props.persistent ? 'Saving answer…' : 'Answer sent') : 'Waiting for your answer';
 });
 const stateTone = computed(() => props.msg.status === 'answered' || sending.value ? 'done' : props.msg.status === 'timed_out' ? 'closed' : 'open');
 const expiredUnsent = computed(() => props.msg.status === 'timed_out' && !(props.msg.answers?.length));
@@ -214,7 +255,7 @@ const picksShown = computed(() => !!props.msg.answers?.length && props.msg.answe
 /** The deadline passed while the user was still choosing: keep their work by sending it as a chat message. */
 function sendAsMessage(): void {
   const lines = props.msg.questions.map((q, qi) => {
-    const selected = [...(picks[qi] ?? []), ...(otherText[qi]?.trim() ? [otherText[qi].trim()] : [])];
+    const selected = answerSelection(picks[qi] ?? [], customAnswer(qi), !!q.multiSelect);
     return selected.length ? `- ${ q.question }\n  ${ selected.join(', ') }` : '';
   }).filter(Boolean);
   if (lines.length) controller.send(`My answers to your expired question:\n${ lines.join('\n') }`);
@@ -232,6 +273,7 @@ watch(() => props.msg.resolutionError, (error) => {
 
 function toggle(qi: number, label: string, multi: boolean): void {
   if (locked.value) return;
+  if (!multi) customSelected[qi] = false;
   const cur = picks[qi] ?? [];
   if (cur.includes(label)) {
     picks[qi] = cur.filter(l => l !== label);
@@ -243,26 +285,29 @@ function toggle(qi: number, label: string, multi: boolean): void {
 // Every question must have at least one selection or a non-empty "Other".
 const canSubmit = computed(() =>
   props.msg.questions.every((_q, qi) =>
-    (picks[qi]?.length ?? 0) > 0 || (otherText[qi]?.trim().length ?? 0) > 0));
+    (picks[qi]?.length ?? 0) > 0 || customAnswer(qi).trim().length > 0));
 
 /** Questions still without an answer, named by their short header when they have one. */
 const missing = computed(() => props.msg.questions
-  .map((q, qi) => ({ qi, name: q.header || `Question ${ qi + 1 }`, done: (picks[qi]?.length ?? 0) > 0 || (otherText[qi]?.trim().length ?? 0) > 0 }))
+  .map((q, qi) => ({ qi, name: q.header || `Question ${ qi + 1 }`, done: (picks[qi]?.length ?? 0) > 0 || customAnswer(qi).trim().length > 0 }))
   .filter(x => !x.done));
 const blocks = reactive<(HTMLElement | null)[]>([]);
 function jumpTo(qi: number): void {
+  currentStep.value = qi;
   const el = blocks[qi];
   el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   el?.querySelector<HTMLElement>('.qc-option')?.focus({ preventScroll: true });
 }
 
-function submit(): void {
+async function submit(): Promise<void> {
   if (locked.value || !canSubmit.value) return;
   const answers: ToolQuestionAnswerItem[] = props.msg.questions.map((q, qi) => {
-    return { question: q.question, selected: answerSelection(picks[qi] ?? [], otherText[qi] ?? '', !!q.multiSelect) };
+    return { question: q.question, selected: answerSelection(picks[qi] ?? [], customAnswer(qi), !!q.multiSelect) };
   });
   sending.value = true;
-  controller.answerQuestion(props.msg.id, answers);
+  if (props.submitAnswers) {
+    try { await props.submitAnswers(answers) } catch { /* The inbox displays the error and preserves the draft. */ } finally { sending.value = false }
+  } else controller.answerQuestion(props.msg.id, answers);
 }
 </script>
 
@@ -329,8 +374,13 @@ function submit(): void {
 .qc-label { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .qc-desc { font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
 
+.qc-custom { align-items: center; }
+.qc-custom-choice { appearance: none; cursor: pointer; padding: 0; }
+.qc-custom-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.qc-custom-choice:checked { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-surface); }
+.qc-custom-choice[type=checkbox] { appearance: auto; accent-color: var(--accent); }
 .qc-other {
-  width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px;
+  min-width: 0; flex: 1; width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px;
   border: 1px solid var(--border-default); border-radius: 8px;
   background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
   font: 14px var(--font-body);

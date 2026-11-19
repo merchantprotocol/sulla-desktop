@@ -2,10 +2,10 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-
 import crypto from 'node:crypto';
 
 import { ProviderCliBridgeService, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
+import { assertWorkerSubscription } from './workerSubscriptionGuard';
 import { getIntegrationService } from '../services/IntegrationService';
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
@@ -31,6 +31,7 @@ export async function createGuestCodexBrokerLease(input: {
 }): Promise<ProviderCliBridgeLease> {
   const integrations = getIntegrationService();
   const accountId = await integrations.getActiveAccountId('codex');
+  assertWorkerSubscription(input.state, 'codex', 'codex', accountId);
 
   // Codex routes ChatGPT plan usage through the chatgpt_account_id claim.
   // The vault derives it from the stored id/access token per request
