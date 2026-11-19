@@ -45,6 +45,7 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { DelegatedTurnPreparer } from './DelegatedTurnPreparer';
 import { ReceiverRunGuard } from './ReceiverRunGuard';
 import { CompletionConsumptionRecorder } from './CompletionConsumptionRecorder';
+import { SupportSessionPolicy } from './SupportSessionPolicy';
 import { AgentTurnStopper } from './AgentTurnStopper';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -1006,7 +1007,7 @@ export class BackendGraphWebSocketService {
         (state.metadata as any).allowedToolNames = supportTabTools;
         (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
         (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
-      } else if ((state.metadata as any).supportSessionId) {
+      } else if ((state.metadata as any).supportSessionId && new SupportSessionPolicy().shouldClearCapability(metadata)) {
         delete (state.metadata as any).supportSessionId;
         delete (state.metadata as any).allowedToolNames;
         delete (state.metadata as any).supportContext;

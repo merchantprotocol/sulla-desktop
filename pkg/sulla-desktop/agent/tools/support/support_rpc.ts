@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import { BaseTool, type ToolResponse } from '../base';
 import { cloudRequest } from '@pkg/main/cloud/cloudFetch';
+import { SupportSessionPolicy } from '../../services/SupportSessionPolicy';
 
 export class SupportRpcWorker extends BaseTool {
   name = '';
@@ -15,9 +16,8 @@ export class SupportRpcWorker extends BaseTool {
     const metadata = (this.state as any)?.metadata || {};
     const sessionId = typeof metadata.supportSessionId === 'string' ? metadata.supportSessionId : '';
     const allowed = Array.isArray(metadata.allowedToolNames) ? metadata.allowedToolNames : [];
-    if (!sessionId || !allowed.includes(this.name)) {
-      return { successBoolean: false, responseString: 'This support tool is available only inside its active Support session tab.' };
-    }
+    const refusal = new SupportSessionPolicy().toolRefusalReason(sessionId, allowed, this.name);
+    if (refusal) return { successBoolean: false, responseString: refusal };
     const response = await cloudRequest('POST', `/super-admin/support/sessions/${ encodeURIComponent(sessionId) }/rpc`, {
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: crypto.randomUUID(), method: 'tools/call', params: { name: this.name, arguments: input } }),

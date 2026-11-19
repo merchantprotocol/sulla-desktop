@@ -56,6 +56,9 @@ export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop Sched
  */
 export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
 
+/** Support chats keep Bash only as the transport for the Sulla support RPC CLI. */
+export const SUPPORT_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
+
 /**
  * Full `--disallowedTools` value for a spawn. Every acting agent — primary
  * chat, heartbeat, reviewers, workflow nodes, spawned sub-agents — gets the same base set. Only subconscious observers (memory
@@ -65,7 +68,13 @@ export class ClaudeToolPolicy {
   public disallowedToolsFor(metadata: Record<string, unknown> | null | undefined): string {
     if (this.isObserverSpawn(metadata)) return `${ BASE_DISALLOWED_TOOLS } ${ SUBCONSCIOUS_NATIVE_TOOL_DENYLIST }`;
     const acting = `${ BASE_DISALLOWED_TOOLS } ${ ACTING_NATIVE_TOOL_DENYLIST }`;
+    if (this.isSupportSession(metadata)) return `${ acting } ${ SUPPORT_NATIVE_TOOL_DENYLIST }`;
     return this.isDelegatedSpawn(metadata) ? `${ acting } ${ DELEGATED_NATIVE_TOOL_DENYLIST }` : acting;
+  }
+
+  /** Support turns use Bash only to invoke the gated support RPC CLI. */
+  public isSupportSession(metadata: Record<string, unknown> | null | undefined): boolean {
+    return typeof metadata?.supportSessionId === 'string' && metadata.supportSessionId.length > 0;
   }
 
   /** Delegated workers and delegated managers share the Sulla-only controls. */
