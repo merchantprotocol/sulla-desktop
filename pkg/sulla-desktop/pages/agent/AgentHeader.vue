@@ -2263,15 +2263,4 @@ html.tab-pointer-dragging * { cursor: grabbing !important; }
     transition-duration: 0s;
   }
 }
-
-/* Selection is a filled surface plus an inset underline; status stays beside the icon. */
-.app-titlebar .tab-item.tab-active,
-.app-titlebar .tab-item.tab-active-native {
-  background: color-mix(in srgb, var(--text-primary) 16%, var(--bg-surface));
-  color: var(--text-primary);
-  font-weight: 700;
-  box-shadow: inset 0 -3px 0 var(--accent), inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--border-default));
-}
-.app-titlebar .tab-item.tab-active .tab-label,
-.app-titlebar .tab-item.tab-active-native .tab-label { font-weight: 700; }
 </style>
