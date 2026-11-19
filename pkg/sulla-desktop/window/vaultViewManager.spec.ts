@@ -75,6 +75,24 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(disposed).toBeDefined();
   });
 
+  it('opens the vault unthemed when renderer theme colors are invalid', async() => {
+    // risk: renderer CSS serialization must not prevent access to the password vault
+    const manager = new VaultViewManager() as any;
+    const view = makeView();
+    manager.createView = vi.fn().mockResolvedValue({ view, session: { clearStorageData: vi.fn() } });
+    const window = { id: 4, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
+    const reservation = manager.reserve(window, 'invalid-theme-owner');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const theme = { dark: true, colors: Object.fromEntries(VAULT_THEME_TOKENS.map(token => [token, 'color(srgb 1 0 0)'])) };
+
+    await expect(manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 400, height: 300 }, undefined, undefined, theme)).resolves.toBe(true);
+    expect(manager.createView).toHaveBeenCalledOnce();
+    expect(window.contentView.addChildView).toHaveBeenCalledWith(view);
+    expect(view.webContents.loadURL).toHaveBeenCalledWith('https://vault.test/vault/home');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Invalid vault theme during open'), expect.any(Error));
+    warn.mockRestore();
+  });
+
   it('releases the vault view when its tab host crashes or closes', async() => {
     // risk: closing/crashing a tab must not retain a visible or orphaned password renderer
     const manager = new VaultViewManager() as any;

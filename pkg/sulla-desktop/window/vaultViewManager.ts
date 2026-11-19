@@ -91,7 +91,7 @@ export class VaultViewManager {
     const target = this.validateUrl(url);
     const state = this.windows.get(reservation.windowId);
     if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
-    state.themeCss = theme === undefined ? '' : vaultThemeCss(theme);
+    state.themeCss = this.themeCssOrUnthemed(theme, 'open');
     const created = await this.createView(window);
     if (!this.isCurrent(reservation)) {
       this.discardCreatedView(created);
@@ -130,9 +130,20 @@ export class VaultViewManager {
   async setTheme(ownerId: string, theme: unknown, window: Electron.BrowserWindow): Promise<void> {
     const state = this.windows.get(window.id);
     if (state?.ownerId !== ownerId) return;
-    const css = vaultThemeCss(theme);
+    const css = this.themeCssOrUnthemed(theme, 'update');
     state.themeCss = css;
     if (state.view) await this.applyTheme(state, state.view);
+  }
+
+  /** Presentation must never prevent the isolated vault UI from opening. */
+  private themeCssOrUnthemed(theme: unknown, operation: 'open' | 'update'): string {
+    if (theme === undefined) return '';
+    try {
+      return vaultThemeCss(theme);
+    } catch (error) {
+      console.warn(`Invalid vault theme during ${ operation }; opening without theme`, error);
+      return '';
+    }
   }
 
   private applyTheme(state: VaultWindowState, view: WebContentsView): Promise<void> {
