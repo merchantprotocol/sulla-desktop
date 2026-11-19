@@ -26,7 +26,7 @@ export class InternalTabViewManager {
   activate(owner: Electron.BrowserWindow, tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown): void {
     let tab = this.tabs.get(tabId);
     if (!tab) {
-      const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
+      const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false, backgroundThrottling: !(descriptor && typeof descriptor === 'object' && (descriptor as { mode?: unknown }).mode === 'capture-studio') } });
       // The descriptor must be stored before the renderer loads: the host reads it synchronously at boot.
       tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
       this.tabs.set(tabId, tab);

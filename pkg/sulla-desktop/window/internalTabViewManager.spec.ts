@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
   default: { app: { isPackaged: false } },
   app: { isPackaged: false },
   WebContentsView: class {
+    constructor(public options: any) {}
     webContents = {
       loadURL: vi.fn().mockResolvedValue(undefined),
       on: vi.fn((event: string, listener: (...args: any[]) => void) => { (this as any).webContents.listeners[event] = listener; }),
@@ -47,6 +48,7 @@ describe('InternalTabViewManager', () => {
     const target = ownerWindow(203);
     const instance = manager() as any;
     instance.activate(source, 'capture-tab', 'main', { x: 0, y: 0, width: 20, height: 20 }, { id: 'capture-tab', mode: 'capture-studio' });
+    expect(instance.tabs.get('capture-tab').view.options.webPreferences.backgroundThrottling).toBe(false);
     const renderer = instance.tabs.get('capture-tab').view.webContents;
     expect(instance.moveToWindow('capture-tab', target)).toBe(true);
     expect(instance.tabs.get('capture-tab').view.webContents).toBe(renderer);
