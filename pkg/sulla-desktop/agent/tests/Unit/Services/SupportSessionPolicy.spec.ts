@@ -8,6 +8,7 @@ describe('SupportSessionPolicy', () => {
     // risk: permissions — internal completion/orchestrator messages must not revoke the live support turn, while normal chats must not inherit support access.
     expect(policy.shouldClearCapability({ source: 'sub_agent_completion' })).toBe(false);
     expect(policy.shouldClearCapability({ source: 'orchestrator_job_message' })).toBe(false);
+    expect(policy.shouldClearCapability({ source: 'inject' })).toBe(true);
     expect(policy.shouldClearCapability({})).toBe(true);
   });
 
