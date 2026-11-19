@@ -7,7 +7,7 @@
 <template>
   <!-- Screen preview -->
   <div v-if="currentLayout === 'sidebyside'" class="sbs-grid">
-    <article v-for="channel in channels" :key="channel.id" class="sbs-tile">
+    <article v-for="channel in channels" :key="channel.id" class="sbs-tile" @contextmenu.prevent="$emit(channel.type === 'camera' ? 'show-camera-menu' : channel.type === 'screen' ? 'show-screen-menu' : 'show-audio-menu', $event, channel.id)">
       <video v-if="channel.stream" :ref="el => bindChannelVideo(channel.id, el as HTMLVideoElement | null)" autoplay muted playsinline />
       <div v-else-if="channel.type === 'mic' || channel.type === 'system'" class="sbs-audio-meter">
         <span v-for="(height, index) in meterBars(channel.level || 0)" :key="index" :style="{ height: `${height}px` }" />
@@ -19,7 +19,7 @@
   </div>
 
   <div v-show="currentLayout !== 'sidebyside'" class="screen-preview"
-    @contextmenu.prevent="$emit(primarySource?.type === 'camera' ? 'show-camera-menu' : 'show-screen-menu', $event)"
+    @contextmenu.prevent="$emit(primarySource?.type === 'camera' ? 'show-camera-menu' : 'show-screen-menu', $event, primarySource?.id)"
   >
     <video
       ref="screenVideoEl"
@@ -63,7 +63,7 @@
   <!-- Side-by-side camera (shown in sidebyside layout) -->
   <div
     class="sbs-camera"
-    @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
+    @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event, pipSource?.id)"
   >
     <video
       ref="sbsCameraVideoEl"
@@ -95,7 +95,7 @@
   <!-- Full-screen camera (shown in camonly layout) -->
   <div
     class="fullscreen-camera"
-    @contextmenu.prevent="$emit(primarySource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
+    @contextmenu.prevent="$emit(primarySource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event, primarySource?.id)"
   >
     <video
       ref="fullCameraVideoEl"
@@ -168,9 +168,9 @@ const props = defineProps<{
 }>();
 
 defineEmits<{
-  (e: 'show-screen-menu', event: MouseEvent): void;
-  (e: 'show-camera-menu', event: MouseEvent): void;
-  (e: 'show-audio-menu', event: MouseEvent): void;
+  (e: 'show-screen-menu', event: MouseEvent, sourceId?: string): void;
+  (e: 'show-camera-menu', event: MouseEvent, sourceId?: string): void;
+  (e: 'show-audio-menu', event: MouseEvent, sourceId?: string): void;
 }>();
 
 const screenVideoEl = ref<HTMLVideoElement | null>(null);

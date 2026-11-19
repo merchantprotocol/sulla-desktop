@@ -50,11 +50,11 @@ const STREAM_FILENAMES: Record<StreamEntry['type'], string> = {
   'system-audio': 'speaker.webm',
 };
 
-/** Keep the historic primary-screen filename and give every additional display its own file. */
+/** Keep historic primary filenames and give every additional video source its own file. */
 export function recordingFilename(type: StreamEntry['type'], id: string): string {
-  if (type !== 'screen' || id === 'screen') return STREAM_FILENAMES[type];
+  if ((type !== 'screen' || id === 'screen') && (type !== 'camera' || id === 'cam')) return STREAM_FILENAMES[type];
   const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `screen-${ safeId || 'extra' }.webm`;
+  return `${ type }-${ safeId || 'extra' }.webm`;
 }
 
 export interface RecorderManifestStream {
