@@ -25,7 +25,7 @@ export class OrgConversationsIpcController implements IpcController {
     private readonly backend: () => OrgConversationsBackend,
     private readonly memberships: Pick<OrgMembershipsCloudClient, 'list'> = new OrgMembershipsCloudClient(),
     private readonly invitations: Pick<TeamInvitationsCloudClient, 'listPending'> = new TeamInvitationsCloudClient(),
-    private readonly servers: Pick<ConversationServersCloudClient, 'list' | 'channels' | 'members' | 'channelPreference' | 'setServerDefault' | 'setChannelPreference' | 'messages' | 'sendMessage' | 'markRead' | 'unread'> = new ConversationServersCloudClient(),
+    private readonly servers: Pick<ConversationServersCloudClient, 'list' | 'channels' | 'members' | 'channelPreference' | 'setServerDefault' | 'setChannelPreference' | 'setChannelOverride' | 'messages' | 'sendMessage' | 'markRead' | 'unread'> = new ConversationServersCloudClient(),
   ) {}
 
   /** Org roles and invitations are keyed by the org id, which the backend resolves for the requested org. */
@@ -41,6 +41,7 @@ export class OrgConversationsIpcController implements IpcController {
     this.ipc.handle('conversation-servers:channel-preference', (_event, input: { serverId: string; channelId: string }) => this.servers.channelPreference(input.serverId, input.channelId));
     this.ipc.handle('conversation-servers:set-default', (_event, input: { serverId: string; level: 'all' | 'mentions' | 'nothing' }) => this.servers.setServerDefault(input.serverId, input.level));
     this.ipc.handle('conversation-servers:set-channel-notification', (_event, input: { serverId: string; channelId: string; level: 'all' | 'mentions' | 'nothing' | null }) => this.servers.setChannelPreference(input.serverId, input.channelId, input.level));
+    this.ipc.handle('conversation-servers:set-channel-override', (_event, input: { serverId: string; channelId: string; level: 'all' | 'mentions' | 'nothing' | null }) => this.servers.setChannelOverride(input.serverId, input.channelId, input.level));
     this.ipc.handle('conversation-servers:messages', (_event, input: { serverId: string; channelId: string; before?: number }) => this.servers.messages(input.serverId, input.channelId, input.before));
     this.ipc.handle('conversation-servers:send-message', (_event, input: { serverId: string; channelId: string; body: string }) => this.servers.sendMessage(input.serverId, input.channelId, input.body));
     this.ipc.handle('conversation-servers:read', (_event, input: { serverId: string; channelId: string; seq: number }) => this.servers.markRead(input.serverId, input.channelId, input.seq));

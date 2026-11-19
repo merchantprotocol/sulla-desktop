@@ -44,6 +44,10 @@ export class ConversationServersCloudClient {
     return this.request('PUT', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/notification-preference`, { level });
   }
 
+  setChannelOverride(serverId: string, channelId: string, level: ConversationServerNotificationLevel | null): Promise<Record<string, unknown>> {
+    return this.request('PATCH', `/conversation-servers/${encodeURIComponent(serverId)}/channels/${encodeURIComponent(channelId)}/notification-override`, { level });
+  }
+
   async messages(serverId: string, channelId: string, before?: number, after?: number): Promise<{ messages: ConversationChannelMessage[]; nextBefore?: number | null; latestSeq?: number }> {
     const query = new URLSearchParams({ limit: '50' });
     if (before !== undefined) query.set('before', String(before));

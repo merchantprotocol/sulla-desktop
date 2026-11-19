@@ -27,6 +27,17 @@ describe('ConversationServersCloudClient', () => {
     expect(calls.slice(1).map(call => JSON.parse(call.body ?? 'null'))).toEqual([{ level: 'nothing' }, { level: null }]);
   });
 
+  it('writes and clears a channel override only through the PATCH override route', async () => {
+    // risk: authorization/policy; channel defaults are distinct from per-member preference controls
+    const calls: { method: string; path: string; body?: string }[] = [];
+    const client = new ConversationServersCloudClient(async (method, path, init) => { calls.push({ method, path, body: init?.body as string | undefined }); return new Response('{}', { status: 200 }); });
+    await client.setChannelOverride('s1', 'c1', 'mentions'); await client.setChannelOverride('s1', 'c1', null);
+    expect(calls.map(call => [call.method, call.path, JSON.parse(call.body ?? 'null')])).toEqual([
+      ['PATCH', '/conversation-servers/s1/channels/c1/notification-override', { level: 'mentions' }],
+      ['PATCH', '/conversation-servers/s1/channels/c1/notification-override', { level: null }],
+    ]);
+  });
+
   it('surfaces failed API reads instead of presenting fabricated empty server data', async () => {
     // risk: data accuracy; a denied/failed Cloud read must not look like an actually empty public server list
     const client = new ConversationServersCloudClient(async () => new Response('{}', { status: 503 }));
