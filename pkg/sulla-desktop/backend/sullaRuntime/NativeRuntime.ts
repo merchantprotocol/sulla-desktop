@@ -25,7 +25,9 @@ const console = Logging.sullaRuntime;
  */
 const DEFAULT_READY_TIMEOUT_MS = 5 * 60_000;
 const QUIET_TIMEOUT_MS = 120_000;
-const STOP_TIMEOUT_MS = 70_000;
+// The runtime daemon allows the guest 75 s to stop containers, sync, and
+// unmount. Keep this outer watchdog below Desktop's 90 s quit deadline.
+const STOP_TIMEOUT_MS = 82_000;
 // Darwin 23 is macOS 14, the first release that can save and restore a VM.
 // The host accepts only sulla.<name>=<value> with this value alphabet.
 let activeRuntime: NativeRuntime | undefined;

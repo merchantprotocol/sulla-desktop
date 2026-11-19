@@ -684,12 +684,12 @@ func proxyDocker(host net.Conn) {
 }
 
 // stopUnit sends SIGTERM to a supervised unit and waits for it to exit.
-func (a *agent) stopUnit(name string, timeout time.Duration) {
+func (a *agent) stopUnit(name string, timeout time.Duration) bool {
 	a.unitsMu.Lock()
 	cmd := a.units[name]
 	a.unitsMu.Unlock()
 	if cmd == nil || cmd.Process == nil {
-		return
+		return true
 	}
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	deadline := time.Now().Add(timeout)
@@ -698,14 +698,19 @@ func (a *agent) stopUnit(name string, timeout time.Duration) {
 		_, running := a.units[name]
 		a.unitsMu.Unlock()
 		if !running {
-			return
+			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	a.log.Printf("%s did not stop within %s", name, timeout)
+	return false
 }
 
 func (a *agent) shutdown() {
+	started := time.Now()
+	logStep := func(step string, stepStarted time.Time, result string) {
+		a.emit("shutdown-step", "", fmt.Sprintf("step=%s elapsed_ms=%d result=%s total_elapsed_ms=%d", step, time.Since(stepStarted).Milliseconds(), result, time.Since(started).Milliseconds()), "")
+	}
 	a.unitsMu.Lock()
 	if a.shutting {
 		a.unitsMu.Unlock()
@@ -717,13 +722,46 @@ func (a *agent) shutdown() {
 	// dockerd stops containers before it exits, and those may be databases on
 	// the data disk; containerd must outlive it. Cancelling the context
 	// SIGKILLs whatever is still running, so it comes last.
-	a.stopUnit("dockerd", 45*time.Second)
-	a.stopUnit("containerd", 10*time.Second)
+	step := time.Now()
+	if a.stopUnit("dockerd", 45*time.Second) {
+		logStep("dockerd-stop", step, "stopped")
+	} else {
+		logStep("dockerd-stop", step, "timeout")
+	}
+	step = time.Now()
+	if a.stopUnit("containerd", 10*time.Second) {
+		logStep("containerd-stop", step, "stopped")
+	} else {
+		logStep("containerd-stop", step, "timeout")
+	}
 	a.cancel()
+	step = time.Now()
 	syscall.Sync()
-	unmountDataDisk()
+	logStep("sync", step, "complete")
+	step = time.Now()
+	diskClean := true
+	if err := unmountDataDisk(); err != nil {
+		diskClean = false
+		logStep("data-disk-unmount", step, "failed")
+		a.log.Printf("shutdown data disk could not be made read-only: %v", err)
+	} else {
+		logStep("data-disk-unmount", step, "clean")
+	}
+	if !diskClean {
+		// Still power off: the data was synced above, and ext4 replays its
+		// journal safely at the next boot. Waiting for the host's force-stop
+		// would only stretch every quit to the full timeout.
+		a.emit("shutdown-incomplete", "", "data disk neither unmounted nor remounted read-only; powering off after sync", "")
+	}
 	if os.Getpid() == 1 {
-		_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
+		step = time.Now()
+		err := syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
+		if err != nil {
+			logStep("poweroff", step, "failed")
+			a.log.Printf("shutdown poweroff failed: %v", err)
+		} else {
+			logStep("poweroff", step, "requested")
+		}
 	}
 }
 
