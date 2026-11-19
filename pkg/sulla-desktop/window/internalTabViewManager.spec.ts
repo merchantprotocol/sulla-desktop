@@ -40,7 +40,7 @@ describe('InternalTabViewManager', () => {
     expect(instance.tabs.size).toBe(0);
     instance.activate(owner, 'one', 'main', bounds);
     const tab = instance.tabs.get('one');
-    expect(tab.view.webContents.loadURL).toHaveBeenCalledWith(expect.stringMatching(/^app:\/\.\/agent\.html\?tabHost=1&tabId=one&windowKey=main&startupId=/));
+    expect(tab.view.webContents.loadURL).toHaveBeenCalledWith(expect.stringMatching(/^app:\/\/\.\/agent\.html\?tabHost=1&tabId=one&windowKey=main&startupId=/));
     expect(owner.contentView.addChildView).toHaveBeenCalledWith(tab.view);
     instance.setVisible(owner, 'one', false);
     expect(owner.contentView.removeChildView).toHaveBeenCalledWith(tab.view);
