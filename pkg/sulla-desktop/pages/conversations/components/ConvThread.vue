@@ -41,12 +41,14 @@ function sendDraft(): void {
 
 <template>
   <section class="main">
+    <!-- Shown in every state, so a Cloud or vault failure is never hidden behind the empty screens. -->
+    <div v-if="error" class="banner bad" role="alert"><span>{{ error }}</span></div>
     <template v-if="!hasOrg || (!store.threads().length && !store.s.thread)">
-      <div class="top"><div class="ttl"><b>{{ store.org().name || 'Conversations' }}</b><small>{{ hasOrg ? 'No conversations yet' : 'No organization yet' }}</small></div></div>
+      <div class="top"><div class="ttl"><b>{{ store.org().name || 'Conversations' }}</b><small>{{ hasOrg ? 'No conversations yet' : (error ? 'Could not reach Sulla Cloud' : 'No organization yet') }}</small></div></div>
       <div class="empty">
         <div class="in">
           <div class="ic"><ConvIcon name="people" /></div>
-          <h1>Start your first conversation</h1>
+          <h1>{{ !hasOrg && error ? 'Conversations are unavailable right now' : 'Start your first conversation' }}</h1>
           <p>Invite your team to talk with them here. Once they join, your agent can also talk to their agents, and you'll see every one of those threads.</p>
           <div class="r">
             <button class="btn pri" disabled title="Coming soon"><ConvIcon name="invite" />Invite people</button>
@@ -98,7 +100,6 @@ function sendDraft(): void {
       <div v-if="!online && isAgentThread" class="banner warn"><ConvIcon name="wifi" /><span><b>You're offline.</b> Your agent paused this thread. {{ other ? `${other.firstName}'s agent` : 'The other agent' }} can't reach yours until you reconnect.</span></div>
       <div v-else-if="!online" class="banner warn"><ConvIcon name="wifi" /><span><b>You're offline.</b> Messages you send will go out when you reconnect.</span></div>
       <div v-else-if="personOffline && other" class="banner warn"><ConvIcon name="info" /><span>{{ other.firstName }} is offline{{ other.hasAgent && !other.agentOnline ? ` and ${other.firstName}'s agent is offline too` : '' }}. Messages will be delivered when {{ other.firstName }} is back.</span></div>
-      <div v-if="error" class="banner bad" role="alert"><span>{{ error }}</span></div>
 
       <div class="msgs">
         <div v-if="thread && !messages.length" class="meta" style="padding:16px;color:var(--muted)">No messages yet. Send the first one below.</div>

@@ -9,28 +9,29 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import SecretaryMode from '@pkg/pages/SecretaryMode.vue';
 import { ConversationProjection, type ConversationMessageData, type ConversationThreadProjection } from './ConversationProjection';
 import { CONV_STORE, ConversationScreenStore, type LiveSnapshot, type MessageView, type OrgView, type PersonView, type RequestView, type ThreadView } from './ConversationScreenStore';
-import { ConversationViewBuilder, type DirectoryPerson } from './ConversationViewBuilder';
-import { DirectoryPersonNormalizer } from './DirectoryPersonNormalizer';
+import { ConversationViewBuilder } from './ConversationViewBuilder';
+import { ConversationDataState, OrgConversationsLoader, type OrgConversationsGateway } from './OrgConversationsData';
 import ConvList from './components/ConvList.vue';
 import ConvNav from './components/ConvNav.vue';
 import ConvSide from './components/ConvSide.vue';
 import ConvThread from './components/ConvThread.vue';
 
 type Org = { orgId: string; name: string; slug?: string; memberCount: number };
-type Person = DirectoryPerson;
 type MessageData = ConversationMessageData;
 
 const props = defineProps<{ tabId: string }>();
 defineEmits<{ (event: 'set-mode', mode: string): void }>();
 
 // Data layer: org list, directory, inbox, participant, start and send, all through the existing IPC.
-const organizations = ref<Org[]>([]), activeOrg = ref(''), people = ref<Person[]>([]), messages = ref<MessageData[]>([]), localSent = ref<MessageData[]>([]);
-const contactRequests = ref<MessageData[]>([]);
-const invitedRaw = ref<{ id: string; email: string; expiresAt: string }[]>([]);
-const userId = ref(''), userName = ref(''), loading = ref(false), sending = ref(false), secretaryOpen = ref(false), error = ref('');
+const organizations = ref<Org[]>([]), activeOrg = ref(''), sending = ref(false), secretaryOpen = ref(false), error = ref(''), loading = ref(false);
+// Org data (people, inbox, requests, member id, sent-but-not-yet-returned messages) lives in one state object that
+// only the newest load may write. A failed read keeps the last good data for the same org.
+const dataState = new ConversationDataState();
+const data = dataState.data;
+const loader = new OrgConversationsLoader(gateway());
+const people = computed(() => data.people);
 const emptyConversations = ref<ConversationThreadProjection[]>([]);
 const projection = new ConversationProjection();
-const directoryNormalizer = new DirectoryPersonNormalizer();
 // The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
 const cloudStatus = ref<Record<string, any> | null>(null);
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
@@ -40,8 +41,22 @@ const retryDelays = [2_000, 5_000, 10_000, 20_000, 30_000];
 const store = new ConversationScreenStore();
 provide(CONV_STORE, store);
 
+function gateway(): OrgConversationsGateway {
+  return {
+    directory: org => ipcRenderer.invoke('org-conversations:directory', org),
+    inbox: org => ipcRenderer.invoke('org-conversations:inbox', org),
+    participant: org => ipcRenderer.invoke('org-conversations:participant', org),
+    contactRequests: org => ipcRenderer.invoke('org-conversations:contact-requests', org),
+    memberships: org => ipcRenderer.invoke('org-conversations:memberships', org),
+    invitations: org => ipcRenderer.invoke('org-conversations:invitations', org),
+  };
+}
+
 const threads = computed<ConversationThreadProjection[]>(() => {
-  const loaded = projection.project([...messages.value, ...localSent.value], people.value, activeOrg.value, userId.value);
+  // A sent message can briefly sit in both the inbox and the local list; keep one copy per id.
+  const unique = new Map<string, MessageData>();
+  for (const message of [...data.messages, ...data.localSent]) unique.set(message.messageId, message);
+  const loaded = projection.project([...unique.values()], people.value, activeOrg.value, data.userId);
   const ids = new Set(loaded.map(thread => thread.id));
   return [...loaded, ...emptyConversations.value.filter(thread => !ids.has(thread.id))].sort((a, b) => (b.messages.at(-1)?.createdAt ?? '').localeCompare(a.messages.at(-1)?.createdAt ?? ''));
 });
@@ -49,50 +64,40 @@ const threads = computed<ConversationThreadProjection[]>(() => {
 /** Maps the real inbox and directory into the view models the components render. */
 const snapshot = computed<LiveSnapshot | null>(() => {
   if (!activeOrg.value) return null;
-  const views = new ConversationViewBuilder(people.value, userId.value);
+  const views = new ConversationViewBuilder(people.value, data.userId);
   const orgs: OrgView[] = organizations.value.map(org => ({ id: org.orgId, name: org.name, initials: initials(org.name), memberCount: org.memberCount, gradient: views.orgGradient(org.orgId) }));
-  const self = people.value.find(person => person.userId === userId.value);
-  const memberViews: PersonView[] = people.value.filter(person => person.userId !== userId.value).map(person => views.person(person));
+  const self = people.value.find(person => person.userId === data.userId);
+  const memberViews: PersonView[] = people.value.filter(person => person.userId !== data.userId).map(person => views.person(person));
   const threadViews: ThreadView[] = threads.value.map(thread => views.thread(thread));
   const bodies: Record<string, MessageView[]> = {};
   for (const thread of threads.value) bodies[thread.id] = thread.messages.map(message => views.message(message));
   const requests: RequestView[] = [];
-  for (const request of contactRequests.value) {
+  for (const request of data.requests) {
     const existing = requests.find(view => view.senderId === request.from.userId);
     if (existing) { existing.count += 1; continue; }
     requests.push({ senderId: request.from.userId, name: displayName(request.from.userId), initials: initials(displayName(request.from.userId)), latest: request.body.text, time: formatTime(request.createdAt), count: 1 });
   }
   const activeName = organizations.value.find(org => org.orgId === activeOrg.value)?.name ?? '';
-  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, invited: invitedRaw.value.map(entry => views.invitation(entry)), threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
+  return { orgId: activeOrg.value, orgName: activeName, orgs, me: self ? views.person(self) : null, people: memberViews, invited: data.invited.map(entry => views.invitation(entry)), threads: threadViews, requests, bodies, relay: views.relayState(cloudStatus.value, online.value), online: online.value };
 });
 
 function displayName(id: string): string {
   return people.value.find(person => person.userId === id)?.displayName ?? 'Organization member';
 }
 
+/**
+ * Loads the active org. Every read is independent: a failed read keeps the last good data for this org and
+ * names the failure in the status line. A load that a newer org switch or refresh has overtaken writes nothing.
+ */
 async function refresh(): Promise<void> {
-  if (!activeOrg.value) return;
   const requestedOrg = activeOrg.value;
-  loading.value = true; error.value = ''; people.value = []; invitedRaw.value = []; messages.value = []; contactRequests.value = []; emptyConversations.value = []; localSent.value = [];
-  try {
-    const [directory, inbox, participant, contact, memberships, invitations] = await Promise.all([
-      ipcRenderer.invoke('org-conversations:directory', activeOrg.value),
-      ipcRenderer.invoke('org-conversations:inbox', activeOrg.value),
-      ipcRenderer.invoke('org-conversations:participant', activeOrg.value),
-      ipcRenderer.invoke('org-conversations:contact-requests', activeOrg.value),
-      // Roles and invitations are best-effort: a failed or forbidden read hides the pill or section instead of showing a wrong one.
-      ipcRenderer.invoke('org-conversations:memberships', activeOrg.value).catch(() => ({ memberships: [] })),
-      ipcRenderer.invoke('org-conversations:invitations', activeOrg.value).catch(() => ({ invitations: [] })),
-    ]);
-    if (activeOrg.value !== requestedOrg) return;
-    people.value = directoryNormalizer.withRoles(directory.directory.people as Record<string, unknown>[], memberships.memberships ?? []) as Person[];
-    invitedRaw.value = (invitations.invitations ?? []) as { id: string; email: string; expiresAt: string }[];
-    messages.value = inbox.messages as MessageData[];
-    contactRequests.value = contact.requests as MessageData[];
-    userId.value = participant.userId;
-    userName.value = people.value.find(person => person.userId === participant.userId)?.displayName ?? '';
-  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not load organization conversations'; }
-  finally { loading.value = false; }
+  if (!requestedOrg) return;
+  const token = dataState.begin(requestedOrg);
+  loading.value = true;
+  const load = await loader.load(requestedOrg);
+  if (!dataState.apply(token, requestedOrg, load)) return;
+  error.value = load.problems.join(' ');
+  loading.value = false;
 }
 
 async function initialize(): Promise<void> {
@@ -146,7 +151,7 @@ async function sendMessage(text: string): Promise<void> {
   sending.value = true; error.value = '';
   try {
     const result = await ipcRenderer.invoke('org-conversations:send', { orgId: activeOrg.value, conversationId, toUserIds: target.participantIds, text: text.trim() });
-    localSent.value = [...localSent.value, result.message as MessageData];
+    dataState.addSent(result.message as MessageData);
   } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Message was not sent'; }
   finally { sending.value = false; }
 }
@@ -156,7 +161,7 @@ async function createGroup(personIds: string[]): Promise<void> {
   if (unique.length < 2) return;
   error.value = '';
   try {
-    const humanId = userId.value || (await ipcRenderer.invoke('org-conversations:participant', activeOrg.value)).userId;
+    const humanId = data.userId || (await ipcRenderer.invoke('org-conversations:participant', activeOrg.value)).userId;
     const participantIds = [humanId, ...unique];
     const result = await ipcRenderer.invoke('org-conversations:start', { orgId: activeOrg.value, participantUserIds: participantIds, kind: 'group' });
     const org = activeOrg.value;
@@ -172,7 +177,7 @@ async function createGroup(personIds: string[]): Promise<void> {
 async function openDirect(personId: string): Promise<void> {
   error.value = '';
   try {
-    const humanId = userId.value || (await ipcRenderer.invoke('org-conversations:participant', activeOrg.value)).userId;
+    const humanId = data.userId || (await ipcRenderer.invoke('org-conversations:participant', activeOrg.value)).userId;
     const participantIds = [humanId, personId];
     const result = await ipcRenderer.invoke('org-conversations:start', { orgId: activeOrg.value, participantUserIds: participantIds, kind: 'direct' });
     const org = activeOrg.value;
@@ -200,11 +205,15 @@ const openSecretary = (event: Event): void => {
   if (!detail?.tabId || detail.tabId === props.tabId) openSecretaryModal(detail?.start === true);
 };
 
-watch(activeOrg, () => { if (activeOrg.value && !loading.value) void refresh(); });
 watch(snapshot, value => store.setLive(value), { immediate: true });
 
 store.sendHandler = text => void sendMessage(text);
-store.orgSwitchHandler = orgId => { activeOrg.value = orgId; };
+store.orgSwitchHandler = orgId => {
+  if (orgId === activeOrg.value) return;
+  activeOrg.value = orgId;
+  emptyConversations.value = [];
+  void refresh();
+};
 store.directHandler = personId => void openDirect(personId);
 store.groupHandler = personIds => void createGroup(personIds);
 store.secretaryHandler = () => openSecretaryModal();
