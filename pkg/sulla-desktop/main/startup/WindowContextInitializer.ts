@@ -31,6 +31,7 @@ export class WindowContextInitializer {
     const { ipcRenderer } = require('electron');
     try {
       const userDataPath = await ipcRenderer.invoke('get-user-data-path');
+      console.info(`[WindowBoot] user-data IPC handshake received after ${ Date.now() - startedAt }ms`);
       const fallbackPath = require('path').join(userDataPath, 'sulla-settings-fallback.json');
       SullaSettingsModel.setFallbackFilePath(fallbackPath);
       console.log('[WindowContext] Fallback path set to:', fallbackPath);
