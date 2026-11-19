@@ -277,8 +277,6 @@
       aria-hidden="true"
     />
 
-    <div class="glow blue" />
-    <div class="glow violet" />
     <div class="stars" />
     <div class="bracket tl" />
     <div class="bracket tr" />
@@ -3210,52 +3208,6 @@ watch(
   height: 100%;
 }
 
-.glow {
-  position: absolute;
-  pointer-events: none;
-  mix-blend-mode: screen;
-  transform: translate(-50%, -50%) scale(1);
-  will-change: transform, opacity, top, left;
-  z-index: 2;
-}
-.glow.blue {
-  width: 160%;
-  height: 160%;
-  top: 18%;
-  left: 22%;
-  background: radial-gradient(circle at center,
-    rgba(74,111,165,0.55) 0%, rgba(74,111,165,0.38) 10%, rgba(74,111,165,0.22) 22%,
-    rgba(74,111,165,0.11) 34%, rgba(74,111,165,0.05) 46%, rgba(74,111,165,0.018) 58%,
-    rgba(74,111,165,0.004) 72%, transparent 90%);
-  animation: breathe-blue 26s ease-in-out infinite;
-}
-.glow.violet {
-  width: 150%;
-  height: 150%;
-  top: 82%;
-  left: 80%;
-  background: radial-gradient(circle at center,
-    rgba(139,92,246,0.45) 0%, rgba(139,92,246,0.28) 10%, rgba(139,92,246,0.16) 22%,
-    rgba(139,92,246,0.08) 34%, rgba(139,92,246,0.035) 46%, rgba(139,92,246,0.012) 58%,
-    rgba(139,92,246,0.003) 72%, transparent 90%);
-  animation: breathe-violet 34s ease-in-out infinite;
-  animation-delay: -8s;
-}
-@keyframes breathe-blue {
-  0%   { top: 18%; left: 22%; opacity: 0.85; transform: translate(-50%, -50%) scale(1); }
-  25%  { top: 14%; left: 28%; opacity: 1.00; transform: translate(-50%, -50%) scale(1.15); }
-  50%  { top: 24%; left: 18%; opacity: 0.70; transform: translate(-50%, -50%) scale(0.92); }
-  75%  { top: 20%; left: 30%; opacity: 0.95; transform: translate(-50%, -50%) scale(1.08); }
-  100% { top: 18%; left: 22%; opacity: 0.85; transform: translate(-50%, -50%) scale(1); }
-}
-@keyframes breathe-violet {
-  0%   { top: 82%; left: 80%; opacity: 0.80; transform: translate(-50%, -50%) scale(1); }
-  30%  { top: 78%; left: 86%; opacity: 1.00; transform: translate(-50%, -50%) scale(1.2); }
-  55%  { top: 88%; left: 74%; opacity: 0.65; transform: translate(-50%, -50%) scale(0.9); }
-  80%  { top: 84%; left: 88%; opacity: 0.92; transform: translate(-50%, -50%) scale(1.1); }
-  100% { top: 82%; left: 80%; opacity: 0.80; transform: translate(-50%, -50%) scale(1); }
-}
-
 .stars {
   position: absolute;
   inset: 0;
@@ -4384,19 +4336,9 @@ watch(
     var(--nx-paper);
 }
 
-.theme-noir .glow.violet,
 .theme-noir .stars,
 .theme-noir .bracket {
   display: none;
-}
-
-.theme-noir .glow.blue {
-  width: 85%;
-  height: 85%;
-  top: 5%;
-  left: 18%;
-  opacity: 0.38;
-  background: radial-gradient(circle, color-mix(in srgb, var(--nx-accent) 18%, transparent), transparent 68%);
 }
 
 .theme-noir .title-block {
