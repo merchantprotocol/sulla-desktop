@@ -17,9 +17,21 @@ describe('ConversationChannelComposer', () => {
 
     await sendMessage(submission!);
 
-    expect(submission).toEqual({ ...oldTarget, body: 'private note' });
-    expect(sendMessage).toHaveBeenCalledWith({ ...oldTarget, body: 'private note' });
+    expect(submission).toEqual({ ...oldTarget, body: 'private note', sourceDraft: '  private note  ' });
+    expect(sendMessage).toHaveBeenCalledWith({ ...oldTarget, body: 'private note', sourceDraft: '  private note  ' });
     expect(composer.draft(newTarget)).toBe('');
+  });
+
+  it('preserves whitespace-only edits made while a send is in flight', () => {
+    // risk: draft integrity; a trailing-space edit must not be erased as if the submitted draft were unchanged
+    const composer = new ConversationChannelComposer();
+    const target = { serverId: 'server-a', channelId: 'channel-a' };
+    composer.updateDraft(target, 'message');
+    const submission = composer.capture(target, composer.draft(target))!;
+    composer.updateDraft(target, 'message ');
+    composer.clearAfterSend(submission);
+
+    expect(composer.draft(target)).toBe('message ');
   });
 
   it('keeps drafts isolated by channel and preserves edits made while a send is in flight', () => {

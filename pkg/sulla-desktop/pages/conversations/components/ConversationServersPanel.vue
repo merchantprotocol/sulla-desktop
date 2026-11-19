@@ -119,7 +119,7 @@ async function sendFromComposer(form: HTMLFormElement): Promise<void> {
   if (!submission || sending.value) return;
   sending.value = true;
   try {
-    await ipcRenderer.invoke('conversation-servers:send-message', submission);
+    await ipcRenderer.invoke('conversation-servers:send-message', { serverId: submission.serverId, channelId: submission.channelId, body: submission.body });
     composer.clearAfterSend(submission);
     composerRevision.value += 1;
     if (selectedServer.value === submission.serverId && selectedChannel.value === submission.channelId) await loadMessages(undefined, submission);

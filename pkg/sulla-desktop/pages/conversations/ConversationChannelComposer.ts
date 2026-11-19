@@ -9,6 +9,7 @@ export interface ConversationChannelTarget {
 
 export interface ConversationChannelSubmission extends ConversationChannelTarget {
   body: string;
+  sourceDraft: string;
 }
 
 export class ConversationChannelComposer {
@@ -25,12 +26,12 @@ export class ConversationChannelComposer {
   capture(target: ConversationChannelTarget, body: string): ConversationChannelSubmission | undefined {
     const trimmedBody = body.trim();
     if (!trimmedBody) return undefined;
-    return { ...target, body: trimmedBody };
+    return { ...target, body: trimmedBody, sourceDraft: body };
   }
 
   clearAfterSend(submission: ConversationChannelSubmission): void {
     const key = this.key(submission);
-    if (this.drafts.get(key)?.trim() === submission.body) this.drafts.delete(key);
+    if (this.drafts.get(key) === submission.sourceDraft) this.drafts.delete(key);
   }
 
   private key(target: ConversationChannelTarget): string {
