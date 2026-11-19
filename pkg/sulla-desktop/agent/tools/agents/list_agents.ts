@@ -33,7 +33,7 @@ export class ListAgentsWorker extends BaseTool {
     }
 
     const now = Date.now();
-    const rows = agents
+    const rows: Array<Record<string, any>> = agents
       .filter(a => a.type !== 'human')
       .map(a => ({
         name:        a.name || a.agentId,
