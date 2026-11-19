@@ -9,7 +9,7 @@ import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpc
 
 export function focusTabForOwner(setFocused: () => void, tabId: string | null, owner: Electron.BrowserWindow, currentOwner: Electron.BrowserWindow | null): void {
   if (tabId && !currentOwner) return;
-  if (currentOwner && currentOwner !== owner) throw new Error('Browser tab is not owned by this window');
+  if (currentOwner && currentOwner !== owner) return;
   setFocused();
 }
 
@@ -83,7 +83,12 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
       const owner = ownerWindow(event);
       const currentOwner = tabViewManager.getOwnerWindow(tabId);
       if (!currentOwner) return;
-      if (currentOwner !== owner) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
+      if (currentOwner !== owner) {
+        // An in-flight renderer bounds update can cross a window-transfer boundary.
+        // Ignore it without weakening ownership: setBounds is never called for a non-owner.
+        console.debug(`[BrowserTabViewIpc] ignored stale bounds from non-owner window=${ owner.id } tabId=${ tabId }`);
+        return;
+      }
       tabViewManager.setBounds(tabId, bounds, owner);
     });
 
@@ -95,7 +100,10 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
       const owner = ownerWindow(event);
       const tabOwner = tabId ? tabViewManager.getOwnerWindow(tabId) : null;
       const clearOwner = clearOnlyIfFocusedTabId ? tabViewManager.getOwnerWindow(clearOnlyIfFocusedTabId) : null;
-      if (clearOwner && clearOwner !== owner) throw new Error('Browser tab is not owned by this window');
+      if (clearOwner && clearOwner !== owner) {
+        console.debug(`[BrowserTabViewIpc] ignored stale focus update from non-owner window=${ owner.id } tabId=${ clearOnlyIfFocusedTabId }`);
+        return;
+      }
       focusTabForOwner(() => tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId, sentAt, owner), tabId, owner, tabOwner);
     });
 

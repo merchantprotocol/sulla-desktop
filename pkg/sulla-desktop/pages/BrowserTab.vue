@@ -413,7 +413,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { isStudioSection, type StudioSection } from '@pkg/components/routines/studioSections';
 import { useBookmarks } from '@pkg/composables/useBookmarks';
-import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { isBrowserTabTransferPending, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useFocusGuard } from '@pkg/composables/useFocusGuard';
 import { useTheme } from '@pkg/composables/useTheme';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
@@ -891,7 +891,7 @@ let boundsFrame: number | null = null;
 let lastSentBounds = '';
 
 function sendBounds() {
-  if (boundsFrame !== null) return;
+  if (isBrowserTabTransferPending(props.tabId) || boundsFrame !== null) return;
   boundsFrame = requestAnimationFrame(() => {
     boundsFrame = null;
     sendBoundsNow();
@@ -899,6 +899,7 @@ function sendBounds() {
 }
 
 function sendBoundsNow() {
+  if (isBrowserTabTransferPending(props.tabId)) return;
   const el = viewContainerRef.value;
   if (!el) return;
   const rect = el.getBoundingClientRect();
@@ -1132,6 +1133,25 @@ function onStateUpdate(_event: unknown, state: { tabId: string; url: string; tit
 // ResizeObserver for bounds tracking
 let resizeObserver: ResizeObserver | null = null;
 
+function stopBoundsObservation(): void {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  if (boundsFrame !== null) {
+    cancelAnimationFrame(boundsFrame);
+    boundsFrame = null;
+  }
+}
+
+function onTransferRelease(event: Event): void {
+  if ((event as CustomEvent<{ tabId: string }>).detail?.tabId === props.tabId) stopBoundsObservation();
+}
+
+function onTransferActivated(event: Event): void {
+  if ((event as CustomEvent<{ tabId: string }>).detail?.tabId !== props.tabId) return;
+  lastSentBounds = '';
+  nextTick(() => sendBounds());
+}
+
 // ── Visibility management ──
 // SINGLE SOURCE OF TRUTH on the renderer side. This component is rendered
 // with v-show (never removed from DOM), so visibility of the underlying
@@ -1188,6 +1208,8 @@ onMounted(() => {
   ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
   ipcRenderer.on('side-panel:state-changed' as any, onSidePanelStateChanged);
   window.addEventListener('sulla:mode-rail-select', onModeRailSelect);
+  window.addEventListener('sulla:browser-tab-transfer-release', onTransferRelease as EventListener);
+  window.addEventListener('sulla:browser-tab-transfer-activated', onTransferActivated as EventListener);
   window.addEventListener('sulla:tab-navigate', onExternalNavigate);
   window.addEventListener('sulla:open-secure-vault', onOpenSecureVault);
   window.addEventListener('sulla:vault-integration-saved', onVaultIntegrationSaved);
@@ -1211,6 +1233,8 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('sulla:mode-rail-select', onModeRailSelect);
+  window.removeEventListener('sulla:browser-tab-transfer-release', onTransferRelease as EventListener);
+  window.removeEventListener('sulla:browser-tab-transfer-activated', onTransferActivated as EventListener);
   window.removeEventListener('sulla:tab-navigate', onExternalNavigate);
   window.removeEventListener('sulla:open-secure-vault', onOpenSecureVault);
   window.removeEventListener('sulla:vault-integration-saved', onVaultIntegrationSaved);
@@ -1220,14 +1244,7 @@ onUnmounted(() => {
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
   ipcRenderer.removeListener('side-panel:state-changed' as any, onSidePanelStateChanged);
 
-  if (resizeObserver) {
-    resizeObserver.disconnect();
-    resizeObserver = null;
-  }
-  if (boundsFrame !== null) {
-    cancelAnimationFrame(boundsFrame);
-    boundsFrame = null;
-  }
+  stopBoundsObservation();
 
   if (viewCreated.value) {
     ipcRenderer.invoke('browser-tab-view:destroy', props.tabId);
