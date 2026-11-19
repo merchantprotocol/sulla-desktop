@@ -1,10 +1,3 @@
-File: pkg/sulla-desktop/pages/chat/components/composer/Composer.vue
-Size: 49563 bytes
-SHA: a067ba0aac34cceb68efefe52c03ccd8ed46e3cd
-Encoding: base64
-Ref: main
-
-Content:
 <!--
   Sulla Desktop · https://sulladesktop.com
   Copyright (c) 2025-2026 Merchant Protocol LLC.
