@@ -289,7 +289,10 @@ export interface IpcMainInvokeEvents {
   'org-conversations:send': (input: { orgId: string; conversationId: string; toUserIds: string[]; text: string }) => { messageId: string; message: import('@sulla/domain').MessageEnvelope['data'] };
   'use-case-recall:query': (text: string, options: Partial<import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallQueryOptions>) => import('@pkg/main/AgentUseCaseRecallQuery').AgentRecallSuggestionResponse;
   'extensions-ui:list': (slot?: import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUISlot) => readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[];
-  'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }>;
+  /** null while the database is not reachable yet; reload on `database:available`. */
+  'extension-permissions:list': () => Array<{ extensionId:string; slug:string; name:string; description:string; publisher:string; version:string|null; hooks:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName[]; grants:Partial<Record<import('@pkg/agent/extensions/HookRegistry').ExtensionHookName,boolean>>; ui:readonly import('@pkg/agent/extensions/ExtensionUIRegistry').ExtensionUIContribution[]; hiddenFromRail:boolean }> | null;
+  /** Installed extensions read from disk (no DB, no grants). Renders before extension-permissions:list. */
+  'extension-permissions:local': () => import('@pkg/agent/extensions/LocalExtensionMetadataReader').LocalExtensionPermissionRow[];
   'extension-permissions:audit': () => import('@pkg/agent/extensions/HookRegistry').HookAuditEvent[];
   'extension-permissions:set-hook': (input:{extensionId:string;hook:import('@pkg/agent/extensions/HookRegistry').ExtensionHookName;granted:boolean}) => void;
   'extension-permissions:revoke-all': (extensionId?:string) => void;

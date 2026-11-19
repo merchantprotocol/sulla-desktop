@@ -376,8 +376,9 @@ interface ExtensionRailItem { extensionId:string; id:string; label:string; icon?
 const railExtensions = ref<ExtensionRailItem[]>([]);
 async function refreshRailExtensions(){
   const [items, permissions] = await Promise.all([ipcRenderer.invoke('extensions-ui:list','sidebar_entry'), ipcRenderer.invoke('extension-permissions:list')]);
-  const hidden = new Set(permissions.filter(item=>item.hiddenFromRail).map(item=>item.extensionId));
-  const extensionNames = Object.fromEntries(permissions.map(item=>[item.extensionId,item.name]));
+  const rows = permissions ?? []; // null while the database is starting; reloads on database:available
+  const hidden = new Set(rows.filter(item=>item.hiddenFromRail).map(item=>item.extensionId));
+  const extensionNames = Object.fromEntries(rows.map(item=>[item.extensionId,item.name]));
   railExtensions.value = items.filter(item=>!hidden.has(item.extensionId)).map(item=>({...item,tooltip:`${item.label} · ${extensionNames[item.extensionId]||item.extensionId}`}));
 }
 // Permissions come back empty while the database is starting; reload when it is up.
