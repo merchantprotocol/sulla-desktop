@@ -41,6 +41,7 @@ interface ProviderConfig {
 
 export class ModelDiscoveryService {
   private cache = new Map<string, { models: ModelInfo[]; timestamp: number }>();
+  private failures = new Map<string, string>();
   private readonly cacheTimeout = 30 * 60 * 1000; // 30 minutes
 
   private providers: Record<string, ProviderConfig> = {
@@ -371,6 +372,8 @@ export class ModelDiscoveryService {
 
   supportsProvider(providerId: string): boolean { return Object.prototype.hasOwnProperty.call(this.providers, providerId); }
 
+  getLastFailure(providerId: string): string | undefined { return this.failures.get(providerId); }
+
   /**
    * Fetch available models for a specific provider
    */
@@ -413,7 +416,10 @@ export class ModelDiscoveryService {
             ? alibabaBaseUrl(savedValues)
             : provider.baseUrl;
       const baseUrl = (options.baseUrl || runtime?.values.base_url || configuredBaseUrl).replace(/\/+$/, '');
-      if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) return options.liveOnly ? [] : provider.staticModels ?? [];
+      if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) {
+        this.failures.set(providerId, 'no endpoint configured');
+        return options.liveOnly ? [] : provider.staticModels ?? [];
+      }
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint
         : `${ baseUrl }${ provider.modelsEndpoint }`;
@@ -469,11 +475,14 @@ export class ModelDiscoveryService {
 
       if (!response.ok) {
         if (response.status === 401) {
+          this.failures.set(providerId, 'API key rejected (401)');
           throw new Error(`Invalid API key for ${ providerId }`);
         }
         if (response.status === 403) {
+          this.failures.set(providerId, 'models endpoint access denied (403)');
           throw new Error(`Access denied for ${ providerId } models endpoint`);
         }
+        this.failures.set(providerId, `models endpoint returned HTTP ${ response.status }`);
         throw new Error(`Failed to fetch models from ${ providerId }: ${ response.status } ${ response.statusText }`);
       }
 
@@ -483,12 +492,18 @@ export class ModelDiscoveryService {
       // If the endpoint responded but yielded no usable models, fall back to the
       // offline static list (if any) rather than caching an empty catalog.
       const resolved = models.length > 0 ? models : (options.liveOnly ? [] : provider.staticModels ?? []);
+      if (!models.length) this.failures.set(providerId, 'models endpoint returned no models');
+      else this.failures.delete(providerId);
 
       // Cache the results
       this.cache.set(cacheKey, { models: resolved, timestamp: Date.now() });
 
       return resolved;
     } catch (error) {
+      if (!this.failures.has(providerId)) {
+        const name = error instanceof Error ? error.name : '';
+        this.failures.set(providerId, name === 'TimeoutError' || name === 'AbortError' ? 'models request timed out' : 'models request failed');
+      }
       console.warn(`[ModelDiscovery] Failed to fetch models for ${ providerId }:`, error);
 
       // Return cached results if available, even if expired
@@ -556,6 +571,8 @@ export class ModelDiscoveryService {
     } else {
       this.cache.clear();
     }
+    if (providerId) this.failures.delete(providerId);
+    else this.failures.clear();
   }
 
   /**

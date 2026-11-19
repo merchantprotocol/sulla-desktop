@@ -294,7 +294,7 @@ class ModelProviderService {
     return providers;
   }
 
-  async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean } = {}): Promise<ProviderModelInfo[]> {
+  async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean; forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
     const integration = integrations[providerId];
     if (!integration) {
       return this.getCliProviderModels(providerId);
@@ -352,7 +352,7 @@ class ModelProviderService {
       // CLI (through Sulla, so vault OAuth creds are injected). Degrades to the
       // "Auto" sentinel on any failure. See codexModelCatalog.ts.
       const { listCodexModels } = await import('../languagemodels/codexModelCatalog');
-      return (await listCodexModels()).map(model => this.modelInfo(providerId, model));
+      return (await listCodexModels({ force: queryOptions.forceRefresh === true })).map(model => this.modelInfo(providerId, model));
     }
 
     if (providerId === 'opencode') {
