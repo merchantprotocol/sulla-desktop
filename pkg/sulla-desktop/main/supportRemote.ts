@@ -209,12 +209,16 @@ export class RemoteSupportService {
     const clean = message.trim();
     if (!clean || clean.length > 4000) throw new Error('Describe the problem in 1 to 4,000 characters.');
     const deviceId = supportDeviceIdentity.getOrCreate(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
+    const token = crypto.randomBytes(32).toString('base64url');
     const result = await jsonCloud('POST', '/support/sessions', {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
-      deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(),
+      deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), token,
     });
-    stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: result.session.id, message: clean, requestedAt: result.session.createdAt || now(), activity: [] } });
-    broadcast();
+    const expiresAt = result.grant?.expiresAt || result.session?.expiresAt;
+    if (typeof expiresAt !== 'string') throw new Error('Cloud did not return a support expiry.');
+    stateStore().update((state) => { state.remote = { status: 'connected', sessionId: result.session.id, message: clean, requestedAt: result.session.createdAt || now(), approvedAt: result.session.createdAt || now(), expiresAt, grant: { sessionId: result.session.id, token, deviceId, expiresAt }, activity: [] } });
+    broadcast(); this.syncKeepAwake(); await this.ensureHost();
+    void this.reportDeviceStatus().catch(error => console.debug('[RemoteSupport] initial device status report deferred:', error));
     return this.state();
   }
 
