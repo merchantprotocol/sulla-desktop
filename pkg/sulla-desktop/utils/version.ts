@@ -47,11 +47,20 @@ export class AppVersionService {
       return this.env.SULLA_MOCK_VERSION;
     }
 
-    if (this.env.NODE_ENV === 'production' || this.env.SULLA_MOCK_FOR_SCREENSHOTS) {
+    if (this.isPackaged() || this.env.SULLA_MOCK_FOR_SCREENSHOTS) {
       return this.getProductionVersion();
     }
 
     return await this.getDevVersion();
+  }
+
+  /** Packaged builds have no git checkout, so they must read the app version rather than run git describe. */
+  private isPackaged(): boolean {
+    try {
+      return Electron.app.isPackaged === true;
+    } catch {
+      return false;
+    }
   }
 
   parseDocsVersion(version: string): string {
