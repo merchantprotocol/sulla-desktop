@@ -1,3 +1,10 @@
+File: pkg/sulla-desktop/pages/chat/components/composer/Composer.vue
+Size: 49563 bytes
+SHA: a067ba0aac34cceb68efefe52c03ccd8ed46e3cd
+Encoding: base64
+Ref: main
+
+Content:
 <!--
   Sulla Desktop · https://sulladesktop.com
   Copyright (c) 2025-2026 Merchant Protocol LLC.
@@ -39,17 +46,6 @@
         box, one solid surface with no gaps for the transcript to show through.
       -->
       <div class="composer-card">
-        <div v-if="!side" class="composer-for-you">
-          <button
-            type="button"
-            :class="{ 'has-requests': forYou.openCount.value > 0 }" @click="forYou.open.value ? forYou.open.value = false : forYou.show()"
-          >
-            For You<span v-if="forYou.openCount.value"> · {{ forYou.openCount.value }}</span>
-          </button>
-          <div v-if="forYou.open.value" class="composer-for-you-panel">
-            <ForYouPanel />
-          </div>
-        </div>
         <!-- Kept mounted in the side dock (it also drives the tab dots); the tabs and lanes show its content there. -->
         <div class="dock-status">
           <ThreadStatusLine>
@@ -284,7 +280,6 @@ import ThreadStatusLine   from './ThreadStatusLine.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
-import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { DockPositions } from '../../composables/useDockPosition';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
@@ -295,7 +290,6 @@ import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
-import ForYouPanel from '../sidedock/ForYouPanel.vue';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -359,7 +353,6 @@ const usagePercent = computed(() => {
 const { position: dockPosition, setPosition } = DockPositions.use();
 const drawerOpen = computed(() => dockPosition.value === 'side');
 const side = computed(() => dockPosition.value === 'side');
-const forYou = ChatDecisions.useChatDecisions();
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -1109,5 +1102,4 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 <style scoped src="../../styles/composer-field.css"></style>
 
 <style scoped>
-.composer-for-you{padding:8px 12px;border-bottom:1px solid var(--border-default)}.composer-for-you>button{font:inherit;font-size:12px;border:1px solid var(--border-strong);border-radius:7px;padding:6px 10px;background:transparent;color:var(--text-primary);cursor:pointer}.composer-for-you>button.has-requests{color:var(--status-warning);border-color:var(--status-warning)}.composer-for-you-panel{max-height:55vh;overflow:auto}
 </style>
