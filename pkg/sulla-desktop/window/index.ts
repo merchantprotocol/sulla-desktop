@@ -222,7 +222,7 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
       height:          saved?.height ?? defaultHeight,
       resizable:       true,
       icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
-      backgroundColor: '#0d1117',
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#0d1117' : '#f6f7f9',
       // macOS: hide native title bar, keep traffic lights overlaid on content
       ...(os.platform() === 'darwin'
         ? {
