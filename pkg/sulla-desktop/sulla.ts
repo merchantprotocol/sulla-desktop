@@ -48,6 +48,11 @@ export function initiateWindowContext(): Promise<void> {
   return sullaStartup.windowContext.initialize();
 }
 
+/** Hydrate renderer-only state in the background so the agent shell can paint. */
+export function startWindowContextHydration(): void {
+  sullaStartup.windowContext.startForFirstPaint();
+}
+
 export function expectVaultContainer(): void {
   sullaStartup.vaultState.expectContainer();
 }

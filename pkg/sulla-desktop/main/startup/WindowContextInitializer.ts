@@ -9,9 +9,19 @@ import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
 
-/** Renderer-side bootstrap every window runs before it mounts. */
+/** Renderer-side settings and extension hydration for a window. */
 export class WindowContextInitializer {
+  /** Start window hydration without making it a prerequisite for first paint. */
+  startForFirstPaint(): void {
+    const startedAt = Date.now();
+    console.info(`[WindowBoot] window context hydration started at ${ startedAt }`);
+    void this.initialize().then(() => {
+      console.info(`[WindowBoot] window context hydration finished after ${ Date.now() - startedAt }ms`);
+    }).catch((error: unknown) => console.error('[WindowBoot] window context hydration failed:', error));
+  }
+
   async initialize(): Promise<void> {
+    const startedAt = Date.now();
     // This function serves as the explicit initialization hook
     console.log('[WindowContext] Sulla window context initialized');
 
@@ -21,6 +31,7 @@ export class WindowContextInitializer {
     const { ipcRenderer } = require('electron');
     try {
       const userDataPath = await ipcRenderer.invoke('get-user-data-path');
+      console.info(`[WindowBoot] user-data IPC handshake received after ${ Date.now() - startedAt }ms`);
       const fallbackPath = require('path').join(userDataPath, 'sulla-settings-fallback.json');
       SullaSettingsModel.setFallbackFilePath(fallbackPath);
       console.log('[WindowContext] Fallback path set to:', fallbackPath);
@@ -34,6 +45,10 @@ export class WindowContextInitializer {
         void SullaSettingsModel.bootstrap().catch((error: unknown) => console.error('[WindowContext] Secondary settings bootstrap failed:', error));
       } else {
       const backendsReady = ipcRenderer.invoke('sulla-settings:wait-for-backends');
+      void backendsReady.then(
+        () => console.info(`[WindowBoot] settings backend handshake received after ${ Date.now() - startedAt }ms`),
+        () => undefined,
+      );
       const readyInTime = await Promise.race([
         backendsReady.then(() => true),
         new Promise<boolean>(resolve => setTimeout(() => resolve(false), 8_000)),
