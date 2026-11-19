@@ -206,6 +206,11 @@ export class BrowserTabViewManager {
   beginShutdown(): void {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
+    for (const tabId of this.retryTimers.keys()) this.stopRetry(tabId);
+    if (this.healthMonitor) {
+      clearInterval(this.healthMonitor);
+      this.healthMonitor = null;
+    }
     for (const [tabId, view] of this.views) {
       const owner = this.owners.get(tabId);
       if (!owner || owner.isDestroyed()) continue;

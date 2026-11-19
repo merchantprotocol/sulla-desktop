@@ -34,6 +34,8 @@ const managerWith = (tabId: string, view: any, owner: any) => {
   manager.transferringTabs = new Set<string>();
   manager.latestBounds = new Map([[tabId, { x: 12, y: 24, width: 640, height: 480 }]]);
   manager.appliedPlacement = new WeakMap();
+  manager.retryTimers = new Map();
+  manager.healthMonitor = null;
   manager.viewHealth = new Map([[tabId, { captureFailures: 0, stuckScrolls: 0, probeInFlight: false, recovering: false, lastRecoveryAt: 0, recoveryStage: null }]]);
   manager.lastActiveAt = new Map();
   manager.reconcileVisibility = vi.fn();
