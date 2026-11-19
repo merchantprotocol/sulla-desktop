@@ -83,7 +83,6 @@ describe('InternalTabViewManager', () => {
     tab.view.webContents.listeners['did-finish-load']();
     expect(owner.webContents.send).not.toHaveBeenCalled();
   });
-  });
 
   it('destroys only the closed tab view', () => {
     // risk: closing a tab must release its isolated Chromium renderer
