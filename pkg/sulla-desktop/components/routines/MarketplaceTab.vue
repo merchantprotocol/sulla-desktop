@@ -40,9 +40,11 @@
       :install-error="mp.installError.value"
       :installed-info="installedForOpenDrawer"
       :update-available="detailUpdateAvailable"
+      :buying="buyingId === mp.detail.value.row.id"
       @close="onCloseDetail"
       @install="onInstall(mp.detail.value.row.id)"
       @install-all="onInstall(mp.detail.value.row.id, true)"
+      @buy="onBuy(mp.detail.value.row.id)"
       @open-dependency="onOpenDependency"
       @filter="onListingFilter"
     />
@@ -186,6 +188,7 @@
           @open-detail="onOpen($event.id)"
           @filter="onListingFilter"
           @install="onInstall($event.id)"
+          @buy="onBuy($event.id)"
           @close="clearSearch"
         />
 
@@ -228,6 +231,7 @@
               :install-state="mp.installStateFor(t)"
               @open="onOpen(t.id)"
               @install="onInstall(t.id)"
+              @buy="onBuy(t.id)"
             />
           </div>
 
@@ -529,6 +533,7 @@ const submissionsTotalPages = computed(() => {
   if (submissionsTotal.value === 0) return 1;
   return Math.max(1, Math.ceil(submissionsTotal.value / SUBMISSIONS_LIMIT));
 });
+const buyingId = ref<string | null>(null);
 
 const emit = defineEmits<(e: 'installed', info: { kind: string; slug: string; path: string; name: string }) => void>();
 
@@ -571,6 +576,9 @@ function onOpenDetailEvent(ev: Event) {
 onMounted(async() => {
   searchController.syncFromRoute().then(state => { searchDraft.value = state.q; selectedFacets.value = { topics: state.topics, kinds: state.kinds, media: state.media, price: state.price, length: state.length, apps: state.apps, approval: state.approval }; searchMode.value = searchController.isResultsMode; if (searchController.listingId) mp.loadDetail(searchController.listingId).catch(() => undefined); }).catch(() => undefined);
   window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
+  // Returning from the hosted checkout only triggers a server-authoritative
+  // ownership refresh; success/cancel query parameters are never consulted.
+  window.addEventListener('focus', onMarketplaceFocus);
   const authed = await refreshAuthStatus();
   if (authed) {
     mp.load().catch(() => undefined);
@@ -593,7 +601,16 @@ watch(() => router.currentRoute.value.query.listing, listing => {
 
 onUnmounted(() => {
   window.removeEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
+  window.removeEventListener('focus', onMarketplaceFocus);
 });
+
+async function onMarketplaceFocus() {
+  await mp.load().catch(() => undefined);
+  const ownedIds = await mp.refreshOwnership().catch(() => null);
+  if (ownedIds) catalogRows.value = catalogRows.value.map(row => row.is_paid ? { ...row, owned: ownedIds.has(row.id) } : row);
+  const id = mp.detail.value?.row.id;
+  if (id) await mp.loadDetail(id).catch(() => undefined);
+}
 
 function onKind(k: KindFilter) {
   mp.setKind(k).catch(() => undefined);
@@ -640,6 +657,16 @@ async function onInstall(id: string, includeDependencies = false) {
   }
   const err = mp.installError.value;
   window.alert(`Install failed${ err ? `: ${ err }` : '.' }`);
+}
+
+async function onBuy(id: string) {
+  buyingId.value = id;
+  try {
+    const error = await mp.checkout(id);
+    if (error) window.alert(`Checkout couldn't be opened: ${error}`);
+  } finally {
+    buyingId.value = null;
+  }
 }
 
 async function onOpenDependency(dependency: { kind: MarketplaceKind; slug: string }) {

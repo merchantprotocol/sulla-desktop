@@ -44,10 +44,17 @@
 
         <div class="cta-row">
           <button
-            v-if="source === 'marketplace'"
+            v-if="source === 'marketplace' && purchasePolicy.shouldBuy(row)"
             type="button"
             class="btn primary big"
-            :disabled="installing || (!!installedInfo && !updateAvailable)"
+            :disabled="buying"
+            @click="emit('buy')"
+          >{{ buying ? 'Opening checkout…' : `Buy${presentation.price ? ` · ${presentation.price}` : ''}` }}</button>
+          <button
+            v-else-if="source === 'marketplace'"
+            type="button"
+            class="btn primary big"
+            :disabled="!purchasePolicy.canInstall(row) || installing || (!!installedInfo && !updateAvailable)"
             @click="requestInstall"
           >
             {{ installButtonLabel }}
@@ -483,6 +490,7 @@ import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 
 import { MarketplaceListingPresenter } from '@pkg/composables/MarketplaceListingPresenter';
+import { MarketplacePurchasePolicy } from '@pkg/composables/MarketplacePurchasePolicy';
 import { marketplaceKindInfo, marketplaceKindLabel, type MarketplaceKind } from '@pkg/composables/marketplaceKinds';
 import LoopFrameNode from '@pkg/pages/routines/LoopFrameNode.vue';
 import RoutineEdge from '@pkg/pages/routines/RoutineEdge.vue';
@@ -498,6 +506,7 @@ const props = withDefaults(defineProps<{
   installError?:  string | null;
   installedInfo?: { kind: string; slug: string; path: string; name: string; version?: string } | null;
   updateAvailable?: boolean;
+  buying?: boolean;
   forking?:       boolean;
   forkError?:     string | null;
 }>(), {
@@ -506,6 +515,7 @@ const props = withDefaults(defineProps<{
   installError:  null,
   installedInfo: null,
   updateAvailable: false,
+  buying: false,
   forking:       false,
   forkError:     null,
 });
@@ -514,6 +524,7 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'install'): void;
   (e: 'install-all'): void;
+  (e: 'buy'): void;
   (e: 'open-dependency', dependency: { kind: MarketplaceKind; slug: string }): void;
   (e: 'fork'): void;
   (e: 'filter', key: 'topic' | 'type', value: string): void;
@@ -538,6 +549,7 @@ provide('routines-mode', ref<'edit' | 'run'>('run'));
 const kindInfo = computed(() => marketplaceKindInfo(props.row.kind));
 const kindLabel = computed(() => props.row.kind_label || marketplaceKindLabel(props.row.kind));
 const presentation = computed(() => new MarketplaceListingPresenter().present(props.row));
+const purchasePolicy = new MarketplacePurchasePolicy();
 const detailTab = ref<'graph' | 'docs'>('graph');
 
 const initials = computed(() => {
