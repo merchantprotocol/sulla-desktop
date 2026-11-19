@@ -214,10 +214,17 @@ export class RemoteSupportService {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
       deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), token,
     });
-    const expiresAt = result.grant?.expiresAt || result.session?.expiresAt;
-    if (typeof expiresAt !== 'string') throw new Error('Cloud did not return a support expiry.');
-    stateStore().update((state) => { state.remote = { status: 'connected', sessionId: result.session.id, message: clean, requestedAt: result.session.createdAt || now(), approvedAt: result.session.createdAt || now(), expiresAt, grant: { sessionId: result.session.id, token, deviceId, expiresAt }, activity: [] } });
-    broadcast(); this.syncKeepAwake(); await this.ensureHost();
+    const session = result.session;
+    const expiresAt = result.grant?.expiresAt;
+    if (!session?.id) throw new Error('Cloud did not return a support session.');
+    if (session.status !== 'active' || typeof expiresAt !== 'string') {
+      stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: session.id, message: clean, requestedAt: session.createdAt || now(), activity: [] } });
+      broadcast(); this.syncKeepAwake();
+      return this.state();
+    }
+    stateStore().update((state) => { state.remote = { status: 'connected', sessionId: session.id, message: clean, requestedAt: session.createdAt || now(), approvedAt: session.createdAt || now(), expiresAt, grant: { sessionId: session.id, token, deviceId, expiresAt }, activity: [] } });
+    broadcast(); this.syncKeepAwake();
+    try { await this.ensureHost() } catch (error) { console.warn('[RemoteSupport] initial host connection deferred:', error) }
     void this.reportDeviceStatus().catch(error => console.debug('[RemoteSupport] initial device status report deferred:', error));
     return this.state();
   }
