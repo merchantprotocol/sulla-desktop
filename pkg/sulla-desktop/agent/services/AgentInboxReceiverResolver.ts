@@ -5,7 +5,7 @@
 import type { AgentInboxTarget } from './AgentInbox';
 import type { AgentJob } from '../tools/agents/jobRegistry';
 
-export interface AgentInboxReceiverResolver { resolve(channel: string, targetId?: string): Promise<AgentInboxTarget> }
+export interface AgentInboxReceiverResolver { resolve(channel: string, targetId?: string, replyToThreadId?: string): Promise<AgentInboxTarget> }
 export interface AgentInboxJobReader { allJobs(): Promise<AgentJob[]>; activeJobs?(): Promise<AgentJob[]> }
 export interface AgentInboxCandidate { channel: string; threadId: string; label: string; jobId?: string; executing?: boolean }
 
@@ -24,7 +24,7 @@ export class AmbiguousAgentInboxTargetError extends Error {
 export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverResolver {
   constructor(private readonly jobs: AgentInboxJobReader, private readonly activeThreads: (channel: string) => AgentInboxCandidate[]) {}
 
-  async resolve(channel: string, targetId?: string): Promise<AgentInboxTarget> {
+  async resolve(channel: string, targetId?: string, replyToThreadId?: string): Promise<AgentInboxTarget> {
     const candidates = [...this.activeThreads(channel)];
     const jobs = await (this.jobs.activeJobs?.() ?? this.jobs.allJobs());
     jobs.sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
@@ -48,6 +48,10 @@ export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverReso
       const match = matches[0];
       return { channel, threadId: match.threadId, agentId: channel, jobId: match.jobId, label: match.label };
     }
+    // A reply goes back to the exact instance that woke the sender when that thread belongs to this channel;
+    // otherwise (the waker was a different channel) fall through to normal bare-name routing.
+    const replyMatch = replyToThreadId ? unique.find(candidate => candidate.threadId === replyToThreadId) : undefined;
+    if (replyMatch) return { channel, threadId: replyMatch.threadId, agentId: channel, jobId: replyMatch.jobId, label: replyMatch.label };
     const bound = unique.filter(candidate => candidate.jobId);
     const executing = unique.filter(candidate => candidate.executing);
     const ambiguous = bound.length > 1 ? bound : executing.length > 1 ? executing : [];

@@ -7,7 +7,7 @@ import { ReceiverRunGuard } from './ReceiverRunGuard';
 
 export type AgentMessageKind = 'human' | 'parent' | 'child' | 'peer' | 'contract' | 'blocker' | 'org';
 export type AgentInboxDeliveryReceipt = 'accepted' | 'deferred' | 'failed';
-export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; senderChannel?: string; senderThreadId?: string; senderJobId?: string; senderLabel?: string; targetId?: string; ids: { messageId: string; remoteMessageId?: string; orgId?: string; orgName?: string; jobId?: string; taskIndex?: number; threadId?: string; hostSeq?: number; relayed?: boolean } }
+export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; senderChannel?: string; senderThreadId?: string; senderJobId?: string; senderLabel?: string; targetId?: string; replyToThreadId?: string; ids: { messageId: string; remoteMessageId?: string; orgId?: string; orgName?: string; jobId?: string; taskIndex?: number; threadId?: string; hostSeq?: number; relayed?: boolean } }
 export interface AgentInboxTarget { channel: string; threadId?: string; agentId?: string; jobId?: string; label?: string }
 export interface AgentInboxEntry { envelope: AgentMessageEnvelope; target: AgentInboxTarget }
 export interface AgentInboxClaim { owner: string; target: AgentInboxTarget; entries: AgentInboxEntry[] }
@@ -113,10 +113,10 @@ export class AgentInbox {
 
   render(entries: AgentInboxEntry[]): string {
     return entries.map(({ envelope }) => {
-      const sender = envelope.kind === 'peer'
-        ? `Peer message from ${envelope.senderLabel || envelope.from} (${[envelope.senderChannel, envelope.senderThreadId, envelope.senderJobId].filter(Boolean).join(' · ')})`
+      const provenance = [envelope.senderChannel, envelope.senderThreadId, envelope.senderJobId].filter(Boolean).join(' · ');
+      const label = envelope.kind === 'peer'
+        ? `Peer message from ${ envelope.senderLabel || envelope.from }${ provenance ? ` (${ provenance })` : '' }`
         : `${ envelope.kind } message from ${ envelope.from }`;
-      const label = sender;
       return `[${ label }]\n${ envelope.body }`;
     }).join('\n\n==========\n\n');
   }

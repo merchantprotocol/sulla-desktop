@@ -15,7 +15,7 @@ describe('DurableAgentInboxReceiverResolver', () => {
     const resolver = new DurableAgentInboxReceiverResolver(jobs, () => []);
     await expect(resolver.resolve('coding-manager')).rejects.toMatchObject({
       name: 'AmbiguousAgentInboxTargetError',
-      candidates: [expect.objectContaining({ threadId: 'manager-a', jobId: 'job-a' }), expect.objectContaining({ threadId: 'manager-b', jobId: 'job-b' })],
+      candidates: expect.arrayContaining([expect.objectContaining({ threadId: 'manager-a', jobId: 'job-a' }), expect.objectContaining({ threadId: 'manager-b', jobId: 'job-b' })]),
     });
     try { await resolver.resolve('coding-manager'); } catch (error) {
       expect(error).toBeInstanceOf(AmbiguousAgentInboxTargetError);
@@ -50,5 +50,15 @@ describe('DurableAgentInboxReceiverResolver', () => {
   it('returns a typed no-match error for an invalid explicit address', async () => { // risk: peer delivery recovery
     const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => []);
     await expect(resolver.resolve('coding-manager', 'missing')).rejects.toBeInstanceOf(NoAgentInboxTargetError);
+  });
+
+  it('routes a reply to the waking instance even when the channel is ambiguous', async () => { // risk: peer reply misdelivery
+    const resolver = new DurableAgentInboxReceiverResolver(jobs, () => []);
+    await expect(resolver.resolve('coding-manager', undefined, 'manager-b')).resolves.toMatchObject({ threadId: 'manager-b' });
+  });
+
+  it('ignores a reply thread from another channel and uses normal routing', async () => { // risk: dropped peer replies
+    const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => [{ channel: 'sulla-desktop', threadId: 'chat', label: 'chat' }]);
+    await expect(resolver.resolve('sulla-desktop', undefined, 'heartbeat-thread')).resolves.toMatchObject({ threadId: 'chat' });
   });
 });

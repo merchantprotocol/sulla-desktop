@@ -28,7 +28,7 @@ describe('ChannelTagExtractor', () => {
     const extractor = new ChannelTagExtractor();
     const response = { content: '<channel:coding-manager#Thread-AbC>update</channel:coding-manager#Thread-AbC>' } as any;
     extractor.processComplete(response, { channel: 'worker', threadId: 'sender', state: { metadata: { agentId: 'worker' } } } as any);
-    expect(send.mock.calls[1][1].data.targetId).toBe('Thread-AbC');
+    expect(send.mock.calls[1][1].data.envelope.targetId).toBe('Thread-AbC');
     expect(send.mock.calls[1][1].data.receiverChannel).toBe('coding-manager');
   });
 
@@ -36,7 +36,8 @@ describe('ChannelTagExtractor', () => {
     const extractor = new ChannelTagExtractor();
     const response = { content: '<channel:heartbeat>reply</channel:heartbeat>' } as any;
     extractor.processComplete(response, { channel: 'worker', threadId: 'worker-thread', state: { metadata: { agentId: 'worker', replyToThread: 'origin-thread' } } } as any);
-    expect(send.mock.calls[1][1].data.envelope.targetId).toBe('origin-thread');
+    expect(send.mock.calls[1][1].data.envelope.replyToThreadId).toBe('origin-thread');
+    expect(send.mock.calls[1][1].data.envelope.targetId).toBeUndefined();
   });
 
   it('deduplicates identical bodies independently per explicit target instance', () => {
