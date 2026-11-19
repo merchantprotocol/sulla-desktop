@@ -73,6 +73,8 @@ export interface MarketplaceTemplateDetail {
   manifest:             Record<string, unknown>;
   price_cents?:            number | null;
   currency?:               string | null;
+  is_paid?:                boolean;
+  owned?:                  boolean;
   video_url?:              string | null;
   video_duration_seconds?: number | null;
   poster_url?:             string | null;
@@ -287,6 +289,23 @@ export async function fetchPublicTemplate(templateId: string): Promise<Marketpla
   const body = await readJsonOrThrow<{ template: MarketplaceTemplateDetail }>(res, 'fetchPublicTemplate');
 
   return new MarketplaceBrowseRowMapper().map(body.template) as MarketplaceTemplateDetail;
+}
+
+export interface MarketplaceCheckoutSession { url: string; sessionId: string }
+
+/** Start the Workers-hosted checkout session using the current Cloud session. */
+export async function createMarketplaceCheckout(templateId: string): Promise<MarketplaceCheckoutSession> {
+  const url = `${ API_BASE }/marketplace/templates/${ encodeURIComponent(templateId) }/checkout`;
+  const res = await fetchWithAuthRetry(url, { method: 'POST' });
+  const body = await readJsonOrThrow<MarketplaceCheckoutSession>(res, 'createMarketplaceCheckout');
+  if (typeof body.url !== 'string' || typeof body.sessionId !== 'string') throw new Error('[createMarketplaceCheckout] invalid checkout response');
+  return body;
+}
+
+/** Ownership is confirmed only by the authenticated Workers entitlement endpoint. */
+export async function fetchMarketplaceEntitlements(): Promise<{ entitlements: Record<string, unknown>[] }> {
+  const res = await fetchWithAuthRetry(`${ API_BASE }/marketplace/entitlements`, { method: 'GET' });
+  return readJsonOrThrow<{ entitlements: Record<string, unknown>[] }>(res, 'fetchMarketplaceEntitlements');
 }
 
 /**

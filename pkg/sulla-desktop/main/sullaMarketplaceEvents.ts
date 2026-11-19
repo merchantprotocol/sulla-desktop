@@ -132,6 +132,26 @@ export function initSullaMarketplaceEvents(): void {
     }
   });
 
+  ipcMainProxy.handle('marketplace-checkout', async(_event, id: string) => {
+    if (!id || typeof id !== 'string') return { error: 'marketplace-checkout requires a template id' };
+    try {
+      const { createMarketplaceCheckout } = await import('@pkg/main/marketplace/client');
+      return await createMarketplaceCheckout(id);
+    } catch (err) {
+      console.error('[Sulla] marketplace-checkout failed:', err);
+      return errorOf(err);
+    }
+  });
+
+  ipcMainProxy.handle('marketplace-entitlements', async() => {
+    try {
+      const { fetchMarketplaceEntitlements } = await import('@pkg/main/marketplace/client');
+      return await fetchMarketplaceEntitlements();
+    } catch (err) {
+      return errorOf(err);
+    }
+  });
+
   // ── Install (or update in place with { overwrite: true }) ──
   ipcMainProxy.handle('marketplace-install', async(_event, id: string, opts?: { overwrite?: boolean; replaces?: string }) => {
     if (!id || typeof id !== 'string') {

@@ -162,6 +162,30 @@ export function useMarketplace() {
     }
   }
 
+  async function refreshOwnership(): Promise<Set<string> | null> {
+    const result = await ipcRenderer.invoke('marketplace-entitlements');
+    if ('error' in result) return null;
+    const ids = new Set((result.entitlements ?? []).map((item: any) => item.template_id ?? item.templateId).filter((id: unknown): id is string => typeof id === 'string'));
+    templates.value = templates.value.map(row => row.is_paid ? { ...row, owned: ids.has(row.id) } : row);
+    if (detail.value?.row.is_paid) detail.value = { ...detail.value, row: { ...detail.value.row, owned: ids.has(detail.value.row.id) } };
+    return ids;
+  }
+
+  async function checkout(id: string): Promise<string | null> {
+    try {
+      const result = await ipcRenderer.invoke('marketplace-checkout', id);
+      if ('error' in result) throw new Error(result.error);
+      const target = new URL(result.url);
+      if (target.protocol !== 'https:') throw new Error('Checkout returned an unsafe URL.');
+      // Use the existing main-process safe external-browser route; sessionId is
+      // intentionally not used as proof of purchase.
+      ipcRenderer.send('extensions/open-external', target.toString());
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
   /** The local copy of this listing: same template id, else same kind + slug (an older listing). */
   function installedEntryFor(row: { id: string; kind: string; slug: string }): InstalledEntry | null {
     return installed.value[row.id] ??
@@ -184,6 +208,7 @@ export function useMarketplace() {
       const res = await ipcRenderer.invoke('marketplace-install', id, { overwrite: opts.overwrite === true, replaces: opts.replaces });
       if ('error' in res) {
         installError.value = res.error;
+        if (/\b402\b/.test(res.error)) await refreshOwnership();
 
         return null;
       }
@@ -193,6 +218,7 @@ export function useMarketplace() {
       return res;
     } catch (err) {
       installError.value = err instanceof Error ? err.message : String(err);
+      if (/\b402\b/.test(installError.value)) await refreshOwnership();
 
       return null;
     } finally {
@@ -208,6 +234,7 @@ export function useMarketplace() {
       const res = await ipcRenderer.invoke('marketplace-install-all', id, { overwrite: opts.overwrite === true, replaces: opts.replaces });
       if ('error' in res) {
         installError.value = res.error;
+        if (/\b402\b/.test(res.error)) await refreshOwnership();
 
         return null;
       }
@@ -298,6 +325,8 @@ export function useMarketplace() {
     installStateFor,
     installedEntryFor,
     loadInstalled,
+    refreshOwnership,
+    checkout,
     lastInstalled,
     installError,
     clearInstallResult,
