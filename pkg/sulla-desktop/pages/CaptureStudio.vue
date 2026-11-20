@@ -6,11 +6,6 @@
 -->
 <template>
   <div class="capture-studio-app">
-    <WindowDragLogo
-      :size="20"
-      force-dark
-      class="capture-drag-logo"
-    />
     <!-- Loading screen -->
     <div
       v-if="loading"
@@ -483,7 +478,6 @@ import { useSettings } from './capture-studio/composables/useSettings';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
 import { useRmsWaveform, useAnalyserWaveform, levelToPercent } from './capture-studio/composables/useWaveform';
 
-import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 
 // ─── Context menu for source switching ───
 import type { CtxMenuItem } from './capture-studio/ContextMenuItem';
@@ -2089,12 +2083,7 @@ html, body {
   height: 100%;
 }
 
-.capture-drag-logo {
-  position: fixed;
-  top: 6px;
-  left: 80px;
-  z-index: 600;
-}
+
 
 .capture-studio-app {
 
