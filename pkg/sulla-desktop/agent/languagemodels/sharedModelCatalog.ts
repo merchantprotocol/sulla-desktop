@@ -26,6 +26,10 @@ const modelIdPattern = /^[@A-Za-z0-9][@A-Za-z0-9._:/-]{0,199}$/;
 export class SharedModelCatalogClient {
   private flight?: Promise<SharedCatalogProvider[]>;
   private retryAfter = 0;
+  private lastGood: { fetchedAt: number; providers: SharedCatalogProvider[] } | null = null;
+  private status: { authority: 'shared-model-catalog'; state: 'fresh' | 'stale' | 'unavailable'; fetchedAt?: number } = { authority: 'shared-model-catalog', state: 'unavailable' };
+
+  getStatus(): typeof this.status { return { ...this.status }; }
 
   constructor(
     private readonly fetcher: typeof fetch = fetch,
@@ -37,16 +41,18 @@ export class SharedModelCatalogClient {
   async listProviders(): Promise<SharedCatalogProvider[]> {
     let cached: { fetchedAt: number; providers: SharedCatalogProvider[] } | null = null;
     try { cached = await this.readCache(); } catch { /* Keep startup resilient if settings storage is unavailable. */ }
+    if (this.lastGood && (!cached || this.lastGood.fetchedAt > cached.fetchedAt)) cached = this.lastGood;
     if (cached) {
+      this.status = { authority: 'shared-model-catalog', state: this.now() - cached.fetchedAt >= TTL_MS ? 'stale' : 'fresh', fetchedAt: cached.fetchedAt };
       if (this.now() - cached.fetchedAt >= TTL_MS) void this.refresh().catch(() => undefined);
       return cached.providers;
     }
     try { return await this.refresh(); }
-    catch { return []; } // Offline first start: unavailable, never a competing seed.
+    catch { this.status = { authority: 'shared-model-catalog', state: 'unavailable' }; return []; } // Offline first start: unavailable, never a competing seed.
   }
 
   async listModels(providerId: string): Promise<SharedCatalogModel[]> {
-    return (await this.listProviders()).find(provider => provider.id === catalogProviderId(providerId))?.models || [];
+    return (await this.listProviders()).find(provider => catalogProviderId(provider.id) === catalogProviderId(providerId))?.models || [];
   }
 
   async refreshNow(): Promise<void> { this.retryAfter = 0; await this.refresh(); }
@@ -60,7 +66,10 @@ export class SharedModelCatalogClient {
       });
       if (!response.ok) throw new Error(`Shared model catalog unavailable (${ response.status })`);
       const parsed = this.validate(await this.readBoundedJson(response));
-      await this.setCache(CACHE_SETTING, { authority: 'shared-model-catalog', schemaVersion: 1, fetchedAt: this.now(), providers: parsed.providers });
+      this.lastGood = { fetchedAt: this.now(), providers: parsed.providers };
+      this.status = { authority: 'shared-model-catalog', state: 'fresh', fetchedAt: this.lastGood.fetchedAt };
+      try { await this.setCache(CACHE_SETTING, { authority: 'shared-model-catalog', schemaVersion: 1, ...this.lastGood }); }
+      catch { /* Validated Cloud data remains usable in memory if persistence is unavailable. */ }
       this.retryAfter = 0;
       return parsed.providers;
     })().catch(error => {
@@ -100,7 +109,7 @@ export class SharedModelCatalogClient {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const record = raw as Record<string, unknown>;
     if (record.authority !== 'shared-model-catalog' || record.schemaVersion !== 1) return null;
-    if (typeof record.fetchedAt !== 'number' || !Number.isFinite(record.fetchedAt)) return null;
+    if (typeof record.fetchedAt !== 'number' || !Number.isFinite(record.fetchedAt) || record.fetchedAt < 0 || record.fetchedAt > this.now() + 60_000) return null;
     try { return { fetchedAt: record.fetchedAt, providers: this.validate({ schemaVersion: 1, providers: record.providers }).providers }; }
     catch { return null; }
   }

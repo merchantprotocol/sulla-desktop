@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ModelCompatibilityService } from './ModelCompatibilityService';
+import { getCliStatus } from '../tools/models/shared';
 import { PROVIDER_FACTORIES } from './index';
 import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
 import { LiveProviderSnapshot, type LiveProviderMap } from './LiveProviderSnapshot';
@@ -405,6 +407,8 @@ export class ModelRouter {
             ...(model.defaultEffort ? { defaultEffort: String(model.defaultEffort) } : {}),
             ...(model.upgrade ? { upgrade: String(model.upgrade) } : {}),
             ...(model.unverified ? { unverified: true } : {}),
+            ...(model.minimumClientVersion ? { minimumClientVersion: model.minimumClientVersion } : {}),
+            ...(model.capabilities ? { capabilities: model.capabilities } : {}),
             ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
           }));
           if (!models.length) discoveryReason = 'No validated Cloud catalog models available (or private endpoint unavailable)';
@@ -434,6 +438,7 @@ export class ModelRouter {
       if (!provider?.connected && !provider?.connectionUnknown) throw new Error(`Provider ${ pinned.provider } is not connected for the selected account`);
       const advertised = provider?.models.find(model => model.id === pinned.model);
       if (!advertised) throw new Error(`Model ${ pinned.provider }/${ pinned.model } is unavailable in the validated catalog; saved pin retained`);
+      await new ModelCompatibilityService(getCliStatus).assertClient(pinned.provider, advertised);
       if (pinned.effort !== undefined) {
         const levels = live.get(pinned.provider)?.models.find(model => model.id === pinned.model)?.efforts;
         if (!levels?.some(level => level.id === pinned.effort)) {
@@ -459,6 +464,9 @@ export class ModelRouter {
       const provider = live.get(item.provider);
       // Discovery is advisory; unknown status still enters authenticated execution.
       if (!provider?.connected && !provider?.connectionUnknown) continue;
+      const advertised = provider?.models.find(model => model.id === item.model);
+      if (!advertised) continue;
+      await new ModelCompatibilityService(getCliStatus).assertClient(item.provider, advertised);
       // A never-use pair is skipped whole: that model is never run at that effort.
       if (isPairBlocked(state.neverUse, item.provider, item.model, effectiveEffort(item, provider?.models ?? []))) continue;
       item = { provider: item.provider, model: item.model, ...(item.effort ? { effort: item.effort } : {}) };
