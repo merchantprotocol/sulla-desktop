@@ -42,7 +42,7 @@ COPY assets/runtime/guest/make-artifact.sh /usr/local/bin/make-artifact
 # /usr/local is replaced by the data disk at boot. Pinned to the versions the
 # sulla-agent image uses; Desktop still installs them on demand if missing.
 ARG CLAUDE_CODE_VERSION=2.1.329
-ARG CODEX_VERSION=0.171.0
+ARG CODEX_VERSION=0.170.0
 RUN npm install --global --no-fund --no-audit --prefix /image/rootfs/usr \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" "@openai/codex@${CODEX_VERSION}" \
     && test -x /image/rootfs/usr/bin/claude && test -x /image/rootfs/usr/bin/codex \
@@ -172,7 +172,7 @@ COPY --from=wsl-image /image/wsl-rootfs.sha256 /rootfs.tar.sha256
 FROM alpine:${ALPINE_VERSION} AS linux-runtime
 ARG ALPINE_VERSION
 ARG CLAUDE_CODE_VERSION=2.1.329
-ARG CODEX_VERSION=0.171.0
+ARG CODEX_VERSION=0.170.0
 RUN apk add --no-cache alpine-base busybox ca-certificates tini openssl iproute2 \
       docker-cli docker-cli-buildx docker-cli-compose \
       python3 py3-pip git curl wget jq nodejs npm ripgrep tar unzip zstd bash \
