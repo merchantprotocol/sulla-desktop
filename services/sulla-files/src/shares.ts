@@ -91,10 +91,15 @@ export class SharesService {
     return normalized;
   }
 
+  private cloudDeviceId(): string {
+    if (!this.config.cloudDeviceId) throw Object.assign(new Error('Desktop device identity is not ready for Cloud sharing'), { status: 503 });
+    return this.config.cloudDeviceId;
+  }
+
   async create(identity: Identity, input: ShareInput, _cloudToken?: string) {
     const assetKind = input.assetKind === 'capture' ? 'capture' : input.assetKind === 'artifact' ? 'artifact' : 'file';
     const accessMode = input.permission === 'download' || input.accessMode === 'download' ? 'download' : 'view';
-    const deviceId = this.config.deviceId || identity.device;
+    const deviceId = this.cloudDeviceId();
     const keepAvailable = input.keepAvailable ?? assetKind === 'capture';
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     const keepUntil = input.keepUntil ? new Date(input.keepUntil) : null;
@@ -248,6 +253,7 @@ export class SharesService {
     return this.withLinkLock(id, async(client) => {
       const row = await this.getRow(identity, id, client); if (!row.revoked_at) return this.safeRow(identity, id, client);
       if (row.password_protected && (!restorePassword || !row.password_hash || !this.passwords.matches(restorePassword, row.password_hash))) throw Object.assign(new Error('Re-enter the link password to restore this protected share'), { status: 401 });
+      const deviceId = this.cloudDeviceId();
       if (row.reconciliation_required) {
         if (!await this.deleteRemote(id)) throw Object.assign(new Error('The prior remote link deletion is still pending; restore is blocked until it can be confirmed'), { status: 502 });
       }
@@ -255,7 +261,7 @@ export class SharesService {
       // fully verified. A lost POST response is therefore always recoverable.
       await this.persistRemoteDeleteState(id, true, client);
       try {
-        const cloud = await this.cloud('/shares', { method: 'POST', body: JSON.stringify({ id, targetType: row.target_type, name: row.display_name, mime: row.mime, accessMode: row.access_mode, password: row.password_protected ? restorePassword : undefined, expiresAt: row.expires_at, keepAvailable: false, keepUntil: null, displaySharerName: row.display_sharer_name, servedFrom: 'desktop', deviceId: row.device_id, assetKind: row.asset_kind, captureMetadata: row.capture_metadata }) });
+        const cloud = await this.cloud('/shares', { method: 'POST', body: JSON.stringify({ id, targetType: row.target_type, name: row.display_name, mime: row.mime, accessMode: row.access_mode, password: row.password_protected ? restorePassword : undefined, expiresAt: row.expires_at, keepAvailable: false, keepUntil: null, displaySharerName: row.display_sharer_name, servedFrom: 'desktop', deviceId, assetKind: row.asset_kind, captureMetadata: row.capture_metadata }) });
         this.remote.assertPolicy(cloud, {
           accessMode:        row.access_mode,
           passwordProtected: Boolean(row.password_protected),
@@ -264,7 +270,7 @@ export class SharesService {
           keepUntil:         null,
           displaySharerName: Boolean(row.display_sharer_name),
         });
-        await this.links.markRestored(client, id, cloud.url);
+        await this.links.markRestored(client, id, cloud.url, deviceId);
         await this.links.recordEvent(client, id, 'created', 'restored'); return this.safeRow(identity, id, client);
       } catch (error) {
         const deleted = await this.deleteRemote(id);

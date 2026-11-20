@@ -1497,6 +1497,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     } else if (filesImage.bundled && !process.env.SULLA_FILES_IMAGE) {
       this.#pinnedSullaImages.set('sulla_files', filesImage.image);
     }
+    // Compose is rendered before the settings database can migrate a legacy
+    // device ID. Read only the persisted canonical identity here; never mint
+    // a different ID during early boot. Local Files still starts without it.
+    const filesCloudDeviceId = readExistingDesktopDeviceId();
+
     compose.services.sulla_files = {
       ...composeImageFields(filesImage),
       image: resolvedFilesImage,
@@ -1520,8 +1525,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_FILES_STORED_ONLY:           '1',
         SULLA_FILES_MODE:                  'desktop',
         SULLA_FILES_DEVICE_ID:             os.hostname(),
-        // Cloud device id (not the hostname) so the Files catalog push targets this device's Cloud row.
-        ...((cloudDeviceId: string | null) => (cloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: cloudDeviceId } : {}))(readExistingDesktopDeviceId()),
+        // Catalog and share registration target the same canonical Cloud row.
+        ...(filesCloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: filesCloudDeviceId } : {}),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_BOOTSTRAP_SERVICE_ID:  'sulla-desktop-files-bootstrap',
