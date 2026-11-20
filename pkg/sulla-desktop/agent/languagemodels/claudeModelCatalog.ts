@@ -136,14 +136,13 @@ async function fetchBrokeredModels(): Promise<ClaudeCatalogModel[] | null> {
  * @param opts.force — bypass the short in-memory cache (used by explicit
  *   "refresh models" actions; the picker's routine reads hit the cache).
  */
-export async function listClaudeCodeModels(opts?: { force?: boolean }): Promise<ClaudeCatalogModel[]> {
-  // Workers can ask only for this fixed catalog operation. No caller command,
-  // prompt, credentials, or execution context crosses the boundary.
-  if (currentAgentContainerRuntime()) {
-    if (!mainCatalogResource) return cache?.models ?? [AUTO_SENTINEL];
-    return mainCatalogResource.runInAsyncScope(() => loadClaudeCodeModels());
-  }
-  return loadClaudeCodeModels(opts);
+export async function listClaudeCodeModels(_opts?: { force?: boolean }): Promise<ClaudeCatalogModel[]> {
+  const { sharedModelCatalog } = await import('./sharedModelCatalog');
+  return (await sharedModelCatalog.listModels('claude-code')).map(model => ({
+    id: model.id, name: model.name,
+    ...(model.supportedReasoningEfforts ? { efforts: model.supportedReasoningEfforts.map(id => ({ id })) } : {}),
+    ...(model.defaultReasoningEffort ? { defaultEffort: model.defaultReasoningEffort } : {}),
+  }));
 }
 
 async function loadClaudeCodeModels(opts?: { force?: boolean }): Promise<ClaudeCatalogModel[]> {

@@ -29,7 +29,7 @@ import { resolveProviderAccess, type ProviderAccessMethod } from '@pkg/shared/pr
 
 // IDs curated in Sulla Cloud's public shared catalog. Unknown/custom/local
 // providers must never trigger a catalog download simply to list their models.
-const SHARED_CATALOG_PROVIDER_IDS = new Set(['anthropic', 'openai', 'google', 'xai', 'deepseek', 'moonshot', 'alibaba', 'meta', 'minimax', 'workers-ai']);
+const PRIVATE_CATALOG_PROVIDER_IDS = new Set(['custom', 'ollama']);
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -68,6 +68,12 @@ export interface ProviderInfo {
 export type ModelSelectionMode = import('@pkg/shared/providerAccess').ModelSelectionMode;
 
 export interface ProviderModelInfo {
+  source?:        'shared-model-catalog' | 'private-endpoint';
+  provenance?:    Record<string, unknown>;
+  aliases?:       string[];
+  capabilities?:  string[];
+  minimumClientVersion?: string;
+  contextWindow?: number;
   id:             string;
   name:           string;
   description?:   string;
@@ -312,28 +318,29 @@ class ModelProviderService {
   }
 
   async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean; forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
-    // Catalog metadata is public Cloud data, not proof of an account/API-key
-    // entitlement. Availability/auth checks remain in the provider access path.
-    // CLI providers retain their CLI-specific catalogs and compatibility rules.
+    // Public metadata authority is independent of credentials/transport readiness.
+    // liveOnly cannot bypass Cloud. Custom/local catalogs remain private.
     const integration = integrations[providerId];
-    let customEndpointConfigured = false;
-    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId) && integration?.properties?.some(property => property.key === 'base_url')) {
-      try {
-        const integrationService = getIntegrationService();
-        const accountId = await integrationService.getActiveAccountId(providerId).catch(() => '');
-        const values = await integrationService.getFormValues(providerId, accountId);
-        customEndpointConfigured = values.some(value => value.property === 'base_url' && typeof value.value === 'string' && value.value.trim().length > 0);
-      } catch { /* Retain shared defaults when endpoint settings cannot be read. */ }
-    }
-    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId) && !queryOptions.liveOnly && !customEndpointConfigured) {
+    if (!PRIVATE_CATALOG_PROVIDER_IDS.has(providerId)) {
+      if (integration?.properties?.some(property => property.key === 'base_url')) {
+        try {
+          const values = await getIntegrationService().getFormValues(providerId);
+          if (values.some(value => value.property === 'base_url' && value.value?.trim())) return [];
+        } catch { return []; } // Unknown endpoint constraints are not a public default.
+      }
       const { sharedModelCatalog } = await import('../languagemodels/sharedModelCatalog');
-      const provider = (await sharedModelCatalog.listProviders()).find(item => item.id === providerId)
-        ?? sharedModelCatalog.getBundledProvider(providerId);
-      if (provider) return provider.models.map(model => this.modelInfo(providerId, { id: model.id, name: model.name }));
-      // A Cloud-listed provider missing from a stale/partial response must not
-      // silently fall back to account-specific discovery. Bundled fallback
-      // rows are returned by the catalog client; otherwise fail closed.
-      return [];
+      return (await sharedModelCatalog.listModels(providerId)).map(model => ({
+        ...this.modelInfo(providerId, { id: model.id, name: model.name }),
+        source: 'shared-model-catalog' as const,
+        ...(model.source ? { provenance: model.source } : {}),
+        ...(model.aliases ? { aliases: model.aliases } : {}),
+        ...(model.capabilities ? { capabilities: model.capabilities } : {}),
+        ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+        ...(model.minimumClientVersion ? { minimumClientVersion: model.minimumClientVersion } : {}),
+        ...(model.supportedReasoningEfforts ? { efforts: model.supportedReasoningEfforts.map(id => ({ id })) } : {}),
+        ...(model.defaultReasoningEffort ? { defaultEffort: model.defaultReasoningEffort } : {}),
+        ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
+      }));
     }
     if (!integration) {
       return this.getCliProviderModels(providerId, queryOptions);
@@ -369,41 +376,15 @@ class ModelProviderService {
         ? await selectBoxProvider.getOptions({ integrationId: providerId, accountId, formValues: formMap, liveOnly: true })
         : await integrationService.getSelectOptions(modelProp.selectBoxId, providerId, accountId, formMap);
 
-      return options.map(opt => this.modelInfo(providerId, { id: opt.value, name: opt.label, description: opt.description }));
+      return options.map(opt => ({ ...this.modelInfo(providerId, { id: opt.value, name: opt.label, description: opt.description }), source: 'private-endpoint' as const }));
     } catch (err) {
       console.warn(`[ModelProviderService] Failed to fetch models for ${ providerId }:`, err);
       return [];
     }
   }
 
-  private async getCliProviderModels(providerId: string, queryOptions: { forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
-    if (providerId === 'claude-code') {
-      // No hardcoded claude-code model list — read the live catalog from
-      // Anthropic's /v1/models using the signed-in account's credentials.
-      // Degrades to the provider-agnostic Auto sentinel on any failure. See
-      // claudeModelCatalog.ts.
-      const { listClaudeCodeModels } = await import('../languagemodels/claudeModelCatalog');
-      return (await listClaudeCodeModels()).map(model => this.modelInfo(providerId, model));
-    }
-
-    if (providerId === 'codex') {
-      // No hardcoded codex model list — read the live catalog from the codex
-      // CLI (through Sulla, so vault OAuth creds are injected). Degrades to the
-      // "Auto" sentinel on any failure. See codexModelCatalog.ts.
-      const { listCodexModels } = await import('../languagemodels/codexModelCatalog');
-      return (await listCodexModels({ force: queryOptions.forceRefresh === true })).map(model => this.modelInfo(providerId, model));
-    }
-
-    if (providerId === 'opencode') {
-      const { listOpenCodeModels } = await import('../languagemodels/openCodeModelCatalog');
-      return (await listOpenCodeModels()).map(model => this.modelInfo(providerId, model));
-    }
-
-    if (providerId === 'cursor') {
-      const { listCursorModels } = await import('../languagemodels/cursorModelCatalog');
-      return (await listCursorModels()).map(model => this.modelInfo(providerId, model));
-    }
-
+  private async getCliProviderModels(_providerId: string, _options: { forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
+    // Uncatalogued private providers require an explicit endpoint implementation.
     return [];
   }
 
@@ -508,23 +489,10 @@ class ModelProviderService {
   }
 
   async setSubconsciousProvider(providerId: string): Promise<void> {
-    const changed = providerId !== this.state.subconsciousProvider;
     this.state.subconsciousProvider = providerId;
     await SullaSettingsModel.set('subconsciousProvider', providerId, 'string');
 
-    // When the provider changes, a concrete model-id override left over from the
-    // previous provider is now stranded — e.g. subconsciousProvider moves grok→codex
-    // while subconsciousModelId is still 'grok-4.6'. That inconsistent pair is the
-    // source of the recurring subconscious model drift: every full-state broadcast
-    // re-pushes the stale id into the settings UI, which re-persists it and clobbers
-    // any manual repair. Reset the override to '' (use the new provider's default) so
-    // the model always stays consistent with its provider. Tier names
-    // (fast/balanced/powerful) and '' are provider-agnostic, so leave those intact.
-    if (changed && !this.isProviderAgnosticModelId(this.state.subconsciousModelId)) {
-      this.state.subconsciousModelId = '';
-      await SullaSettingsModel.set('subconsciousModelId', '', 'string');
-    }
-
+    // Keep saved exact pins; a provider change never authorizes a replacement model.
     await this.broadcastChange();
   }
 
@@ -635,7 +603,7 @@ class ModelProviderService {
     // provider=codex left with a concrete grok-4.6 id). setSubconsciousProvider only
     // clears this on a provider change; reconcile here so it also heals on restart when
     // the provider is unchanged — the acceptance criterion for this slot.
-    await this.reconcileSubconsciousModel();
+    // Saved explicit pins survive catalog removals; runtime validation reports unavailability.
 
     // Load active model from the provider's integration form values
     try {

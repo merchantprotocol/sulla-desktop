@@ -168,27 +168,11 @@ async function fetchBrokeredModels(force: boolean): Promise<CodexCatalogModel[] 
  * selectable model reported by the connected ChatGPT account. A failed or
  * empty response returns Auto only and is never cached as a successful list.
  */
-export async function listCodexModels(opts?: { force?: boolean }): Promise<CodexCatalogModel[]> {
-  const force = opts?.force === true;
-  if (catalogFlight?.generation === catalogGeneration && (!force || catalogFlight.force)) return catalogFlight.promise;
-  if (force && catalogFlight?.generation === catalogGeneration) {
-    catalogGeneration++;
-  }
-
-  const generation = catalogGeneration;
-  const flight = { generation, force, promise: undefined as unknown as Promise<CodexCatalogModel[]> };
-  flight.promise = (async() => {
-    const dynamic = await fetchBrokeredModels(force);
-    if (!dynamic) {
-      log.warn('[codexModelCatalog] Live model discovery failed or returned no selectable metadata; returning Auto only');
-      return [AUTO_SENTINEL];
-    }
-    const models = [AUTO_SENTINEL, ...dynamic];
-    log.log(`[codexModelCatalog] Loaded ${ dynamic.length } visible codex models from the connected account`);
-    return models;
-  })().finally(() => {
-    if (catalogFlight === flight) catalogFlight = undefined;
-  });
-  catalogFlight = flight;
-  return flight.promise;
+export async function listCodexModels(_opts?: { force?: boolean }): Promise<CodexCatalogModel[]> {
+  const { sharedModelCatalog } = await import('./sharedModelCatalog');
+  return (await sharedModelCatalog.listModels('codex')).map(model => ({
+    id: model.id, name: model.name,
+    ...(model.supportedReasoningEfforts ? { efforts: model.supportedReasoningEfforts.map(id => ({ id })) } : {}),
+    ...(model.defaultReasoningEffort ? { defaultEffort: model.defaultReasoningEffort } : {}),
+  }));
 }

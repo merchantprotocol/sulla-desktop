@@ -45,20 +45,9 @@ const providerOrder = Object.keys(PROVIDER_FACTORIES);
 /** True for a provider id in the AI Infrastructure catalog (connected or not). */
 export function isKnownProvider(id: string): boolean { return providerOrder.includes(id) }
 
-// Deliberately static: defaults must not change underneath an installation when a
-// provider changes its discovery endpoint. Unknown providers/models remain editable.
-export const DEFAULT_MODELS: Partial<Record<string, Partial<Record<ModelClass, string[]>>>> = {
-  'claude-code': { frontier: ['claude-opus-5-5'], standard: ['claude-sonnet-5-5'], fast: ['claude-haiku-5-5'], coding: ['claude-sonnet-5-5'] },
-  codex: { frontier: ['gpt-5.5'], standard: ['gpt-5.6-terra'], fast: ['gpt-5.6-luna'], coding: ['gpt-5.6-sol'] },
-  anthropic: { frontier: ['claude-opus-5-5'], standard: ['claude-sonnet-5-5'], fast: ['claude-haiku-5-5'], coding: ['claude-sonnet-5-5'] },
-  openai: { frontier: ['gpt-5.5'], standard: ['gpt-5.3'], fast: ['gpt-5-mini'], coding: ['gpt-5.3-codex'] },
-  grok: { frontier: ['grok-4.6'], standard: ['grok-4.1-fast'], fast: ['grok-4.1-fast'], coding: ['grok-code-fast-1'] },
-  deepseek: { frontier: ['deepseek-v4-pro'], standard: ['deepseek-chat'], fast: ['deepseek-chat'], coding: ['deepseek-coder'] },
-  google: { frontier: ['gemini-3-pro'], standard: ['gemini-3-flash'], fast: ['gemini-3-flash'], coding: ['gemini-3-pro'] },
-  kimi: { frontier: ['kimi-k2.5'], standard: ['kimi-k2.5'], fast: ['kimi-k2.5'], coding: ['kimi-k2.5'] },
-  alibaba: { frontier: ['qwen3-max'], standard: ['qwen3-plus'], fast: ['qwen3-turbo'], coding: ['qwen3-coder-plus'] },
-  ollama: { local: ['llama3.1:8b'], fast: ['llama3.1:8b'], standard: ['llama3.1:8b'], coding: ['qwen2.5-coder:7b'] },
-};
+// No client-maintained model defaults. Saved class assignments remain explicit;
+// a first-start installation must choose from validated Cloud metadata.
+export const DEFAULT_MODELS: Partial<Record<string, Partial<Record<ModelClass, string[]>>>> = {};
 
 function strongest(provider: string): ModelClass {
   const table = DEFAULT_MODELS[provider] || {};
@@ -110,7 +99,7 @@ export const STALE_PUBLICATION_MAPPING = 'An unsettled package model mapping fro
 
 export function canonicalProviderId(provider: string): string {
   const normalized = String(provider || '').trim().toLowerCase();
-  const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai' };
+  const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai', xai: 'grok', moonshot: 'kimi' };
   return aliases[normalized] || normalized.replace(/_/g, '-');
 }
 
@@ -409,7 +398,7 @@ export class ModelRouter {
       let discoveryReason: string | undefined;
       if (connected && mps?.getModelsForProvider) {
         try {
-          models = (await mps.getModelsForProvider(id, { liveOnly: true, forceRefresh: id === 'codex' })).map((model: any) => ({
+          models = (await mps.getModelsForProvider(id)).map((model: any) => ({
             id:    String(model.id),
             label: String(model.name || model.label || model.id),
             ...(Array.isArray(model.efforts) && model.efforts.length ? { efforts: model.efforts } : {}),
@@ -418,13 +407,7 @@ export class ModelRouter {
             ...(model.unverified ? { unverified: true } : {}),
             ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
           }));
-          if (id !== 'codex' && id !== 'claude-code' && id !== 'cursor' && id !== 'opencode') {
-            const { modelDiscoveryService } = await import('./ModelDiscoveryService');
-            discoveryReason = modelDiscoveryService.getLastFailure(id);
-          } else if (id === 'codex') {
-            const { getLastCodexModelCatalogFailure } = await import('./codexModelCatalog');
-            discoveryReason = getLastCodexModelCatalogFailure();
-          }
+          if (!models.length) discoveryReason = 'No validated Cloud catalog models available (or private endpoint unavailable)';
         } catch { discoveryReason = 'model discovery failed'; }
       }
       return [id, { connected, connectionUnknown, accessMethod: available.get(id)?.accessMethod, accessLabel: available.get(id)?.accessLabel, models, discoveryReason }] as const;
@@ -447,9 +430,13 @@ export class ModelRouter {
     // A human's explicit selector choice is a hard route boundary. Recovery may retry this
     // exact route, but it must never substitute a configured alternate provider or model.
     if (pinned) {
+      const provider = live.get(pinned.provider);
+      if (!provider?.connected && !provider?.connectionUnknown) throw new Error(`Provider ${ pinned.provider } is not connected for the selected account`);
+      const advertised = provider?.models.find(model => model.id === pinned.model);
+      if (!advertised) throw new Error(`Model ${ pinned.provider }/${ pinned.model } is unavailable in the validated catalog; saved pin retained`);
       if (pinned.effort !== undefined) {
         const levels = live.get(pinned.provider)?.models.find(model => model.id === pinned.model)?.efforts;
-        if (pinned.provider !== 'codex' || !levels?.some(level => level.id === pinned.effort)) {
+        if (!levels?.some(level => level.id === pinned.effort)) {
           throw new Error(`Requested effort "${ pinned.effort }" is not advertised for ${ pinned.provider }/${ pinned.model }. Choose an advertised effort, or omit effort for the default.`);
         }
       }
@@ -495,14 +482,8 @@ export class ModelRouter {
    * and record what changed since the previous check.
    */
   async refreshCatalog(): Promise<ModelCatalogReport> {
-    await Promise.allSettled([
-      import('./claudeModelCatalog').then(m => m.clearClaudeModelCatalogCache()),
-      import('./codexModelCatalog').then(m => m.clearCodexModelCatalogCache()),
-      import('./cursorModelCatalog').then(m => m.clearCursorModelCatalogCache()),
-      import('./openCodeModelCatalog').then(m => m.clearOpenCodeModelCatalogCache()),
-      import('../services/brokeredModelList').then(m => m.clearBrokeredModelListCache()),
-      import('./ModelDiscoveryService').then(m => m.modelDiscoveryService.clearCache()),
-    ]);
+    const { sharedModelCatalog } = await import('./sharedModelCatalog');
+    await sharedModelCatalog.refreshNow();
     this.invalidateLiveProviders();
     const live = await this.liveProviders();
     const lists: Record<string, string[]> = {};
