@@ -2105,7 +2105,6 @@ html, body {
   --mono:             var(--font-mono), monospace;
   --display:          var(--font-display), serif;
   --record-red:       #e5534b;
-  --record-glow:      rgba(229,83,75,0.4);
 
   height: 100vh;
   display: flex;
@@ -2118,7 +2117,7 @@ html, body {
   overflow: hidden;
 }
 
-.record-setup-backdrop { position: fixed; inset: 0; z-index: 700; display: grid; place-items: center; padding: 32px; background: rgba(5, 8, 12, .76); backdrop-filter: blur(12px); }
+.record-setup-backdrop { position: fixed; inset: 0; z-index: 700; display: grid; place-items: center; padding: 32px; background: rgba(5, 8, 12, .76); }
 .record-setup { width: min(820px, 92vw); max-height: 90vh; overflow: auto; padding: 24px; border: 1px solid var(--border-default); border-radius: 18px; background: var(--bg-surface); box-shadow: 0 30px 90px rgba(0, 0, 0, .65); }
 .record-setup header, .record-setup footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .record-setup header h2 { font: 600 24px var(--display); }
@@ -2236,9 +2235,8 @@ html, body {
 .tp-close-btn {
   position: absolute; top: 12px; right: 12px; z-index: 30;
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; border: 1px solid var(--border-default); background: rgba(22,27,34,0.7);
+  border-radius: 50%; border: 1px solid var(--border-default); background: var(--bg-surface);
   color: var(--text-secondary); cursor: pointer; transition: all 0.15s;
-  backdrop-filter: blur(6px);
 }
 .tp-close-btn:hover { background: rgba(248,81,73,0.25); color: var(--status-error); border-color: var(--status-error); }
 
@@ -2270,8 +2268,8 @@ html, body {
 .tp-float-toolbar {
   position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px; padding: 6px 10px;
-  background: rgba(22,27,34,0.88); border: 1px solid var(--border-default); border-radius: 14px;
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 25;
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 25;
 }
 
 .canvas.layout-teleprompter .float-controls { opacity: 0; pointer-events: none; }
@@ -2311,8 +2309,8 @@ html, body {
 /* Script overlay */
 .tp-script-overlay {
   position: absolute; top: 0; right: 0; width: 360px; height: 100%;
-  background: rgba(22,27,34,0.92); border-left: 1px solid var(--border-default);
-  backdrop-filter: blur(12px); display: flex; flex-direction: column; z-index: 30;
+  background: var(--bg-surface); border-left: 1px solid var(--border-default);
+  display: flex; flex-direction: column; z-index: 30;
   transform: translateX(100%); transition: transform 0.3s ease;
 }
 .tp-script-overlay.open { transform: translateX(0); }
@@ -2374,7 +2372,7 @@ html, body {
 .shape-picker {
   display: flex; gap: 3px; opacity: 0; transition: opacity 0.2s;
   background: rgba(22,27,34,0.9); border: 1px solid var(--border-default); border-radius: 8px;
-  padding: 3px; backdrop-filter: blur(8px);
+  padding: 3px; background: var(--bg-surface);
 }
 .cam-container:hover .shape-picker { opacity: 1; }
 
@@ -2392,8 +2390,8 @@ html, body {
    ═══════════════════════════════════════════════ */
 .layout-bar {
   position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
-  display: flex; gap: 3px; padding: 4px; background: rgba(22,27,34,0.88);
-  border: 1px solid var(--border-default); border-radius: 10px; backdrop-filter: blur(8px); z-index: 10;
+  display: flex; gap: 3px; padding: 4px; background: var(--bg-surface);
+  border: 1px solid var(--border-default); border-radius: 10px; z-index: 10;
 }
 .layout-btn {
   width: 40px; height: 30px; background: none; border: 1px solid transparent;
@@ -2416,8 +2414,8 @@ html, body {
    ═══════════════════════════════════════════════ */
 .info-badges { position: absolute; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 10; }
 .info-badge {
-  padding: 4px 10px; background: rgba(22,27,34,0.8); border: 1px solid var(--border-default);
-  border-radius: 6px; font-size: 10px; color: var(--text-muted); backdrop-filter: blur(4px);
+  padding: 4px 10px; background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: 6px; font-size: 10px; color: var(--text-muted);
   display: flex; align-items: center; gap: 4px;
 }
 .info-badge .dot { width: 5px; height: 5px; border-radius: 50%; }
@@ -2431,8 +2429,8 @@ html, body {
 .float-controls {
   position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 4px; padding: 5px;
-  background: rgba(22,27,34,0.88); border: 1px solid var(--border-default); border-radius: 14px;
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 20;
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 20;
 }
 
 .src-toggle {
@@ -2499,7 +2497,7 @@ html, body {
   cursor: pointer; transition: all 0.2s;
 }
 .record-pill.idle { background: var(--record-red); color: white; }
-.record-pill.idle:hover { background: #d04842; box-shadow: 0 4px 20px var(--record-glow); }
+.record-pill.idle:hover { background: #d04842; }
 .record-pill.active { background: rgba(229,83,75,0.1); border: 1px solid var(--record-red); color: var(--record-red); }
 .record-pill .dot { width: 14px; height: 14px; background: currentColor; border-radius: 50%; transition: all 0.2s; }
 .record-pill.active .dot { width: 12px; height: 12px; border-radius: 3px; }
@@ -2526,7 +2524,7 @@ html, body {
    ═══════════════════════════════════════════════ */
 .add-popup-overlay {
   position: fixed; inset: 0; z-index: 100; display: none; align-items: center;
-  justify-content: center; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  justify-content: center; background: rgba(0,0,0,0.5);
 }
 .add-popup-overlay.open { display: flex; }
 
@@ -2789,7 +2787,7 @@ html, body {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   padding: 8px 18px; background: var(--bg-surface); border: 1px solid var(--border-default);
   border-radius: 8px; font-size: 12px; color: var(--text-secondary);
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
   z-index: 60; animation: toast-in 0.2s ease;
 }
 @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
@@ -2807,8 +2805,8 @@ html, body {
 
 .recording-toast-content {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-  background: rgba(22,27,34,0.95); border: 1px solid var(--border-default); border-radius: 10px;
-  backdrop-filter: blur(8px); box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
 }
 
 .recording-toast-text { display: flex; flex-direction: column; gap: 1px; }
@@ -2939,15 +2937,11 @@ html, body {
   --border: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   --border-subtle: color-mix(in srgb, var(--nx-hair-strong) 43.75%, transparent);
   --mono: ui-monospace, var(--font-mono), monospace;
-  background:
-    radial-gradient(90% 60% at 50% 110%, color-mix(in srgb, var(--nx-accent) 14%, transparent), transparent 62%),
-    var(--nx-paper);
+  background: var(--nx-paper);
 }
 
 .capture-studio-app .canvas {
-  background:
-    radial-gradient(75% 70% at 50% 55%, color-mix(in srgb, var(--nx-accent) 7%, transparent), transparent 64%),
-    var(--nx-paper);
+  background: var(--nx-paper);
 }
 
 .capture-studio-app .screen-preview,
@@ -2963,11 +2957,11 @@ html, body {
 .capture-studio-app .float-controls,
 .capture-studio-app .tp-float-toolbar,
 .capture-studio-app .shape-picker {
-  background: color-mix(in srgb, var(--bg-surface-alt) 74%, transparent);
+  background: var(--nx-surface);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-radius: 18px;
   box-shadow: 0 18px 50px color-mix(in srgb, var(--shadow) 55.5556%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
-  backdrop-filter: blur(20px);
+
 }
 
 .capture-studio-app .layout-btn,
@@ -2997,22 +2991,16 @@ html, body {
   color: var(--nx-read-1);
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 30%, transparent), color-mix(in srgb, var(--nx-accent) 14%, transparent));
   border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 20%, transparent);
 }
 
 .capture-studio-app .info-badge {
   min-height: 28px;
   padding: 0 10px;
   color: var(--nx-read-3);
-  background: color-mix(in srgb, var(--bg-surface-alt) 70%, transparent);
+  background: var(--nx-surface);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 14px;
   font-family: ui-monospace, var(--font-mono), monospace;
-  backdrop-filter: blur(16px);
-}
-
-.capture-studio-app .info-badge .dot.green {
-  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
 
 .capture-studio-app .record-pill {
@@ -3024,24 +3012,20 @@ html, body {
 }
 
 .capture-studio-app .record-pill.idle {
-  background: linear-gradient(180deg, #ff6a63, #d94039);
-  box-shadow: 0 0 20px color-mix(in srgb, var(--nx-danger) 34%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 24%, transparent);
-  animation: noir-record-pulse 2.2s ease-in-out infinite;
+  background: var(--nx-danger);
 }
 
 .capture-studio-app .record-pill.idle:hover {
   transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 0 30px color-mix(in srgb, var(--nx-danger) 52%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 26%, transparent);
 }
 
 .capture-studio-app .record-pill.idle {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-danger) 78%, white), var(--nx-danger));
+  background: var(--nx-danger);
 }
 
 .capture-studio-app .record-pill.active {
   background: color-mix(in srgb, var(--nx-danger) 8%, transparent);
   border-color: color-mix(in srgb, var(--nx-danger) 55%, transparent);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-danger) 15%, transparent);
 }
 
 .capture-studio-app .fc-timer,
@@ -3055,10 +3039,10 @@ html, body {
 
 .capture-studio-app .track-panel {
   padding: 8px 10px 10px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 82%, transparent);
+  background: var(--nx-surface);
   border-color: var(--nx-hair);
   box-shadow: 0 -18px 42px color-mix(in srgb, var(--shadow) 27.7778%, transparent);
-  backdrop-filter: blur(20px);
+
 }
 
 .capture-studio-app .track-panel.open { height: 190px; }
@@ -3111,10 +3095,10 @@ html, body {
 .capture-studio-app .ctx-menu,
 .capture-studio-app .tp-script-overlay,
 .capture-studio-app .playback-overlay {
-  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
+  background: var(--nx-surface);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   box-shadow: 0 26px 80px color-mix(in srgb, var(--shadow) 68.8889%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
-  backdrop-filter: blur(20px);
+
 }
 
 .capture-studio-app .add-popup,
@@ -3133,7 +3117,7 @@ html, body {
 }
 
 .capture-studio-app .loading-screen {
-  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--nx-accent) 16%, transparent), transparent 38%), var(--nx-paper);
+  background: var(--nx-paper);
 }
 
 .capture-studio-app .loading-content h1,
@@ -3142,14 +3126,8 @@ html, body {
   font-family: var(--font-display), Georgia, serif;
 }
 
-@keyframes noir-record-pulse {
-  0%, 100% { box-shadow: 0 0 18px color-mix(in srgb, var(--nx-danger) 30%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 24%, transparent); }
-  50% { box-shadow: 0 0 30px color-mix(in srgb, var(--nx-danger) 52%, transparent), 0 0 0 7px color-mix(in srgb, var(--nx-danger) 4.5%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 24%, transparent); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .capture-studio-app .record-pill.idle { animation: none; }
-  .capture-studio-app .track-lane,
+    .capture-studio-app .track-lane,
   .capture-studio-app .record-pill,
   .capture-studio-app .layout-btn,
   .capture-studio-app .src-toggle { transition-duration: 0.01ms; }
