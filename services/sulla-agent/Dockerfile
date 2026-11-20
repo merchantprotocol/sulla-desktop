@@ -1,7 +1,7 @@
 FROM node:22-bookworm-slim
 
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=0.162.1
+ARG CLAUDE_CODE_VERSION=2.1.329
+ARG CODEX_VERSION=0.170.0
 
 LABEL com.sulla.agent.transport-version="1"
 
