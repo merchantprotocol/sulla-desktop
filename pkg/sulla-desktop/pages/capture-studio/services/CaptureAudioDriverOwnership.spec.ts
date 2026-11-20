@@ -61,9 +61,12 @@ describe('CaptureAudioDriverOwnership', () => {
   it('deduplicates concurrent releases and serializes a reacquisition after stop settles', async() => {
     // risk: audio ownership — overlapping source removal, close, and re-enable must not drop or double-release a holder.
     let finishStop!: () => void;
+    let stopCalls = 0;
     const driver = {
       startMic: vi.fn().mockResolvedValue({}),
-      stopMic: vi.fn(() => new Promise<void>(resolve => { finishStop = resolve; })),
+      stopMic: vi.fn(() => ++stopCalls === 1
+        ? new Promise<void>(resolve => { finishStop = resolve; })
+        : Promise.resolve()),
       startSpeaker: vi.fn().mockResolvedValue(undefined),
       stopSpeaker: vi.fn().mockResolvedValue(undefined),
     };
@@ -86,9 +89,9 @@ describe('CaptureAudioDriverOwnership', () => {
     let completeStart!: () => void;
     let held = false;
     const driver = {
-      startMic: lifecycle.protect(() => new Promise<void>(resolve => {
+      startMic: () => new Promise<void>(resolve => {
         completeStart = () => { held = true; resolve(); };
-      })),
+      }),
       stopMic: vi.fn(async() => { held = false; }),
       startSpeaker: vi.fn().mockResolvedValue(undefined),
       stopSpeaker: vi.fn().mockResolvedValue(undefined),

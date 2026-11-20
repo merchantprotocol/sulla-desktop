@@ -27,10 +27,15 @@ class MemoryWriteStream extends EventEmitter {
     return true;
   }
 
-  end(): void {
+  end(callback?: () => void): void {
     if (this.writableFinished) return;
     this.writableFinished = true;
-    queueMicrotask(() => { this.commit(Buffer.concat(this.chunks)); this.closed = true; this.emit('finish'); });
+    queueMicrotask(() => {
+      this.commit(Buffer.concat(this.chunks));
+      this.closed = true;
+      this.emit('finish');
+      callback?.();
+    });
   }
 }
 
