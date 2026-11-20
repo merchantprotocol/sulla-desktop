@@ -450,7 +450,14 @@ const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
-ChatDecisions.provide(subAgentParentThreadId);
+const mainDecisionTranscript = computed(() => !props.agentTabContractId && !props.agentTabThreadId &&
+  !props.initialAgentId && !props.supportSessionId && !controller.thread.value.agentId);
+const transcriptDecisionIds = computed(() => mainDecisionTranscript.value ? controller.messages.value.flatMap(message => {
+  const id = message.kind === 'tool_question' ? message.questionId : message.kind === 'tool_approval' ? message.approvalId : undefined;
+  return id ? [id] : [];
+}) : []);
+provide('chat:main-decision-transcript', mainDecisionTranscript);
+ChatDecisions.provide(subAgentParentThreadId, transcriptDecisionIds);
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;

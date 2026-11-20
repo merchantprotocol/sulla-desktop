@@ -73,6 +73,7 @@
         >{{ q.header }}</span>
         {{ q.question }}
       </legend>
+      <pre v-if="submitAnswers && !persistent && q.command">{{ q.command }}</pre>
       <p
         v-if="!locked"
         class="qc-hint"
@@ -209,7 +210,7 @@ import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/M
 import { useChatController } from '../../controller/useChatController';
 import { answerSelection } from '../../messages/questionAnswer';
 
-const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; draft?: { picks: string[][]; other: string[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
+const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; blocked?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
 const currentStep = ref(0);
 
@@ -217,7 +218,7 @@ const currentStep = ref(0);
 // msg.questions. reactive so the template updates on toggle.
 const picks = reactive<string[][]>(props.draft?.picks ?? props.msg.questions.map(() => []));
 const otherText = reactive<string[]>(props.draft?.other ?? props.msg.questions.map(() => ''));
-const customSelected = reactive<boolean[]>(props.msg.questions.map((q, qi) => !!otherText[qi]?.trim() && (!!q.multiSelect || !picks[qi]?.length)));
+const customSelected = reactive<boolean[]>(props.draft?.customSelected ?? props.msg.questions.map((q, qi) => !!otherText[qi]?.trim() && (!!q.multiSelect || !picks[qi]?.length)));
 
 function selectCustom(qi: number, selected: boolean): void {
   if (locked.value) return;
@@ -234,19 +235,20 @@ function isPicked(qi: number, label: string): boolean {
 const now = ref(Date.now());
 const ticker = setInterval(() => { now.value = Date.now() }, 1_000);
 onBeforeUnmount(() => clearInterval(ticker));
-const remaining = computed(() => !props.persistent && props.msg.status === 'pending' && !sending.value && props.msg.expiresAt ? Math.max(0, props.msg.expiresAt - now.value) : null);
+const remaining = computed(() => !props.persistent && !props.submitAnswers && props.msg.status === 'pending' && !sending.value && props.msg.expiresAt ? Math.max(0, props.msg.expiresAt - now.value) : null);
 const countdown = computed(() => {
   const seconds = Math.ceil((remaining.value ?? 0) / 1_000);
   return `${ Math.floor(seconds / 60) }:${ String(seconds % 60).padStart(2, '0') }`;
 });
 const stateText = computed(() => {
+  if (props.stateLabel) return props.stateLabel;
   if (props.msg.status === 'answered') return 'Answered';
   if (props.msg.status === 'timed_out') return 'Expired';
   if (props.msg.resolutionError) return 'Not sent';
-  return sending.value ? (props.persistent ? 'Saving answer…' : 'Answer sent') : 'Waiting for your answer';
+  return sending.value ? (props.submitAnswers ? 'Saving answer…' : 'Answer sent') : 'Waiting for your answer';
 });
 const stateTone = computed(() => props.msg.status === 'answered' || sending.value ? 'done' : props.msg.status === 'timed_out' ? 'closed' : 'open');
-const expiredUnsent = computed(() => props.msg.status === 'timed_out' && !(props.msg.answers?.length));
+const expiredUnsent = computed(() => !props.submitAnswers && props.msg.status === 'timed_out' && !(props.msg.answers?.length));
 const hasDraft = computed(() => picks.some(p => p.length > 0) || otherText.some(t => t.trim()));
 /** The answered card already shows each question with the option picked; the summary list is only for when those picks are not known (e.g. after a restart). */
 const picksShown = computed(() => !!props.msg.answers?.length && props.msg.answers.every((answer, qi) =>
@@ -264,7 +266,7 @@ function sendAsMessage(): void {
 // Locks the card the moment Submit is pressed, before the backend confirms,
 // so the answered card can't read as a second open prompt or be re-submitted.
 const sending = ref(false);
-const locked = computed(() => sending.value || props.msg.status !== 'pending');
+const locked = computed(() => !!props.blocked || sending.value || props.msg.status !== 'pending');
 
 // The backend rejected the answer: reopen the card so it can be fixed and resent.
 watch(() => props.msg.resolutionError, (error) => {

@@ -98,6 +98,14 @@ export class DecisionService {
     return this.pendingDecisions.listForConversation(conversationId, before);
   }
 
+  async listTranscriptDecisions(conversationId: string, ids: string[]): Promise<DecisionRecord[]> {
+    if (typeof conversationId !== 'string' || !conversationId || conversationId.length > 300 ||
+        !Array.isArray(ids) || ids.length > 500 || ids.some(id => typeof id !== 'string' || !id || id.length > 300)) {
+      throw new Error('A conversation and valid request IDs are required.');
+    }
+    return this.pendingDecisions.listTranscriptDecisions(conversationId, ids);
+  }
+
   async dismiss(id: string, conversationId: string): Promise<{ settled: boolean }> {
     const entry = this.waiting.get(id);
     if (entry?.busy) return { settled: false };

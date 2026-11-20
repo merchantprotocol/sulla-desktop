@@ -14,9 +14,10 @@
     <div class="head">Approval required</div>
     <div class="what">{{ msg.reason }}</div>
     <div class="cmd">{{ msg.command }}</div>
+    <p v-if="stateLabel && msg.decision === 'timed_out'" role="status">{{ stateLabel }}</p>
     <div v-if="msg.decision === 'pending'" class="actions">
-      <button class="approve" type="button" @click="controller.approveTool(msg.id)">Approve</button>
-      <button class="deny"    type="button" @click="controller.denyTool(msg.id)">Deny</button>
+      <button class="approve" type="button" :disabled="blocked" @click="settle('approved')">Approve</button>
+      <button class="deny"    type="button" :disabled="blocked" @click="settle('denied')">Deny</button>
     </div>
   </div>
 </template>
@@ -26,8 +27,14 @@ import { computed } from 'vue';
 import type { ToolApprovalMessage } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
 
-const props = defineProps<{ msg: ToolApprovalMessage }>();
+const props = defineProps<{ msg: ToolApprovalMessage; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void> }>();
 const controller = useChatController();
+function settle(action: 'approved' | 'denied'): void {
+  if (props.blocked || props.msg.decision !== 'pending') return;
+  if (props.decide) void props.decide(action);
+  else if (action === 'approved') controller.approveTool(props.msg.id);
+  else controller.denyTool(props.msg.id);
+}
 const decisionClass = computed(() => {
   if (props.msg.decision === 'approved') return 'settled approved';
   if (props.msg.decision === 'denied')   return 'settled denied';
