@@ -236,34 +236,38 @@ export function useMicRecording() {
     }
 
     const ws = writeStream;
-    writeStream = null;
-    if (ws) {
-      await new Promise<void>((resolve) => {
-        let resolved = false;
-        const done = () => {
-          if (resolved) return;
-          resolved = true;
-          resolve();
+    if (ws?.errored) throw ws.errored;
+    if (ws && !ws.writableFinished) {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const finish = (error?: unknown) => {
+          if (settled) return;
+          settled = true;
+          if (timeout) clearTimeout(timeout);
+          ws.removeListener('finish', onFinish);
+          ws.removeListener('error', onError);
+          if (error) reject(error);
+          else resolve();
         };
-        ws.once('finish', done);
-        ws.once('close', done);
-        ws.once('error', done);
+        const onFinish = () => finish();
+        const onError = (error: Error) => finish(error);
+        if (ws.errored) { finish(ws.errored); return; }
+        ws.once('finish', onFinish);
+        ws.once('error', onError);
+        timeout = setTimeout(() => finish(new Error('Timed out finalizing microphone recording.')), 5000);
         ws.end();
-        setTimeout(done, 5000);
       });
     }
 
     // Finalize WAV header for PCM modes
     const isCompressed = currentMode === 'streaming' || currentMode === 'streaming-voice';
     if (!isCompressed && filePath) {
-      try {
-        finalizeWav(filePath, totalDataBytes);
-      } catch (err: any) {
-        console.error('[useMicRecording] Failed to finalize WAV:', err.message);
-      }
+      finalizeWav(filePath, totalDataBytes);
     }
 
     const result = filePath;
+    writeStream = null;
     console.log('[useMicRecording] Stopped', { file: result, bytes: totalDataBytes });
     filePath = '';
     totalDataBytes = 0;

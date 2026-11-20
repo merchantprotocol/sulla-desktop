@@ -9,6 +9,13 @@ import type { StudioSection } from '@pkg/components/routines/studioSections';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
+import { TabCloseGuardRegistry } from './TabCloseGuardRegistry';
+
+const tabCloseGuards = new TabCloseGuardRegistry();
+
+export function registerBrowserTabCloseGuard(tabId: string, guard: () => Promise<boolean>): () => void {
+  return tabCloseGuards.register(tabId, guard);
+}
 
 export function shouldPersistTabList(search: string): boolean { return new URLSearchParams(search).get('tabHost') !== '1'; }
 
@@ -617,7 +624,7 @@ export function useBrowserTabs() {
     return createTab('about:blank', { mode: 'chat' });
   }
 
-  function closeTab(id: string) {
+  function removeTab(id: string): void {
     const idx = tabs.findIndex(t => t.id === id);
 
     if (idx !== -1) {
@@ -651,6 +658,11 @@ export function useBrowserTabs() {
     if (tabs.length === 0) {
       ipcRenderer.send('agent-window:close-self');
     }
+  }
+
+  function closeTab(id: string): Promise<boolean> {
+    if (!tabs.some(tab => tab.id === id)) return Promise.resolve(false);
+    return tabCloseGuards.requestClose(id, () => removeTab(id));
   }
 
   /** Remove a tab for an in-window transfer without closing its conversation. */
@@ -875,12 +887,13 @@ export function openDocumentTab(documentFile: { fileId: string; path: string; co
  *
  * Returns true if a tab was found and closed.
  */
-export function closeTabByAssetId(assetId: string): boolean {
+export function closeTabByAssetId(assetId: string): Promise<boolean> {
   const tab = tabs.find(t => t.assetId === assetId);
-  if (!tab) return false;
+  if (!tab) return Promise.resolve(false);
 
-  const idx = tabs.findIndex(t => t.id === tab.id);
-  if (idx === -1) return false;
+  return tabCloseGuards.requestClose(tab.id, () => {
+    const idx = tabs.findIndex(t => t.id === tab.id);
+    if (idx === -1) return;
 
   // Record closure in conversation history
   closeTabInHistory(tab.id);
@@ -922,7 +935,7 @@ export function closeTabByAssetId(assetId: string): boolean {
     } catch { /* non-browser context */ }
   }
 
-  return true;
+  });
 }
 
 export function applyTransferAdoption(adopt: (descriptor: BrowserTab) => unknown, descriptor: Record<string, unknown>, acknowledge: () => void): void {

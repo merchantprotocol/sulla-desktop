@@ -2,7 +2,7 @@
      Copyright (c) 2025-2026 Merchant Protocol LLC.
      SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
-  <CaptureStudio />
+  <CaptureStudio :tab-id="props.tabId" />
 </template>
 
 <script setup lang="ts">
@@ -13,6 +13,8 @@ import { provide } from 'vue';
 import CaptureStudio from '../CaptureStudio.vue';
 import { CameraEffectsComposition, cameraEffectsKey } from './effects/CameraEffectsComposition';
 import paths from '@pkg/utils/paths';
+
+const props = defineProps<{ tabId: string }>();
 
 // Preserve the native camera-effects runtime previously provided by the
 // standalone entry point. The component stays mounted in its transferable tab.

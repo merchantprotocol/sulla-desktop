@@ -7,6 +7,7 @@ export class CaptureSessionLifecycle {
   private closing = false;
 
   get isClosing(): boolean { return this.closing; }
+  get hasPendingAcquisitions(): boolean { return this.startups.size > 0 || !!this.active; }
 
   run(transition: () => Promise<void>): Promise<void> {
     if (this.closing) return Promise.resolve();
@@ -44,8 +45,15 @@ export class CaptureSessionLifecycle {
   close(flushAndRelease: () => Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.closing = true;
-    this.shutdown = this.finish(flushAndRelease);
-    return this.shutdown;
+    const shutdown = this.finish(flushAndRelease);
+    this.shutdown = shutdown;
+    void shutdown.catch(() => {
+      if (this.shutdown === shutdown) {
+        this.shutdown = undefined;
+        this.closing = false;
+      }
+    });
+    return shutdown;
   }
 
   private async finish(flushAndRelease: () => Promise<void>): Promise<void> {

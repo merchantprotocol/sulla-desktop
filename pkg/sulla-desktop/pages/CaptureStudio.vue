@@ -175,6 +175,19 @@
       </section>
     </div>
 
+    <div v-if="closeConfirmationOpen" class="record-setup-backdrop capture-close-backdrop">
+      <section class="record-setup capture-close-dialog" role="alertdialog" aria-modal="true" aria-labelledby="capture-close-title">
+        <h2 id="capture-close-title">Close Capture Studio?</h2>
+        <p>Closing Capture Studio will stop all its audio and video streams. Close anyway?</p>
+        <p v-if="recording">The recording will be stopped and saved before Capture Studio closes.</p>
+        <p v-if="closeError" role="alert" class="capture-close-error">{{ closeError }}</p>
+        <footer>
+          <button type="button" class="setup-cancel" autofocus @click="keepCaptureOpen">Keep open</button>
+          <button type="button" class="setup-record" @click="stopCaptureAndClose">Stop streams and close</button>
+        </footer>
+      </section>
+    </div>
+
     <TrackPanel
       :sources="sources"
       :tracks-open="tracksOpen"
@@ -373,6 +386,7 @@
           :key="stream.id"
           class="playback-tile"
           :class="'tile-' + stream.type"
+          @contextmenu.prevent="showPlaybackContextMenu($event, stream.id)"
         >
           <div class="tile-label">
             <span
@@ -380,6 +394,10 @@
               :style="{ background: tileColor(stream.type) }"
             />
             <span>{{ tileName(stream) }}</span>
+            <div class="tile-actions">
+              <button type="button" :aria-label="isPlaybackPaused(stream.id) ? `Play ${tileName(stream)}` : `Pause ${tileName(stream)}`" @click.stop="togglePlayback(stream.id)">{{ isPlaybackPaused(stream.id) ? 'Play' : 'Pause' }}</button>
+              <button type="button" class="tile-remove" :aria-label="`Close ${tileName(stream)}`" @click.stop="removePlaybackStream(stream.id)">×</button>
+            </div>
           </div>
           <div class="tile-media">
             <video
@@ -387,6 +405,8 @@
               :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
               :src="'file://' + stream.filePath"
               controls
+              @play="playbackPaused[stream.id] = false"
+              @pause="playbackPaused[stream.id] = true"
               style="width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 6px;"
             />
             <div
@@ -437,6 +457,8 @@
                 :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
                 :src="'file://' + stream.filePath"
                 controls
+                @play="playbackPaused[stream.id] = false"
+                @pause="playbackPaused[stream.id] = true"
                 style="width: 100%;"
               />
             </div>
@@ -473,6 +495,9 @@ import { useMediaSources, QUALITY_PRESETS, type CropRegion, type QualityPreset, 
 import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { CaptureSessionLifecycle } from './capture-studio/effects/CaptureSessionLifecycle';
+import { CaptureSourceTileReplacer } from './capture-studio/services/CaptureSourceTileReplacer';
+import { PlaybackTileController } from './capture-studio/services/PlaybackTileController';
+import { registerBrowserTabCloseGuard } from '@pkg/composables/useBrowserTabs';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useSettings } from './capture-studio/composables/useSettings';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
@@ -484,6 +509,7 @@ import type { CtxMenuItem } from './capture-studio/ContextMenuItem';
 
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
+const props = defineProps<{ tabId?: string }>();
 
 // ─── Composables ───
 const audioDriver = useAudioDriver();
@@ -502,12 +528,22 @@ const loadingMessage = ref('Initializing Capture Studio...');
 // ─── State ───
 const recording = ref(false);
 const captureLifecycle = new CaptureSessionLifecycle();
+const closeConfirmationOpen = ref(false);
+const closeError = ref('');
+let pendingCloseDecision: ((allow: boolean) => void) | null = null;
+let pendingCloseRequest: Promise<boolean> | null = null;
+let unregisterCaptureCloseGuard: (() => void) | null = null;
+let windowCloseRequestIds: string[] = [];
 // All entry points (UI, setup and RPC) share the parent teardown barrier.
 mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen);
 mediaSources.acquireScreenForSource = captureLifecycle.protect(mediaSources.acquireScreenForSource);
 mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
 mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
 mediaSources.acquireCameraForSource = captureLifecycle.protect(mediaSources.acquireCameraForSource);
+const screenTileReplacer = new CaptureSourceTileReplacer(
+  (tileId, deviceId) => mediaSources.acquireScreenForSource(tileId, deviceId),
+  () => { if (!captureLifecycle.isClosing) updateStreamAssignments(); },
+);
 mediaSources.switchCameraForSource = captureLifecycle.protect(mediaSources.switchCameraForSource);
 mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
 mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
@@ -545,6 +581,10 @@ interface PlaybackStream {
 const playbackOpen = ref(false);
 const playbackStreams = ref<PlaybackStream[]>([]);
 const playbackRefs = ref<Record<string, HTMLMediaElement | null>>({});
+const playbackPaused = reactive<Record<string, boolean>>({});
+const playbackTileController = new PlaybackTileController(
+  id => playbackRefs.value[id], removePlaybackTile, (id, paused) => { playbackPaused[id] = paused; },
+);
 let sourceCounter = 0;
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
@@ -566,6 +606,7 @@ const sources = reactive<Source[]>([
   { id: 'mic', type: 'mic', name: 'Microphone', color: 'mic', status: '—', builtin: true, on: false, isVideo: false },
   { id: 'system', type: 'system', name: 'System Audio', color: 'sys', status: '—', builtin: true, on: false, isVideo: false },
 ]);
+const selectedScreenSourceIds = reactive<Record<string, string>>({});
 
 const builtinSources = computed(() => sources.filter(s => s.builtin));
 const customSources = computed(() => sources.filter(s => !s.builtin));
@@ -1222,6 +1263,26 @@ function closePlayback() {
   playbackRefs.value = {};
 }
 
+function isPlaybackPaused(id: string): boolean { return playbackTileController.isPaused(id); }
+function togglePlayback(id: string): void { playbackTileController.toggle(id); }
+function pausePlayback(id: string): void { playbackTileController.pause(id); }
+function removePlaybackStream(id: string): void { playbackTileController.close(id); }
+function removePlaybackTile(id: string): void {
+  playbackStreams.value = playbackStreams.value.filter(stream => stream.id !== id);
+  delete playbackRefs.value[id];
+  delete playbackPaused[id];
+  if (!playbackStreams.value.length) playbackOpen.value = false;
+}
+function showPlaybackContextMenu(event: MouseEvent, id: string): void {
+  const target = playbackRefs.value[id];
+  ctxMenu.title = tileName(playbackStreams.value.find(stream => stream.id === id)!);
+  ctxMenu.items = [
+    { id: 'playback-toggle', label: target?.paused ? 'Play' : 'Pause', action: () => togglePlayback(id) },
+    { id: 'playback-close-source', label: 'Close tile', action: () => removePlaybackStream(id) },
+  ];
+  ctxMenu.x = event.clientX; ctxMenu.y = event.clientY; ctxMenu.visible = true;
+}
+
 function openSessionFolder() {
   if (!lastSessionDir.value) return;
   shell.openPath(lastSessionDir.value);
@@ -1431,26 +1492,21 @@ function buildQualityChildren(
   ];
 }
 
-async function showScreenContextMenu(e: MouseEvent) {
+async function showScreenContextMenu(e: MouseEvent, sourceId = 'screen') {
   try {
+    const targetSource = sources.find(source => source.id === sourceId && source.type === 'screen');
+    if (!targetSource) return;
     const screenSources = await mediaSources.listScreenSources();
 
     const sourceChildren: CtxMenuItem[] = screenSources.map(s => ({
       id:        s.id,
       label:     s.name,
       thumbnail: s.thumbnailDataUrl,
-      active:    s.id === mediaSources.activeScreenSourceId.value,
+      active:    s.id === (selectedScreenSourceIds[sourceId] || (sourceId === 'screen' ? mediaSources.activeScreenSourceId.value : '')),
       action:    async() => {
         try {
-          await mediaSources.switchScreen(s.id);
-          const src = sources.find(ss => ss.id === 'screen');
-          if (src) {
-            src.on = true;
-            src.name = s.name;
-            src.status = 'Capturing';
-            autoAssign();
-            if (!captureLifecycle.isClosing) updateStreamAssignments();
-          }
+          await screenTileReplacer.replace(targetSource, s.id, s.name);
+          selectedScreenSourceIds[sourceId] = s.id;
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch screen:', err);
         }
@@ -1924,6 +1980,11 @@ watch(recording, value => {
 
 onMounted(async() => {
   document.addEventListener('keydown', onKeyDown);
+  if (props.tabId) {
+    unregisterCaptureCloseGuard = registerBrowserTabCloseGuard(props.tabId, requestCaptureStudioClose);
+    ipcRenderer.send('capture-studio:tab-mounted' as any, { tabId: props.tabId, mounted: true });
+  }
+  ipcRenderer.on('capture-studio:request-window-close' as any, onCaptureStudioWindowCloseRequest);
 
   // Hook teleprompter style/script updates to sync with floating window.
   // Position sync is handled by the main process (teleprompterTracking.ts).
@@ -2015,38 +2076,89 @@ onMounted(async() => {
 });
 
 // ── Full cleanup — shared by before-quit and onUnmounted ──
+function hasLiveTracks(streams: MediaStream[]): boolean {
+  return streams.some(stream => stream.active && stream.getTracks().some(track => track.readyState === 'live'));
+}
+
+function hasOwnedCapture(): boolean {
+  return recording.value || captureLifecycle.hasPendingAcquisitions ||
+    hasLiveTracks([...Object.values(mediaSources.screenStreams), ...Object.values(mediaSources.cameraStreams)]) ||
+    hasLiveTracks([speakerCapture.nativeStream.value].filter((stream): stream is MediaStream => !!stream)) ||
+    micRecording.active.value || speakerCapture.active.value || audioDriver.micRunning.value || audioDriver.speakerRunning.value ||
+    sources.some(source => source.on);
+}
+
+function requestCaptureStudioClose(): Promise<boolean> {
+  if (!hasOwnedCapture()) return Promise.resolve(true);
+  if (pendingCloseRequest) return pendingCloseRequest;
+  closeError.value = '';
+  closeConfirmationOpen.value = true;
+  pendingCloseRequest = new Promise<boolean>(resolve => { pendingCloseDecision = resolve; });
+  return pendingCloseRequest;
+}
+
+function settleCloseRequest(allow: boolean): void {
+  const resolve = pendingCloseDecision;
+  pendingCloseDecision = null;
+  pendingCloseRequest = null;
+  closeConfirmationOpen.value = false;
+  resolve?.(allow);
+  for (const requestId of windowCloseRequestIds.splice(0)) {
+    ipcRenderer.send('capture-studio:window-close-response' as any, { requestId, tabId: props.tabId, allow });
+  }
+}
+
+function onCaptureStudioWindowCloseRequest(_event: unknown, request: { requestId: string; tabIds: string[] }): void {
+  if (!props.tabId || !request.tabIds.includes(props.tabId)) return;
+  if (!hasOwnedCapture()) {
+    ipcRenderer.send('capture-studio:window-close-response' as any, { requestId: request.requestId, tabId: props.tabId, allow: true });
+    return;
+  }
+  windowCloseRequestIds.push(request.requestId);
+  void requestCaptureStudioClose();
+}
+
+function keepCaptureOpen(): void { settleCloseRequest(false); }
+
+async function stopCaptureAndClose(): Promise<void> {
+  closeError.value = '';
+  try {
+    await cleanupCaptureStudio();
+    settleCloseRequest(true);
+  } catch (error: any) {
+    closeError.value = `Capture Studio could not finish saving. It will stay open. ${ error?.message || error }`;
+    closeConfirmationOpen.value = true;
+  }
+}
+
 async function cleanupCaptureStudio() {
   return captureLifecycle.close(async() => {
-  console.log('[CaptureStudio] Cleaning up...');
+    console.log('[CaptureStudio] Cleaning up...');
 
-  // Stop even when async startup never reached the component recording flag.
-  await micRecording.stop();
-  if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
-  inputTracker.stopTracking();
-  await recorder.stopSession();
-  mediaSources.endAllCameraRecordings();
-  recording.value = false;
-  diskSpace.stopMonitoring();
+    // Finalize every recorder and manifest before releasing media sources.
+    await micRecording.stop();
+    if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
+    await recorder.stopSession();
+    mediaSources.endAllCameraRecordings();
+    recording.value = false;
+    diskSpace.stopMonitoring();
+    inputTracker.stopTracking();
+    stopAudioMeter();
+    stopWaveformLoop();
+    teleprompterRef.value?.stopTracking?.();
 
-  // Stop teleprompter tracking
-  teleprompterRef.value?.stopTracking?.();
+    if (prompterEnabled.value) {
+      await ipcRenderer.invoke('teleprompter:close');
+      prompterEnabled.value = false;
+    }
 
-  // Close floating teleprompter
-  if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:close').catch(() => {});
-    prompterEnabled.value = false;
-  }
+    mediaSources.releaseAllScreens();
+    await mediaSources.releaseAllCameras();
+    speakerCapture.releaseNative();
 
-  await recorder.stopSession();
-
-  // Release all media streams (screen + camera)
-  mediaSources.releaseAllScreens();
-  await mediaSources.releaseAllCameras();
-  speakerCapture.releaseNative();
-
-  // Disconnect from controllers
-  try { await audioDriver.stopMic() } catch { /* already stopped */ }
-  try { await audioDriver.stopSpeaker() } catch { /* already stopped */ }
+    // These stop calls release only Capture Studio's controller holds.
+    await audioDriver.stopMic();
+    await audioDriver.stopSpeaker();
   });
 }
 
@@ -2056,6 +2168,11 @@ ipcRenderer.on('app:before-quit', () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
+  ipcRenderer.removeListener('capture-studio:request-window-close' as any, onCaptureStudioWindowCloseRequest);
+  unregisterCaptureCloseGuard?.();
+  unregisterCaptureCloseGuard = null;
+  if (props.tabId) ipcRenderer.send('capture-studio:tab-mounted' as any, { tabId: props.tabId, mounted: false });
+  if (pendingCloseDecision) settleCloseRequest(false);
   ipcRenderer.removeAllListeners('app:before-quit');
   stopAudioMeter();
   stopWaveformLoop();
@@ -2138,6 +2255,10 @@ html, body {
 .record-setup footer { justify-content: flex-end; margin-top: 20px; }
 .record-setup footer .setup-record { min-width: 110px; color: var(--text-on-accent); border-color: var(--status-error); background: var(--status-error); }
 .record-setup footer .setup-record:disabled { opacity: .5; cursor: default; }
+.capture-close-dialog h2 { margin-bottom: 10px; font: 600 24px var(--display); }
+.capture-close-dialog p { margin-top: 8px; color: var(--text-secondary); }
+.capture-close-dialog footer { justify-content: flex-end; margin-top: 22px; }
+.capture-close-dialog .capture-close-error { color: var(--status-error); }
 
 /* ═══════════════════════════════════════════════
    CANVAS — full screen preview
@@ -2884,6 +3005,10 @@ html, body {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
 }
+.tile-actions { margin-left: auto; display: flex; gap: 6px; opacity: 0; transition: opacity .12s ease; }
+.playback-tile:hover .tile-actions, .playback-tile:focus-within .tile-actions { opacity: 1; }
+.tile-actions button { border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px; color: var(--text-primary); background: var(--bg-page); cursor: pointer; }
+.tile-actions .tile-remove { font-size: 17px; line-height: 1; }
 
 .tile-label {
   display: flex; align-items: center; gap: 8px;
