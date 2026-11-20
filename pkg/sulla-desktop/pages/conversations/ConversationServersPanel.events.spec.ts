@@ -54,6 +54,48 @@ describe('ConversationServersPanel composer events', () => {
     wrapper.unmount();
   });
 
+  it('opens an accessible, searchable public-only directory from the accessible compass control', async () => {
+    // risk: tenant isolation; directory results must never expose organization servers
+    invoke.mockImplementation((channel: string, arg?: unknown) => Promise.resolve(
+      channel === 'conversation-servers:list' && arg === undefined
+        ? [publicServer, { ...orgServer, id: 'leaked-org', name: 'Hidden organization' }]
+        : invokeResult(channel, arg),
+    ));
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    const compass = wrapper.get('button[aria-label="Discover public servers"]');
+    expect(compass.attributes('title')).toBe('Discover public servers');
+    expect((compass.element as HTMLElement).tagName).toBe('BUTTON');
+    await compass.trigger('click');
+    expect(wrapper.get('[role="dialog"][aria-label="Discover public servers"]').exists()).toBe(true);
+    expect(wrapper.findAll('.cs-discover-results li').map(row => row.text())).toEqual(['PU Public Open']);
+    await wrapper.get('input[type="search"]').setValue('hidden');
+    expect(wrapper.findAll('.cs-discover-results li')).toHaveLength(0);
+    await wrapper.get('input[type="search"]').setValue('public');
+    await wrapper.get('.cs-discover-results button').trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('[aria-label="general, notifications All messages"]').exists()).toBe(true));
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(wrapper.find('.cs-rail [aria-label="Direct messages and People"]').exists()).toBe(true);
+    expect(wrapper.find('.cs-rail [aria-label="Back"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('explains membership is required when a public directory result cannot be opened', async () => {
+    // risk: access control; directory discovery must not imply that private membership can be bypassed
+    invoke.mockImplementation((channel: string, arg?: unknown) => {
+      if (channel === 'conversation-servers:channels' && arg === 'public') return Promise.reject(new Error('Request failed (403)'));
+      return Promise.resolve(invokeResult(channel, arg));
+    });
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    // A native button exposes the same activation behavior to keyboard and pointer users.
+    await wrapper.get('[aria-label="Discover public servers"]').trigger('click');
+    await wrapper.get('.cs-discover-results button').trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toBe('Membership is required to open this public server.'));
+    expect(wrapper.find('button[aria-label*="Join"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
   it('creates a public server without an orgId', async () => {
     // risk: tenant isolation; public creation must not inherit or send an organization scope
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });

@@ -107,6 +107,7 @@ jobs:
     - uses: ./.github/actions/yarn-install
       timeout-minutes: 20
     - name: Test bundled-image safety detector
+      if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_channel != 'artifacts-only' }}
       run: yarn vitest run scripts/lib/bundled-image-safety.spec.ts
     - run: yarn build
     # electron-builder silently skips macOS signing if the certificate is
