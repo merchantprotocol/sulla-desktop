@@ -36,20 +36,17 @@ vi.mock('../../../integrations/select_box', () => ({ getSelectBoxProvider: vi.fn
 vi.mock('../../../tools/models/shared', () => ({ getCliStatus: async(providerId: string) => ({ installed: f.cli[providerId] === true }) }));
 vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 vi.mock('@pkg/main/firstRun/pendingCredentials', () => ({ hasPendingCredential: () => false }));
-vi.mock('../../../languagemodels/codexModelCatalog', () => ({
-  listCodexModels: async() => [
-    { id: 'codex', name: 'Auto (CLI default)' },
-    { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol' },
-  ],
-}));
-// Shape produced by claudeModelCatalog + parseClaudeCliModels for a subscription account.
-vi.mock('../../../languagemodels/claudeModelCatalog', () => ({
-  listClaudeCodeModels: async() => [
-    { id: 'claude-code', name: 'Auto (Claude picks)' },
-    { id: 'claude-opus-5-5', name: 'Opus 5.5', efforts: [{ id: 'high' }] },
-    { id: 'opus', name: 'Opus 5.5 (CLI alias)', efforts: [{ id: 'high' }] },
-  ],
-}));
+vi.mock('../../../languagemodels/sharedModelCatalog', () => ({ sharedModelCatalog: {
+  getStatus: () => ({ authority: 'shared-model-catalog', state: 'fresh' }),
+  listModels: async(provider: string) => provider === 'codex' ? [
+    { id: 'codex', name: 'Auto (CLI default)', selectionMode: 'auto' },
+    { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol', selectionMode: 'exact' },
+  ] : provider === 'claude-code' ? [
+    { id: 'claude-code', name: 'Auto (Claude picks)', selectionMode: 'auto' },
+    { id: 'claude-opus-5-5', name: 'Opus 5.5', supportedReasoningEfforts: ['high'], selectionMode: 'exact' },
+    { id: 'opus', name: 'Opus 5.5 (CLI alias)', supportedReasoningEfforts: ['high'], selectionMode: 'alias' },
+  ] : [],
+} }));
 
 import { getModelProviderService } from '../../../services/ModelProviderService';
 
@@ -131,14 +128,14 @@ describe('ModelProviderService access metadata', () => {
   });
 
   it('marks the provider auto alias separately from exact model ids', async() => {
-    await expect(getModelProviderService().getModelsForProvider('codex')).resolves.toEqual([
-      { id: 'codex', name: 'Auto (CLI default)', selectionMode: 'automatic' },
+    await expect(getModelProviderService().getModelsForProvider('codex', { liveOnly: true })).resolves.toMatchObject([
+      { id: 'codex', name: 'Auto (CLI default)', selectionMode: 'automatic', source: 'shared-model-catalog' },
       { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol', selectionMode: 'exact' },
     ]);
   });
 
   it('classifies Claude CLI family aliases as automatic versions while keeping ids and efforts', async() => {
-    await expect(getModelProviderService().getModelsForProvider('claude-code')).resolves.toEqual([
+    await expect(getModelProviderService().getModelsForProvider('claude-code')).resolves.toMatchObject([
       { id: 'claude-code', name: 'Auto (Claude picks)', selectionMode: 'automatic' },
       { id: 'claude-opus-5-5', name: 'Opus 5.5', efforts: [{ id: 'high' }], selectionMode: 'exact' },
       { id: 'opus', name: 'Opus 5.5 (CLI alias)', efforts: [{ id: 'high' }], selectionMode: 'alias' },

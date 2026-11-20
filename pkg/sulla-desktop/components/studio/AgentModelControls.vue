@@ -35,14 +35,13 @@ function toggle() {
     if (props.fallbacks.length) emit('update:fallbacks', []);
     return;
   }
-  const provider = providers.value[0]; const model = provider?.models[0];
-  if (provider && model) emit('update:modelValue', { mode: 'pin', provider: provider.id, model: model.id });
+  emit('update:modelValue', { mode: 'pin', provider: '', model: '' });
 }
-function selectProvider(provider: string) { emit('update:modelValue', { mode: 'pin', provider, model: models(provider)[0]?.id ?? '' }) }
+function selectProvider(provider: string) { emit('update:modelValue', { mode: 'pin', provider, model: '' }) }
 function selectModel(model: string) { if (pin.value) emit('update:modelValue', { mode: 'pin', provider: pin.value.provider, model }); }
 function selectEffort(effort: string) { if (pin.value) emit('update:modelValue', { mode: 'pin', provider: pin.value.provider, model: pin.value.model, ...(effort ? { effort } : {}) }); }
 function updateFallback(index: number, patch: Partial<ModelCandidate>) { emit('update:fallbacks', props.fallbacks.map((row, i) => i === index ? { ...row, ...patch } : { ...row })) }
-function add() { const provider = fallbackProviders.value[0]; const model = provider?.models[0]; if (provider && model) emit('update:fallbacks', [...props.fallbacks, { provider: provider.id, model: model.id }]); }
+function add() { emit('update:fallbacks', [...props.fallbacks, { provider: '', model: '' }]); }
 function move(index: number, delta: number) { const rows = [...props.fallbacks]; [rows[index], rows[index + delta]] = [rows[index + delta], rows[index]]; emit('update:fallbacks', rows) }
 </script>
 <template>
@@ -102,7 +101,7 @@ function move(index: number, delta: number) { const rows = [...props.fallbacks];
               v-if="!providers.some(provider => provider.id === pin!.provider)"
               :value="pin.provider"
             >
-              {{ pin.provider }} · not listed
+              {{ pin.provider ? `${ pin.provider } · not listed` : 'Choose provider' }}
             </option><option
               v-for="provider in providers"
               :key="provider.id"
@@ -117,6 +116,7 @@ function move(index: number, delta: number) { const rows = [...props.fallbacks];
             aria-label="Pinned model"
             @change="selectModel(($event.target as HTMLSelectElement).value)"
           >
+            <option v-if="!pin.model" value="" disabled>Choose model</option>
             <option
               v-for="model in models(pin.provider, pin.model)"
               :key="model.id"
@@ -179,7 +179,7 @@ function move(index: number, delta: number) { const rows = [...props.fallbacks];
           <select
             :value="row.provider"
             :aria-label="`Fallback provider ${index + 1}`"
-            @change="updateFallback(index, { provider: ($event.target as HTMLSelectElement).value, model: models(($event.target as HTMLSelectElement).value)[0]?.id ?? '', effort: undefined })"
+            @change="updateFallback(index, { provider: ($event.target as HTMLSelectElement).value, model: '', effort: undefined })"
           >
             <option
               v-if="!fallbackProviders.some(provider => provider.id === row.provider)"

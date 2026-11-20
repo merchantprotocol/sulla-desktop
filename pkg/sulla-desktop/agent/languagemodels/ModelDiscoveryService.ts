@@ -35,8 +35,6 @@ interface ProviderConfig {
   modelsEndpoint: string;
   authHeader:     string;
   parseResponse:  (data: any) => ModelInfo[];
-  staticModels?:  ModelInfo[]; // Use static list when /models endpoint isn't supported
-  preferLive?:    boolean;     // When true, fetch /models live and only use staticModels as a fallback
 }
 
 export class ModelDiscoveryService {
@@ -145,19 +143,6 @@ export class ModelDiscoveryService {
       // The Coding Plan /models endpoint DOES return a live catalog (verified 2026-07-20).
       // Fetch it live so new models (e.g. qwen3.6-plus, qwen3.7-plus) appear automatically;
       // fall back to the list below only if the endpoint is unreachable.
-      preferLive:   true,
-      staticModels: [
-        { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus', provider: 'alibaba' },
-        { id: 'qwen3.6-plus', name: 'Qwen 3.6 Plus', provider: 'alibaba' },
-        { id: 'qwen3.7-plus', name: 'Qwen 3.7 Plus', provider: 'alibaba' },
-        { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'alibaba' },
-        { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'alibaba' },
-        { id: 'glm-5', name: 'GLM 5', provider: 'alibaba' },
-        { id: 'qwen3-coder-plus', name: 'Qwen 3 Coder Plus', provider: 'alibaba' },
-        { id: 'qwen3-coder-next', name: 'Qwen 3 Coder Next', provider: 'alibaba' },
-        { id: 'qwen3-max-2026-01-23', name: 'Qwen 3 Max', provider: 'alibaba' },
-        { id: 'glm-4.7', name: 'GLM 4.7', provider: 'alibaba' },
-      ],
     },
 
     groq: {
@@ -180,14 +165,6 @@ export class ModelDiscoveryService {
         name:     model.id,
         provider: 'mistral',
       })) || [],
-      staticModels: [
-        { id: 'codestral-latest', name: 'Codestral (latest)', provider: 'mistral', description: 'Purpose-built for code — free for non-commercial use' },
-        { id: 'devstral-small-2505', name: 'Devstral Small', provider: 'mistral', description: 'Agentic coding model' },
-        { id: 'mistral-small-latest', name: 'Mistral Small (latest)', provider: 'mistral', description: 'Fast, cost-effective' },
-        { id: 'mistral-medium-latest', name: 'Mistral Medium (latest)', provider: 'mistral', description: 'Balanced performance' },
-        { id: 'mistral-large-latest', name: 'Mistral Large (latest)', provider: 'mistral', description: 'Most capable' },
-        { id: 'open-mistral-nemo', name: 'Mistral Nemo', provider: 'mistral', description: 'Open, 12B, multilingual' },
-      ],
     },
 
     cerebras: {
@@ -199,11 +176,6 @@ export class ModelDiscoveryService {
         name:     model.id,
         provider: 'cerebras',
       })) || [],
-      staticModels: [
-        { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'cerebras', description: 'Most capable free model on Cerebras' },
-        { id: 'llama-3.1-8b', name: 'Llama 3.1 8B', provider: 'cerebras', description: 'Fast, lightweight — great for quick tasks' },
-        { id: 'qwen-3-32b', name: 'Qwen 3 32B', provider: 'cerebras', description: 'Strong reasoning and coding' },
-      ],
     },
 
     together: {
@@ -218,14 +190,6 @@ export class ModelDiscoveryService {
           provider: 'together',
         }));
       },
-      staticModels: [
-        { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3', provider: 'together', description: 'Top open-source coding model' },
-        { id: 'Qwen/Qwen2.5-Coder-32B-Instruct', name: 'Qwen 2.5 Coder 32B', provider: 'together', description: 'Strong coding + instruction following' },
-        { id: 'meta-llama/Llama-4-Scout-17B-16E-Instruct', name: 'Llama 4 Scout', provider: 'together', description: 'Meta\'s latest — fast and capable' },
-        { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct', name: 'Llama 4 Maverick', provider: 'together', description: 'Meta\'s latest — long context' },
-        { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo', provider: 'together', description: 'Fast 70B inference' },
-        { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B', provider: 'together', description: 'Efficient MoE model' },
-      ],
     },
 
     ollama: {
@@ -265,24 +229,6 @@ export class ModelDiscoveryService {
         return [];
       },
       // Fallback static list - only Command models (support tool use)
-      staticModels: [
-        // Command A - Latest flagship
-        { id: 'command-a-03-2025', name: 'Command A', provider: 'cohere', description: 'Latest flagship - tool use, RAG, agents' },
-        { id: 'command-a-reasoning-08-2025', name: 'Command A Reasoning', provider: 'cohere', description: 'Advanced reasoning - tool use, complex reasoning' },
-        { id: 'command-a-translate-08-2025', name: 'Command A Translate', provider: 'cohere', description: 'Translation optimized - tool use, multilingual' },
-        { id: 'command-a-vision-07-2025', name: 'Command A Vision', provider: 'cohere', description: 'Multimodal vision - tool use, image + text' },
-        // Command R7B - Fast lightweight
-        { id: 'command-r7b-12-2024', name: 'Command R7B', provider: 'cohere', description: 'Fast, lightweight - tool use, RAG, everyday tasks' },
-        { id: 'command-r7b-arabic-02-2025', name: 'Command R7B Arabic', provider: 'cohere', description: 'Arabic optimized - tool use, fast, lightweight' },
-        // Command R - Balanced
-        { id: 'command-r-08-2024', name: 'Command R (08-2024)', provider: 'cohere', description: 'Balanced - tool use, conversation, RAG' },
-        { id: 'command-r-03-2024', name: 'Command R (03-2024)', provider: 'cohere', description: 'Earlier Command R - tool use, conversation' },
-        { id: 'command-r', name: 'Command R', provider: 'cohere', description: 'Balanced - tool use, everyday tasks' },
-        // Command R+ - Advanced reasoning
-        { id: 'command-r-plus-08-2024', name: 'Command R+ (08-2024)', provider: 'cohere', description: 'Advanced reasoning - tool use, complex tasks' },
-        { id: 'command-r-plus-04-2024', name: 'Command R+ (04-2024)', provider: 'cohere', description: 'Earlier Command R+ - tool use, reasoning' },
-        { id: 'command-r-plus', name: 'Command R+', provider: 'cohere', description: 'Advanced reasoning - tool use, complex tasks' },
-      ],
     },
 
     deepseek: {
@@ -302,13 +248,6 @@ export class ModelDiscoveryService {
         return [];
       },
       // Fallback static list - DeepSeek V4 models
-      staticModels: [
-        { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', description: 'Fast, efficient model - tool use, coding, reasoning (non-thinking mode)' },
-        { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', description: 'Most capable model - tool use, complex reasoning, coding' },
-        // Legacy aliases (to be deprecated 2026/07/24)
-        { id: 'deepseek-chat', name: 'DeepSeek-Chat (Legacy)', provider: 'deepseek', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash non-thinking mode' },
-        { id: 'deepseek-reasoner', name: 'DeepSeek-R1 Reasoner (Legacy)', provider: 'deepseek', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash thinking mode' },
-      ],
     },
 
     arcee: {
@@ -328,11 +267,6 @@ export class ModelDiscoveryService {
         return [];
       },
       // Fallback static list - Arcee Trinity models
-      staticModels: [
-        { id: 'trinity-large-thinking', name: 'Trinity Large Thinking', provider: 'arcee', description: 'Arcee\'s most capable thinking model - tool use, reasoning, coding' },
-        { id: 'trinity-large-preview', name: 'Trinity Large Preview', provider: 'arcee', description: 'Preview of latest improvements - tool use, reasoning, coding' },
-        { id: 'trinity-mini', name: 'Trinity Mini', provider: 'arcee', description: 'Fast, efficient model - tool use, quick tasks' },
-      ],
     },
 
     ...Object.fromEntries(OPENAI_COMPATIBLE_PROVIDERS.map((definition: OpenAICompatibleProviderDefinition) => [definition.id, {
@@ -355,7 +289,6 @@ export class ModelDiscoveryService {
           return { id, name: model.name || model.display_name || id, provider: definition.id, description: model.description };
         }).filter((model: ModelInfo) => model.id && definition.defaultModelFilter.test(model.id));
       },
-      ...(definition.staticModels ? { staticModels: definition.staticModels.map(id => ({ id, name: id, provider: definition.id })) } : {}),
     }])),
 
     custom: {
@@ -378,6 +311,15 @@ export class ModelDiscoveryService {
    * Fetch available models for a specific provider
    */
   async fetchModelsForProvider(providerId: string, apiKey = '', options: { accountId?: string; baseUrl?: string; region?: string; liveOnly?: boolean } = {}): Promise<ModelInfo[]> {
+    // Listing authority is Cloud, never account discovery. Private user endpoints
+    // are explicitly scoped and must not be uploaded to the public catalog.
+    if (!['custom', 'ollama', 'lm-studio', 'local-server'].includes(providerId)) {
+      const { sharedModelCatalog } = await import('./sharedModelCatalog');
+      return (await sharedModelCatalog.listModels(providerId)).map(model => ({
+        id: model.id, name: model.name, provider: providerId,
+        capabilities: model.capabilities?.task ? [model.capabilities.task] : undefined, contextLength: model.contextWindow,
+      }));
+    }
     // A key supplied by the Connect form is intentionally used for a direct
     // verification request. Saved accounts have no renderer-visible key and
     // therefore take the brokered provider.discovery lane below.
@@ -398,11 +340,11 @@ export class ModelDiscoveryService {
     if (!provider) {
       throw new Error(`Unsupported provider: ${ providerId }`);
     }
-    if (!provider.modelsEndpoint) return options.liveOnly ? [] : provider.staticModels ?? [];
+    if (!provider.modelsEndpoint) return [];
 
     // Always attempt live discovery first for every provider so newly released
-    // models appear automatically. Any `staticModels` array is treated purely as
-    // an offline fallback (used only when the live fetch fails or returns nothing),
+    // models appear automatically. Former static arrays are not an authority; failures leave
+    // the private endpoint unavailable,
     // never as the authoritative catalog. See the catch block and empty-result
     // handling below.
     try {
@@ -418,7 +360,7 @@ export class ModelDiscoveryService {
       const baseUrl = (options.baseUrl || runtime?.values.base_url || configuredBaseUrl).replace(/\/+$/, '');
       if (!baseUrl && !provider.modelsEndpoint.startsWith('http')) {
         this.failures.set(providerId, 'no endpoint configured');
-        return options.liveOnly ? [] : provider.staticModels ?? [];
+        return [];
       }
       const url = provider.modelsEndpoint.startsWith('http')
         ? provider.modelsEndpoint
@@ -489,9 +431,8 @@ export class ModelDiscoveryService {
       const data = await response.json();
       const models = provider.parseResponse(data);
 
-      // If the endpoint responded but yielded no usable models, fall back to the
-      // offline static list (if any) rather than caching an empty catalog.
-      const resolved = models.length > 0 ? models : (options.liveOnly ? [] : provider.staticModels ?? []);
+      // Private endpoints have no bundled fallback.
+      const resolved = models.length > 0 ? models : [];
       if (!models.length) this.failures.set(providerId, 'models endpoint returned no models');
       else this.failures.delete(providerId);
 
@@ -509,11 +450,6 @@ export class ModelDiscoveryService {
       // Return cached results if available, even if expired
       if (cached && !options.liveOnly) {
         return cached.models;
-      }
-
-      // Fall back to a static list when the live fetch fails (keeps the picker populated)
-      if (provider.staticModels?.length && !options.liveOnly) {
-        return provider.staticModels;
       }
 
       // Return empty array on complete failure
@@ -602,7 +538,7 @@ export function isChatModel(model: ModelInfo): boolean {
 
 /** Resolve a usable chat model without ever manufacturing an empty/default id. */
 export async function resolveFirstChatModel(providerId: string, apiKey = '', baseUrl?: string): Promise<string> {
-  const models = await modelDiscoveryService.fetchModelsForProvider(providerId, apiKey, { baseUrl });
-  return models.find(isChatModel)?.id || '';
+  // A missing explicit selection is not permission to execute the first listing.
+  throw new Error(`Choose an explicit model for ${ providerId }; no default model was selected`);
 }
 export type { ModelInfo };

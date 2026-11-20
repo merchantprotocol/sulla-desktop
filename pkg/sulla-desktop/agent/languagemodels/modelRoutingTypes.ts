@@ -65,6 +65,8 @@ export interface NeverUsePair { provider: string; model: string; effort: string 
 
 /** One model in a provider's list, with what the provider says about it. */
 export interface RoutingModelInfo {
+ minimumClientVersion?: string;
+ capabilities?: import('./sharedModelCatalog').SharedCatalogModel['capabilities'];
  id: string;
  label: string;
  efforts?: { id: string; description?: string }[]; // effort levels the model accepts

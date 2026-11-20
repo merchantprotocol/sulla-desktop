@@ -4,45 +4,12 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
+import { sharedModelCatalog } from '../../languagemodels/sharedModelCatalog';
 
 export class NvidiaModels extends SelectBoxProvider {
   readonly id = 'nvidia_models';
-
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
-    const apiKey = context.formValues.api_key;
-
-    if (!apiKey) {
-      return this.getStaticModels(context);
-    }
-
-    try {
-      const response = await fetch('https://integrate.api.nvidia.com/v1/models', {
-        headers: { Authorization: `Bearer ${ apiKey }` },
-      });
-
-      if (!response.ok) {
-        return this.getStaticModels(context);
-      }
-
-      const body = await response.json() as { data?: { id: string }[] };
-
-      if (body.data && body.data.length > 0) {
-        return body.data.map(m => ({ value: m.id, label: m.id }));
-      }
-    } catch {
-      // Fall back to static list
-    }
-
-    return this.getStaticModels(context);
-  }
-
-  private getStaticModels(context: SelectBoxContext): SelectOption[] {
-    if (context.liveOnly) return [];
-    return [
-      { value: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B Instruct' },
-      { value: 'meta/llama-3.1-405b-instruct', label: 'Llama 3.1 405B Instruct' },
-      { value: 'nvidia/llama-3.1-nemotron-70b-instruct', label: 'Nemotron 70B Instruct' },
-      { value: 'mistralai/mixtral-8x22b-instruct-v0.1', label: 'Mixtral 8x22B Instruct' },
-    ];
+    if (context.formValues.base_url?.trim()) return [];
+    return (await sharedModelCatalog.listModels('nvidia')).map(model => ({ value: model.id, label: model.name }));
   }
 }
