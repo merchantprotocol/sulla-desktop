@@ -36,6 +36,7 @@ export interface Config {
   tlsPrivateKeyPath?:   string;
   mode:                 'desktop';
   deviceId:             string;
+  cloudDeviceId?:       string;
   userId:               string;
   orgId?:               string;
   serverUrl?:           string;
@@ -122,6 +123,7 @@ export function loadConfig():Config {
     tlsPrivateKeyPath:  process.env.SULLA_FILES_TLS_PRIVATE_KEY_PATH,
     mode: 'desktop',
     deviceId:         process.env.SULLA_FILES_DEVICE_ID ?? 'desktop',
+    cloudDeviceId:    process.env.SULLA_FILES_CLOUD_DEVICE_ID?.trim() || undefined,
     userId:           process.env.SULLA_FILES_USER_ID ?? 'desktop-user',
     orgId:            process.env.SULLA_FILES_ORG_ID,
     serverUrl:        process.env.SULLA_FILES_SERVER_URL,

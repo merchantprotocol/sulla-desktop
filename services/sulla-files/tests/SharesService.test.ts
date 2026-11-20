@@ -58,7 +58,7 @@ describe.skipIf(!databaseUrl)('share links (real Postgres)', () => {
     await pool.query('TRUNCATE file_share_events, file_share_links, files_protected_files, files, collections CASCADE');
     collectionId = (await pool.query('INSERT INTO collections DEFAULT VALUES RETURNING id')).rows[0].id;
     cloud = new FakeCloud();
-    shares = new SharesService(pool, { mode: 'desktop', deviceId: 'device-1' } as Config, {} as Store, { cloudBroker: cloud });
+    shares = new SharesService(pool, { mode: 'desktop', deviceId: 'synthetic-hostname', cloudDeviceId: 'registered-desktop' } as Config, {} as Store, { cloudBroker: cloud });
   });
 
   async function seedFile(path:string, options:{ deleted?:boolean; protected?:boolean } = {}) {
@@ -71,6 +71,30 @@ describe.skipIf(!databaseUrl)('share links (real Postgres)', () => {
   const events = async(id:string) => (await pool.query('SELECT action,detail FROM file_share_events WHERE share_id=$1 ORDER BY occurred_at,action', [id])).rows;
   const folderShare = (extra:Partial<Parameters<SharesService['create']>[1]> = {}) => shares.create(owner, { collectionId, folderPath: 'docs', ...extra });
   async function readAll(body:AsyncIterable<Buffer>) { const parts:Buffer[] = []; for await (const part of body) parts.push(part); return Buffer.concat(parts) }
+
+  // risk: sharing availability and provenance — Cloud must see the registered Desktop, not local or caller identity.
+  it('registers a capture using the canonical device and records that same source', async() => {
+    const fileId = await seedFile('capture.png');
+    const created = await shares.create(owner, {
+      fileId, assetKind: 'capture', keepAvailable: false, deviceId: 'untrusted-request-device',
+    });
+
+    expect(cloud.calls[0]).toMatchObject({ path: '/shares', method: 'POST', body: {
+      deviceId: 'registered-desktop', assetKind: 'capture',
+    } });
+    expect(await link(created.id)).toMatchObject({ device_id: 'registered-desktop' });
+  });
+
+  // risk: sharing availability and privacy — missing canonical ID must fail before local or remote publication.
+  it('does not fall back to local, actor, or request identity when the canonical device is missing', async() => {
+    const unconfigured = new SharesService(pool, { mode: 'desktop', deviceId: 'synthetic-hostname' } as Config, {} as Store, { cloudBroker: cloud });
+    const fileId = await seedFile('capture.png');
+
+    await expect(unconfigured.create(owner, { fileId, assetKind: 'capture', deviceId: 'untrusted-request-device' }))
+      .rejects.toMatchObject({ status: 503 });
+    expect(cloud.calls).toEqual([]);
+    expect((await pool.query('SELECT id FROM file_share_links')).rows).toEqual([]);
+  });
 
   // risk: security — a share password must be stored only as a salted hash and never returned to the owner.
   it('creates a password-protected link, stores only a salted hash and never returns secrets', async() => {
@@ -151,9 +175,11 @@ describe.skipIf(!databaseUrl)('share links (real Postgres)', () => {
     await shares.revoke(owner, created.id);
     await expect(shares.restore(owner, created.id, 'wrong horse!')).rejects.toMatchObject({ status: 401 });
     expect((await link(created.id)).revoked_at).not.toBeNull();
+    await pool.query('UPDATE file_share_links SET device_id=$2 WHERE id=$1', [created.id, 'legacy-hostname']);
     const restored:any = await shares.restore(owner, created.id, 'correct horse');
     expect(restored.revoked_at).toBeNull();
-    expect(await link(created.id)).toMatchObject({ reconciliation_required: false, served_from: 'desktop' });
+    expect(cloud.calls.filter(call => call.method === 'POST').at(-1)?.body.deviceId).toBe('registered-desktop');
+    expect(await link(created.id)).toMatchObject({ reconciliation_required: false, served_from: 'desktop', device_id: 'registered-desktop' });
   });
 
   // risk: data leak — a folder link lists only live, unprotected files inside that folder (LIKE wildcards escaped).

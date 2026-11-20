@@ -50,6 +50,7 @@ import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/a
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare, SullaRuntimeStartError } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
+import { FilesCloudIdentityProjection } from './sullaRuntime/FilesCloudIdentityProjection';
 import { GuestTlsIdentityProvisioner } from './sullaRuntime/GuestTlsIdentityProvisioner';
 import { HostServiceIdentityStore } from './sullaRuntime/HostServiceIdentityStore';
 import { ManagedContainerHealthWatcher } from './sullaRuntime/ManagedContainerHealthWatcher';
@@ -242,6 +243,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   readonly #volumeMigrator = new NamedVolumeMigrator(this.#guestDocker, this.#composeContainers, 'sulla', console);
   /** Sulla containers the person stopped from the Docker tab; supervision leaves them stopped. */
   readonly #userStopped = new UserStoppedContainers();
+  readonly #filesCloudIdentity = new FilesCloudIdentityProjection(
+    readExistingDesktopDeviceId, contents => this.writeFile(FilesCloudIdentityProjection.GUEST_ENV_FILE, contents, 0o600),
+  );
   readonly #healthWatcher = new ManagedContainerHealthWatcher(
     this, this.#userStopped,
     async() => (await import('@pkg/agent/services/AgentContainerLauncher')).repairHostRelay(),
@@ -251,6 +255,15 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       const { getSullaFilesWatcher } = await import('@pkg/main/sullaFilesWatcher');
       void getSullaFilesWatcher().recoverAfterContainerRestart().catch(error => console.warn('[SullaFiles] restart recovery failed:', error));
     },
+    (target, heal, checkpoint) => this.#composeRegeneration.serialize(async() => {
+      checkpoint();
+      if (this.#userStopped.has(target.container)) return;
+      const changed = await this.#filesCloudIdentity.refresh();
+      const drifted = changed || await this.#composeDrift.hasDrifted(target);
+
+      checkpoint();
+      if (!this.#userStopped.has(target.container)) await heal(drifted);
+    }),
   );
   readonly #identityStore = new HostServiceIdentityStore(() => Electron.safeStorage, () => paths.appHome);
   readonly #tlsIdentities = new GuestTlsIdentityProvisioner(
@@ -994,7 +1007,12 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     await this.progressTracker.action('Preparing Sulla Docker Compose file', 30, async() => {
       this.progressTracker.numeric('Preparing Sulla Docker Compose file', 5, 100);
       t = Date.now();
-      await this.prepareSullaComposeFile();
+      await this.#composeRegeneration.serialize(async() => {
+        this.assertManagedServicesGeneration(generation);
+        await this.#filesCloudIdentity.refresh(true);
+        this.assertManagedServicesGeneration(generation);
+        await this.prepareSullaComposeFile();
+      });
       this.assertManagedServicesGeneration(generation);
       console.log(`[startup-perf] prepareSullaComposeFile: ${ Date.now() - t }ms`);
       this.progressTracker.numeric('Docker Compose file prepared', 15, 100);
@@ -1501,6 +1519,9 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       ...composeImageFields(filesImage),
       image: resolvedFilesImage,
       container_name: 'sulla_files',
+      // Only managed Files lifecycle actions refresh this file. Unrelated
+      // secret/mount regeneration cannot turn a late ID into a surprise outage.
+      env_file: [FilesCloudIdentityProjection.GUEST_ENV_FILE],
       labels: {
         'sulla.files-tls-fingerprint': filesTlsFingerprint,
         ...(vaultTlsFingerprint ? { 'sulla.vault-tls-fingerprint': vaultTlsFingerprint } : {}),
@@ -1520,8 +1541,6 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
         SULLA_FILES_STORED_ONLY:           '1',
         SULLA_FILES_MODE:                  'desktop',
         SULLA_FILES_DEVICE_ID:             os.hostname(),
-        // Cloud device id (not the hostname) so the Files catalog push targets this device's Cloud row.
-        ...((cloudDeviceId: string | null) => (cloudDeviceId ? { SULLA_FILES_CLOUD_DEVICE_ID: cloudDeviceId } : {}))(readExistingDesktopDeviceId()),
         SULLA_FILES_UID:                   String(os.userInfo().uid),
         SULLA_FILES_GID:                   String(os.userInfo().gid),
         SULLA_FILES_BOOTSTRAP_SERVICE_ID:  'sulla-desktop-files-bootstrap',
@@ -2087,13 +2106,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
               // Any other service still in its start period is left to finish
               // too: compose's fallback would recreate it mid-migration.
               if (service === 'sulla_files') {
-                if (!state.startsWith('running')) {
-                  await startOptionalService(service);
-                } else if (await this.#imageFreshness.isStale(container, service, generation)) {
-                  await startOptionalService(service);
-                } else {
-                  await configDrift.reconcile(entry);
-                }
+                // The image check lets a starter reach healthy and can take
+                // minutes. Do not hold the Compose writer queue during that wait.
+                const needsStart = !state.startsWith('running') || await this.#imageFreshness.isStale(container, service, generation);
+
+                await this.#composeRegeneration.serialize(async() => {
+                  this.assertManagedServicesGeneration(generation);
+                  await this.#filesCloudIdentity.refresh();
+                  this.assertManagedServicesGeneration(generation);
+                  if (needsStart) {
+                    await startOptionalService(service);
+                  } else {
+                    await configDrift.reconcile(entry);
+                  }
+                });
               } else if (service === 'sulla_files_fuse') {
                 if (this.#staleFilesAdapters.has(service) || !state.startsWith('running')) {
                   await startOptionalService(service);
