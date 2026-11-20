@@ -11,18 +11,18 @@
       <p v-if="record.title !== record.questions?.[0]?.question">{{ record.title }}</p>
       <p v-if="record.answerDelivery === 'interrupted'" role="status">Your answer is saved, but Sulla could not confirm it finished handling it. Check the original chat before submitting the saved answer again.</p>
       <p v-else-if="record.kind === 'question' && record.status === 'expired'" class="fy-muted">Sulla stopped waiting. Your answer will be queued in the original chat without interrupting running work.</p>
-      <p v-if="errors[record.id]" role="alert">{{ errors[record.id] }}</p>
+      <p v-if="store.actionError(record.id)" role="alert">{{ store.actionError(record.id) }}</p>
       <template v-if="record.kind === 'question'">
         <pre v-if="record.questions?.length !== 1 || !record.questions[0].task" v-for="question in record.questions?.filter(question => question.command)" :key="question.question" class="fy-command">{{ question.command }}</pre>
-        <ToolTask v-if="record.questions?.length === 1 && record.questions[0].task" :msg="questionMessage(record)" :draft="store.draft(record)" :submit-answer="value => taskAnswer(record, value)" />
-        <ToolQuestion v-else :msg="questionMessage(record)" persistent :draft="store.draft(record)" :submit-answers="answers => answer(record, answers)" />
+        <ToolTask v-if="record.questions?.length === 1 && record.questions[0].task" :msg="questionMessage(record)" :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answer="value => taskAnswer(record, value)" />
+        <ToolQuestion v-else :msg="questionMessage(record)" persistent :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answers="answers => answer(record, answers)" />
       </template>
       <template v-else>
         <p v-if="record.toolName" class="fy-muted">Approval for {{ record.toolName }}</p>
         <pre v-if="approvalCommand(record)" class="fy-command">{{ approvalCommand(record) }}</pre>
-        <div class="fy-actions"><button type="button" class="fy-primary" :disabled="busy.has(record.id)" @click="decide(record, 'approved')">Approve</button><button type="button" :disabled="busy.has(record.id)" @click="decide(record, 'denied')">Deny</button></div>
+        <div class="fy-actions"><button type="button" class="fy-primary" :disabled="store.busy(record.id)" @click="decide(record, 'approved')">Approve</button><button type="button" :disabled="store.busy(record.id)" @click="decide(record, 'denied')">Deny</button></div>
       </template>
-      <button type="button" class="fy-dismiss" :disabled="busy.has(record.id)" @click="dismiss(record)">Dismiss</button>
+      <button type="button" class="fy-dismiss" :disabled="store.busy(record.id)" @click="dismiss(record)">Dismiss</button>
       <p class="fy-hint">Dismiss removes this request from your active list. It does not grant approval or change running work.</p>
     </article>
     <details class="fy-past" :open="pastOpen" @toggle="pastOpen = ($event.target as HTMLDetailsElement).open">
@@ -48,7 +48,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { computed, inject, nextTick, reactive, ref, watch, type Ref } from 'vue';
+import { computed, inject, nextTick, ref, watch, type Ref } from 'vue';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 import ToolTask from '../tool/ToolTask.vue';
 import { AgentResultActions } from '../../composables/useAgentResultActions';
@@ -66,7 +66,7 @@ const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activ
 const owner = context.backendThreadId;
 const active = computed(() => store.decisions.value.filter(record => DecisionAttention.active(record, store.now.value)));
 const past = computed(() => store.decisions.value.filter(record => !DecisionAttention.active(record, store.now.value)));
-const pastOpen = ref(false); const errors = reactive<Record<string, string>>({}); const busy = reactive(new Set<string>());
+const pastOpen = ref(false);
 watch(owner, () => { pastOpen.value = false; });
 let focusedVersion = -1;
 watch(() => [store.openVersion.value, store.decisions.value] as const, async() => {
@@ -81,14 +81,10 @@ function messageFor(record: DecisionRecord) { return controller.messages.value.f
 function jump(record: DecisionRecord) { const message = messageFor(record); if (!message) { actions.openAgent({ threadId: record.conversationId, agentId: record.channel, label: record.title }); return; } window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId: message.id } })); }
 function approvalCommand(record: DecisionRecord): string { const message = messageFor(record); return message?.kind === 'tool_approval' ? message.command : ''; }
 function questionMessage(record: DecisionRecord): ToolQuestionMessage { return { id: record.id as ToolQuestionMessage['id'], kind: 'tool_question', role: 'assistant', createdAt: record.createdAt, questionId: record.id, questions: record.questions ?? [], status: 'pending', text: '' } as ToolQuestionMessage; }
-async function run(record: DecisionRecord, operation: () => Promise<void>): Promise<void> {
-  if (busy.has(record.id)) return; busy.add(record.id); errors[record.id] = '';
-  try { await operation() } catch (error) { errors[record.id] = error instanceof Error ? error.message : 'Request could not be saved.'; } finally { busy.delete(record.id); }
-}
-async function answer(record: DecisionRecord, answers: ToolQuestionAnswerItem[]) { await run(record, () => store.resolve(record, 'answered', answers.map(answer => ({ question: answer.question, selected: [...answer.selected] })))); if (errors[record.id]) throw new Error(errors[record.id]); }
+function answer(record: DecisionRecord, answers: ToolQuestionAnswerItem[]) { return store.resolve(record, 'answered', answers.map(answer => ({ question: answer.question, selected: [...answer.selected] }))); }
 function taskAnswer(record: DecisionRecord, value: string) { return answer(record, [{ question: record.questions![0].question, selected: [value] }]); }
-function decide(record: DecisionRecord, action: 'approved' | 'denied') { return run(record, () => store.resolve(record, action)); }
-function dismiss(record: DecisionRecord) { return run(record, () => store.dismiss(record)); }
+function decide(record: DecisionRecord, action: 'approved' | 'denied') { return store.resolve(record, action).catch(() => { /* The shared store displays the error. */ }); }
+function dismiss(record: DecisionRecord) { return store.dismiss(record).catch(() => { /* The shared store displays the error. */ }); }
 </script>
 <style scoped>
 .fy{--fy-muted:color-mix(in srgb,var(--text-primary) 72%,var(--bg-surface));padding:20px;color:var(--text-primary);font-family:var(--font-body)}.fy-head,.fy-meta,.fy-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.fy-head h2{font-size:21px;margin:0}.fy h3{font-size:15px;margin:12px 0 8px;overflow-wrap:anywhere}.fy p{line-height:1.6;overflow-wrap:anywhere}.fy-muted,.fy-meta{color:var(--fy-muted);font-size:12px}.fy-empty{padding:24px 0 36px}.fy-empty h3{font-size:18px;font-weight:550}.fy-request{border-top:1px solid var(--border-default);padding:18px 0}.fy-command{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;background:var(--bg-page);padding:12px;border-radius:6px}.fy button{font:inherit;font-size:12px;cursor:pointer;border:1px solid var(--border-strong);border-radius:7px;padding:7px 10px;background:transparent;color:inherit}.fy button:focus-visible,.fy summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.fy button:disabled{opacity:.5;cursor:default}.fy button:hover{border-color:var(--accent)}.fy-primary{background:var(--accent)!important;color:var(--text-on-accent)!important}.fy-dismiss{margin-top:12px}.fy-hint{font-size:11px;color:var(--fy-muted)}.fy-past{border-top:1px solid var(--border-default);margin-top:24px;padding-top:18px}.fy summary{cursor:pointer}.fy-past-item{padding:16px 0;border-bottom:1px solid var(--border-default)}.fy-answer{font-size:13px;padding-left:10px;border-left:2px solid var(--border-strong)}.fy-original{font-size:12px;margin-top:12px}.fy-original li p{margin-top:4px;color:var(--fy-muted)}.fy-actions{justify-content:flex-start}

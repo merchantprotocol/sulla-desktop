@@ -796,6 +796,7 @@ export interface IpcMainInvokeEvents {
   // Approval gate — renderer resolves a pending user-approval request
   // that a backend tool parked via ApprovalService.
   'decisions:conversation': (conversationId: string, before?: { at: number; id: string }) => import('@pkg/shared/decisions').DecisionRecord[];
+  'decisions:transcript': (conversationId: string, ids: string[]) => import('@pkg/shared/decisions').DecisionRecord[];
   'decisions:dismiss':      (id: string, conversationId: string) => { settled: boolean };
   'decisions:list': () => import('@pkg/shared/decisions').DecisionRecord[];
   'decisions:resolve': (response: import('@pkg/shared/decisions').DecisionResponse) => { settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean };

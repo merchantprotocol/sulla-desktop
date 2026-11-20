@@ -121,6 +121,13 @@ export class PendingDecisionRepository {
     return rows.map(row => row.record);
   }
 
+  /** Transcript history can outlive the drawer's first page. Only read cards owned by this thread. */
+  async listTranscriptDecisions(conversationId: string, ids: string[]): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE id=ANY($2::text[]) AND record->>'conversationId'=$1`, [conversationId, ids]);
+    return rows.map(row => row.record);
+  }
+
   async dismiss(id: string, conversationId: string): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions
       SET record = jsonb_set(record, '{attention}', '"dismissed"'), updated_at = NOW()

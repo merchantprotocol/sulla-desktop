@@ -27,7 +27,8 @@
       <h3 class="tk-t">
         {{ title }}
       </h3>
-      <template v-if="!answered">
+      <p v-if="submitAnswer && msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
+      <template v-if="!answered || submitAnswer">
         <p
           v-if="item.question !== title"
           class="tk-q"
@@ -48,27 +49,27 @@
           </button>
         </div>
         <p
-          v-if="msg.status === 'timed_out'"
+          v-if="!submitAnswer && msg.status === 'timed_out'"
           class="tk-note"
         >
           Sulla stopped waiting; Done still tells it in the chat.
         </p>
       </template>
       <p
-        v-else-if="reply"
+        v-if="reply"
         class="tk-q"
       >
         {{ reply }}
       </p>
     </div>
     <footer
-      v-if="!answered"
+      v-if="!answered && (!submitAnswer || msg.status === 'pending')"
       class="tk-f"
     >
       <button
         type="button"
         class="tk-btn tk-pri"
-        :disabled="sending"
+        :disabled="sending || blocked"
         @click="done"
       >
         Done
@@ -85,7 +86,7 @@
         <button
           type="button"
           class="tk-btn"
-          :disabled="sending || !text.trim()"
+          :disabled="sending || blocked || !text.trim()"
           @click="sendReply"
         >
           Send
@@ -95,6 +96,7 @@
         v-else
         type="button"
         class="tk-btn"
+        :disabled="blocked"
         @click="replying = true"
       >
         Reply…
@@ -111,7 +113,7 @@ import { TaskAsks } from '../../messages/taskAsk';
 
 import type { ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: ToolQuestionMessage; submitAnswer?: (value: string) => Promise<void>; draft?: { other: string[] } }>();
+const props = defineProps<{ msg: ToolQuestionMessage; blocked?: boolean; stateLabel?: string; submitAnswer?: (value: string) => Promise<void>; draft?: { other: string[] } }>();
 const sending = ref(false);
 const controller = useChatController();
 
@@ -121,6 +123,7 @@ const said = computed(() => props.msg.answers?.[0]?.selected?.[0]);
 const answered = computed(() => props.msg.status === 'answered' || !!said.value);
 const reply = computed(() => (said.value && said.value !== 'Done' ? said.value : ''));
 const stateText = computed(() => {
+  if (props.stateLabel) return props.stateLabel;
   if (answered.value) return said.value === 'Done' || !said.value ? 'Done' : 'Replied';
   return props.msg.status === 'timed_out' ? 'Still waiting on you' : 'Waiting on you';
 });
@@ -132,12 +135,13 @@ const localText = ref('');
 // eslint-disable-next-line vue/no-mutating-props
 const text = computed({ get: () => props.draft?.other[0] ?? localText.value, set: value => { if (props.draft) props.draft.other[0] = value; else localText.value = value; } });
 async function done(): Promise<void> {
+  if (props.blocked || answered.value || (props.submitAnswer && props.msg.status !== 'pending')) return;
   if (!props.submitAnswer) { TaskAsks.done(controller, props.msg); return }
   if (sending.value) return; sending.value = true;
   try { await props.submitAnswer('Done') } catch { /* The inbox displays the error and preserves the draft. */ } finally { sending.value = false }
 }
 async function sendReply(): Promise<void> {
-  if (!text.value.trim() || sending.value) return;
+  if (props.blocked || answered.value || (props.submitAnswer && props.msg.status !== 'pending') || !text.value.trim() || sending.value) return;
   if (props.submitAnswer) {
     sending.value = true;
     try { await props.submitAnswer(text.value) } catch { return } finally { sending.value = false }
