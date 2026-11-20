@@ -21,3 +21,22 @@ export class ModelCompatibilityService {
     }
   }
 }
+
+/** Resolve the selected worker CLI, not the unrelated VM helper binary. */
+export class ProviderClientStatus {
+  constructor(
+    private readonly readSelections: () => Promise<unknown>,
+    private readonly readImageVersion: (provider: string) => Promise<string | undefined>,
+    private readonly readOtherStatus: (provider: string) => Promise<{ required: boolean; installed: boolean; version?: string }>,
+  ) {}
+
+  async get(provider: string): Promise<{ required: boolean; installed: boolean; version?: string }> {
+    if (provider !== 'codex' && provider !== 'claude-code') return this.readOtherStatus(provider);
+    const selected = await this.readSelections();
+    if (!selected || typeof selected !== 'object' || Array.isArray(selected)) throw new Error('Saved provider CLI selections are invalid');
+    const pinned = (selected as Record<string, unknown>)[provider];
+    if (pinned !== undefined && pinned !== null && (typeof pinned !== 'string' || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(pinned))) throw new Error(`Saved ${ provider } CLI selection is invalid`);
+    const version = typeof pinned === 'string' ? pinned : await this.readImageVersion(provider);
+    return { required: true, installed: Boolean(version), version };
+  }
+}

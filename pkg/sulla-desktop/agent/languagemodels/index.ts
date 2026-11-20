@@ -106,9 +106,12 @@ export class LLMRegistryImpl {
       const { getModelProviderService } = await import('../services/ModelProviderService');
       const metadata = (await getModelProviderService().getModelsForProvider(providerId)).find(model => model.id === modelOverride);
       if (!metadata) throw new Error(`Model ${ providerId }/${ modelOverride } is unavailable in the validated catalog; saved pin retained`);
-      const { ModelCompatibilityService } = await import('./ModelCompatibilityService');
+      const { ModelCompatibilityService, ProviderClientStatus } = await import('./ModelCompatibilityService');
       const { getCliStatus } = await import('../tools/models/shared');
-      await new ModelCompatibilityService(getCliStatus).assertClient(providerId, metadata);
+      const { getWorkerImageCliVersion } = await import('@pkg/backend/providerCliUpdates');
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      const clients = new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), getWorkerImageCliVersion, getCliStatus);
+      await new ModelCompatibilityService(provider => clients.get(provider)).assertClient(providerId, metadata);
       if (effort && !metadata.efforts?.some(level => level.id === effort)) throw new Error(`Unsupported effort ${ effort } for ${ providerId }/${ modelOverride }`);
     }
     // Effort only applies to the CLI providers that take it, and only with an explicit model.
