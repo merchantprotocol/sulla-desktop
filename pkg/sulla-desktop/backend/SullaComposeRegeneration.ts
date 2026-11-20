@@ -45,7 +45,12 @@ export class SullaComposeRegeneration {
   ) {}
 
   run(reason: string, options: RegenerationOptions = {}): Promise<DriftOutcome[]> {
-    const next = this.queue.catch(() => undefined).then(() => this.regenerate(reason, options));
+    return this.serialize(() => this.regenerate(reason, options));
+  }
+
+  /** Keep a lifecycle operation and its Compose inputs ordered against regeneration. */
+  serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.queue.catch(() => undefined).then(operation);
 
     this.queue = next;
 
