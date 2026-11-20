@@ -108,7 +108,7 @@ const inlineRecord = computed(() => {
   const kind = props.msg.kind === 'tool_question' ? 'question' : 'approval';
   return mainDecisionTranscript.value && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
 });
-const checking = computed(() => !!(mainDecisionTranscript.value && decisionId.value && !inlineRecord.value && decisions.checkingInline(decisionId.value)));
+const checking = computed(() => !!(mainDecisionTranscript.value && decisionId.value && decisions.checkingInline(decisionId.value)));
 const decisionCardKey = computed(() => inlineRecord.value ? 'saved' : checking.value ? 'loading' : 'original');
 const blocked = computed(() => checking.value || !!(inlineRecord.value && decisions.busy(inlineRecord.value.id)));
 const active = computed(() => !!inlineRecord.value && DecisionAttention.active(inlineRecord.value, decisions.now.value));

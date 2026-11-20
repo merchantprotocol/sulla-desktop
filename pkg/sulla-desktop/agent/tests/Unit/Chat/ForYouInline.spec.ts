@@ -16,10 +16,15 @@ import type { ToolApprovalMessage, ToolQuestionMessage } from '@pkg/pages/chat/m
 import { asMessageId } from '@pkg/pages/chat/types/chat';
 import type { DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
+// This route does not render Sulla replies; avoid starting unrelated browser-tab IPC at import time.
+vi.mock('@pkg/pages/chat/components/transcript/TurnSulla.vue', () => ({ default: {} }));
+
 const ipc = vi.hoisted(() => ({ invoke: vi.fn(), listeners: new Set<(event: unknown, record: DecisionRecord) => void>() }));
 vi.mock('@pkg/utils/ipcRenderer', () => ({
   ipcRenderer: {
     invoke: ipc.invoke,
+    send: vi.fn(),
+    sendSync: vi.fn(),
     on: (channel: string, listener: (event: unknown, record: DecisionRecord) => void) => {
       if (channel === 'decisions:changed') ipc.listeners.add(listener);
     },
@@ -217,6 +222,32 @@ describe('For You from the original transcript', () => {
     await flushPromises();
     expect(card.props('msg')).toMatchObject({ status: 'answered', answers: [{ question: 'Where?', selected: ['Staging'] }] });
     expect(submissions()).toHaveLength(2);
+  });
+
+  it('revalidates an older cached request on focus even when its change event was missed', async() => {
+    // risk: a missed delivery transition turns a stale card back into an actionable request
+    historyOnly.add(task.id);
+    records = records.map(record => record.id === task.id
+      ? { ...record, attention: 'answered', answerDelivery: 'queued', answers: [{ question: task.title, selected: ['Done'] }] }
+      : record);
+    const { transcript } = fixture();
+    await flushPromises();
+    const card = transcript.getComponent(ToolTask);
+    expect(card.find('footer').exists()).toBe(false);
+
+    // Recover an interrupted delivery without notifying this renderer.
+    records = records.map(record => record.id === task.id ? { ...record, attention: 'active', answerDelivery: 'interrupted' } : record);
+    window.dispatchEvent(new Event('focus'));
+    await flushPromises();
+    expect(card.get('.tk-pri').attributes('disabled')).toBeUndefined();
+
+    // A second missed event closes this now-actionable cached request.
+    records = records.map(record => record.id === task.id ? { ...record, attention: 'answered', answerDelivery: 'delivered' } : record);
+    window.dispatchEvent(new Event('focus'));
+    await flushPromises();
+    expect(card.find('footer').exists()).toBe(false);
+    expect(ipc.invoke.mock.calls.filter(([channel]) => channel === 'decisions:transcript')).toHaveLength(3);
+    expect(submissions()).toHaveLength(0);
   });
 
   it('honors drawer dismissal inline without sending anything, including on reopen', async() => {
