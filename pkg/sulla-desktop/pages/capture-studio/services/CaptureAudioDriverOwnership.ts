@@ -15,9 +15,9 @@ export class CaptureAudioDriverOwnership {
   constructor(private readonly driver: {
     startMic: (formats?: string[], isCancelled?: () => boolean) => Promise<any>;
     stopMic: () => Promise<void>;
-    startSpeaker: () => Promise<void>;
+    startSpeaker: () => Promise<any>;
     stopSpeaker: () => Promise<void>;
-  }, private readonly isClosing: () => boolean = () => false) {}
+  }) {}
 
   async acquireMic(formats?: string[], isCancelled: () => boolean = () => false): Promise<void> {
     if (this.micReleaseOperation) await this.micReleaseOperation;
@@ -28,17 +28,17 @@ export class CaptureAudioDriverOwnership {
         // Do not delegate cancellation to startMic: its helper performs its own
         // stop, but the lifecycle guard can then reject after that stop and make
         // cleanup release the same owner twice. Keep cancellation custody here.
-        await this.driver.startMic(formats);
+        const result = await this.driver.startMic(formats);
+        // Record custody only from the driver's explicit successful receipt.
+        // An exception may happen before acquisition; close state says nothing
+        // about whether this owner actually obtained a ref-counted hold.
+        if (result?.ok === false) return;
+        this.micHeld = true;
         if (isCancelled()) {
           await this.driver.stopMic();
+          this.micHeld = false;
           return;
         }
-        this.micHeld = true;
-      } catch (error) {
-        // A lifecycle guard can reject after the driver already acquired its
-        // holder. Cleanup runs after this operation settles, so preserve custody.
-        if (isCancelled() || this.isClosing()) this.micHeld = true;
-        throw error;
       }
     })();
     try { await this.micOperation; } finally { this.micOperation = null; }
@@ -61,11 +61,9 @@ export class CaptureAudioDriverOwnership {
     if (this.speakerOperation) return this.speakerOperation;
     this.speakerOperation = (async() => {
       try {
-        await this.driver.startSpeaker();
+        const result = await this.driver.startSpeaker();
+        if ((result as any)?.ok === false) return;
         this.speakerHeld = true;
-      } catch (error) {
-        if (this.isClosing()) this.speakerHeld = true;
-        throw error;
       }
     })();
     try { await this.speakerOperation; } finally { this.speakerOperation = null; }

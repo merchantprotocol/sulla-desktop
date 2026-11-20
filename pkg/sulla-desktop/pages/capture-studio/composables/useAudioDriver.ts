@@ -107,9 +107,10 @@ export function useAudioDriver() {
 
   // ── Speaker commands ──
 
-  async function startSpeaker(): Promise<void> {
+  async function startSpeaker(): Promise<any> {
     const result = await ipcRenderer.invoke('audio-driver:start-speaker', 'capture-studio');
     speakerRunning.value = !!result?.speakerRunning;
+    return result;
   }
 
   async function stopSpeaker(): Promise<void> {

@@ -93,8 +93,8 @@ describe('CaptureAudioDriverOwnership', () => {
       startSpeaker: vi.fn().mockResolvedValue(undefined),
       stopSpeaker: vi.fn().mockResolvedValue(undefined),
     };
-    const ownership = new CaptureAudioDriverOwnership(driver, () => lifecycle.isClosing);
-    const acquisition = ownership.acquireMic();
+    const ownership = new CaptureAudioDriverOwnership(driver);
+    const acquisition = lifecycle.protect(() => ownership.acquireMic())();
     expect(completeStart).toBeDefined();
     const closing = lifecycle.close(() => ownership.releaseMic());
     completeStart();
@@ -102,5 +102,22 @@ describe('CaptureAudioDriverOwnership', () => {
     await closing;
     expect(held).toBe(false);
     expect(driver.stopMic).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not release an unowned mic when startup fails before acquisition during close', async() => {
+    // risk: audio ownership — a failed start before driver custody must not stop another consumer.
+    const lifecycle = new CaptureSessionLifecycle();
+    const driver = {
+      startMic: vi.fn().mockRejectedValue(new Error('start failed before holder registration')),
+      stopMic: vi.fn().mockResolvedValue(undefined),
+      startSpeaker: vi.fn().mockResolvedValue({ ok: true }),
+      stopSpeaker: vi.fn().mockResolvedValue(undefined),
+    };
+    const ownership = new CaptureAudioDriverOwnership(driver);
+    const acquisition = lifecycle.protect(() => ownership.acquireMic())();
+    const closing = lifecycle.close(() => ownership.releaseMic());
+    await expect(acquisition).rejects.toThrow('start failed before holder registration');
+    await closing;
+    expect(driver.stopMic).not.toHaveBeenCalled();
   });
 });

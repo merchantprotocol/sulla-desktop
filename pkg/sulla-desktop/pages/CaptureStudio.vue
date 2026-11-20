@@ -492,9 +492,16 @@ mediaSources.switchCameraForSource = captureLifecycle.protect(mediaSources.switc
 mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
 mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
 mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
-audioDriver.startMic = captureLifecycle.protect(audioDriver.startMic);
-audioDriver.startSpeaker = captureLifecycle.protect(audioDriver.startSpeaker);
-const audioOwnership = new CaptureAudioDriverOwnership(audioDriver, () => captureLifecycle.isClosing);
+// The ownership adapter wraps the raw IPC acquisition, so its success receipt
+// is recorded before the outer lifecycle guard can reject a close race.
+const audioOwnership = new CaptureAudioDriverOwnership({
+  startMic: audioDriver.startMic.bind(audioDriver),
+  stopMic: audioDriver.stopMic.bind(audioDriver),
+  startSpeaker: audioDriver.startSpeaker.bind(audioDriver),
+  stopSpeaker: audioDriver.stopSpeaker.bind(audioDriver),
+});
+audioDriver.startMic = captureLifecycle.protect((formats, isCancelled) => audioOwnership.acquireMic(formats, isCancelled));
+audioDriver.startSpeaker = captureLifecycle.protect(() => audioOwnership.acquireSpeaker());
 speakerCapture.acquireNative = captureLifecycle.protect(speakerCapture.acquireNative);
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
