@@ -182,8 +182,8 @@
         <p v-if="recording">The recording will be stopped and saved before Capture Studio closes.</p>
         <p v-if="closeError" role="alert" class="capture-close-error">{{ closeError }}</p>
         <footer>
-          <button type="button" class="setup-cancel" autofocus @click="keepCaptureOpen">Keep open</button>
-          <button type="button" class="setup-record" @click="stopCaptureAndClose">Stop streams and close</button>
+          <button type="button" class="setup-cancel" :disabled="closingCapture" autofocus @click="keepCaptureOpen">Keep open</button>
+          <button type="button" class="setup-record" :disabled="closingCapture" @click="stopCaptureAndClose">Stop streams and close</button>
         </footer>
       </section>
     </div>
@@ -381,89 +381,20 @@
         </div>
       </div>
       <div class="playback-grid">
-        <div
+        <PlaybackTile
           v-for="stream in playbackStreams"
           :key="stream.id"
-          class="playback-tile"
-          :class="'tile-' + stream.type"
-          @contextmenu.prevent="showPlaybackContextMenu($event, stream.id)"
-        >
-          <div class="tile-label">
-            <span
-              class="tile-dot"
-              :style="{ background: tileColor(stream.type) }"
-            />
-            <span>{{ tileName(stream) }}</span>
-            <div class="tile-actions">
-              <button type="button" :aria-label="isPlaybackPaused(stream.id) ? `Play ${tileName(stream)}` : `Pause ${tileName(stream)}`" @click.stop="togglePlayback(stream.id)">{{ isPlaybackPaused(stream.id) ? 'Play' : 'Pause' }}</button>
-              <button type="button" class="tile-remove" :aria-label="`Close ${tileName(stream)}`" @click.stop="removePlaybackStream(stream.id)">×</button>
-            </div>
-          </div>
-          <div class="tile-media">
-            <video
-              v-if="stream.isVideo"
-              :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
-              :src="'file://' + stream.filePath"
-              controls
-              @play="playbackPaused[stream.id] = false"
-              @pause="playbackPaused[stream.id] = true"
-              style="width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 6px;"
-            />
-            <div
-              v-else
-              class="tile-audio-wrap"
-            >
-              <div class="tile-audio-icon">
-                <svg
-                  width="32"
-                  height="32"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  :stroke="tileColor(stream.type)"
-                  stroke-width="1.5"
-                >
-                  <path
-                    v-if="stream.type === 'mic'"
-                    d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"
-                  /><path
-                    v-if="stream.type === 'mic'"
-                    d="M19 10v2a7 7 0 0 1-14 0v-2"
-                  /><line
-                    v-if="stream.type === 'mic'"
-                    x1="12"
-                    y1="19"
-                    x2="12"
-                    y2="23"
-                  /><line
-                    v-if="stream.type === 'mic'"
-                    x1="8"
-                    y1="23"
-                    x2="16"
-                    y2="23"
-                  />
-                  <path
-                    v-if="stream.type === 'system-audio'"
-                    d="M11 5L6 9H2v6h4l5 4V5z"
-                  /><path
-                    v-if="stream.type === 'system-audio'"
-                    d="M19.07 4.93a10 10 0 0 1 0 14.14"
-                  /><path
-                    v-if="stream.type === 'system-audio'"
-                    d="M15.54 8.46a5 5 0 0 1 0 7.07"
-                  />
-                </svg>
-              </div>
-              <audio
-                :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
-                :src="'file://' + stream.filePath"
-                controls
-                @play="playbackPaused[stream.id] = false"
-                @pause="playbackPaused[stream.id] = true"
-                style="width: 100%;"
-              />
-            </div>
-          </div>
-        </div>
+          :stream="stream"
+          :label="tileName(stream)"
+          :color="tileColor(stream.type)"
+          :paused="isPlaybackPaused(stream.id)"
+          @media="setPlaybackMedia"
+          @toggle="togglePlayback"
+          @close="removePlaybackStream"
+          @context-menu="showPlaybackContextMenu"
+          @play="setPlaybackPaused($event, false)"
+          @pause="setPlaybackPaused($event, true)"
+        />
       </div>
     </div>
 
@@ -487,6 +418,7 @@ import FloatingControls from './capture-studio/FloatingControls.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
 import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
 import TrackPanel from './capture-studio/TrackPanel.vue';
+import PlaybackTile from './capture-studio/PlaybackTile.vue';
 import { useAgentBridge } from './capture-studio/composables/useAgentBridge';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
 import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
@@ -530,6 +462,7 @@ const recording = ref(false);
 const captureLifecycle = new CaptureSessionLifecycle();
 const closeConfirmationOpen = ref(false);
 const closeError = ref('');
+const closingCapture = ref(false);
 let pendingCloseDecision: ((allow: boolean) => void) | null = null;
 let pendingCloseRequest: Promise<boolean> | null = null;
 let unregisterCaptureCloseGuard: (() => void) | null = null;
@@ -583,7 +516,9 @@ const playbackStreams = ref<PlaybackStream[]>([]);
 const playbackRefs = ref<Record<string, HTMLMediaElement | null>>({});
 const playbackPaused = reactive<Record<string, boolean>>({});
 const playbackTileController = new PlaybackTileController(
-  id => playbackRefs.value[id], removePlaybackTile, (id, paused) => { playbackPaused[id] = paused; },
+  id => playbackRefs.value[id], removePlaybackTile,
+  id => playbackPaused[id] ?? playbackRefs.value[id]?.paused ?? true,
+  (id, paused) => { playbackPaused[id] = paused; },
 );
 let sourceCounter = 0;
 
@@ -1261,12 +1196,17 @@ function closePlayback() {
   playbackOpen.value = false;
   playbackStreams.value = [];
   playbackRefs.value = {};
+  Object.keys(playbackPaused).forEach(id => delete playbackPaused[id]);
 }
 
 function isPlaybackPaused(id: string): boolean { return playbackTileController.isPaused(id); }
 function togglePlayback(id: string): void { playbackTileController.toggle(id); }
-function pausePlayback(id: string): void { playbackTileController.pause(id); }
 function removePlaybackStream(id: string): void { playbackTileController.close(id); }
+function setPlaybackMedia(id: string, element: HTMLMediaElement | null): void {
+  if (element) playbackRefs.value[id] = element;
+  else delete playbackRefs.value[id];
+}
+function setPlaybackPaused(id: string, paused: boolean): void { playbackPaused[id] = paused; }
 function removePlaybackTile(id: string): void {
   playbackStreams.value = playbackStreams.value.filter(stream => stream.id !== id);
   delete playbackRefs.value[id];
@@ -1274,10 +1214,9 @@ function removePlaybackTile(id: string): void {
   if (!playbackStreams.value.length) playbackOpen.value = false;
 }
 function showPlaybackContextMenu(event: MouseEvent, id: string): void {
-  const target = playbackRefs.value[id];
   ctxMenu.title = tileName(playbackStreams.value.find(stream => stream.id === id)!);
   ctxMenu.items = [
-    { id: 'playback-toggle', label: target?.paused ? 'Play' : 'Pause', action: () => togglePlayback(id) },
+    { id: 'playback-toggle', label: isPlaybackPaused(id) ? 'Resume' : 'Pause', action: () => togglePlayback(id) },
     { id: 'playback-close-source', label: 'Close tile', action: () => removePlaybackStream(id) },
   ];
   ctxMenu.x = event.clientX; ctxMenu.y = event.clientY; ctxMenu.visible = true;
@@ -2118,9 +2057,11 @@ function onCaptureStudioWindowCloseRequest(_event: unknown, request: { requestId
   void requestCaptureStudioClose();
 }
 
-function keepCaptureOpen(): void { settleCloseRequest(false); }
+function keepCaptureOpen(): void { if (!closingCapture.value) settleCloseRequest(false); }
 
 async function stopCaptureAndClose(): Promise<void> {
+  if (closingCapture.value) return;
+  closingCapture.value = true;
   closeError.value = '';
   try {
     await cleanupCaptureStudio();
@@ -2128,6 +2069,8 @@ async function stopCaptureAndClose(): Promise<void> {
   } catch (error: any) {
     closeError.value = `Capture Studio could not finish saving. It will stay open. ${ error?.message || error }`;
     closeConfirmationOpen.value = true;
+  } finally {
+    closingCapture.value = false;
   }
 }
 

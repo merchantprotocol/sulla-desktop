@@ -491,7 +491,17 @@ if (process.type === 'browser') {
     if (!owner || typeof payload?.tabId !== 'string') return;
     const tabs = captureStudioTabsByWindow.get(owner.id) ?? new Set<string>();
     if (payload.mounted) tabs.add(payload.tabId);
-    else tabs.delete(payload.tabId);
+    else {
+      tabs.delete(payload.tabId);
+      const pending = pendingCaptureStudioWindowCloses.get(owner.id);
+      if (pending?.remaining.delete(payload.tabId)) {
+        pending.approved = false;
+        if (!pending.remaining.size) {
+          pendingCaptureStudioWindowCloses.delete(owner.id);
+          windowsClosedByLastTab.delete(owner.id);
+        }
+      }
+    }
     if (tabs.size) captureStudioTabsByWindow.set(owner.id, tabs);
     else captureStudioTabsByWindow.delete(owner.id);
   });
@@ -501,7 +511,10 @@ if (process.type === 'browser') {
     const pending = pendingCaptureStudioWindowCloses.get(owner.id);
     if (!pending || pending.requestId !== payload.requestId || !pending.remaining.has(payload.tabId)) return;
     pending.remaining.delete(payload.tabId);
-    if (!payload.allow) pending.approved = false;
+    if (!payload.allow) {
+      pending.approved = false;
+      windowsClosedByLastTab.delete(owner.id);
+    }
     if (pending.remaining.size > 0) return;
     pendingCaptureStudioWindowCloses.delete(owner.id);
     if (pending.approved && !owner.isDestroyed()) {
@@ -513,7 +526,9 @@ if (process.type === 'browser') {
     const owner = agentWindowRegistry.agentWindowFor(event.sender);
     if (owner && !owner.isDestroyed()) {
       windowsClosedByLastTab.add(owner.id);
-      approvedCaptureStudioWindowCloses.add(owner.id);
+      // Let the close handler ask mounted Capture Studio tabs first. This also
+      // prevents stale "close-self" intents from bypassing an active recording guard.
+      if (!captureStudioTabsByWindow.get(owner.id)?.size) approvedCaptureStudioWindowCloses.add(owner.id);
       owner.close();
     }
   });

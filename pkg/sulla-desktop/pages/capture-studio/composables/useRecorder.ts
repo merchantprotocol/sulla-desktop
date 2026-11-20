@@ -115,7 +115,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function useRecorder(
-  optionsOrIntegrity: { manageUnmount?: boolean } | SpeakerCaptureIntegrity = {},
+  optionsOrIntegrity: { manageUnmount?: boolean; fileSystem?: any; capturesDir?: string } | SpeakerCaptureIntegrity = {},
   injectedIntegrity?: SpeakerCaptureIntegrity,
 ) {
   const options = optionsOrIntegrity instanceof SpeakerCaptureIntegrity ? {} : optionsOrIntegrity;
@@ -128,6 +128,8 @@ export function useRecorder(
   const bytesWritten = ref(0);
   const diskDisplay = ref('0 B');
   const error = ref<string | null>(null);
+  const recordingFs = options.fileSystem ?? fs;
+  const capturesRoot = options.capturesDir ?? getCapturesDir();
 
   let sessionDir = '';
   let entries: StreamEntry[] = [];
@@ -155,10 +157,10 @@ export function useRecorder(
     error.value = null;
     const id = randomUUID().slice(0, 13);
     sessionId.value = id;
-    sessionDir = path.join(getCapturesDir(), id);
+    sessionDir = path.join(capturesRoot, id);
 
     try {
-      fs.mkdirSync(sessionDir, { recursive: true });
+      recordingFs.mkdirSync(sessionDir, { recursive: true });
     } catch (e: any) {
       error.value = `Failed to create capture directory: ${ e.message }`;
       console.error('[useRecorder]', error.value);
@@ -181,7 +183,7 @@ export function useRecorder(
 
       let ws: any;
       try {
-        ws = fs.createWriteStream(filePath);
+        ws = recordingFs.createWriteStream(filePath);
       } catch (e: any) {
         console.error(`[useRecorder] Failed to create write stream for ${ filename }:`, e.message);
         continue;
@@ -414,7 +416,7 @@ export function useRecorder(
     // This includes container/header bytes and guarantees downstream editors
     // see the size of the exact file named by each manifest entry.
     for (const stream of allStreams) {
-      stream.bytes = fs.statSync(path.join(sessionDir, stream.filename)).size;
+      stream.bytes = recordingFs.statSync(path.join(sessionDir, stream.filename)).size;
     }
 
     // A finalized 44-byte WAV contains only its header. Do not advertise it
@@ -434,7 +436,7 @@ export function useRecorder(
       events:    captureEvents,
     };
 
-    fs.writeFileSync(path.join(sessionDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    recordingFs.writeFileSync(path.join(sessionDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
     const returnId = sessionId.value;
     entries = [];
