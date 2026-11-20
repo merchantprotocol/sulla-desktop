@@ -30,4 +30,12 @@ describe('Cloud metadata versus installed CLI compatibility', () => {
     await expect(invalid.get('codex')).rejects.toThrow('selection is invalid');
   });
 
+  it('rejects source identities and request formats that the selected native transport cannot execute', async() => {
+    // risk: cross-transport identity substitution
+    const service = new ModelCompatibilityService(async() => ({ required: false, installed: true }));
+    await expect(service.assertClient('anthropic', { id: 'anthropic/qualified-model' })).rejects.toThrow('gateway-qualified');
+    await expect(service.assertClient('openai', { id: 'responses-only', capabilities: { requestFormats: ['responses'] } })).rejects.toThrow('chat-completions');
+    await expect(service.assertClient('openai', { id: 'chat-model', capabilities: { requestFormats: ['responses', 'chat-completions'] } })).resolves.toBeUndefined();
+  });
+
 });

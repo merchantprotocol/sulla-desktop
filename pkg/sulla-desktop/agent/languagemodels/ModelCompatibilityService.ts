@@ -7,7 +7,9 @@
 export class ModelCompatibilityService {
   constructor(private readonly clientStatus: (provider: string) => Promise<{ required: boolean; installed: boolean; version?: string }>) {}
 
-  async assertClient(provider: string, model: { id: string; minimumClientVersion?: string }): Promise<void> {
+  async assertClient(provider: string, model: { id: string; minimumClientVersion?: string; capabilities?: { requestFormats?: string[] } }): Promise<void> {
+    if (provider === 'anthropic' && model.id.startsWith('anthropic/')) throw new Error(`Model ${ model.id } is gateway-qualified; no verified native Anthropic execution identity is declared. Choose a native identity, not an inferred replacement.`);
+    if (provider === 'openai' && model.capabilities?.requestFormats?.length && !model.capabilities.requestFormats.includes('chat-completions')) throw new Error(`Model ${ model.id } does not advertise the chat-completions transport used by this Desktop provider`);
     if (!model.minimumClientVersion) return;
     const status = await this.clientStatus(provider);
     if (!status.required) return;
