@@ -197,8 +197,10 @@
       :color-map="colorMap"
       :icon-map="iconMap"
       :disk-display="totalDiskDisplay"
+      :paused-sources="pausedSources"
       @toggle-src="toggleSrc"
       @remove-source="removeSource"
+      @toggle-pause="toggleSourcePause"
     />
 
     <AddSourceDialog
@@ -523,6 +525,25 @@ const playbackTileController = new PlaybackTileController(
   (id, paused) => { playbackPaused[id] = paused; },
 );
 let sourceCounter = 0;
+const pausedSources = reactive<Record<string, boolean>>({});
+
+function toggleSourcePause(id: string): void {
+  const source = sources.find(candidate => candidate.id === id);
+  if (!source || !source.on) return;
+  const paused = !pausedSources[id];
+  if (source.type === 'screen') {
+    const stream = mediaSources.screenStreams[id];
+    stream?.getTracks().forEach(track => { track.enabled = !paused; });
+    void recorder.setSourcePaused(id, paused);
+  } else if (source.type === 'camera') {
+    const stream = mediaSources.cameraStreams[id];
+    stream?.getTracks().forEach(track => { track.enabled = !paused; });
+    void recorder.setSourcePaused(id, paused);
+  } else if (source.type === 'system') {
+    speakerCapture.nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = !paused; });
+  }
+  pausedSources[id] = paused;
+}
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
 
@@ -1300,12 +1321,12 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
   addPopupOpen.value = false;
 }
 
-function removeSource(id: string) {
+async function removeSource(id: string) {
   // Stop mic via controller if this was a mic source
   const src = sources.find(s => s.id === id);
   if (recording.value && (src?.type === 'camera' || src?.type === 'screen')) {
-    statusMessage.value = 'Stop recording before removing a video source';
-    return;
+    try { await recorder.finalizeSource(id); }
+    catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
   }
   if (src?.type === 'mic') {
     audioDriver.stopMic().catch(() => {});
@@ -1320,6 +1341,7 @@ function removeSource(id: string) {
   }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
+  delete pausedSources[id];
   autoAssign();
   updateStreamAssignments();
 }

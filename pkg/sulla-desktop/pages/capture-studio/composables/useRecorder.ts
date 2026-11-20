@@ -34,6 +34,7 @@ interface StreamEntry {
   startOffset:  number;
   bytesWritten: number;
   chunkQueue: RecorderChunkQueue;
+  finalized: boolean;
 }
 
 interface ExternalStreamEntry {
@@ -217,6 +218,7 @@ export function useRecorder(
         startOffset:  0,
         bytesWritten: 0,
         chunkQueue: new RecorderChunkQueue(),
+        finalized: false,
       };
 
       recorder.ondataavailable = (e: BlobEvent) => {
@@ -293,6 +295,39 @@ export function useRecorder(
       ...entry,
       startOffset: entry.startOffset ?? performance.now() - sessionStartTime,
     });
+  }
+
+  /** Pause/resume one recorder without affecting any other capture owner. */
+  function setSourcePaused(id: string, paused: boolean): boolean {
+    const entry = entries.find(candidate => candidate.id === id && !candidate.finalized);
+    if (!entry || entry.recorder.state === 'inactive') return false;
+    try {
+      if (paused && entry.recorder.state === 'recording') entry.recorder.pause();
+      else if (!paused && entry.recorder.state === 'paused') entry.recorder.resume();
+      return true;
+    } catch { return false; }
+  }
+
+  /** Finalize one video source and keep its completed file in the session manifest. */
+  async function finalizeSource(id: string): Promise<boolean> {
+    const entry = entries.find(candidate => candidate.id === id && !candidate.finalized);
+    if (!entry) return false;
+    if (entry.recorder.state !== 'inactive') {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (error?: unknown) => { if (settled) return; settled = true; error ? reject(error) : resolve(); };
+        entry.recorder.onstop = () => { void entry.chunkQueue.flush().then(() => finish(), finish); };
+        try { entry.recorder.stop(); } catch (error) { finish(error); }
+      });
+    } else await entry.chunkQueue.flush();
+    await entry.chunkQueue.flush();
+    await new Promise<void>((resolve, reject) => {
+      const ws = entry.writeStream;
+      if (!ws || ws.closed || ws.destroyed) return ws?.errored ? reject(ws.errored) : resolve();
+      ws.once('error', reject); ws.end(resolve);
+    });
+    entry.finalized = true;
+    return true;
   }
 
   /**
@@ -463,6 +498,8 @@ export function useRecorder(
     startSession,
     stopSession,
     registerExternalStream,
+    setSourcePaused,
+    finalizeSource,
     logEvent,
     getSessionDir,
   };
