@@ -141,7 +141,7 @@ export class WorkerModelRoutingService {
       const provider = providers.find(row => row.id === candidate.provider);
       if (!provider?.connected) throw new InfrastructureFailure(`Connect ${ candidate.provider } before saving this worker model.`);
       const model = provider.models.find(row => row.id === candidate.model && !row.unverified);
-      if (!model) throw new InfrastructureFailure(`Model ${ candidate.provider }/${ candidate.model } is not in the verified live catalog. Refresh models and choose an available version.`);
+      if (!model) throw new InfrastructureFailure(`Model ${ candidate.provider }/${ candidate.model } is not in the verified catalog. Choose an available version.`);
       if (candidate.effort !== undefined && !model.efforts?.some(level => level.id === candidate.effort)) throw new InfrastructureFailure(`Effort ${ candidate.effort } is not supported by ${ candidate.provider }/${ candidate.model }.`);
     }
     return this.subscriptionConnections(candidates);

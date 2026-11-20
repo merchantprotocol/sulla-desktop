@@ -117,25 +117,6 @@ async function updateCli(row: import('@pkg/backend/providerCliUpdates').Provider
     updatingCli.value = '';
   }
 }
-const refreshing = ref(false);
-async function refreshModels() {
-  if (!state.value || refreshing.value) return;
-  refreshing.value = true; error.value = '';
-  try {
-    state.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.refresh);
-    snapshot = JSON.stringify(state.value);
-    now.value = Date.now();
-    const checks = state.value.catalog?.checks ?? [];
-    const failed = checks.filter(check => check.status === 'unavailable');
-    if (failed.length) showError(`Could not refresh models for ${ failed.map(check => `${ check.provider }: ${ check.reason || 'model discovery failed' }`).join('; ') }.`, 'Couldn’t refresh model catalogs', 'Saved model choices were preserved.');
-    toast(`${ checks.filter(check => check.status === 'refreshed').length } provider model lists refreshed.`);
-    await checkCliVersions();
-  } catch (e) {
-    showError(e instanceof Error ? e.message : String(e), 'Couldn’t refresh model catalogs', 'Saved model choices were preserved.');
-  } finally {
-    refreshing.value = false;
-  }
-}
 async function reset(section: 'agents' | 'subconscious' | 'classes', modelClass?: ModelClass) {
   if (!state.value) return;
   error.value = '';
@@ -265,9 +246,7 @@ onBeforeUnmount(() => {
       <RoleLedger
         :state="state"
         :now="now"
-        :refreshing="refreshing"
         @save="saveLanes"
-        @refresh="refreshModels"
       />
       <section v-if="cliVersions.length" class="cli-versions" aria-label="Provider CLI versions">
         <h3>Provider CLI versions</h3>

@@ -27,6 +27,10 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { resolveProviderAccess, type ProviderAccessMethod } from '@pkg/shared/providerAccess';
 
+// IDs curated in Sulla Cloud's public shared catalog. Unknown/custom/local
+// providers must never trigger a catalog download simply to list their models.
+const SHARED_CATALOG_PROVIDER_IDS = new Set(['anthropic', 'openai', 'google', 'xai', 'deepseek', 'moonshot', 'alibaba', 'meta', 'minimax', 'workers-ai']);
+
 // ── Public types ─────────────────────────────────────────────────
 
 export interface ModelProviderState {
@@ -308,7 +312,29 @@ class ModelProviderService {
   }
 
   async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean; forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
+    // Catalog metadata is public Cloud data, not proof of an account/API-key
+    // entitlement. Availability/auth checks remain in the provider access path.
+    // CLI providers retain their CLI-specific catalogs and compatibility rules.
     const integration = integrations[providerId];
+    let customEndpointConfigured = false;
+    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId) && integration?.properties?.some(property => property.key === 'base_url')) {
+      try {
+        const integrationService = getIntegrationService();
+        const accountId = await integrationService.getActiveAccountId(providerId).catch(() => '');
+        const values = await integrationService.getFormValues(providerId, accountId);
+        customEndpointConfigured = values.some(value => value.property === 'base_url' && typeof value.value === 'string' && value.value.trim().length > 0);
+      } catch { /* Retain shared defaults when endpoint settings cannot be read. */ }
+    }
+    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId) && !queryOptions.liveOnly && !customEndpointConfigured) {
+      const { sharedModelCatalog } = await import('../languagemodels/sharedModelCatalog');
+      const provider = (await sharedModelCatalog.listProviders()).find(item => item.id === providerId)
+        ?? sharedModelCatalog.getBundledProvider(providerId);
+      if (provider) return provider.models.map(model => this.modelInfo(providerId, { id: model.id, name: model.name }));
+      // A Cloud-listed provider missing from a stale/partial response must not
+      // silently fall back to account-specific discovery. Bundled fallback
+      // rows are returned by the catalog client; otherwise fail closed.
+      return [];
+    }
     if (!integration) {
       return this.getCliProviderModels(providerId, queryOptions);
     }

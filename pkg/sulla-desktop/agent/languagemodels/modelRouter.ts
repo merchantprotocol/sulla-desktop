@@ -450,7 +450,7 @@ export class ModelRouter {
       if (pinned.effort !== undefined) {
         const levels = live.get(pinned.provider)?.models.find(model => model.id === pinned.model)?.efforts;
         if (pinned.provider !== 'codex' || !levels?.some(level => level.id === pinned.effort)) {
-          throw new Error(`Requested effort "${ pinned.effort }" is not advertised for ${ pinned.provider }/${ pinned.model }. Refresh models and choose a supported effort, or omit effort for the default.`);
+          throw new Error(`Requested effort "${ pinned.effort }" is not advertised for ${ pinned.provider }/${ pinned.model }. Choose an advertised effort, or omit effort for the default.`);
         }
       }
       return [pinned];
