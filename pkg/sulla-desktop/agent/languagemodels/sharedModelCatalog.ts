@@ -68,7 +68,7 @@ export class SharedModelCatalogClient {
       return cached.providers;
     }
     try { return await this.refresh(); }
-    catch { return cached?.providers ?? BUNDLED_FALLBACK; }
+    catch { return BUNDLED_FALLBACK; }
   }
 
   getBundledProvider(providerId: string): SharedCatalogProvider | undefined {
