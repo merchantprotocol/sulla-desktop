@@ -8,7 +8,7 @@
 <template>
   <section
     class="qc"
-    :class="{ 'qc-settled': locked }"
+    :class="{ 'qc-settled': locked, 'qc-original': retainOptions }"
     :aria-disabled="locked"
     aria-label="Question from Sulla"
   >
@@ -82,7 +82,7 @@
       </p>
 
       <div
-        v-if="!locked || picks[qi]?.length"
+        v-if="retainOptions || !locked || picks[qi]?.length"
         class="qc-options"
         :role="q.multiSelect ? 'group' : 'radiogroup'"
       >
@@ -210,7 +210,7 @@ import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/M
 import { useChatController } from '../../controller/useChatController';
 import { answerSelection } from '../../messages/questionAnswer';
 
-const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; blocked?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
+const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
 const currentStep = ref(0);
 
@@ -227,9 +227,15 @@ function selectCustom(qi: number, selected: boolean): void {
 }
 function customAnswer(qi: number): string { return customSelected[qi] ? (otherText[qi] ?? '') : '' }
 
-function isPicked(qi: number, label: string): boolean {
-  return picks[qi]?.includes(label) ?? false;
+function selectedLabels(qi: number): readonly string[] {
+  if (props.retainOptions && props.msg.status !== 'pending') {
+    const question = props.msg.questions[qi].question;
+    return props.msg.answers?.find(answer => answer.question === question)?.selected ?? [];
+  }
+  return picks[qi] ?? [];
 }
+
+function isPicked(qi: number, label: string): boolean { return selectedLabels(qi).includes(label) }
 
 // Countdown to the backend's deadline; the card used to give no sign it would expire.
 const now = ref(Date.now());
@@ -252,7 +258,9 @@ const expiredUnsent = computed(() => !props.submitAnswers && props.msg.status ==
 const hasDraft = computed(() => picks.some(p => p.length > 0) || otherText.some(t => t.trim()));
 /** The answered card already shows each question with the option picked; the summary list is only for when those picks are not known (e.g. after a restart). */
 const picksShown = computed(() => !!props.msg.answers?.length && props.msg.answers.every((answer, qi) =>
-  answer.selected.length > 0 && answer.selected.every(choice => picks[qi]?.includes(choice))));
+  answer.selected.length > 0 && answer.selected.every(choice => props.retainOptions
+    ? props.msg.questions.find(question => question.question === answer.question)?.options.some(option => option.label === choice)
+    : picks[qi]?.includes(choice))));
 
 /** The deadline passed while the user was still choosing: keep their work by sending it as a chat message. */
 function sendAsMessage(): void {
@@ -419,7 +427,7 @@ async function submit(): Promise<void> {
 .qc-settled { opacity: 0.62; background: transparent; }
 .qc-settled .qc-option { cursor: default; }
 /* Only the chosen options stay once answered (picks exist only in the session that answered). */
-.qc-settled .qc-option:not(.picked) { display: none; }
+.qc-settled:not(.qc-original) .qc-option:not(.picked) { display: none; }
 .qc-settled .qc-option:hover { border-color: var(--border-default); }
 .qc-settled:has(.qc-late) { opacity: 0.9; }
 

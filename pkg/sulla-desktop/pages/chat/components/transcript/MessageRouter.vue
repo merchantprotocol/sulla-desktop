@@ -43,11 +43,11 @@
       :key="decisionCardKey"
       :msg="questionMessage(msg)" :draft="questionDraft(msg)"
       :blocked="blocked" :state-label="decisionLabel"
-      :submit-answers="inlineRecord ? answer : undefined"
+      :retain-options="!!inlineRecord || checking" :submit-answers="inlineRecord ? answer : undefined"
     />
     <button v-if="checking && decisions.inlineReadFailed.value" type="button" @click="decisions.refreshInline">Retry loading request</button>
   </div>
-  <DecisionReference v-else-if="inboxRecord" :msg="msg" />
+  <DecisionReference v-else-if="inboxRecord && (msg.kind === 'tool_question' || msg.kind === 'tool_approval')" :msg="msg" />
   <ToolApproval v-else-if="msg.kind === 'tool_approval'" :msg="msg" />
   <ToolTask v-else-if="TaskAsks.isTask(msg)" :msg="msg" :draft="questionDraft(msg)" />
   <ToolQuestion v-else-if="msg.kind === 'tool_question'" :msg="msg" :draft="questionDraft(msg)" />

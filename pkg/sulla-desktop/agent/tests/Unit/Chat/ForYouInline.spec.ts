@@ -79,6 +79,9 @@ function fixture(main = true, includeLegacy = false) {
   ];
   if (includeLegacy) messages.push({ ...messages[0] as ToolQuestionMessage, id: asMessageId('legacy'), questionId: 'legacy-question' });
   const controller = { messages: ref(messages), thread: ref({ id: 'ui-thread' }), send: vi.fn(), answerQuestion: vi.fn(), approveTool: vi.fn(), denyTool: vi.fn() };
+  const TranscriptHarness = defineComponent({
+    setup: () => () => h('section', messages.map(msg => h(MessageRouter, { key: msg.id, msg }))),
+  });
   const wrapper = mount(defineComponent({
     setup() {
       ChatDecisions.provide(thread, main ? ref(messages.flatMap(message => message.kind === 'tool_question' ? [message.questionId!] : [message.approvalId!])) : undefined);
@@ -86,13 +89,13 @@ function fixture(main = true, includeLegacy = false) {
       provide('chat:main-decision-transcript', ref(main));
       provide('chat:activity-context', { backendThreadId: thread });
       return () => h('div', [
-        h('section', { 'aria-label': 'Transcript' }, messages.map(msg => h(MessageRouter, { key: msg.id, msg }))),
+        h(TranscriptHarness),
         h(ForYouPanel),
       ]);
     },
   }));
   mounted.add(wrapper);
-  return { controller, wrapper, transcript: wrapper.get('[aria-label="Transcript"]'), drawer: wrapper.getComponent(ForYouPanel) };
+  return { controller, wrapper, transcript: wrapper.getComponent(TranscriptHarness), drawer: wrapper.getComponent(ForYouPanel) };
 }
 
 describe('For You from the original transcript', () => {
@@ -174,6 +177,27 @@ describe('For You from the original transcript', () => {
     expect(reloaded.transcript.getComponent(ToolApproval).findAll('button')).toHaveLength(0);
     expect(ipc.invoke).toHaveBeenCalledWith('decisions:transcript', owner, [approval.id]);
     expect(submissions()).toHaveLength(1);
+  });
+
+  it('shows a durable answer from another surface instead of a stale local choice, and restores it on interruption', async() => {
+    // risk: showing an unsubmitted choice as the user's recorded answer
+    const { transcript, drawer } = fixture();
+    await flushPromises();
+    const card = transcript.getComponent(ToolQuestion);
+    await card.get('[role=radio]').trigger('click');
+    const queued: DecisionRecord = {
+      ...question, attention: 'answered', answerDelivery: 'queued',
+      answers: [{ question: 'Where?', selected: ['Production'] }],
+    };
+    publish(queued);
+    await flushPromises();
+    expect(card.findAll('[role=radio]').map(option => option.attributes('aria-checked'))).toEqual(['false', 'true']);
+    publish({ ...queued, attention: 'active', answerDelivery: 'interrupted' });
+    await flushPromises();
+    expect(card.props('msg').status).toBe('pending');
+    expect(card.findAll('[role=radio]').map(option => option.attributes('aria-checked'))).toEqual(['false', 'true']);
+    expect(drawer.getComponent(ToolQuestion).findAll('[role=radio]')[1].attributes('aria-checked')).toBe('true');
+    expect(submissions()).toHaveLength(0);
   });
 
   it('shows a failed save in both surfaces, then accepts a retry without changing the draft', async() => {

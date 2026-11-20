@@ -7,6 +7,11 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { ToolQuestionAnswerItem, ToolQuestionItem } from '../models/Message';
 
 export interface DecisionDraft { picks: string[][]; other: string[]; customSelected: boolean[]; }
+interface DraftSource {
+  id: string;
+  questions?: readonly ToolQuestionItem[];
+  answers?: readonly ToolQuestionAnswerItem[];
+}
 export interface ChatDecisionStore {
   decisions:   Ref<DecisionRecord[]>;
   openCount:   Ref<number>;
@@ -26,7 +31,7 @@ export interface ChatDecisionStore {
   refresh(): Promise<void>;
   loadMore(): Promise<void>;
   show(id?: string): void;
-  draft(record: { id: string; questions?: readonly ToolQuestionItem[]; answers?: readonly ToolQuestionAnswerItem[] }): DecisionDraft;
+  draft(record: DraftSource): DecisionDraft;
   resolve(record: DecisionRecord, action: DecisionResponse['action'], answers?: DecisionResponse['answers']): Promise<void>;
   dismiss(record: DecisionRecord): Promise<void>;
 }
@@ -37,7 +42,21 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
   const decisions = ref<DecisionRecord[]>([]); const error = ref(''); const loading = ref(false); const hasMore = ref(false); const now = ref(Date.now());
   const open = ref(false); const openVersion = ref(0); const selectedId = ref<string>(); const drafts = reactive(new Map<string, DecisionDraft>());
   let cursor: { at: number; id: string } | undefined; let generation = 0; let requestVersion = 0; let eventVersion = 0; const changedAt = new Map<string, number>(); let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-  const put = (record: DecisionRecord, readAt?: number) => { if (readAt !== undefined && (changedAt.get(record.id) ?? 0) > readAt) return; if (readAt === undefined) changedAt.set(record.id, ++eventVersion); decisions.value = [...decisions.value.filter(item => item.id !== record.id), record].sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)) };
+  function put(record: DecisionRecord, readAt?: number): void {
+    if (readAt !== undefined && (changedAt.get(record.id) ?? 0) > readAt) return;
+    if (readAt === undefined) changedAt.set(record.id, ++eventVersion);
+    const previous = decisions.value.find(item => item.id === record.id);
+    const draft = drafts.get(record.id);
+    if (draft && record.answerDelivery === 'interrupted' && previous?.answerDelivery !== 'interrupted') {
+      // An interrupted delivery makes the durable answer an editable draft again.
+      const saved = makeDraft(record);
+      draft.picks.splice(0, draft.picks.length, ...saved.picks);
+      draft.other.splice(0, draft.other.length, ...saved.other);
+      draft.customSelected.splice(0, draft.customSelected.length, ...saved.customSelected);
+    }
+    decisions.value = [...decisions.value.filter(item => item.id !== record.id), record]
+      .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+  }
   const history = reactive(new Map<string, DecisionRecord>());
   const checked = reactive(new Set<string>());
   const checking = new Set<string>();
@@ -74,6 +93,18 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
     } finally {
       if (version === generation) for (const id of ids) checking.delete(id);
     }
+  }
+  function makeDraft(record: DraftSource): DecisionDraft {
+    const draft: DecisionDraft = { picks: [], other: [], customSelected: [] };
+    for (const question of record.questions ?? []) {
+      const selected = record.answers?.find(answer => answer.question === question.question)?.selected ?? [];
+      const picks = selected.filter(value => question.options.some(option => option.label === value));
+      const other = selected.filter(value => !picks.includes(value)).join(', ');
+      draft.picks.push(picks);
+      draft.other.push(other);
+      draft.customSelected.push(!!other.trim() && (!!question.multiSelect || picks.length === 0));
+    }
+    return draft;
   }
   async function run(record: DecisionRecord, operation: () => Promise<void>): Promise<void> {
     const current = inlineRecords.value.get(record.id) ?? record;
@@ -127,7 +158,7 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
   watch(threadId, () => {
     generation++; clearTimeout(reconnectTimer);
     decisions.value = []; cursor = undefined; hasMore.value = false; open.value = false; selectedId.value = undefined;
-    history.clear(); checked.clear(); checking.clear(); inFlight.clear(); actionErrors.clear();
+    history.clear(); checked.clear(); checking.clear(); changedAt.clear(); inFlight.clear(); actionErrors.clear();
     firstPageLoaded.value = false; inlineReadFailed.value = false;
     void refresh();
   }, { immediate: true });
@@ -160,13 +191,8 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
     loadMore:  () => read(true),
     show(id?: string) { selectedId.value = id; open.value = true; openVersion.value++ },
     draft(record) {
-      let draft = drafts.get(record.id); if (!draft) {
-        const saved = (record.questions ?? []).map(question => record.answers?.find(answer => answer.question === question.question)?.selected ?? []);
-        const picks = (record.questions ?? []).map((question, index) => saved[index].filter(value => question.options.some(option => option.label === value)));
-        const other = (record.questions ?? []).map((question, index) => saved[index].filter(value => !question.options.some(option => option.label === value)).join(', '));
-        draft = { picks, other, customSelected: other.map((value, index) => !!value.trim() && (!!record.questions?.[index].multiSelect || !picks[index].length)) };
-        drafts.set(record.id, draft);
-      } return drafts.get(record.id)!;
+      if (!drafts.has(record.id)) drafts.set(record.id, makeDraft(record));
+      return drafts.get(record.id)!;
     },
     resolve(record, action, answers) {
       return run(record, async() => {
