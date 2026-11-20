@@ -167,6 +167,18 @@ class TabRegistryImpl {
     return record;
   }
 
+  /** Route explicit activation through the owning shell, never native focus gates. */
+  requestActivation(assetId: string, owner?: TabOwner): void {
+    const record = this.records.get(assetId);
+    if (!record) return;
+    if (!this.sameOwner(record.owner, owner)) throw this.ownershipError(assetId);
+    const window = BrowserTabViewManager.getInstance().getOwnerWindow(assetId);
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+    // Carry the record with the request: the coalesced tabs:change broadcast
+    // may not have run yet, so the renderer must mirror before navigating.
+    window.webContents.send('tabs:request-activation', { ...record });
+  }
+
   close(assetId: string): boolean {
     if (!this.records.has(assetId)) return false;
     BrowserTabViewManager.getInstance().destroyView(assetId);

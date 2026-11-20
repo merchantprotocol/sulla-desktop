@@ -146,3 +146,27 @@ describe('tab drop position and release ordering', () => {
     expect(ack).toHaveBeenCalledWith('xfer-2', 'tab-a');
   });
 });
+
+describe('explicit agent activation routing', () => {
+  it('mirrors the supplied tab before notifying the supported router', async() => {
+    // risk: asynchronous registry broadcast drops activation of a newly-opened tab
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
+    const { useBrowserTabs } = await import('./useBrowserTabs');
+    const handler = vi.mocked(ipcRenderer.on).mock.calls.find(call => call[0] === 'tabs:request-activation')?.[1] as any;
+    const store = useBrowserTabs();
+    let knownAtNavigation = false;
+    const navigate = (event: Event) => {
+      if ((event as CustomEvent).detail.tabId === 'explicit-qa') {
+        knownAtNavigation = store.tabs.some(tab => tab.id === 'explicit-qa');
+      }
+    };
+    window.addEventListener('sulla:navigate-tab', navigate);
+    try {
+      handler({}, { assetId: 'explicit-qa', title: 'QA', url: 'https://example.com', origin: 'agent' });
+      expect(knownAtNavigation).toBe(true);
+    } finally {
+      window.removeEventListener('sulla:navigate-tab', navigate);
+      store.closeTab('explicit-qa');
+    }
+  });
+});
