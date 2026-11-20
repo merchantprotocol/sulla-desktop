@@ -96,10 +96,6 @@ async function getApiKeyForProvider(providerId: string): Promise<string> {
 // An agent that explicitly declares the 'fast' tier (the voice agent) gets the
 // provider's light model instead. Same ids the built-in Haiku and Codex Luna
 // workers already run on.
-const CLI_FAST_MODELS: Record<string, string> = {
-  'claude-code': 'claude-haiku-5-5',
-  codex:         'gpt-5.6-luna',
-};
 
 /**
  * Light model for a CLI provider when an agent asks for the 'fast' tier by
@@ -108,7 +104,8 @@ const CLI_FAST_MODELS: Record<string, string> = {
  * heartbeat slots default to 'fast' too, and they keep their current model.
  */
 export function cliTierModelId(providerId: string, tier: ModelTier): string | undefined {
-  return tier === 'fast' ? CLI_FAST_MODELS[providerId] : undefined;
+  // A tier is not an exact executable ID. Never silently pin a bundled Luna/Haiku.
+  return undefined;
 }
 
 /**
@@ -118,7 +115,7 @@ export function cliTierModelId(providerId: string, tier: ModelTier): string | un
  */
 export function cliPinnedModelId(providerId: string, model: string | null | undefined): string | undefined {
   const value = model?.trim();
-  if (!value || value === providerId) return undefined;
+  if (!value || value === providerId || (providerId === 'claude-code' && value === 'default')) return undefined;
   const alias = value.toLowerCase();
   if (isTierName(alias)) return cliTierModelId(providerId, alias);
 
@@ -143,11 +140,8 @@ export async function resolveTierToModelId(
   if (providerId === 'claude-code' || providerId === 'codex' || providerId === 'opencode' || providerId === 'cursor') return undefined;
 
   try {
-    const containerAuthority = usesContainerVaultAuthority();
-    const apiKey = containerAuthority ? '' : await getApiKeyForProvider(providerId);
-    if (!containerAuthority && !apiKey) return undefined;
-
-    const models = await modelDiscoveryService.fetchModelsForProvider(providerId, apiKey);
+    const { sharedModelCatalog } = await import('./sharedModelCatalog');
+    const models = await sharedModelCatalog.listModels(providerId);
     const modelIds = models.map(m => m.id);
     const resolved = selectBestForTier(modelIds, tier);
 

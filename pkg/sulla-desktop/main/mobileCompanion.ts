@@ -453,7 +453,8 @@ export async function mobileCompanionRequest(method: string, params: Record<stri
   }
   case 'models.list': {
     const provider = await companionProvider(params.providerId);
-    return { providerId: provider.id, models: await getModelProviderService().getModelsForProvider(provider.id) };
+    const models = await getModelProviderService().getModelsForProvider(provider.id);
+    return { providerId: provider.id, models, unavailableReason: models.length ? undefined : 'Validated model catalog unavailable' };
   }
   case 'models.select': {
     // Called only by an explicit human pick in the phone's device settings.
