@@ -964,7 +964,7 @@ function ensureView(url: string) {
       : { x: 0, y: 0, width: 800, height: 600 };
 
     // Ensure the view exists in the main-process TabRegistry (idempotent —
-    // if it already exists, this navigates to `url`). Then apply the
+    // existing records retain their authoritative URL and owner). Then apply the
     // chrome-derived bounds. Splitting creation from positioning means the
     // agent can open a tab before the UI knows where to render it.
     void ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds).catch((err: unknown) => {

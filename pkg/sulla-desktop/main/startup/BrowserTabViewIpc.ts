@@ -40,12 +40,20 @@ export class BrowserTabViewIpc implements MainProcessIpcStep {
     };
 
     // Renderer asks main to ensure a WebContentsView exists for `tabId` pointing
-    // at `url`. Idempotent: if it already exists, navigate it to the new URL.
+    // at `url`. Existing records attach idempotently; only explicit navigation
+    // may change their URL (the renderer can hold stale graph-owned metadata).
     // View bounds are set separately via 'browser-tab-view:set-bounds' once the
     // UI knows where to render. This is the single entry point into the
     // TabRegistry from the UI; agent tools call tabRegistry.open() directly.
     ipc.handle('browser-tab-view:create', async(event: Electron.IpcMainInvokeEvent, tabId: string, url: string, _bounds: Electron.Rectangle) => {
-      tabRegistry.open({ assetId: tabId, url, origin: 'user', ownerWindow: ownerWindow(event) });
+      const owner = ownerWindow(event);
+      if (tabRegistry.get(tabId)) {
+        // Window custody authorizes attachment, not graph-session navigation.
+        // Do not reopen as an unbound caller or change URL/owner/activation.
+        assertOwner(event, tabId);
+        return;
+      }
+      tabRegistry.open({ assetId: tabId, url, origin: 'user', ownerWindow: owner });
     });
 
     ipc.handle('browser-tab-view:destroy', async(event: Electron.IpcMainInvokeEvent, tabId: string) => {
