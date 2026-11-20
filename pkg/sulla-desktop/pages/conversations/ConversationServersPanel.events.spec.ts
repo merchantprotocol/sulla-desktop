@@ -19,8 +19,8 @@ const channels = {
 };
 
 function invokeResult(channel: string, arg?: unknown): unknown {
-  if (channel === 'org-conversations:organizations') return [];
-  if (channel === 'conversation-servers:list') return [publicServer, orgServer];
+  if (channel === 'org-conversations:organizations') return [{ orgId: 'org-id', name: 'Organization' }];
+  if (channel === 'conversation-servers:list') return (arg as string | undefined) === 'org-id' ? [orgServer] : [publicServer];
   if (channel === 'conversation-servers:channels') return (arg as string) === 'org' ? channels.org : channels.public;
   if (channel === 'conversation-servers:members') return [];
   if (channel === 'conversation-servers:channel-preference') return { preference: null, channelOverride: null };
@@ -96,6 +96,9 @@ describe('ConversationServersPanel composer events', () => {
 
   it('does not invoke IPC for a blank name or a missing organization selection', async () => {
     // risk: invalid tenant-scoped writes; blank names and absent membership selections must be rejected
+    invoke.mockImplementation((channel: string, arg?: unknown) => Promise.resolve(
+      channel === 'org-conversations:organizations' ? [] : invokeResult(channel, arg),
+    ));
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
     await flushPromises();
     await wrapper.get('.cs-server-add').trigger('click');
@@ -115,8 +118,8 @@ describe('ConversationServersPanel composer events', () => {
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
     await flushPromises();
     await wrapper.get('[aria-label="Organization server"]').trigger('click');
-    await vi.waitFor(() => expect(wrapper.find('[aria-label="Channels"]').exists()).toBe(true));
-    expect(wrapper.get('[aria-label="team, notifications All messages"]').exists()).toBe(true);
+    // The Channels container mounts immediately on selection, before async channels/preferences resolve.
+    await vi.waitFor(() => expect(wrapper.find('[aria-label="team, notifications All messages"]').exists()).toBe(true));
     expect(wrapper.get('.cs-rail').element.lastElementChild?.getAttribute('aria-label')).toBe('Back');
     await wrapper.get('[aria-label="Back"]').trigger('click');
     expect(wrapper.emitted('exit')).toHaveLength(1);
