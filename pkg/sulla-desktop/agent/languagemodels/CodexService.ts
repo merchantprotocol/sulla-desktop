@@ -15,7 +15,7 @@ import {
   type ProviderTransportContext,
 } from './ProviderExecutionTransport';
 import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCommand';
-import { CliFaultError, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
+import { CliFaultError, isCliFault, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
@@ -24,6 +24,7 @@ import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
+import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { CodexTurnOutcome } from './codexTurnOutcome';
@@ -42,6 +43,7 @@ import paths from '@pkg/utils/paths';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 
 const log = Logging.background;
+const failureDiagnostics = new CodexFailureDiagnostics(line => log.warn(line));
 const perf = Logging.perf;
 
 /** stderr prefix carrying the in-VM PID of the codex process (see buildSpawnArgs). */
@@ -269,7 +271,7 @@ export class CodexService extends BaseLanguageModel {
       stdio:    'ignore',
       detached: true,
     });
-    janitor.on('error', error => log.warn(`[CodexService] Codex temp cleanup failed: ${ error.message }`));
+    janitor.on('error', () => log.warn('[CodexService] Codex temp cleanup failed.'));
     janitor.unref();
   }
 
@@ -306,10 +308,11 @@ export class CodexService extends BaseLanguageModel {
 
   /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    return runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), {}, options), {
+    const runOptions = { ...options, diagnosticRunId: crypto.randomUUID() };
+    return runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), {}, runOptions), {
       signal:   options.signal,
       canRetry: () => true,
-      onRetry:  (_error, attempt) => log.warn(`[CodexService] retrying failed CLI process (attempt ${ attempt })`),
+      onRetry:  (error, attempt) => failureDiagnostics.retry(error, attempt, options.conversationId ?? '__default__', runOptions.diagnosticRunId),
     });
   }
 
@@ -341,6 +344,7 @@ export class CodexService extends BaseLanguageModel {
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
+    const runOptions = { ...options, diagnosticRunId: crypto.randomUUID() };
 
     try {
       let toolStarted = false;
@@ -360,10 +364,10 @@ export class CodexService extends BaseLanguageModel {
         streamedText += token;
         callbacks.onToken?.(token);
       };
-      const result = await runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, options), {
+      const result = await runWithCliFaultRecovery('Codex', attempt => this.runCodex(attempt === 1 ? messages : recoveryMessages(messages), guardedCallbacks, runOptions), {
         signal:   options.signal,
         canRetry: () => !toolStarted,
-        onRetry:  (_error, attempt) => log.warn(`[CodexService] retrying failed CLI process (attempt ${ attempt })`),
+        onRetry:  (error, attempt) => failureDiagnostics.retry(error, attempt, options.conversationId ?? '__default__', runOptions.diagnosticRunId),
       });
       if (streamedText) result.text = streamedText;
       const response: NormalizedResponse = {
@@ -381,7 +385,7 @@ export class CodexService extends BaseLanguageModel {
 
       return response;
     } catch (err) {
-      console.warn('[CodexService] chatStream failed:', err);
+      failureDiagnostics.failure({ error: err, fault: isCliFault(err) ? err.kind : 'process_exit', conversationId: options.conversationId ?? '__default__', runId: runOptions.diagnosticRunId });
       throw err;
     }
   }
@@ -408,8 +412,8 @@ export class CodexService extends BaseLanguageModel {
         return ref.path;
       }
       throw new Error('Attachment transport context is required');
-    } catch (err) {
-      log.error('[CodexService] Failed to save image attachment:', err);
+    } catch {
+      log.error('[CodexService] Failed to save image attachment.');
       return null;
     }
   }
@@ -632,7 +636,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
   private async runCodex(
     messages: ChatMessage[],
     callbacks: Partial<StreamCallbacks>,
-    options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
+    options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState; diagnosticRunId?: string },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
     TurnHopTiming.mark(options.state, 'onActivity.Preparing your turn');
@@ -642,6 +646,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     let lastSetupMark = runPhaseStart;
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
+    const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
     // Each container owns one provider bridge, so pod id scopes bridge
     // activity to this container without letting unrelated agents keep us alive.
     const providerBridgePodId = currentAgentContainerRuntime()?.podId;
@@ -1132,7 +1137,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
               if (outcome.recordErrorEvent(item.message) === 'notice') {
-                log.info(`[CodexService] Codex notice (non-fatal): ${ String(item.message).slice(0, 200) }`);
+                log.info('[CodexService] Codex emitted a non-fatal notice.');
               } else if (typeof item.message === 'string') {
                 errorMessage = item.message;
               }
@@ -1155,7 +1160,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           if (parsed.type === 'error') {
             if (outcome.recordErrorEvent(parsed.message) === 'notice') {
-              log.info(`[CodexService] Codex notice (non-fatal): ${ String(parsed.message).slice(0, 200) }`);
+              log.info('[CodexService] Codex emitted a non-fatal notice.');
             } else if (typeof parsed.message === 'string' && parsed.message) {
               errorMessage = parsed.message;
             }
@@ -1203,7 +1208,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           break;
         case 'error':
           if (outcome.recordErrorEvent(msg.message) === 'notice') {
-            log.info(`[CodexService] Codex notice (non-fatal): ${ String(msg.message).slice(0, 200) }`);
+            log.info('[CodexService] Codex emitted a non-fatal notice.');
           } else if (typeof msg.message === 'string' && msg.message) {
             errorMessage = msg.message;
           }
@@ -1241,10 +1246,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
         }
         stderrBuffer += text;
-        const trimmed = text.trim();
-        if (trimmed) {
-          console.log(`[CodexService][stderr] ${ trimmed.slice(0, 200) }`);
-        }
       });
 
       proc.on('error', (err) => {
@@ -1254,13 +1255,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         closeSteering(true);
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
+        failureDiagnostics.failure({ error: err, fault: 'spawn', conversationId: convId, runId: diagnosticRunId });
         if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
         const retrySafe = activeToolItems.size === 0 && !unresolvedTool;
         const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
         reject(new CliFaultError('spawn', `Codex process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
       });
 
-      proc.on('close', async(code) => {
+      proc.on('close', async(code, signal) => {
         logRunPhase();
         if (settled) return;
         if (stdoutBuffer.trim()) {
@@ -1326,7 +1328,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // falling through to the generic no-output message.
         if (stalled) {
           const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
-          reject(new CliFaultError(
+          const stallError = new CliFaultError(
             'stall',
             unresolvedTool
               ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
@@ -1334,7 +1336,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             undefined,
             !unresolvedTool,
             unresolvedTool,
-          ));
+          );
+          failureDiagnostics.failure({ error: stallError, fault: 'stall', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
+          reject(stallError);
           return;
         }
 
@@ -1343,6 +1347,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // session must survive so the conversation resumes once codex is
         // re-provisioned).
         if (code === 127) {
+          failureDiagnostics.failure({ error: new Error('Codex spawn failed because CLI is not installed'), fault: 'process_exit', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           import('./providerRecovery').then(({ InfrastructureFailure }) => reject(new InfrastructureFailure('codex CLI is not installed in the VM yet. Restart Sulla Desktop to re-provision, or run: npm install --prefix /mnt/data/npm-global -g @openai/codex')));
           return;
         }
@@ -1357,7 +1362,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           (outcome.fatal || code !== 0) &&
           /(?:failed|unable) to (?:load|resume|find).*(?:thread|rollout|conversation)|(?:thread|rollout|conversation).*(?:not found|does not exist|invalid|expired)|recorded with model .* resuming with/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
-          log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
+          const typedFailure = legacyProviderFailure('codex', errorMessage || stderrBuffer.trim().slice(-200) || 'Codex resume failed', { exitCode: code });
+          if (signal) Object.assign(typedFailure, { signal });
+          failureDiagnostics.retry(new CliFaultError('process_exit', 'Codex resume failed', typedFailure), 2, convId, diagnosticRunId);
           this.deleteSession(convId).then(() => this.runCodex(messages, callbacks, options, true)).then(
             r => resolve(r),
             reject,
@@ -1371,8 +1378,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
         if (outcome.fatal) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
-          log.warn(`[CodexService] runCodex errored: ${ msg.slice(0, 200) }`);
           const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
+          if (signal) Object.assign(typedFailure, { signal });
+          failureDiagnostics.failure({ error: typedFailure, fault: 'process_exit', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           reject(isPermanentCliFailure(typedFailure) && !(activeToolItems.size > 0 || unresolvedTool)
             ? typedFailure
             : new CliFaultError('process_exit', `Codex: ${ msg }`, typedFailure, !(activeToolItems.size > 0 || unresolvedTool), Boolean(activeToolItems.size > 0 || unresolvedTool)));
@@ -1382,6 +1390,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (code !== 0) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
           const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
+          if (signal) Object.assign(typedFailure, { signal });
+          failureDiagnostics.failure({ error: typedFailure, fault: 'process_exit', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
           reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
@@ -1392,14 +1402,17 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
         if (!sawTerminalResult) {
           const retrySafe = activeToolItems.size === 0 && !unresolvedTool;
-          reject(new CliFaultError('protocol', 'Codex exited before emitting a terminal completion event.', undefined, retrySafe, !retrySafe));
+          const protocolError = new CliFaultError('protocol', 'Codex exited before emitting a terminal completion event.', undefined, retrySafe, !retrySafe);
+          failureDiagnostics.failure({ error: protocolError, fault: 'protocol', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
+          reject(protocolError);
           return;
         }
 
         if (!textCollected.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
-          log.warn(`[CodexService] runCodex exited with no text (code=${ code }) stderr=${ stderrTail }`);
           const typedFailure = legacyProviderFailure('codex', stderrTail || 'Codex returned no output', { exitCode: code });
+          if (signal) Object.assign(typedFailure, { signal });
+          failureDiagnostics.failure({ error: typedFailure, fault: 'protocol', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
           reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
