@@ -7,14 +7,18 @@ describe('CaptureSessionLifecycle close barrier', () => {
     // risk: stream custody — teardown must not race a screen/camera acquisition still in flight.
     const lifecycle = new CaptureSessionLifecycle();
     let acquired!: () => void;
-    const acquire = lifecycle.protect(() => new Promise<void>(resolve => { acquired = resolve; }));
+    let acquisitionFinished = false;
+    const acquire = lifecycle.protect(() => new Promise<void>(resolve => {
+      acquired = () => { acquisitionFinished = true; resolve(); };
+    }));
     const acquisition = acquire();
-    const release = vi.fn(async() => {});
+    const release = vi.fn(async() => { expect(acquisitionFinished).toBe(true); });
     const closing = lifecycle.close(release);
 
     expect(lifecycle.hasPendingAcquisitions).toBe(true);
     acquired();
-    await Promise.all([acquisition, closing]);
+    await expect(acquisition).rejects.toThrow('Capture Studio is closing');
+    await closing;
     expect(release).toHaveBeenCalledTimes(1);
     expect(lifecycle.isClosing).toBe(true);
   });
