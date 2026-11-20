@@ -317,7 +317,7 @@ export class ModelDiscoveryService {
       const { sharedModelCatalog } = await import('./sharedModelCatalog');
       return (await sharedModelCatalog.listModels(providerId)).map(model => ({
         id: model.id, name: model.name, provider: providerId,
-        capabilities: model.capabilities, contextLength: model.contextWindow,
+        capabilities: model.capabilities?.task ? [model.capabilities.task] : undefined, contextLength: model.contextWindow,
       }));
     }
     // A key supplied by the Connect form is intentionally used for a direct

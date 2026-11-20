@@ -4,7 +4,6 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ModelCompatibilityService, ProviderClientStatus } from './ModelCompatibilityService';
-import { getWorkerImageCliVersion } from '@pkg/backend/providerCliUpdates';
 import { getCliStatus } from '../tools/models/shared';
 import { PROVIDER_FACTORIES } from './index';
 import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
@@ -439,7 +438,7 @@ export class ModelRouter {
       if (!provider?.connected && !provider?.connectionUnknown) throw new Error(`Provider ${ pinned.provider } is not connected for the selected account`);
       const advertised = provider?.models.find(model => model.id === pinned.model);
       if (!advertised) throw new Error(`Model ${ pinned.provider }/${ pinned.model } is unavailable in the validated catalog; saved pin retained`);
-      await new ModelCompatibilityService(provider => new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), getWorkerImageCliVersion, getCliStatus).get(provider)).assertClient(pinned.provider, advertised);
+      await new ModelCompatibilityService(provider => new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), async provider => (await import('@pkg/backend/providerCliUpdates')).getWorkerImageCliVersion(provider), getCliStatus).get(provider)).assertClient(pinned.provider, advertised);
       if (pinned.effort !== undefined) {
         const levels = live.get(pinned.provider)?.models.find(model => model.id === pinned.model)?.efforts;
         if (!levels?.some(level => level.id === pinned.effort)) {
@@ -467,7 +466,7 @@ export class ModelRouter {
       if (!provider?.connected && !provider?.connectionUnknown) continue;
       const advertised = provider?.models.find(model => model.id === item.model);
       if (!advertised) continue;
-      await new ModelCompatibilityService(provider => new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), getWorkerImageCliVersion, getCliStatus).get(provider)).assertClient(item.provider, advertised);
+      await new ModelCompatibilityService(provider => new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), async provider => (await import('@pkg/backend/providerCliUpdates')).getWorkerImageCliVersion(provider), getCliStatus).get(provider)).assertClient(item.provider, advertised);
       // A never-use pair is skipped whole: that model is never run at that effort.
       if (isPairBlocked(state.neverUse, item.provider, item.model, effectiveEffort(item, provider?.models ?? []))) continue;
       item = { provider: item.provider, model: item.model, ...(item.effort ? { effort: item.effort } : {}) };

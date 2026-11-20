@@ -8,20 +8,23 @@ import { SULLA_CLOUD_HOST } from '../../../../services/sulla-vault/src/sullaClou
 
 export interface SharedCatalogModel {
   id: string; name: string; contextWindow?: number;
-  aliases?: string[]; capabilities?: string[]; supportedReasoningEfforts?: string[];
+  aliases?: string[];
+  capabilities?: { task?: string; requestFormats?: string[]; inputModalities?: string[]; functionCalling?: boolean };
+  supportedReasoningEfforts?: string[]; maxContextWindow?: number; maxOutputTokens?: number;
+  provenance?: Record<string, string>;
   defaultReasoningEffort?: string; minimumClientVersion?: string;
-  selectionMode?: 'exact' | 'alias' | 'automatic'; source?: Record<string, unknown>; revision?: string;
+  selectionMode?: 'exact' | 'alias' | 'auto' | 'policy'; source?: Record<string, unknown>; revision?: string;
 }
 export const catalogProviderId = (id: string): string => (({ grok: 'xai', kimi: 'moonshot' } as Record<string, string>)[id] || id);
 export const executionProviderId = (id: string): string => (({ xai: 'grok', moonshot: 'kimi' } as Record<string, string>)[id] || id);
-export interface SharedCatalogProvider { id: string; name: string; tag?: string; models: SharedCatalogModel[] }
+export interface SharedCatalogProvider { id: string; name: string; tag?: string; models: SharedCatalogModel[]; transport?: 'api' | 'workers-ai' | 'codex-cli' | 'claude-code'; aliases?: string[] }
 interface SharedCatalog { schemaVersion: 1; providers: SharedCatalogProvider[] }
 const CACHE_SETTING = 'sharedModelCatalogCache';
 const TTL_MS = 5 * 60_000;
 const RETRY_BACKOFF_MS = 60_000;
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const providerIdPattern = /^[A-Za-z][A-Za-z0-9._-]{0,99}$/;
-const modelIdPattern = /^[@A-Za-z0-9][@A-Za-z0-9._:/-]{0,199}$/;
+const modelIdPattern = /^[@A-Za-z0-9][@A-Za-z0-9._:/\[\]-]{0,199}$/;
 
 export class SharedModelCatalogClient {
   private flight?: Promise<SharedCatalogProvider[]>;
@@ -114,10 +117,16 @@ export class SharedModelCatalogClient {
     catch { return null; }
   }
 
+  private providerAliases(raw: unknown): string[] {
+    if (!Array.isArray(raw) || raw.length > 100 || !raw.every(alias => typeof alias === 'string' && providerIdPattern.test(alias))) throw new Error('Invalid provider aliases');
+    return [...raw];
+  }
+
   private validate(raw: unknown): SharedCatalog {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid shared catalog');
     const value = raw as Record<string, unknown>;
     if (value.schemaVersion !== 1 || !Array.isArray(value.providers) || value.providers.length > 100) throw new Error('Invalid shared catalog');
+    if (value.revision !== undefined && (typeof value.revision !== 'string' || !/^[a-f0-9]{64}$/.test(value.revision))) throw new Error('Invalid catalog revision');
     const providers: SharedCatalogProvider[] = [];
     const seen = new Set<string>();
     for (const item of value.providers) {
@@ -132,7 +141,7 @@ export class SharedModelCatalogClient {
         if (typeof m.id !== 'string' || !modelIdPattern.test(m.id) || modelIds.has(m.id) || typeof m.name !== 'string' || !m.name.trim() || (m.contextWindow !== undefined && (!Number.isInteger(m.contextWindow) || Number(m.contextWindow) < 1))) throw new Error('Invalid shared catalog model');
         modelIds.add(m.id);
         const metadata: Partial<SharedCatalogModel> = {};
-        for (const key of ['aliases', 'capabilities', 'supportedReasoningEfforts'] as const) {
+        for (const key of ['aliases', 'supportedReasoningEfforts'] as const) {
           if (m[key] === undefined) continue;
           if (!Array.isArray(m[key]) || m[key].length > 100 || !m[key].every((v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 200)) throw new Error(`Invalid catalog ${ key }`);
           metadata[key] = [...m[key]];
@@ -142,23 +151,67 @@ export class SharedModelCatalogClient {
           if (typeof m[key] !== 'string' || !m[key].trim() || m[key].length > 200) throw new Error(`Invalid catalog ${ key }`);
           metadata[key] = m[key];
         }
+        if (m.capabilities !== undefined) {
+          if (!m.capabilities || typeof m.capabilities !== 'object' || Array.isArray(m.capabilities)) throw new Error('Invalid model capabilities');
+          const caps = m.capabilities as Record<string, unknown>;
+          metadata.capabilities = {};
+          if (caps.task !== undefined) {
+            if (typeof caps.task !== 'string' || caps.task.length > 200) throw new Error('Invalid capability task');
+            metadata.capabilities.task = caps.task;
+          }
+          for (const key of ['requestFormats', 'inputModalities'] as const) {
+            if (caps[key] === undefined) continue;
+            if (!Array.isArray(caps[key]) || !caps[key].every((v: unknown) => typeof v === 'string' && v.length <= 200)) throw new Error('Invalid capability format');
+            metadata.capabilities[key] = [...caps[key]];
+          }
+          if (caps.functionCalling !== undefined) {
+            if (typeof caps.functionCalling !== 'boolean') throw new Error('Invalid function-calling capability');
+            metadata.capabilities.functionCalling = caps.functionCalling;
+          }
+        }
+        if (m.provenance !== undefined) {
+          if (!m.provenance || typeof m.provenance !== 'object' || Array.isArray(m.provenance)) throw new Error('Invalid model provenance');
+          metadata.provenance = {};
+          for (const key of ['sourceId', 'upstreamModelId', 'upstreamProviderId', 'upstreamRecordId', 'status', 'reason', 'sourcePath']) {
+            const field = (m.provenance as Record<string, unknown>)[key];
+            if (field === undefined) continue;
+            if (typeof field !== 'string' || !field || field.length > 2048) throw new Error('Invalid provenance field');
+            metadata.provenance[key] = field;
+          }
+          if (!['verified', 'stale-unverified'].includes(metadata.provenance.status)) throw new Error('Invalid provenance status');
+        }
+        for (const key of ['maxContextWindow', 'maxOutputTokens'] as const) {
+          if (m[key] !== undefined) {
+            if (!Number.isSafeInteger(m[key]) || Number(m[key]) < 1) throw new Error('Invalid catalog context');
+            metadata[key] = Number(m[key]);
+          }
+        }
         if (metadata.defaultReasoningEffort && !metadata.supportedReasoningEfforts?.includes(metadata.defaultReasoningEffort)) throw new Error('Invalid catalog default effort');
         if (m.selectionMode !== undefined) {
-          if (!['exact', 'alias', 'automatic'].includes(String(m.selectionMode))) throw new Error('Invalid selection mode');
+          if (!['exact', 'alias', 'auto', 'policy'].includes(String(m.selectionMode))) throw new Error('Invalid selection mode');
           metadata.selectionMode = m.selectionMode as SharedCatalogModel['selectionMode'];
         }
-        if (m.source !== undefined) {
-          if (!m.source || typeof m.source !== 'object' || Array.isArray(m.source)) throw new Error('Invalid catalog source');
+        const sourceReceipt = metadata.provenance && Array.isArray(value.sources)
+          ? value.sources.find((source: unknown) => !!source && typeof source === 'object' && (source as Record<string, unknown>).id === metadata.provenance?.sourceId)
+          : m.source;
+        if (metadata.provenance && Array.isArray(value.sources) && !sourceReceipt) throw new Error('Missing catalog source receipt');
+        if (sourceReceipt !== undefined) {
+          if (!sourceReceipt || typeof sourceReceipt !== 'object' || Array.isArray(sourceReceipt)) throw new Error('Invalid catalog source');
           // Public source receipts only. Never copy arbitrary account fields.
           metadata.source = {};
-          for (const key of ['url', 'revision', 'release', 'fetchedAt', 'parserVersion', 'coverage', 'license', 'attribution']) {
-            const value = (m.source as Record<string, unknown>)[key];
+          for (const key of ['id', 'url', 'revision', 'sha256', 'release', 'fetchedAt', 'parserVersion', 'coverage', 'license', 'attribution']) {
+            const value = (sourceReceipt as Record<string, unknown>)[key];
             if (typeof value === 'string' && value.length <= 2000) metadata.source[key] = value;
           }
         }
+        if (typeof value.revision === 'string') metadata.revision = value.revision;
         return { id: m.id, name: m.name, ...(m.contextWindow ? { contextWindow: Number(m.contextWindow) } : {}), ...metadata };
       });
-      providers.push({ id: p.id, name: p.name, ...(typeof p.tag === 'string' ? { tag: p.tag } : {}), models });
+      if (p.transport !== undefined && !['api', 'workers-ai', 'codex-cli', 'claude-code'].includes(String(p.transport))) throw new Error('Invalid provider transport');
+      if (p.id === 'codex' && p.transport !== undefined && p.transport !== 'codex-cli') throw new Error('Codex transport mismatch');
+      if (p.id === 'claude-code' && p.transport !== undefined && p.transport !== 'claude-code') throw new Error('Claude transport mismatch');
+      const aliases = p.aliases === undefined ? undefined : this.providerAliases(p.aliases);
+      providers.push({ ...(aliases ? { aliases } : {}), id: p.id, name: p.name, ...(p.transport ? { transport: p.transport as SharedCatalogProvider['transport'] } : {}), ...(typeof p.tag === 'string' ? { tag: p.tag } : {}), models });
     }
     if (!providers.length) throw new Error('Empty shared catalog');
     return { schemaVersion: 1, providers };

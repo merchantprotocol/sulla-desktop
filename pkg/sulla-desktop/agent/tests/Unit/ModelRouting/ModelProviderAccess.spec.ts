@@ -39,10 +39,10 @@ vi.mock('@pkg/main/firstRun/pendingCredentials', () => ({ hasPendingCredential: 
 vi.mock('../../../languagemodels/sharedModelCatalog', () => ({ sharedModelCatalog: {
   getStatus: () => ({ authority: 'shared-model-catalog', state: 'fresh' }),
   listModels: async(provider: string) => provider === 'codex' ? [
-    { id: 'codex', name: 'Auto (CLI default)', selectionMode: 'automatic' },
+    { id: 'codex', name: 'Auto (CLI default)', selectionMode: 'auto' },
     { id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol', selectionMode: 'exact' },
   ] : provider === 'claude-code' ? [
-    { id: 'claude-code', name: 'Auto (Claude picks)', selectionMode: 'automatic' },
+    { id: 'claude-code', name: 'Auto (Claude picks)', selectionMode: 'auto' },
     { id: 'claude-opus-5-5', name: 'Opus 5.5', supportedReasoningEfforts: ['high'], selectionMode: 'exact' },
     { id: 'opus', name: 'Opus 5.5 (CLI alias)', supportedReasoningEfforts: ['high'], selectionMode: 'alias' },
   ] : [],

@@ -115,7 +115,7 @@ export function cliTierModelId(providerId: string, tier: ModelTier): string | un
  */
 export function cliPinnedModelId(providerId: string, model: string | null | undefined): string | undefined {
   const value = model?.trim();
-  if (!value || value === providerId) return undefined;
+  if (!value || value === providerId || (providerId === 'claude-code' && value === 'default')) return undefined;
   const alias = value.toLowerCase();
   if (isTierName(alias)) return cliTierModelId(providerId, alias);
 

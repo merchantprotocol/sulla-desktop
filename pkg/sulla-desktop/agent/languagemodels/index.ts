@@ -113,6 +113,7 @@ export class LLMRegistryImpl {
       const clients = new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), getWorkerImageCliVersion, getCliStatus);
       await new ModelCompatibilityService(provider => clients.get(provider)).assertClient(providerId, metadata);
       if (effort && !metadata.efforts?.some(level => level.id === effort)) throw new Error(`Unsupported effort ${ effort } for ${ providerId }/${ modelOverride }`);
+      if (metadata.selectionMode === 'automatic') modelOverride = undefined;
     }
     // Effort only applies to the CLI providers that take it, and only with an explicit model.
     const runEffort = modelOverride && (providerId === 'claude-code' || providerId === 'codex') ? effort || '' : '';

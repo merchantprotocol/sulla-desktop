@@ -70,9 +70,13 @@ export type ModelSelectionMode = import('@pkg/shared/providerAccess').ModelSelec
 export interface ProviderModelInfo {
   source?:        'shared-model-catalog' | 'private-endpoint';
   provenance?:    Record<string, unknown>;
+  sourceReceipt?: Record<string, unknown>;
+  maxContextWindow?: number;
+  maxOutputTokens?: number;
   catalog?:       { authority: 'shared-model-catalog'; state: 'fresh' | 'stale' | 'unavailable'; fetchedAt?: number };
   aliases?:       string[];
-  capabilities?:  string[];
+  capabilities?:  import('../languagemodels/sharedModelCatalog').SharedCatalogModel['capabilities'];
+  catalogRevision?: string;
   minimumClientVersion?: string;
   contextWindow?: number;
   id:             string;
@@ -331,18 +335,23 @@ class ModelProviderService {
       }
       const { sharedModelCatalog } = await import('../languagemodels/sharedModelCatalog');
       const models = await sharedModelCatalog.listModels(providerId);
-      return models.map(model => ({
+      return models.filter(model => !model.capabilities?.task || /text.*generation|text-to-text|chat|completion|conversational/i.test(model.capabilities.task)).map(model => ({
         catalog: sharedModelCatalog.getStatus(),
         ...this.modelInfo(providerId, { id: model.id, name: model.name }),
         source: 'shared-model-catalog' as const,
-        ...(model.source ? { provenance: model.source } : {}),
+        ...(model.provenance ? { provenance: model.provenance } : {}),
+        ...(model.source ? { sourceReceipt: model.source } : {}),
+        ...(model.provenance?.status === 'stale-unverified' ? { unverified: true } : {}),
+        ...(model.maxContextWindow ? { maxContextWindow: model.maxContextWindow } : {}),
+        ...(model.maxOutputTokens ? { maxOutputTokens: model.maxOutputTokens } : {}),
+        ...(model.revision ? { catalogRevision: model.revision } : {}),
         ...(model.aliases ? { aliases: model.aliases } : {}),
         ...(model.capabilities ? { capabilities: model.capabilities } : {}),
         ...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
         ...(model.minimumClientVersion ? { minimumClientVersion: model.minimumClientVersion } : {}),
         ...(model.supportedReasoningEfforts ? { efforts: model.supportedReasoningEfforts.map(id => ({ id })) } : {}),
         ...(model.defaultReasoningEffort ? { defaultEffort: model.defaultReasoningEffort } : {}),
-        ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
+        ...(model.selectionMode ? { selectionMode: model.selectionMode === 'auto' ? 'automatic' as const : model.selectionMode } : {}),
       }));
     }
     if (!integration) {

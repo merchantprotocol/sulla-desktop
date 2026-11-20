@@ -90,7 +90,7 @@ describe('shared model catalog', () => {
 
   it('preserves Cloud CLI metadata and explicit aliases without substituting missing providers', async() => {
     // risk: execution compatibility / exact model selection
-    const model = { id: 'official-model', name: 'Official', aliases: ['family'], capabilities: ['tools'], supportedReasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'low', minimumClientVersion: '1.2.3', selectionMode: 'exact', source: { revision: 'release-sha', url: 'https://example.org/official' } };
+    const model = { id: 'official-model', name: 'Official', aliases: ['family'], capabilities: { task: 'Text Generation', functionCalling: true }, supportedReasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'low', minimumClientVersion: '1.2.3', selectionMode: 'exact', source: { revision: 'release-sha', url: 'https://example.org/official' } };
     const providers = [{ id: 'codex', name: 'Codex', models: [model] }, { id: 'xai', name: 'xAI', models: [{ id: 'grok-test', name: 'Grok' }] }, { id: 'moonshot', name: 'Moonshot', models: [] }];
     let saved: unknown = null;
     const client = new SharedModelCatalogClient(vi.fn().mockResolvedValue(jsonResponse({ schemaVersion: 1, providers })) as any, () => 1, async() => saved, async(_key, value) => { saved = value; });
@@ -107,6 +107,22 @@ describe('shared model catalog', () => {
       () => 999999, async() => ({ authority: 'shared-model-catalog', schemaVersion: 1, fetchedAt: 1, providers: prior }), async() => { throw new Error('must not overwrite'); });
     expect(await client.listModels('codex')).toEqual(prior[0].models);
     await expect(client.refreshNow()).rejects.toThrow();
+  });
+
+  it('preserves canonical Cloud source receipts, transports, policy modes and per-model capabilities', async() => {
+    // risk: schema drift / cross-transport catalog rejection
+    const source = { id: 'official-release', url: 'https://example.org/source', revision: 'release-sha', sha256: 'b'.repeat(64), fetchedAt: '2026-11-20T00:00:00Z', parserVersion: '1', license: 'Apache-2.0', attribution: 'Official source', coverage: 'General support, not entitlement' };
+    const provenance = { sourceId: source.id, upstreamModelId: 'sonnet[1m]', status: 'verified' };
+    let saved: unknown = null;
+    const client = new SharedModelCatalogClient(vi.fn().mockResolvedValue(jsonResponse({ schemaVersion: 1, revision: 'a'.repeat(64), sources: [source], providers: [{ id: 'claude-code', name: 'Claude Code', transport: 'claude-code', aliases: [], models: [
+      { id: 'sonnet[1m]', name: 'Sonnet 1M', capabilities: { task: 'Text Generation', requestFormats: ['messages'], functionCalling: true }, supportedReasoningEfforts: [], aliases: [], selectionMode: 'alias', provenance },
+      { id: 'default', name: 'Account default', capabilities: {}, aliases: [], supportedReasoningEfforts: [], selectionMode: 'auto', provenance: { ...provenance, upstreamModelId: 'default' } },
+      { id: 'opusplan', name: 'Plan policy', capabilities: {}, aliases: [], supportedReasoningEfforts: [], selectionMode: 'policy', provenance: { ...provenance, upstreamModelId: 'opusplan' } },
+    ] }] })) as any, () => 1, async() => saved, async(_key, value) => { saved = value; });
+    const models = await client.listModels('claude-code');
+    expect(models[0]).toMatchObject({ id: 'sonnet[1m]', provenance, source, revision: 'a'.repeat(64), capabilities: { functionCalling: true } });
+    expect(models.map(model => model.selectionMode)).toEqual(['alias', 'auto', 'policy']);
+    expect(await client.listModels('claude-code')).toEqual(models); // persisted Cloud metadata survives revalidation
   });
 
 });
