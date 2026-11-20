@@ -63,12 +63,23 @@ function createHarness(preferences:Record<string, unknown>, responses:Record<str
 
   runInNewContext(script, { require: () => ({ ipcRenderer }), document, window, setTimeout, clearTimeout, setInterval, clearInterval, URL, encodeURI, Math, Number, String, RegExp });
 
-  return { elements, ipcHandlers, ipcInvocations, ipcMessages };
+  return { elements, ipcHandlers, ipcInvocations, ipcMessages, documentListeners };
 }
 
 afterEach(() => vi.useRealTimers());
 
 describe('after-capture tray actions', () => {
+  // risk: data exposure — a timer or remembered preference must never create a public link or copy a path without a user action.
+  it.each(['share', 'save', 'ask'])('does not perform the %s default action when the popup initializes or time passes', async(defaultAction) => {
+    vi.useFakeTimers();
+    const harness = createHarness({ defaultAction }, {});
+    await harness.ipcHandlers.get('files-after-capture:show')!({}, capture);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(harness.ipcInvocations.filter(([name]) => name !== 'tray-panel:files-preferences-get')).toEqual([]);
+  });
+
   // risk: capture sharing — Share online must invoke public Files sharing without a Cloud-copy/residency toggle and close after the active selection flash.
   it('shares online, copies through the main service, flashes the selected action, then closes', async() => {
     vi.useFakeTimers();
@@ -96,5 +107,16 @@ describe('after-capture tray actions', () => {
     expect(harness.elements.get('save')!.classList.contains('selected')).toBe(true);
     await vi.advanceTimersByTimeAsync(450);
     expect(harness.ipcMessages).toContainEqual(['files-after-capture:close']);
+  });
+
+  // risk: data exposure — Enter is an explicit user action and must honor the selected Save to Files action, not publish online.
+  it('runs the selected action on explicit Enter', async() => {
+    const harness = createHarness({ defaultAction: 'save' }, { 'tray-panel:copy-capture-path': '/Files/Screenshots/shot.png' });
+    await harness.ipcHandlers.get('files-after-capture:show')!({}, capture);
+
+    await harness.documentListeners.get('keydown')!({ key: 'Enter' });
+
+    expect(harness.ipcInvocations).toContainEqual(['tray-panel:copy-capture-path', capture]);
+    expect(harness.ipcInvocations.some(([name]) => name === 'tray-panel:share-capture')).toBe(false);
   });
 });
