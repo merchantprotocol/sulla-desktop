@@ -7,6 +7,7 @@ import type { cloudRequest } from './cloud/cloudFetch';
 export type ConversationServerNotificationLevel = 'all' | 'mentions' | 'nothing';
 type CloudRequester = typeof cloudRequest;
 export type ConversationServerSummary = ConversationServerDto;
+export type CreateConversationServerInput = { name: string; visibility: 'public' } | { name: string; visibility: 'organization'; orgId: string };
 export type ConversationChannelSummary = ConversationChannelDto;
 type ConversationServerDto = { id: string; name: string; visibility: 'public' | 'organization'; orgId?: string; ownerUserId: string; notificationDefault: ConversationServerNotificationLevel };
 type ConversationChannelDto = { id: string; serverId: string; name: string; kind: 'text' | 'a2a' | 'announcement'; private: boolean; memberUserIds?: string[] };
@@ -21,6 +22,16 @@ export class ConversationServersCloudClient {
     const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
     const body = await this.request('GET', `/conversation-servers${query}`);
     return Array.isArray(body.servers) ? body.servers as ConversationServerDto[] : [];
+  }
+
+  create(input: CreateConversationServerInput): Promise<Record<string, unknown>> {
+    const name = input.name.trim();
+    if (!name || name.length > 100) throw new Error('Server name must be between 1 and 100 characters');
+    if (input.visibility === 'organization' && !input.orgId.trim()) throw new Error('Select an organization');
+    const body = input.visibility === 'organization'
+      ? { name, visibility: input.visibility, orgId: input.orgId }
+      : { name, visibility: input.visibility };
+    return this.request('POST', '/conversation-servers', body);
   }
 
   async channels(serverId: string): Promise<ConversationChannelDto[]> {

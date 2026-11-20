@@ -50,7 +50,63 @@ describe('ConversationServersPanel composer events', () => {
     expect(wrapper.find('.cs-group').text()).toBe('Public');
     expect(wrapper.findAll('.cs-server-icon.cs-public').map(button => button.attributes('aria-label'))).toEqual(['Public server']);
     expect(wrapper.findAll('.cs-server-icon.cs-org').map(button => button.attributes('aria-label'))).toEqual(['Organization server']);
-    expect(wrapper.find('[aria-label="Create server"]').exists()).toBe(false);
+    expect(wrapper.find('.cs-server-add[aria-label="Create server"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('creates a public server without an orgId', async () => {
+    // risk: tenant isolation; public creation must not inherit or send an organization scope
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    invoke.mockImplementation((channel: string, arg?: unknown) => channel === 'conversation-servers:create'
+      ? Promise.resolve({ id: 'created-public', name: 'Open community', visibility: 'public', ownerUserId: 'user' })
+      : Promise.resolve(invokeResult(channel, arg)));
+    await wrapper.get('.cs-server-add').trigger('click');
+    expect(wrapper.get('form[aria-label="Create server"]').exists()).toBe(true);
+    await wrapper.get('input').setValue('  Open community  ');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).toHaveBeenCalledWith('conversation-servers:create', { name: 'Open community', visibility: 'public' });
+    wrapper.unmount();
+  });
+
+  it('creates an organization server using only a membership-backed organization option', async () => {
+    // risk: tenant isolation; organization creation must use an authorized membership and its exact orgId
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    invoke.mockImplementation((channel: string, arg?: unknown) => channel === 'org-conversations:organizations'
+      ? Promise.resolve([{ orgId: 'member-org', name: 'Member org', memberCount: 2 }])
+      : channel === 'conversation-servers:create'
+        ? Promise.resolve({ id: 'created-org', name: 'Team hub', visibility: 'organization', orgId: 'member-org', ownerUserId: 'user' })
+        : Promise.resolve(invokeResult(channel, arg)));
+    // Refresh membership-backed org options before opening the dialog.
+    await wrapper.setProps({ orgId: 'updated-org' });
+    await flushPromises();
+    await wrapper.get('.cs-server-add').trigger('click');
+    await wrapper.get('input').setValue('Team hub');
+    await wrapper.get('select').setValue('organization');
+    const orgSelect = wrapper.findAll('select')[1];
+    expect(orgSelect.findAll('option').map(option => option.text())).toEqual(['Member org']);
+    await orgSelect.setValue('member-org');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).toHaveBeenCalledWith('conversation-servers:create', {
+      name: 'Team hub', visibility: 'organization', orgId: 'member-org',
+    });
+    wrapper.unmount();
+  });
+
+  it('does not invoke IPC for a blank name or a missing organization selection', async () => {
+    // risk: invalid tenant-scoped writes; blank names and absent membership selections must be rejected
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    await wrapper.get('.cs-server-add').trigger('click');
+    await wrapper.get('input').setValue('   ');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).not.toHaveBeenCalledWith('conversation-servers:create', expect.anything());
+
+    await wrapper.get('input').setValue('No organization');
+    await wrapper.get('select').setValue('organization');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).not.toHaveBeenCalledWith('conversation-servers:create', expect.anything());
     wrapper.unmount();
   });
 

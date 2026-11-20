@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { MessageEnvelope, ParticipantAddress } from '@sulla/domain';
-import { ConversationServersCloudClient } from './ConversationServersCloudClient';
+import { ConversationServersCloudClient, type CreateConversationServerInput } from './ConversationServersCloudClient';
 import { OrgMembershipsCloudClient } from './OrgMembershipsCloudClient';
 import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 import { TeamInvitationsCloudClient } from './TeamInvitationsCloudClient';
@@ -25,7 +25,7 @@ export class OrgConversationsIpcController implements IpcController {
     private readonly backend: () => OrgConversationsBackend,
     private readonly memberships: Pick<OrgMembershipsCloudClient, 'list'> = new OrgMembershipsCloudClient(),
     private readonly invitations: Pick<TeamInvitationsCloudClient, 'listPending'> = new TeamInvitationsCloudClient(),
-    private readonly servers: Pick<ConversationServersCloudClient, 'list' | 'channels' | 'members' | 'channelPreference' | 'setServerDefault' | 'setChannelPreference' | 'setChannelOverride' | 'messages' | 'sendMessage' | 'markRead' | 'unread'> = new ConversationServersCloudClient(),
+    private readonly servers: Pick<ConversationServersCloudClient, 'list' | 'create' | 'channels' | 'members' | 'channelPreference' | 'setServerDefault' | 'setChannelPreference' | 'setChannelOverride' | 'messages' | 'sendMessage' | 'markRead' | 'unread'> = new ConversationServersCloudClient(),
   ) {}
 
   /** Org roles and invitations are keyed by the org id, which the backend resolves for the requested org. */
@@ -36,6 +36,7 @@ export class OrgConversationsIpcController implements IpcController {
 
   register(): void {
     this.ipc.handle('conversation-servers:list', (_event, orgId?: string) => this.servers.list(orgId));
+    this.ipc.handle('conversation-servers:create', (_event, input: CreateConversationServerInput) => this.servers.create(input));
     this.ipc.handle('conversation-servers:channels', (_event, serverId: string) => this.servers.channels(serverId));
     this.ipc.handle('conversation-servers:members', (_event, serverId: string) => this.servers.members(serverId));
     this.ipc.handle('conversation-servers:channel-preference', (_event, input: { serverId: string; channelId: string }) => this.servers.channelPreference(input.serverId, input.channelId));
