@@ -20,6 +20,7 @@
  */
 
 import { ref, type Ref } from 'vue';
+import { PcmPauseTimeline } from '../services/PcmPauseTimeline';
 
 const fs = require('fs');
 const net = require('net');
@@ -92,6 +93,9 @@ export function useMicRecording() {
   let totalDataBytes = 0;
   let pending = Buffer.alloc(0);
   let currentMode: MicQualityMode = 'raw';
+  let paused = false;
+  let sampleRate = 48000;
+  const pauseTimeline = new PcmPauseTimeline();
 
   /**
    * Start recording mic audio to a file.
@@ -106,6 +110,7 @@ export function useMicRecording() {
     if (active.value) await stop();
 
     currentMode = mode;
+    paused = false;
     filePath = outputPath;
     totalDataBytes = 0;
     bytesWritten.value = 0;
@@ -135,7 +140,7 @@ export function useMicRecording() {
       if (!isCompressed) {
         // Get the actual sample rate from the controller
         const state = await ipcRenderer.invoke('audio-driver:get-state');
-        const sampleRate = state?.micSampleRate || 48000;
+        sampleRate = state?.micSampleRate || 48000;
         writeWavHeader(writeStream, sampleRate);
       }
     } catch (err: any) {
@@ -165,7 +170,7 @@ export function useMicRecording() {
           const chunk = pending.subarray(4, 4 + frameLen);
           pending = pending.subarray(4 + frameLen);
 
-          if (writeStream && !writeStream.destroyed) {
+          if (writeStream && !writeStream.destroyed && !paused) {
             writeStream.write(chunk);
             totalDataBytes += chunk.length;
             bytesWritten.value = totalDataBytes;
@@ -184,7 +189,7 @@ export function useMicRecording() {
           const chunk = pending.subarray(4, 4 + frameLen);
           pending = pending.subarray(4 + frameLen);
 
-          if (writeStream && !writeStream.destroyed) {
+          if (writeStream && !writeStream.destroyed && !paused) {
             writeStream.write(chunk);
             totalDataBytes += chunk.length;
             bytesWritten.value = totalDataBytes;
@@ -226,7 +231,26 @@ export function useMicRecording() {
    * Stop recording and finalize the output file.
    * Returns the file path.
    */
+  function setPaused(value: boolean): void {
+    if (paused === value || !active.value) return;
+    if (value) { paused = true; pauseTimeline.pause(); level.value = 0; return; }
+    if (currentMode !== 'streaming' && currentMode !== 'streaming-voice' && writeStream && !writeStream.destroyed) {
+      let silenceBytes = pauseTimeline.resume(sampleRate, BYTES_PER_SAMPLE);
+      while (silenceBytes > 0) {
+        const chunkBytes = Math.min(silenceBytes, 16 * 1024 * 1024);
+        writeStream.write(Buffer.alloc(chunkBytes));
+        totalDataBytes += chunkBytes;
+        silenceBytes -= chunkBytes;
+      }
+      bytesWritten.value = totalDataBytes;
+    }
+    paused = false;
+  }
+
   async function stop(): Promise<string> {
+    if (paused) setPaused(false);
+    paused = false;
+    pauseTimeline.reset();
     active.value = false;
     level.value = 0;
 
@@ -281,5 +305,6 @@ export function useMicRecording() {
     bytesWritten,
     start,
     stop,
+    setPaused,
   };
 }

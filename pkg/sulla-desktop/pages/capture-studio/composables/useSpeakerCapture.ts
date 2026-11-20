@@ -20,6 +20,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
+import { PcmPauseTimeline } from '../services/PcmPauseTimeline';
 
 const fs = require('fs');
 const net = require('net');
@@ -118,6 +119,8 @@ export function useSpeakerCapture(
   let pending: Buffer = Buffer.alloc(0);
   let analyserContext: AudioContext | null = null;
   let analyserFrame: number | null = null;
+  let paused = false;
+  const pauseTimeline = new PcmPauseTimeline();
 
   function stopNativeMeter(): void {
     if (analyserFrame !== null) cancelAnimationFrame(analyserFrame);
@@ -269,7 +272,7 @@ export function useSpeakerCapture(
         pending = pending.subarray(4 + frameLen);
 
         // Write raw PCM to WAV file
-        if (writeStream && !writeStream.destroyed) {
+        if (writeStream && !writeStream.destroyed && !paused) {
           writeStream.write(chunk);
           totalDataBytes += chunk.length;
           bytesWritten.value = totalDataBytes;
@@ -307,10 +310,34 @@ export function useSpeakerCapture(
     return true;
   }
 
+  function setPaused(value: boolean): void {
+    if (paused === value || !active.value) return;
+    if (value) {
+      paused = true; pauseTimeline.pause(); level.value = 0;
+      if (mode.value === 'native') nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = false; });
+      return;
+    }
+    if (mode.value === 'native') nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = true; });
+    if (writeStream && !writeStream.destroyed) {
+      let silenceBytes = pauseTimeline.resume(SAMPLE_RATE, BYTES_PER_SAMPLE);
+      while (silenceBytes > 0) {
+        const chunkBytes = Math.min(silenceBytes, 16 * 1024 * 1024);
+        writeStream.write(Buffer.alloc(chunkBytes));
+        totalDataBytes += chunkBytes;
+        silenceBytes -= chunkBytes;
+      }
+      bytesWritten.value = totalDataBytes;
+    }
+    paused = false;
+  }
+
   /**
    * Stop capturing and finalize the WAV file.
    */
   async function stop(): Promise<string> {
+    if (paused) setPaused(false);
+    paused = false;
+    pauseTimeline.reset();
     if (nativeStream.value) releaseNative();
     level.value = 0;
 
@@ -374,5 +401,6 @@ export function useSpeakerCapture(
     releaseNative,
     start,
     stop,
+    setPaused,
   };
 }

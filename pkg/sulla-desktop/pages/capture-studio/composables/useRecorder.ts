@@ -136,6 +136,7 @@ export function useRecorder(
   let entries: StreamEntry[] = [];
   let stopping: Promise<string> | undefined;
   let externalEntries: ExternalStreamEntry[] = [];
+  const sourceFinalizations = new Map<string, Promise<boolean>>();
   let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let sessionStartTime = 0;
@@ -298,25 +299,32 @@ export function useRecorder(
   }
 
   /** Finalize one video source and keep its completed file in the session manifest. */
-  async function finalizeSource(id: string): Promise<boolean> {
+  function finalizeSource(id: string): Promise<boolean> {
+    const inFlight = sourceFinalizations.get(id);
+    if (inFlight) return inFlight;
     const entry = entries.find(candidate => candidate.id === id && !candidate.finalized);
-    if (!entry) return false;
-    if (entry.recorder.state !== 'inactive') {
+    if (!entry) return Promise.resolve(false);
+    const operation = (async() => {
+      if (entry.recorder.state !== 'inactive') {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (error?: unknown) => { if (settled) return; settled = true; error ? reject(error) : resolve(); };
+          entry.recorder.onstop = () => { void entry.chunkQueue.flush().then(() => finish(), finish); };
+          try { entry.recorder.stop(); } catch (error) { finish(error); }
+        });
+      } else await entry.chunkQueue.flush();
+      await entry.chunkQueue.flush();
       await new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const finish = (error?: unknown) => { if (settled) return; settled = true; error ? reject(error) : resolve(); };
-        entry.recorder.onstop = () => { void entry.chunkQueue.flush().then(() => finish(), finish); };
-        try { entry.recorder.stop(); } catch (error) { finish(error); }
+        const ws = entry.writeStream;
+        if (!ws || ws.closed || ws.destroyed) return ws?.errored ? reject(ws.errored) : resolve();
+        ws.once('error', reject); ws.end(resolve);
       });
-    } else await entry.chunkQueue.flush();
-    await entry.chunkQueue.flush();
-    await new Promise<void>((resolve, reject) => {
-      const ws = entry.writeStream;
-      if (!ws || ws.closed || ws.destroyed) return ws?.errored ? reject(ws.errored) : resolve();
-      ws.once('error', reject); ws.end(resolve);
-    });
-    entry.finalized = true;
-    return true;
+      entry.finalized = true;
+      return true;
+    })();
+    sourceFinalizations.set(id, operation);
+    void operation.finally(() => { if (sourceFinalizations.get(id) === operation) sourceFinalizations.delete(id); }).catch(() => undefined);
+    return operation;
   }
 
   /**

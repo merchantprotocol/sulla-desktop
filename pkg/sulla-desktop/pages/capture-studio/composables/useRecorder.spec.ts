@@ -53,6 +53,7 @@ class MemoryRecordingFileSystem {
 class FinalChunkRecorder {
   static isTypeSupported(): boolean { return true; }
   static finalData: { size: number; arrayBuffer: () => Promise<ArrayBuffer> } | undefined;
+  static stopCount = 0;
   state: 'inactive' | 'recording' = 'inactive';
   ondataavailable: ((event: BlobEvent) => void) | null = null;
   onstop: (() => void) | null = null;
@@ -60,6 +61,7 @@ class FinalChunkRecorder {
   constructor(_stream: MediaStream, _options: MediaRecorderOptions) {}
   start(): void { this.state = 'recording'; }
   stop(): void {
+    FinalChunkRecorder.stopCount++;
     this.state = 'inactive';
     if (FinalChunkRecorder.finalData) this.ondataavailable?.({ data: FinalChunkRecorder.finalData } as BlobEvent);
     this.onstop?.();
@@ -73,6 +75,7 @@ function recordingStream(): MediaStream {
 afterEach(() => {
   vi.unstubAllGlobals();
   FinalChunkRecorder.finalData = undefined;
+  FinalChunkRecorder.stopCount = 0;
 });
 
 describe('recordingFilename', () => {
@@ -123,6 +126,20 @@ describe('useRecorder finalization', () => {
     const manifest = JSON.parse(fileSystem.files.get(manifestPath) as string);
     expect(manifest.streams).toEqual([expect.objectContaining({ id: 'screen', bytes: 3 })]);
     expect(recorder.isRecording.value).toBe(false);
+  });
+
+  it('shares concurrent per-source finalization so removing a source cannot stop its recorder twice', async() => {
+    // risk: recording integrity — concurrent close requests must not truncate or race the same source file.
+    vi.stubGlobal('MediaRecorder', FinalChunkRecorder);
+    FinalChunkRecorder.finalData = { size: 2, arrayBuffer: async() => new Uint8Array([7, 8]).buffer };
+    const recorder = useRecorder({ manageUnmount: false, fileSystem: new MemoryRecordingFileSystem(), capturesDir: '/memory/captures' });
+    recorder.startSession([{ id: 'screen', type: 'screen', stream: recordingStream() }]);
+
+    const first = recorder.finalizeSource('screen');
+    const second = recorder.finalizeSource('screen');
+    expect(second).toBe(first);
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(FinalChunkRecorder.stopCount).toBe(1);
   });
 
   it('keeps the failed final chunk and retries it before a later save completes', async() => {

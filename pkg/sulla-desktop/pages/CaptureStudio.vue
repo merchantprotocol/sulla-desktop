@@ -57,10 +57,13 @@
         :pip-source="pipSource"
         :audio-only-sources="audioOnlySources"
         :audio-only-source-id="audioOnlySourceId"
+        :paused-sources="pausedSources"
         :channels="splitChannels"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
         @show-audio-menu="showAudioContextMenu"
+        @toggle-pause="toggleSourcePause"
+        @remove-source="removeSource"
       />
 
       <TeleprompterLayout
@@ -77,6 +80,9 @@
         :camera-shape="cameraShape"
         :current-layout="currentLayout"
         :pip-source="pipSource"
+        :paused-sources="pausedSources"
+        @toggle-pause="toggleSourcePause"
+        @remove-source="removeSource"
         @update:camera-shape="cameraShape = $event"
         @swap="swapAssignments"
         @show-screen-menu="showScreenContextMenu"
@@ -526,6 +532,7 @@ const playbackTileController = new PlaybackTileController(
 );
 let sourceCounter = 0;
 const pausedSources = reactive<Record<string, boolean>>({});
+const sourceRemovals = new Map<string, Promise<void>>();
 
 function toggleSourcePause(id: string): void {
   const source = sources.find(candidate => candidate.id === id);
@@ -537,8 +544,10 @@ function toggleSourcePause(id: string): void {
   } else if (source.type === 'camera') {
     const stream = mediaSources.cameraStreams[id];
     stream?.getTracks().forEach(track => { track.enabled = !paused; });
+  } else if (source.type === 'mic') {
+    micRecording.setPaused(paused);
   } else if (source.type === 'system') {
-    speakerCapture.nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = !paused; });
+    speakerCapture.setPaused(paused);
   }
   pausedSources[id] = paused;
 }
@@ -1319,22 +1328,37 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
   addPopupOpen.value = false;
 }
 
-async function removeSource(id: string) {
-  // Stop mic via controller if this was a mic source
+function removeSource(id: string): Promise<void> {
+  const inFlight = sourceRemovals.get(id);
+  if (inFlight) return inFlight;
+  const operation = performSourceRemoval(id);
+  sourceRemovals.set(id, operation);
+  void operation.finally(() => { if (sourceRemovals.get(id) === operation) sourceRemovals.delete(id); }).catch(() => {});
+  return operation;
+}
+
+async function performSourceRemoval(id: string): Promise<void> {
+  // Finalize and release only this source's recording stream; the driver may have other consumers.
   const src = sources.find(s => s.id === id);
-  if (recording.value && (src?.type === 'camera' || src?.type === 'screen')) {
-    try { await recorder.finalizeSource(id); }
+  if (recording.value && src?.type === 'mic') {
+    try { await micRecording.stop(); }
+    catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
+  } else if (recording.value && src?.type === 'system' && speakerCapture.mode.value === 'blackhole') {
+    try { await speakerCapture.stop(); }
+    catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
+  } else if (recording.value && (src?.type === 'camera' || src?.type === 'screen' || (src?.type === 'system' && speakerCapture.mode.value === 'native'))) {
+    try { await recorder.finalizeSource(src?.type === 'system' ? 'speaker' : id); }
     catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
   }
   if (src?.type === 'mic') {
-    audioDriver.stopMic().catch(() => {});
+    await micRecording.stop().catch(() => '');
   } else if (src?.type === 'system') {
-    disableSystemAudio().catch(() => {});
+    await speakerCapture.stop().catch(() => '');
   } else if (src?.type === 'screen') {
     mediaSources.releaseScreen(id);
     delete deviceIdMap[src.name];
   } else if (src?.type === 'camera') {
-    mediaSources.releaseCamera(id).catch(() => {});
+    await mediaSources.releaseCamera(id).catch(() => {});
     delete deviceIdMap[src.name];
   }
   const idx = sources.findIndex(s => s.id === id);
@@ -1457,6 +1481,16 @@ function buildQualityChildren(
   ];
 }
 
+function sourceActionItems(sourceId: string): CtxMenuItem[] {
+  const source = sources.find(candidate => candidate.id === sourceId);
+  if (!source) return [];
+  return [
+    { id: `pause-${sourceId}`, label: pausedSources[sourceId] ? 'Resume' : 'Pause', action: () => toggleSourcePause(sourceId) },
+    { id: `remove-${sourceId}`, label: 'Close Source', action: () => { void removeSource(sourceId); } },
+    { id: `divider-source-${sourceId}`, label: '', divider: true, action: () => {} },
+  ];
+}
+
 async function showScreenContextMenu(e: MouseEvent, sourceId = 'screen') {
   try {
     const targetSource = sources.find(source => source.id === sourceId && source.type === 'screen');
@@ -1499,6 +1533,7 @@ async function showScreenContextMenu(e: MouseEvent, sourceId = 'screen') {
     ];
 
     ctxMenu.items = [
+      ...sourceActionItems(sourceId),
       { id: 'sub-sources', label: 'Sources', children: sourceChildren, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
       { id: 'divider-tracking', label: '', divider: true, action: () => {} },
@@ -1561,6 +1596,7 @@ async function showCameraContextMenu(e: MouseEvent, sourceId = 'cam') {
     );
 
     ctxMenu.items = [
+      ...sourceActionItems(sourceId),
       { id: 'sub-sources', label: 'Sources', children: deviceChildren, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
     ];
@@ -1579,8 +1615,9 @@ async function showAudioContextMenu(e: MouseEvent, sourceId = 'mic') {
     if (!audioSource || (audioSource.type !== 'mic' && audioSource.type !== 'system')) return;
 
     if (audioSource.type === 'system') {
-      ctxMenu.items = [{
-        id: 'toggle-system-audio',
+      ctxMenu.items = [
+        ...sourceActionItems(sourceId),
+        { id: 'toggle-system-audio',
         label: audioSource.on ? 'Stop System Audio' : 'Start System Audio',
         action: () => toggleSrc(audioSource),
       }];
@@ -1635,6 +1672,7 @@ async function showAudioContextMenu(e: MouseEvent, sourceId = 'mic') {
       { id: 'divider-quality', label: '', divider: true, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
     ];
+    ctxMenu.items = [...sourceActionItems(sourceId), ...ctxMenu.items];
     ctxMenu.title = 'Audio';
     ctxMenu.x = e.clientX;
     ctxMenu.y = e.clientY;
