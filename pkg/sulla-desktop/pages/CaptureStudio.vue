@@ -56,10 +56,14 @@
         :primary-source="primarySource"
         :pip-source="pipSource"
         :audio-only-sources="audioOnlySources"
+        :audio-only-source-id="audioOnlySourceId"
+        :paused-sources="pausedSources"
         :channels="splitChannels"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
         @show-audio-menu="showAudioContextMenu"
+        @toggle-pause="toggleSourcePause"
+        @remove-source="removeSource"
       />
 
       <TeleprompterLayout
@@ -76,6 +80,9 @@
         :camera-shape="cameraShape"
         :current-layout="currentLayout"
         :pip-source="pipSource"
+        :paused-sources="pausedSources"
+        @toggle-pause="toggleSourcePause"
+        @remove-source="removeSource"
         @update:camera-shape="cameraShape = $event"
         @swap="swapAssignments"
         @show-screen-menu="showScreenContextMenu"
@@ -175,6 +182,19 @@
       </section>
     </div>
 
+    <div v-if="closeConfirmationOpen" class="record-setup-backdrop capture-close-backdrop">
+      <section class="record-setup capture-close-dialog" role="alertdialog" aria-modal="true" aria-labelledby="capture-close-title">
+        <h2 id="capture-close-title">Close Capture Studio?</h2>
+        <p>Closing Capture Studio will stop all its audio and video streams. Close anyway?</p>
+        <p v-if="recording">The recording will be stopped and saved before Capture Studio closes.</p>
+        <p v-if="closeError" role="alert" class="capture-close-error">{{ closeError }}</p>
+        <footer>
+          <button type="button" class="setup-cancel" :disabled="closingCapture" autofocus @click="keepCaptureOpen">Keep open</button>
+          <button type="button" class="setup-record" :disabled="closingCapture" @click="stopCaptureAndClose">Stop streams and close</button>
+        </footer>
+      </section>
+    </div>
+
     <TrackPanel
       :sources="sources"
       :tracks-open="tracksOpen"
@@ -183,8 +203,10 @@
       :color-map="colorMap"
       :icon-map="iconMap"
       :disk-display="totalDiskDisplay"
+      :paused-sources="pausedSources"
       @toggle-src="toggleSrc"
       @remove-source="removeSource"
+      @toggle-pause="toggleSourcePause"
     />
 
     <AddSourceDialog
@@ -368,80 +390,20 @@
         </div>
       </div>
       <div class="playback-grid">
-        <div
+        <PlaybackTile
           v-for="stream in playbackStreams"
           :key="stream.id"
-          class="playback-tile"
-          :class="'tile-' + stream.type"
-        >
-          <div class="tile-label">
-            <span
-              class="tile-dot"
-              :style="{ background: tileColor(stream.type) }"
-            />
-            <span>{{ tileName(stream) }}</span>
-          </div>
-          <div class="tile-media">
-            <video
-              v-if="stream.isVideo"
-              :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
-              :src="'file://' + stream.filePath"
-              controls
-              style="width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 6px;"
-            />
-            <div
-              v-else
-              class="tile-audio-wrap"
-            >
-              <div class="tile-audio-icon">
-                <svg
-                  width="32"
-                  height="32"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  :stroke="tileColor(stream.type)"
-                  stroke-width="1.5"
-                >
-                  <path
-                    v-if="stream.type === 'mic'"
-                    d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"
-                  /><path
-                    v-if="stream.type === 'mic'"
-                    d="M19 10v2a7 7 0 0 1-14 0v-2"
-                  /><line
-                    v-if="stream.type === 'mic'"
-                    x1="12"
-                    y1="19"
-                    x2="12"
-                    y2="23"
-                  /><line
-                    v-if="stream.type === 'mic'"
-                    x1="8"
-                    y1="23"
-                    x2="16"
-                    y2="23"
-                  />
-                  <path
-                    v-if="stream.type === 'system-audio'"
-                    d="M11 5L6 9H2v6h4l5 4V5z"
-                  /><path
-                    v-if="stream.type === 'system-audio'"
-                    d="M19.07 4.93a10 10 0 0 1 0 14.14"
-                  /><path
-                    v-if="stream.type === 'system-audio'"
-                    d="M15.54 8.46a5 5 0 0 1 0 7.07"
-                  />
-                </svg>
-              </div>
-              <audio
-                :ref="(el) => { if (el) playbackRefs[stream.id] = el as HTMLMediaElement; }"
-                :src="'file://' + stream.filePath"
-                controls
-                style="width: 100%;"
-              />
-            </div>
-          </div>
-        </div>
+          :stream="stream"
+          :label="tileName(stream)"
+          :color="tileColor(stream.type)"
+          :paused="isPlaybackPaused(stream.id)"
+          @media="setPlaybackMedia"
+          @toggle="togglePlayback"
+          @close="removePlaybackStream"
+          @context-menu="showPlaybackContextMenu"
+          @play="setPlaybackPaused($event, false)"
+          @pause="setPlaybackPaused($event, true)"
+        />
       </div>
     </div>
 
@@ -465,6 +427,7 @@ import FloatingControls from './capture-studio/FloatingControls.vue';
 import LayoutBar from './capture-studio/LayoutBar.vue';
 import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
 import TrackPanel from './capture-studio/TrackPanel.vue';
+import PlaybackTile from './capture-studio/PlaybackTile.vue';
 import { useAgentBridge } from './capture-studio/composables/useAgentBridge';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
 import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
@@ -473,6 +436,11 @@ import { useMediaSources, QUALITY_PRESETS, type CropRegion, type QualityPreset, 
 import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { CaptureSessionLifecycle } from './capture-studio/effects/CaptureSessionLifecycle';
+import { CaptureSourceTileReplacer } from './capture-studio/services/CaptureSourceTileReplacer';
+import { CaptureAudioDriverOwnership } from './capture-studio/services/CaptureAudioDriverOwnership';
+import { CaptureContextMenuRouter } from './capture-studio/services/CaptureContextMenuRouter';
+import { PlaybackTileController } from './capture-studio/services/PlaybackTileController';
+import { registerBrowserTabCloseGuard } from '@pkg/composables/useBrowserTabs';
 import { useRecorder } from './capture-studio/composables/useRecorder';
 import { useSettings } from './capture-studio/composables/useSettings';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
@@ -484,6 +452,7 @@ import type { CtxMenuItem } from './capture-studio/ContextMenuItem';
 
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
+const props = defineProps<{ tabId?: string }>();
 
 // ─── Composables ───
 const audioDriver = useAudioDriver();
@@ -502,18 +471,37 @@ const loadingMessage = ref('Initializing Capture Studio...');
 // ─── State ───
 const recording = ref(false);
 const captureLifecycle = new CaptureSessionLifecycle();
+const closeConfirmationOpen = ref(false);
+const closeError = ref('');
+const closingCapture = ref(false);
+let pendingCloseDecision: ((allow: boolean) => void) | null = null;
+let pendingCloseRequest: Promise<boolean> | null = null;
+let unregisterCaptureCloseGuard: (() => void) | null = null;
+let windowCloseRequestIds: string[] = [];
 // All entry points (UI, setup and RPC) share the parent teardown barrier.
 mediaSources.acquireScreen = captureLifecycle.protect(mediaSources.acquireScreen);
 mediaSources.acquireScreenForSource = captureLifecycle.protect(mediaSources.acquireScreenForSource);
 mediaSources.switchScreen = captureLifecycle.protect(mediaSources.switchScreen);
 mediaSources.acquireCamera = captureLifecycle.protect(mediaSources.acquireCamera);
 mediaSources.acquireCameraForSource = captureLifecycle.protect(mediaSources.acquireCameraForSource);
+const screenTileReplacer = new CaptureSourceTileReplacer(
+  (tileId, deviceId) => mediaSources.acquireScreenForSource(tileId, deviceId),
+  () => { if (!captureLifecycle.isClosing) updateStreamAssignments(); },
+);
 mediaSources.switchCameraForSource = captureLifecycle.protect(mediaSources.switchCameraForSource);
 mediaSources.switchCamera = captureLifecycle.protect(mediaSources.switchCamera);
 mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQuality);
 mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
-audioDriver.startMic = captureLifecycle.protect(audioDriver.startMic);
-audioDriver.startSpeaker = captureLifecycle.protect(audioDriver.startSpeaker);
+// The ownership adapter wraps the raw IPC acquisition, so its success receipt
+// is recorded before the outer lifecycle guard can reject a close race.
+const audioOwnership = new CaptureAudioDriverOwnership({
+  startMic: audioDriver.startMic.bind(audioDriver),
+  stopMic: audioDriver.stopMic.bind(audioDriver),
+  startSpeaker: audioDriver.startSpeaker.bind(audioDriver),
+  stopSpeaker: audioDriver.stopSpeaker.bind(audioDriver),
+});
+audioDriver.startMic = captureLifecycle.protect((formats, isCancelled) => audioOwnership.acquireMic(formats, isCancelled));
+audioDriver.startSpeaker = captureLifecycle.protect(() => audioOwnership.acquireSpeaker());
 speakerCapture.acquireNative = captureLifecycle.protect(speakerCapture.acquireNative);
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
@@ -545,7 +533,33 @@ interface PlaybackStream {
 const playbackOpen = ref(false);
 const playbackStreams = ref<PlaybackStream[]>([]);
 const playbackRefs = ref<Record<string, HTMLMediaElement | null>>({});
+const playbackPaused = reactive<Record<string, boolean>>({});
+const playbackTileController = new PlaybackTileController(
+  id => playbackRefs.value[id], removePlaybackTile,
+  id => playbackPaused[id] ?? playbackRefs.value[id]?.paused ?? true,
+  (id, paused) => { playbackPaused[id] = paused; },
+);
 let sourceCounter = 0;
+const pausedSources = reactive<Record<string, boolean>>({});
+const sourceRemovals = new Map<string, Promise<void>>();
+
+function toggleSourcePause(id: string): void {
+  const source = sources.find(candidate => candidate.id === id);
+  if (!source || !source.on) return;
+  const paused = !pausedSources[id];
+  if (source.type === 'screen') {
+    const stream = mediaSources.screenStreams[id];
+    stream?.getTracks().forEach(track => { track.enabled = !paused; });
+  } else if (source.type === 'camera') {
+    const stream = mediaSources.cameraStreams[id];
+    stream?.getTracks().forEach(track => { track.enabled = !paused; });
+  } else if (source.type === 'mic') {
+    micRecording.setPaused(paused);
+  } else if (source.type === 'system') {
+    speakerCapture.setPaused(paused);
+  }
+  pausedSources[id] = paused;
+}
 
 const assign = reactive({ primary: 'screen', pip: 'cam' });
 
@@ -566,6 +580,8 @@ const sources = reactive<Source[]>([
   { id: 'mic', type: 'mic', name: 'Microphone', color: 'mic', status: '—', builtin: true, on: false, isVideo: false },
   { id: 'system', type: 'system', name: 'System Audio', color: 'sys', status: '—', builtin: true, on: false, isVideo: false },
 ]);
+const selectedScreenSourceIds = reactive<Record<string, string>>({});
+const contextMenuRouter = new CaptureContextMenuRouter();
 
 const builtinSources = computed(() => sources.filter(s => s.builtin));
 const customSources = computed(() => sources.filter(s => !s.builtin));
@@ -631,8 +647,8 @@ const splitChannels = computed(() => sources.filter(source => source.on).map(sou
   name: source.name,
   stream: source.type === 'screen' ? mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null)
     : source.type === 'camera' ? mediaSources.cameraStreams[source.id] || (source.id === 'cam' ? mediaSources.cameraStream.value : null) : null,
-  level: source.type === 'mic' ? audioDriver.micLevel.value
-    : source.type === 'system' ? (speakerCapture.level.value || audioDriver.speakerLevel.value) : 0,
+  level: source.type === 'mic' ? (pausedSources[source.id] ? 0 : audioDriver.micLevel.value)
+    : source.type === 'system' ? (pausedSources[source.id] ? 0 : (speakerCapture.level.value || audioDriver.speakerLevel.value)) : 0,
 })));
 
 const primarySource = computed(() => sources.find(s => s.id === assign.primary && s.on) || null);
@@ -684,6 +700,9 @@ const totalDiskDisplay = computed(() => {
 const audioOnlySources = computed(() => {
   return sources.filter(s => !s.isVideo && s.on).map(s => s.name).join(' + ') || 'No sources';
 });
+const audioOnlySourceId = computed(() => sources.find(source => source.on && source.type === 'mic')?.id
+  || sources.find(source => source.on && source.type === 'system')?.id
+  || 'mic');
 
 const timerDisplay = computed(() => {
   const secs = recorder.elapsedSeconds.value;
@@ -792,7 +811,7 @@ async function enableSystemAudio(): Promise<void> {
 
   // BlackHole/CoreAudio is intentionally fallback-only. It remains useful on
   // older Electron/macOS combinations where native loopback is unavailable.
-  await audioDriver.startSpeaker();
+  await audioOwnership.acquireSpeaker();
   if (!audioDriver.speakerRunning.value) {
     throw new Error('Native loopback and BlackHole fallback are both unavailable');
   }
@@ -801,7 +820,7 @@ async function enableSystemAudio(): Promise<void> {
 async function disableSystemAudio(): Promise<void> {
   speakerCapture.releaseNative();
   if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
-  if (audioDriver.speakerRunning.value) await audioDriver.stopSpeaker();
+  await audioOwnership.releaseSpeaker();
 }
 
 // ─── Source toggles (wired to real capture) ───
@@ -827,7 +846,7 @@ async function toggleSrc(src: Source) {
         console.log('[CaptureStudio] Camera acquired:', src.id, stream ? 'active' : 'null', 'tracks:', stream?.getVideoTracks().length);
         if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'mic') {
-        await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
+        await audioOwnership.acquireMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
       } else if (src.type === 'system') {
         await enableSystemAudio();
       }
@@ -841,7 +860,7 @@ async function toggleSrc(src: Source) {
     } else if (src.type === 'camera') {
       await mediaSources.releaseCamera(src.id);
     } else if (src.type === 'mic') {
-      await audioDriver.stopMic();
+      await audioOwnership.releaseMic();
     } else if (src.type === 'system') {
       await disableSystemAudio();
     }
@@ -1068,8 +1087,9 @@ async function toggleRecord() {
       // Start mic recording via controller socket if mic is running.
       if (audioDriver.micRunning.value) {
         const path = require('path');
-        const isCompressed = micQualityMode.value === 'streaming' || micQualityMode.value === 'streaming-voice';
-        const ext = isCompressed ? 'webm' : 'wav';
+        // The recorder uses PCM for every selected mode so a pause never drops
+        // arbitrary WebM clusters. The persisted quality preference is unchanged.
+        const ext = 'wav';
         const micPath = path.join(recorder.getSessionDir(), `mic.${ ext }`);
         const started = await micRecording.start(micPath, micQualityMode.value as MicQualityMode);
         if (!started) throw new Error('Microphone stream did not start');
@@ -1220,6 +1240,30 @@ function closePlayback() {
   playbackOpen.value = false;
   playbackStreams.value = [];
   playbackRefs.value = {};
+  Object.keys(playbackPaused).forEach(id => delete playbackPaused[id]);
+}
+
+function isPlaybackPaused(id: string): boolean { return playbackTileController.isPaused(id); }
+function togglePlayback(id: string): void { playbackTileController.toggle(id); }
+function removePlaybackStream(id: string): void { playbackTileController.close(id); }
+function setPlaybackMedia(id: string, element: HTMLMediaElement | null): void {
+  if (element) playbackRefs.value[id] = element;
+  else delete playbackRefs.value[id];
+}
+function setPlaybackPaused(id: string, paused: boolean): void { playbackPaused[id] = paused; }
+function removePlaybackTile(id: string): void {
+  playbackStreams.value = playbackStreams.value.filter(stream => stream.id !== id);
+  delete playbackRefs.value[id];
+  delete playbackPaused[id];
+  if (!playbackStreams.value.length) playbackOpen.value = false;
+}
+function showPlaybackContextMenu(event: MouseEvent, id: string): void {
+  ctxMenu.title = tileName(playbackStreams.value.find(stream => stream.id === id)!);
+  ctxMenu.items = [
+    { id: 'playback-toggle', label: isPlaybackPaused(id) ? 'Resume' : 'Pause', action: () => togglePlayback(id) },
+    { id: 'playback-close-source', label: 'Close tile', action: () => removePlaybackStream(id) },
+  ];
+  ctxMenu.x = event.clientX; ctxMenu.y = event.clientY; ctxMenu.visible = true;
 }
 
 function openSessionFolder() {
@@ -1258,7 +1302,7 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
       if (deviceLabel && deviceLabel !== 'default') {
         await audioDriver.setMicDevice(deviceLabel);
       }
-      await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
+      await audioOwnership.acquireMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
@@ -1294,26 +1338,45 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
   addPopupOpen.value = false;
 }
 
-function removeSource(id: string) {
-  // Stop mic via controller if this was a mic source
+function removeSource(id: string): Promise<void> {
+  const inFlight = sourceRemovals.get(id);
+  if (inFlight) return inFlight;
+  const operation = performSourceRemoval(id);
+  sourceRemovals.set(id, operation);
+  void operation.finally(() => { if (sourceRemovals.get(id) === operation) sourceRemovals.delete(id); }).catch(() => {});
+  return operation;
+}
+
+async function performSourceRemoval(id: string): Promise<void> {
+  // Finalize and release only this source's recording stream; the driver may have other consumers.
   const src = sources.find(s => s.id === id);
-  if (recording.value && (src?.type === 'camera' || src?.type === 'screen')) {
-    statusMessage.value = 'Stop recording before removing a video source';
-    return;
+  if (recording.value && src?.type === 'mic') {
+    try { await micRecording.stop(); }
+    catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
+  } else if (recording.value && src?.type === 'system' && speakerCapture.mode.value === 'blackhole') {
+    try { await speakerCapture.stop(); }
+    catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
+  } else if (recording.value && (src?.type === 'camera' || src?.type === 'screen' || (src?.type === 'system' && speakerCapture.mode.value === 'native'))) {
+    try { await recorder.finalizeSource(src?.type === 'system' ? 'speaker' : id); }
+    catch (error: any) { statusMessage.value = `Could not finish source file: ${ error.message || error }`; return; }
   }
   if (src?.type === 'mic') {
-    audioDriver.stopMic().catch(() => {});
+    await micRecording.stop().catch(() => '');
+    await audioOwnership.releaseMic();
   } else if (src?.type === 'system') {
-    disableSystemAudio().catch(() => {});
+    await speakerCapture.stop().catch(() => '');
+    speakerCapture.releaseNative();
+    await audioOwnership.releaseSpeaker();
   } else if (src?.type === 'screen') {
     mediaSources.releaseScreen(id);
     delete deviceIdMap[src.name];
   } else if (src?.type === 'camera') {
-    mediaSources.releaseCamera(id).catch(() => {});
+    await mediaSources.releaseCamera(id).catch(() => {});
     delete deviceIdMap[src.name];
   }
   const idx = sources.findIndex(s => s.id === id);
   if (idx > -1) sources.splice(idx, 1);
+  delete pausedSources[id];
   autoAssign();
   updateStreamAssignments();
 }
@@ -1361,8 +1424,10 @@ function startAudioMeter() {
 
       // Combine mic level (from controller VAD) + speaker level
       const spActive = speakerCapture.active.value;
-      const speakerLvl = spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
-      const micLvl = audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
+      const speakerPaused = sources.some(source => source.type === 'system' && source.on && pausedSources[source.id]);
+      const speakerLvl = speakerPaused ? 0 : spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
+      const micPaused = sources.some(source => source.type === 'mic' && source.on && pausedSources[source.id]);
+      const micLvl = audioDriver.micRunning.value && !micPaused ? audioDriver.micLevel.value : 0;
       const combinedLevel = Math.max(speakerLvl, micLvl);
 
       // Log occasionally to debug
@@ -1431,26 +1496,31 @@ function buildQualityChildren(
   ];
 }
 
-async function showScreenContextMenu(e: MouseEvent) {
+function sourceActionItems(sourceId: string): CtxMenuItem[] {
+  const source = sources.find(candidate => candidate.id === sourceId);
+  if (!source) return [];
+  return [
+    { id: `pause-${sourceId}`, label: pausedSources[sourceId] ? 'Resume' : 'Pause', action: () => toggleSourcePause(sourceId) },
+    { id: `remove-${sourceId}`, label: 'Close Source', action: () => { void removeSource(sourceId); } },
+    { id: `divider-source-${sourceId}`, label: '', divider: true, action: () => {} },
+  ];
+}
+
+async function showScreenContextMenu(e: MouseEvent, sourceId = 'screen') {
   try {
+    const targetSource = sources.find(source => source.id === sourceId && source.type === 'screen');
+    if (!targetSource) return;
     const screenSources = await mediaSources.listScreenSources();
 
     const sourceChildren: CtxMenuItem[] = screenSources.map(s => ({
       id:        s.id,
       label:     s.name,
       thumbnail: s.thumbnailDataUrl,
-      active:    s.id === mediaSources.activeScreenSourceId.value,
+      active:    s.id === (selectedScreenSourceIds[sourceId] || (sourceId === 'screen' ? mediaSources.activeScreenSourceId.value : '')),
       action:    async() => {
         try {
-          await mediaSources.switchScreen(s.id);
-          const src = sources.find(ss => ss.id === 'screen');
-          if (src) {
-            src.on = true;
-            src.name = s.name;
-            src.status = 'Capturing';
-            autoAssign();
-            if (!captureLifecycle.isClosing) updateStreamAssignments();
-          }
+          await screenTileReplacer.replace(targetSource, s.id, s.name);
+          selectedScreenSourceIds[sourceId] = s.id;
         } catch (err) {
           console.error('[CaptureStudio] Failed to switch screen:', err);
         }
@@ -1478,6 +1548,7 @@ async function showScreenContextMenu(e: MouseEvent) {
     ];
 
     ctxMenu.items = [
+      ...sourceActionItems(sourceId),
       { id: 'sub-sources', label: 'Sources', children: sourceChildren, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
       { id: 'divider-tracking', label: '', divider: true, action: () => {} },
@@ -1540,6 +1611,7 @@ async function showCameraContextMenu(e: MouseEvent, sourceId = 'cam') {
     );
 
     ctxMenu.items = [
+      ...sourceActionItems(sourceId),
       { id: 'sub-sources', label: 'Sources', children: deviceChildren, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
     ];
@@ -1552,8 +1624,25 @@ async function showCameraContextMenu(e: MouseEvent, sourceId = 'cam') {
   }
 }
 
-async function showAudioContextMenu(e: MouseEvent) {
+async function showAudioContextMenu(e: MouseEvent, sourceId = 'mic') {
   try {
+    const audioSource = sources.find(source => source.id === sourceId);
+    if (!audioSource || (audioSource.type !== 'mic' && audioSource.type !== 'system')) return;
+
+    if (audioSource.type === 'system') {
+      ctxMenu.items = [
+        ...sourceActionItems(sourceId),
+        { id: 'toggle-system-audio',
+        label: audioSource.on ? 'Stop System Audio' : 'Start System Audio',
+        action: () => toggleSrc(audioSource),
+      }];
+      ctxMenu.title = 'System Audio';
+      ctxMenu.x = e.clientX;
+      ctxMenu.y = e.clientY;
+      ctxMenu.visible = true;
+      return;
+    }
+
     const { inputs } = await listAudioDevices();
     // Refresh deviceIdMap with latest enumeration
     for (const d of inputs) {
@@ -1588,16 +1677,23 @@ async function showAudioContextMenu(e: MouseEvent) {
       action: () => {
         micQualityMode.value = m.id;
         // Tell the controller which PCM mode to use
-        const pcmMode = m.id === 'raw' ? 'raw' : 'noise-reduction';
+        const pcmMode = m.id === 'raw' || m.id === 'streaming' ? 'raw' : 'noise-reduction';
         audioDriver.setMicPcmMode(pcmMode).catch(() => {});
       },
     }));
+    qualityChildren.unshift({
+      id: 'wav-output-note',
+      label: 'Pause-safe output: PCM WAV (larger than Opus)',
+      disabled: true,
+      action: () => {},
+    });
 
     ctxMenu.items = [
       { id: 'sub-mics', label: 'Microphone', children: deviceChildren, action: () => {} },
       { id: 'divider-quality', label: '', divider: true, action: () => {} },
       { id: 'sub-quality', label: 'Quality', children: qualityChildren, action: () => {} },
     ];
+    ctxMenu.items = [...sourceActionItems(sourceId), ...ctxMenu.items];
     ctxMenu.title = 'Audio';
     ctxMenu.x = e.clientX;
     ctxMenu.y = e.clientY;
@@ -1610,15 +1706,11 @@ async function showAudioContextMenu(e: MouseEvent) {
 // ─── Source context menu dispatcher (right-click from floating controls) ───
 
 function showSourceContextMenu(src: Source, e: MouseEvent) {
-  if (src.type === 'screen') {
-    showScreenContextMenu(e);
-  } else if (src.type === 'camera') {
-    showCameraContextMenu(e, src.id);
-  } else if (src.type === 'mic') {
-    showAudioContextMenu(e);
-  } else if (src.type === 'system') {
-    // System audio has no source/quality options yet
-  }
+  contextMenuRouter.open(src.id, sources, e, {
+    screen: (event, sourceId) => showScreenContextMenu(event, sourceId),
+    camera: (event, sourceId) => showCameraContextMenu(event, sourceId),
+    audio: (event, sourceId) => showAudioContextMenu(event, sourceId),
+  });
 }
 
 // ─── Track panel waveform (continuous animation) ───
@@ -1631,8 +1723,9 @@ const WAVEFORM_SCROLL_INTERVAL = 80; // ms between scrolls — gives a steady DA
 function getCurrentLevel(src: { id: string; type: string; on: boolean }): number {
   if (src.type === 'mic') {
     // Mic level comes from the controller's VAD pipeline
-    return audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
+    return audioDriver.micRunning.value && !pausedSources[src.id] ? audioDriver.micLevel.value : 0;
   } else if (src.type === 'system') {
+    if (pausedSources[src.id]) return 0;
     const spActive = speakerCapture.active.value;
     return spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
   }
@@ -1798,7 +1891,7 @@ useAgentBridge({
       await mediaSources.acquireCamera(deviceId);
     }
     if (params.mic === true && !audioDriver.micRunning.value) {
-      await audioDriver.startMic();
+      await audioOwnership.acquireMic();
     }
     if (params.speaker === true && !hasNativeSystemAudio()) {
       await enableSystemAudio();
@@ -1924,6 +2017,11 @@ watch(recording, value => {
 
 onMounted(async() => {
   document.addEventListener('keydown', onKeyDown);
+  if (props.tabId) {
+    unregisterCaptureCloseGuard = registerBrowserTabCloseGuard(props.tabId, requestCaptureStudioClose);
+    ipcRenderer.send('capture-studio:tab-mounted' as any, { tabId: props.tabId, mounted: true });
+  }
+  ipcRenderer.on('capture-studio:request-window-close' as any, onCaptureStudioWindowCloseRequest);
 
   // Hook teleprompter style/script updates to sync with floating window.
   // Position sync is handled by the main process (teleprompterTracking.ts).
@@ -2015,38 +2113,93 @@ onMounted(async() => {
 });
 
 // ── Full cleanup — shared by before-quit and onUnmounted ──
+function hasLiveTracks(streams: MediaStream[]): boolean {
+  return streams.some(stream => stream.active && stream.getTracks().some(track => track.readyState === 'live'));
+}
+
+function hasOwnedCapture(): boolean {
+  return recording.value || captureLifecycle.hasPendingAcquisitions ||
+    hasLiveTracks([...Object.values(mediaSources.screenStreams), ...Object.values(mediaSources.cameraStreams)]) ||
+    hasLiveTracks([speakerCapture.nativeStream.value].filter((stream): stream is MediaStream => !!stream)) ||
+    micRecording.active.value || speakerCapture.active.value || audioDriver.micRunning.value || audioDriver.speakerRunning.value ||
+    sources.some(source => source.on);
+}
+
+function requestCaptureStudioClose(): Promise<boolean> {
+  if (!hasOwnedCapture()) return Promise.resolve(true);
+  if (pendingCloseRequest) return pendingCloseRequest;
+  closeError.value = '';
+  closeConfirmationOpen.value = true;
+  pendingCloseRequest = new Promise<boolean>(resolve => { pendingCloseDecision = resolve; });
+  return pendingCloseRequest;
+}
+
+function settleCloseRequest(allow: boolean): void {
+  const resolve = pendingCloseDecision;
+  pendingCloseDecision = null;
+  pendingCloseRequest = null;
+  closeConfirmationOpen.value = false;
+  resolve?.(allow);
+  for (const requestId of windowCloseRequestIds.splice(0)) {
+    ipcRenderer.send('capture-studio:window-close-response' as any, { requestId, tabId: props.tabId, allow });
+  }
+}
+
+function onCaptureStudioWindowCloseRequest(_event: unknown, request: { requestId: string; tabIds: string[] }): void {
+  if (!props.tabId || !request.tabIds.includes(props.tabId)) return;
+  if (!hasOwnedCapture()) {
+    ipcRenderer.send('capture-studio:window-close-response' as any, { requestId: request.requestId, tabId: props.tabId, allow: true });
+    return;
+  }
+  windowCloseRequestIds.push(request.requestId);
+  void requestCaptureStudioClose();
+}
+
+function keepCaptureOpen(): void { if (!closingCapture.value) settleCloseRequest(false); }
+
+async function stopCaptureAndClose(): Promise<void> {
+  if (closingCapture.value) return;
+  closingCapture.value = true;
+  closeError.value = '';
+  try {
+    await cleanupCaptureStudio();
+    settleCloseRequest(true);
+  } catch (error: any) {
+    closeError.value = `Capture Studio could not finish saving. It will stay open. ${ error?.message || error }`;
+    closeConfirmationOpen.value = true;
+  } finally {
+    closingCapture.value = false;
+  }
+}
+
 async function cleanupCaptureStudio() {
   return captureLifecycle.close(async() => {
-  console.log('[CaptureStudio] Cleaning up...');
+    console.log('[CaptureStudio] Cleaning up...');
 
-  // Stop even when async startup never reached the component recording flag.
-  await micRecording.stop();
-  if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
-  inputTracker.stopTracking();
-  await recorder.stopSession();
-  mediaSources.endAllCameraRecordings();
-  recording.value = false;
-  diskSpace.stopMonitoring();
+    // Finalize every recorder and manifest before releasing media sources.
+    await micRecording.stop();
+    if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
+    await recorder.stopSession();
+    mediaSources.endAllCameraRecordings();
+    recording.value = false;
+    diskSpace.stopMonitoring();
+    inputTracker.stopTracking();
+    stopAudioMeter();
+    stopWaveformLoop();
+    teleprompterRef.value?.stopTracking?.();
 
-  // Stop teleprompter tracking
-  teleprompterRef.value?.stopTracking?.();
+    if (prompterEnabled.value) {
+      await ipcRenderer.invoke('teleprompter:close');
+      prompterEnabled.value = false;
+    }
 
-  // Close floating teleprompter
-  if (prompterEnabled.value) {
-    ipcRenderer.invoke('teleprompter:close').catch(() => {});
-    prompterEnabled.value = false;
-  }
+    mediaSources.releaseAllScreens();
+    await mediaSources.releaseAllCameras();
+    speakerCapture.releaseNative();
 
-  await recorder.stopSession();
-
-  // Release all media streams (screen + camera)
-  mediaSources.releaseAllScreens();
-  await mediaSources.releaseAllCameras();
-  speakerCapture.releaseNative();
-
-  // Disconnect from controllers
-  try { await audioDriver.stopMic() } catch { /* already stopped */ }
-  try { await audioDriver.stopSpeaker() } catch { /* already stopped */ }
+    // These stop calls release only Capture Studio's controller holds.
+    await audioOwnership.releaseMic();
+    await audioOwnership.releaseSpeaker();
   });
 }
 
@@ -2056,6 +2209,11 @@ ipcRenderer.on('app:before-quit', () => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown);
+  ipcRenderer.removeListener('capture-studio:request-window-close' as any, onCaptureStudioWindowCloseRequest);
+  unregisterCaptureCloseGuard?.();
+  unregisterCaptureCloseGuard = null;
+  if (props.tabId) ipcRenderer.send('capture-studio:tab-mounted' as any, { tabId: props.tabId, mounted: false });
+  if (pendingCloseDecision) settleCloseRequest(false);
   ipcRenderer.removeAllListeners('app:before-quit');
   stopAudioMeter();
   stopWaveformLoop();
@@ -2105,7 +2263,6 @@ html, body {
   --mono:             var(--font-mono), monospace;
   --display:          var(--font-display), serif;
   --record-red:       #e5534b;
-  --record-glow:      rgba(229,83,75,0.4);
 
   height: 100vh;
   display: flex;
@@ -2118,7 +2275,7 @@ html, body {
   overflow: hidden;
 }
 
-.record-setup-backdrop { position: fixed; inset: 0; z-index: 700; display: grid; place-items: center; padding: 32px; background: rgba(5, 8, 12, .76); backdrop-filter: blur(12px); }
+.record-setup-backdrop { position: fixed; inset: 0; z-index: 700; display: grid; place-items: center; padding: 32px; background: rgba(5, 8, 12, .76); }
 .record-setup { width: min(820px, 92vw); max-height: 90vh; overflow: auto; padding: 24px; border: 1px solid var(--border-default); border-radius: 18px; background: var(--bg-surface); box-shadow: 0 30px 90px rgba(0, 0, 0, .65); }
 .record-setup header, .record-setup footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .record-setup header h2 { font: 600 24px var(--display); }
@@ -2139,6 +2296,10 @@ html, body {
 .record-setup footer { justify-content: flex-end; margin-top: 20px; }
 .record-setup footer .setup-record { min-width: 110px; color: var(--text-on-accent); border-color: var(--status-error); background: var(--status-error); }
 .record-setup footer .setup-record:disabled { opacity: .5; cursor: default; }
+.capture-close-dialog h2 { margin-bottom: 10px; font: 600 24px var(--display); }
+.capture-close-dialog p { margin-top: 8px; color: var(--text-secondary); }
+.capture-close-dialog footer { justify-content: flex-end; margin-top: 22px; }
+.capture-close-dialog .capture-close-error { color: var(--status-error); }
 
 /* ═══════════════════════════════════════════════
    CANVAS — full screen preview
@@ -2236,9 +2397,8 @@ html, body {
 .tp-close-btn {
   position: absolute; top: 12px; right: 12px; z-index: 30;
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; border: 1px solid var(--border-default); background: rgba(22,27,34,0.7);
+  border-radius: 50%; border: 1px solid var(--border-default); background: var(--bg-surface);
   color: var(--text-secondary); cursor: pointer; transition: all 0.15s;
-  backdrop-filter: blur(6px);
 }
 .tp-close-btn:hover { background: rgba(248,81,73,0.25); color: var(--status-error); border-color: var(--status-error); }
 
@@ -2270,8 +2430,8 @@ html, body {
 .tp-float-toolbar {
   position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 6px; padding: 6px 10px;
-  background: rgba(22,27,34,0.88); border: 1px solid var(--border-default); border-radius: 14px;
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 25;
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 25;
 }
 
 .canvas.layout-teleprompter .float-controls { opacity: 0; pointer-events: none; }
@@ -2311,8 +2471,8 @@ html, body {
 /* Script overlay */
 .tp-script-overlay {
   position: absolute; top: 0; right: 0; width: 360px; height: 100%;
-  background: rgba(22,27,34,0.92); border-left: 1px solid var(--border-default);
-  backdrop-filter: blur(12px); display: flex; flex-direction: column; z-index: 30;
+  background: var(--bg-surface); border-left: 1px solid var(--border-default);
+  display: flex; flex-direction: column; z-index: 30;
   transform: translateX(100%); transition: transform 0.3s ease;
 }
 .tp-script-overlay.open { transform: translateX(0); }
@@ -2374,7 +2534,7 @@ html, body {
 .shape-picker {
   display: flex; gap: 3px; opacity: 0; transition: opacity 0.2s;
   background: rgba(22,27,34,0.9); border: 1px solid var(--border-default); border-radius: 8px;
-  padding: 3px; backdrop-filter: blur(8px);
+  padding: 3px; background: var(--bg-surface);
 }
 .cam-container:hover .shape-picker { opacity: 1; }
 
@@ -2392,8 +2552,8 @@ html, body {
    ═══════════════════════════════════════════════ */
 .layout-bar {
   position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
-  display: flex; gap: 3px; padding: 4px; background: rgba(22,27,34,0.88);
-  border: 1px solid var(--border-default); border-radius: 10px; backdrop-filter: blur(8px); z-index: 10;
+  display: flex; gap: 3px; padding: 4px; background: var(--bg-surface);
+  border: 1px solid var(--border-default); border-radius: 10px; z-index: 10;
 }
 .layout-btn {
   width: 40px; height: 30px; background: none; border: 1px solid transparent;
@@ -2416,8 +2576,8 @@ html, body {
    ═══════════════════════════════════════════════ */
 .info-badges { position: absolute; top: 16px; right: 16px; display: flex; gap: 6px; z-index: 10; }
 .info-badge {
-  padding: 4px 10px; background: rgba(22,27,34,0.8); border: 1px solid var(--border-default);
-  border-radius: 6px; font-size: 10px; color: var(--text-muted); backdrop-filter: blur(4px);
+  padding: 4px 10px; background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: 6px; font-size: 10px; color: var(--text-muted);
   display: flex; align-items: center; gap: 4px;
 }
 .info-badge .dot { width: 5px; height: 5px; border-radius: 50%; }
@@ -2431,8 +2591,8 @@ html, body {
 .float-controls {
   position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 4px; padding: 5px;
-  background: rgba(22,27,34,0.88); border: 1px solid var(--border-default); border-radius: 14px;
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 20;
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 14px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3); z-index: 20;
 }
 
 .src-toggle {
@@ -2499,7 +2659,7 @@ html, body {
   cursor: pointer; transition: all 0.2s;
 }
 .record-pill.idle { background: var(--record-red); color: white; }
-.record-pill.idle:hover { background: #d04842; box-shadow: 0 4px 20px var(--record-glow); }
+.record-pill.idle:hover { background: #d04842; }
 .record-pill.active { background: rgba(229,83,75,0.1); border: 1px solid var(--record-red); color: var(--record-red); }
 .record-pill .dot { width: 14px; height: 14px; background: currentColor; border-radius: 50%; transition: all 0.2s; }
 .record-pill.active .dot { width: 12px; height: 12px; border-radius: 3px; }
@@ -2526,7 +2686,7 @@ html, body {
    ═══════════════════════════════════════════════ */
 .add-popup-overlay {
   position: fixed; inset: 0; z-index: 100; display: none; align-items: center;
-  justify-content: center; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+  justify-content: center; background: rgba(0,0,0,0.5);
 }
 .add-popup-overlay.open { display: flex; }
 
@@ -2789,7 +2949,7 @@ html, body {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   padding: 8px 18px; background: var(--bg-surface); border: 1px solid var(--border-default);
   border-radius: 8px; font-size: 12px; color: var(--text-secondary);
-  backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
   z-index: 60; animation: toast-in 0.2s ease;
 }
 @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
@@ -2807,8 +2967,8 @@ html, body {
 
 .recording-toast-content {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-  background: rgba(22,27,34,0.95); border: 1px solid var(--border-default); border-radius: 10px;
-  backdrop-filter: blur(8px); box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
 }
 
 .recording-toast-text { display: flex; flex-direction: column; gap: 1px; }
@@ -2886,6 +3046,10 @@ html, body {
   border-color: rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.05);
 }
+.tile-actions { margin-left: auto; display: flex; gap: 6px; opacity: 0; transition: opacity .12s ease; }
+.playback-tile:hover .tile-actions, .playback-tile:focus-within .tile-actions { opacity: 1; }
+.tile-actions button { border: 1px solid var(--border); border-radius: 5px; padding: 3px 7px; color: var(--text-primary); background: var(--bg-page); cursor: pointer; }
+.tile-actions .tile-remove { font-size: 17px; line-height: 1; }
 
 .tile-label {
   display: flex; align-items: center; gap: 8px;
@@ -2939,15 +3103,11 @@ html, body {
   --border: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   --border-subtle: color-mix(in srgb, var(--nx-hair-strong) 43.75%, transparent);
   --mono: ui-monospace, var(--font-mono), monospace;
-  background:
-    radial-gradient(90% 60% at 50% 110%, color-mix(in srgb, var(--nx-accent) 14%, transparent), transparent 62%),
-    var(--nx-paper);
+  background: var(--nx-paper);
 }
 
 .capture-studio-app .canvas {
-  background:
-    radial-gradient(75% 70% at 50% 55%, color-mix(in srgb, var(--nx-accent) 7%, transparent), transparent 64%),
-    var(--nx-paper);
+  background: var(--nx-paper);
 }
 
 .capture-studio-app .screen-preview,
@@ -2963,11 +3123,11 @@ html, body {
 .capture-studio-app .float-controls,
 .capture-studio-app .tp-float-toolbar,
 .capture-studio-app .shape-picker {
-  background: color-mix(in srgb, var(--bg-surface-alt) 74%, transparent);
+  background: var(--nx-surface);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   border-radius: 18px;
   box-shadow: 0 18px 50px color-mix(in srgb, var(--shadow) 55.5556%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
-  backdrop-filter: blur(20px);
+
 }
 
 .capture-studio-app .layout-btn,
@@ -2997,22 +3157,16 @@ html, body {
   color: var(--nx-read-1);
   background: linear-gradient(180deg, color-mix(in srgb, var(--nx-accent) 30%, transparent), color-mix(in srgb, var(--nx-accent) 14%, transparent));
   border-color: color-mix(in srgb, var(--nx-accent-2) 50%, transparent);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--nx-accent) 20%, transparent);
 }
 
 .capture-studio-app .info-badge {
   min-height: 28px;
   padding: 0 10px;
   color: var(--nx-read-3);
-  background: color-mix(in srgb, var(--bg-surface-alt) 70%, transparent);
+  background: var(--nx-surface);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 62.5%, transparent);
   border-radius: 14px;
   font-family: ui-monospace, var(--font-mono), monospace;
-  backdrop-filter: blur(16px);
-}
-
-.capture-studio-app .info-badge .dot.green {
-  box-shadow: 0 0 8px color-mix(in srgb, var(--nx-success) 70%, transparent);
 }
 
 .capture-studio-app .record-pill {
@@ -3024,24 +3178,20 @@ html, body {
 }
 
 .capture-studio-app .record-pill.idle {
-  background: linear-gradient(180deg, #ff6a63, #d94039);
-  box-shadow: 0 0 20px color-mix(in srgb, var(--nx-danger) 34%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 24%, transparent);
-  animation: noir-record-pulse 2.2s ease-in-out infinite;
+  background: var(--nx-danger);
 }
 
 .capture-studio-app .record-pill.idle:hover {
   transform: translateY(-2px) scale(1.025);
-  box-shadow: 0 0 30px color-mix(in srgb, var(--nx-danger) 52%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 26%, transparent);
 }
 
 .capture-studio-app .record-pill.idle {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--nx-danger) 78%, white), var(--nx-danger));
+  background: var(--nx-danger);
 }
 
 .capture-studio-app .record-pill.active {
   background: color-mix(in srgb, var(--nx-danger) 8%, transparent);
   border-color: color-mix(in srgb, var(--nx-danger) 55%, transparent);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--nx-danger) 15%, transparent);
 }
 
 .capture-studio-app .fc-timer,
@@ -3055,10 +3205,10 @@ html, body {
 
 .capture-studio-app .track-panel {
   padding: 8px 10px 10px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 82%, transparent);
+  background: var(--nx-surface);
   border-color: var(--nx-hair);
   box-shadow: 0 -18px 42px color-mix(in srgb, var(--shadow) 27.7778%, transparent);
-  backdrop-filter: blur(20px);
+
 }
 
 .capture-studio-app .track-panel.open { height: 190px; }
@@ -3111,10 +3261,10 @@ html, body {
 .capture-studio-app .ctx-menu,
 .capture-studio-app .tp-script-overlay,
 .capture-studio-app .playback-overlay {
-  background: color-mix(in srgb, var(--nx-surface) 96%, transparent);
+  background: var(--nx-surface);
   border-color: color-mix(in srgb, var(--nx-hair-strong) 75%, transparent);
   box-shadow: 0 26px 80px color-mix(in srgb, var(--shadow) 68.8889%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--nx-hair-strong) 15.625%, transparent);
-  backdrop-filter: blur(20px);
+
 }
 
 .capture-studio-app .add-popup,
@@ -3133,7 +3283,7 @@ html, body {
 }
 
 .capture-studio-app .loading-screen {
-  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--nx-accent) 16%, transparent), transparent 38%), var(--nx-paper);
+  background: var(--nx-paper);
 }
 
 .capture-studio-app .loading-content h1,
@@ -3142,14 +3292,8 @@ html, body {
   font-family: var(--font-display), Georgia, serif;
 }
 
-@keyframes noir-record-pulse {
-  0%, 100% { box-shadow: 0 0 18px color-mix(in srgb, var(--nx-danger) 30%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 24%, transparent); }
-  50% { box-shadow: 0 0 30px color-mix(in srgb, var(--nx-danger) 52%, transparent), 0 0 0 7px color-mix(in srgb, var(--nx-danger) 4.5%, transparent), inset 0 1px 0 color-mix(in srgb, var(--text-on-accent) 24%, transparent); }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .capture-studio-app .record-pill.idle { animation: none; }
-  .capture-studio-app .track-lane,
+    .capture-studio-app .track-lane,
   .capture-studio-app .record-pill,
   .capture-studio-app .layout-btn,
   .capture-studio-app .src-toggle { transition-duration: 0.01ms; }

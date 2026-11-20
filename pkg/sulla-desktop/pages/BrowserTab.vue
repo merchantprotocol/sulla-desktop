@@ -360,7 +360,7 @@
     <!-- Labs: experimental features panel -->
     <template v-else-if="tabMode === 'capture-studio'">
       <div class="flex-1 min-h-0 overflow-hidden">
-        <CaptureStudioTab />
+        <CaptureStudioTab :tab-id="props.tabId" />
       </div>
     </template>
 

@@ -239,6 +239,8 @@ function createAgentWindow(name = 'main-agent', windowKey = 'main', requestedBou
       },
     });
 
+  guardCaptureStudioWindowClose(window);
+
   const persistGeometry = () => {
     const key = agentWindowRegistry.windowKeyOf(window);
     if (key) getAgentWindowPersistence().update(key, window.getNormalBounds(), window.isMaximized());
@@ -379,6 +381,28 @@ export function newAgentWindow() { return openAgentWindow({ initialTabs: 'fresh-
 export function openMain() { return agentWindowRegistry.getAgentWindows().length ? ensureAgentWindow() : restoreAgentWindows(); }
 
 const windowsClosedByLastTab = new Set<number>();
+const captureStudioTabsByWindow = new Map<number, Set<string>>();
+const pendingCaptureStudioWindowCloses = new Map<number, { requestId: string; remaining: Set<string>; approved: boolean }>();
+const approvedCaptureStudioWindowCloses = new Set<number>();
+let captureStudioCloseRequestSequence = 0;
+
+function guardCaptureStudioWindowClose(window: BrowserWindow): void {
+  window.on('close', (event) => {
+    if (approvedCaptureStudioWindowCloses.delete(window.id)) return;
+    const tabIds = captureStudioTabsByWindow.get(window.id);
+    if (!tabIds?.size) return;
+    event.preventDefault();
+    if (pendingCaptureStudioWindowCloses.has(window.id)) return;
+    const requestId = `capture-window-close-${ ++captureStudioCloseRequestSequence }`;
+    pendingCaptureStudioWindowCloses.set(window.id, { requestId, remaining: new Set(tabIds), approved: true });
+    window.webContents.send('capture-studio:request-window-close', { requestId, tabIds: [...tabIds] });
+  });
+  window.on('closed', () => {
+    captureStudioTabsByWindow.delete(window.id);
+    pendingCaptureStudioWindowCloses.delete(window.id);
+    approvedCaptureStudioWindowCloses.delete(window.id);
+  });
+}
 
 export const getAgentWindows = () => agentWindowRegistry.getAgentWindows();
 export const getActiveAgentWindow = () => agentWindowRegistry.getActiveAgentWindow();
@@ -462,10 +486,49 @@ if (process.type === 'browser') {
   ipcMain.on('agent-window:open', (event) => {
     if (agentWindowRegistry.isAgentWebContents(event.sender)) openAgentWindow({ initialTabs: 'fresh-chat' });
   });
+  ipcMain.on('capture-studio:tab-mounted', (event, payload: { tabId?: string; mounted?: boolean }) => {
+    const owner = agentWindowRegistry.agentWindowFor(event.sender);
+    if (!owner || typeof payload?.tabId !== 'string') return;
+    const tabs = captureStudioTabsByWindow.get(owner.id) ?? new Set<string>();
+    if (payload.mounted) tabs.add(payload.tabId);
+    else {
+      tabs.delete(payload.tabId);
+      const pending = pendingCaptureStudioWindowCloses.get(owner.id);
+      if (pending?.remaining.delete(payload.tabId)) {
+        pending.approved = false;
+        if (!pending.remaining.size) {
+          pendingCaptureStudioWindowCloses.delete(owner.id);
+          windowsClosedByLastTab.delete(owner.id);
+        }
+      }
+    }
+    if (tabs.size) captureStudioTabsByWindow.set(owner.id, tabs);
+    else captureStudioTabsByWindow.delete(owner.id);
+  });
+  ipcMain.on('capture-studio:window-close-response', (event, payload: { requestId?: string; tabId?: string; allow?: boolean }) => {
+    const owner = agentWindowRegistry.agentWindowFor(event.sender);
+    if (!owner || !payload?.requestId || !payload.tabId) return;
+    const pending = pendingCaptureStudioWindowCloses.get(owner.id);
+    if (!pending || pending.requestId !== payload.requestId || !pending.remaining.has(payload.tabId)) return;
+    pending.remaining.delete(payload.tabId);
+    if (!payload.allow) {
+      pending.approved = false;
+      windowsClosedByLastTab.delete(owner.id);
+    }
+    if (pending.remaining.size > 0) return;
+    pendingCaptureStudioWindowCloses.delete(owner.id);
+    if (pending.approved && !owner.isDestroyed()) {
+      approvedCaptureStudioWindowCloses.add(owner.id);
+      owner.close();
+    }
+  });
   ipcMain.on('agent-window:close-self', (event) => {
     const owner = agentWindowRegistry.agentWindowFor(event.sender);
     if (owner && !owner.isDestroyed()) {
       windowsClosedByLastTab.add(owner.id);
+      // Let the close handler ask mounted Capture Studio tabs first. This also
+      // prevents stale "close-self" intents from bypassing an active recording guard.
+      if (!captureStudioTabsByWindow.get(owner.id)?.size) approvedCaptureStudioWindowCloses.add(owner.id);
       owner.close();
     }
   });

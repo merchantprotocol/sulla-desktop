@@ -1072,7 +1072,7 @@ watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
 
-function closeBrowserTab(id: string) {
+async function closeBrowserTab(id: string) {
   const isActive = route.path === `/Browser/${ id }`;
 
   // Snapshot visual position BEFORE closing so we can pick the adjacent tab
@@ -1085,7 +1085,8 @@ function closeBrowserTab(id: string) {
     nextTabRoute = candidate?.route ?? null;
   }
 
-  closeTab(id);
+  const closed = await closeTab(id);
+  if (!closed) return;
 
   if (isActive) {
     if (nextTabRoute) {
@@ -1098,9 +1099,9 @@ function closeBrowserTab(id: string) {
   }
 }
 
-function closeAnyTab(tab: HeaderTab) {
+async function closeAnyTab(tab: HeaderTab) {
   if (tab.browserId) {
-    closeBrowserTab(tab.browserId);
+    await closeBrowserTab(tab.browserId);
   }
 }
 
