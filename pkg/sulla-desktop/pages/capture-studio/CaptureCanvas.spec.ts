@@ -73,14 +73,16 @@ describe('CaptureCanvas context menu source wiring', () => {
     for (const channel of channels) {
       const tile = wrapper.findAll('.sbs-tile').find(item => item.text().includes(channel.name));
       expect(tile, `tile for ${channel.id} remains visible`).toBeTruthy();
+      const removeEventsBeforePause = wrapper.emitted('remove-source')?.length ?? 0;
       await tile!.get(`[aria-label="Pause ${channel.name}"]`).trigger('click');
       expect(wrapper.emitted('toggle-pause')?.at(-1)?.[0]).toBe(channel.id);
-      expect(wrapper.emitted('remove-source')).toBeUndefined();
+      expect(wrapper.emitted('remove-source')?.length ?? 0).toBe(removeEventsBeforePause);
       await wrapper.setProps({ pausedSources: { [channel.id]: true } });
       expect(tile!.find(`[aria-label="Resume ${channel.name}"]`).exists()).toBe(true);
       await tile!.get(`[aria-label="Resume ${channel.name}"]`).trigger('click');
       expect(wrapper.emitted('toggle-pause')?.at(-1)?.[0]).toBe(channel.id);
       await tile!.get(`[aria-label="Remove ${channel.name}"]`).trigger('click');
+      expect(wrapper.emitted('remove-source')?.length).toBe(removeEventsBeforePause + 1);
       expect(wrapper.emitted('remove-source')?.at(-1)?.[0]).toBe(channel.id);
       expect(tile!.exists()).toBe(true);
     }
