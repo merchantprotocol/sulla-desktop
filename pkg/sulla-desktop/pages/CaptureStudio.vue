@@ -534,11 +534,9 @@ function toggleSourcePause(id: string): void {
   if (source.type === 'screen') {
     const stream = mediaSources.screenStreams[id];
     stream?.getTracks().forEach(track => { track.enabled = !paused; });
-    void recorder.setSourcePaused(id, paused);
   } else if (source.type === 'camera') {
     const stream = mediaSources.cameraStreams[id];
     stream?.getTracks().forEach(track => { track.enabled = !paused; });
-    void recorder.setSourcePaused(id, paused);
   } else if (source.type === 'system') {
     speakerCapture.nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = !paused; });
   }

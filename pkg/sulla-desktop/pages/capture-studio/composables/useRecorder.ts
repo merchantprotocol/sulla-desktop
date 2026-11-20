@@ -297,17 +297,6 @@ export function useRecorder(
     });
   }
 
-  /** Pause/resume one recorder without affecting any other capture owner. */
-  function setSourcePaused(id: string, paused: boolean): boolean {
-    const entry = entries.find(candidate => candidate.id === id && !candidate.finalized);
-    if (!entry || entry.recorder.state === 'inactive') return false;
-    try {
-      if (paused && entry.recorder.state === 'recording') entry.recorder.pause();
-      else if (!paused && entry.recorder.state === 'paused') entry.recorder.resume();
-      return true;
-    } catch { return false; }
-  }
-
   /** Finalize one video source and keep its completed file in the session manifest. */
   async function finalizeSource(id: string): Promise<boolean> {
     const entry = entries.find(candidate => candidate.id === id && !candidate.finalized);
@@ -498,7 +487,6 @@ export function useRecorder(
     startSession,
     stopSession,
     registerExternalStream,
-    setSourcePaused,
     finalizeSource,
     logEvent,
     getSessionDir,
