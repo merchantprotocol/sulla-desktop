@@ -308,6 +308,14 @@ class ModelProviderService {
   }
 
   async getModelsForProvider(providerId: string, queryOptions: { liveOnly?: boolean; forceRefresh?: boolean } = {}): Promise<ProviderModelInfo[]> {
+    // Catalog metadata is public Cloud data, not proof of an account/API-key
+    // entitlement. Availability/auth checks remain in the provider access path.
+    // CLI providers retain their CLI-specific catalogs and compatibility rules.
+    if (!['claude-code', 'codex', 'opencode', 'cursor'].includes(providerId)) {
+      const { sharedModelCatalog } = await import('../languagemodels/sharedModelCatalog');
+      const provider = (await sharedModelCatalog.listProviders()).find(item => item.id === providerId);
+      if (provider) return provider.models.map(model => this.modelInfo(providerId, { id: model.id, name: model.name }));
+    }
     const integration = integrations[providerId];
     if (!integration) {
       return this.getCliProviderModels(providerId, queryOptions);
