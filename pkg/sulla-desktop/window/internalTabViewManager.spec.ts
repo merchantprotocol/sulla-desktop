@@ -260,6 +260,26 @@ describe('InternalTabViewManager', () => {
     expect(() => instance.openWorkspaceTab(chat, { mode: 'browser', url: 'file:///private/report.md' })).toThrow('Invalid workspace tab request');
   });
 
+  it('routes the Files home, exact attachment version and approved detail actions to the owning shell', () => {
+    const owner = ownerWindow(12);
+    const instance = manager() as any;
+    instance.activate(owner, 'chat', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const sender = instance.tabs.get('chat').view.webContents;
+    const home = { mode: 'files', title: 'File Manager' };
+    const details = {
+      ...home,
+      filesNavigation: { fileId: 'screenshot', path: 'files/screenshot.jpeg', collectionId: 'my-files', versionId: 'attached', section: 'detail' },
+    };
+    const history = { ...details, filesNavigation: { ...details.filesNavigation, section: 'versions' } };
+    instance.openWorkspaceTab(sender, home);
+    instance.openWorkspaceTab(sender, details);
+    instance.openWorkspaceTab(sender, history);
+    expect(owner.webContents.send.mock.calls).toEqual([home, details, history].map(request => ['internal-tab-view:open-workspace-tab', request]));
+    expect(() => instance.openWorkspaceTab(sender, {
+      ...details, filesNavigation: { ...details.filesNavigation, section: 'trash' },
+    })).toThrow('Invalid workspace tab request');
+  });
+
   it('keeps hosted chat activity with its current owner and clears it on renderer loss', () => {
     const owner = ownerWindow(14);
     const other = ownerWindow(15);

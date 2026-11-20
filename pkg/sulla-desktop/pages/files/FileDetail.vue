@@ -123,12 +123,13 @@ import { supportsDocumentEditor } from './editor/editorTypes';
 
 import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesTrashFile, FilesVersion, ShareActivity, ShareLink } from './types';
 
-const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
+const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions'; previewVersionId?: string }>();
 const emit = defineEmits<{ close:[]; open:[]; share:[]; restored:[]; 'trash-outcome':[message:string]; 'open-linked':[fileId:string, path:string] }>();
 const item = reactive<FilesItem>({ ...props.item });
 const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
+const previewVersion = computed(() => props.previewVersionId || item.currentVersionId);
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
 const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs = ['Details', 'Versions', 'Access', 'Activity'] as const;
 const name = computed(() => item.path.split('/').at(-1) || item.path); const isUseCase = computed(() => item.path.startsWith('Sulla/Use Cases/')); const activeVersionId = computed(() => item.publishedVersionId || null); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
@@ -165,7 +166,7 @@ onMounted(async() => {
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
   const [publicLinks, source] = await Promise.allSettled([
     props.dataSource.listPublicLinks?.() || Promise.resolve([]),
-    supportsMedia.value ? props.dataSource.mediaUrl(item.id, item.currentVersionId) : Promise.resolve(''),
+    supportsMedia.value ? props.dataSource.mediaUrl(item.id, previewVersion.value) : Promise.resolve(''),
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
@@ -173,7 +174,7 @@ onMounted(async() => {
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
-async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, previewVersion.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
 type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
 const lifecycleForm = reactive({ enabled: item.versioning?.enabled ?? false, majorMinor: item.versioning?.majorMinor ?? false, requireApproval: item.versioning?.requireApproval ?? false, requireCheckout: item.versioning?.requireCheckout ?? false });

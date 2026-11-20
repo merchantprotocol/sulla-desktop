@@ -716,6 +716,12 @@ The main shell owns the tab list. A hosted tab requests a new tab in its owning 
 
 Re-run the startup, internal tab, Vault, Supporting reports, and agent editor suites with the recovery regression set. Build in the PR checkout using the command above. Test hosted tabs with isolated data before loading a candidate into a user's Sulla instance.
 
+## Open files from chat
+
+The file card and Files drawer resolve the saved Files ID before asking the owning shell to open a document or file preview. The Files tab can preview or download the version attached to the chat. Right-click a saved row or card to open that version with the default app, or choose a macOS app. External actions use the existing Files authorization and downloaded-copy path.
+
+Run `yarn vitest run -c vitest.agent.config.mts OpenChatFile internalTabViewManager SullaFilesIpcOpenedCopyService`. In a hosted chat, open a saved document and an attached screenshot, then check the right-click actions and the Files toolbar.
+
 ## Product Owner chat Workflow
 
 Workflow in the chat side dock shows the Product Owner feature path and recorded handoffs. The plan follows the existing Product Owner and Coding Manager guidance. Product Owner still handles simple requests directly. Design and independent review are conditional. Run history combines the existing bounded job lineage read (live jobs and up to 100 recent jobs) with live agent status. It displays runtime-reported model and effort after a model returns output. Settlement saves that evidence on the job task, including a fallback reason when the existing retry path supplied one. Older runs may lack this evidence.

@@ -74,7 +74,6 @@
         <ChatFilesDrawer
           :open="chatFilesOpen"
           @close="setChatFilesOpen(false)"
-          @open-files="openFiles"
         />
       </template>
       <SideDock
@@ -85,7 +84,6 @@
           <ChatFilesDrawer
             :open="true"
             @close="sideDock?.selectTab('sulla')"
-            @open-files="openFiles"
           />
         </template>
         <template #artifacts>
@@ -794,12 +792,6 @@ function setChatFilesOpen(open:boolean):void {
 function onToggleChatFiles():void {
   if (props.isActive === false) return;
   setChatFilesOpen(!chatFilesOpen.value);
-}
-
-function openFiles():void {
-  const existing = tabs.find(tab => tab.mode === 'files');
-  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager' });
-  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }
 
 // Keep this chat tab's label in sync with the active conversation's title.

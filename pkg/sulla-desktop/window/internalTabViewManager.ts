@@ -115,6 +115,10 @@ export class InternalTabViewManager {
     const owner = this.resolveOwner(sender);
     if (!owner || sender.isDestroyed() || !input || typeof input !== 'object') throw new Error('Invalid workspace tab request');
     const request = input as WorkspaceTabRequest;
+    if (request.mode === 'files' && typeof request.title === 'string' && request.filesNavigation === undefined) {
+      owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'files', title: request.title });
+      return;
+    }
     const file = request.mode === 'paper' ? request.documentFile : request.mode === 'files' ? request.filesNavigation : null;
     if (file && typeof file.fileId === 'string' && file.fileId && typeof file.path === 'string' && file.path) {
       const { fileId, path, collectionId } = file;
@@ -123,11 +127,16 @@ export class InternalTabViewManager {
         owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'paper', documentFile: identity });
         return;
       }
-      if (request.mode === 'files' && typeof request.title === 'string') {
-        owner.webContents.send('internal-tab-view:open-workspace-tab', {
-          mode: 'files', title: request.title, filesNavigation: { ...identity, section: 'detail' },
-        });
-        return;
+      if (request.mode === 'files' && typeof request.title === 'string' && request.filesNavigation) {
+        const { section, versionId } = request.filesNavigation;
+
+        if (section === 'detail' || section === 'versions' || section === 'share-review') {
+          owner.webContents.send('internal-tab-view:open-workspace-tab', {
+            mode: 'files', title: request.title,
+            filesNavigation: { ...identity, section, ...(typeof versionId === 'string' && versionId ? { versionId } : {}) },
+          });
+          return;
+        }
       }
     }
     if (request.mode === 'chat' && typeof request.title === 'string'

@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <article class="file-card" role="button" tabindex="0" :aria-label="`Open ${reference.name} in File Manager`" @click="open" @keydown.enter.self="open" @keydown.space.self.prevent="open">
+  <article class="file-card" role="button" tabindex="0" :aria-label="`Open ${reference.name}`" @click="open" @contextmenu.stop.prevent="openMenu?.show($event, reference)" @keydown.enter.self="open" @keydown.space.self.prevent="open">
     <FileGlyph
       :name="reference.name"
       :mime="reference.mime"
@@ -23,8 +23,8 @@
       </button><button
         v-if="supportsDocumentEditor(reference.path)"
         type="button"
-        @click.stop="openEditor"
-      ><svg viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4z" /></svg><span>Open editor</span>
+        @click.stop="navigate('detail')"
+      ><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h6" /></svg><span>Details</span>
       </button><button
         v-if="editable"
         type="button"
@@ -42,27 +42,31 @@
         <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5" /></svg><span>Link</span>
       </button>
     </div>
+    <p v-if="error" class="file-error" role="alert">{{ error }}</p>
     <div v-if="editing" class="inline-editor" @click.stop>
       <textarea v-model="draft" :disabled="saving" aria-label="Edit project file markdown" />
-      <div><span v-if="error" role="alert">{{ error }}</span><button type="button" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save new version' }}</button><button type="button" @click="editing = false">Cancel</button></div>
+      <div><button type="button" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save new version' }}</button><button type="button" @click="editing = false">Cancel</button></div>
     </div>
+    <ChatFileOpenMenu ref="openMenu" @error="error = $event" />
   </article>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
+import ChatFileOpenMenu from './ChatFileOpenMenu.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 
 import { useChatController } from '../../controller/useChatController';
-import { openDocumentTab, useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { openChatFile } from '../../services/openChatFile';
+import type { WorkspaceFileSection } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 
 const props = defineProps<{ reference: { fileId: string; versionId?: string; path: string; name: string; mime?: string; createdByType?: string; createdById?: string } }>();
-const { createTab, tabs, updateTab } = useBrowserTabs();
 const controller = useChatController();
+const openMenu = ref<InstanceType<typeof ChatFileOpenMenu>>();
 const editing = ref(false); const saving = ref(false); const draft = ref(''); const artifactId = ref(''); const artifactVersion = ref(0); const error = ref('');
 const editable = computed(() => /(?:markdown|text\/plain)/i.test(props.reference.mime || '') || /\.md$/i.test(props.reference.path));
 async function toggleEditor() {
@@ -82,16 +86,15 @@ async function save() {
   finally { saving.value = false; }
 }
 const provenance = computed(() => props.reference.createdByType === 'agent-run' ? `Made by ${ props.reference.createdById || 'Sulla' } · persistent Files version` : 'From Sulla Files · persistent version');
-async function open() {
-  navigate('detail');
-}
-function openEditor() { openDocumentTab({ fileId: props.reference.fileId, path: props.reference.path }); }
-function navigate(section:'detail' | 'versions' | 'share-review') {
-  const filesNavigation = { fileId: props.reference.fileId, path: props.reference.path, section };
-  const existing = tabs.find(tab => tab.mode === 'files');
-  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
-  if (existing) updateTab(existing.id, { filesNavigation });
-  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+function open():Promise<void> { return navigate() }
+
+async function navigate(section?: WorkspaceFileSection):Promise<void> {
+  error.value = '';
+  try {
+    await openChatFile(props.reference, section);
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : 'This file could not be opened.';
+  }
 }
 </script>
 
