@@ -22,11 +22,6 @@
 import { ref, type Ref } from 'vue';
 import { PcmPauseTimeline } from '../services/PcmPauseTimeline';
 
-const fs = require('fs');
-const net = require('net');
-
-const { ipcRenderer } = require('electron');
-
 // Default to 48kHz — updated from controller state on start
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
@@ -53,7 +48,7 @@ function writeWavHeader(ws: any, sampleRate: number): void {
   ws.write(header);
 }
 
-function finalizeWav(filePath: string, dataBytes: number): void {
+function finalizeWav(fs: any, filePath: string, dataBytes: number): void {
   let fd: number | null = null;
   try {
     fd = fs.openSync(filePath, 'r+');
@@ -82,7 +77,16 @@ function computePcmRms(pcm: Buffer): number {
 
 export type MicQualityMode = 'raw' | 'noise-reduction' | 'voice-compressed' | 'streaming' | 'streaming-voice';
 
-export function useMicRecording() {
+export interface MicRecordingDependencies {
+  fs?: any;
+  net?: any;
+  ipcRenderer?: { invoke: (...args: any[]) => Promise<any> };
+}
+
+export function useMicRecording(dependencies: MicRecordingDependencies = {}) {
+  const fs = dependencies.fs ?? require('fs');
+  const net = dependencies.net ?? require('net');
+  const ipcRenderer = dependencies.ipcRenderer ?? require('electron').ipcRenderer;
   const level: Ref<number> = ref(0);
   const active = ref(false);
   const bytesWritten = ref(0);
@@ -151,6 +155,13 @@ export function useMicRecording() {
     socket = net.createConnection(socketPath);
 
     socket.on('data', (data: Buffer) => {
+      if (paused) {
+        // Do not carry a partial frame across a pause boundary; otherwise its
+        // pre-pause samples could be written after resume.
+        pending = Buffer.alloc(0);
+        level.value = 0;
+        return;
+      }
       // PCM — parse length-prefixed frames, write raw PCM and compute level.
       pending = pending.length > 0 ? Buffer.concat([pending, data]) : data;
       while (pending.length >= 4) {
@@ -163,13 +174,13 @@ export function useMicRecording() {
         const chunk = pending.subarray(4, 4 + frameLen);
         pending = pending.subarray(4 + frameLen);
 
-        if (writeStream && !writeStream.destroyed && !paused) {
+        if (writeStream && !writeStream.destroyed) {
           writeStream.write(chunk);
           totalDataBytes += chunk.length;
           bytesWritten.value = totalDataBytes;
         }
 
-        level.value = paused ? 0 : computePcmRms(chunk);
+        level.value = computePcmRms(chunk);
       }
     });
 
@@ -209,6 +220,7 @@ export function useMicRecording() {
     if (paused === value) return;
     if (value) {
       paused = true;
+      pending = Buffer.alloc(0);
       if (active.value) pauseTimeline.pause();
       level.value = 0;
       return;
@@ -266,7 +278,7 @@ export function useMicRecording() {
 
     // Every mode is recorded as PCM WAV so the container remains valid across pauses.
     if (filePath) {
-      finalizeWav(filePath, totalDataBytes);
+      finalizeWav(fs, filePath, totalDataBytes);
     }
 
     const result = filePath;

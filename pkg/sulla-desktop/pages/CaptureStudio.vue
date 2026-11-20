@@ -494,7 +494,7 @@ mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQ
 mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
 audioDriver.startMic = captureLifecycle.protect(audioDriver.startMic);
 audioDriver.startSpeaker = captureLifecycle.protect(audioDriver.startSpeaker);
-const audioOwnership = new CaptureAudioDriverOwnership(audioDriver);
+const audioOwnership = new CaptureAudioDriverOwnership(audioDriver, () => captureLifecycle.isClosing);
 speakerCapture.acquireNative = captureLifecycle.protect(speakerCapture.acquireNative);
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
@@ -641,7 +641,7 @@ const splitChannels = computed(() => sources.filter(source => source.on).map(sou
   stream: source.type === 'screen' ? mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null)
     : source.type === 'camera' ? mediaSources.cameraStreams[source.id] || (source.id === 'cam' ? mediaSources.cameraStream.value : null) : null,
   level: source.type === 'mic' ? (pausedSources[source.id] ? 0 : audioDriver.micLevel.value)
-    : source.type === 'system' ? (speakerCapture.level.value || audioDriver.speakerLevel.value) : 0,
+    : source.type === 'system' ? (pausedSources[source.id] ? 0 : (speakerCapture.level.value || audioDriver.speakerLevel.value)) : 0,
 })));
 
 const primarySource = computed(() => sources.find(s => s.id === assign.primary && s.on) || null);
@@ -1417,7 +1417,8 @@ function startAudioMeter() {
 
       // Combine mic level (from controller VAD) + speaker level
       const spActive = speakerCapture.active.value;
-      const speakerLvl = spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
+      const speakerPaused = sources.some(source => source.type === 'system' && source.on && pausedSources[source.id]);
+      const speakerLvl = speakerPaused ? 0 : spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
       const micPaused = sources.some(source => source.type === 'mic' && source.on && pausedSources[source.id]);
       const micLvl = audioDriver.micRunning.value && !micPaused ? audioDriver.micLevel.value : 0;
       const combinedLevel = Math.max(speakerLvl, micLvl);
@@ -1669,10 +1670,16 @@ async function showAudioContextMenu(e: MouseEvent, sourceId = 'mic') {
       action: () => {
         micQualityMode.value = m.id;
         // Tell the controller which PCM mode to use
-        const pcmMode = m.id === 'raw' ? 'raw' : 'noise-reduction';
+        const pcmMode = m.id === 'raw' || m.id === 'streaming' ? 'raw' : 'noise-reduction';
         audioDriver.setMicPcmMode(pcmMode).catch(() => {});
       },
     }));
+    qualityChildren.unshift({
+      id: 'wav-output-note',
+      label: 'Pause-safe output: PCM WAV (larger than Opus)',
+      disabled: true,
+      action: () => {},
+    });
 
     ctxMenu.items = [
       { id: 'sub-mics', label: 'Microphone', children: deviceChildren, action: () => {} },
@@ -1711,6 +1718,7 @@ function getCurrentLevel(src: { id: string; type: string; on: boolean }): number
     // Mic level comes from the controller's VAD pipeline
     return audioDriver.micRunning.value && !pausedSources[src.id] ? audioDriver.micLevel.value : 0;
   } else if (src.type === 'system') {
+    if (pausedSources[src.id]) return 0;
     const spActive = speakerCapture.active.value;
     return spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
   }

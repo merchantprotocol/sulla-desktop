@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it, vi } from 'vitest';
+import { CaptureSessionLifecycle } from '../effects/CaptureSessionLifecycle';
 import { CaptureAudioDriverOwnership } from './CaptureAudioDriverOwnership';
 
 describe('CaptureAudioDriverOwnership', () => {
@@ -20,13 +21,13 @@ describe('CaptureAudioDriverOwnership', () => {
     expect(driver.stopSpeaker).toHaveBeenCalledTimes(1);
   });
 
-  it('does not release a mic hold when acquisition was cancelled before ownership transfer', async() => {
-    // risk: audio ownership — cancellation must not double-release a hold already released by startMic.
+  it('releases a cancelled mic acquisition once without retaining a phantom hold', async() => {
+    // risk: audio ownership — a cancelled acquisition must release exactly once and later close must be a no-op.
     const driver = { startMic: vi.fn().mockResolvedValue({}), stopMic: vi.fn().mockResolvedValue(undefined), startSpeaker: vi.fn().mockResolvedValue(undefined), stopSpeaker: vi.fn().mockResolvedValue(undefined) };
     const ownership = new CaptureAudioDriverOwnership(driver);
     await ownership.acquireMic(undefined, () => true);
     await ownership.releaseMic();
-    expect(driver.stopMic).not.toHaveBeenCalled();
+    expect(driver.stopMic).toHaveBeenCalledTimes(1);
   });
 
   it('keeps another consumer active after source removal and Capture Studio close release its hold', async() => {
@@ -44,6 +45,62 @@ describe('CaptureAudioDriverOwnership', () => {
     await ownership.releaseMic(); // later Capture Studio close
     expect(holders.has('voice-session')).toBe(true);
     expect(holders.has('capture-studio')).toBe(false);
+    expect(driver.stopMic).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains ownership after a failed release so cleanup can retry', async() => {
+    // risk: audio ownership — a transient IPC stop error must not erase the only record of a live hold.
+    const driver = { startMic: vi.fn().mockResolvedValue({}), stopMic: vi.fn().mockRejectedValueOnce(new Error('temporary stop failure')).mockResolvedValue(undefined), startSpeaker: vi.fn().mockResolvedValue(undefined), stopSpeaker: vi.fn().mockResolvedValue(undefined) };
+    const ownership = new CaptureAudioDriverOwnership(driver);
+    await ownership.acquireMic();
+    await expect(ownership.releaseMic()).rejects.toThrow('temporary stop failure');
+    await ownership.releaseMic();
+    expect(driver.stopMic).toHaveBeenCalledTimes(2);
+  });
+
+  it('deduplicates concurrent releases and serializes a reacquisition after stop settles', async() => {
+    // risk: audio ownership — overlapping source removal, close, and re-enable must not drop or double-release a holder.
+    let finishStop!: () => void;
+    const driver = {
+      startMic: vi.fn().mockResolvedValue({}),
+      stopMic: vi.fn(() => new Promise<void>(resolve => { finishStop = resolve; })),
+      startSpeaker: vi.fn().mockResolvedValue(undefined),
+      stopSpeaker: vi.fn().mockResolvedValue(undefined),
+    };
+    const ownership = new CaptureAudioDriverOwnership(driver);
+    await ownership.acquireMic();
+    const firstRelease = ownership.releaseMic();
+    const secondRelease = ownership.releaseMic();
+    expect(driver.stopMic).toHaveBeenCalledTimes(1);
+    const reacquire = ownership.acquireMic();
+    expect(driver.startMic).toHaveBeenCalledTimes(1);
+    finishStop();
+    await Promise.all([firstRelease, secondRelease, reacquire]);
+    expect(driver.startMic).toHaveBeenCalledTimes(2);
+    await ownership.releaseMic();
+  });
+
+  it('releases a mic acquired just as the lifecycle close guard rejects startup', async() => {
+    // risk: audio ownership — the lifecycle guard may reject after IPC acquired the mic but before the adapter records the hold.
+    const lifecycle = new CaptureSessionLifecycle();
+    let completeStart!: () => void;
+    let held = false;
+    const driver = {
+      startMic: lifecycle.protect(() => new Promise<void>(resolve => {
+        completeStart = () => { held = true; resolve(); };
+      })),
+      stopMic: vi.fn(async() => { held = false; }),
+      startSpeaker: vi.fn().mockResolvedValue(undefined),
+      stopSpeaker: vi.fn().mockResolvedValue(undefined),
+    };
+    const ownership = new CaptureAudioDriverOwnership(driver, () => lifecycle.isClosing);
+    const acquisition = ownership.acquireMic();
+    expect(completeStart).toBeDefined();
+    const closing = lifecycle.close(() => ownership.releaseMic());
+    completeStart();
+    await expect(acquisition).rejects.toThrow('Capture Studio is closing');
+    await closing;
+    expect(held).toBe(false);
     expect(driver.stopMic).toHaveBeenCalledTimes(1);
   });
 });
