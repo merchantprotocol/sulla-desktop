@@ -718,7 +718,7 @@ Re-run the startup, internal tab, Vault, Supporting reports, and agent editor su
 
 ## Open files from chat
 
-The file card and Files drawer resolve the saved Files ID before asking the owning shell to open a document or file preview. The Files tab can preview or download the version attached to the chat. Right-click a saved row or card to open that version with the default app, or choose a macOS app. External actions use the existing Files authorization and downloaded-copy path.
+The file card and Files drawer resolve the saved Files ID before asking the owning shell to open a document or file preview. The Files tab can preview or download the version attached to the chat. Right-click a saved row or card to open that version with the default app, or choose a macOS app. External actions use the existing Files authorization and downloaded-copy path. The menu stays open when the secondary mouse button is released. A selection, primary click outside, another context menu, or Escape closes it.
 
 Run `yarn vitest run -c vitest.agent.config.mts OpenChatFile internalTabViewManager SullaFilesIpcOpenedCopyService`. In a hosted chat, open a saved document and an attached screenshot, then check the right-click actions and the Files toolbar.
 

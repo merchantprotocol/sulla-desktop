@@ -1,14 +1,18 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
-  <div ref="menu" class="chat-file-open-menu" popover="auto" aria-label="Open file" @click.stop @keydown.esc.stop>
+  <div ref="menu" class="chat-file-open-menu" popover="manual" aria-label="Open file" @click.stop @contextmenu.prevent>
     <button type="button" autofocus @click="choose('sulla')">Open in Sulla</button>
     <button type="button" @click="choose('default')">Open with Default App</button>
     <button v-if="canChooseApp" type="button" @click="choose('choose')">Choose App…</button>
   </div>
 </template>
 
+<script lang="ts">
+let closeActiveFileMenu: (() => void) | undefined;
+</script>
+
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 
 import { openChatFile } from '../../services/openChatFile';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -19,13 +23,46 @@ const emit = defineEmits<{ error:[message:string] }>();
 const menu = ref<HTMLElement>();
 const canChooseApp = /Mac/i.test(navigator.platform);
 let file: OpenableFile | undefined;
+let opener: HTMLElement | null = null;
+
+function close():void {
+  if (closeActiveFileMenu !== close) return;
+  closeActiveFileMenu = undefined;
+  document.removeEventListener('pointerdown', onPointerDown, true);
+  document.removeEventListener('contextmenu', dismissOutside, true);
+  document.removeEventListener('keydown', onKeyDown, true);
+  menu.value?.hidePopover();
+}
+
+function dismissOutside(event: Event):void {
+  if (!menu.value?.contains(event.target as Node)) close();
+}
+
+function onPointerDown(event: PointerEvent):void {
+  // The secondary-button gesture opens the menu; its release must leave it open.
+  if (event.button === 0) dismissOutside(event);
+}
+
+function onKeyDown(event: KeyboardEvent):void {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  close();
+  opener?.focus({ preventScroll: true });
+}
 
 function show(event: MouseEvent, reference: OpenableFile):void {
   const element = menu.value;
   if (!element) return;
+  closeActiveFileMenu?.();
   file = reference;
+  opener = event.currentTarget as HTMLElement;
+  const anchor = opener.getBoundingClientRect();
+  closeActiveFileMenu = close;
   element.showPopover();
-  const anchor = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('contextmenu', dismissOutside, true);
+  document.addEventListener('keydown', onKeyDown, true);
   const x = event.clientX || anchor.left;
   const y = event.clientY || anchor.bottom;
   element.style.left = `${ Math.max(0, Math.min(x, innerWidth - element.offsetWidth - 4)) }px`;
@@ -34,7 +71,7 @@ function show(event: MouseEvent, reference: OpenableFile):void {
 
 async function choose(destination: 'sulla' | 'default' | 'choose'):Promise<void> {
   const selected = file;
-  menu.value?.hidePopover();
+  close();
   if (!selected) return;
   emit('error', '');
   try {
@@ -47,6 +84,7 @@ async function choose(destination: 'sulla' | 'default' | 'choose'):Promise<void>
   }
 }
 
+onBeforeUnmount(close);
 defineExpose({ show });
 </script>
 
