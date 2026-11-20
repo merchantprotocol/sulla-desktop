@@ -14,9 +14,9 @@
  *   'raw'             — all audio, no processing (ASMR, music)
  *   'noise-reduction' — VAD-gated + noise-processed (voice)
  *
- * Compressed modes use the WebM/Opus mic-socket instead:
- *   'streaming'       — compressed WebM/Opus
- *   'streaming-voice' — compressed WebM/Opus + voice processing
+ * Streaming quality preferences keep their controller processing choice, but
+ * this independent session recording uses PCM/WAV so pause/resume never drops
+ * arbitrary compressed container clusters. This costs disk space versus Opus.
  */
 
 import { ref, type Ref } from 'vue';
@@ -92,7 +92,6 @@ export function useMicRecording() {
   let filePath = '';
   let totalDataBytes = 0;
   let pending = Buffer.alloc(0);
-  let currentMode: MicQualityMode = 'raw';
   let paused = false;
   let sampleRate = 48000;
   const pauseTimeline = new PcmPauseTimeline();
@@ -103,31 +102,29 @@ export function useMicRecording() {
    * For PCM modes (raw, noise-reduction, voice-compressed):
    *   Connects to mic-pcm-socket, writes WAV at 48kHz.
    *
-   * For compressed modes (streaming, streaming-voice):
-   *   Connects to mic-socket, writes raw WebM/Opus chunks.
+   * All modes record PCM WAV. Streaming modes retain their selected preference
+   * but use the PCM socket for pause-safe, truthful WAV output.
    */
   async function start(outputPath: string, mode: MicQualityMode = 'raw'): Promise<boolean> {
     if (active.value) await stop();
 
-    currentMode = mode;
-    paused = false;
+    // A pause can be requested while microphone acquisition is still in flight.
+    // Preserve that desired state so the first socket frames cannot leak.
+    pauseTimeline.reset();
     filePath = outputPath;
     totalDataBytes = 0;
     bytesWritten.value = 0;
     pending = Buffer.alloc(0);
 
-    const isCompressed = mode === 'streaming' || mode === 'streaming-voice';
-
+    // Record all selected modes from the lossless PCM socket. Dropping arbitrary
+    // WebM clusters while paused corrupts the container; PCM gives us a valid
+    // WAV timeline (silence is inserted across pauses). The selected mode remains
+    // the user's preference and still controls raw vs voice processing below.
     // Set the PCM mode on the controller (raw vs noise-reduction)
-    if (!isCompressed) {
-      const pcmMode = mode === 'raw' ? 'raw' : 'noise-reduction';
-      await ipcRenderer.invoke('audio-driver:set-mic-pcm-mode', pcmMode);
-    }
+    const pcmMode = mode === 'raw' || mode === 'streaming' ? 'raw' : 'noise-reduction';
+    await ipcRenderer.invoke('audio-driver:set-mic-pcm-mode', pcmMode);
 
-    // Get the appropriate socket path
-    const socketPath = isCompressed
-      ? await ipcRenderer.invoke('audio-driver:get-mic-socket-path')
-      : await ipcRenderer.invoke('audio-driver:get-mic-pcm-socket-path');
+    const socketPath = await ipcRenderer.invoke('audio-driver:get-mic-pcm-socket-path');
 
     if (!socketPath) {
       console.warn('[useMicRecording] No socket path available — is audio driver running?');
@@ -137,12 +134,10 @@ export function useMicRecording() {
     // Open output file
     try {
       writeStream = fs.createWriteStream(filePath);
-      if (!isCompressed) {
-        // Get the actual sample rate from the controller
-        const state = await ipcRenderer.invoke('audio-driver:get-state');
-        sampleRate = state?.micSampleRate || 48000;
-        writeWavHeader(writeStream, sampleRate);
-      }
+      // Get the actual sample rate from the controller
+      const state = await ipcRenderer.invoke('audio-driver:get-state');
+      sampleRate = state?.micSampleRate || 48000;
+      writeWavHeader(writeStream, sampleRate);
     } catch (err: any) {
       console.error('[useMicRecording] Failed to create write stream:', err.message);
       return false;
@@ -156,47 +151,25 @@ export function useMicRecording() {
     socket = net.createConnection(socketPath);
 
     socket.on('data', (data: Buffer) => {
-      if (isCompressed) {
-        // WebM/Opus — write chunks directly (already length-prefixed on socket)
-        // Parse length-prefixed frames and write just the payload
-        pending = pending.length > 0 ? Buffer.concat([pending, data]) : data;
-        while (pending.length >= 4) {
-          const frameLen = pending.readUInt32BE(0);
-          if (!Number.isFinite(frameLen) || frameLen <= 0 || frameLen > 1024 * 1024) {
-            pending = Buffer.alloc(0);
-            break;
-          }
-          if (pending.length < 4 + frameLen) break;
-          const chunk = pending.subarray(4, 4 + frameLen);
-          pending = pending.subarray(4 + frameLen);
-
-          if (writeStream && !writeStream.destroyed && !paused) {
-            writeStream.write(chunk);
-            totalDataBytes += chunk.length;
-            bytesWritten.value = totalDataBytes;
-          }
+      // PCM — parse length-prefixed frames, write raw PCM and compute level.
+      pending = pending.length > 0 ? Buffer.concat([pending, data]) : data;
+      while (pending.length >= 4) {
+        const frameLen = pending.readUInt32BE(0);
+        if (!Number.isFinite(frameLen) || frameLen <= 0 || frameLen > 1024 * 1024) {
+          pending = Buffer.alloc(0);
+          break;
         }
-      } else {
-        // PCM — parse length-prefixed frames, write raw PCM, compute level
-        pending = pending.length > 0 ? Buffer.concat([pending, data]) : data;
-        while (pending.length >= 4) {
-          const frameLen = pending.readUInt32BE(0);
-          if (!Number.isFinite(frameLen) || frameLen <= 0 || frameLen > 1024 * 1024) {
-            pending = Buffer.alloc(0);
-            break;
-          }
-          if (pending.length < 4 + frameLen) break;
-          const chunk = pending.subarray(4, 4 + frameLen);
-          pending = pending.subarray(4 + frameLen);
+        if (pending.length < 4 + frameLen) break;
+        const chunk = pending.subarray(4, 4 + frameLen);
+        pending = pending.subarray(4 + frameLen);
 
-          if (writeStream && !writeStream.destroyed && !paused) {
-            writeStream.write(chunk);
-            totalDataBytes += chunk.length;
-            bytesWritten.value = totalDataBytes;
-          }
-
-          level.value = computePcmRms(chunk);
+        if (writeStream && !writeStream.destroyed && !paused) {
+          writeStream.write(chunk);
+          totalDataBytes += chunk.length;
+          bytesWritten.value = totalDataBytes;
         }
+
+        level.value = paused ? 0 : computePcmRms(chunk);
       }
     });
 
@@ -205,7 +178,7 @@ export function useMicRecording() {
     });
 
     socket.on('close', () => {
-      if (writeStream) {
+      if (active.value && writeStream) {
         console.warn('[useMicRecording] Socket closed unexpectedly — finalizing');
         stop().catch((err: any) => console.error('[useMicRecording] Failed to finalize after socket close:', err.message));
       }
@@ -223,6 +196,7 @@ export function useMicRecording() {
     }
 
     active.value = true;
+    if (paused) pauseTimeline.pause();
     console.log('[useMicRecording] Started', { mode, path: socketPath, file: filePath });
     return true;
   }
@@ -232,9 +206,15 @@ export function useMicRecording() {
    * Returns the file path.
    */
   function setPaused(value: boolean): void {
-    if (paused === value || !active.value) return;
-    if (value) { paused = true; pauseTimeline.pause(); level.value = 0; return; }
-    if (currentMode !== 'streaming' && currentMode !== 'streaming-voice' && writeStream && !writeStream.destroyed) {
+    if (paused === value) return;
+    if (value) {
+      paused = true;
+      if (active.value) pauseTimeline.pause();
+      level.value = 0;
+      return;
+    }
+    if (!active.value) { paused = false; return; }
+    if (writeStream && !writeStream.destroyed) {
       let silenceBytes = pauseTimeline.resume(sampleRate, BYTES_PER_SAMPLE);
       while (silenceBytes > 0) {
         const chunkBytes = Math.min(silenceBytes, 16 * 1024 * 1024);
@@ -284,9 +264,8 @@ export function useMicRecording() {
       });
     }
 
-    // Finalize WAV header for PCM modes
-    const isCompressed = currentMode === 'streaming' || currentMode === 'streaming-voice';
-    if (!isCompressed && filePath) {
+    // Every mode is recorded as PCM WAV so the container remains valid across pauses.
+    if (filePath) {
       finalizeWav(filePath, totalDataBytes);
     }
 

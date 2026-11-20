@@ -437,6 +437,7 @@ import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { CaptureSessionLifecycle } from './capture-studio/effects/CaptureSessionLifecycle';
 import { CaptureSourceTileReplacer } from './capture-studio/services/CaptureSourceTileReplacer';
+import { CaptureAudioDriverOwnership } from './capture-studio/services/CaptureAudioDriverOwnership';
 import { CaptureContextMenuRouter } from './capture-studio/services/CaptureContextMenuRouter';
 import { PlaybackTileController } from './capture-studio/services/PlaybackTileController';
 import { registerBrowserTabCloseGuard } from '@pkg/composables/useBrowserTabs';
@@ -493,6 +494,7 @@ mediaSources.setCameraQuality = captureLifecycle.protect(mediaSources.setCameraQ
 mediaSources.setScreenQuality = captureLifecycle.protect(mediaSources.setScreenQuality);
 audioDriver.startMic = captureLifecycle.protect(audioDriver.startMic);
 audioDriver.startSpeaker = captureLifecycle.protect(audioDriver.startSpeaker);
+const audioOwnership = new CaptureAudioDriverOwnership(audioDriver);
 speakerCapture.acquireNative = captureLifecycle.protect(speakerCapture.acquireNative);
 const tracksOpen = ref(false);
 const currentLayout = ref('pip');
@@ -638,7 +640,7 @@ const splitChannels = computed(() => sources.filter(source => source.on).map(sou
   name: source.name,
   stream: source.type === 'screen' ? mediaSources.screenStreams[source.id] || (source.id === 'screen' ? mediaSources.screenStream.value : null)
     : source.type === 'camera' ? mediaSources.cameraStreams[source.id] || (source.id === 'cam' ? mediaSources.cameraStream.value : null) : null,
-  level: source.type === 'mic' ? audioDriver.micLevel.value
+  level: source.type === 'mic' ? (pausedSources[source.id] ? 0 : audioDriver.micLevel.value)
     : source.type === 'system' ? (speakerCapture.level.value || audioDriver.speakerLevel.value) : 0,
 })));
 
@@ -802,7 +804,7 @@ async function enableSystemAudio(): Promise<void> {
 
   // BlackHole/CoreAudio is intentionally fallback-only. It remains useful on
   // older Electron/macOS combinations where native loopback is unavailable.
-  await audioDriver.startSpeaker();
+  await audioOwnership.acquireSpeaker();
   if (!audioDriver.speakerRunning.value) {
     throw new Error('Native loopback and BlackHole fallback are both unavailable');
   }
@@ -811,7 +813,7 @@ async function enableSystemAudio(): Promise<void> {
 async function disableSystemAudio(): Promise<void> {
   speakerCapture.releaseNative();
   if (speakerCapture.mode.value === 'blackhole') await speakerCapture.stop();
-  if (audioDriver.speakerRunning.value) await audioDriver.stopSpeaker();
+  await audioOwnership.releaseSpeaker();
 }
 
 // ─── Source toggles (wired to real capture) ───
@@ -837,7 +839,7 @@ async function toggleSrc(src: Source) {
         console.log('[CaptureStudio] Camera acquired:', src.id, stream ? 'active' : 'null', 'tracks:', stream?.getVideoTracks().length);
         if (!captureLifecycle.isClosing) updateStreamAssignments();
       } else if (src.type === 'mic') {
-        await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
+        await audioOwnership.acquireMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
       } else if (src.type === 'system') {
         await enableSystemAudio();
       }
@@ -851,7 +853,7 @@ async function toggleSrc(src: Source) {
     } else if (src.type === 'camera') {
       await mediaSources.releaseCamera(src.id);
     } else if (src.type === 'mic') {
-      await audioDriver.stopMic();
+      await audioOwnership.releaseMic();
     } else if (src.type === 'system') {
       await disableSystemAudio();
     }
@@ -1078,8 +1080,9 @@ async function toggleRecord() {
       // Start mic recording via controller socket if mic is running.
       if (audioDriver.micRunning.value) {
         const path = require('path');
-        const isCompressed = micQualityMode.value === 'streaming' || micQualityMode.value === 'streaming-voice';
-        const ext = isCompressed ? 'webm' : 'wav';
+        // The recorder uses PCM for every selected mode so a pause never drops
+        // arbitrary WebM clusters. The persisted quality preference is unchanged.
+        const ext = 'wav';
         const micPath = path.join(recorder.getSessionDir(), `mic.${ ext }`);
         const started = await micRecording.start(micPath, micQualityMode.value as MicQualityMode);
         if (!started) throw new Error('Microphone stream did not start');
@@ -1292,7 +1295,7 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
       if (deviceLabel && deviceLabel !== 'default') {
         await audioDriver.setMicDevice(deviceLabel);
       }
-      await audioDriver.startMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
+      await audioOwnership.acquireMic(['webm-opus', 'pcm-s16le'], () => captureLifecycle.isClosing);
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start mic for new source:', e.message);
       newSrc.on = false;
@@ -1352,8 +1355,11 @@ async function performSourceRemoval(id: string): Promise<void> {
   }
   if (src?.type === 'mic') {
     await micRecording.stop().catch(() => '');
+    await audioOwnership.releaseMic();
   } else if (src?.type === 'system') {
     await speakerCapture.stop().catch(() => '');
+    speakerCapture.releaseNative();
+    await audioOwnership.releaseSpeaker();
   } else if (src?.type === 'screen') {
     mediaSources.releaseScreen(id);
     delete deviceIdMap[src.name];
@@ -1412,7 +1418,8 @@ function startAudioMeter() {
       // Combine mic level (from controller VAD) + speaker level
       const spActive = speakerCapture.active.value;
       const speakerLvl = spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
-      const micLvl = audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
+      const micPaused = sources.some(source => source.type === 'mic' && source.on && pausedSources[source.id]);
+      const micLvl = audioDriver.micRunning.value && !micPaused ? audioDriver.micLevel.value : 0;
       const combinedLevel = Math.max(speakerLvl, micLvl);
 
       // Log occasionally to debug
@@ -1702,7 +1709,7 @@ const WAVEFORM_SCROLL_INTERVAL = 80; // ms between scrolls — gives a steady DA
 function getCurrentLevel(src: { id: string; type: string; on: boolean }): number {
   if (src.type === 'mic') {
     // Mic level comes from the controller's VAD pipeline
-    return audioDriver.micRunning.value ? audioDriver.micLevel.value : 0;
+    return audioDriver.micRunning.value && !pausedSources[src.id] ? audioDriver.micLevel.value : 0;
   } else if (src.type === 'system') {
     const spActive = speakerCapture.active.value;
     return spActive ? speakerCapture.level.value : audioDriver.speakerLevel.value;
@@ -1869,7 +1876,7 @@ useAgentBridge({
       await mediaSources.acquireCamera(deviceId);
     }
     if (params.mic === true && !audioDriver.micRunning.value) {
-      await audioDriver.startMic();
+      await audioOwnership.acquireMic();
     }
     if (params.speaker === true && !hasNativeSystemAudio()) {
       await enableSystemAudio();
@@ -2176,8 +2183,8 @@ async function cleanupCaptureStudio() {
     speakerCapture.releaseNative();
 
     // These stop calls release only Capture Studio's controller holds.
-    await audioDriver.stopMic();
-    await audioDriver.stopSpeaker();
+    await audioOwnership.releaseMic();
+    await audioOwnership.releaseSpeaker();
   });
 }
 
