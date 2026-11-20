@@ -140,3 +140,26 @@ describe('BrowserTabViewManager window ownership', () => {
     expect(manager.focusedTabIds.has(owner.id)).toBe(false);
   });
 });
+
+describe('hidden mount bounds ordering', () => {
+  it('preserves drawable geometry when repeated create arrives with zero layout', () => {
+    // risk: hidden renderer initialization overwrites the agent compositor with 0x0
+    const owner = ownerWindow(101);
+    const view = { webContents: { getURL: () => 'https://example.com' }, setBounds: vi.fn() };
+    const manager = managerWith('tab', view, owner);
+    manager.reconcileVisibility = vi.fn();
+    const original = manager.latestBounds.get('tab');
+    manager.awaitingOwnerBounds.add('tab');
+    manager.createView('tab', 'https://example.com', { x: 0, y: 0, width: 0, height: 900 }, owner);
+    expect(manager.latestBounds.get('tab')).toEqual(original);
+    expect(manager.awaitingOwnerBounds.has('tab')).toBe(true);
+    expect(manager.setBounds('tab', { x: 0, y: 0, width: 0, height: 0 }, owner)).toBe(false);
+    expect(manager.awaitingOwnerBounds.has('tab')).toBe(true);
+    expect(view.setBounds).not.toHaveBeenCalled();
+    expect(manager.setBounds('tab', { x: 0, y: 0, width: 900, height: 600 }, owner)).toBe(true);
+    expect(manager.latestBounds.get('tab').width).toBe(900);
+    expect(manager.awaitingOwnerBounds.has('tab')).toBe(false);
+    expect(manager.setBounds('tab', { x: 0, y: 0, width: 0, height: 0 }, owner)).toBe(false);
+    expect(manager.latestBounds.get('tab').width).toBe(900);
+  });
+});

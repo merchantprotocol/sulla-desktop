@@ -356,13 +356,13 @@ export class BrowserTabViewManager {
       if (existing.webContents.getURL() !== url) {
         existing.webContents.loadURL(url).catch(() => {});
       }
-      this.latestBounds.set(tabId, bounds);
-      if (this.owners.get(tabId) && this.focusedFor(this.owners.get(tabId)!) === tabId) {
-        existing.setBounds(bounds);
-      }
+      this.setBounds(tabId, bounds, ownerWindow ?? undefined);
       return;
     }
 
+    // A hidden renderer can mount before it has layout. Do not create a
+    // zero-sized compositor; the first valid owner layout will replace this.
+    if (!this.hasDrawableBounds(bounds)) bounds = { x: 0, y: 0, width: 1280, height: 800 };
     const mainWindow = ownerWindow;
 
     if (!mainWindow) {
@@ -559,6 +559,10 @@ export class BrowserTabViewManager {
    * bounds get pushed to the native view; unfocused tabs have no
    * on-screen presence to position.
    */
+  private hasDrawableBounds(bounds: Electron.Rectangle): boolean {
+    return [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) && bounds.width > 0 && bounds.height > 0;
+  }
+
   setBounds(tabId: string, bounds: Electron.Rectangle, ownerWindow?: Electron.BrowserWindow): boolean {
     const view = this.views.get(tabId);
     if (!view) return false;
@@ -567,6 +571,9 @@ export class BrowserTabViewManager {
       console.debug(`[BrowserTabView] ignored stale bounds from non-owner window=${ ownerWindow.id } tabId=${ tabId }`);
       return false;
     }
+    // Ignore transient hidden/mount rectangles, preserving the last drawable
+    // geometry and the transfer gate until the owner supplies real layout.
+    if (!this.hasDrawableBounds(bounds)) return false;
     this.latestBounds.set(tabId, bounds);
     this.awaitingOwnerBounds.delete(tabId);
     if (owner && this.focusedFor(owner) === tabId) {

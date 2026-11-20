@@ -335,6 +335,16 @@ try {
     if (Array.isArray(initial)) mirrorMainTabs(initial);
   }).catch(() => {});
 
+  (ipcRenderer as any).on('tabs:request-activation', (_e: unknown, record: MainTabRecord) => {
+    if (!record || record.origin !== 'agent') return;
+    // Upsert just this record without pruning unrelated tabs. The complete
+    // registry broadcast remains the authority for removals.
+    const others = tabs.filter(t => t.assetId && t.assetId !== record.assetId)
+      .map(t => ({ assetId: t.assetId!, title: t.title, url: t.url, origin: 'agent' as const }));
+    mirrorMainTabs([...others, record]);
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: record.assetId } }));
+  });
+
   (ipcRenderer as any).on('tabs:change', (_e: unknown, mainTabs: MainTabRecord[]) => {
     mirrorMainTabs(mainTabs);
   });
