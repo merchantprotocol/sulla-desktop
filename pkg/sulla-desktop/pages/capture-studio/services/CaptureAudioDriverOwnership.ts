@@ -24,7 +24,6 @@ export class CaptureAudioDriverOwnership {
     if (this.micHeld) return;
     if (this.micOperation) return this.micOperation;
     this.micOperation = (async() => {
-      try {
         // Do not delegate cancellation to startMic: its helper performs its own
         // stop, but the lifecycle guard can then reject after that stop and make
         // cleanup release the same owner twice. Keep cancellation custody here.
@@ -39,7 +38,6 @@ export class CaptureAudioDriverOwnership {
           this.micHeld = false;
           return;
         }
-      }
     })();
     try { await this.micOperation; } finally { this.micOperation = null; }
   }
@@ -60,11 +58,9 @@ export class CaptureAudioDriverOwnership {
     if (this.speakerHeld) return;
     if (this.speakerOperation) return this.speakerOperation;
     this.speakerOperation = (async() => {
-      try {
         const result = await this.driver.startSpeaker();
         if ((result as any)?.ok === false) return;
         this.speakerHeld = true;
-      }
     })();
     try { await this.speakerOperation; } finally { this.speakerOperation = null; }
   }
