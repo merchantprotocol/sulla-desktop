@@ -128,7 +128,7 @@
   <div
     class="audio-only-display"
     :class="{ visible: currentLayout === 'audioonly' }"
-    @contextmenu.prevent="$emit('show-audio-menu', $event)"
+    @contextmenu.prevent="$emit('show-audio-menu', $event, audioOnlySourceId)"
   >
     <div
       ref="audioMeterVisRef"
@@ -164,6 +164,7 @@ const props = defineProps<{
   primarySource:    Source | null;
   pipSource:        Source | null;
   audioOnlySources: string;
+  audioOnlySourceId: string;
   channels: Channel[];
 }>();
 

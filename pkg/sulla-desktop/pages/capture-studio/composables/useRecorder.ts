@@ -349,8 +349,10 @@ export function useRecorder(
       };
 
       entry.recorder.onstop = () => {
-        // Safety: resolve if ondataavailable never fires (empty final chunk)
-        setTimeout(() => { void entry.chunkQueue.flush().then(safeResolve, safeReject); }, 100);
+        // MediaRecorder dispatches the final dataavailable before stop. Drain
+        // that exact queue here; a timer can publish the manifest while a
+        // slow Blob.arrayBuffer() or filesystem write is still in flight.
+        void entry.chunkQueue.flush().then(safeResolve, safeReject);
       };
       entry.recorder.onerror = (event: Event) => safeReject(new Error(`MediaRecorder failed while stopping ${ entry.type}: ${ (event as any).error?.message || 'unknown error' }`));
 

@@ -56,6 +56,7 @@
         :primary-source="primarySource"
         :pip-source="pipSource"
         :audio-only-sources="audioOnlySources"
+        :audio-only-source-id="audioOnlySourceId"
         :channels="splitChannels"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
@@ -428,6 +429,7 @@ import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { CaptureSessionLifecycle } from './capture-studio/effects/CaptureSessionLifecycle';
 import { CaptureSourceTileReplacer } from './capture-studio/services/CaptureSourceTileReplacer';
+import { CaptureContextMenuRouter } from './capture-studio/services/CaptureContextMenuRouter';
 import { PlaybackTileController } from './capture-studio/services/PlaybackTileController';
 import { registerBrowserTabCloseGuard } from '@pkg/composables/useBrowserTabs';
 import { useRecorder } from './capture-studio/composables/useRecorder';
@@ -542,6 +544,7 @@ const sources = reactive<Source[]>([
   { id: 'system', type: 'system', name: 'System Audio', color: 'sys', status: '—', builtin: true, on: false, isVideo: false },
 ]);
 const selectedScreenSourceIds = reactive<Record<string, string>>({});
+const contextMenuRouter = new CaptureContextMenuRouter();
 
 const builtinSources = computed(() => sources.filter(s => s.builtin));
 const customSources = computed(() => sources.filter(s => !s.builtin));
@@ -660,6 +663,9 @@ const totalDiskDisplay = computed(() => {
 const audioOnlySources = computed(() => {
   return sources.filter(s => !s.isVideo && s.on).map(s => s.name).join(' + ') || 'No sources';
 });
+const audioOnlySourceId = computed(() => sources.find(source => source.on && source.type === 'mic')?.id
+  || sources.find(source => source.on && source.type === 'system')?.id
+  || 'mic');
 
 const timerDisplay = computed(() => {
   const secs = recorder.elapsedSeconds.value;
@@ -1547,8 +1553,24 @@ async function showCameraContextMenu(e: MouseEvent, sourceId = 'cam') {
   }
 }
 
-async function showAudioContextMenu(e: MouseEvent) {
+async function showAudioContextMenu(e: MouseEvent, sourceId = 'mic') {
   try {
+    const audioSource = sources.find(source => source.id === sourceId);
+    if (!audioSource || (audioSource.type !== 'mic' && audioSource.type !== 'system')) return;
+
+    if (audioSource.type === 'system') {
+      ctxMenu.items = [{
+        id: 'toggle-system-audio',
+        label: audioSource.on ? 'Stop System Audio' : 'Start System Audio',
+        action: () => toggleSrc(audioSource),
+      }];
+      ctxMenu.title = 'System Audio';
+      ctxMenu.x = e.clientX;
+      ctxMenu.y = e.clientY;
+      ctxMenu.visible = true;
+      return;
+    }
+
     const { inputs } = await listAudioDevices();
     // Refresh deviceIdMap with latest enumeration
     for (const d of inputs) {
@@ -1605,15 +1627,11 @@ async function showAudioContextMenu(e: MouseEvent) {
 // ─── Source context menu dispatcher (right-click from floating controls) ───
 
 function showSourceContextMenu(src: Source, e: MouseEvent) {
-  if (src.type === 'screen') {
-    showScreenContextMenu(e);
-  } else if (src.type === 'camera') {
-    showCameraContextMenu(e, src.id);
-  } else if (src.type === 'mic') {
-    showAudioContextMenu(e);
-  } else if (src.type === 'system') {
-    // System audio has no source/quality options yet
-  }
+  contextMenuRouter.open(src.id, sources, e, {
+    screen: (event, sourceId) => showScreenContextMenu(event, sourceId),
+    camera: (event, sourceId) => showCameraContextMenu(event, sourceId),
+    audio: (event, sourceId) => showAudioContextMenu(event, sourceId),
+  });
 }
 
 // ─── Track panel waveform (continuous animation) ───
