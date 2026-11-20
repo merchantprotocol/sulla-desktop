@@ -12,7 +12,9 @@ interface SharedCatalog { schemaVersion: 1; providers: SharedCatalogProvider[] }
 const CACHE_SETTING = 'sharedModelCatalogCache';
 const TTL_MS = 5 * 60_000;
 const RETRY_BACKOFF_MS = 60_000;
-const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+const MAX_RESPONSE_BYTES = 512 * 1024;
+const providerIdPattern = /^[A-Za-z][A-Za-z0-9._-]{0,99}$/;
+const modelIdPattern = /^[@A-Za-z0-9][@A-Za-z0-9._:/-]{0,199}$/;
 
 // First-launch/offline seed copied only from the maintained shared catalog
 // source in sulla-workers/src/config/model-catalog.ts. Update alongside its
@@ -21,6 +23,7 @@ const BUNDLED_FALLBACK: SharedCatalogProvider[] = [
   { id: 'anthropic', name: 'Anthropic', models: ['claude-opus-5.5', 'claude-sonnet-5.5', 'claude-haiku-5.5'].map(id => ({ id, name: id })) },
   { id: 'openai', name: 'OpenAI', models: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.5'].map(id => ({ id, name: id })) },
   { id: 'google', name: 'Google', models: ['gemini-3.1-pro', 'gemini-3.8-flash', 'gemini-2.5-pro'].map(id => ({ id, name: id })) },
+  { id: 'alibaba', name: 'Alibaba', models: ['qwen3.8-max', 'qwen3.7-plus'].map(id => ({ id, name: id })) },
 ];
 
 export class SharedModelCatalogClient {
@@ -35,13 +38,18 @@ export class SharedModelCatalogClient {
   ) {}
 
   async listProviders(): Promise<SharedCatalogProvider[]> {
-    const cached = await this.readCache();
+    let cached: { fetchedAt: number; providers: SharedCatalogProvider[] } | null = null;
+    try { cached = await this.readCache(); } catch { /* Keep startup resilient if settings storage is unavailable. */ }
     if (cached) {
       if (this.now() - cached.fetchedAt >= TTL_MS) void this.refresh().catch(() => undefined);
       return cached.providers;
     }
     try { return await this.refresh(); }
     catch { return cached?.providers ?? BUNDLED_FALLBACK; }
+  }
+
+  getBundledProvider(providerId: string): SharedCatalogProvider | undefined {
+    return BUNDLED_FALLBACK.find(provider => provider.id === providerId);
   }
 
   private refresh(): Promise<SharedCatalogProvider[]> {
@@ -52,7 +60,7 @@ export class SharedModelCatalogClient {
         method: 'GET', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5_000),
       });
       if (!response.ok) throw new Error(`Shared model catalog unavailable (${ response.status })`);
-      const parsed = this.validate(await response.json());
+      const parsed = this.validate(await this.readBoundedJson(response));
       await this.setCache(CACHE_SETTING, { fetchedAt: this.now(), providers: parsed.providers });
       this.retryAfter = 0;
       return parsed.providers;
@@ -61,6 +69,31 @@ export class SharedModelCatalogClient {
       throw error;
     }).finally(() => { this.flight = undefined; });
     return this.flight;
+  }
+
+  private async readBoundedJson(response: Response): Promise<unknown> {
+    const declaredLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) throw new Error('Shared model catalog response is too large');
+    if (!response.body) throw new Error('Shared model catalog response has no body');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw new Error('Shared model catalog response is too large');
+        }
+        chunks.push(value);
+      }
+    } finally { reader.releaseLock(); }
+    const body = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder().decode(body)) as unknown;
   }
 
   private async readCache(): Promise<{ fetchedAt: number; providers: SharedCatalogProvider[] } | null> {
@@ -81,13 +114,13 @@ export class SharedModelCatalogClient {
     for (const item of value.providers) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Invalid shared catalog provider');
       const p = item as Record<string, unknown>;
-      if (typeof p.id !== 'string' || !idPattern.test(p.id) || seen.has(p.id) || typeof p.name !== 'string' || !p.name.trim() || !Array.isArray(p.models) || p.models.length > 500) throw new Error('Invalid shared catalog provider');
+      if (typeof p.id !== 'string' || !providerIdPattern.test(p.id) || seen.has(p.id) || typeof p.name !== 'string' || !p.name.trim() || !Array.isArray(p.models) || p.models.length === 0 || p.models.length > 500) throw new Error('Invalid shared catalog provider');
       seen.add(p.id);
       const modelIds = new Set<string>();
       const models = p.models.map((entry) => {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid shared catalog model');
         const m = entry as Record<string, unknown>;
-        if (typeof m.id !== 'string' || !idPattern.test(m.id) || modelIds.has(m.id) || typeof m.name !== 'string' || !m.name.trim() || (m.contextWindow !== undefined && (!Number.isInteger(m.contextWindow) || Number(m.contextWindow) < 1))) throw new Error('Invalid shared catalog model');
+        if (typeof m.id !== 'string' || !modelIdPattern.test(m.id) || modelIds.has(m.id) || typeof m.name !== 'string' || !m.name.trim() || (m.contextWindow !== undefined && (!Number.isInteger(m.contextWindow) || Number(m.contextWindow) < 1))) throw new Error('Invalid shared catalog model');
         modelIds.add(m.id);
         return { id: m.id, name: m.name, ...(m.contextWindow ? { contextWindow: Number(m.contextWindow) } : {}) };
       });

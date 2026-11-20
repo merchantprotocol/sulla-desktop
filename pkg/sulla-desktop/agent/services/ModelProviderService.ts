@@ -27,6 +27,10 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { resolveProviderAccess, type ProviderAccessMethod } from '@pkg/shared/providerAccess';
 
+// IDs curated in Sulla Cloud's public shared catalog. Unknown/custom/local
+// providers must never trigger a catalog download simply to list their models.
+const SHARED_CATALOG_PROVIDER_IDS = new Set(['anthropic', 'openai', 'google', 'xai', 'deepseek', 'moonshot', 'alibaba', 'meta', 'minimax', 'workers-ai']);
+
 // ── Public types ─────────────────────────────────────────────────
 
 export interface ModelProviderState {
@@ -311,10 +315,15 @@ class ModelProviderService {
     // Catalog metadata is public Cloud data, not proof of an account/API-key
     // entitlement. Availability/auth checks remain in the provider access path.
     // CLI providers retain their CLI-specific catalogs and compatibility rules.
-    if (!['claude-code', 'codex', 'opencode', 'cursor'].includes(providerId)) {
+    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId)) {
       const { sharedModelCatalog } = await import('../languagemodels/sharedModelCatalog');
-      const provider = (await sharedModelCatalog.listProviders()).find(item => item.id === providerId);
+      const provider = (await sharedModelCatalog.listProviders()).find(item => item.id === providerId)
+        ?? sharedModelCatalog.getBundledProvider(providerId);
       if (provider) return provider.models.map(model => this.modelInfo(providerId, { id: model.id, name: model.name }));
+      // A Cloud-listed provider missing from a stale/partial response must not
+      // silently fall back to account-specific discovery. Bundled fallback
+      // rows are returned by the catalog client; otherwise fail closed.
+      return [];
     }
     const integration = integrations[providerId];
     if (!integration) {
