@@ -19,7 +19,24 @@ describe('shared model catalog', () => {
   it('uses bundled verified metadata on a first-ever offline launch', async() => {
     const client = new SharedModelCatalogClient(vi.fn().mockRejectedValue(new Error('offline')) as any, () => 1, async() => null, async() => undefined);
     const providers = await client.listProviders();
-    expect(providers.find(provider => provider.id === 'openai')?.models.map(model => model.id)).toContain('gpt-6-sol');
+    expect(providers.map(provider => provider.id)).toEqual(['anthropic', 'openai', 'google', 'xai', 'deepseek', 'moonshot', 'alibaba', 'meta', 'minimax', 'workers-ai']);
+    expect(providers.find(provider => provider.id === 'workers-ai')?.models).toContainEqual({ id: '@cf/openai/gpt-oss-120b', name: 'gpt-oss-120b', contextWindow: 128_000 });
+    expect(providers.find(provider => provider.id === 'xai')?.models).toContainEqual({ id: 'grok-4.20-multi-agent-0309', name: 'grok-4.20-multi-agent-0309', contextWindow: 2_000_000 });
+  });
+
+  it('returns persisted cache immediately and attempts stale refresh without losing it on failure', async() => {
+    const prior = [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-v4-pro', name: 'deepseek-v4-pro' }] }];
+    const fetcher = vi.fn().mockRejectedValue(new Error('offline'));
+    const client = new SharedModelCatalogClient(fetcher as any, () => 999999, async() => ({ fetchedAt: 1, providers: prior }), async() => undefined);
+    expect(await client.listProviders()).toEqual(prior);
+    await Promise.resolve();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects oversized catalog response bodies and serves the verified offline seed', async() => {
+    const oversized = new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(512 * 1024 + 1)); controller.close(); } }), { status: 200 });
+    const client = new SharedModelCatalogClient(vi.fn().mockResolvedValue(oversized) as any, () => 1, async() => null, async() => undefined);
+    expect((await client.listProviders()).map(provider => provider.id)).toHaveLength(10);
   });
 
   it('accepts Cloudflare model identifiers and rejects providers without models', async() => {
@@ -61,7 +78,7 @@ describe('shared model catalog', () => {
 
   it('rejects empty catalogs and duplicate model IDs', async() => {
     const client = new SharedModelCatalogClient(vi.fn() as any, () => 1, async() => null, async() => undefined);
-    await expect((client as any).validate({ schemaVersion: 1, providers: [] })).toThrow();
-    await expect((client as any).validate({ schemaVersion: 1, providers: [{ id: 'openai', name: 'OpenAI', models: [{ id: 'gpt-6-sol', name: 'one' }, { id: 'gpt-6-sol', name: 'two' }] }] })).toThrow();
+    expect(() => (client as any).validate({ schemaVersion: 1, providers: [] })).toThrow();
+    expect(() => (client as any).validate({ schemaVersion: 1, providers: [{ id: 'openai', name: 'OpenAI', models: [{ id: 'gpt-6-sol', name: 'one' }, { id: 'gpt-6-sol', name: 'two' }] }] })).toThrow();
   });
 });

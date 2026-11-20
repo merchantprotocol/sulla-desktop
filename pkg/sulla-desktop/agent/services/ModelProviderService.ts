@@ -315,7 +315,17 @@ class ModelProviderService {
     // Catalog metadata is public Cloud data, not proof of an account/API-key
     // entitlement. Availability/auth checks remain in the provider access path.
     // CLI providers retain their CLI-specific catalogs and compatibility rules.
-    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId)) {
+    const integration = integrations[providerId];
+    let customEndpointConfigured = false;
+    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId) && integration?.properties?.some(property => property.key === 'base_url')) {
+      try {
+        const integrationService = getIntegrationService();
+        const accountId = await integrationService.getActiveAccountId(providerId).catch(() => '');
+        const values = await integrationService.getFormValues(providerId, accountId);
+        customEndpointConfigured = values.some(value => value.property === 'base_url' && typeof value.value === 'string' && value.value.trim().length > 0);
+      } catch { /* Retain shared defaults when endpoint settings cannot be read. */ }
+    }
+    if (SHARED_CATALOG_PROVIDER_IDS.has(providerId) && !queryOptions.liveOnly && !customEndpointConfigured) {
       const { sharedModelCatalog } = await import('../languagemodels/sharedModelCatalog');
       const provider = (await sharedModelCatalog.listProviders()).find(item => item.id === providerId)
         ?? sharedModelCatalog.getBundledProvider(providerId);
@@ -325,7 +335,6 @@ class ModelProviderService {
       // rows are returned by the catalog client; otherwise fail closed.
       return [];
     }
-    const integration = integrations[providerId];
     if (!integration) {
       return this.getCliProviderModels(providerId, queryOptions);
     }

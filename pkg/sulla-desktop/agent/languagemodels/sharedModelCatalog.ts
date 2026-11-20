@@ -20,10 +20,33 @@ const modelIdPattern = /^[@A-Za-z0-9][@A-Za-z0-9._:/-]{0,199}$/;
 // source in sulla-workers/src/config/model-catalog.ts. Update alongside its
 // schema/source; online responses remain authoritative after validation.
 const BUNDLED_FALLBACK: SharedCatalogProvider[] = [
-  { id: 'anthropic', name: 'Anthropic', models: ['claude-opus-5.5', 'claude-sonnet-5.5', 'claude-haiku-5.5'].map(id => ({ id, name: id })) },
-  { id: 'openai', name: 'OpenAI', models: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.5'].map(id => ({ id, name: id })) },
-  { id: 'google', name: 'Google', models: ['gemini-3.1-pro', 'gemini-3.8-flash', 'gemini-2.5-pro'].map(id => ({ id, name: id })) },
+  { id: 'anthropic', name: 'Anthropic', models: ['claude-fable-5.1', 'claude-fable-5', 'claude-opus-5.5', 'claude-opus-5', 'claude-opus-4.8', 'claude-opus-4.7', 'claude-sonnet-5.5', 'claude-sonnet-5', 'claude-sonnet-4.6', 'claude-haiku-5.5', 'claude-haiku-4.5'].map(id => ({ id, name: id })) },
+  { id: 'openai', name: 'OpenAI', models: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.5-pro', 'gpt-5.5', 'gpt-5.4-mini', 'gpt-5-nano', 'o4-mini', 'o3'].map(id => ({ id, name: id })) },
+  { id: 'google', name: 'Google', models: ['gemini-3.1-pro', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-pro'].map(id => ({ id, name: id })) },
+  { id: 'xai', name: 'xAI', models: ['grok-4.7', 'grok-4.6', 'grok-4.5', 'grok-4.20-multi-agent-0309'].map((id, index) => ({ id, name: id, ...(index === 3 ? { contextWindow: 2_000_000 } : {}) })) },
+  { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-v4-pro', name: 'deepseek-v4-pro' }] },
+  { id: 'moonshot', name: 'Moonshot AI', models: [{ id: 'kimi-k3', name: 'kimi-k3' }] },
   { id: 'alibaba', name: 'Alibaba', models: ['qwen3.8-max', 'qwen3.7-plus'].map(id => ({ id, name: id })) },
+  { id: 'meta', name: 'Meta', models: ['muse-spark-1.3', 'muse-wonder-1.0'].map(id => ({ id, name: id })) },
+  { id: 'minimax', name: 'MiniMax', models: [{ id: 'm3', name: 'm3' }] },
+  { id: 'workers-ai', name: 'Cloudflare Workers AI', tag: 'open models', models: [
+    { id: '@cf/openai/gpt-oss-120b', name: 'gpt-oss-120b', contextWindow: 128_000 },
+    { id: '@cf/openai/gpt-oss-20b', name: 'gpt-oss-20b', contextWindow: 128_000 },
+    { id: '@cf/moonshotai/kimi-k2.6', name: 'kimi-k2.6', contextWindow: 262_144 },
+    { id: '@cf/moonshotai/kimi-k2.7-code', name: 'kimi-k2.7-code', contextWindow: 262_144 },
+    { id: '@cf/zai-org/glm-5.3', name: 'glm-5.3', contextWindow: 1_310_720 },
+    { id: '@cf/zai-org/glm-5.3-flash', name: 'glm-5.3-flash', contextWindow: 1_310_720 },
+    { id: '@cf/deepseek-ai/deepseek-v4-pro-0813', name: 'deepseek-v4-pro-0813', contextWindow: 1_048_576 },
+    { id: '@cf/deepseek-ai/deepseek-v4-flash-0731', name: 'deepseek-v4-flash-0731', contextWindow: 1_310_720 },
+    { id: '@cf/meta/llama-4-scout-17b-16e-instruct', name: 'llama-4-scout-17b-16e-instruct', contextWindow: 131_000 },
+    { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', name: 'llama-3.3-70b-instruct-fp8-fast', contextWindow: 24_000 },
+    { id: '@cf/qwen/qwen3.8-27b', name: 'qwen3.8-27b', contextWindow: 262_144 },
+    { id: '@cf/qwen/qwen2.5-coder-32b-instruct', name: 'qwen2.5-coder-32b-instruct', contextWindow: 32_768 },
+    { id: '@cf/mistralai/mistral-small-3.1-24b-instruct', name: 'mistral-small-3.1-24b-instruct', contextWindow: 128_000 },
+    { id: '@cf/nvidia/nemotron-3-120b-a12b', name: 'nemotron-3-120b-a12b', contextWindow: 256_000 },
+    { id: '@cf/google/gemma-4-26b-a4b-it', name: 'gemma-4-26b-a4b-it', contextWindow: 256_000 },
+    { id: '@cf/ibm-granite/granite-4.0-h-micro', name: 'granite-4.0-h-micro', contextWindow: 131_000 },
+  ] },
 ];
 
 export class SharedModelCatalogClient {
