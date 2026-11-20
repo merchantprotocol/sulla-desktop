@@ -271,6 +271,7 @@ export interface IpcMainInvokeEvents {
   'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
 
   'conversation-servers:list': (orgId?: string) => import('@pkg/main/ConversationServersCloudClient').ConversationServerSummary[];
+  'conversation-servers:create': (input: import('@pkg/main/ConversationServersCloudClient').CreateConversationServerInput) => Record<string, unknown>;
   'conversation-servers:channels': (serverId: string) => import('@pkg/main/ConversationServersCloudClient').ConversationChannelSummary[];
   'conversation-servers:members': (serverId: string) => { userId: string; role: string }[];
   'conversation-servers:channel-preference': (input: { serverId: string; channelId: string }) => { level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel; preference: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; channelOverride: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; serverDefault: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel };

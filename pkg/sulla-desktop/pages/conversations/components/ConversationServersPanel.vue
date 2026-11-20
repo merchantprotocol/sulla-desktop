@@ -18,6 +18,8 @@ const messages = ref<{ id: string; seq: number; authorUserId: string; body: stri
 const unreadByChannel = ref<Record<string, { unreadCount?: number; mentionCount?: number; unread?: number; mentions?: number }>>({});
 const loadingOlder = ref(false), sending = ref(false);
 const orgMembers = ref<{ userId: string; role?: string; displayName?: string }[]>([]);
+const organizations = ref<{ orgId: string; name: string }[]>([]);
+const createOpen = ref(false), createName = ref(''), createVisibility = ref<'public' | 'organization'>('public'), createOrgId = ref(''), creating = ref(false);
 const selectedServer = ref(''), selectedChannel = ref(''), error = ref(''), loading = ref(false), openMenu = ref('');
 const server = computed(() => servers.value.find(item => item.id === selectedServer.value));
 const publicServers = computed(() => servers.value.filter(item => item.visibility === 'public'));
@@ -34,7 +36,8 @@ async function load(): Promise<void> {
   loading.value = true; error.value = '';
   try {
     // Public and organization server lists are returned by the authenticated Cloud API; no sample data is used.
-    const orgs = await ipcRenderer.invoke('org-conversations:organizations') as { orgId: string }[];
+    const orgs = await ipcRenderer.invoke('org-conversations:organizations') as { orgId: string; name: string }[];
+    organizations.value = orgs;
     const orgIds = orgs.map(org => org.orgId);
     const [publicServers, ...orgServers] = await Promise.all([
       ipcRenderer.invoke('conversation-servers:list') as Promise<ConversationServer[]>,
@@ -143,6 +146,23 @@ function selectServer(serverId: string): void {
   channels.value = []; members.value = []; memberNames.value = []; orgMembers.value = []; selectedChannel.value = '';
   void load();
 }
+function openCreate(): void { createName.value = ''; createVisibility.value = 'public'; createOrgId.value = organizations.value[0]?.orgId ?? ''; createOpen.value = true; }
+async function createServer(): Promise<void> {
+  const name = createName.value.trim();
+  if (!name || creating.value || (createVisibility.value === 'organization' && !createOrgId.value)) return;
+  creating.value = true; error.value = '';
+  try {
+    const input = createVisibility.value === 'organization'
+      ? { name, visibility: 'organization' as const, orgId: createOrgId.value }
+      : { name, visibility: 'public' as const };
+    const result = await ipcRenderer.invoke('conversation-servers:create', input) as ConversationServer | { server?: ConversationServer };
+    const created = 'server' in result ? result.server : result;
+    createOpen.value = false;
+    await load();
+    if (created?.id) selectServer(created.id);
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : 'Could not create server'; }
+  finally { creating.value = false; }
+}
 function showDirectMessages(): void {
   selectedServer.value = '';
   channels.value = []; members.value = []; memberNames.value = []; orgMembers.value = []; selectedChannel.value = '';
@@ -178,9 +198,19 @@ onBeforeUnmount(() => ipcRenderer.removeListener('conversation-servers:changed',
       <span v-if="organizationServers.length" class="cs-divider" />
       <span v-if="organizationServers.length" class="cs-group">Orgs</span>
       <button v-for="item in organizationServers" :key="item.id" class="cs-server-icon cs-org" :class="{ selected: selectedServer === item.id }" :title="item.name" :aria-label="`${item.name} server`" @click="selectServer(item.id)">{{ item.name.slice(0, 2).toUpperCase() }}</button>
+      <button class="cs-server-add" aria-label="Create server" title="Create server" @click="openCreate">+</button>
       <span v-if="loading" class="cs-loading" aria-live="polite">…</span>
       <button class="cs-exit" title="Back" aria-label="Back" @click="$emit('exit')"><span aria-hidden="true">↩</span><small>Exit</small></button>
     </nav>
+    <div v-if="createOpen" class="cs-dialog-backdrop" @click.self="createOpen = false">
+      <form class="cs-create-dialog" aria-label="Create server" @submit.prevent="void createServer()">
+        <h2>Create a server</h2>
+        <label>Server name<input v-model="createName" maxlength="100" required autofocus /></label>
+        <label>Visibility<select v-model="createVisibility"><option value="public">Public</option><option value="organization" :disabled="!organizations.length">Organization</option></select></label>
+        <label v-if="createVisibility === 'organization'">Organization<select v-model="createOrgId" required><option v-for="org in organizations" :key="org.orgId" :value="org.orgId">{{ org.name }}</option></select></label>
+        <div><button type="button" @click="createOpen = false">Cancel</button><button :disabled="creating || !createName.trim() || (createVisibility === 'organization' && !createOrgId)">{{ creating ? 'Creating…' : 'Create server' }}</button></div>
+      </form>
+    </div>
     <slot v-if="!server" />
     <template v-else>
     <aside class="cs-channel-list" aria-label="Channels">
@@ -212,6 +242,7 @@ onBeforeUnmount(() => ipcRenderer.removeListener('conversation-servers:changed',
 <style scoped>
 .cs-shell{display:grid;grid-template-columns:62px 240px minmax(300px,1fr);position:absolute;inset:0;background:var(--bg,#17191d);color:var(--text,#eee);z-index:5;font:13px system-ui}.cs-rail{display:flex;flex-direction:column;align-items:center;gap:9px;padding:12px 8px;background:var(--surface-1,#202329);border-right:1px solid var(--border,#363a43)}.cs-server-icon{position:relative;width:40px;height:40px;border:0;border-radius:14px;background:var(--surface-2,#2b2f36);color:var(--text-muted,#bec3cb);font-weight:700;cursor:pointer}.cs-server-icon.selected{border-radius:12px;box-shadow:0 0 0 2px var(--surface-1,#202329),0 0 0 4px var(--accent,#5096b3)}.cs-server-icon.selected::before{content:"";position:absolute;left:-11px;width:3px;height:28px;border-radius:0 3px 3px 0;background:var(--accent,#5096b3)}.cs-dm{border-radius:50%;background:var(--surface-2,#2b2f36)}.cs-channel-list{position:relative;padding:14px 10px;background:var(--surface-1,#202329);border-right:1px solid var(--border,#363a43);overflow:auto}.cs-channel-list header,.cs-content>header{display:flex;flex-direction:column;padding:4px 8px 14px;border-bottom:1px solid var(--border,#363a43)}.cs-channel-list small,.cs-content header span{color:var(--text-muted,#a4a9b2);margin-top:4px}.cs-default,.cs-channel,.cs-menu button{width:100%;border:0;background:none;color:inherit;text-align:left;padding:9px 8px;border-radius:6px;cursor:pointer}.cs-default{color:var(--text-muted,#a4a9b2);font-size:11px}.cs-channel{display:flex;align-items:center;gap:8px;color:var(--text-muted,#a4a9b2);border-radius:6px}.cs-channel.active{background:var(--surface-2,#2b2f36);color:var(--text,#eee)}.cs-channel-select{display:flex;gap:8px;align-items:center;flex:1;padding:9px 8px;border:0;background:none;color:inherit;text-align:left;cursor:pointer}.cs-bell{color:inherit;border:0;background:none;cursor:pointer;padding:5px}.cs-bell svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;display:block}.cs-bell:disabled{opacity:.4;cursor:not-allowed}.cs-menu{padding:4px;background:var(--surface-2,#2b2f36);border:1px solid var(--border,#363a43);border-radius:7px}.cs-menu button:hover,.cs-channel:hover{background:var(--surface-3,#393e47)}.cs-content{position:relative;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) 220px}.cs-content>header{grid-column:1/-1;display:block;padding:16px 18px}.cs-content>header span{margin-left:12px}.cs-empty{padding:22px}.cs-timeline{padding:12px 18px 18px;overflow:auto;display:flex;flex-direction:column;gap:10px}.cs-message{padding:10px;border-bottom:1px solid var(--border,#363a43)}.cs-message p{white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}.cs-message small{color:var(--text-dim,#888)}.cs-composer{margin-top:auto;padding:12px;border:1px solid var(--border,#363a43);border-radius:8px}.cs-composer textarea{width:100%;min-height:64px;resize:vertical;background:transparent;color:inherit;border:0;font:inherit}.cs-compose-tools{display:flex;justify-content:space-between}.cs-compose-tools select,.cs-compose-tools button,.cs-older{background:var(--surface-2,#2b2f36);color:inherit;border:1px solid var(--border,#363a43);border-radius:5px;padding:7px}.cs-badge{margin-left:auto;color:var(--accent,#5096b3)}.cs-empty p,.cs-muted{color:var(--text-muted,#a4a9b2)}.cs-members{padding:16px 12px;border-left:1px solid var(--border,#363a43);color:var(--text-muted,#a4a9b2)}.cs-members>b{display:block;color:var(--text,#eee);margin-bottom:12px}.cs-members div{padding:5px 0}.cs-members small{float:right}.cs-error{color:var(--danger,#f66)}@media(max-width:900px){.cs-shell{grid-template-columns:56px 200px minmax(220px,1fr)}.cs-content{grid-template-columns:minmax(0,1fr)}.cs-members{display:none}}
 .cs-shell{--cs-rail-width:72px;--cs-channel-width:244px;--cs-active:#3a7fa0;position:relative;z-index:2;display:grid;grid-template-columns:var(--cs-rail-width) minmax(0,1fr);width:100%;height:100%;min-height:0;overflow:hidden;background:var(--paper,#f4f7fb);color:var(--text,#1a2332);font:13px var(--sans,system-ui)}
+.cs-server-add{width:40px;height:40px;border:1px dashed var(--line-2,rgba(26,35,50,.2));border-radius:14px;background:transparent;color:var(--muted,#5b6778);font-size:23px;cursor:pointer}.cs-server-add:hover{border-color:var(--cs-active);color:var(--cs-active)}.cs-dialog-backdrop{position:absolute;inset:0;z-index:8;display:grid;place-items:center;background:rgba(20,28,38,.32)}.cs-create-dialog{display:grid;gap:14px;width:min(360px,calc(100% - 32px));padding:22px;border:1px solid var(--line-2,rgba(26,35,50,.14));border-radius:12px;background:var(--card-solid,#fff);box-shadow:0 16px 48px rgba(26,35,50,.2)}.cs-create-dialog h2{margin:0;font-size:18px}.cs-create-dialog label{display:grid;gap:6px;color:var(--muted,#5b6778)}.cs-create-dialog input,.cs-create-dialog select{padding:9px;border:1px solid var(--line-2,rgba(26,35,50,.16));border-radius:6px;background:var(--paper,#f4f7fb);color:var(--text,#1a2332);font:inherit}.cs-create-dialog>div{display:flex;justify-content:flex-end;gap:8px}.cs-create-dialog button{padding:8px 12px;border:1px solid var(--line-2,rgba(26,35,50,.16));border-radius:6px;background:var(--paper-2,#eaf0f6);color:var(--text,#1a2332);cursor:pointer}.cs-create-dialog button[type=submit]{background:var(--cs-active);color:white}.cs-create-dialog button:disabled{opacity:.55;cursor:not-allowed}
 .cs-shell.has-server{grid-template-columns:var(--cs-rail-width) var(--cs-channel-width) minmax(0,1fr)}
 .cs-rail{gap:8px;min-height:0;overflow-y:auto;padding:12px 0;background:var(--paper-2,#eaf0f6);border-color:var(--line,rgba(26,35,50,.09))}.cs-group{font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--dim,#8a94a3);text-transform:uppercase;margin-top:4px}.cs-divider{width:32px;height:2px;border-radius:2px;background:var(--line-2,rgba(26,35,50,.14));margin:2px 0}
 .cs-server-icon{flex:none;width:44px;height:44px;background:var(--card-solid,#fff);color:#3d4b59;box-shadow:0 1px 1px rgba(26,35,50,.04),0 2px 8px -2px rgba(26,35,50,.08);transition:border-radius .15s}.cs-server-icon:hover{border-radius:11px}.cs-server-icon.selected{border-radius:11px;box-shadow:0 0 0 2px var(--paper,#f4f7fb),0 0 0 4px var(--cs-active)}.cs-server-icon.selected::before{left:-14px;top:50%;width:4px;height:32px;margin-top:-16px;background:var(--cs-active)}.cs-dm{background:#cfd8e0}.cs-public{background:color-mix(in srgb,var(--accent,#3a7fa0) 11%,var(--card-solid,#fff));color:var(--accent-2,#2f6a86)}.cs-org{background:color-mix(in srgb,#8394a5 15%,var(--card-solid,#fff));color:#526273}
