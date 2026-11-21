@@ -580,10 +580,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   protected recordedReplyAttribution(state: BaseThreadState, model?: string): { agent?: string; model?: string } {
-    const agentId = state.metadata.agentId;
+    const { metadata } = state;
+    const agentId = metadata.agentId;
+    const agent = 'agent' in metadata ? metadata.agent : undefined;
+    const name = agent && typeof agent === 'object' && 'name' in agent && typeof agent.name === 'string'
+      ? agent.name.trim()
+      : undefined;
     const concrete = model?.trim();
     return {
-      agent: agentId ? state.metadata.agent?.name?.trim() || agentId : undefined,
+      agent: agentId ? name || agentId : undefined,
       // Transport names, route tiers and CLI aliases do not identify a concrete model.
       model: concrete && !/^(auto|default|codex|claude-code|fast|balanced|powerful|opus|sonnet|haiku)$/i.test(concrete)
         ? concrete : undefined,
@@ -1823,7 +1828,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       new TurnOutputCounter(state.metadata as any).record();
     };
 
-    let reply: NormalizedResponse | null;
+    let reply: NormalizedResponse | null = null;
     try {
       const providerId = provider.getProviderId?.();
       TurnHopTiming.mark(state, 'provider.getAccountId.start');
