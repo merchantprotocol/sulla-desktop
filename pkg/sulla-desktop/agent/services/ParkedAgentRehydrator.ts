@@ -69,6 +69,11 @@ export class ParkedAgentRehydrator {
 
   apply(state: any, identity: ParkedAgentIdentity): void {
     if (identity.task.workerModelRoute) installWorkerRoute(state, identity.task.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
+    // The graph is recreated with the saved persona, but the restored state can
+    // still carry the parent chat channel as its legacy identity. Keep the
+    // durable task identity explicit so container labels, capabilities, Files
+    // actors, and audit records do not silently fall back to `sulla-desktop`.
+    state.metadata.agentId = identity.agentId;
     state.metadata.isSubAgent = true;
     state.metadata.modelSlot = 'primary';
     state.metadata.subAgentDepth = Number(identity.task.depth) || 1;
