@@ -55,11 +55,11 @@ function uniqueMessageId(ctx: DispatchContext, baseId: string): string {
   return id;
 }
 
-function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string): void {
+function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string, reportingActivity?: 'status' | 'tool'): void {
   const last = ctx.messages[ctx.messages.length - 1] as (ChatMessage & { _completed?: boolean }) | undefined;
   // Only adjacent events in the same open segment may share a source
   // record. Otherwise a later status can jump ahead of a decision or evidence.
-  if (last?.kind === 'thinking' && last.role === 'assistant' && last.channelId === agentId
+  if (!reportingActivity && !last?.reportingActivity && last?.kind === 'thinking' && last.role === 'assistant' && last.channelId === agentId
     && last.threadId === msgThreadId && !last._completed) {
     ctx.messages[ctx.messages.length - 1] = {
       ...last,
@@ -69,7 +69,7 @@ function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadI
   }
 
   const id = uniqueMessageId(ctx, `${ Date.now() }_ws_thinking`);
-  ctx.messages.push({ id, channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content });
+  ctx.messages.push({ id, channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content, reportingActivity });
 }
 
 function contentToString(content: any): string {
@@ -227,7 +227,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.kind === target && m.role === 'assistant' && !(m as any)._completed) {
+      if (m.kind === target && m.role === 'assistant' && m.threadId === msgThreadId && !(m as any)._completed &&
+        (target !== 'streaming' || m.decisionFollowUpId === data?.decisionFollowUpId)) {
         if (target === 'thinking') {
           console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=sentinel:${ kindRaw } (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
         }
@@ -479,7 +480,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
   const finalContent = content;
   const decisionFollowUpId = msg.type === 'assistant_message' && role === 'assistant' &&
-    (kind === 'streaming' || kind === 'text' || !kind) && typeof data.decisionFollowUpId === 'string'
+    (kind === 'streaming' || kind === 'text' || !kind) && typeof data?.decisionFollowUpId === 'string'
     ? data.decisionFollowUpId : undefined;
 
   if (kind === 'speak') {
@@ -515,7 +516,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (replyBoundary(m)) break;
-      if (m.kind === 'streaming' && m.role === 'assistant' && m.decisionFollowUpId === decisionFollowUpId && !(m as any)._completed) {
+      if (m.kind === 'streaming' && m.role === 'assistant' && m.threadId === msgThreadId && m.decisionFollowUpId === decisionFollowUpId && !(m as any)._completed) {
         existingIdx = i;
         break;
       }
@@ -537,7 +538,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       const m = ctx.messages[i];
       if (replyBoundary(m)) break;
       if (m.role !== 'assistant') continue;
-      if (m.kind !== 'streaming' || m.decisionFollowUpId !== decisionFollowUpId) continue;
+      if (m.kind !== 'streaming' || m.threadId !== msgThreadId || m.decisionFollowUpId !== decisionFollowUpId) continue;
       const prev = (m.content || '').trim();
       if (!prev) continue;
       if (trimmedIncoming.startsWith(prev) || prev.startsWith(trimmedIncoming)) {
@@ -604,7 +605,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── Thinking: accumulate into a single growing bubble ──
   if (kind === 'thinking' && role === 'assistant') {
-    appendThinkingMessage(ctx, agentId, msgThreadId, finalContent);
+    appendThinkingMessage(ctx, agentId, msgThreadId, finalContent,
+      msg.type === 'assistant_message' && (data?.reportingActivity === 'tool' || data?.reportingActivity === 'status')
+        ? data.reportingActivity : undefined);
     return;
   }
 
@@ -616,7 +619,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (replyBoundary(m) || m.role !== 'assistant') break;
-      if (m.kind === 'streaming' && m.decisionFollowUpId === decisionFollowUpId) recentStreamIndexes.push(i);
+      if (m.kind === 'streaming' && m.threadId === msgThreadId && m.decisionFollowUpId === decisionFollowUpId) recentStreamIndexes.push(i);
     }
 
     if (!terminalRunError && recentStreamIndexes.length > 0) {
@@ -787,6 +790,8 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     // as separate transcript cards.
 
     if (toolRunId) {
+      const existingId = ctx.toolRunIdToMessageId.get(toolRunId);
+      if (existingId && ctx.messages.some(message => message.id === existingId && message.threadId === msgThreadId)) return;
       const messageId = `${ Date.now() }_tool_${ toolRunId }`;
       const safeArgs = redactToolArgs(toolName, args) as Record<string, unknown>;
       const description = typeof safeArgs?.description === 'string' ? safeArgs.description : undefined;

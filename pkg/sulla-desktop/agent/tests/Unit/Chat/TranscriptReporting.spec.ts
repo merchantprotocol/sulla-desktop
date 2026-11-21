@@ -48,10 +48,6 @@ class ReportingFixture {
     this.adapter.syncMessages();
   }
 
-  resolveWaitingGate(id: string) {
-    this.adapter.armDecisionResume(id, 'fixture-thread');
-  }
-
   entries(level: ReportingLevel) {
     return this.reporting.entries(this.chat.messages.value, level);
   }
@@ -75,10 +71,12 @@ class ReportingFixture {
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
 it('projects safe individual events in source order before and after tool settlement and reload', () => {
   const live = new ReportingFixture();
-  live.emit('assistant_message', { kind: 'thinking', content: 'Preparing your turn…' });
+  live.emit('assistant_message', { kind: 'thinking', content: 'Preparing your turn…', reportingActivity: 'status' });
   live.emit('assistant_message', { kind: 'thinking', content: '💭 PRIVATE_REASONING' });
   live.emit('assistant_message', { kind: 'citation', citations: [{ num: 1, title: 'Evidence', origin: 'fixture' }] });
-  live.emit('assistant_message', { kind: 'thinking', content: '$ echo PRIVATE_COMMAND' });
+  live.emit('assistant_message', { kind: 'thinking', content: 'Private buffer\n\n$ echo PRIVATE_LEGACY_COMMAND\n\nPreparing your turn…' });
+  live.emit('assistant_message', { kind: 'thinking', content: '$ echo PRIVATE_TYPED_COMMAND', reportingActivity: 'tool' });
+  live.emit('progress', { phase: 'tool_call', toolRunId: 'fixture-call', toolName: 'exec', args: { command: 'echo PRIVATE_INPUT' } });
   live.emit('progress', { phase: 'tool_call', toolRunId: 'fixture-call', toolName: 'exec', args: { command: 'echo PRIVATE_INPUT' } });
   live.emit('assistant_message', { kind: 'thinking', content: 'Tools connected — calling model' });
 
@@ -86,7 +84,7 @@ it('projects safe individual events in source order before and after tool settle
   expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
     'Preparing your turn…', 'citation', 'Running a shell command', 'Shell · Running', 'Tools connected — calling model',
   ]);
-  expect(live.entries('info').map(row => row.id)).toEqual([debug[0].id, debug[1].id, debug[4].id]);
+  expect(live.entries('info').map(row => row.id)).toEqual([debug[1].id]);
   expect(live.entries('fatal').map(row => row.id)).toEqual([debug[1].id]);
   expect(JSON.stringify(debug)).not.toContain('PRIVATE_');
 
@@ -117,7 +115,7 @@ it('keeps the original actionable cards and terminal failure at every level', as
   const deliverable: Message = { id: asMessageId('deliverable'), createdAt: 2, kind: 'sulla', model: 'test', text: 'Delivered the requested report.' };
   live.chat.appendMessage(approval);
   live.chat.appendMessage(deliverable);
-  live.emit('assistant_message', { kind: 'thinking', content: '$ synthetic command' });
+  live.emit('assistant_message', { kind: 'thinking', content: '$ synthetic command', reportingActivity: 'tool' });
   live.emit('assistant_message', { runEnded: true, content: 'The execution environment stopped.' });
   const wrapper = live.mount('info');
   const approvalCard = wrapper.getComponent(ToolApproval);
@@ -164,22 +162,25 @@ it('ignores an old page if the active thread changes while loading', async() => 
 
 // risk: adjacent but unrelated replies can disappear if attribution relies
 // on message proximity alone, or the first follow-up can duplicate on replay.
-it('links just the first new reply of a resolved active gate and keeps neighboring replies after reload', () => {
+it.each(['Yes', 'No'])('attributes only the explicit %s answer reply live and after a dated reload', (answer) => {
+  const clock = vi.spyOn(Date, 'now');
+  onTestFinished(() => clock.mockRestore());
+  clock.mockReturnValue(Date.parse('2026-10-14T12:00:00Z'));
   const live = new ReportingFixture();
   live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply' });
   const question = {
     id: asMessageId('question-line'), createdAt: Date.now(), kind: 'tool_question', status: 'pending',
-    questionId: 'question-1', questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }] }],
+    questionId: 'question-1', questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }, { label: 'No' }] }],
   } satisfies Message;
   live.chat.appendMessage(question);
-  live.resolveWaitingGate('question-1');
   live.chat.updateMessage(question.id, {
-    status: 'answered', answers: [{ question: 'Proceed?', selected: ['Yes'] }],
+    status: 'answered', answers: [{ question: 'Proceed?', selected: [answer] }],
   });
   live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply, updated' });
   live.emit('assistant_message', { kind: 'streaming_complete' });
-  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up' });
-  live.emit('assistant_message', { kind: 'streaming_complete' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up', decisionFollowUpId: 'question-1' });
+  live.emit('assistant_message', { kind: 'streaming_complete', decisionFollowUpId: 'question-1' });
+  live.emit('assistant_message', { kind: 'text', content: 'Decision follow-up', decisionFollowUpId: 'question-1' });
   live.emit('assistant_message', { kind: 'text', content: 'Separate neighboring reply' });
   live.ctx.graphRunning.value = false;
   live.emit('assistant_message', { kind: 'text', content: 'Later ordinary reply' });
@@ -190,9 +191,15 @@ it('links just the first new reply of a resolved active gate and keeps neighbori
   expect(texts(live, 'fatal')).toEqual(brief);
   expect(texts(live, 'info')).toEqual([brief[0], 'Decision follow-up', ...brief.slice(1)]);
   expect(live.entries('fatal').find(row => row.id === question.id)).toMatchObject({
-    message: { status: 'answered', answers: [{ question: 'Proceed?', selected: ['Yes'] }] },
+    message: { status: 'answered', answers: [{ question: 'Proceed?', selected: [answer] }] },
   });
+  clock.mockReturnValue(Date.parse('2026-11-21T12:00:00Z'));
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  expect(reopened.entries('info').map(row => row.createdAt)).toEqual(live.entries('info').map(row => row.createdAt));
+  const separate = new ReportingFixture(new ChatController());
+  separate.chat.thread.value = { ...separate.chat.thread.value, id: asThreadId('separate-chat') };
+  separate.emit('assistant_message', { kind: 'text', content: 'Decision follow-up' });
+  expect(texts(separate, 'fatal')).toEqual(['Decision follow-up']);
   expect(texts(reopened, 'fatal')).toEqual(brief);
   expect(texts(reopened, 'debug')).toEqual(texts(live, 'info'));
 });

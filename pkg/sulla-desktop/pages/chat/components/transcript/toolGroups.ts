@@ -98,16 +98,15 @@ export class TranscriptReporting {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {
       if (!Array.isArray(message.thoughts)) return;
-      for (const [index, line] of message.thoughts.entries()) {
-        if (typeof line !== 'string') continue;
-        const status = statuses.get(line);
-        const tool = status || !/^\d+_ws_thinking(?:_\d+)?$/.test(message.id) ? undefined :
-          cliTools.find(([pattern]) => pattern.test(line))?.[1];
-        const text = status ?? tool;
-        if (text) {
-          yield { ...base, id: `activity:${ message.id }:${ index }`, kind: 'activity',
-            label: status ? 'Status' : 'Tool', level: status ? 'info' : 'debug', text };
-        }
+      // Old untyped buffers can mix reasoning and activity. Only an exact,
+      // standalone public status survives; never pattern-match individual lines.
+      const line = message.thoughts.length === 1 ? message.thoughts[0] : undefined;
+      const status = typeof line === 'string' ? statuses.get(line) : undefined;
+      const tool = message.reportingActivity === 'tool';
+      const text = status ?? (tool ? cliTools.find(([pattern]) => typeof line === 'string' && pattern.test(line))?.[1] ?? 'Calling a tool' : undefined);
+      if (text) {
+        yield { ...base, id: `activity:${ message.id }:0`, kind: 'activity',
+          label: tool && !status ? 'Tool' : 'Status', level: 'debug', text };
       }
       return;
     }

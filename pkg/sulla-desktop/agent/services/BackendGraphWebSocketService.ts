@@ -1431,7 +1431,9 @@ export class BackendGraphWebSocketService {
       const abort = runAbort ?? new AbortService();
       runAbort = abort;
       state.metadata.options.abort = abort;
+      delete state.metadata.reportingDecisionFollowUp;
       this.activeAborts.set(abortKey, abort);
+      const initialSteerRevision = state.metadata.reportingSteerRevision;
       this.resumeContexts.set(abortKey, {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
@@ -1535,7 +1537,9 @@ export class BackendGraphWebSocketService {
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
       // Only the claim-owned late-answer dispatch may attribute its reply.
       // Do not source this from client-provided chat metadata.
-      (state.metadata as any)._reportingDecisionFollowUpId = decisionTurn ? answerInputs[0]?.id : undefined;
+      if (decisionTurn && threadId && state.metadata.reportingSteerRevision === initialSteerRevision) {
+        state.metadata.reportingDecisionFollowUp = { id: answerInputs[0].id, threadId };
+      }
       if (runLocation === 'container') {
         await this.runInConversationContainer(state, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
           content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
@@ -1591,7 +1595,7 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
-      if (state && isCurrentRun()) delete (state.metadata as any)._reportingDecisionFollowUpId;
+      if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
       }

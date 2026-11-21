@@ -85,7 +85,7 @@ export interface StreamCallbacks {
    * Providers that don't emit rich events (OpenAI-compatible chat, etc.)
    * simply never call this. Callers that don't care can omit it.
    */
-  onActivity?:  (message: string) => void;
+  onActivity?:  (message: string, reportingActivity?: 'status' | 'tool') => void;
   /**
    * Emitted when the provider's agent loop performs a file edit/write that
    * the UI should surface as a post-hoc PatchBlock in chat. Currently only

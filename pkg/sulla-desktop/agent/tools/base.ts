@@ -272,6 +272,7 @@ export abstract class BaseTool<TState = any> {
       const sideEffect = (metadata?.sideEffect as ToolSideEffect | undefined) ?? (operations.length && operations.every(operation => operation === 'read') ? 'read' : undefined);
       const relayedWrite = metadata?.relayed === true && requiresToolApproval(sideEffect, { relayed: true });
       if (this.name !== 'ask_user_question' && (relayedWrite || await decisions.requiresApproval(this.name))) {
+        const initialSteerRevision = metadata?.reportingSteerRevision;
         const { record, result } = await decisions.request({
           kind:           'approval',
           title:          `Allow ${ this.metadata.category } / ${ this.name }?`,
@@ -286,6 +287,12 @@ export abstract class BaseTool<TState = any> {
           });
         } catch { /* The durable Decide inbox remains available. */ }
         const answer = await result;
+        // The result belongs to this invocation's live graph, not to the
+        // next text that happened to arrive after a card changed state.
+        if (metadata?.threadId && !signal?.aborted && metadata.reportingSteerRevision === initialSteerRevision &&
+          (answer.status === 'approved' || answer.status === 'denied')) {
+          metadata.reportingDecisionFollowUp = { id: record.id, threadId: metadata.threadId };
+        }
         if (answer.status !== 'approved') return { toolName: this.name, success: false, error: `Action ${ answer.status }; nothing was executed.` };
       }
       if (signal?.aborted) throw new Error('Action cancelled; nothing was executed.');

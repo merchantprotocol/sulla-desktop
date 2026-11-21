@@ -1721,7 +1721,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // will then start a fresh streaming bubble — so the UI shows
     // think → message → think → message instead of merging everything.
     let lastActivity = '';
-    const onActivity = (message: string): void => {
+    const onActivity = (message: string, reportingActivity?: 'status' | 'tool'): void => {
       if (!message || message === lastActivity) return;
       if (!firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
       lastActivity = message;
@@ -1748,7 +1748,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       const willForward = !!(parentWsCh && (state.metadata as any).isSubAgent);
       console.log(`[ThinkingTrace] onActivity emit "${ message.slice(0, 80) }" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel }, isSubAgent=${ (state.metadata as any).isSubAgent }, willForwardToParent=${ willForward }, flushedStreamingFirst=${ flushedStreaming })`);
 
-      this.wsChatMessage(state, message, 'assistant', 'thinking');
+      this.wsChatMessage(state, message, 'assistant', 'thinking', { reportingActivity });
       thinkingOpen = true;
 
       // When a sub-agent (e.g. memory-recall running Claude Code) has a parent
@@ -1759,7 +1759,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const parentTid = (state.metadata as any).parentConversationId || state.metadata.threadId;
         const parentProxy = { ...state, metadata: { ...state.metadata, wsChannel: parentWsCh, threadId: parentTid } };
         console.log(`[ThinkingTrace] onActivity FORWARDING to parent (parentChannel=${ parentWsCh }, parentTid=${ parentTid })`);
-        this.wsChatMessage(parentProxy as BaseThreadState, message, 'assistant', 'thinking');
+        this.wsChatMessage(parentProxy as BaseThreadState, message, 'assistant', 'thinking', { reportingActivity });
       }
     };
 
@@ -2081,6 +2081,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Send via WebSocket. `extras` (e.g. `citations`) is merged into data
     // so structured fields ride alongside the usual content/role/kind.
+    const followUp = state.metadata.reportingDecisionFollowUp;
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: messageType,
       data: {
@@ -2091,8 +2092,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         timestamp:   Date.now(),
         modelStatus: (state.metadata as any).resolvedModelStatus,
         ...(extras ?? {}),
-        ...(role === 'assistant' && (kind === 'streaming' || kind === 'text' || !kind)
-          ? { decisionFollowUpId: (state.metadata as any)._reportingDecisionFollowUpId } : {}),
+        ...(messageType === 'assistant_message' && role === 'assistant' && followUp?.threadId === threadId &&
+          (kind === 'streaming' || kind === 'streaming_complete' || kind === 'text' || !kind)
+          ? { decisionFollowUpId: followUp.id } : {}),
       },
     });
 

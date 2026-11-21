@@ -30,12 +30,12 @@
           <span
             class="report-label"
             :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
-          >{{ entry.label }} · {{ levelLabels[entry.level] }}</span>
+          >{{ entry.label }}</span>
           <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" />
           <div v-else class="report-activity">{{ entry.text }}</div>
         </div>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
-          <span class="report-label">Status · Info</span>
+          <span class="report-label">Status</span>
           <TurnWaiting
             :since="waiting.since"
             :can-resend="!waiting.message.attachments?.length"
@@ -77,7 +77,6 @@ const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
-const levelLabels: Record<ReportingLevel, string> = { fatal: 'Fatal', info: 'Info', debug: 'Debug' };
 
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);

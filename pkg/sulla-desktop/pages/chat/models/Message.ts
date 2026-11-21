@@ -100,6 +100,7 @@ export interface StreamingMessage extends MessageBase {
 // ─── Thinking (live / settled / expanded rendered by Thinking.vue) ─
 export interface ThinkingMessage extends MessageBase {
   kind:         'thinking';
+  reportingActivity?: 'status' | 'tool';
   thoughts:     readonly string[];  // appended to while live
   startedAt:    number;
   completed:    boolean;            // false = live streaming
