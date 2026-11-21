@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ApprovedClients } from '../approvedClients';
+import { getCloudPreferences } from '../cloudSettings';
+import { signDeviceMessageExact } from '../deviceKey';
+
 import path from 'node:path';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -15,7 +19,7 @@ import { persistMobileAttachments } from '@pkg/main/mobileRelayContent';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
-import { acceptRelayUserTurn, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { acceptRelayUserTurn, admitRelayThread, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
 import type { DesktopRelayLog, DesktopRelayPortSet, DesktopRelaySignInNotifier, DesktopRelayTimers } from './DesktopRelayPorts';
@@ -63,6 +67,7 @@ export class DesktopRelayRuntimePorts {
         vaultView:  socket => socket instanceof VaultRelaySocket ? socket : null,
       },
       session: {
+        proveRelayDevice: (room, deviceId, nonce) => signDeviceMessageExact('shared-live-relay-v1', [room, 'desktop', deviceId, nonce]),
         accessToken:     () => getCurrentAccessToken(),
         deviceId:        () => getDesktopDeviceId(),
         acquireLiveness: holder => acquireRelayLiveness(holder),
@@ -80,6 +85,9 @@ export class DesktopRelayRuntimePorts {
         deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
       },
       chat: {
+        approveViewer: async(id, key) => (await getCloudPreferences()).remoteAccess && ApprovedClients.get(id)?.publicKey === key,
+        relayApprovals: () => ApprovedClients.list().map(client => [client.clientId, client.publicKey] as const),
+        admitRelayThread,
         validateSelection:  message => validateChatSelection(message),
         persistAttachments: (conversationId, messageId, turn) => persistMobileAttachments(path.join(resolveSullaHomeDir(), 'uploads', 'mobile'), conversationId, messageId, turn.files),
         companionRequest:   async(method, params) => (await import('@pkg/main/mobileCompanion')).mobileCompanionRequest(method, params),

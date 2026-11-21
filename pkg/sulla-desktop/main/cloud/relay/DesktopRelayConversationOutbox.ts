@@ -45,6 +45,7 @@ export class DesktopRelayConversationOutbox {
     private readonly transport: DesktopRelayFrameTransport,
     private readonly timers: DesktopRelayTimers,
     private readonly log: DesktopRelayLog,
+    private readonly approvals: () => readonly (readonly [string, string])[] = () => [],
   ) {}
 
   /** Send a conversation frame, stamped with its run id, to its secure route or the relay room. */
@@ -58,6 +59,10 @@ export class DesktopRelayConversationOutbox {
       ? payload.clientRunId
       : this.relayRuns.get(conversationId)?.[0];
     const stamped = runId ? { ...payload, clientRunId: runId, userMessageId: payload.userMessageId ?? runId } : payload;
+    if (conversationId.startsWith('remote_')) {
+      this.sendScoped(conversationId, stamped);
+      return;
+    }
     const secure = this.secureRoutes.get(conversationId);
     if (secure) {
       try {
@@ -68,6 +73,16 @@ export class DesktopRelayConversationOutbox {
       return;
     }
     this.send({ ...stamped, conversationId, deviceId: this.transport.deviceId });
+  }
+
+  sendScoped(conversationId: string, payload: RelayFrame, request?: string): void {
+    // Scope metadata is rebuilt by the host, never copied from viewer input.
+    this.send({ ...payload, conversationId, deviceId: this.transport.deviceId, relayScope: 'v1',
+      relayApprovals: this.approvals(), ...(request ? { relayRequest: request } : {}) });
+  }
+
+  activeRun(conversationId: string): string | undefined {
+    return this.activeConversations.has(conversationId) ? this.oldestRun(conversationId) : undefined;
   }
 
   /** Relay-room send that refuses conversation frames missing their conversationId. */

@@ -34,12 +34,14 @@ export class DesktopRelayClient {
   constructor(private readonly ports: DesktopRelayPortSet = new DesktopRelayRuntimePorts().create()) {
     const { log, timers } = ports;
     this.transport = new DesktopRelayTransport(ports.sockets, ports.session, timers, log, {
-      message:        (raw, socket, generation) => { void this.router.route(raw, socket, generation) },
+      message:        (raw, socket, generation) => {
+        void this.router.route(raw, socket, generation).catch(() => log.warn('[DesktopRelay] Relay command rejected'));
+      },
       socketReleased: (socket, generation) => this.shares.abort(socket, generation),
       sessionReset:   () => this.outbox.reset(),
       frameDelivered: () => this.outbox.frameDelivered(),
     });
-    this.outbox = new DesktopRelayConversationOutbox(this.transport, timers, log);
+    this.outbox = new DesktopRelayConversationOutbox(this.transport, timers, log, ports.chat.relayApprovals);
     this.shares = new DesktopRelayShareServer(this.transport, ports.files, timers, log);
     const scribe = new DesktopRelayTurnScribe(ports.history, log);
     const deviceId = () => ports.session.deviceId();
@@ -56,6 +58,7 @@ export class DesktopRelayClient {
       companion:        async message => this.handlers.companion(message as RelayIncomingFrame, frame => this.outbox.send(frame)),
       shareFetch:       (message, socket, generation) => this.shares.serve(message as RelayIncomingFrame, socket, generation),
       shareFetchCancel: (message, socket, generation) => this.shares.cancel(message as RelayIncomingFrame, socket, generation),
+      scoped:           message => this.handlers.handleScopedCommand(message as RelayIncomingFrame),
       chat:             message => this.handlers.handleChat(message as RelayIncomingFrame),
       cancel:           message => this.handlers.handleCancel(message as RelayIncomingFrame),
       inject:           message => this.handlers.handleInject(message as RelayIncomingFrame),

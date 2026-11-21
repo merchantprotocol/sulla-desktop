@@ -168,7 +168,7 @@ export class DesktopRelayTransport {
     const json = JSON.stringify(payload);
     if (!this.ws || this.ws.readyState !== RELAY_SOCKET_OPEN) {
       // Streaming/activity frames are ephemeral — dropping them is acceptable.
-      if (type && DURABLE_RELAY_FRAME_TYPES.includes(type)) {
+      if (payload.relayScope !== 'v1' && type && DURABLE_RELAY_FRAME_TYPES.includes(type)) {
         this.pendingFrames.push(json);
         this.log.warn(`[DesktopRelay] Queued ${ type } frame — socket not open`);
       } else {
@@ -278,6 +278,21 @@ export class DesktopRelayTransport {
     ws.addEventListener('open', () => this.handleOpen(ws, room));
     ws.addEventListener('message', (event) => {
       if (this.ws !== ws) return;
+      // Proof is bound to this socket's nonce. Never buffer it or reuse it
+      // on a replacement socket, including vault-owned transports.
+      if (typeof event.data === 'string' && this.session.proveRelayDevice) {
+        let challenge: { type?: string; nonce?: string } | undefined;
+        try { challenge = JSON.parse(event.data) } catch {}
+        if (challenge?.type === 'relay_device_challenge') {
+          const nonce = challenge.nonce;
+          if (typeof nonce === 'string' && /^[a-f0-9-]{36}$/.test(nonce)) {
+            void this.session.proveRelayDevice(room, this.currentDeviceId, nonce).then(signature => {
+              if (this.ws === ws) ws.send(JSON.stringify({ type: 'relay_device_proof', signature }));
+            }).catch(() => this.log.warn('[DesktopRelay] Device proof unavailable'));
+          }
+          return;
+        }
+      }
       this.heartbeat.noteInbound();
       this.events.message(event.data as string, ws, gen);
     });

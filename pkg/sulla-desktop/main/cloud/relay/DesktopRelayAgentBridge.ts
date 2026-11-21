@@ -46,6 +46,8 @@ export class DesktopRelayAgentBridge {
   // Id of the most recent committed assistant turn, so `done` can reuse it
   // instead of making mobile persist the same text under a second id.
   private readonly lastCommittedIdByThread = new Map<string, string>();
+  private readonly graphOutcome = new Map<string, string>();
+  private readonly commitFailed = new Set<string>();
   private readonly queues = new Map<string, Promise<void>>();
 
   constructor(
@@ -70,6 +72,7 @@ export class DesktopRelayAgentBridge {
     const threadId = typeof (msg.data as any)?.thread_id === 'string' ? (msg.data as any).thread_id : '';
     const next = (this.queues.get(threadId) ?? Promise.resolve()).then(() => this.handle(msg));
     const settled = next.catch((error) => {
+      if (threadId && this.outbox.activeRun(threadId)) this.commitFailed.add(threadId);
       this.log.warn('[DesktopRelay] Mobile bridge frame failed:', error);
     });
     this.queues.set(threadId, settled);
@@ -78,6 +81,13 @@ export class DesktopRelayAgentBridge {
   }
 
   private async handle(msg: AgentChannelMessage): Promise<void> {
+    const threadId = (msg.data as any)?.thread_id;
+    if (typeof threadId !== 'string' || !this.outbox.activeRun(threadId)) return;
+    if (msg.type === 'relay_dispatch_complete') {
+      const data = msg.data as { relayRunId?: string; outcome?: string };
+      if (data.relayRunId !== this.outbox.activeRun(threadId)) return;
+      return this.finish(threadId, data.outcome === 'accepted' ? this.graphOutcome.get(threadId) || 'completed' : data.outcome || 'failed');
+    }
     if (msg.type === 'speak_dispatch') return this.handleSpeak(msg.data);
     if (msg.type === 'progress') return this.handleToolProgress(msg.data);
     if (msg.type === 'assistant_message') return this.handleAssistantMessage(msg.data);
@@ -91,13 +101,13 @@ export class DesktopRelayAgentBridge {
    * `spoken` marks a <speak> sentence mobile reads aloud on arrival.
    */
   private async commitAssistantText(threadId: string, text: string, spoken = false): Promise<void> {
+    const ts = new Date().toISOString();
+    const id = this.scribe.deriveId(threadId, 'assistant', text, ts);
+    await this.scribe.scribe(threadId, 'assistant', text, { id, ts });
     this.lastActivityByThread.delete(threadId);
     this.finalTextByThread.set(threadId, text);
     this.streamedByThread.delete(threadId);
-    const ts = new Date().toISOString();
-    const id = this.scribe.deriveId(threadId, 'assistant', text, ts);
     this.lastCommittedIdByThread.set(threadId, id);
-    await this.scribe.scribe(threadId, 'assistant', text, { id, ts });
     this.outbox.sendChatFrame(threadId, { type: 'message', content: text, id, ...(spoken ? { spoken: true } : {}) });
   }
 
@@ -197,20 +207,36 @@ export class DesktopRelayAgentBridge {
       this.log.warn('[DesktopRelay] Dropping done frame without thread_id/conversationId');
       return;
     }
-    // A trailing segment that never saw its streaming_complete boundary is
-    // still a separate turn when earlier ones were committed.
-    const trailing = this.streamedByThread.get(threadId);
-    if (trailing && this.finalTextByThread.has(threadId)) await this.commitAssistantText(threadId, trailing);
-    const committed = this.finalTextByThread.get(threadId);
-    const finalText = committed ?? this.streamedByThread.get(threadId) ?? '';
-    // Streaming-only runs were never scribed; committed text was, and `done`
-    // reuses its id so mobile dedups instead of duplicating.
-    let doneId = committed ? this.lastCommittedIdByThread.get(threadId) : undefined;
-    if (!committed && finalText) doneId = await this.scribe.scribeDerived(threadId, 'assistant', finalText);
+    this.graphOutcome.set(threadId, typeof data.stopReason === 'string' ? data.stopReason : 'completed');
+  }
+
+  private async finish(threadId: string, outcome: string): Promise<void> {
+    const runId = this.outbox.activeRun(threadId);
+    if (!runId) return;
+    let terminal: Record<string, unknown>;
+    try {
+      // A failed turn write is not completed live. The existing history
+      // store remains the only source for recovery.
+      if (this.commitFailed.has(threadId)) throw new Error('relay_history_unavailable');
+      const trailing = this.streamedByThread.get(threadId);
+      if (outcome !== 'stopped' && trailing) await this.commitAssistantText(threadId, trailing);
+      const finalText = this.finalTextByThread.get(threadId) ?? '';
+      const id = this.lastCommittedIdByThread.get(threadId);
+      await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
+        sullaCard: { version: 1, kind: 'run_outcome', runId, outcome },
+      }));
+      terminal = outcome === 'stopped'
+        ? { type: 'stopped', outcome }
+        : { type: 'done', content: finalText, id, outcome };
+    } catch {
+      terminal = { type: 'error', reason: 'relay_history_unavailable' };
+    }
     this.streamedByThread.delete(threadId);
     this.finalTextByThread.delete(threadId);
     this.lastActivityByThread.delete(threadId);
     this.lastCommittedIdByThread.delete(threadId);
-    this.outbox.completeRun(threadId, { type: 'done', content: finalText, id: doneId });
+    this.graphOutcome.delete(threadId);
+    this.commitFailed.delete(threadId);
+    this.outbox.completeRun(threadId, terminal);
   }
 }

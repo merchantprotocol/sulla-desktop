@@ -11,23 +11,19 @@ export type RelayTurnRole = 'user' | 'assistant' | 'tool';
  * Writes committed relay turns to the sync log (local claude_messages +
  * sync_queue push). The desktop is the system of record for relay
  * conversations: turns are scribed independently of WebSocket delivery, so a
- * phone that was asleep recovers them from history. Scribing failures are
- * logged, never thrown — the real-time path must survive a bad DB write, and
- * SullaSyncService retries cloud delivery on its own. Turns without a
+ * phone that was asleep recovers them from history. A failed commit is propagated so no committed live frame can advertise unsaved data. Turns without a
  * conversationId are skipped (the SullaLogger mirror scribes those).
  */
 export class DesktopRelayTurnScribe {
   constructor(
     private readonly history: DesktopRelayHistoryPorts,
-    private readonly log: DesktopRelayLog,
+    _log: DesktopRelayLog,
   ) {}
 
   async scribe(conversationId: string | undefined, role: RelayTurnRole, content: string, opts?: { id?: string, ts?: string }): Promise<void> {
     if (!conversationId || !content.trim()) return;
     await this.history.scribe({
       conversationId, role, content, ts: opts?.ts ?? new Date().toISOString(), id: opts?.id,
-    }).catch((err) => {
-      this.log.warn(`[DesktopRelay] Failed to scribe ${ role } turn for ${ conversationId }:`, err);
     });
   }
 

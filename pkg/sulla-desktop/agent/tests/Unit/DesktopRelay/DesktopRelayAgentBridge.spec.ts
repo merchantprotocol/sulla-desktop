@@ -42,7 +42,7 @@ class BridgeHarness {
   }
 
   done(threadId = 'c1'): Promise<void> {
-    return this.emit('transfer_data', { content: 'graph_execution_complete', thread_id: threadId });
+    return this.emit('relay_dispatch_complete', { relayRunId: 'r1', outcome: 'accepted', thread_id: threadId });
   }
 
   framesOf(type: string): RelayFrame[] { return this.frames.filter(frame => frame.type === type) }
@@ -50,6 +50,8 @@ class BridgeHarness {
 
 function bridged(): BridgeHarness {
   const h = new BridgeHarness();
+  h.outbox.registerRun('c1', 'r1');
+  h.outbox.beginRun('c1');
   h.bridge.ensureBridged();
   h.bridge.ensureBridged();
   expect(h.channel.onMessage).toHaveBeenCalledOnce();
@@ -67,7 +69,7 @@ describe('DesktopRelayAgentBridge', () => {
     await h.done();
 
     expect(h.framesOf('message').map(frame => frame.content)).toEqual(['First part', 'Second part']);
-    expect(h.framesOf('done')).toEqual([{ type: 'done', content: 'Second part', id: 'id:assistant:Second part', conversationId: 'c1', deviceId: 'desk-1' }]);
+    expect(h.framesOf('done')).toEqual([expect.objectContaining({ type: 'done', content: 'Second part', id: 'id:assistant:Second part', conversationId: 'c1' })]);
     expect(h.scribed.filter(turn => turn.role === 'assistant').map(turn => turn.content)).toEqual(['First part', 'Second part']);
   });
 
@@ -92,7 +94,7 @@ describe('DesktopRelayAgentBridge', () => {
     await h.done();
 
     expect(h.framesOf('chunk').map(frame => frame.delta)).toEqual(['Only', 'Only streamed']);
-    expect(h.scribed).toEqual([expect.objectContaining({ role: 'assistant', content: 'Only streamed', id: 'id:assistant:Only streamed' })]);
+    expect(h.scribed.filter(turn => turn.role === 'assistant')).toEqual([expect.objectContaining({ role: 'assistant', content: 'Only streamed', id: 'id:assistant:Only streamed' })]);
     expect(h.framesOf('done')[0]).toMatchObject({ content: 'Only streamed', id: 'id:assistant:Only streamed' });
   });
 
@@ -102,7 +104,7 @@ describe('DesktopRelayAgentBridge', () => {
     await h.assistant('thinking', 'Reading files');
     await h.assistant('thinking', 'Reading files');
 
-    expect(h.framesOf('activity')).toEqual([{ type: 'activity', message: 'Reading files', conversationId: 'c1', deviceId: 'desk-1' }]);
+    expect(h.framesOf('activity')).toEqual([{ type: 'activity', message: 'Reading files', conversationId: 'c1', deviceId: 'desk-1', clientRunId: 'r1', userMessageId: 'r1' }]);
     expect(h.scribed).toEqual([expect.objectContaining({ role: 'tool', content: 'Reading files' })]);
   });
 
@@ -136,11 +138,21 @@ describe('DesktopRelayAgentBridge', () => {
     expect(h.frames.map(frame => frame.type)).toEqual(['message', 'done']);
   });
 
+  it('does not publish an unsaved assistant turn or a successful terminal event', async() => {
+    // risk: live transcript must not advertise a commit that cannot be recovered.
+    const h = bridged();
+    vi.mocked(h.history.scribe).mockRejectedValueOnce(new Error('local commit failed'));
+    await h.assistant('progress', 'not saved');
+    await h.done();
+    expect(h.frames.map(frame => frame.type)).toEqual(['error']);
+    expect(h.frames[0]).toMatchObject({ reason: 'relay_history_unavailable', clientRunId: 'r1' });
+  });
+
   it('drops assistant frames without a thread id', async() => {
     // risk: privacy — an unroutable reply must not be sent anywhere.
     const h = bridged();
     await h.emit('assistant_message', { kind: 'progress', content: 'orphan' });
     expect(h.frames).toEqual([]);
-    expect(h.log.warn).toHaveBeenCalledWith('[DesktopRelay] Dropping progress frame without thread_id/conversationId');
+    expect(h.scribed).toEqual([]);
   });
 });

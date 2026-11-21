@@ -53,6 +53,9 @@ const fakes = vi.hoisted(() => {
     usesVault:      vi.fn(),
     scribe:         vi.fn(),
     accept:         vi.fn(),
+    admit:          vi.fn(),
+    persist:        vi.fn(),
+    approve:        vi.fn(),
     selection:      vi.fn(),
     filesFetch:     vi.fn(),
     acquire:        vi.fn(),
@@ -76,6 +79,7 @@ vi.mock('@pkg/main/cloudRelayTransport', () => ({ cloudRelayUsesVault: fakes.use
 vi.mock('@pkg/main/sync/syncMirror', () => ({
   scribeRelayTurn:    fakes.scribe,
   acceptRelayUserTurn: fakes.accept,
+  admitRelayThread: fakes.admit,
   deriveMessageId:    (conversationId: string, role: string, content: string) => `id:${ conversationId }:${ role }:${ content }`,
 }));
 vi.mock('@pkg/main/chatSelection', () => ({ validateChatSelection: fakes.selection }));
@@ -83,6 +87,18 @@ vi.mock('@pkg/main/sullaFilesTls', () => ({ desktopFilesFetch: fakes.filesFetch,
 vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireRelayLiveness: fakes.acquire, releaseRelayLiveness: fakes.release }));
 vi.mock('@pkg/agent/utils/sullaPaths', () => ({ resolveSullaHomeDir: () => '/tmp/sulla-relay-spec' }));
 vi.mock('@pkg/main/mobileCompanion', () => ({ mobileCompanionRequest: vi.fn(), registerMobileCard: vi.fn() }));
+
+vi.mock('../../../../main/cloud/cloudSettings', () => ({ getCloudPreferences: async() => ({ remoteAccess: true }) }));
+vi.mock('../../../../main/cloud/approvedClients', () => ({
+  ApprovedClients: {
+    get: (id: string) => fakes.approve(id) ? { publicKey: 'fixture-viewer-key' } : undefined,
+    list: () => [['viewer-a', 'fixture-viewer-key']].map(([clientId, publicKey]) => ({ clientId, publicKey })),
+  },
+}));
+vi.mock('@pkg/main/mobileRelayContent', async importOriginal => ({
+  ...await importOriginal<typeof import('@pkg/main/mobileRelayContent')>(),
+  persistMobileAttachments: fakes.persist,
+}));
 
 import { DesktopRelayClient } from '@pkg/main/desktopRelay';
 
@@ -118,6 +134,9 @@ describe('DesktopRelayClient characterization', () => {
     fakes.usesVault.mockReturnValue(false);
     fakes.scribe.mockResolvedValue(undefined);
     fakes.accept.mockResolvedValue('accepted');
+    fakes.admit.mockResolvedValue(true);
+    fakes.persist.mockResolvedValue([]);
+    fakes.approve.mockReturnValue(true);
     fakes.selection.mockResolvedValue({});
   });
 
@@ -259,16 +278,21 @@ describe('DesktopRelayClient characterization', () => {
       await pairedClient();
       const first = FakeSocket.instances[0];
       first.open();
+      first.deliver({ type: 'chat', conversationId: 'c1', userMessageId: 'r1', messages: [{ role: 'user', content: 'hi' }] });
+      await flush();
       first.readyState = 3;
+      first.deliver({ type: 'cancel', conversationId: 'c1', clientRunId: 'stale' });
       first.deliver({ type: 'cancel', conversationId: 'c1', clientRunId: 'r1' });
       await flush();
 
-      expect(fakes.agentChannel.send).toHaveBeenCalledWith('mobile-relay', { type: 'stop_run', data: { threadId: 'c1' }, timestamp: expect.any(Number) });
+      const stops = fakes.agentChannel.send.mock.calls.filter(([, frame]) => frame.type === 'stop_run');
+      expect(stops).toEqual([['mobile-relay', { type: 'stop_run', data: { threadId: 'c1', relayRunId: 'r1' }, timestamp: expect.any(Number) }]]);
+      await fakes.bridge.handler!({ type: 'relay_dispatch_complete', data: { thread_id: 'c1', relayRunId: 'r1', outcome: 'stopped' } });
       first.drop();
       await advance(1_000);
       const second = FakeSocket.instances[1];
       second.open();
-      expect(second.sent[0]).toBe('{"type":"stopped","clientRunId":"r1","userMessageId":"r1","conversationId":"c1","deviceId":"desk-1"}');
+      expect(second.frames()).toContainEqual(expect.objectContaining({ type: 'stopped', clientRunId: 'r1', conversationId: 'c1' }));
     });
 
     it('answers a chat without conversationId with an unstamped error frame', async() => {
@@ -316,12 +340,13 @@ describe('DesktopRelayClient characterization', () => {
       expect(socket.frames()).toEqual([]);
       expect(fakes.agentChannel.send).not.toHaveBeenCalled();
       commit('accepted');
+      await flush();
       retry('duplicate');
       await flush();
       expect(fakes.agentChannel.send).toHaveBeenCalledTimes(1);
       expect(socket.frames()).toEqual([
-        expect.objectContaining({ type: 'ack', userMessageId: 'u1', clientRunId: 'run1' }),
-        expect.objectContaining({ type: 'ack', userMessageId: 'u1', clientRunId: 'run1', duplicate: true }),
+        expect.objectContaining({ type: 'ack', userMessageId: 'u1', clientRunId: 'u1' }),
+        expect.objectContaining({ type: 'ack', userMessageId: 'u1', clientRunId: 'u1', duplicate: true }),
       ]);
     });
 
@@ -356,7 +381,7 @@ describe('DesktopRelayClient characterization', () => {
       expect(fakes.agentChannel.connect).toHaveBeenCalledWith('mobile-relay');
       expect(fakes.agentChannel.send).toHaveBeenCalledWith('mobile-relay', {
         type:      'user_message',
-        data:      { content: 'hello', threadId: 'c1', metadata: { source: 'mobile-relay', inputSource: 'keyboard', conversationId: 'c1' } },
+        data:      { content: 'hello', threadId: 'c1', relayRunId: 'u1', metadata: { source: 'mobile-relay', inputSource: 'keyboard', conversationId: 'c1' } },
         timestamp: expect.any(Number),
       });
 
@@ -366,9 +391,10 @@ describe('DesktopRelayClient characterization', () => {
       await fakes.bridge.handler!({ type: 'assistant_message', data: { kind: 'streaming', thread_id: 'c1', content: 'Hi there' } });
       await fakes.bridge.handler!({ type: 'transfer_data', data: { content: 'graph_execution_complete', thread_id: 'c1' } });
 
+      await fakes.bridge.handler!({ type: 'relay_dispatch_complete', data: { thread_id: 'c1', relayRunId: 'u1', outcome: 'accepted' } });
       const frames = socket.frames();
       expect(frames).toContainEqual({ type: 'chunk', delta: 'Hi there', clientRunId: 'u1', userMessageId: 'u1', conversationId: 'c1', deviceId: 'desk-1' });
-      expect(frames[frames.length - 1]).toEqual({ type: 'done', content: 'Hi there', id: 'id:c1:assistant:Hi there', clientRunId: 'u1', userMessageId: 'u1', conversationId: 'c1', deviceId: 'desk-1' });
+      expect(frames[frames.length - 1]).toEqual({ type: 'done', outcome: 'completed', content: 'Hi there', id: 'id:c1:assistant:Hi there', clientRunId: 'u1', userMessageId: 'u1', conversationId: 'c1', deviceId: 'desk-1' });
       expect(fakes.scribe).toHaveBeenCalledWith({ conversationId: 'c1', role: 'assistant', content: 'Hi there', ts: expect.any(String), id: 'id:c1:assistant:Hi there' });
 
       const sentBefore = socket.sent.length;
@@ -398,12 +424,40 @@ describe('DesktopRelayClient characterization', () => {
 
       await client.handleRemoteCommand({ type: 'chat', conversationId: 'c2', userMessageId: 'u2', messages: [{ role: 'user', content: 'hey' }] }, reply, respond);
 
-      expect(reply).toHaveBeenCalledWith({ type: 'ack', userMessageId: 'u2', clientRunId: 'u2', conversationId: 'c2', deviceId: 'desk-1' });
+      expect(respond).toHaveBeenCalledWith({ type: 'ack', userMessageId: 'u2', clientRunId: 'u2', conversationId: 'c2', deviceId: 'desk-1' });
+      expect(reply).not.toHaveBeenCalled();
       expect(socket.sent).toEqual([]);
-      expect(respond).not.toHaveBeenCalled();
 
       await client.handleRemoteCommand({ type: 'chat', userMessageId: 'u3' }, reply, respond);
       expect(respond).toHaveBeenCalledWith({ type: 'error', reason: 'missing_conversation_id', userMessageId: 'u3' });
+    });
+
+    it('never stages attachments for denied or duplicate claims, and keeps a retry canonical', async() => {
+      // risk: filesystem mutations and duplicate execution.
+      fakes.accept.mockResolvedValueOnce('duplicate').mockResolvedValueOnce('accepted');
+      await pairedClient();
+      const socket = FakeSocket.instances[0];
+      socket.open();
+      const frame = { type: 'chat', conversationId: 'remote_fixture_1234', targetDeviceId: 'desk-1',
+        relayScope: 'v1', viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key', relayRequest: 'request-a',
+        userMessageId: 'msg-unique', clientRunId: 'unstable-retry', messages: [{ role: 'user', content: [
+          { type: 'text', text: 'Review' },
+          { type: 'document', source: { type: 'base64', media_type: 'text/plain', data: 'eA==' }, title: 'fixture.txt' },
+        ] }] };
+      fakes.admit.mockResolvedValueOnce(false);
+      socket.deliver(frame);
+      await flush();
+      expect(fakes.accept).not.toHaveBeenCalled();
+      socket.deliver({ ...frame, relayRequest: 'request-b' });
+      await flush();
+      expect(socket.frames()).toContainEqual(expect.objectContaining({
+        type: 'ack', relayRequest: 'request-b', clientRunId: 'msg-unique', duplicate: true,
+      }));
+      expect(fakes.persist).not.toHaveBeenCalled();
+      socket.deliver({ ...frame, relayRequest: 'request-c' });
+      await flush();
+      expect(fakes.persist).toHaveBeenCalledOnce();
+      expect(fakes.agentChannel.send).toHaveBeenCalledOnce();
     });
 
     it('streams a shared file as start, base64 chunk and end frames', async() => {

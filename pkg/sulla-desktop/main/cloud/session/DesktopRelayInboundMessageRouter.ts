@@ -27,6 +27,7 @@ export interface RelayMessageRouteDependencies {
   companion(message: RelayIncomingMessage): Promise<void>;
   shareFetch(message: RelayIncomingMessage, socket: RelaySocketLike, generation: number): Promise<void>;
   shareFetchCancel(message: RelayIncomingMessage, socket: RelaySocketLike | undefined, generation: number): void;
+  scoped?(message: RelayIncomingMessage): Promise<void>;
   chat(message: RelayIncomingMessage): Promise<void>;
   cancel(message: RelayIncomingMessage): void;
   inject(message: RelayIncomingMessage): Promise<void>;
@@ -51,6 +52,14 @@ export class DesktopRelayInboundMessageRouter {
       this.dependencies.log.warn('[DesktopRelay] Non-JSON message received');
       return;
     }
+
+    if (!message || typeof message !== 'object') return;
+    if (message.relayScope === 'v1') {
+      if (message.targetDeviceId === await this.dependencies.deviceId()) await this.dependencies.scoped?.(message);
+      return;
+    }
+    if ((typeof message.conversationId === 'string' && message.conversationId.startsWith('remote_'))
+        || (typeof (message.params as any)?.conversationId === 'string' && (message.params as any).conversationId.startsWith('remote_'))) return;
 
     if (message.type === 'other_device_signin_code') {
       if (!message.requestId || !/^\d{6}$/.test(String(message.code ?? '')) || !message.expiresAt || !message.requestingDeviceId) return;
@@ -100,11 +109,13 @@ export class DesktopRelayInboundMessageRouter {
       return;
     }
     if (message.type === 'cancel') {
+      if (message.targetDeviceId && message.targetDeviceId !== await this.dependencies.deviceId()) return;
       if (message.conversationId) this.dependencies.clearSecureRoute(message.conversationId);
       this.dependencies.cancel(message);
       return;
     }
     if (message.type === 'inject') {
+      if (message.targetDeviceId && message.targetDeviceId !== await this.dependencies.deviceId()) return;
       if (message.conversationId) this.dependencies.clearSecureRoute(message.conversationId);
       await this.dependencies.inject(message);
       return;

@@ -19,13 +19,18 @@ export const RELAY_SOCKET_CONNECTING = 0;
 export const RELAY_SOCKET_OPEN = 1;
 
 /** Frames that must survive a reconnect: they are queued and flushed on the next `open`. */
-export const DURABLE_RELAY_FRAME_TYPES: readonly string[] = ['done', 'stopped', 'error', 'message', 'ack'];
+export const DURABLE_RELAY_FRAME_TYPES: readonly string[] = ['done', 'stopped', 'error', 'message', 'card', 'ack'];
 
 export type RelayFrame = Record<string, unknown>;
 export type RelayFrameSink = (frame: RelayFrame) => void;
 
 export interface RelayIncomingFrame {
   type:            string;
+  relayScope?: 'v1';
+  relayRequest?: string;
+  viewerId?: string;
+  viewerKey?: string;
+  nonce?: string;
   requestId?:      string;
   linkId?:         string;
   path?:           string;
@@ -106,6 +111,7 @@ export interface DesktopRelaySocketPorts {
 }
 
 export interface DesktopRelaySessionPorts {
+  proveRelayDevice?(room: string, deviceId: string, nonce: string): Promise<string>;
   accessToken(): Promise<string | null | undefined>;
   deviceId(): Promise<string>;
   acquireLiveness(holder: string): void;
@@ -133,6 +139,9 @@ export interface DesktopRelayHistoryPorts {
 }
 
 export interface DesktopRelayChatPorts {
+  approveViewer?(id: string, key: string): Promise<boolean>;
+  relayApprovals?(): readonly (readonly [string, string])[];
+  admitRelayThread?(thread: string, existing: boolean): Promise<boolean>;
   validateSelection(message: RelayIncomingFrame): Promise<ChatSelection>;
   persistAttachments(conversationId: string, messageId: string, turn: NormalizedMobileTurn): Promise<string[]>;
   companionRequest(method: string, params: Record<string, unknown>): Promise<unknown>;
