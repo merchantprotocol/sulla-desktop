@@ -12,7 +12,7 @@ import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { agentEgressLabels, prepareAgentEgress as prepareAgentEgressWith, type AgentEgress } from './agentEgress';
-import { bindAgentWorkspace } from './AgentWorkspaceBinding';
+import { AgentWorkspaceBinder } from './AgentWorkspaceBinding';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime, type AgentContainerRuntimeBinding, type AgentContainerRuntimeSupervisor } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
@@ -1352,7 +1352,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const dirsTask = phase('dirs', async() => {
       await ensureGuestWorktreeDirectories(identity);
       if (!stableKey) {
-        const workspace = await bindAgentWorkspace({ jobKey, source: run.workspacePath }, {
+        const workspace = await AgentWorkspaceBinder.bind({ jobKey, source: run.workspacePath }, {
           createEphemeral: key => createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ key }-`),
           seedEphemeral:   prepareRequiredCheckout,
           seedStable:      seedGitWorktreeIntoStableGuest,
@@ -1370,7 +1370,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         GUEST_CONVERSATIONS_ROOT,
         [stableKey, `${ stableKey }/workspace`, `${ stableKey }/home`, `${ stableKey }/home/claude`, `${ stableKey }/home/codex`],
       );
-      const workspace = await bindAgentWorkspace({ jobKey, source: run.workspacePath, stableWorkspace: persistentWorkspace }, {
+      const workspace = await AgentWorkspaceBinder.bind({ jobKey, source: run.workspacePath, stableWorkspace: persistentWorkspace }, {
         createEphemeral: key => createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ key }-`),
         seedEphemeral:   prepareRequiredCheckout,
         seedStable:      seedGitWorktreeIntoStableGuest,
@@ -1411,8 +1411,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     providerFiles = providerFilesResult.value;
     secretDir = secretsResult.value;
     workspacePath = dirs.workspace;
-    toolBinding.workspacePath = workspacePath;
-    getMCPServerHost().rebindSession(toolSession.id, run.state, IDLE_MS + 5 * 60_000, toolBinding);
+    const resolvedToolBinding = { ...toolBinding, workspacePath };
+    getMCPServerHost().rebindSession(toolSession.id, run.state, IDLE_MS + 5 * 60_000, resolvedToolBinding);
     const providerWorkspace = workspacePath;
     for (const pin of cliSettings.pinned) {
       const executable = pin.provider === 'claude-code' ? 'claude' : 'codex';
@@ -1641,7 +1641,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     });
     renewTimer = setInterval(() => {
       capabilityExpiresAt = Math.floor(Date.now() / 1000) + Math.ceil(LEASE_MS / 1000);
-      getMCPServerHost().rebindSession(toolSession!.id, run.state, LEASE_MS, toolBinding);
+      getMCPServerHost().rebindSession(toolSession!.id, run.state, LEASE_MS, resolvedToolBinding);
       if (secretDir) {
         replaceContainerSecret(secretDir, 'SULLA_API_TOKEN', issueLease(), identity).catch(error => {
           log.warn(`[AgentContainer] capability renewal failed for ${ containerName }: ${ (error as Error).message }`);

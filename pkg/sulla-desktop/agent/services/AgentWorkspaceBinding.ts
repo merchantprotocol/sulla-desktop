@@ -19,14 +19,16 @@ export interface AgentWorkspaceBindingOperations {
  * workspacePath initializes that workspace once; it must never replace the
  * durable binding with a new ephemeral clone on wake or restart.
  */
-export async function bindAgentWorkspace(
-  request: AgentWorkspaceBindingRequest,
-  operations: AgentWorkspaceBindingOperations,
-): Promise<string> {
-  if (request.stableWorkspace) {
-    if (request.source) await operations.seedStable(request.source, request.stableWorkspace);
-    return request.stableWorkspace;
+export class AgentWorkspaceBinder {
+  static async bind(
+    request: AgentWorkspaceBindingRequest,
+    operations: AgentWorkspaceBindingOperations,
+  ): Promise<string> {
+    if (request.stableWorkspace) {
+      if (request.source) await operations.seedStable(request.source, request.stableWorkspace);
+      return request.stableWorkspace;
+    }
+    if (request.source) return await operations.seedEphemeral(request.source, request.jobKey);
+    return await operations.createEphemeral(request.jobKey);
   }
-  if (request.source) return await operations.seedEphemeral(request.source, request.jobKey);
-  return await operations.createEphemeral(request.jobKey);
 }
