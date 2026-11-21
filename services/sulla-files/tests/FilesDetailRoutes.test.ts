@@ -42,6 +42,21 @@ describe.skipIf(!databaseUrl)('Files detail, preview and feed routes (real app, 
     expect(Array.isArray(detail.body.activity)).toBe(true);
   });
 
+  it('shows the published model conflict and exact version without exposing other audit messages', async() => {
+    const versionId = (await fixture.pool.query('SELECT current_version_id FROM files WHERE id=$1', [alpha()])).rows[0].current_version_id;
+    const message = 'The owner chose shared routing. Update the agent or file to reconcile its model settings.';
+    await fixture.pool.query(`INSERT INTO audit_log(who_type,who_id,file_id,version_id,action,details)
+      VALUES ('user',$1,$2,$3,'use-case-model-conflict',$4),('user',$1,$2,$3,'test-unrelated-action','{"message":"do not expose"}')`,
+    [fixture.userId, alpha(), versionId, { message }]);
+    const detail = await fixture.request(`/v1/files/${ alpha() }`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.activity).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'use-case-model-conflict', message, version_id: versionId }),
+      expect.objectContaining({ action: 'test-unrelated-action', message: null, version_id: null }),
+    ]));
+    expect((await new FileDetailRepository(fixture.pool).activity(alpha())).map(row => row.action)).not.toContain('use-case-model-conflict');
+  });
+
   it('keeps trashed-file detail without a version, and 404s an unknown file', async() => {
     // risk: data accuracy — a trashed file's tombstone must not broaden version visibility.
     const trashed = await fixture.request(`/v1/files/${ files['misc/trashed.txt'] }`);

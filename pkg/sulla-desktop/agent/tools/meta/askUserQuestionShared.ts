@@ -155,7 +155,7 @@ export function formatQuestionResolution(
   timeoutMs:  number,
 ): string {
   if (resolution.status === 'timed_out') {
-    return `User did not answer within ${ Math.round(timeoutMs / 1000) }s. The question remains in For You. This is not an answer or consent. Do not ask it again or assume a selection; continue only unrelated work while its answer is pending.`;
+    return `User did not answer within ${ Math.round(timeoutMs / 1000) }s. The question remains in Decide. This is not an answer or consent. Do not ask it again or assume a selection; continue only unrelated work while its answer is pending.`;
   }
 
   if (!resolution.answers.length) {
@@ -173,5 +173,5 @@ export function formatQuestionResolution(
 
 /** A question receipt contains no inferred choice and never asks the model to keep a tool connection open. */
 export function formatQuestionReceipt(id: string, answerSaved = false): string {
-  return `${ answerSaved ? 'The answer is already saved and queued' : 'The question is saved in For You and remains open until answered or dismissed' } (request ${ id }). The answer will arrive in this original conversation through the durable mailbox. Do not ask the question again, infer consent, or proceed with work that depends on the answer. Finish this turn so the saved answer can be delivered; independent work may continue separately. Ask a new question only when its context or choices actually change.`;
+  return `${ answerSaved ? 'The answer is already saved and queued' : 'The question is saved in Decide and remains open until answered or dismissed' } (request ${ id }). The answer will arrive in this original conversation through the durable mailbox. Do not ask the question again, infer consent, or proceed with work that depends on the answer. Finish this turn so the saved answer can be delivered; independent work may continue separately. Ask a new question only when its context or choices actually change.`;
 }

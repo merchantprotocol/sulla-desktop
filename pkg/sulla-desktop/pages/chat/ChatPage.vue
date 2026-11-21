@@ -74,7 +74,6 @@
         <ChatFilesDrawer
           :open="chatFilesOpen"
           @close="setChatFilesOpen(false)"
-          @open-files="openFiles"
         />
       </template>
       <SideDock
@@ -85,7 +84,6 @@
           <ChatFilesDrawer
             :open="true"
             @close="sideDock?.selectTab('sulla')"
-            @open-files="openFiles"
           />
         </template>
         <template #artifacts>
@@ -115,6 +113,7 @@
 </template>
 
 <script setup lang="ts">
+import { findAgentBySlug } from '@pkg/shared/agentJobNames';
 import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
@@ -367,7 +366,7 @@ const modelSelector   = new AgentModelSelectorController({
     controller.selectForChat(selected, providerId || null, agentId);
   },
 });
-controller.agentModelOf = agentId => modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.model;
+controller.agentModelOf = agentId => findAgentBySlug(modelSelector.agentOptions.value, agentId)?.model;
 /** Point the selector at this chat's own saved pin (provider, exact model, agent). */
 function restoreSelectorFromThread(): void {
   const { providerId, agentId } = controller.thread.value;
@@ -449,7 +448,11 @@ watch(artifactCollapsed, artifact => {
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
-provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
+provide('chat:activity-context', {
+  tabId: props.tabId,
+  backendThreadId: subAgentParentThreadId,
+  modelPicker: computed(() => ({ ...adapter.chatModelPickerSelection, chatThreadId: controller.thread.value.id })),
+});
 const mainDecisionTranscript = computed(() => !props.agentTabContractId && !props.agentTabThreadId &&
   !props.initialAgentId && !props.supportSessionId && !controller.thread.value.agentId);
 const transcriptDecisionIds = computed(() => mainDecisionTranscript.value ? controller.messages.value.flatMap(message => {
@@ -803,12 +806,6 @@ function onToggleChatFiles():void {
   setChatFilesOpen(!chatFilesOpen.value);
 }
 
-function openFiles():void {
-  const existing = tabs.find(tab => tab.mode === 'files');
-  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager' });
-  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
-}
-
 // Keep this chat tab's label in sync with the active conversation's title.
 // The controller derives a title from the first user message
 // (autoTitleFromFirstUserMessage) and honors explicit renames, so the tab
@@ -892,6 +889,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-body);
 }
 .shell {
+  --chat-header-height: 52px;
   position: absolute; inset: 0; z-index: 5;
   --scroller-pad-b: 240px;
 }

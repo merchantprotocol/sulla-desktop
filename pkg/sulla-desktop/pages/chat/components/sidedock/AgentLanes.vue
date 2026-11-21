@@ -5,264 +5,183 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  The side dock's Sulla tab: what needs you, then one compact lane per agent
-  in this chat (two short lines: name, task, time, actions; then the latest
-  step and a 10-minute activity meter). Child agents sit indented under their
-  parent; finished agents fold into "Finished". Reads the agent state rows the
-  status line uses; actions go through the same AgentActionController.
+  Recorded handoffs and unlinked activity for the current chat.
 -->
 <template>
-  <div class="ln">
-    <!-- One line that answers "is anything waiting on me, and is the rest moving?" -->
-    <p
-      class="ln-sum"
-      :class="`ln-sum-${summary.state}`"
-    >
-      <span
-        class="ln-sum-dot"
-        aria-hidden="true"
-      /><b>{{ summary.lead }}</b><template
-        v-for="part in summary.parts"
-        :key="part"
-      >
+  <div ref="panel" class="ln">
+    <p class="ln-sum" :class="`ln-sum-${summary.state}`">
+      <span class="ln-sum-dot" aria-hidden="true" /><b>{{ summary.lead }}</b>
+      <template v-for="part in summary.parts" :key="part">
         <span class="ln-sum-sep">·</span>{{ part }}
       </template>
     </p>
     <button
+      v-if="recorded.length"
+      type="button"
+      class="ln-history"
+      @click="emit('show-history')"
+    >View full history</button>
+    <button
       v-if="decisionStore.openCount.value"
       type="button"
       class="ln-for-you"
-      @click="decisionStore.show()"
+      @click="openForYou()"
     >
-      {{ decisionStore.openCount.value }} {{ decisionStore.openCount.value === 1 ? 'request' : 'requests' }} in For You
+      Open Decide
     </button>
-    <div
-      v-if="!needsYou.length && !live.length && !finished.length"
-      class="ln-empty"
-    >
-      Nothing running in this chat.
+    <p v-if="outcomesLoading && outcomes.length" class="ln-outcome-refresh" role="status">
+      Refreshing saved outcomes…
+    </p>
+    <p v-else-if="outcomesError" class="ln-outcome-error" role="status">
+      Saved outcome history may be stale. <button type="button" @click="emit('retry-outcomes')">Try again</button>
+    </p>
+    <div v-if="!live.length && !finished.length && !decisionStore.openCount.value && !outcomes.length && !outcomesLoading && !outcomesError" class="ln-empty">
+      No agent activity in this chat.
     </div>
-    <div
-      v-else
-      class="ln-list"
+    <details
+      v-for="section in sections"
+      :key="section.key"
+      class="ln-work"
+      :open="sectionOpen(section)"
+      @toggle="rememberSection(section, $event)"
     >
-      <details
-        v-for="group in workGroups"
-        :key="group.key"
-        class="ln-work"
-        :open="!collapsedGroups.has(group.key)"
-        @toggle="toggleGroup(group.key, $event)"
-      >
-        <summary class="ln-work-heading">
-          <span>{{ group.title }}</span><small>{{ agentCountSummary(group.nodes.filter(node => !node.context).map(node => node.row)) }}</small>
-        </summary>
-        <p class="ln-work-caption">
-          {{ group.linked ? 'Agents connected to this work' : 'No recorded links to other work in this chat' }}
-        </p>
-        <div
-          v-for="node in group.nodes"
-          :key="node.row.key"
-          class="ln-row ln-agent"
-          :class="{ 'ln-child': node.indent > 0, 'ln-open': expanded === node.row.key, 'ln-context': node.context, 'ln-stalled': node.row.state === 'quiet' && !node.row.runtimeAlive }"
-          :style="node.indent ? { '--ln-indent': `${Math.min(node.indent, 4) * 16}px` } : undefined"
-          @click="onRowClick($event, node.row.key)"
-        >
-          <!-- The task leads; the agent is the avatar (initials, model tag, full name on hover). -->
-          <span
-            class="ln-av"
-            :class="{ 'ln-spin': SPINNING.has(node.row.state) }"
-            :title="node.parentLabel ? `${node.row.agentId || 'agent'} · started by ${node.parentLabel}` : (node.row.agentId || 'agent')"
-          >{{ initials(node.row) }}</span>
-          <div class="ln-main">
-            <div class="ln-l1">
-              <b
-                class="ln-task"
-                :title="node.row.label"
-              >{{ node.row.label }}</b>
-              <span class="ln-time">{{ timeText(node.row) }}</span>
-              <span class="ln-acts">
-                <button
-                  v-if="node.row.canMessage"
-                  type="button"
-                  class="ln-ib"
-                  title="Message this agent"
-                  aria-label="Message this agent"
-                  @click="toggleMessage(node.row.key)"
-                ><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z" /></svg></button>
-                <button
-                  v-if="node.row.canOpen"
-                  type="button"
-                  class="ln-ib"
-                  title="Open this agent"
-                  aria-label="Open this agent"
-                  @click="openAgent(node.row)"
-                ><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6" /></svg></button>
-                <button
-                  v-if="node.row.canStop"
-                  type="button"
-                  class="ln-ib ln-stop"
-                  :class="{ 'ln-confirm': confirmStop === node.row.key }"
-                  :title="confirmStop === node.row.key ? 'Click again to stop' : 'Stop this agent'"
-                  :aria-label="confirmStop === node.row.key ? 'Click again to stop' : 'Stop this agent'"
-                  @click.stop="stop(node.row)"
-                ><svg viewBox="0 0 24 24"><rect
-                  x="7"
-                  y="7"
-                  width="10"
-                  height="10"
-                  rx="1.5"
-                /></svg></button>
-              </span>
-              <button
-                type="button"
-                class="ln-chev"
-                :aria-expanded="expanded === node.row.key"
-                :aria-label="expanded === node.row.key ? 'Hide details' : 'Show details'"
-                @click.stop="toggleExpand(node.row.key)"
-              >
-                ▸
+      <summary class="ln-work-heading">
+        <span>{{ section.title }}</span><small>{{ section.summary }}</small>
+      </summary>
+      <div class="ln-work-body">
+        <AgentHandoffMap :nodes="section.nodes" :draw-links="section.map" v-slot="{ node }">
+          <div v-if="node.links.length" class="ln-relationships">
+            <div v-for="link in node.links" :key="`${link.kind}-${link.key}`">
+              {{ link.kind === 'assignment' ? 'Assigned by' : 'Follows' }}
+              <button v-if="nodeFor(link.key)" type="button" class="ln-link" @click="revealJob(link.key)">
+                {{ relationTitle(link.key) }}
               </button>
+              <span v-else>earlier job unavailable</span>
             </div>
-            <p
-              v-if="node.relationship"
-              class="ln-relationship"
-            >
-              {{ node.relationship }}
-            </p>
-            <p
-              v-if="node.context"
-              class="ln-relationship"
-            >
-              Earlier task · {{ node.row.state === 'done' ? 'Reported done' : node.row.state }}
-            </p>
-            <div class="ln-l2">
-              <span
-                v-if="waitTarget(node.row) === 'github'"
-                class="ln-wait"
-                title="Waiting on GitHub: its checks or tests are running"
-              >GitHub</span>
-              <span
-                class="ln-step"
-                :title="laneStep(node.row, now)"
-              >{{ AgentModelStatus.label(node.row.modelStatus) }} · {{ laneStep(node.row, now) }}</span>
-              <span
-                class="ln-meter"
-                aria-hidden="true"
-              ><i
-                v-for="(count, index) in bins(node.row.key)"
-                :key="index"
-                :style="{ height: `${count ? Math.min(12, 3 + count * 3) : 1}px` }"
-              /></span>
-            </div>
-            <dl
-              v-if="expanded === node.row.key"
-              class="ln-more"
-            >
-              <dt>Model · effort</dt><dd>{{ AgentModelStatus.label(node.row.modelStatus) }}</dd>
-              <dt>Agent</dt><dd>
-                {{ node.row.agentId || 'agent' }}<template v-if="node.parentLabel">
-                  · started by {{ node.parentLabel }}
-                </template>
-              </dd>
-              <dt>Task</dt><dd>{{ node.row.label }}</dd>
-              <template v-if="node.relationship">
-                <dt>Connection</dt><dd>{{ node.relationship }}</dd>
-              </template>
-              <template v-if="node.row.taskId">
-                <dt>Assigned task</dt><dd>{{ node.row.taskId }}</dd>
-              </template>
-              <dt>Latest</dt><dd>{{ laneStep(node.row, now) }}</dd>
-              <template v-if="node.row.startedAt">
-                <dt>Started</dt><dd>{{ LineTimes.shortTime(Date.parse(node.row.startedAt)) }} · {{ age(Date.parse(node.row.startedAt)) }} ago</dd>
-              </template>
-              <template v-if="node.row.lastCheckinSummary">
-                <dt>Check-in</dt><dd>
-                  {{ shortenHashes(node.row.lastCheckinSummary) }}<template v-if="node.row.lastCheckinAt">
-                    · {{ age(Date.parse(node.row.lastCheckinAt)) }} ago
-                  </template>
-                </dd>
-              </template>
-            </dl>
-            <div
-              v-if="messaging.has(node.row.key) || (expanded === node.row.key && node.row.canMessage)"
-              class="ln-msg"
-            >
-              <input
-                v-model="drafts[node.row.key]"
-                :aria-label="`Message ${node.row.agentId || 'agent'}`"
-                placeholder="Steer this agent, e.g. skip docs-only PRs"
-                @keydown.enter="send(node.row)"
-              >
-              <button
-                type="button"
-                :disabled="!drafts[node.row.key]?.trim()"
-                @click="send(node.row)"
-              >
-                Send
-              </button>
-            </div>
-            <p
-              v-if="notice[node.row.key]"
-              class="ln-notice"
-            >
-              {{ notice[node.row.key] }}
-            </p>
           </div>
-        </div>
-      </details>
-
-      <details
-        v-if="finished.length"
-        class="ln-fin"
-      >
-        <summary><span class="ln-dot" />Finished · {{ finished.length }}<span class="ln-sp" />▾</summary>
-        <div
-          v-for="row in finished"
-          :key="row.key"
-          class="ln-fr"
-        >
-          <span
-            class="ln-dot"
-            :class="`ln-dot-${row.state}`"
+          <div class="ln-job-card" :class="{ 'ln-job-open': expanded.has(node.row.key) }">
+            <button
+              type="button"
+              class="ln-job"
+              :aria-expanded="expanded.has(node.row.key)"
+              :aria-controls="detailId(node.row.key)"
+              :data-job-key="node.row.key"
+              @click="toggleExpand(node.row.key)"
+            >
+              <span class="ln-chevron" aria-hidden="true" />
+              <span class="ln-job-title" :title="node.row.label">{{ jobTitle(section, node) }}</span>
+              <span class="ln-job-state" :class="`ln-job-${node.row.state}`">{{ jobState(node.row) }}</span>
+              <span class="ln-job-meta">
+                {{ modelCaption(node.row) }}<span class="ln-time"><AgentActivityTime :row="node.row" /></span>
+                <template v-if="node.row.state === 'parked' && node.row.wakeAt"> · Next check <AgentActivityTime :at="node.row.wakeAt" event="Next check" /></template>
+                <template v-if="outcomesByJob.has(node.row.key)"> · 1 report</template>
+              </span>
+            </button>
+            <div v-show="expanded.has(node.row.key)" :id="detailId(node.row.key)" class="ln-detail">
+              <template v-if="expanded.has(node.row.key)">
+                <p v-if="node.row.stateReason || node.row.lastCheckinSummary || AgentWorkTree.live(node.row)" class="ln-latest">
+                  {{ laneStep(node.row, now) }}
+                </p>
+                <dl class="ln-more">
+                  <dt>Agent</dt><dd>{{ node.row.agentId || 'Agent' }}</dd>
+                  <template v-if="node.row.taskId">
+                    <dt>Project task</dt><dd>{{ node.row.taskId }}</dd>
+                  </template>
+                  <template v-if="node.row.modelStatus?.model && responseFor(node.row)">
+                    <dt>{{ selectionSource(node.row) }}</dt><dd>{{ formatModel(node.row.modelStatus) }}</dd>
+                  </template>
+                  <template v-if="!responseFor(node.row)">
+                    <dt>Recorded response</dt><dd>No model output recorded</dd>
+                  </template>
+                  <template v-if="node.row.jobRestartResumeCount">
+                    <dt>Job recovery</dt><dd>Resumed {{ node.row.jobRestartResumeCount }} {{ node.row.jobRestartResumeCount === 1 ? 'time' : 'times' }}</dd>
+                  </template>
+                  <template v-for="decision in linkedQuestions(node.row)" :key="decision.id">
+                    <dt>Related request</dt>
+                    <dd><button type="button" class="ln-link" @click="openForYou(decision.id)">{{ decision.title || 'Open Decide' }}</button></dd>
+                  </template>
+                </dl>
+                <div class="ln-actions">
+                  <button v-if="node.row.canOpen" type="button" @click="openAgent(node.row)">Open agent</button>
+                  <button v-if="node.row.canMessage" type="button" @click="toggleMessage(node.row.key)">Message</button>
+                  <button v-if="node.row.canStop" type="button" class="ln-stop" @click.stop="stop(node.row)">
+                    {{ confirmStop === node.row.key ? 'Click again to stop' : 'Stop agent' }}
+                  </button>
+                  <button v-if="resultMessageFor(node.row)" type="button" @click="jump(resultMessageFor(node.row)!)">View report</button>
+                </div>
+                <div v-if="node.row.canMessage && messaging.has(node.row.key)" class="ln-msg">
+                  <input
+                    v-model="drafts[node.row.key]"
+                    :aria-label="`Message ${node.row.agentId || 'agent'}`"
+                    placeholder="Message this agent"
+                    @keydown.enter="send(node.row)"
+                  >
+                  <button type="button" :disabled="!drafts[node.row.key]?.trim()" @click="send(node.row)">Send</button>
+                </div>
+                <p v-if="notice[node.row.key]" class="ln-notice" role="status">{{ notice[node.row.key] }}</p>
+                <WorkOutcomeCard
+                  v-if="outcomesByJob.get(node.row.key)"
+                  class="ln-job-report"
+                  :group="outcomesByJob.get(node.row.key)!"
+                  :focus-key="outcomeTarget === node.row.key ? outcomeTarget : undefined"
+                  owned
+                />
+              </template>
+            </div>
+          </div>
+        </AgentHandoffMap>
+        <div v-if="outcomesBySection.get(section.key)?.length" class="ln-outcomes ln-build-outcomes">
+          <h3>Reports for this work</h3>
+          <WorkOutcomeCard
+            v-for="outcome in outcomesBySection.get(section.key)"
+            :key="outcome.key"
+            :group="outcome"
+            :focus-key="focusReport(outcome)"
           />
-          <span class="ln-fr-label">{{ row.label }}</span>
-          <span class="ln-sp" />
-          <span class="ln-time">{{ row.state === 'done' ? '' : row.state }} {{ row.endedAt ? age(Date.parse(row.endedAt)) : '' }}</span>
-          <button
-            v-if="resultMessageFor(row)"
-            type="button"
-            class="ln-jump"
-            @click="jump(resultMessageFor(row)!)"
-          >
-            Jump to
-          </button>
         </div>
-      </details>
-    </div>
+      </div>
+    </details>
+    <details v-if="recentOutcomes.length" class="ln-work ln-recent-outcomes" :open="!live.length || !!focusedRecent">
+      <summary class="ln-work-heading"><span>Recent outcomes</span><small>{{ recentOutcomes.length }}</small></summary>
+      <div class="ln-work-body ln-outcomes">
+        <WorkOutcomeCard
+          v-for="outcome in visibleRecent"
+          :key="outcome.key"
+          :group="outcome"
+          :focus-key="focusReport(outcome)"
+          recent
+        />
+        <button v-if="recentOutcomes.length > visibleRecent.length" type="button" class="ln-earlier-outcomes" @click="showEarlier = true">
+          Show earlier outcomes · {{ recentOutcomes.length - visibleRecent.length }}
+        </button>
+      </div>
+    </details>
+    <p v-else-if="outcomesLoading && !outcomes.length" class="ln-empty" role="status">Loading saved outcomes…</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, useId, watch, type Ref } from 'vue';
 
+import AgentHandoffMap from './AgentHandoffMap.vue';
+import WorkOutcomeCard from './WorkOutcomeCard.vue';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
-import { AgentWorkTree } from '../../messages/AgentWorkTree';
-import { LineTimes } from '../../messages/lineTime';
-import { ActivityTrail, activityBins, laneStep, shortenHashes } from '../../messages/sideDock';
-import { activityAge, agentCountSummary, deriveThreadActivity, waitTarget } from '../../messages/threadActivity';
+import { AgentWorkTree, type AgentWorkNode } from '../../messages/AgentWorkTree';
+import { ThreadGoalProgress, type ThreadWorkstream } from '../../messages/ThreadGoalProgress';
+import { laneStep } from '../../messages/sideDock';
+import { agentCountSummary, deriveThreadActivity, parkedActivity } from '../../messages/threadActivity';
+import AgentActivityTime from '../chrome/AgentActivityTime.vue';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
-import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
-import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
+import { AgentModelStatus, type AgentModelStatusValue } from '@pkg/shared/agentState/AgentModelStatus';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
+import { DecisionAttention } from '@pkg/shared/decisionAttention';
+import type { WorkflowRunRow } from '@pkg/shared/productOwnerWorkflow';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import type { ProactiveMessage, ToolApprovalMessage, ToolQuestionMessage } from '../../models/Message';
-
-const LIVE = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
-const SPINNING = new Set<AgentStateRow['state']>(['queued', 'working']);
+import type { ProactiveMessage } from '../../models/Message';
 
 const controller = useChatController();
 const client = inject(AGENT_STATE_CLIENT_KEY);
@@ -271,64 +190,328 @@ const actions = new AgentActionController(ipcRenderer as any, client);
 const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
 const now = ref(Date.now());
-const trail = new ActivityTrail();
 const messaging = reactive(new Set<string>());
 const drafts = reactive<Record<string, string>>({});
 const notice = reactive<Record<string, string>>({});
 const confirmStop = ref('');
-/** One lane open at a time, so the list stays compact. */
-const expanded = ref('');
-function toggleExpand(key: string): void { expanded.value = expanded.value === key ? '' : key }
-/** A click anywhere on the lane (not on its buttons or the steer box) opens or closes its details. */
-function onRowClick(event: MouseEvent, key: string): void {
-  if ((event.target as HTMLElement).closest('button, input, a, .ln-msg')) return;
-  toggleExpand(key);
+const expanded = reactive(new Set<string>());
+const detailsPrefix = useId();
+const detailId = (key: string) => `${ detailsPrefix }-job-${ key }`;
+function toggleExpand(key: string): void {
+  if (expanded.has(key)) expanded.delete(key);
+  else expanded.add(key);
 }
 
-const tree = computed(() => (context.backendThreadId.value
-  ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)
-  : []));
-
-const workGroups = computed(() => AgentWorkTree.build(client.snapshot.value.rows, context.backendThreadId.value));
-const live = computed(() => workGroups.value.flatMap(group => group.nodes).filter(node => AgentWorkTree.live(node.row)));
-const collapsedGroups = reactive(new Set<string>());
-function toggleGroup(key: string, event: Event): void {
-  if ((event.target as HTMLDetailsElement).open) collapsedGroups.delete(key);
-  else collapsedGroups.add(key);
-}
-const finished = computed(() => new AgentTreeBuilder([]).flatten(tree.value).map(node => node.row)
-  .filter(row => !LIVE.has(row.state))
-  .sort((a, b) => Date.parse(b.endedAt ?? b.lastActivityAt) - Date.parse(a.endedAt ?? a.lastActivityAt)));
-/** Both status surfaces use the same activity wording and heartbeat schedule. */
-const summary = computed(() => {
-  const activity = deriveThreadActivity({ running: controller.isRunning.value, messages: controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)), agents: live.value.map(node => node.row), heartbeatMinutes: controller.heartbeat?.value.intervalMinutes ?? null });
-  if (decisionStore.openCount.value) {
-    // What waits on you is listed right below; the line counts it and says what the agents are doing.
-    const agents = deriveThreadActivity({ running: controller.isRunning.value, messages: [], agents: live.value.map(node => node.row), heartbeatMinutes: controller.heartbeat?.value.intervalMinutes ?? null });
-    const count = needsYou.value.length;
-    return { state: 'you', lead: 'Needs you', parts: [`${ count } ${ count === 1 ? 'request' : 'requests' } in For You`, ...(agents.state === 'idle' ? [] : agents.parts)] };
-  }
-  return activity;
-});
+const props = withDefaults(defineProps<{
+  outcomes?: ThreadWorkstream[];
+  outcomesError?: boolean;
+  outcomesLoading?: boolean;
+  outcomeTarget?: string;
+}>(), { outcomes: () => [] });
+const emit = defineEmits<{ (event: 'show-for-you' | 'show-history' | 'retry-outcomes'): void }>();
 const decisionStore = ChatDecisions.useChatDecisions();
-const needsYou = computed(() => ({ length: decisionStore.openCount.value }));
-
-watch(() => client.snapshot.value.rows, rows => trail.record(rows, Date.now()), { immediate: true });
-
-function initials(row: AgentStateRow): string {
-  const name = (row.agentId || row.label || 'A').replace(/[-_]?worker$/i, '');
-  const parts = name.split(/[-_\s]+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? 'A') + (parts[1]?.[0] ?? parts[0]?.[1] ?? '')).toUpperCase();
+function openForYou(id?: string): void {
+  decisionStore.show(id);
+  emit('show-for-you');
 }
-function age(at: number): string { return Number.isFinite(at) ? activityAge(Math.max(0, now.value - at)) : '' }
-function timeText(row: AgentStateRow): string {
-  // A timer wait shows when it looks again; that says "scheduled, not stuck" better than a running clock.
-  if (row.state === 'parked' && row.wakeAt) return LineTimes.shortTime(Date.parse(row.wakeAt)).replace(/\s?[AP]M$/i, '');
-  if (row.state === 'parked' && row.stateReason === 'scheduled wake-up') return 'scheduled';
-  const lastActive = age(Date.parse(row.lastActivityAt));
-  return lastActive ? `last active ${ lastActive } ago` : '';
+const threadId = context.backendThreadId;
+const snapshot = computed(() => client.snapshot.value.rows);
+const scoped = computed(() => snapshot.value.filter(row => row.rootThreadId === threadId.value));
+const live = computed(() => scoped.value.filter(AgentWorkTree.live));
+const saved = ref<{ threadId?: string; rows: WorkflowRunRow[] }>({ rows: [] });
+const historySignal = computed(() => scoped.value.map(row => `${ row.key }:${ row.state }:${ row.endedAt ?? '' }`).sort().join('|'));
+
+// The Sulla overview keeps the current tree after its last worker returns. The
+// Full history opens from this overview; this read supplies durable tree links.
+watch([threadId, historySignal], async([id], _, onCleanup) => {
+  if (!id) {
+    saved.value = { rows: [] };
+    return;
+  }
+  let cancelled = false;
+  onCleanup(() => { cancelled = true });
+  try {
+    const rows = await ipcRenderer.invoke('chat-workflow:history', id);
+    if (!cancelled && Array.isArray(rows)) saved.value = { threadId: id, rows };
+  } catch {
+    // A missing endpoint stays visible in the inspector as unavailable.
+  }
+}, { immediate: true });
+
+function historyRow(row: WorkflowRunRow): AgentStateRow {
+  return {
+    ...row,
+    visibility:         'hidden',
+    depth:              0,
+    threadId:           null,
+    killedByHuman:      false,
+    waitingOnChildren:  0,
+    lastActivityAt:     row.endedAt ?? row.startedAt ?? '',
+    lastCheckinAt:      null,
+    lastCheckinSummary: null,
+    canMessage:         false,
+    canStop:            false,
+    canOpen:            false,
+  };
 }
-function bins(key: string): number[] { return activityBins(trail.times(key), now.value) }
+const recorded = computed(() => {
+  const rows = new Map<string, AgentStateRow>();
+  if (saved.value.threadId === threadId.value) {
+    for (const row of saved.value.rows) rows.set(row.key, historyRow(row));
+  }
+  // A recent snapshot carries current controls and updates. A saved terminal
+  // state wins over a delayed live snapshot that has not settled yet.
+  for (const row of scoped.value) {
+    const stored = rows.get(row.key);
+    if (stored && !AgentWorkTree.live(stored) && AgentWorkTree.live(row)) {
+      rows.set(row.key, { ...row, ...stored, responseModels: stored.responseModels?.length ? stored.responseModels : row.responseModels });
+    } else {
+      rows.set(row.key, { ...stored, ...row, responseModels: row.responseModels?.length ? row.responseModels : stored?.responseModels });
+    }
+  }
+  return [...rows.values()];
+});
+
+const leadMessage = computed(() => controller.messages.value.findLast(message => message.kind === 'sulla'));
+function chatLeadRow(rows: readonly AgentStateRow[], activeKeys: ReadonlySet<string>): AgentStateRow | undefined {
+  const id = threadId.value;
+  if (!id || !rows.length) return undefined;
+  const message = leadMessage.value;
+  const response = message?.by?.modelStatus;
+  const at = rows.map(row => row.startedAt ?? row.lastActivityAt).filter(Boolean).sort()[0] ??
+    (message?.createdAt ? new Date(message.createdAt).toISOString() : '');
+  // The transcript replying does not make an already-settled handoff tree active.
+  // Only recorded live child work can make this synthetic relationship row coordinate.
+  const active = rows.some(row => activeKeys.has(row.key));
+  return {
+    key:               `chat-lead-${ id }:0`,
+    jobId:             `chat-lead-${ id }`,
+    taskIndex:         0,
+    parentJobId:       null,
+    parentTaskIndex:   null,
+    rootThreadId:      id,
+    threadId:          id,
+    depth:             0,
+    agentId:           message?.by?.agent ?? 'Sulla',
+    label:             'Chat lead',
+    visibility:        'tab',
+    state:             active ? 'working' : 'done',
+    stateReason:       null,
+    killedByHuman:     false,
+    waitingOnChildren: activeKeys.size,
+    startedAt:         at,
+    endedAt:           active
+      ? null
+      : (message?.createdAt ? new Date(message.createdAt).toISOString() : at),
+    lastActivityAt:    message?.createdAt
+      ? new Date(message.createdAt).toISOString()
+      : rows.map(row => row.endedAt ?? row.lastActivityAt).filter(Boolean).sort().at(-1) ?? at,
+    lastCheckinAt:      null,
+    lastCheckinSummary: active ? 'Coordinating this work' : null,
+    responseModels:     response?.source === 'resolved' ? [response] : undefined,
+    modelStatus:        response,
+    canMessage:         false,
+    canStop:            false,
+    canOpen:            false,
+  };
+}
+
+const workGroups = computed(() => {
+  const activeKeys = new Set(live.value.map(row => row.key));
+  const recentKeys = new Set(scoped.value.map(row => row.key));
+  const current = AgentWorkTree.current(recorded.value, threadId.value, activeKeys, recentKeys);
+  const lead = chatLeadRow(current, activeKeys);
+  if (!lead) return [];
+  const connected = current.map(row => AgentWorkTree.links(row).length
+    ? row
+    : { ...row, parentJobId: lead.jobId, parentTaskIndex: lead.taskIndex });
+  const title = activeKeys.size ? 'Current work' : 'Latest handoff';
+  return AgentWorkTree.build([lead, ...connected], threadId.value, { includeSettled: true })
+    .map(group => ({ ...group, title }));
+});
+const finished = computed(() => {
+  const shown = new Set(workGroups.value.flatMap(group => group.nodes.map(node => node.row.key)));
+  return scoped.value.filter(row => !AgentWorkTree.live(row) && !shown.has(row.key))
+    .sort((a, b) => Date.parse(b.endedAt ?? b.lastActivityAt) - Date.parse(a.endedAt ?? a.lastActivityAt));
+});
+
+interface WorkSection {
+  key: string;
+  title: string;
+  summary: string;
+  nodes: AgentWorkNode[];
+  map: boolean;
+  defaultOpen: boolean;
+}
+
+const sections = computed(() => {
+  const list: WorkSection[] = [];
+  for (const group of workGroups.value) {
+    if (group.linked) {
+      const layout = AgentWorkTree.layout(group.nodes);
+      const agents = group.nodes.filter(node => !node.row.key.startsWith('chat-lead-')).map(node => node.row);
+      const count = agents.filter(row => row.state === 'done').length;
+      const active = agentCountSummary(agents);
+      list.push({
+        ...group, map: layout.style !== 'list',
+        summary: [active, count ? `${count} returned` : ''].filter(Boolean).join(' · '), defaultOpen: true,
+      });
+      continue;
+    }
+    const oldestFirst = [...group.nodes].sort((a, b) => Date.parse(a.row.lastActivityAt) - Date.parse(b.row.lastActivityAt));
+    const buckets = [
+      { title: 'Quiet', nodes: oldestFirst.filter(({ row }) => row.state === 'quiet') },
+      { title: 'Waiting', nodes: group.nodes.filter(({ row }) => row.state === 'parked' || row.state === 'blocked') },
+      { title: 'Working', nodes: group.nodes.filter(({ row }) => row.state === 'queued' || row.state === 'working') },
+    ].filter(bucket => bucket.nodes.length);
+    for (const bucket of buckets) {
+      list.push({
+        ...bucket, key: `unlinked-${bucket.title}`, title: `${bucket.title} · unlinked`,
+        summary: String(bucket.nodes.length), map: false,
+        defaultOpen: bucket.title !== 'Working' || (buckets.length === 1 && bucket.nodes.length <= 4),
+      });
+    }
+  }
+  if (finished.value.length) list.push({
+    key: 'finished', title: 'Finished', summary: String(finished.value.length),
+    nodes: finished.value.map(row => ({ row, links: [] })), map: false, defaultOpen: false,
+  });
+  return list;
+});
+
+const panel = ref<HTMLElement>();
+const jobs = computed(() => new Map(sections.value.flatMap(section =>
+  section.nodes.map(node => [node.row.key, { node, section }] as const))));
+const placements = computed(() => {
+  const byJob = new Map<string, ThreadWorkstream>();
+  const bySection = new Map<string, ThreadWorkstream[]>();
+  const recent: ThreadWorkstream[] = [];
+  const targets = new Map<string, { section?: string; job?: string }>();
+  for (const outcome of props.outcomes) {
+    const remaining = outcome.steps.filter(step => {
+      const entry = jobs.value.get(step.key);
+      if (!step.report || !entry || entry.section.key === 'finished' || ThreadGoalProgress.key(step.report) !== step.key) return true;
+      byJob.set(step.key, { ...outcome, key: step.key, steps: [step] });
+      targets.set(step.key, { section: entry.section.key, job: step.key });
+      return false;
+    });
+    if (!remaining.some(step => step.report)) continue;
+    const context = new Set(outcome.steps.map(step => jobs.value.get(step.key)?.section)
+      .filter(section => section && section.key !== 'finished' && !section.key.startsWith('unlinked-'))
+      .map(section => section!.key));
+    const section = context.size === 1 ? [...context][0] : undefined;
+    const group = { ...outcome, steps: remaining };
+    if (section) bySection.set(section, [...bySection.get(section) ?? [], group]);
+    else recent.push(group);
+    for (const step of remaining) {
+      if (step.report) targets.set(step.key, { section });
+    }
+  }
+  return { byJob, bySection, recent, targets };
+});
+const outcomesByJob = computed(() => placements.value.byJob);
+const outcomesBySection = computed(() => placements.value.bySection);
+const recentOutcomes = computed(() => placements.value.recent);
+const focusedReport = computed(() => props.outcomeTarget ? placements.value.targets.get(props.outcomeTarget) : undefined);
+const focusedRecent = computed(() => !!focusedReport.value && !focusedReport.value.section);
+function focusReport(outcome: ThreadWorkstream): string | undefined {
+  return outcome.steps.some(step => step.report && step.key === props.outcomeTarget) ? props.outcomeTarget : undefined;
+}
+
+const showEarlier = ref(false);
+const visibleRecent = computed(() => {
+  if (showEarlier.value) return recentOutcomes.value;
+  return recentOutcomes.value.filter((group, index) => index < 6 || (focusedRecent.value && !!focusReport(group)));
+});
+const sectionPreferences = reactive(new Map<string, boolean>());
+watch(threadId, () => {
+  expanded.clear();
+  showEarlier.value = false;
+  sectionPreferences.clear();
+});
+watch([() => props.outcomeTarget, () => focusedReport.value?.section, () => focusedReport.value?.job, focusedRecent], async([target, section, job]) => {
+  if (!target || !focusedReport.value) return;
+  if (section) sectionPreferences.set(section, true);
+  if (job) expanded.add(job);
+  await nextTick();
+  const report = [...panel.value?.querySelectorAll<HTMLElement>('[data-report-key]') ?? []]
+    .find(element => element.dataset.reportKey === target);
+  const headline = report?.querySelector<HTMLElement>('summary');
+  headline?.scrollIntoView?.({ block: 'nearest' });
+  headline?.focus({ preventScroll: true });
+}, { immediate: true, flush: 'post' });
+function sectionOpen(section: WorkSection): boolean {
+  return sectionPreferences.get(section.key) ?? (section.defaultOpen || section.nodes.some(node => expanded.has(node.row.key)));
+}
+function rememberSection(section: WorkSection, event: Event): void {
+  const open = (event.currentTarget as HTMLDetailsElement).open;
+  if (open !== sectionOpen(section)) sectionPreferences.set(section.key, open);
+}
+async function revealJob(key: string): Promise<void> {
+  const entry = jobs.value.get(key);
+  if (!entry) return;
+  sectionPreferences.set(entry.section.key, true);
+  expanded.add(key);
+  await nextTick();
+  const header = [...panel.value?.querySelectorAll<HTMLButtonElement>('[data-job-key]') ?? []]
+    .find(button => button.dataset.jobKey === key);
+  header?.scrollIntoView?.({ block: 'nearest' });
+  header?.focus({ preventScroll: true });
+}
+function jobTitle(section: WorkSection, node: AgentWorkNode): string {
+  const { row } = node;
+  if (section.map && row.label === section.title && row.agentId) {
+    return row.agentId.replace(/(^|[-_])([a-z])/g, (_, divider: string, letter: string) => (divider ? ' ' : '') + letter.toUpperCase());
+  }
+  return row.label;
+}
+function nodeFor(key: string): AgentWorkNode | undefined { return jobs.value.get(key)?.node }
+function relationTitle(key: string): string {
+  const entry = jobs.value.get(key);
+  return entry ? jobTitle(entry.section, entry.node) : '';
+}
+function linkedQuestions(row: AgentStateRow) {
+  const ids = row.decisionIds ?? [];
+  return ids.length ? decisionStore.decisions.value.filter(record => ids.includes(record.id) && DecisionAttention.active(record, now.value)) : [];
+}
+
+const summary = computed(() => {
+  const activity = deriveThreadActivity({
+    running:          controller.isRunning.value,
+    messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),
+    agents:           live.value,
+    heartbeatMinutes: controller.heartbeat?.value.intervalMinutes ?? null,
+    now:              now.value,
+  });
+  const count = decisionStore.openCount.value;
+  if (!count) return activity;
+  return {
+    state: 'you', lead: 'Needs you',
+    parts: [`${count} ${count === 1 ? 'request' : 'requests'} in Decide`, ...(activity.state === 'idle' ? [] : activity.parts)],
+  };
+});
+
+function jobState(row: AgentStateRow): string {
+  if (row.key.startsWith('chat-lead-') && row.state === 'working') return 'Coordinating';
+  if (row.state === 'parked') return parkedActivity(row).state === 'idle' ? 'Idle' : 'Waiting';
+  if (row.state === 'quiet' && row.runtimeAlive === false) return 'No progress';
+  return { queued: 'Queued', working: 'Working', quiet: 'Quiet', blocked: 'Blocked', done: 'Returned', failed: 'Failed', lost: 'Unreachable', stopped: 'Stopped' }[row.state];
+}
+function responseFor(row: AgentStateRow): AgentModelStatusValue | undefined {
+  return row.responseModels?.filter(response => response.model && response.source === 'resolved').at(-1);
+}
+function formatModel(model?: AgentModelStatusValue): string {
+  return model ? AgentModelStatus.label({ ...model, mapping: undefined, source: 'resolved' }) : '';
+}
+function selectionSource(row: AgentStateRow): string {
+  return row.modelStatus?.mapping ?? (row.modelStatus?.source === 'requested' ? 'Requested model' : 'Selected model');
+}
+function modelCaption(row: AgentStateRow): string {
+  const response = responseFor(row);
+  if (response) return `Response · ${formatModel(response)}`;
+  if (row.modelStatus?.model) return `${selectionSource(row)} · ${formatModel(row.modelStatus)}`;
+  return 'Model output unavailable';
+}
 function resultMessageFor(row: AgentStateRow): string | undefined {
   return controller.messages.value.find((msg): msg is ProactiveMessage => msg.kind === 'proactive' &&
     !!msg.result?.items.some(item => item.jobId === row.jobId && item.taskIndex === row.taskIndex))?.id;

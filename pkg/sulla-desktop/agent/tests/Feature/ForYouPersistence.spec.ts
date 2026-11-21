@@ -9,7 +9,7 @@ import { TestDatabase } from '../Support/TestDatabase';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
 const dbDescribe = TestDatabase.available() ? describe : describe.skip;
-dbDescribe('For You durable records and exact-target answer delivery', () => {
+dbDescribe('Decide durable records and exact-target answer delivery', () => {
   const db = new TestDatabase();
   const decisions = new PendingDecisionRepository({ query: (sql, params) => db.query(sql, params) as any });
   const inbox = new PostgresAgentInboxRepository({ select: (sql: string, params: any[]) => db.query(sql, params), run: (sql: string, params: any[]) => db.query(sql, params) } as any);
@@ -31,9 +31,27 @@ dbDescribe('For You durable records and exact-target answer delivery', () => {
     await db.query(`INSERT INTO agent_jobs(job_id,status,task_count,parent_thread_id,tasks) VALUES('lineage','completed',1,'parent-root',$1::jsonb)`, [JSON.stringify([{ threadId: 'child-thread', status: 'completed' }])]);
     expect(await decisions.ancestry('child-thread')).toEqual(expect.arrayContaining(['child-thread', 'parent-root']));
     await insert(question('old-child', 'child-thread')); await decisions.preserveAncestry('parent-root');
+    expect(await decisions.findById('old-child')).toMatchObject({ presentationConversationId: 'parent-root' });
     await db.query("DELETE FROM agent_jobs WHERE job_id='lineage'");
     expect((await decisions.listForConversation('parent-root')).map(record => record.id)).toContain('old-child');
     expect((await decisions.listForConversation('unrelated-root')).map(record => record.id)).not.toContain('old-child');
+  });
+  it('presents a delegated request as actionable in only its owning chat', async() => {
+    const lineage = question('single-owner', 'owner-child', {
+      status: 'pending',
+      relatedConversationIds: ['owner-child', 'owner-root'],
+      presentationConversationId: 'owner-root',
+    });
+    const legacy = question('legacy-single-owner', 'legacy-child', {
+      status: 'pending',
+      relatedConversationIds: ['legacy-child', 'legacy-root'],
+    });
+    await insert(lineage); await insert(legacy);
+    expect((await decisions.listForConversation('owner-root')).map(record => record.id)).toContain(lineage.id);
+    expect((await decisions.listForConversation('owner-child')).map(record => record.id)).not.toContain(lineage.id);
+    expect((await decisions.listForConversation('legacy-root')).map(record => record.id)).toContain(legacy.id);
+    expect((await decisions.listForConversation('legacy-child')).map(record => record.id)).not.toContain(legacy.id);
+    expect((await decisions.findById(lineage.id))?.conversationId).toBe('owner-child');
   });
   it('commits answer and one stable inbox entry together even with no legacy payload object', async() => {
     const record = question('late-a', 'answer-a'); await insert(record);

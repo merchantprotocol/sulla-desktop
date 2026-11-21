@@ -16,7 +16,7 @@ import { applyThreadAgentRoute, resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
 import { InterruptedAgentRecoveryService } from './InterruptedAgentRecoveryService';
 import { agentWaitProvider } from './AgentWaitServices';
-import { RunActivity } from './RunActivity';
+import { RunActivity, watchForDeadRun } from './RunActivity';
 import { agentJobLifecycle, returnedTaskSettlement } from './AgentJobLifecycleService';
 import { parkedAgentRehydrator } from './ParkedAgentRehydrator';
 import { ChatErrorDiagnostics } from './ChatErrorDiagnostics';
@@ -36,6 +36,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { agentRestartResumePacket } from './AgentRestartResumePacket';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
@@ -288,6 +289,33 @@ export class BackendGraphWebSocketService {
     return this.activeAborts.has(this.abortKey(channelId, threadId));
   }
 
+  /**
+   * Main chat turns use the same activity clock as delegated workers. Model
+   * tokens, child work and tools all touch the inherited key; a run that has
+   * truly produced no activity past the configured dead-run limit is aborted
+   * instead of leaving the renderer stuck on "Sulla is replying" forever.
+   */
+  private watchChatRun(channelId: string, threadId: string, abortKey: string, state: AgentGraphState, abort: AbortService): () => void {
+    const activityKey = `chat:${ abortKey }:${ nextMessageId() }`;
+    state.metadata.activityKeys = RunActivity.inherit(state.metadata, activityKey);
+    const stop = watchForDeadRun(activityKey, reason => {
+      if (this.activeAborts.get(abortKey) !== abort || abort.signal.aborted) return;
+      console.warn(`[BackendGraphWS] Ending inactive chat turn ${ threadId }: ${ reason }`);
+      this.emitMessage(channelId, 'assistant_message', {
+        content:   `Sulla stopped this turn after ${ reason }. Send the message again to retry.`,
+        role:      'assistant',
+        kind:      'notice',
+        thread_id: threadId,
+        runEnded:  true,
+      });
+      abort.abort();
+    }, () => Promise.resolve(false), { createdAt: Date.now(), hasCheckin: () => Promise.resolve(false) });
+    return () => {
+      stop();
+      state.metadata.activityKeys = (state.metadata.activityKeys ?? []).filter(key => key !== activityKey);
+    };
+  }
+
   /** Resolves whether this turn runs in the VM or a container. */
   resolveRunLocation(state: AgentGraphState, channelId: string): 'vm' | 'container' {
     return this.runLocationResolver.resolve(state, channelId);
@@ -305,8 +333,9 @@ export class BackendGraphWebSocketService {
     const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
     const { effectiveModelChoice } = await import('../languagemodels/threadModelChoice');
     const workerRoute = !(state.metadata as any).workerModelChatOverride && (state.metadata as any).workerModelRoute;
-    const choice = workerRoute ? undefined : effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, effort: state.metadata.agent?.effort, metadata: state.metadata, agentChoice: definition?.model_choice });
-    const routed = (workerRoute ? await workerModelRouting.resolveRoute(workerRoute, signal) : await modelRouter.resolve('agents', choice))[0];
+    const inherited = !(state.metadata as any).workerModelChatOverride && state.metadata.inheritedResumeModel;
+    const choice = workerRoute || inherited ? undefined : effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, effort: state.metadata.agent?.effort, metadata: state.metadata, agentChoice: definition?.model_choice });
+    const routed = (workerRoute ? await workerModelRouting.resolveRoute(workerRoute, signal) : inherited ? [await modelRouter.checkInheritedResume(inherited)] : await modelRouter.resolve('agents', choice))[0];
     assertOwner();
     const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
     return executeWithContainerLifecycleRecovery(
@@ -655,6 +684,9 @@ export class BackendGraphWebSocketService {
     // carry the agent it was built for (AgentContainerLauncher), so it is
     // never handed to a different agent, not even mid-turn.
     const agentId = String((state.metadata as any).agentId ?? state.metadata.wsChannel ?? '');
+    const delegatedTaskIndex = Number.isInteger(metadata.delegatedTaskIndex)
+      ? metadata.delegatedTaskIndex
+      : Number(metadata.workerModelTask?.taskIndex ?? 0);
     // A lifecycle that aborted or closed (container died, secrets were wiped, capability renewal
     // failed) is dead for good. Reusing it failed every later message in the thread; rebuild it.
     // The conversation itself survives: its workspace and provider homes live on the data disk.
@@ -688,7 +720,9 @@ export class BackendGraphWebSocketService {
     }
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
     const lifecycle = await createAgentContainerLifecycle({
-      jobId: `chat-${ threadId }`, taskIndex: 0, provider,
+      jobId: delegatedJobId ? String(delegatedJobId) : `chat-${ threadId }`,
+      taskIndex: delegatedJobId ? delegatedTaskIndex : 0,
+      provider,
       model, state, providerCliSnapshot,
       persistenceKey: conversationPersistenceKey(channelId, threadId, state),
     });
@@ -821,14 +855,19 @@ export class BackendGraphWebSocketService {
     await recoverPendingAgentCompletions();
     await this.agentInbox.replayPending();
     this.retryDecisionAnswers();
+    const eligibleTask = async(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): Promise<boolean> => {
+      const task = job.tasks[taskIndex];
+      if (!task || task.status !== 'running' || !task.threadId || task.returnedAt || this.recoveryAbort.signal.aborted) return false;
+      if (this.hasActiveRun(job.parentChannel ?? 'sulla-desktop', task.threadId) ||
+        (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
+        probeAgentContainerRuntime(undefined, task.threadId) !== false) return false;
+      return !await this.hasPendingDecision(task.threadId);
+    };
     const eligible = async(job: import('../tools/agents/jobRegistry').AgentJob): Promise<boolean> => {
-      for (const task of job.tasks) {
-        if (task.status !== 'running' || !task.threadId || task.returnedAt) continue;
-        if (this.recoveryAbort.signal.aborted || this.hasActiveRun(job.parentChannel ?? 'sulla-desktop', task.threadId) ||
-          (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
-          probeAgentContainerRuntime(undefined, task.threadId) !== false || await this.hasPendingDecision(task.threadId)) return false;
+      for (let taskIndex = 0; taskIndex < job.tasks.length; taskIndex++) {
+        if (await eligibleTask(job, taskIndex)) return true;
       }
-      return true;
+      return false;
     };
     // Only startup's interrupted working set is eligible. Normal work created
     // later must never be restarted by this reconciliation loop.
@@ -849,14 +888,19 @@ export class BackendGraphWebSocketService {
         if (claimed.resumable.length || claimed.exhausted.length) pending.delete(id);
         return claimed;
       },
-    }, (job, taskIndex) => {
+    }, async(job, taskIndex) => {
       // Dispatch owns/records the running turn. Do not wait for a possibly
-      // hours-long worker before admitting its siblings or the next job.
-      this.resumeInterruptedTask(job, taskIndex);
-      return Promise.resolve();
+      // hours-long worker before admitting its siblings or the next job, but
+      // do wait until the turn is actually accepted so an early failure can
+      // remain in this startup's bounded retry loop.
+      try {
+        await this.resumeInterruptedTask(job, taskIndex);
+      } catch {
+        pending.add(job.jobId);
+      }
     }, (job, reason) => {
       if (job.parentChannel && job.parentThreadId) enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
-    });
+    }, 2, undefined, eligibleTask);
     await returnedTaskSettlement.settleStranded();
     if ((process as any).type === 'browser') {
       this.orgMessagingAbort?.abort();
@@ -870,19 +914,47 @@ export class BackendGraphWebSocketService {
     }
   }
 
-  private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): void {
+  private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): Promise<void> {
+    const task = job.tasks[taskIndex];
+    const threadId = task?.threadId;
+    if (!task || !threadId) return Promise.reject(new Error(`Interrupted task ${ job.jobId }:${ taskIndex } has no thread to resume`));
+    const channel = job.parentChannel || 'sulla-desktop';
+    let resolveLaunch!: () => void;
+    let rejectLaunch!: (error: unknown) => void;
+    let launchSettled = false;
+    const launch = new Promise<void>((resolve, reject) => { resolveLaunch = resolve; rejectLaunch = reject });
+    const settleLaunch = (error?: unknown) => {
+      if (launchSettled) return;
+      launchSettled = true;
+      clearInterval(acceptedProbe);
+      if (error) rejectLaunch(error);
+      else resolveLaunch();
+    };
+    const acceptedProbe = setInterval(() => {
+      if (this.hasActiveRun(channel, threadId)) settleLaunch();
+    }, 25);
     const run = (async() => {
       await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
-      const task = job.tasks[taskIndex];
-      const channel = job.parentChannel || 'sulla-desktop';
+      const checkin = await this.restartResumeCheckin(job.jobId, taskIndex);
       await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-        `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
-        task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
+        agentRestartResumePacket(job, task, taskIndex, checkin),
+        threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
     })();
     this.dispatchedRuns.add(run);
-    run.catch(error => {
+    run.then(() => settleLaunch(), error => {
+      settleLaunch(error);
       if (error?.name !== 'AbortError') console.error('[BackendGraphWS] Interrupted worker dispatch failed:', error);
     }).finally(() => this.dispatchedRuns.delete(run));
+    return launch;
+  }
+
+  private async restartResumeCheckin(jobId: string, taskIndex: number): Promise<import('../database/models/AgentJobMessagingModel').AgentJobCheckin | null> {
+    try {
+      return (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null;
+    } catch (error) {
+      console.warn('[BackendGraphWS] Resume check-in unavailable; continuing with durable workspace:', error);
+      return null;
+    }
   }
 
   private waitForRecoveryRecheck(): Promise<void> {
@@ -1287,6 +1359,7 @@ export class BackendGraphWebSocketService {
     let turnConsumedInput = false;
     const abortKey = this.abortKey(channelId, threadId);
     let runAbort: AbortService | undefined;
+    let stopDeadRunWatch: (() => void) | undefined;
     // Set only for a dormant parked job (no live in-process waiter) this turn
     // is waking. Re-parked in the finally block if the turn ends without the
     // job completing, so job/task status stays truthful for the turn's whole
@@ -1336,7 +1409,9 @@ export class BackendGraphWebSocketService {
       if (currentDefinition) {
         state.metadata.agent = {
           ...(state.metadata.agent ?? {}),
-          runLocation: currentDefinition.run_location,
+          // A restarted delegated task resumes the execution policy it was
+          // created with. Later profile edits apply only to new work.
+          runLocation: parkedIdentity?.task.runLocation ?? currentDefinition.run_location,
         };
       }
 
@@ -1432,6 +1507,7 @@ export class BackendGraphWebSocketService {
       runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
+      stopDeadRunWatch = this.watchChatRun(channelId, threadId, abortKey, state, abort);
       this.resumeContexts.set(abortKey, {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
       });
@@ -1517,13 +1593,18 @@ export class BackendGraphWebSocketService {
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       const newHumanSelection = !parkedIdentity && metadata?.workerMappingNewHumanTurn && !wasActiveForWorkerMapping && !shouldResumeFromCurrentNode;
-      if (newHumanSelection && (state.metadata as any).workerModelRoute && (state.metadata as any).delegatedJobId) {
+      if (newHumanSelection && ((state.metadata as any).workerModelRoute || state.metadata.inheritedResumeModel || (state.metadata as any).savedInheritedModel) && (state.metadata as any).delegatedJobId) {
         const terminal = await parkedAgentRehydrator.isTerminalDelegatedThread(threadId);
         assertDecisionOwner();
         if (terminal) detachTerminalWorkerChat(state);
       }
       if (newHumanSelection && !(state.metadata as any).delegatedJobId) {
-        const route = (state.metadata as any).workerModelChatOverride ? undefined : await workerModelRouting.newRoute(agentId);
+        let route;
+        if (!(state.metadata as any).workerModelChatOverride) {
+          const leadRoute = agentId === 'account-manager' && channelId === SULLA_DESKTOP_CHANNEL_ID && !decisionTurn
+            ? await (await import('./ProductOwnerWorkflow')).productOwnerWorkflow.productOwnerLeadRoute(threadId) : undefined;
+          route = leadRoute ?? await workerModelRouting.newRoute(agentId);
+        }
         assertDecisionOwner();
         installWorkerRoute(state, route);
       }
@@ -1588,6 +1669,7 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
+      stopDeadRunWatch?.();
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
       }

@@ -64,4 +64,14 @@ describe('SpawnAgentDeadRunWatcher liveness floor', () => {
     runTools.finished(metadata, 'call-1');
     stop();
   });
+
+  it('does not resurrect a completed ancestor activity clock', () => {
+    const metadata = { activityKeys: ['finished-ancestor'] };
+    RunActivity.begin('finished-ancestor');
+    RunActivity.end('finished-ancestor');
+
+    RunActivity.touch(metadata);
+
+    expect(RunActivity.lastActivityAt('finished-ancestor')).toBeUndefined();
+  });
 });

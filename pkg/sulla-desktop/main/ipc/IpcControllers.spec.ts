@@ -63,7 +63,7 @@ describe('IpcController channel registration', () => {
     ['support sessions', ipc => new SupportSessionIpcController(ipc, new SupportSessionCloudClient(vi.fn())), ['support-session:get', 'support-session:events', 'support-session:end', 'support-session:extend', 'support-session:presence']],
     ['conversation messages', ipc => new ConversationMessagesIpcController(ipc, { appendMany: vi.fn(), list: vi.fn(), count: vi.fn() }, log), ['conversation-messages:append', 'conversation-messages:list', 'conversation-messages:count']],
     ['tabs', ipc => new TabsIpcController(ipc, { list: vi.fn(), getActiveAssetId: vi.fn(), open: vi.fn(), close: vi.fn(), setActive: vi.fn(), onChange: vi.fn() }, { allWebContents: () => [], browserSession: () => null, send: vi.fn() }), ['tabs:list', 'tabs:active', 'tabs:open', 'tabs:close', 'tabs:setActive']],
-    ['model routing', ipc => new ModelRoutingIpcController(ipc, { router: { onStatusChange: vi.fn() } as any, recommendedState: vi.fn(), listAgents: vi.fn(), onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }), ['model-routing:get', 'model-routing:set', 'model-routing:reset', 'model-routing:worker-set', 'model-routing:refresh', 'model-routing:cli-check', 'model-routing:cli-update']],
+    ['model routing', ipc => new ModelRoutingIpcController(ipc, { router: { onStatusChange: vi.fn() } as any, recommendedState: vi.fn(), listAgents: vi.fn(), onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }), ['chat-workflow:outcomes', 'chat-workflow:history', 'chat-workflow:get', 'chat-workflow:save', 'chat-workflow:execution', 'model-routing:get', 'model-routing:set', 'model-routing:reset', 'model-routing:worker-set', 'model-routing:refresh', 'model-routing:cli-check', 'model-routing:cli-update']],
     ['chat heartbeat', ipc => new ChatHeartbeatIpcController(ipc, () => ({}) as any), ['chat-heartbeat:register', 'chat-heartbeat:set', 'chat-heartbeat:busy', 'chat-heartbeat:unregister']],
     ['extension ui', ipc => new ExtensionUiIpcController(ipc, { readGuard: guard as any, onHookAudit: vi.fn(async() => undefined), broadcast: vi.fn() }), ['extensions-ui:list', 'extension-permissions:local', 'extension-permissions:list', 'extension-permissions:audit', 'extension-permissions:set-hook', 'extension-permissions:revoke-all', 'extension-permissions:set-rail-hidden']],
     ['chat messages', ipc => new ChatMessagesIpcController(ipc, { saveThreadState: vi.fn(), loadThreadState: vi.fn(), loadMessagesBefore: vi.fn(), deleteThreadState: vi.fn(), deleteMessages: vi.fn(), getMessageCount: vi.fn() }, log), ['chat-messages:save', 'chat-messages:load', 'chat-messages:load-before', 'chat-messages:delete', 'chat-messages:delete-messages', 'chat-messages:message-count']],
@@ -175,12 +175,59 @@ describe('IpcController delegation', () => {
     expect(registry.open).toHaveBeenCalledWith({ assetId: 'a', url: 'https://x', title: 'X', origin: 'user' });
   });
 
+  it('rejects Workflow edits from a subframe before reaching settings or routing', async() => {
+    const ipc = new FakeIpc();
+    const router = { onStatusChange: vi.fn(), getEditableState: vi.fn() } as any;
+    new ModelRoutingIpcController(ipc, { router, recommendedState: vi.fn(), listAgents: vi.fn(), onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
+    const mainFrame = {};
+    await expect(ipc.invoke('chat-workflow:save', { sender: { mainFrame }, senderFrame: {} }, { threadId: 'chat-one' })).rejects.toThrow('Untrusted Workflow caller');
+    expect(router.getEditableState).not.toHaveBeenCalled();
+  });
+
   it('model routing: invalid reset target is refused before touching the router', async() => {
     const ipc = new FakeIpc();
     const router = { getEditableState: vi.fn(async() => ({})), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), replaceWorkerBinding: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
     new ModelRoutingIpcController(ipc, { router, recommendedState: () => ({}), listAgents: async() => [{ name: 'A', enabled: true, model_choice: { mode: 'class', class: 'Fast' } }], onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
     await expect(ipc.invoke('model-routing:reset', {}, { section: 'bogus' })).rejects.toThrow('Invalid model routing reset target');
     expect(router.reset).not.toHaveBeenCalled();
+  });
+
+  it('model routing: a cold settings page waits for saved choices and its catalog', async() => {
+    const ipc = new FakeIpc();
+    let markReady!: () => void;
+    const startup = new Promise<void>(resolve => { markReady = resolve; });
+    const saved = { classes: { coding: [{ provider: 'codex', model: 'gpt-6.2-sol', effort: 'high' }] } };
+    const router = { getEditableState: vi.fn(async() => saved), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), replaceWorkerBinding: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
+    new ModelRoutingIpcController(ipc, { router, whenReady: () => startup, recommendedState: vi.fn(), listAgents: async() => [], onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
+
+    const firstPaint = ipc.invoke('model-routing:get', {});
+    await Promise.resolve();
+    expect(router.getEditableState).not.toHaveBeenCalled();
+    expect(router.providerInfo).not.toHaveBeenCalled();
+    markReady();
+    await expect(firstPaint).resolves.toMatchObject(saved);
+  });
+
+  it('model routing: edits and refreshes during startup wait for saved settings', async() => {
+    const ipc = new FakeIpc();
+    let markReady!: () => void;
+    const startup = new Promise<void>(resolve => { markReady = resolve; });
+    const router = { getEditableState: vi.fn(async() => ({})), providerInfo: vi.fn(async() => []), catalogReport: vi.fn(async() => ({})), set: vi.fn(), replaceWorkerBinding: vi.fn(), reset: vi.fn(), refreshCatalog: vi.fn(), onStatusChange: vi.fn() };
+    new ModelRoutingIpcController(ipc, { router, whenReady: () => startup, recommendedState: vi.fn(), listAgents: async() => [], onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }).register();
+
+    const patch = { neverUse: [] };
+    const edit = ipc.invoke('model-routing:set', {}, patch);
+    const refresh = ipc.invoke('model-routing:refresh', {});
+    const reset = ipc.invoke('model-routing:reset', {}, { section: 'classes', class: 'coding' });
+    await Promise.resolve();
+    expect(router.set).not.toHaveBeenCalled();
+    expect(router.refreshCatalog).not.toHaveBeenCalled();
+    expect(router.reset).not.toHaveBeenCalled();
+    markReady();
+    await Promise.all([edit, refresh, reset]);
+    expect(router.set).toHaveBeenCalledWith(patch);
+    expect(router.refreshCatalog).toHaveBeenCalledOnce();
+    expect(router.reset).toHaveBeenCalledWith({ section: 'classes', class: 'coding' });
   });
 
   it('chat heartbeat: register requires a thread id; set reports unregistered threads', () => {

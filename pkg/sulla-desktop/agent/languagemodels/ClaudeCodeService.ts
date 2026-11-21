@@ -502,6 +502,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         prompt_tokens:     Number(raw?.usage?.input_tokens ?? 0),
         completion_tokens: Number(raw?.usage?.output_tokens ?? 0),
         model:             this.getModel(),
+        reportedModel:     raw.reportedModel,
         finish_reason:     FinishReason.Stop,
       },
     };
@@ -557,6 +558,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           prompt_tokens:     Number(result.usage?.input_tokens ?? 0),
           completion_tokens: Number(result.usage?.output_tokens ?? 0),
           model:             this.getModel(),
+          reportedModel:     result.reportedModel,
           finish_reason:     FinishReason.Stop,
         },
       };
@@ -835,7 +837,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
     turn: ClaudeTurnState = { handedOff: false },
-  ): Promise<{ text: string; usage?: any }> {
+  ): Promise<{ text: string; usage?: any; reportedModel?: string }> {
     TurnHopTiming.mark(options.state, 'onActivity.Preparing your turn');
     TurnHopTiming.emitProviderStart(options.state, 'claude', messages.length);
     const runPhaseStart = Date.now();
@@ -1129,6 +1131,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         let textCollected = '';
         let capturedSessionId: string | undefined = existingSession;
         let lastUsage: any;
+        let reportedModel: string | undefined;
         let errored = false;
         let errorMessage = '';
         let sessionInUse = false;
@@ -1615,6 +1618,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // in case the streaming path didn't emit them (some CLI versions
           // batch the assistant message at content_block_stop time).
           if (parsed.type === 'assistant' && parsed.message?.content) {
+            if (promptConsumed && !parsed.parent_tool_use_id && typeof parsed.message.model === 'string' && !parsed.message.model.startsWith('<')) {
+              reportedModel = parsed.message.model;
+            }
             const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
             for (const b of blocks) {
               if (b?.type === 'tool_use' && b.name) {
@@ -1872,7 +1878,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }, BACKGROUND_TASK_MAX_HOLD_MS);
           holdTimer.unref?.();
           log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (${ bgTracker.liveTaskCount } background task(s) still live — holding proc until they finish)`);
-          resolve({ text: textCollected, usage: lastUsage });
+          resolve({ text: textCollected, usage: lastUsage, reportedModel });
         };
 
         const onProcClose = async(code: number | null) => {
@@ -1989,7 +1995,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
 
           log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-          resolve({ text: textCollected, usage: lastUsage });
+          resolve({ text: textCollected, usage: lastUsage, reportedModel });
         };
         proc.on('close', onProcClose);
       });

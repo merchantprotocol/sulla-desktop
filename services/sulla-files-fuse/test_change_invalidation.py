@@ -57,6 +57,28 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertFalse(self.ops.pending_invalidations["folder/file.txt"]["membership_changed"])
         self.assertIn("folder", self.ops.directory_complete)
 
+    # risk: a kernel GETATTR can arrive during reverse invalidation without a LOOKUP or OPEN first.
+    def test_getattr_refreshes_the_inode_when_a_remote_edit_invalidates_it(self):
+        path = "folder/file.txt"
+        inode = self.ops._node(path, False)
+        self.ops.nodes[inode].update({"collectionId": "home", "filesPath": path, "versionId": "v1", "size": 7})
+        reads = []
+        async def entry(collection, name):
+            reads.append((collection, name))
+            return {"kind": "file", "versionId": "v2", "size": 13}
+        self.ops.api = types.SimpleNamespace(entry=entry)
+        observed = []
+        async def during_notification(_notify, target, **_options):
+            observed.append((await self.ops.getattr(target)).st_size)
+            return True
+        self.ops._run_invalidation = during_notification
+        self.ops.consume_change_page({"changes": [{"path": path, "kind": "update", "versionId": "v2", "size": 13}]})
+        asyncio.run(self.ops.invalidate_path(path, **self.ops.pending_invalidations.pop(path)))
+        self.assertEqual(observed, [13])
+        self.assertEqual(self.ops.path_inode[path], inode)
+        self.assertEqual(asyncio.run(self.ops.getattr(inode)).st_size, 13)
+        self.assertEqual(reads, [("home", path)])
+
     # risk: namespace correctness — only membership-changing events evict directory listings.
     def test_membership_events_discard_directory_complete(self):
         for kind in ("insert", "delete", "rename"):
@@ -200,10 +222,24 @@ class ChangeInvalidationTests(unittest.TestCase):
             asyncio.run(exercise())
         finally:
             release.set()
-        limiter, cancellable = self.adapter.trio.run_sync_calls[-1]
+        limiter, abandon_on_cancel = self.adapter.trio.run_sync_calls[-1]
         self.assertIs(limiter, self.ops.invalidation_limiter)
-        self.assertTrue(cancellable)
+        self.assertTrue(abandon_on_cancel)
         self.assertIn(inode, self.ops.nodes)
+
+    # risk: stale reads — a failed inode notification must disable positive caching even if the dentry notification works.
+    def test_failed_notification_disables_caching(self):
+        def fail(*_args, **_options):
+            raise RuntimeError("notification failed")
+        self.pyfuse3.invalidate_inode = fail
+        parent = self.ops._node("folder", True)
+        inode = self.ops._node("folder/file.txt", False)
+        self.ops.nodes[inode]["collectionId"] = "home"
+        self.ops.feed_healthy = True
+        self.ops.feed_ready_collections.add("home")
+        asyncio.run(self.ops.invalidate_path("folder/file.txt"))
+        self.assertIn(("entry", parent, b"file.txt"), self.events)
+        self.assertFalse(self.ops.invalidation_healthy)
 
     async def _fake_request(self, served):
         served.set()

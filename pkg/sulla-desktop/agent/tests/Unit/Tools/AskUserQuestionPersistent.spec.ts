@@ -24,7 +24,7 @@ describe('the in-process question tool', () => {
   });
   it('keeps the saved receipt if transcript notification fails', async() => {
     f.emit.mockResolvedValue(false);
-    expect((await worker()._validatedCall({ questions })).responseString).toContain('For You');
+    expect((await worker()._validatedCall({ questions })).responseString).toContain('Decide');
   });
   it('rejects malformed questions before creating a durable record', async() => {
     expect((await worker()._validatedCall({ questions: [] })).successBoolean).toBe(false);

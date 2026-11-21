@@ -45,11 +45,16 @@ describe('owner worker mapping writes', () => {
     await expect(f.handlers.get(MODEL_ROUTING_IPC.set)(null, { workerBindings: null })).rejects.toThrow('dedicated');
     await expect(save({ agentId: 'other-owner' })).rejects.toThrow('agent changed');
   });
-  it('rejects stale drafts after reset and recreate even when revisions match', async() => {
+  it('rejects drafts opened before a reset and requires the current token even when the revision matches', async() => {
     await save({}); const first = structuredClone(settings().workerBindings.luna);
     await save({ expectedRevision: first.revision, expectedToken: first.editToken, candidates: null });
-    await save({}); const replacement = structuredClone(settings().workerBindings.luna);
-    expect(replacement.revision).toBe(first.revision); expect(replacement.editToken).not.toBe(first.editToken);
+    const inherited = settings().workerInheritance.luna;
+    await expect(save({})).rejects.toThrow('changed elsewhere');
+    await save({ expectedRevision: inherited.revision, expectedToken: inherited.editToken });
+    const replacement = structuredClone(settings().workerBindings.luna);
+    expect(replacement.revision).toBeGreaterThan(inherited.revision);
+    expect(replacement.editToken).not.toBe(first.editToken);
+    await expect(save({ expectedRevision: replacement.revision, expectedToken: first.editToken })).rejects.toThrow('changed elsewhere');
     await expect(save({ expectedRevision: first.revision, expectedToken: first.editToken })).rejects.toThrow('changed elsewhere');
     expect(settings().workerBindings.luna).toEqual(replacement);
   });

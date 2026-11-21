@@ -27,7 +27,9 @@ export const RunActivity = {
     if (!Array.isArray(keys) || keys.length === 0) return;
     const now = Date.now();
     for (const key of keys) {
-      if (typeof key === 'string') lastActivity.set(key, now);
+      // An inherited child can outlive the turn that created an ancestor key.
+      // Never resurrect a clock after its watcher has ended.
+      if (typeof key === 'string' && lastActivity.has(key)) lastActivity.set(key, now);
     }
   },
 

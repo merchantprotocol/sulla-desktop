@@ -15,12 +15,17 @@ describe('a provider bridge pinned to a model', () => {
     expect(ProviderModelPin.allows('claude-opus-5-5[1m]', ['opus'])).toBe(true);
     expect(ProviderModelPin.allows('claude-sonnet-5-5', ['sonnet'])).toBe(true);
     expect(ProviderModelPin.allows('claude-haiku-5-5', ['haiku'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-fable-5-1', ['fable'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-fable-5-2', ['fable'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-fable-5-2[1m]', ['fable'])).toBe(true);
   });
 
   it('still refuses any other model, which is what the pin is for', () => {
     expect(ProviderModelPin.allows('claude-sonnet-5-5', ['opus'])).toBe(false);
     expect(ProviderModelPin.allows('claude-opus-5-5', ['claude-sonnet-5-5'])).toBe(false);
     expect(ProviderModelPin.allows('gpt-6.1-sol', ['opus'])).toBe(false);
+    expect(ProviderModelPin.allows('claude-opus-5-5', ['fable'])).toBe(false);
+    expect(ProviderModelPin.allows('claude-fable-5-2', ['opus'])).toBe(false);
     expect(ProviderModelPin.allows('xclaude-opus-5-5', ['opus'])).toBe(false);
     expect(ProviderModelPin.allows(undefined, ['opus'])).toBe(false);
   });

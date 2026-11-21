@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
-export interface AgentTreeNode { row: AgentStateRow; children: AgentTreeNode[]; depth: number }
+type TreeRow = Pick<AgentStateRow, 'key' | 'parentJobId' | 'parentTaskIndex' | 'rootThreadId' | 'state' | 'startedAt'>;
+export interface AgentTreeNode<T extends TreeRow = AgentStateRow> { row: T; children: AgentTreeNode<T>[]; depth: number }
 
-export class AgentTreeBuilder {
+export class AgentTreeBuilder<T extends TreeRow = AgentStateRow> {
   private readonly liveStates = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
-  constructor(private readonly rows: readonly AgentStateRow[]) {}
+  constructor(private readonly rows: readonly T[]) {}
 
-  forThread(rootThreadId: string): AgentTreeNode[] {
+  forThread(rootThreadId: string): AgentTreeNode<T>[] {
     const included = this.rows.filter(row => row.rootThreadId === rootThreadId);
-    const nodes = new Map(included.map(row => [row.key, { row, children: [] as AgentTreeNode[], depth: 0 }]));
-    const roots: AgentTreeNode[] = [];
+    const nodes = new Map(included.map(row => [row.key, { row, children: [] as AgentTreeNode<T>[], depth: 0 }]));
+    const roots: AgentTreeNode<T>[] = [];
 
     for (const node of nodes.values()) {
       const { parentJobId, parentTaskIndex } = node.row;
@@ -25,17 +26,17 @@ export class AgentTreeBuilder {
     return roots;
   }
 
-  groups(): { rootThreadId: string; tree: AgentTreeNode[] }[] {
+  groups(): { rootThreadId: string; tree: AgentTreeNode<T>[] }[] {
     const ids = [...new Set(this.rows.map(row => row.rootThreadId).filter((id): id is string => !!id))];
     return ids.map(rootThreadId => ({ rootThreadId, tree: this.forThread(rootThreadId) }))
       .filter(group => group.tree.length > 0)
       .sort((a, b) => this.compare(a.tree[0].row, b.tree[0].row));
   }
 
-  flatten(tree: readonly AgentTreeNode[]): AgentTreeNode[] {
-    const flattened: AgentTreeNode[] = [];
+  flatten(tree: readonly AgentTreeNode<T>[]): AgentTreeNode<T>[] {
+    const flattened: AgentTreeNode<T>[] = [];
     const visited = new Set<string>();
-    const visit = (nodes: readonly AgentTreeNode[]): void => {
+    const visit = (nodes: readonly AgentTreeNode<T>[]): void => {
       for (const node of nodes) {
         if (visited.has(node.row.key)) continue;
         visited.add(node.row.key);
@@ -47,9 +48,9 @@ export class AgentTreeBuilder {
     return flattened;
   }
 
-  private createsCycle(node: AgentTreeNode, parent: AgentTreeNode, nodes: ReadonlyMap<string, AgentTreeNode>): boolean {
+  private createsCycle(node: AgentTreeNode<T>, parent: AgentTreeNode<T>, nodes: ReadonlyMap<string, AgentTreeNode<T>>): boolean {
     const visited = new Set<string>([node.row.key]);
-    let candidate: AgentTreeNode | undefined = parent;
+    let candidate: AgentTreeNode<T> | undefined = parent;
     while (candidate) {
       if (visited.has(candidate.row.key)) return true;
       visited.add(candidate.row.key);
@@ -60,16 +61,16 @@ export class AgentTreeBuilder {
     return false;
   }
 
-  private assignDepths(nodes: readonly AgentTreeNode[], depth: number): void {
+  private assignDepths(nodes: readonly AgentTreeNode<T>[], depth: number): void {
     for (const node of nodes) { node.depth = depth; this.assignDepths(node.children, depth + 1) }
   }
 
-  private sort(nodes: AgentTreeNode[]): void {
+  private sort(nodes: AgentTreeNode<T>[]): void {
     nodes.sort((a, b) => this.compare(a.row, b.row));
     nodes.forEach(node => this.sort(node.children));
   }
 
-  private compare(a: AgentStateRow, b: AgentStateRow): number {
+  private compare(a: T, b: T): number {
     const live = Number(this.liveStates.has(b.state)) - Number(this.liveStates.has(a.state));
     if (live) return live;
     return this.time(a.startedAt) - this.time(b.startedAt) || a.key.localeCompare(b.key);

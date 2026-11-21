@@ -315,4 +315,40 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     expect(listed.some(job => job.jobId === 'active')).toBe(true);
     expect(listed.filter(job => job.status !== 'running')).toHaveLength(25);
   });
+  it('renames installed built-ins twice without changing parked jobs, settings ownership or custom agents', async() => {
+    const { postgresClient } = await import('../../../database/PostgresClient');
+    const { up } = await import('../../../database/migrations/0167_builtin_agent_identities');
+    const { AgentDefinitionModel } = await import('../../../database/models/AgentDefinitionModel');
+
+    await database.query(`INSERT INTO agent_definitions (id, slug, name, is_builtin, prompt_content, can_call, enabled)
+      VALUES ('quick-row','codex-luna-worker','Codex LUNA Worker',true,'Custom instructions',ARRAY['opus-worker'],false),
+        ('advisor-row','opus-worker','Edited Advisor name',true,'User prompt',ARRAY[]::text[],true),
+        ('old-builder','codex-sol-worker','Codex SOL Worker',true,'Built-in',ARRAY[]::text[],true),
+        ('my-builder','builder','My Builder',false,'Custom builder prompt',ARRAY[]::text[],true)`);
+    await database.query("INSERT INTO agent_builtin_seed_ledger (slug) VALUES ('haiku-worker')");
+    const binding = { agentId: 'quick-row', revision: 2, candidates: [{ provider: 'codex', model: 'saved-model', effort: 'low' }] };
+    await database.query("INSERT INTO sulla_settings (property,value) VALUES ('modelRouting',$1),('productOwnerWorkflow.qa.implementation',$2)",
+      [JSON.stringify({ workerBindings: { 'codex-luna-worker': binding } }), JSON.stringify({ agentSlug: 'codex-luna-worker', agentId: 'quick-row', revision: 'saved-revision' })]);
+    const created = await registry.createJob([{ agentId: 'codex-luna-worker', label: 'Parked original', prompt: 'Keep', status: 'queued', threadId: 'alias-parked' }], 'parent', 'alias-root');
+    await database.query("UPDATE agent_jobs SET status='parked' WHERE job_id=$1", [created.jobId]);
+    const before = await database.query('SELECT * FROM agent_jobs WHERE job_id=$1', [created.jobId]);
+
+    await postgresClient.transaction(up);
+    const rows = await database.query('SELECT * FROM agent_definitions ORDER BY id');
+    await postgresClient.transaction(up);
+    expect(await database.query('SELECT * FROM agent_definitions ORDER BY id')).toEqual(rows);
+    expect(await database.query('SELECT * FROM agent_jobs WHERE job_id=$1', [created.jobId])).toEqual(before);
+    expect(await AgentDefinitionModel.findBySlug('quick-fixer')).toMatchObject({
+      id: 'quick-row', slug: 'quick-fixer', name: 'Quick Fixer', can_call: ['advisor'], enabled: false, prompt_content: 'Custom instructions',
+    });
+    expect(await AgentDefinitionModel.findBySlug('codex-luna-worker')).toMatchObject({ id: 'quick-row', slug: 'quick-fixer' });
+    expect(await AgentDefinitionModel.findBySlug('advisor')).toMatchObject({ name: 'Edited Advisor name', prompt_content: 'User prompt' });
+    expect(await AgentDefinitionModel.findBySlug('builder')).toMatchObject({ id: 'my-builder', name: 'My Builder' });
+    expect(await AgentDefinitionModel.findBySlug('codex-sol-worker')).toMatchObject({ id: 'old-builder', name: 'Builder' });
+    expect(await database.query("SELECT slug FROM agent_builtin_seed_ledger WHERE slug='lookup'")).toEqual([{ slug: 'lookup' }]);
+    const settings = await database.query<{ property: string; value: string }>("SELECT property,value FROM sulla_settings WHERE property IN ('modelRouting','productOwnerWorkflow.qa.implementation') ORDER BY property");
+    expect(JSON.parse(settings[0].value).workerBindings).toEqual({ 'quick-fixer': binding });
+    expect(JSON.parse(settings[1].value)).toEqual({ agentSlug: 'quick-fixer', agentId: 'quick-row', revision: 'saved-revision' });
+    await database.query('DELETE FROM agent_jobs WHERE job_id=$1', [created.jobId]);
+  });
 });

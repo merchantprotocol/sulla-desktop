@@ -20,6 +20,7 @@
 */
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
+import type { ChatModelPickerSelection } from '@pkg/shared/productOwnerWorkflow';
 import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
@@ -366,6 +367,15 @@ export class PersonaAdapter {
     this.supportOptions = { ...this.supportOptions, supportSessionId, supportToolNames: [...supportToolNames] };
   }
 
+  get chatModelPickerSelection(): ChatModelPickerSelection {
+    const { providerId, agentId } = this.controller.thread.value;
+    const modelId = this.controller.model.value.id;
+    const persona = agentId ? { agentId } : {};
+    return providerId && modelId
+      ? { ...persona, modelSelection: 'explicit', providerId, modelId }
+      : { ...persona, modelSelection: 'default', ...(providerId ? { providerId } : {}) };
+  }
+
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
     // Optimistically render the user turn and thinking state before awaiting readiness IPC.
     const adapterStart = performance.now();
@@ -406,7 +416,8 @@ export class PersonaAdapter {
 
     const resolved = await Promise.all(mapped);
     // An "Ask <agent>" chip routes this one turn through the existing explicit agentId override.
-    const agentId = intentAgentId || this.voiceAgentRouting.resolve(inputSource, this.controller.thread.value.agentId);
+    const { agentId: selectedAgent, ...picker } = this.chatModelPickerSelection;
+    const agentId = intentAgentId || this.voiceAgentRouting.resolve(inputSource, selectedAgent);
     // Spoken turns are tagged so the backend answers in voice mode (<speak> → TTS).
     const selection = {
       ...(this.controller.thread.value.runLocation ? { runLocation: this.controller.thread.value.runLocation } : {}),
@@ -415,9 +426,7 @@ export class PersonaAdapter {
       ...(voiceIdentity ? { voiceIdentity } : {}),
       ...(agentId ? { agentId } : {}),
       ...(useCaseIntent ? { useCaseIntent } : {}),
-      modelSelection: this.controller.thread.value.providerId && this.controller.model.value.id ? 'explicit' : 'default',
-      ...(this.controller.thread.value.providerId ? { providerId: this.controller.thread.value.providerId } : {}),
-      ...(this.controller.thread.value.providerId && this.controller.model.value.id ? { modelId: this.controller.model.value.id } : {}),
+      ...picker,
       ...(this.supportSessionMetadata()),
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };

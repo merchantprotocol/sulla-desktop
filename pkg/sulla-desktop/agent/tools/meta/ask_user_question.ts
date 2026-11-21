@@ -6,7 +6,7 @@
 /**
  * ask_user_question — pause the agent and ask the user one or more
  * multiple-choice questions. The chat transcript renders an interactive
- * card in For You. The tool returns its saved receipt immediately; the
+ * card in Decide. The tool returns its saved receipt immediately; the
  * actual answer is delivered later through the existing durable chat inbox.
  *
  * This is the single "pause and ask the human" tool. Use it when you need
@@ -27,7 +27,7 @@ import {
 
 export class AskUserQuestionWorker extends BaseTool {
   name = 'ask_user_question';
-  description = 'Save persistent questions in For You and return a receipt immediately. Questions remain until answered or dismissed. Their saved answers arrive through the original chat mailbox. End the current turn; do not infer consent or ask again while the decision is pending. Resume decision-dependent work only after the answer arrives. Independent work can continue separately.';
+  description = 'Save persistent questions in Decide and return a receipt immediately. Questions remain until answered or dismissed. Their saved answers arrive through the original chat mailbox. End the current turn; do not infer consent or ask again while the decision is pending. Resume decision-dependent work only after the answer arrives. Independent work can continue separately.';
 
   schemaDef: InputSchemaDef = {
     questions: {

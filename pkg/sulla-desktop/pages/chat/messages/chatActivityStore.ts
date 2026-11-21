@@ -5,7 +5,21 @@
 
 import { reactive } from 'vue';
 
-import type { ThreadActivityState } from './threadActivity';
+import type { ChatTabActivity } from '@pkg/shared/chatTabActivity';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 /** Each chat tab's current activity, keyed by browser tab id, for the tab strip's dots. */
-export const chatActivityByTab = reactive(new Map<string, ThreadActivityState>());
+export const chatActivityByTab = reactive(new Map<string, ChatTabActivity>());
+
+export function receiveChatActivity(_event: unknown, tabId: string, state: ChatTabActivity | null): void {
+  if (state === null) chatActivityByTab.delete(tabId);
+  else chatActivityByTab.set(tabId, state);
+}
+
+export function publishChatActivity(tabId: string, state: ChatTabActivity | null): void {
+  receiveChatActivity(null, tabId, state);
+  const search = new URLSearchParams(window.location.search);
+  if (search.get('tabHost') === '1' && search.get('tabId') === tabId) {
+    ipcRenderer.send('internal-tab-view:chat-activity', tabId, state);
+  }
+}

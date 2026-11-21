@@ -46,6 +46,15 @@ vi.mock('../../../languagemodels/modelRouter', () => ({ modelRouter: {
     f.settings.workerBindings[slug] = structuredClone(binding);
     return true;
   },
+  writeFilePublishedBinding: async(slug: string, agentId: string, expected: any, next: any) => {
+    const existing = f.settings.workerBindings[slug];
+    if (expected === null ? existing : existing?.revision !== expected.revision) throw new Error('changed while its file publication was applied');
+    const revision = (expected?.revision ?? 0) + 1;
+    const binding = { ...next, agentId, revision, filePublication: { ...next.filePublication, revision } };
+    f.set({ [slug]: binding });
+    f.settings.workerBindings[slug] = structuredClone(binding);
+    return { editToken: binding.editToken, revision };
+  },
   removeWorkerBindingIfOwned: async(slug: string, agentId: string) => {
     if (f.settings.workerBindings[slug]?.agentId !== agentId) return false;
     const workerBindings = { ...f.settings.workerBindings };
@@ -62,6 +71,7 @@ import { WorkerCatalogUnavailable } from '../../../languagemodels/workerModelBin
 import { WorkerModelRoutingService } from '../../../services/WorkerModelRouting';
 
 const grok = { provider: 'grok', model: 'grok-4.6' };
+const publication = { fileId: 'file-1', versionId: 'version-1' };
 
 beforeEach(() => {
   f.definition = { id: 'grok-agent-id', slug: 'grok-reviewer', source_kind: 'local', enabled: false };
@@ -80,6 +90,23 @@ beforeEach(() => {
 });
 
 describe('Grok subscription model mapping', () => {
+  it('honors exact tier requests and enforces the account boundary for any overrides', async() => {
+    const routing = new WorkerModelRoutingService({ budgetMs: 0, pollMs: 1 });
+    const other = { ...grok, model: 'grok-4.5' };
+    const binding = { agentId: f.definition.id, revision: 1, candidates: [grok, other], connections: { grok: 'oauth' },
+      modelTiers: { version: 1, tiers: [{ candidates: [grok] }, { candidates: [other] }], allowLaunchOverride: 'listed' } };
+    f.settings.workerBindings[f.definition.slug] = binding;
+    const exact = await routing.newRoute(f.definition.slug, other);
+    expect(exact).toMatchObject({ selected: 0, candidates: [other], candidateTiers: [2], requestedModel: other });
+    await expect(routing.newRoute(f.definition.slug, { ...grok, model: 'missing' })).rejects.toThrow(/list/);
+    binding.modelTiers.allowLaunchOverride = 'any';
+    await expect(routing.newRoute(f.definition.slug, { provider: 'codex', model: 'gpt-6-luna' })).rejects.toThrow(/approved subscription/);
+    await expect(routing.applyWorkflowRequest(exact!, grok)).rejects.toThrow(/chat/);
+    expect((await routing.applyWorkflowRequest(exact!, other)).candidates).toEqual([other]);
+    f.accounts.grok = 'default';
+    await expect(routing.newRoute(f.definition.slug, other)).rejects.toThrow(/subscription/);
+  });
+
   it('accepts only the connected Grok OAuth subscription and records its exact account id', async() => {
     const routing = new WorkerModelRoutingService();
     expect(await routing.validateSubscriptionCandidates([grok])).toEqual({ grok: 'oauth' });
@@ -103,9 +130,9 @@ describe('Grok subscription model mapping', () => {
 
   it('prepares a published package route before its local definition exists and reports only a newly written mapping', async() => {
     const routing = new WorkerModelRoutingService();
-    const created = await routing.initializeBindingForPublishedPackage('grok-pr-reviewer', 'agent-published-exact-id', [grok]);
-    expect(created).toEqual({ created: true, binding: { editToken: f.settings.workerBindings['grok-pr-reviewer'].editToken, revision: 1 } });
-    expect(f.settings.workerBindings['grok-pr-reviewer']).toMatchObject({ agentId: 'agent-published-exact-id', candidates: [grok] });
+    const created = await routing.reconcilePublishedPackageBinding('grok-pr-reviewer', 'agent-published-exact-id', { candidates: [grok] }, publication);
+    expect(created).toEqual({ outcome: 'written', written: { editToken: f.settings.workerBindings['grok-pr-reviewer'].editToken, revision: 1 } });
+    expect(f.settings.workerBindings['grok-pr-reviewer']).toMatchObject({ agentId: 'agent-published-exact-id', candidates: [grok], connections: { grok: 'oauth' }, filePublication: { ...publication, revision: 1 } });
     expect(f.set).toHaveBeenCalledTimes(1);
   });
 
@@ -115,8 +142,8 @@ describe('Grok subscription model mapping', () => {
     f.providers = [{ id: 'grok', connected: false, models: [] }, { id: 'codex', connected: false, models: [] }];
     f.accounts.grok = 'default';
     const routing = new WorkerModelRoutingService();
-    expect(await routing.initializeBindingForPublishedPackage('grok-pr-reviewer', 'agent-published-exact-id', [grok])).toEqual({ created: false });
-    expect(await routing.initializeBindingForPublishedPackage('grok-pr-reviewer', 'agent-published-exact-id', [{ provider: 'grok', model: 'grok-4.5' }])).toEqual({ created: false });
+    expect(await routing.reconcilePublishedPackageBinding('grok-pr-reviewer', 'agent-published-exact-id', { candidates: [grok] }, publication)).toMatchObject({ outcome: 'conflict', message: expect.stringContaining("owner's model mapping (codex/gpt-6-luna (max)) was kept") });
+    expect(await routing.reconcilePublishedPackageBinding('grok-pr-reviewer', 'agent-published-exact-id', { candidates: [owner.candidates[0]] }, publication)).toEqual({ outcome: 'unchanged' });
     expect(f.settings.workerBindings['grok-pr-reviewer']).toEqual(owner);
     expect(f.set).not.toHaveBeenCalled();
   });
@@ -124,9 +151,9 @@ describe('Grok subscription model mapping', () => {
   it('still requires an exact live subscription model for a new package mapping and refuses another owner before writing', async() => {
     const routing = new WorkerModelRoutingService();
     f.providers = [{ id: 'grok', connected: true, models: [{ id: 'grok-4.5', efforts: [] }] }];
-    await expect(routing.initializeBindingForPublishedPackage('grok-pr-reviewer', 'agent-published-exact-id', [grok])).rejects.toThrow('verified live catalog');
+    await expect(routing.reconcilePublishedPackageBinding('grok-pr-reviewer', 'agent-published-exact-id', { candidates: [grok] }, publication)).rejects.toThrow('verified live catalog');
     f.settings.workerBindings['grok-pr-reviewer'] = { agentId: 'someone-else', revision: 1, candidates: [grok] };
-    await expect(routing.initializeBindingForPublishedPackage('grok-pr-reviewer', 'agent-published-exact-id', [{ provider: 'grok', model: 'grok-4.5' }])).rejects.toThrow('different agent');
+    await expect(routing.reconcilePublishedPackageBinding('grok-pr-reviewer', 'agent-published-exact-id', { candidates: [{ provider: 'grok', model: 'grok-4.5' }] }, publication)).rejects.toThrow('different agent');
     expect(f.set).not.toHaveBeenCalled();
     expect(f.settings.workerBindings['grok-pr-reviewer'].agentId).toBe('someone-else');
   });
