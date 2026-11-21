@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { CompletionKey } from '../app/Services/CompletionKey';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import type { PendingCompletion } from './AgentCompletionInbox';
 import { DelegatedTurnProgressProbe } from './DelegatedTurnProgressProbe';
@@ -46,24 +47,33 @@ export class DelegatedFreshTurnRunner {
   ) {}
 
   async run(currentState: any): Promise<DelegatedFreshTurnResult> {
+    return this.runBatch(currentState, []);
+  }
+
+  private async runBatch(currentState: any, carried: PendingCompletion[]): Promise<DelegatedFreshTurnResult> {
     const { ports } = this;
     const { state, jobId, taskIndex } = ports;
-    const wakeInput = state.messages[state.messages.length - 1];
+    let entries = this.claimWakeEntries(carried);
+    // Actual inputs (including reminders and orchestrator steers) make a mixed
+    // wake actionable, even if the notice expires before provider dispatch.
+    let currentInputs = DeferredStallInput.actionableMessages(state);
     const progress = new DelegatedTurnProgressProbe(state);
     currentState = await this.executeOnce();
     let returned = await ports.returnedTask();
     if (!returned && !progress.madeProgress()) {
+      entries = this.claimWakeEntries(entries);
+      currentInputs = [...currentInputs, ...DeferredStallInput.actionableMessages(state)];
       currentState = await this.executeOnce();
       returned = await ports.returnedTask();
-      if (!returned && !progress.madeProgress()) return this.settleEmptyTurn(currentState, wakeInput);
+      if (!returned && !progress.madeProgress()) return this.settleEmptyTurn(currentState, entries, currentInputs.length > 0, currentInputs.at(-1)?.metadata?.source);
     }
     if (jobId && (returned || progress.madeProgress())) {
       const currentTask = (await ports.getJob(jobId))?.tasks[taskIndex];
       const completionUpdate = currentTask && this.policy.completionUpdate(currentTask);
       if (completionUpdate) await ports.updateJobTask(jobId, taskIndex, completionUpdate);
     }
-    const entries = this.completionEntries(wakeInput).filter(entry => CompletionKey.isTaskCompletion(entry));
-    if (entries.length) await ports.acknowledgeCompletions(entries);
+    const completions = entries.filter(entry => CompletionKey.isTaskCompletion(entry));
+    if (completions.length) await ports.acknowledgeCompletions(completions);
     return { finalState: currentState, returned };
   }
 
@@ -72,18 +82,16 @@ export class DelegatedFreshTurnRunner {
     return await this.ports.execute();
   }
 
-  private completionEntries(wakeInput: any): PendingCompletion[] {
-    const entries = wakeInput?.metadata?.completionEntries;
-    return Array.isArray(entries) ? entries : [];
+  private claimWakeEntries(carried: PendingCompletion[]): PendingCompletion[] {
+    const batch = [...carried, ...DelegatedCompletionHandoff.takeWakeEntries(this.ports.state)];
+    return [...new Map(batch.map(entry => [CompletionKey.of(entry), entry])).values()];
   }
 
-  private async settleEmptyTurn(currentState: any, wakeInput: any): Promise<DelegatedFreshTurnResult> {
+  private async settleEmptyTurn(currentState: any, entries: PendingCompletion[], actionable: boolean, wakeSource: unknown): Promise<DelegatedFreshTurnResult> {
     const { ports } = this;
     const { jobId, taskIndex, threadId } = ports;
-    const entries = this.completionEntries(wakeInput);
     const completionEntries = entries.filter(entry => !CompletionKey.isStall(entry));
-    const advisoryOnly = Boolean(DeferredStallInput.read(wakeInput))
-      || (entries.length > 0 && completionEntries.length === 0);
+    const advisoryOnly = !actionable && entries.length > 0 && completionEntries.length === 0;
     if (!jobId) {
       // No agent job row (direct/legacy run): nothing can park it, count its
       // empty turns or own child completions, so hand the turn back to the
@@ -103,13 +111,9 @@ export class DelegatedFreshTurnRunner {
       await ports.waitForWake(threadId, ports.signal);
       if (ports.signal?.aborted) return { finalState: currentState, returned: undefined };
       await ports.resume(jobId, taskIndex);
-      // A wake (child completion, job message) is injected into this live
-      // state.messages before wake() releases waitForWake (see
-      // AgentJobLifecycleService.hasLiveWaiter), so the next
-      // run() reads that as its wake input. If the wake added nothing, run()
-      // re-reads this same unacknowledged input, so its completions are still
-      // acknowledged on progress or rerouted on failure; never dropped.
-      return await this.run(currentState);
+      // Unsettled terminal entries remain owned across another park, even if
+      // the next handoff is advisory-only or the graph trimmed the old prompt.
+      return await this.runBatch(currentState, completionEntries);
     }
     if (action === 'settle') {
       // Nothing was waiting to be consumed (a contract reminder, resume nudge
@@ -118,7 +122,7 @@ export class DelegatedFreshTurnRunner {
       await ports.updateJobTask(jobId, taskIndex, { emptyWakeCount });
       return { finalState: currentState, returned: undefined };
     }
-    const wakeReason = String(wakeInput?.metadata?.source || 'unknown_wake');
+    const wakeReason = String(completionEntries.length ? 'sub_agent_completion' : wakeSource || 'unknown_wake');
     const completionIds = completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',') || 'none';
     const failureReason = `Delegated wake turn produced no assistant output after retry: job=${ jobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
     if (completionEntries.length && job) await ports.rerouteCompletions(job, taskIndex, failureReason, completionEntries);

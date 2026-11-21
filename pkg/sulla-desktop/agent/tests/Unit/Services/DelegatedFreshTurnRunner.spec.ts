@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
+import { DelegatedCompletionHandoff } from '../../../app/Services/DelegatedCompletionHandoff';
+import { injectSteer } from '../../../utils/steerChannel';
 import { DeferredStallInput } from '../../../app/Services/DeferredStallInput';
 import type { PendingCompletion } from '../../../services/AgentCompletionInbox';
 import { DelegatedFreshTurnRunner, type DelegatedFreshTurnPorts } from '../../../services/DelegatedFreshTurnRunner';
@@ -24,6 +26,10 @@ class FakeDelegatedTask {
 
   constructor(messages: any[], private readonly effects: TurnEffect[]) {
     this.state = { messages, metadata: { lastActivityMs: 500 } };
+    const last = messages.at(-1);
+    const entries = DeferredStallInput.read(last)?.entries ?? last?.metadata?.completionEntries;
+    if (entries) DelegatedCompletionHandoff.recordWakeEntries(this.state, entries);
+    else if (last?.role === 'user') DeferredStallInput.markActionable(this.state, last);
   }
 
   /**
@@ -253,6 +259,35 @@ describe('DelegatedFreshTurnRunner', () => {
     expect(task.rerouted).toEqual([]);
     expect(task.acknowledged).toEqual([]);
     expect(task.job.tasks[0].emptyWakeCount).toBe(count);
+  });
+
+  it.each(['terminal first', 'stall first'])('reroutes the terminal at the empty-wake bound after distinct handoffs (%s)', async(order) => {
+    // risk: the inbox already acknowledged a terminal result, but the last advisory hides it.
+    const terminal: PendingCompletion = { jobId: 'real-child', taskIndex: 0, results: [] };
+    const stall: PendingCompletion = { jobId: 'still-running', taskIndex: 1, noticeKind: 'stall', results: [] };
+    const oldTerminal = completionWake();
+    const task = new FakeDelegatedTask([...history(), oldTerminal, { role: 'tool', content: 'old tool result' }], [
+      state => { state.messages = DeferredStallInput.persistentMessages(state.messages) },
+    ]);
+    task.liveChildren = 1;
+    task.job.tasks[0].emptyWakeCount = 2;
+    const pending = order === 'terminal first' ? [terminal, stall] : [stall, terminal];
+    const injectedAcks: PendingCompletion[] = [];
+    const handoff = new DelegatedCompletionHandoff(
+      { take: () => pending.splice(0, 1), currentEntries: async(_channel, _thread, entries) => entries, format: () => 'child completed' },
+      { hasLiveWaiter: () => true, wake: () => true },
+      { firstDelivered: async() => {}, acknowledge: async(entry) => { injectedAcks.push(entry) } },
+      injectSteer, () => `wake-${ pending.length }`,
+    );
+    await handoff.deliver('manager', 'thread-e1', task.state);
+    await handoff.deliver('manager', 'thread-e1', task.state);
+    expect(injectedAcks).toHaveLength(2);
+    await expect(new DelegatedFreshTurnRunner(task.ports()).run(task.state))
+      .rejects.toThrow('unconsumedCompletionJobs=real-child');
+    expect(task.executions).toBe(2);
+    expect(task.rerouted).toEqual([{ reason: expect.any(String), entries: [terminal] }]);
+    expect(task.acknowledged).toEqual([]);
+    expect(task.calls).not.toContain('waitForWake');
   });
 
 });

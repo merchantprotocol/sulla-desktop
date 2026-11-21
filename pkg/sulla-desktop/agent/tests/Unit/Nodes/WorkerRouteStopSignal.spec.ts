@@ -48,11 +48,12 @@ describe('graph model resolution Stop propagation for worker routes', () => {
 });
 
 describe('deferred stall input at the model boundary', () => {
-  it('does not send a stall that expires during provider setup, and leaves a newer steer pending', async() => {
+  it.each(['assistant', 'user', 'tool'] as const)('does not send an expired stall over a historical %s tail, and leaves a newer steer pending', async(role) => {
     // risk: false stall reaches the parent after the child settled; unrelated input is lost.
     const node = new RouteProbeNode();
+    const ws = vi.spyOn(node as any, 'wsChatMessage').mockResolvedValue(undefined);
     const state = stateWith(undefined);
-    state.messages.push({ role: 'assistant', content: 'waiting for the child' });
+    state.messages.push({ role, content: 'waiting for the child' });
     injectSteer(state, {
       role: 'user', content: '', metadata: DeferredStallInput.metadata('parent', 't', [{
         jobId: 'running', taskIndex: 0, results: [], noticeKind: 'stall', stall: { childThread: 'child', baseline: 'old' },
@@ -74,8 +75,37 @@ describe('deferred stall input at the model boundary', () => {
     const reply = await (node as any).callLLMStreaming(state, snapshot, {}, {}, provider);
     expect(validation).toHaveBeenCalledOnce();
     expect(chatStream).not.toHaveBeenCalled();
+    expect(ws).not.toHaveBeenCalled();
     expect(reply.metadata.reusedAssistantMessage).toBe(true);
     expect(state.messages.map(message => message.content)).toEqual(['waiting for the child', 'unrelated new steer']);
     expect(state.messages[1].metadata?.steerPending).toBe(true);
   });
+  it('revalidates a notice on retry without losing the genuine prompt or taking a concurrent steer', async() => {
+    // risk: either stale text reaches a provider or current human input is swallowed.
+    const node = new RouteProbeNode();
+    vi.spyOn(node as any, 'wsChatMessage').mockResolvedValue(undefined);
+    const state = stateWith(undefined);
+    DeferredStallInput.appendActionable(state, { role: 'user', content: 'genuine new prompt' });
+    injectSteer(state, {
+      role: 'user', content: '', metadata: DeferredStallInput.metadata('parent', 't', [{
+        jobId: 'running', taskIndex: 0, results: [], noticeKind: 'stall', stall: { childThread: 'child', baseline: 'old' },
+      }]),
+    });
+    const snapshot = [...state.messages];
+    const validation = vi.spyOn(completionInboxStore, 'currentEntries')
+      .mockImplementationOnce(async(_channel, _thread, entries) => entries)
+      .mockResolvedValueOnce([]);
+    const chatStream = vi.fn().mockRejectedValueOnce(new Error('temporary response failure'))
+      .mockResolvedValueOnce({ content: 'answered', metadata: {} });
+    const provider = { getModel: () => 'test', chatStream };
+    await expect((node as any).callLLMStreaming(state, snapshot, {}, {}, provider)).rejects.toThrow('temporary response failure');
+    injectSteer(state, { role: 'user', content: 'newer steer' });
+
+    await (node as any).callLLMStreaming(state, snapshot, {}, {}, provider);
+
+    expect(validation).toHaveBeenCalledTimes(2);
+    expect(chatStream.mock.calls[1][0].map((message: { content: string }) => message.content)).toEqual(['genuine new prompt']);
+    expect(state.messages.at(-1)?.metadata?.steerPending).toBe(true);
+  });
+
 });

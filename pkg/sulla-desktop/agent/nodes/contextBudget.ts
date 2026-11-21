@@ -87,7 +87,7 @@ function buildUnits(messages: ChatMessage[]): ChatMessage[][] {
  * caller's system prompt has been added, and tool use/result messages are
  * treated as indivisible units so providers never see a broken transcript.
  */
-export function prepareProviderMessages(messages: ChatMessage[], contextWindow: number): {
+export function prepareProviderMessages(messages: ChatMessage[], contextWindow: number, preserve?: (message: ChatMessage) => boolean): {
   messages: ChatMessage[];
   inputBudgetTokens: number;
   beforeTokens: number;
@@ -102,7 +102,7 @@ export function prepareProviderMessages(messages: ChatMessage[], contextWindow: 
   const inputBudgetTokens = Math.max(1, Math.floor(contextWindow * (1 - PROVIDER_RESPONSE_RESERVE)));
   const units = buildUnits(compacted);
   const latestUserUnit = [...units].reverse().find(unit => unit.some(message => message.role === 'user'));
-  const protectedUnits = new Set(latestUserUnit ? [latestUserUnit] : []);
+  const protectedUnits = new Set(units.filter(unit => unit === latestUserUnit || (preserve && unit.some(preserve))));
   const kept: Array<{ index: number; unit: ChatMessage[] }> = [];
   let used = 0;
 

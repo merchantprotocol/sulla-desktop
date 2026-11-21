@@ -31,6 +31,19 @@ export interface DelegatedCompletionDeliveryMarks {
  * mid-turn strands it: nothing re-notifies the inbox when the runner parks.
  */
 export class DelegatedCompletionHandoff {
+  private static readonly pendingWakes = new WeakMap<DelegatedThreadState, PendingCompletion[]>();
+
+  /** Claim only inputs handed off since the previous fresh turn, never transcript history. */
+  static takeWakeEntries(state: DelegatedThreadState): PendingCompletion[] {
+    const entries = this.pendingWakes.get(state) ?? [];
+    this.pendingWakes.delete(state);
+    return entries;
+  }
+
+  static recordWakeEntries(state: DelegatedThreadState, entries: PendingCompletion[]): void {
+    this.pendingWakes.set(state, [...(this.pendingWakes.get(state) ?? []), ...entries]);
+  }
+
   constructor(
     private readonly inbox: DelegatedCompletionInbox,
     private readonly lifecycle: DelegatedRunLifecycle,
@@ -59,6 +72,7 @@ export class DelegatedCompletionHandoff {
       ? await this.inbox.currentEntries?.(channel, threadId, claimed) ?? claimed.filter(entry => entry.noticeKind !== 'stall')
       : claimed;
     if (!entries.length) return true;
+    DelegatedCompletionHandoff.recordWakeEntries(state, entries);
     const stalls = entries.filter(entry => CompletionKey.isStall(entry));
     const regular = entries.filter(entry => !CompletionKey.isStall(entry));
     if (stalls.length) this.inject(state, {

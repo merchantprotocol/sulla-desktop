@@ -1486,11 +1486,12 @@ export class BackendGraphWebSocketService {
         ]
         : contextualMessage;
 
+      DeferredStallInput.beginDispatch(state);
       if (deferredStalls.length) state.messages.push({
         id: nextMessageId(), role: 'user', content: '', timestamp: Date.now(),
         metadata: DeferredStallInput.metadata(channelId, threadId, deferredStalls),
       });
-      if (!deferredStalls.length || contextualMessage || hasAttachments) state.messages.push({
+      if (!deferredStalls.length || contextualMessage || hasAttachments) DeferredStallInput.appendActionable(state, {
         id:        nextMessageId(),
         role:      'user',
         content:   messageContent,

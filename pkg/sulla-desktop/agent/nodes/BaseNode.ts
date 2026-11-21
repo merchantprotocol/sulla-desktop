@@ -1028,6 +1028,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
     TurnHopTiming.mark(state, 'BaseNode.normalizedChat.start');
+    if (DeferredStallInput.isStaleOnly(state)
+      && !state.messages.some(message => DeferredStallInput.read(message))
+      && !DeferredStallInput.actionableMessages(state).length) return this.staleStallReply(state);
     if (agentExecutionReadiness.active) {
       await AgentReadinessStatus.wait(agentExecutionReadiness.wait.bind(agentExecutionReadiness), state.metadata?.options?.abort?.signal,
         (content, status) => this.wsChatMessage(state, content, 'assistant', 'progress', { ...status }));
@@ -1095,22 +1098,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       };
     }
 
-    // Steers already in this prompt snapshot are delivered by this call. Any
-    // that arrive after it stay pending for the live CLI turn or the next
-    // iteration (see utils/steerChannel).
-    const promptMeta = new Set(messages.map(m => (m as any).metadata).filter(Boolean));
-    TurnHopTiming.mark(state, 'steerHandling.start');
-    for (const steer of pendingSteers(state)) {
-      if (!DeferredStallInput.read(steer) && promptMeta.has(steer.metadata)) markSteerDelivered(steer);
-    }
-    TurnHopTiming.mark(state, 'steerHandling.end');
-
     // Curate the exact provider input after the system prompt/context is in
     // place. This compacts stale tool payloads before pair-safe eviction.
     if (isCliManagedLoop(this.llm)) {
       (state.metadata as any).contextBudget = { skipped: true, reason: 'cli-managed-loop' };
     } else {
-      const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
+      const hasDeferredStall = messages.some(message => DeferredStallInput.read(message));
+      const current = new Set(DeferredStallInput.actionableMessages(state, messages).map(message => message.metadata));
+      const budget = prepareProviderMessages(messages, this.llm.getContextWindow(), hasDeferredStall
+        ? message => !!DeferredStallInput.read(message) || current.has(message.metadata)
+        : undefined);
       messages.splice(0, messages.length, ...budget.messages);
       (state.metadata as any).contextBudget = {
         inputBudgetTokens: budget.inputBudgetTokens,
@@ -1378,9 +1375,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               });
             }
             firstRunTrace('chat', attempt === 0 && index > 0 ? 'fallback route started' : 'provider retry started', { provider: candidate.provider, model: candidate.model, attempt: attempt + 1 });
-            const retryMessages = attempt > 0 || index === 0
-              ? this.buildReducedRetryMessages(messages)
-              : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
+            // Keep the mixed wake intact until its advisories are revalidated
+            // at the provider boundary on every attempt.
+            const retryMessages = messages.some(message => DeferredStallInput.read(message))
+              ? messages
+              : attempt > 0 || index === 0
+                ? this.buildReducedRetryMessages(messages)
+                : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
             await workerModelRouting.persistSelection(state, candidate);
             this.recordModelStatus(state, service);
             const reply = await this.callLLMStreaming(state, retryMessages, {
@@ -1622,6 +1623,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     nodeRunContext: any,
     provider: BaseLanguageModel = this.llm!,
   ): Promise<NormalizedResponse | null> {
+    const actionable = DeferredStallInput.actionableMessages(state, messages);
     const controller = this.getChatController();
     const ctx = controller.buildContext(state);
     const voiceTurnId = String((state.metadata as any).voiceTurnId || '');
@@ -1639,6 +1641,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let displayBuffer = '';
     let lastStreamFlush = 0;
     let streamingWsSent = false;
+    let streamingOpen = false;
+    let thinkingOpen = false;
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
     let firstTokenSeen = false;
@@ -1656,6 +1660,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
       this.wsChatMessage(state, content, 'assistant', 'streaming');
+      streamingOpen = true;
     };
 
     const onToken = (token: string): void => {
@@ -1727,7 +1732,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
-        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        streamingOpen = false;
         contentBuffer = '';
         displayBuffer = '';
       }
@@ -1737,6 +1743,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       console.log(`[ThinkingTrace] onActivity emit "${ message.slice(0, 80) }" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel }, isSubAgent=${ (state.metadata as any).isSubAgent }, willForwardToParent=${ willForward }, flushedStreamingFirst=${ flushedStreaming })`);
 
       this.wsChatMessage(state, message, 'assistant', 'thinking');
+      thinkingOpen = true;
 
       // When a sub-agent (e.g. memory-recall running Claude Code) has a parent
       // channel, forward activity there too so the user sees the heartbeat
@@ -1765,7 +1772,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
-        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        streamingOpen = false;
         contentBuffer = '';
         displayBuffer = '';
       }
@@ -1809,16 +1817,21 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (messages.some(message => DeferredStallInput.read(message))) {
         const { completionInboxStore, formatCompletionBatch } = await import('../services/AgentCompletionInbox');
         const input = new DeferredStallInput({ currentEntries: completionInboxStore.currentEntries, format: formatCompletionBatch });
-        const { prompt, consumed } = await input.prepare(state.metadata.threadId, messages);
+        const { prompt, consumed, hasCurrentStall } = await input.prepare(state.metadata.threadId, messages);
         throwIfAborted(state, 'Chat operation aborted');
         DeferredStallInput.consume(state, consumed);
-        const last = prompt.filter(message => message.role !== 'system').pop();
-        if (!last || last.role === 'assistant') {
-          state.metadata.cycleComplete = true;
-          return { content: '', metadata: { tokens_used: 0, time_spent: 0, finish_reason: FinishReason.Stop, reusedAssistantMessage: true } };
-        }
+        if (!hasCurrentStall && !actionable.length) return this.staleStallReply(state);
         messages = prompt;
       }
+      DeferredStallInput.setStaleOnly(state, false);
+      // Only confirm steers in the actual provider snapshot. Anything queued
+      // during provider setup/validation remains pending in the live state.
+      const promptMeta = new Set(messages.map(message => message.metadata));
+      TurnHopTiming.mark(state, 'steerHandling.start');
+      for (const steer of pendingSteers(state)) {
+        if (!DeferredStallInput.read(steer) && promptMeta.has(steer.metadata)) markSteerDelivered(steer);
+      }
+      TurnHopTiming.mark(state, 'steerHandling.end');
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
@@ -1838,9 +1851,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // bubble stays stuck in "live" mode forever — blinking cursor, timer
       // running, even though the graph has moved on or terminated.
       //
-      // Emit both closing sentinels unconditionally here. The dispatcher
-      // only closes the MOST RECENT uncompleted bubble for each kind, so
-      // this is a no-op when nothing is open.
+      // Close only bubbles opened by this attempt; a suppressed stale wake
+      // must not emit a completion sentinel into someone else's stream.
       if (!isVoiceMode) {
         if (contentBuffer.trim()) {
           const stripped = stripProtocolTagsStreaming(displayBuffer);
@@ -1851,8 +1863,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           contentBuffer = '';
           displayBuffer = '';
         }
-        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
-        this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }
       const endedAt = Date.now();
       console.log(`[StreamHop] threadId=${ state.metadata.threadId } provider=${ provider.getProviderId?.() ?? 'unknown' } voice=${ isVoiceMode } firstDeltaMs=${ firstDeltaAt ? firstDeltaAt - streamStartedAt : -1 } deltaCount=${ providerDeltaCount } suppressedDeltaCount=${ suppressedDeltaCount } wsStreamingSendCount=${ wsStreamingSendCount } lastWsSendMs=${ lastWsStreamingSendAt ? lastWsStreamingSendAt - streamStartedAt : -1 } lastDeltaMs=${ lastDeltaAt ? lastDeltaAt - streamStartedAt : -1 } totalMs=${ endedAt - streamStartedAt }`);
@@ -1865,6 +1877,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (streamingWsSent) {
       reply.metadata.streamingEmitted = true;
     }
+
+    if (reply.content?.trim() || reply.metadata.tool_calls?.length) DeferredStallInput.settledInputs(state, actionable);
 
     // Run post-completion processing through all active extractors
     // (thinking extraction, speak tag cleanup, secretary analysis, etc.)

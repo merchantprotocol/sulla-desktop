@@ -64,7 +64,7 @@ export function markSteerPending(message: ChatMessage): void {
  */
 export function injectSteer(state: { messages: ChatMessage[] }, message: ChatMessage): boolean {
   (message as any).metadata = { ...((message as any).metadata || {}), steerPending: true };
-  state.messages.push(message);
+  DeferredStallInput.appendActionable(state, message);
   return offerSteer(state, message);
 }
 
@@ -76,6 +76,7 @@ function offerSteer(state: object, message: ChatMessage): boolean {
     try { taken = listener(message) } catch { /* a broken listener must not drop the steer */ }
     if (taken) {
       markSteerDelivered(message);
+      DeferredStallInput.settledInputs(state as { messages: ChatMessage[] }, [message]);
       return true;
     }
   }

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { DeferredStallInput } from '../../app/Services/DeferredStallInput';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
@@ -628,7 +629,7 @@ export class SpawnAgentWorker extends BaseTool {
         }
 
         // Inject the brief and its return contract.
-        subState.messages.push({
+        DeferredStallInput.appendActionable(subState, {
           role:    'user',
           content: activityJobId
             ? `${ task.prompt }\n\n${ contractFooter({ jobId: activityJobId, contract, visibility: 'hidden' }) }`
@@ -763,7 +764,7 @@ export class SpawnAgentWorker extends BaseTool {
           if (settlement === 'terminal' || settlement === 'fail') break;
 
           if (settlement === 'remind') {
-            subState.messages.push({ role: 'user', content: CONTRACT_REMINDER, metadata: { source: 'contract_reminder' } });
+            DeferredStallInput.appendActionable(subState, { role: 'user', content: CONTRACT_REMINDER, metadata: { source: 'contract_reminder' } });
             reminderSent = true;
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
@@ -788,7 +789,7 @@ export class SpawnAgentWorker extends BaseTool {
             }
             await containerLifecycle?.resume();
             subState.metadata.delegatedRunActive = true;
-            subState.messages.push({ role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.', metadata: { source: 'auto_park_resume' } });
+            DeferredStallInput.appendActionable(subState, { role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.', metadata: { source: 'auto_park_resume' } });
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
             returned = turn.returned;
