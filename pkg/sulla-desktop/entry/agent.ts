@@ -18,6 +18,7 @@ import './agent-tailwind.css';
 import AgentRouter from '../pages/AgentRouter.vue';
 import BrowserTab from '../pages/BrowserTab.vue';
 import { lazyScreen } from '../pages/agent/lazyScreen';
+import { receiveChatActivity } from '../pages/chat/messages/chatActivityStore';
 
 import store from './store';
 
@@ -65,6 +66,8 @@ if (tabHost && hostedTabId) {
       ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.running);
     }
   });
+} else if (!tabHost) {
+  ipcRenderer.on('internal-tab-view:chat-activity', receiveChatActivity);
 }
 // BrowserTab sizes itself from its parent (height: 100%). In the main window that
 // parent is AgentRouter's absolutely positioned tab layer; a tab host has no such

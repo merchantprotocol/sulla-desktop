@@ -20,6 +20,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
 import { NativeCaptureCustody } from '../services/NativeCaptureCustody';
+import { PcmPauseTimeline } from '../services/PcmPauseTimeline';
 
 const fs = require('fs');
 const net = require('net');
@@ -118,6 +119,8 @@ export function useSpeakerCapture(
   let pending: Buffer = Buffer.alloc(0);
   let analyserContext: AudioContext | null = null;
   let analyserFrame: number | null = null;
+  let paused = false;
+  const pauseTimeline = new PcmPauseTimeline();
 
   function stopNativeMeter(): void {
     if (analyserFrame !== null) cancelAnimationFrame(analyserFrame);
@@ -269,7 +272,7 @@ export function useSpeakerCapture(
         pending = pending.subarray(4 + frameLen);
 
         // Write raw PCM to WAV file
-        if (writeStream && !writeStream.destroyed) {
+        if (writeStream && !writeStream.destroyed && !paused) {
           writeStream.write(chunk);
           totalDataBytes += chunk.length;
           bytesWritten.value = totalDataBytes;
@@ -307,10 +310,34 @@ export function useSpeakerCapture(
     return true;
   }
 
+  function setPaused(value: boolean): void {
+    if (paused === value || !active.value) return;
+    if (value) {
+      paused = true; pauseTimeline.pause(); level.value = 0;
+      if (mode.value === 'native') nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = false; });
+      return;
+    }
+    if (mode.value === 'native') nativeStream.value?.getAudioTracks().forEach(track => { track.enabled = true; });
+    if (writeStream && !writeStream.destroyed) {
+      let silenceBytes = pauseTimeline.resume(SAMPLE_RATE, BYTES_PER_SAMPLE);
+      while (silenceBytes > 0) {
+        const chunkBytes = Math.min(silenceBytes, 16 * 1024 * 1024);
+        writeStream.write(Buffer.alloc(chunkBytes));
+        totalDataBytes += chunkBytes;
+        silenceBytes -= chunkBytes;
+      }
+      bytesWritten.value = totalDataBytes;
+    }
+    paused = false;
+  }
+
   /**
    * Stop capturing and finalize the WAV file.
    */
   async function stop(): Promise<string> {
+    if (paused) setPaused(false);
+    paused = false;
+    pauseTimeline.reset();
     if (nativeStream.value) releaseNative();
     level.value = 0;
 
@@ -320,33 +347,37 @@ export function useSpeakerCapture(
     }
 
     const ws = writeStream;
-    writeStream = null;
-    if (ws) {
-      await new Promise<void>((resolve) => {
-        let resolved = false;
-        const done = () => {
-          if (resolved) return;
-          resolved = true;
-          resolve();
+    if (ws?.errored) throw ws.errored;
+    if (ws && !ws.writableFinished) {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const finish = (error?: unknown) => {
+          if (settled) return;
+          settled = true;
+          if (timeout) clearTimeout(timeout);
+          ws.removeListener('finish', onFinish);
+          ws.removeListener('error', onError);
+          if (error) reject(error);
+          else resolve();
         };
-        ws.once('finish', done);
-        ws.once('close', done);
-        ws.once('error', done);
+        const onFinish = () => finish();
+        const onError = (error: Error) => finish(error);
+        if (ws.errored) { finish(ws.errored); return; }
+        ws.once('finish', onFinish);
+        ws.once('error', onError);
+        timeout = setTimeout(() => finish(new Error('Timed out finalizing system-audio recording.')), 5000);
         ws.end();
-        setTimeout(done, 5000);
       });
     }
 
     // Patch WAV header with actual data size
     if (filePath) {
-      try {
-        finalizeWav(filePath, totalDataBytes);
-      } catch (e: any) {
-        console.error('[useSpeakerCapture] Failed to finalize WAV:', e.message);
-      }
+      finalizeWav(filePath, totalDataBytes);
     }
 
     const result = filePath;
+    writeStream = null;
     filePath = '';
     totalDataBytes = 0;
     pending = Buffer.alloc(0);
@@ -370,5 +401,6 @@ export function useSpeakerCapture(
     releaseNative,
     start,
     stop,
+    setPaused,
   };
 }

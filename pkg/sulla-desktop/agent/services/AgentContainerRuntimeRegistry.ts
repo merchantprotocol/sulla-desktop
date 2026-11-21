@@ -27,7 +27,18 @@ export class ContainerExecutionContextFactory {
   }
 }
 
-export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; threadId?: string; deviceId: string; workspacePath: string; }
+export interface AgentContainerRuntimeBinding {
+  podId: string;
+  subject: string;
+  orgId?: string;
+  agentId?: string;
+  jobId: string;
+  threadId?: string;
+  deviceId: string;
+  workspacePath: string;
+  /** Inventory protects files from cleanup but has no live Desktop-owned capability bridge. */
+  origin?: 'desktop' | 'inventory';
+}
 export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<AgentContainerRuntimeBinding[]>; }
 
 /** Injectible owner of container bindings and fail-closed boot rehydration. */
@@ -50,7 +61,7 @@ export class AgentContainerRuntimeRegistry {
   ready(): Promise<void> { return this.rehydrated; }
   /** Tri-state liveness: undefined protects tasks while restart rebind is pending. */
   probe(jobId?: string, threadId?: string): boolean | undefined {
-    if (this.has(jobId, threadId)) return true;
+    if (this.has(jobId, threadId, 'desktop')) return true;
     return this.rebindPending ? undefined : false;
   }
   /** Immutable cleanup/read-model snapshot; pending rehydration remains fail-closed. */
@@ -59,12 +70,20 @@ export class AgentContainerRuntimeRegistry {
   }
 
   withRuntime<T>(binding: AgentContainerRuntimeBinding, action: () => T): T { return this.activeRuntime.run(binding, action); }
-  has(jobId?: string, threadId?: string): boolean { return Array.from(this.bindings.values()).some(binding => (!jobId || binding.jobId === jobId) && (!threadId || binding.threadId === threadId)); }
+  has(jobId?: string, threadId?: string, origin?: AgentContainerRuntimeBinding['origin']): boolean {
+    return Array.from(this.bindings.values()).some(binding => (!jobId || binding.jobId === jobId) &&
+      (!threadId || binding.threadId === threadId) && (!origin || (binding.origin ?? 'desktop') === origin));
+  }
   current(): AgentContainerRuntimeBinding | undefined { return this.activeRuntime.getStore(); }
-  register(binding: AgentContainerRuntimeBinding): () => void { this.bindings.set(binding.podId, binding); return () => { if (this.bindings.get(binding.podId) === binding) this.bindings.delete(binding.podId); }; }
+  register(binding: AgentContainerRuntimeBinding): () => void {
+    const owned = { ...binding, origin: 'desktop' as const };
+    this.bindings.set(owned.podId, owned);
+    return () => { if (this.bindings.get(owned.podId) === owned) this.bindings.delete(owned.podId) };
+  }
   require(ctx: ToolExecutionContext): AgentContainerRuntimeBinding {
     // `reason` is a non-secret code the provider bridge logs when it refuses a request.
     const binding = this.bindings.get(ctx.pod_id ?? ''); if (!binding) throw Object.assign(new Error('Agent tool context is not bound to a live container'), { reason: 'container_not_registered' });
+    if (binding.origin === 'inventory') throw Object.assign(new Error('Agent tool context has no live Desktop capability owner'), { reason: 'container_owner_not_rehydrated' });
     if (ctx.sub !== binding.subject || ctx.org_id !== binding.orgId || ctx.agent_id !== binding.agentId || ctx.job_id !== binding.jobId || ctx.thread_id !== binding.threadId || ctx.device_id !== binding.deviceId) throw Object.assign(new Error('Agent tool context is not bound to this live container job'), { reason: 'container_job_mismatch' });
     return binding;
   }

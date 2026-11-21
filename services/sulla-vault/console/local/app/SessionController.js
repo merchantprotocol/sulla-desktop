@@ -24,6 +24,17 @@ export class SessionController {
     this.dom.byId('vault').hidden = !unlocked;
   }
 
+  async loadUnlockedContent() {
+    // An account-specific integration hint searches state.items, so it must
+    // wait for the initial metadata list. Other hints are independent.
+    if (this.launch.accountHint) {
+      await this.navigator.loadItems();
+      await this.navigator.openIntegrationHint();
+      return;
+    }
+    await Promise.all([this.navigator.loadItems(), this.navigator.openIntegrationHint()]);
+  }
+
   async start() {
     const byId = id => this.dom.byId(id); const { location, history } = this.window;
     const fragment = new URLSearchParams(location.hash.slice(1)); const grant = fragment.get('grant'); this.api.csrf = fragment.get('csrf') || ''; history.replaceState(null, '', '/vault/');
@@ -37,7 +48,7 @@ export class SessionController {
     this.setPhase(session.phase);
     const setupCreatesVault = this.state.setupCreatesVault = session.setupRequired === true;
     if (session.phase === 'unlocked') {
-      await this.navigator.loadItems(); await this.navigator.openIntegrationHint();
+      await this.loadUnlockedContent();
     } else {
       byId('unlock-title').textContent = session.setupRequired ? 'Finish setting up your account' : 'Finish updating your account';
       byId('unlock-help').textContent = session.setupRequired ? 'Return to Sulla Desktop and sign in to finish setup.' : 'Enter your old vault password once. Sulla will move your existing encrypted data to your account password.';
@@ -87,7 +98,7 @@ export class SessionController {
         byId('vault').hidden = true; byId('unlock').hidden = false; byId('unlock-form').hidden = true;
         byId('unlock-title').textContent = 'Vault created'; byId('unlock-help').textContent = 'Your vault is encrypted and its unlock cache is protected by this Mac.';
         await this.configureOnboardingRecovery();
-      } else { await this.navigator.loadItems(); await this.navigator.openIntegrationHint(); }
+      } else { await this.loadUnlockedContent(); }
     } catch (error) { byId('unlock-error').textContent = error.message || 'Could not unlock the vault. Try again.'; } finally { done(); }
   }
 
@@ -96,7 +107,7 @@ export class SessionController {
     event.preventDefault(); byId('unlock-error').textContent = ''; const done = this.dom.busy(event.target, 'Unlocking…');
     try {
       const result = await this.api.post('/v1/human/recovery/unlock', { recoveryCode: byId('recovery-code').value.trim(), nextPassword: byId('recovery-password').value });
-      this.api.csrf = result.csrf; event.target.reset(); this.setPhase('unlocked'); await this.navigator.loadItems(); await this.navigator.openIntegrationHint();
+      this.api.csrf = result.csrf; event.target.reset(); this.setPhase('unlocked'); await this.loadUnlockedContent();
     } catch (error) { byId('unlock-error').textContent = error.message || 'Could not unlock with that recovery key.'; } finally { done(); }
   }
 

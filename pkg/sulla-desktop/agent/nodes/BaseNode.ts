@@ -33,6 +33,7 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { a2aMarkersToText, isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsForUi, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -566,6 +567,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
     const resolved = await turnProviderResolver.resolve(state);
     this.routingCandidates = resolved.candidates;
+    if ((state.metadata as any).delegatedJobId) {
+      const service = resolved.provider;
+      const provider = service.getProviderId?.();
+      const model = service.getModel();
+      const effort = service.getEffort?.();
+      const selected = resolved.candidates[0] ?? (provider && model ? { provider, model, ...(effort ? { effort } : {}) } : undefined);
+      if (selected) await workerModelRouting.recordInheritedSelection(state, selected);
+    }
     return resolved.provider;
   }
 
@@ -1021,6 +1030,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return true;
   }
 
+  private staleStallReply(state: BaseThreadState): NormalizedResponse {
+    state.metadata.cycleComplete = true;
+
+    return { content: '', metadata: { tokens_used: 0, time_spent: 0, finish_reason: FinishReason.Stop, reusedAssistantMessage: true } };
+  }
+
   /**
      * Unified chat: takes state + new system prompt + user message.
      * - Replaces last system prompt (or appends new one)
@@ -1037,6 +1052,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
     TurnHopTiming.mark(state, 'BaseNode.normalizedChat.start');
+    if (DeferredStallInput.isStaleOnly(state)
+      && !state.messages.some(message => DeferredStallInput.read(message))
+      && !DeferredStallInput.actionableMessages(state).length) return this.staleStallReply(state);
     if (agentExecutionReadiness.active) {
       await AgentReadinessStatus.wait(agentExecutionReadiness.wait.bind(agentExecutionReadiness), state.metadata?.options?.abort?.signal,
         (content, status) => this.wsChatMessage(state, content, 'assistant', 'progress', { ...status }));
@@ -1104,22 +1122,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       };
     }
 
-    // Steers already in this prompt snapshot are delivered by this call. Any
-    // that arrive after it stay pending for the live CLI turn or the next
-    // iteration (see utils/steerChannel).
-    const promptMeta = new Set(messages.map(m => (m as any).metadata).filter(Boolean));
-    TurnHopTiming.mark(state, 'steerHandling.start');
-    for (const steer of pendingSteers(state)) {
-      if (promptMeta.has((steer as any).metadata)) markSteerDelivered(steer);
-    }
-    TurnHopTiming.mark(state, 'steerHandling.end');
-
     // Curate the exact provider input after the system prompt/context is in
     // place. This compacts stale tool payloads before pair-safe eviction.
     if (isCliManagedLoop(this.llm)) {
       (state.metadata as any).contextBudget = { skipped: true, reason: 'cli-managed-loop' };
     } else {
-      const budget = prepareProviderMessages(messages, this.llm.getContextWindow());
+      const hasDeferredStall = messages.some(message => DeferredStallInput.read(message));
+      const current = new Set(DeferredStallInput.actionableMessages(state, messages).map(message => message.metadata));
+      const budget = prepareProviderMessages(messages, this.llm.getContextWindow(), hasDeferredStall
+        ? message => !!DeferredStallInput.read(message) || current.has(message.metadata)
+        : undefined);
       messages.splice(0, messages.length, ...budget.messages);
       (state.metadata as any).contextBudget = {
         inputBudgetTokens: budget.inputBudgetTokens,
@@ -1290,6 +1302,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       TurnHopTiming.mark(state, 'callLLMStreaming.end');
 
 
+      if (reply?.metadata.reusedAssistantMessage) return reply;
       if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
         throw new Error(`LLM returned empty response (model=${ this.llm.getModel() }, provider=${ this.llm.getProviderName() })`);
       }
@@ -1331,6 +1344,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           throwIfAborted(abortSignal);
           throw replayError;
         }
+        if (replay?.metadata.reusedAssistantMessage) return replay;
         if (!replay || (!replay.content?.trim() && !replay.metadata.tool_calls?.length)) {
           throw new Error(`LLM returned empty response (provider=${ this.llm.getProviderName() }, model=${ this.llm.getModel() })`);
         }
@@ -1386,16 +1400,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               });
             }
             firstRunTrace('chat', attempt === 0 && index > 0 ? 'fallback route started' : 'provider retry started', { provider: candidate.provider, model: candidate.model, attempt: attempt + 1 });
-            const retryMessages = attempt > 0 || index === 0
-              ? this.buildReducedRetryMessages(messages)
-              : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
+            // Keep the mixed wake intact until its advisories are revalidated
+            // at the provider boundary on every attempt.
+            const retryMessages = messages.some(message => DeferredStallInput.read(message))
+              ? messages
+              : attempt > 0 || index === 0
+                ? this.buildReducedRetryMessages(messages)
+                : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
             await workerModelRouting.persistSelection(state, candidate);
+            if ((state.metadata as any).delegatedJobId && !(state.metadata as any).workerModelRoute) await workerModelRouting.recordInheritedSelection(state, candidate);
             this.recordModelStatus(state, service);
             const reply = await this.callLLMStreaming(state, retryMessages, {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
               signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
               profileId: (state.metadata as any).profileId,
             }, nodeRunContext, service, index > 0 ? { provider: failedFirst.provider, model: failedFirst.model, reason: firstFailureKind } : undefined);
+            if (reply?.metadata.reusedAssistantMessage) return reply;
             if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) throw new Error(`LLM returned empty response (provider=${ candidate.provider }, model=${ candidate.model })`);
             if (index > 0) {
               (reply.metadata as any).fallback_used = true;
@@ -1546,7 +1566,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      */
   protected appendResponse(state: BaseThreadState, content: string, rawProviderContent?: any): void {
     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
-    const normalizedContent = stripProtocolTags(contentStr);
+    const normalizedContent = stripProtocolTagsForUi(contentStr);
     const keepPrivateOverheardContext = isOverheardProtocolTurn(contentStr);
 
     // Determine if the raw provider content has tool_use blocks
@@ -1630,6 +1650,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     provider: BaseLanguageModel = this.llm!,
     fallbackFrom?: NonNullable<import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue['fallbackFrom']>,
   ): Promise<NormalizedResponse | null> {
+    const actionable = DeferredStallInput.actionableMessages(state, messages);
     const controller = this.getChatController();
     const ctx = controller.buildContext(state);
     const voiceTurnId = String((state.metadata as any).voiceTurnId || '');
@@ -1647,6 +1668,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let displayBuffer = '';
     let lastStreamFlush = 0;
     let streamingWsSent = false;
+    let streamingOpen = false;
+    let thinkingOpen = false;
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
     let firstTokenSeen = false;
@@ -1664,6 +1687,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
       this.wsChatMessage(state, content, 'assistant', 'streaming');
+      streamingOpen = true;
     };
 
     const onToken = (token: string): void => {
@@ -1735,7 +1759,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
-        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        streamingOpen = false;
         contentBuffer = '';
         displayBuffer = '';
       }
@@ -1745,6 +1770,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       console.log(`[ThinkingTrace] onActivity emit "${ message.slice(0, 80) }" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel }, isSubAgent=${ (state.metadata as any).isSubAgent }, willForwardToParent=${ willForward }, flushedStreamingFirst=${ flushedStreaming })`);
 
       this.wsChatMessage(state, message, 'assistant', 'thinking');
+      thinkingOpen = true;
 
       // When a sub-agent (e.g. memory-recall running Claude Code) has a parent
       // channel, forward activity there too so the user sees the heartbeat
@@ -1773,7 +1799,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
-        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        streamingOpen = false;
         contentBuffer = '';
         displayBuffer = '';
       }
@@ -1814,6 +1841,24 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
       TurnHopTiming.mark(state, 'issueProviderExecutionContext.end');
+      if (messages.some(message => DeferredStallInput.read(message))) {
+        const { completionInboxStore, formatCompletionBatch } = await import('../services/AgentCompletionInbox');
+        const input = new DeferredStallInput({ currentEntries: completionInboxStore.currentEntries, format: formatCompletionBatch });
+        const { prompt, consumed, hasCurrentStall } = await input.prepare(state.metadata.threadId, messages);
+        throwIfAborted(state, 'Chat operation aborted');
+        DeferredStallInput.consume(state, consumed);
+        if (!hasCurrentStall && !actionable.length) return this.staleStallReply(state);
+        messages = prompt;
+      }
+      DeferredStallInput.setStaleOnly(state, false);
+      // Only confirm steers in the actual provider snapshot. Anything queued
+      // during provider setup/validation remains pending in the live state.
+      const promptMeta = new Set(messages.map(message => message.metadata));
+      TurnHopTiming.mark(state, 'steerHandling.start');
+      for (const steer of pendingSteers(state)) {
+        if (!DeferredStallInput.read(steer) && promptMeta.has(steer.metadata)) markSteerDelivered(steer);
+      }
+      TurnHopTiming.mark(state, 'steerHandling.end');
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
@@ -1833,9 +1878,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // bubble stays stuck in "live" mode forever — blinking cursor, timer
       // running, even though the graph has moved on or terminated.
       //
-      // Emit both closing sentinels unconditionally here. The dispatcher
-      // only closes the MOST RECENT uncompleted bubble for each kind, so
-      // this is a no-op when nothing is open.
+      // Close only bubbles opened by this attempt; a suppressed stale wake
+      // must not emit a completion sentinel into someone else's stream.
       if (!isVoiceMode) {
         if (contentBuffer.trim()) {
           const stripped = stripProtocolTagsStreaming(displayBuffer);
@@ -1846,8 +1890,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           contentBuffer = '';
           displayBuffer = '';
         }
-        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
-        this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }
       const endedAt = Date.now();
       console.log(`[StreamHop] threadId=${ state.metadata.threadId } provider=${ provider.getProviderId?.() ?? 'unknown' } voice=${ isVoiceMode } firstDeltaMs=${ firstDeltaAt ? firstDeltaAt - streamStartedAt : -1 } deltaCount=${ providerDeltaCount } suppressedDeltaCount=${ suppressedDeltaCount } wsStreamingSendCount=${ wsStreamingSendCount } lastWsSendMs=${ lastWsStreamingSendAt ? lastWsStreamingSendAt - streamStartedAt : -1 } lastDeltaMs=${ lastDeltaAt ? lastDeltaAt - streamStartedAt : -1 } totalMs=${ endedAt - streamStartedAt }`);
@@ -1858,9 +1902,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     if (reply.content?.trim() || reply.metadata.tool_calls?.length) {
-      const used = { model: reply.metadata.model || provider.getModel(), provider: provider.getProviderId?.() || provider.getProviderName(), effort: provider.getEffort?.() ?? null, source: 'resolved' as const };
+      const used = { model: reply.metadata.reportedModel || provider.getModel(), modelEvidence: reply.metadata.reportedModel ? 'provider' as const : 'unconfirmed' as const, provider: provider.getProviderId?.() || provider.getProviderName(), effort: provider.getEffort?.() ?? null, source: 'resolved' as const };
       const prior = state.metadata.workflowResponseModels ?? [];
-      const sameModel = (model: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue) => model.provider === used.provider && model.model === used.model && model.effort === used.effort;
+      const sameModel = (model: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue) => model.provider === used.provider && model.model === used.model && model.effort === used.effort && model.modelEvidence === used.modelEvidence;
       const fallback = fallbackFrom ?? prior.find(sameModel)?.fallbackFrom;
       const models = [...prior.filter(model => !sameModel(model)), { ...used, ...(fallback ? { fallbackFrom: fallback } : {}) }];
       state.metadata.workflowResponseModels = models;
@@ -1870,6 +1914,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     if (streamingWsSent) {
       reply.metadata.streamingEmitted = true;
     }
+
+    if (reply.content?.trim() || reply.metadata.tool_calls?.length) DeferredStallInput.settledInputs(state, actionable);
 
     // Run post-completion processing through all active extractors
     // (thinking extraction, speak tag cleanup, secretary analysis, etc.)
@@ -2010,7 +2056,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     // Defence-in-depth: strip agent protocol XML before any user-visible output
-    content = stripProtocolTags(content);
+    content = role === 'assistant' && (kind === 'text' || !kind) ? stripProtocolTagsForUi(content) : stripProtocolTags(content);
     // Segment-boundary sentinels (streaming_complete, thinking_complete)
     // and structured-payload kinds (citation) carry meaning in `kind`/
     // `extras` with intentionally empty content. Don't drop them here —

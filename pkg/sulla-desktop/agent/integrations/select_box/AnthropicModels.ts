@@ -4,75 +4,14 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
-import { usesContainerVaultAuthority } from '../../../vault-broker';
-import { listProviderModelsBrokered } from '../../services/brokeredModelList';
-
-interface AnthropicModelsBody { data?: { id: string; display_name?: string }[] }
-
-function parseAnthropicModels(body: AnthropicModelsBody | null): SelectOption[] {
-  if (!body || !Array.isArray(body.data)) return [];
-  return body.data
-    .filter(m => m && typeof m.id === 'string' && m.id)
-    .map(m => ({ value: m.id, label: m.display_name || m.id }));
-}
+import { sharedModelCatalog } from '../../languagemodels/sharedModelCatalog';
 
 export class AnthropicModels extends SelectBoxProvider {
   readonly id = 'anthropic_models';
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
-    if (usesContainerVaultAuthority()) {
-      // Container vault: no key in the app — list through the vault broker.
-      const { body } = await listProviderModelsBrokered<AnthropicModelsBody>('anthropic', context.accountId);
-      const live = parseAnthropicModels(body);
-      return live.length > 0 ? live : this.getStaticModels(context);
-    }
-
-    const apiKey = context.formValues.api_key;
-
-    if (!apiKey) {
-      return this.getStaticModels(context);
-    }
-
-    try {
-      const workspaceId = context.formValues.workspace_id?.trim();
-      const response = await fetch('https://api.anthropic.com/v1/models', {
-        headers: {
-          'x-api-key':         apiKey,
-          'anthropic-version': '2023-06-01',
-          ...(workspaceId ? { 'anthropic-workspace-id': workspaceId } : {}),
-        },
-      });
-
-      if (!response.ok) {
-        return this.getStaticModels(context);
-      }
-
-      const body = await response.json() as { data?: { id: string; display_name?: string }[] };
-
-      if (body.data && body.data.length > 0) {
-        return body.data.map(m => ({ value: m.id, label: m.display_name || m.id }));
-      }
-    } catch {
-      // Fall back to static list
-    }
-
-    return this.getStaticModels(context);
-  }
-
-  // Last-resort fallback shown when the Anthropic API is unreachable.
-  // Model IDs here are aliases (no date suffix) so they self-update on Anthropic's side.
-  private getStaticModels(context: SelectBoxContext): SelectOption[] {
-    if (context.liveOnly) return [];
-    return [
-      { value: 'claude-fable-5-1',  label: 'Claude Fable 5.1',  description: 'Most capable — long-horizon agentic work' },
-      { value: 'claude-opus-5-5',   label: 'Claude Opus 5.5',   description: 'Frontier reasoning and complex tasks' },
-      { value: 'claude-opus-5',     label: 'Claude Opus 5',     description: 'Previous Opus generation' },
-      { value: 'claude-sonnet-5',   label: 'Claude Sonnet 5',   description: 'Balanced model for everyday work' },
-      { value: 'claude-haiku-4-5',  label: 'Claude Haiku 4.5',  description: 'Fast and lightweight — background agents' },
-      { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet', description: 'Extended thinking model' },
-      { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', description: 'Fast and lightweight (previous gen)' },
-      { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', description: 'Previous generation balanced' },
-      { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus', description: 'Most capable previous gen' },
-    ];
+    // A custom endpoint needs explicit private discovery, never public substitution.
+    if (context.formValues.base_url?.trim()) return [];
+    return (await sharedModelCatalog.listModels('anthropic')).map(model => ({ value: model.id, label: model.name }));
   }
 }

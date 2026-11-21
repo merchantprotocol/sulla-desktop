@@ -11,14 +11,18 @@ import path from 'node:path';
 import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { ChatFilesImportHttpError } from '@pkg/main/ChatFilesImporter';
 import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
-import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
+import { getSullaFilesLinkService, SharingUnavailableError, type CreateShareInput, type ShareLink, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher, type RecentSullaFile, type SullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { ScreenRecordingPermission } from '@pkg/utils/screenRecordingPermission';
 
 export type ScreenshotMode = 'area' | 'window' | 'full';
 export interface CaptureResult { path:string; relativePath:string; name:string; size:number; kind:'screenshot'|'recording'|'upload'; fileId?:string; reference?:ChatFilesReference }
+
+// Main-process only: the original bytes never travel over IPC.
+export interface TrayScreenshot { readonly bytes:Buffer; readonly name:string; capture?:CaptureResult }
 
 interface RecorderResult { recording?:boolean; started?:boolean; stopped?:boolean; setup?:boolean; sessionDir?:string | null; reason?:string }
 
@@ -87,9 +91,44 @@ async function electronScreenshot(target:string, sourceType:'screen'|'window'):P
 
 export class SullaFilesCaptureService {
   private readonly recordingImports = new Map<string, Promise<CaptureResult>>();
+  constructor(
+    private readonly resolveLinks:() => Pick<import('@pkg/main/sullaFilesLinkService').LinkService, 'create'> = getSullaFilesLinkService,
+    private readonly readExpiryDays:() => Promise<unknown> = () => SullaSettingsModel.get('sullaFilesCaptureExpiryDays', 30),
+    private readonly writeClipboard:(value:string) => void = value => clipboard.writeText(value),
+    private readonly importFiles:typeof importChatFiles = importChatFiles,
+  ) {}
+
   recordingState():boolean { return getCaptureStudioRecordingState() }
 
   async screenshot(mode:ScreenshotMode):Promise<CaptureResult> {
+    return this.withScreenshot(mode, async namedPath => captureResult(importedReference(await this.importFiles([namedPath], SCREENSHOTS)), 'screenshot'));
+  }
+
+  trayScreenshot(mode:ScreenshotMode, destinations:SullaFilesCapturePathClipboardService):Promise<TrayScreenshot> {
+    return this.withScreenshot(mode, async namedPath => this.prepareTrayScreenshot(path.basename(namedPath), await fs.promises.readFile(namedPath), destinations, namedPath));
+  }
+
+  async prepareTrayScreenshot(name:string, bytes:Buffer, destinations:SullaFilesCapturePathClipboardService, source?:string):Promise<TrayScreenshot> {
+    const screenshot:TrayScreenshot = { name, bytes };
+    await destinations.importIntoFiles(() => this.importTrayScreenshot(screenshot, source));
+    return screenshot;
+  }
+
+  async importTrayScreenshot(screenshot:TrayScreenshot, source?:string):Promise<CaptureResult> {
+    if (screenshot.capture) return screenshot.capture;
+    if (source) {
+      screenshot.capture = captureResult(importedReference(await this.importFiles([source], SCREENSHOTS)), 'screenshot');
+    } else {
+      screenshot.capture = await withCaptureTemp('.png', async temporaryPath => {
+        const namedPath = path.join(path.dirname(temporaryPath), screenshot.name);
+        await fs.promises.writeFile(namedPath, screenshot.bytes, { flag: 'wx', mode: 0o600 });
+        return captureResult(importedReference(await this.importFiles([namedPath], SCREENSHOTS)), 'screenshot');
+      });
+    }
+    return screenshot.capture;
+  }
+
+  private withScreenshot<T>(mode:ScreenshotMode, work:(namedPath:string) => Promise<T>):Promise<T> {
     return withCaptureTemp('.png', async temporaryPath => {
       if (process.platform === 'darwin') {
         const blocked = new ScreenRecordingPermission().blockedReason();
@@ -101,7 +140,7 @@ export class SullaFilesCaptureService {
       }
       const namedPath = path.join(path.dirname(temporaryPath), `Screenshot ${ stamp() }.png`);
       await fs.promises.rename(temporaryPath, namedPath);
-      return captureResult(importedReference(await importChatFiles([namedPath], SCREENSHOTS)), 'screenshot');
+      return work(namedPath);
     });
   }
 
@@ -157,20 +196,159 @@ export class SullaFilesCaptureService {
     return captureResult(importedReference(await importChatFiles([picked.filePaths[0]], 'Uploads')), 'upload');
   }
 
-  async share(capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }):Promise<{ url?:string; unavailable?:boolean; message:string }> {
+  async share(capture:CaptureResult, options:{ mode:ShareMode }):Promise<{ url?:string; unavailable?:boolean; message:string }> {
     const file = capture.fileId ? { id: capture.fileId } : await waitForFile(capture.relativePath);
     if (!file?.id) return { message: 'Saved to Files. Waiting for the container to finish versioning before sharing.' };
-    const expiryDays = Number(await SullaSettingsModel.get('sullaFilesCaptureExpiryDays', 30));
+    const expiryDays = Number(await this.readExpiryDays());
     const expiresAt = expiryDays > 0 ? new Date(Date.now() + expiryDays * 86_400_000).toISOString() : undefined;
     try {
-      const link = await getSullaFilesLinkService().create({ fileId: file.id, mode: options.mode, keepAvailable: options.keepAvailable, expiresAt, capture: capture.kind !== 'upload', captureMetadata: { kind: capture.kind, sourcePath: capture.relativePath } });
-      clipboard.writeText(link.url);
+      // Captures are shared live from this desktop. The popup has no residency
+      // opt-in, so never request the optional Cloud content copy here.
+      const input:CreateShareInput = { fileId: file.id, mode: options.mode, keepAvailable: false, expiresAt, capture: capture.kind !== 'upload', captureMetadata: { kind: capture.kind, sourcePath: capture.relativePath } };
+      const link:ShareLink = await this.resolveLinks().create(input);
+      this.writeClipboard(link.url);
 
       return { url: link.url, message: 'Link copied' };
     } catch (error) {
       if (error instanceof SharingUnavailableError) return { unavailable: true, message: 'Sharing comes online when links ship. The file is safely saved in Sulla Files.' };
       throw error;
     }
+  }
+}
+
+/** Resolves the real local Files copy or writes the private original on explicit screenshot save. */
+export class SullaFilesCapturePathClipboardService {
+  constructor(
+    private readonly resolveFilesRoot:() => Promise<string> | string,
+    private readonly writeClipboard:(value:string) => void,
+    private readonly resolveDownloads:() => string = () => app.getPath('downloads'),
+  ) {}
+
+  private async existingDirectory(directory:string):Promise<string | undefined> {
+    try {
+      const absolute = await fs.promises.realpath(directory);
+      if (!(await fs.promises.stat(absolute)).isDirectory()) throw new Error('The capture destination is not a directory');
+      return absolute;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+
+  async filesRoot():Promise<string | undefined> {
+    return this.existingDirectory(await this.resolveFilesRoot());
+  }
+
+  async importIntoFiles(operation:() => Promise<CaptureResult>, isCurrent:() => boolean = () => true):Promise<CaptureResult | undefined> {
+    if (!await this.filesRoot() || !isCurrent()) return undefined;
+    try {
+      return await operation();
+    } catch (error) {
+      // HTTP 503 does not establish why Files is unavailable. Preserve the
+      // private original only if the local destination independently vanished.
+      if (!(error instanceof ChatFilesImportHttpError) || error.status !== 503 || await this.filesRoot()) throw error;
+      return undefined;
+    }
+  }
+
+  private async resolveFile(root:string, relativePath:string):Promise<string> {
+    if (typeof relativePath !== 'string' || !relativePath) throw new Error('A Files path is required');
+    const requested = path.resolve(root, relativePath);
+    const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+    if (requested === root || !requested.startsWith(prefix)) throw new Error('The requested item is outside Sulla Files');
+    const absolute = await fs.promises.realpath(requested);
+    if (absolute === root || !absolute.startsWith(prefix)) throw new Error('The requested item resolves outside Sulla Files');
+    if (!(await fs.promises.stat(absolute)).isFile()) throw new Error('The requested Files item is not a file');
+    return absolute;
+  }
+
+  async copy(relativePath:string, isCurrent:() => boolean = () => true):Promise<string | undefined> {
+    const root = await this.filesRoot();
+    if (!root) throw new Error('The local Sulla Files folder is missing');
+    const absolute = await this.resolveFile(root, relativePath);
+    if (!isCurrent()) return undefined;
+    this.writeClipboard(absolute);
+    return absolute;
+  }
+
+  async saveScreenshot(
+    screenshot:TrayScreenshot,
+    choosePath:(name:string) => Promise<string | undefined>,
+    isCurrent:() => boolean = () => true,
+    importScreenshot?:() => Promise<CaptureResult>,
+  ):Promise<string | undefined> {
+    if (!isCurrent()) return undefined;
+    const root = await this.filesRoot();
+    if (!isCurrent()) return undefined;
+    if (root) {
+      const capture = screenshot.capture ?? (importScreenshot && await this.importIntoFiles(importScreenshot, isCurrent));
+      if (!capture && !importScreenshot) throw new Error('The screenshot has not been imported into Sulla Files');
+      let absolute:string | undefined;
+      try {
+        if (capture) absolute = await this.resolveFile(root, capture.relativePath);
+      } catch (error) {
+        // A missing item in an existing root is not permission to save elsewhere.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || await this.filesRoot()) throw error;
+      }
+      if (absolute) {
+        if (!isCurrent()) return undefined;
+        this.writeClipboard(absolute);
+        return absolute;
+      }
+    }
+    if (!isCurrent()) return undefined;
+    const downloadsPath = this.resolveDownloads();
+    const downloads = await this.existingDirectory(downloadsPath);
+    let absolute:string | undefined;
+    if (downloads) {
+      let disappeared = false;
+      const extension = path.extname(screenshot.name);
+      const stem = path.basename(screenshot.name, extension);
+      for (let index = 0; index < 1_000 && isCurrent(); index++) {
+        const filename = index ? `${ stem } (${ index })${ extension }` : stem + extension;
+        const candidate = path.join(downloads, filename);
+        try {
+          if (!await this.writeExclusive(candidate, screenshot.bytes, isCurrent)) return undefined;
+          absolute = candidate;
+          break;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === 'EEXIST') continue;
+          if (code === 'ENOENT' && !await this.existingDirectory(downloadsPath)) {
+            disappeared = true;
+            break;
+          }
+          throw error;
+        }
+      }
+      if (!absolute && !disappeared && isCurrent()) throw new Error('Could not find an unused screenshot name in Downloads');
+    }
+    if (!absolute && isCurrent()) {
+      const selected = await choosePath(screenshot.name);
+      if (!selected || !isCurrent()) return undefined;
+      // The dialog can offer replacement, but capture save never overwrites.
+      if (!await this.writeExclusive(selected, screenshot.bytes, isCurrent)) return undefined;
+      absolute = selected;
+    }
+    if (!absolute || !isCurrent()) return undefined;
+    this.writeClipboard(absolute);
+    return absolute;
+  }
+
+  private async writeExclusive(target:string, bytes:Buffer, isCurrent:() => boolean):Promise<boolean> {
+    const handle = await fs.promises.open(target, 'wx', 0o600);
+    let committed = false;
+    try {
+      if (isCurrent()) {
+        await handle.writeFile(bytes);
+        committed = true;
+      }
+    } finally {
+      try { await handle.close() } finally {
+        if (!committed) await fs.promises.unlink(target);
+      }
+    }
+    return committed;
   }
 }
 

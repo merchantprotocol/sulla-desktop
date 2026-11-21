@@ -11,6 +11,7 @@ import { SpawnDedupeGuard } from './SpawnDedupeGuard';
 import type { AgentJob, AgentJobTask, CreateJobOptions } from '../../tools/agents/jobRegistry';
 
 export interface SpawnJobRepository {
+  findInlineReview(parentThreadId: string, task: AgentJobTask): Promise<AgentJob | undefined>;
   recentSpawnJob(parentThreadId: string | undefined, parentAgentId: string | undefined, label: string, since: number): Promise<AgentJob | undefined>;
 }
 
@@ -25,6 +26,15 @@ export class SpawnJobCreator {
   async create(taskInput: number | AgentJobTask[], parentChannel?: string, parentThreadId?: string, options: CreateJobOptions = {}): Promise<AgentJob> {
     await this.recovery.ensureHydrated();
     const tasks = Array.isArray(taskInput) ? taskInput : [];
+    const task = tasks.length === 1 ? tasks[0] : undefined;
+    if (parentThreadId && task?.inlineReviewDigest && task.followUpOf) {
+      const ref = task.followUpOf;
+      const key = JSON.stringify(['inline-review', parentThreadId, ref.jobId, ref.taskIndex,
+        task.inlineReviewDigest, task.agentId, task.workerModelRoute?.agentId, task.workerModelRoute?.revision]);
+      const result = await this.dedupe.run(key, () => this.repository.findInlineReview(parentThreadId, task),
+        () => this.insert(tasks, parentChannel, parentThreadId, options));
+      return result.deduplicated ? { ...result.value, deduplicated: true } : result.value;
+    }
     const label = options.dedupeLabel?.trim();
     const key = label && tasks.length === 1 ? `${ parentThreadId ? `thread:${ parentThreadId }` : `agent:${ options.parentAgentId ?? parentChannel ?? '' }` }\0${ label }` : undefined;
     const result = await this.dedupe.run(key, () => this.find(parentThreadId, options.parentAgentId, label), () => this.insert(tasks, parentChannel, parentThreadId, options));

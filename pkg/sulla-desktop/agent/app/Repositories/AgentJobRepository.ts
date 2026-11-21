@@ -163,6 +163,24 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return rows[0] ? this.map(rows[0]) : undefined;
   }
 
+  async findInlineReview(parentThreadId: string, task: AgentJobTask): Promise<AgentJob | undefined> {
+    const ref = task.followUpOf;
+    const route = task.workerModelRoute;
+    if (!ref || !route || !task.inlineReviewDigest) return undefined;
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+      WHERE parent_thread_id = $1 AND dismissed_at IS NULL
+        AND status IN ('running', 'parked', 'completed') AND jsonb_array_length(tasks) = 1
+        AND tasks -> 0 ->> 'status' IN ('queued', 'running', 'parked', 'completed')
+        AND tasks -> 0 ->> 'agentId' = $2
+        AND tasks #>> '{0,followUpOf,jobId}' = $3 AND tasks #>> '{0,followUpOf,taskIndex}' = $4
+        AND tasks #>> '{0,workerModelRoute,agentId}' = $5 AND tasks #>> '{0,workerModelRoute,revision}' = $6
+        AND tasks -> 0 ->> 'inlineReviewDigest' = $7
+      ORDER BY created_at DESC LIMIT 1`, [
+      parentThreadId, task.agentId, ref.jobId, String(ref.taskIndex), route.agentId, String(route.revision), task.inlineReviewDigest,
+    ]);
+    return rows[0] ? this.map(rows[0]) : undefined;
+  }
+
   async jobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL ORDER BY created_at ASC`, [parentThreadId]);
     return rows.map(row => this.map(row));
@@ -186,7 +204,7 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
-  async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
+  async lineageForParentThread(parentThreadId: string, limit = 100, includeReports = false): Promise<AgentJob[]> {
     // Walk UP from the small live/recent set instead of DOWN through the thread's whole history:
     // cost is bounded by running/parked + last-24h jobs (retention keeps that set small), not by how
     // many jobs a busy thread ever launched. Ancestors are walked regardless of age, so a running
@@ -206,13 +224,15 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     ), selected AS (
       SELECT candidate_id AS job_id, created_at, MIN(depth) AS lineage_depth FROM up WHERE thread = $1
       GROUP BY candidate_id, created_at ORDER BY created_at DESC LIMIT $2
-    ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,'[]'::jsonb AS results,
-      (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+    ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,
+      CASE WHEN $3::boolean THEN j.results ELSE '[]'::jsonb END AS results,
+      (SELECT COALESCE(jsonb_agg(CASE WHEN $3::boolean THEN task.value - 'result' ELSE task.value - 'result' - 'completion' END
+        ORDER BY task.ordinality), '[]'::jsonb)
         FROM jsonb_array_elements(j.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
       j.error,j.parent_channel,j.parent_thread_id,j.parent_agent_id,j.visibility,j.parent_job_id,j.parent_task_index,j.project_task_ids,
       j.completion_delivered_at,j.waiting_on_children,j.restart_resume_count,j.dismissed_at,j.stopped_by,j.stop_reason,j.orphaned_child_notices
       FROM selected JOIN agent_jobs j ON j.job_id = selected.job_id
-      ORDER BY j.created_at ASC, selected.lineage_depth ASC, j.job_id ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+      ORDER BY j.created_at ASC, selected.lineage_depth ASC, j.job_id ASC`, [parentThreadId, Math.min(100, Math.max(1, limit)), includeReports]);
     return rows.map(row => this.map(row));
   }
 
@@ -289,6 +309,8 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         'agentId', t.agent_id, 'label', t.label, 'status', t.task_status,
         'taskId', j.tasks -> t.task_index -> 'taskId',
         'followUpOf', j.tasks -> t.task_index -> 'followUpOf',
+        'decisionIds', j.tasks -> t.task_index -> 'decisionIds',
+        'responseModels', j.tasks -> t.task_index -> 'responseModels',
         'model', j.tasks -> t.task_index -> 'model', 'provider', j.tasks -> t.task_index -> 'provider',
         'effort', j.tasks -> t.task_index -> 'effort',
         'workerModelRoute', j.tasks -> t.task_index -> 'workerModelRoute',

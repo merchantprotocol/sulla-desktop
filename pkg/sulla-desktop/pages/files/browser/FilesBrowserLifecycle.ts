@@ -23,8 +23,19 @@ export class FilesBrowserLifecycle {
   bind():void {
     const b = this.browser; const state = b.state;
 
-    watch(b.preferences.view, async() => { b.gestures.stopPointerGesture?.(); b.virtualScroll.virtualScrollTop.value = 0; b.preferences.saveFolderPreferences(); await nextTick(); b.virtualScroll.observeGrid() });
+    watch(b.preferences.view, async(view) => {
+      b.gestures.stopPointerGesture?.();
+      b.virtualScroll.virtualScrollTop.value = 0;
+      if (view === 'grid' && state.mainSurface.value) state.mainSurface.value.scrollTop = 0;
+      b.preferences.saveFolderPreferences();
+      await nextTick();
+      b.virtualScroll.observeGrid();
+    });
     watch([state.section, state.currentPath, state.query], () => b.virtualScroll.resetScroll());
+    watch([state.mainSurface, b.virtualScroll.listSurface], ([page, list], _previous, onCleanup) => {
+      if (!page || !list) return;
+      onCleanup(b.virtualScroll.bindListPage());
+    }, { flush: 'post' });
     watch([() => state.props.dataSource, () => state.snapshot.value?.collection.id, state.section, state.currentPath, state.query, state.busy], b.dragSnapshots.invalidate, { flush: 'sync' });
     watch([state.selectedKeys, b.listing.visibleEntries], b.dragSnapshots.revalidate, { flush: 'sync' });
     onBeforeUnmount(b.dragSnapshots.invalidate);

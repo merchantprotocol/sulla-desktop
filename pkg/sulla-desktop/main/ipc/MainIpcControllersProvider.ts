@@ -80,6 +80,12 @@ export class MainIpcControllersProvider {
 
   constructor(raw: IpcMainRegistrar = ipcMain as unknown as IpcMainRegistrar, proxy: IpcRegistrar = getIpcMainProxy(Logging.background) as unknown as IpcRegistrar) {
     initializeMainClaudeModelCatalogBoundary();
+    // Warm the shared public metadata cache after settings are ready. This
+    // request is anonymous and independent of provider credentials/access.
+    void awaitDatabaseReady().then(async() => {
+      const { sharedModelCatalog } = await import('@pkg/agent/languagemodels/sharedModelCatalog');
+      await sharedModelCatalog.listProviders();
+    }).catch(error => Logging.background.warn('[modelCatalog] Shared catalog warm-up failed', error));
     const log = Logging.background;
     const broadcastToWindows = (channel: string, payload: unknown) => {
       for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);

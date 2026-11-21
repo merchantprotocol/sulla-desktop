@@ -23,10 +23,10 @@ export class ModelsListWorker extends BaseTool {
     }
 
     const liveModels = await getModelProviderService().getModelsForProvider(providerId);
-    const models = liveModels.map(model => ({ ...model, source: 'provider-or-cli' }));
+    const models = liveModels.map(model => ({ ...model }));
 
     return {
-      successBoolean: true,
+      successBoolean: models.length > 0,
       responseString: JSON.stringify({
         provider: {
           id:               status.providerId,
@@ -37,6 +37,7 @@ export class ModelsListWorker extends BaseTool {
           ready:            status.ready,
         },
         modelCount: models.length,
+        unavailableReason: models.length ? undefined : 'No validated Cloud catalog models available (or private endpoint unavailable)',
         models,
       }, null, 2),
     };

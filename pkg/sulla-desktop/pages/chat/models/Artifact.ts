@@ -17,7 +17,7 @@ export interface Artifact {
   status:    ArtifactStatus;
   createdAt: number;
   updatedAt: number;
-  /** DB-backed artifacts carry these fields; transcript HTML/workflow artifacts remain transient. */
+  /** DB-backed artifacts carry these fields; workflow/patch artifacts remain transient. */
   persistent?: boolean;
   threadId?:   string;
   version?:    number;

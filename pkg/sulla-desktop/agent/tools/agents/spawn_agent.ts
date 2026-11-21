@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { newerBuiltinAgentSlug } from '../../../shared/agentJobNames';
+import { DeferredStallInput } from '../../app/Services/DeferredStallInput';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
@@ -96,6 +98,7 @@ type DelegatedWorkflowStep = import('../../../shared/productOwnerWorkflow').Dele
 interface SpawnTask {
   workflowStep?: DelegatedWorkflowStep;
   followUpOf?:    ResultReference;
+  implementationSource?: ResultReference;
   agentId?:   string;
   model?: string;
   effort?:        string;
@@ -155,7 +158,9 @@ interface TabPlan {
 // requested "tab" that can't open is downgraded by TabVisibilityResolver, and
 // the downgrade is recorded on the response and the task, never silent.
 export class SpawnAgentWorker extends BaseTool {
-  private readonly workerRoutes = new WeakMap<SpawnTask, WorkerModelRoute>();
+  private readonly inlineAcceptanceSources = new WeakMap<SpawnTask, ResultReference & { digest: string }>();
+  private readonly inlineReviewDigests = new WeakMap<SpawnTask, string>();
+  private readonly workerRoutes = new WeakMap<SpawnTask, WorkerModelRoute | undefined>();
   name = '';
   description = '';
 
@@ -240,10 +245,18 @@ export class SpawnAgentWorker extends BaseTool {
     const plans: TabPlan[] = [];
     const callerIsHiddenJob = Number((this.state as any)?.metadata?.subAgentDepth ?? 0) > 0;
 
+    // New jobs use the stored slug. Existing job records retain their captured selectors.
+    for (const task of tasks) {
+      const selector = taskAgentSelector(task);
+      if (!selector || !newerBuiltinAgentSlug(selector)) continue;
+      const definition = await agentDefinitionService.findBySlug(selector);
+      if (definition) task.agentId = definition.slug;
+    }
+
     // A step is scoped by the canonical job owner and its root chat, never by a title.
     const actor = resolveAgentIdentity(this.state?.metadata);
-    const workflowRequested = tasks.some(task => task.workflowStep !== undefined || (actor === 'account-manager'
-      && ['mockup-designer', 'coding-manager', 'ui-test-manager'].includes(taskAgentSelector(task) ?? '')));
+    const workflowRequested = tasks.some(task => task.workflowStep !== undefined || task.implementationSource !== undefined || (actor === 'account-manager'
+      && ['designer', 'coding-manager', 'ui-test-manager'].includes(newerBuiltinAgentSlug(taskAgentSelector(task) ?? '') ?? taskAgentSelector(task) ?? '')));
     const workflow = parentThreadId && workflowRequested ? (await import('../../services/ProductOwnerWorkflow')).productOwnerWorkflow : undefined;
     const workflowScope = workflow && parentThreadId ? await workflow.productOwnerDelegationScope(actor, parentThreadId) : undefined;
 
@@ -261,8 +274,11 @@ export class SpawnAgentWorker extends BaseTool {
       let configuredRoute: WorkerModelRoute | undefined;
       try {
         const task = tasks[i];
+        if (task.implementationSource !== undefined && (!workflowScope?.lead || task.workflowStep !== 'acceptance')) {
+          throw new Error('Use implementationSource on a Product Owner acceptance handoff.');
+        }
         const settings = workflowScope
-          ? await workflow!.productOwnerDelegation(workflowScope, taskAgentSelector(task), task.workflowStep, task.followUpOf)
+          ? await workflow!.productOwnerDelegation(workflowScope, taskAgentSelector(task), task.workflowStep, task.followUpOf, task.implementationSource)
           : undefined;
         task.workflowStep = settings?.step;
         if (settings?.slug) {
@@ -270,13 +286,28 @@ export class SpawnAgentWorker extends BaseTool {
           task.label ||= taskAgentSelector(task) || parentChannel;
           task.agentId = settings.slug;
         }
-        configuredRoute = settings?.route;
+        configuredRoute = settings?.route
+          ? await workerModelRouting.applyWorkflowRequest(settings.route, task)
+          : await workerModelRouting.newRoute(taskGraphAgentChannel(task, parentChannel), task);
+        const inlineSource = settings?.inlineReview ?? settings?.inlineAcceptance;
+        if (settings && inlineSource) {
+          const { bytes, digest } = inlineSource;
+          const review = Boolean(settings.inlineReview);
+          if (review) {
+            if (tasks.length !== 1) throw new Error('Launch this independent inline review as a single task.');
+            this.inlineReviewDigests.set(task, digest);
+          }
+          if (settings.inlineAcceptance) this.inlineAcceptanceSources.set(task, { ...settings.inlineAcceptance.source, digest });
+
+          const decode = 'const r=JSON.parse(require("node:fs").readFileSync(0,"utf8")); if(!r.success) throw Error("Source unavailable"); const p=typeof r.result==="string"?JSON.parse(r.result):r.result; const b=Buffer.from(p.sourceBase64,"base64"); if(b.length!==p.byteLength||require("node:crypto").createHash("sha256").update(b).digest("hex")!==p.sha256) throw Error("Source mismatch"); process.stdout.write(b);';
+          const stage = review ? 'independent review' : 'acceptance';
+          task.prompt += `\n\nSaved implementation for ${ stage } (Sulla supplied)\nThe saved result is authoritative. It is ${ bytes } UTF-8 bytes, SHA-256 ${ digest }. Fetch it with the shell pipeline below. It checks the saved fingerprint before emitting raw bytes. Feed those bytes directly into any executable checks. Use the retrieved source for inspection. Ignore any copied source, prior checksums or comparisons against a transcription in the brief. Report the verified fingerprint, byte count, findings and any checks you could not run.\n\nsulla agents/check_agent_jobs '{"view":"implementation_source"}' | node -e '${ decode }'`;
+        }
+        this.workerRoutes.set(task, configuredRoute);
       } catch (error) {
         return { successBoolean: false, responseString: `Task ${ i }: ${ (error as Error).message }` };
       }
-      const workerRoute = configuredRoute ?? await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
-      if (workerRoute) this.workerRoutes.set(tasks[i], workerRoute);
-      if (tasks[i].effort !== undefined && !workerRoute) {
+      if (tasks[i].effort !== undefined && !configuredRoute) {
         try {
           const { effectiveModelChoice } = await import('../../languagemodels/threadModelChoice');
           const { modelRouter } = await import('../../languagemodels/modelRouter');
@@ -428,7 +459,7 @@ export class SpawnAgentWorker extends BaseTool {
    * (the root human chat, when the caller is a hidden child).
    */
   private async launchTab(task: SpawnTask, childAgent: RoutableAgent, parentDepth: number, decision: TabVisibilityDecision): Promise<LaunchedTab> {
-    const workerRoute = this.workerRoutes.get(task) ?? await workerModelRouting.newRoute(childAgent.graphAgentId);
+    const workerRoute = this.workerRoutes.has(task) ? this.workerRoutes.get(task) : await workerModelRouting.newRoute(childAgent.graphAgentId, task);
     const { captureProviderCliSnapshot } = await import('../../../backend/providerCliUpdates');
     const providerCliSnapshot = await captureProviderCliSnapshot();
     const metadata = (this.state as any)?.metadata;
@@ -451,6 +482,8 @@ export class SpawnAgentWorker extends BaseTool {
       agentId:    childAgent.graphAgentId,
       label:      title,
       followUpOf:       task.followUpOf,
+      inlineReviewDigest: this.inlineReviewDigests.get(task),
+      inlineAcceptanceSource: this.inlineAcceptanceSources.get(task),
       provider: task.provider, model: task.model, effort:           task.effort,
       workerModelRoute: workerRoute,
       workflowStep:     task.workflowStep,
@@ -569,6 +602,8 @@ export class SpawnAgentWorker extends BaseTool {
         workspacePath: task.workspacePath,
         taskId:           task.projectTaskId?.trim(),
         followUpOf:       task.followUpOf,
+        inlineReviewDigest: this.inlineReviewDigests.get(task),
+        inlineAcceptanceSource: this.inlineAcceptanceSources.get(task),
         status:     'queued',
         visibility: 'hidden',
         ...(decisions[index]?.requestedVisibility ? { requestedVisibility: decisions[index].requestedVisibility, downgradeReason: decisions[index].downgradeReason } : {}),
@@ -657,7 +692,7 @@ export class SpawnAgentWorker extends BaseTool {
         }
 
         // Inject the brief and its return contract.
-        subState.messages.push({
+        DeferredStallInput.appendActionable(subState, {
           role:    'user',
           content: activityJobId
             ? `${ task.prompt }\n\n${ contractFooter({ jobId: activityJobId, contract, visibility: 'hidden' }) }`
@@ -674,6 +709,7 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.productOwnerWorkflowStep = task.workflowStep;
         subState.metadata.delegatedJobId = activityJobId;
         subState.metadata.delegatedTaskIndex = index;
+        subState.metadata.delegatedGeneration = input.generation ?? 1;
         subState.metadata.managerAgentId = parentAgentId || parentChannel;
         subState.metadata.managerThreadId = parentThreadId;
         // While this runner drives the graph, a human typing into the thread
@@ -749,12 +785,6 @@ export class SpawnAgentWorker extends BaseTool {
           if ((agentExecutionReadiness.draining || subState.metadata.runtimeInterrupted) && !await returnedTask()) throw Object.assign(executionAbort(), { runtimeInterrupted: true });
           return result;
         };
-        const acknowledgeCompletionInput = async(wakeInput: any) => {
-          const entries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
-          await Promise.all(entries.map((entry: any) => markTaskCompletionDelivered(
-            String(entry.jobId), Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0,
-          )));
-        };
         const failedManagerCompletionRerouter = new FailedManagerCompletionRerouter();
         const freshTurnRunner = new DelegatedFreshTurnRunner({
           jobId:                  activityJobId,
@@ -773,7 +803,8 @@ export class SpawnAgentWorker extends BaseTool {
           waitForWake:            (wakeThreadId, signal) => agentJobLifecycle.waitForWake(wakeThreadId, signal),
           resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
           rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
-          acknowledgeCompletions: acknowledgeCompletionInput,
+          acknowledgeCompletions: entries => Promise.all(entries.map(entry =>
+            markTaskCompletionDelivered(entry.jobId, entry.taskIndex))),
         });
         const runFreshTurn = (currentState: any) => freshTurnRunner.run(currentState);
 
@@ -798,7 +829,7 @@ export class SpawnAgentWorker extends BaseTool {
           if (settlement === 'terminal' || settlement === 'fail') break;
 
           if (settlement === 'remind') {
-            subState.messages.push({ role: 'user', content: CONTRACT_REMINDER, metadata: { source: 'contract_reminder' } });
+            DeferredStallInput.appendActionable(subState, { role: 'user', content: CONTRACT_REMINDER, metadata: { source: 'contract_reminder' } });
             reminderSent = true;
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
@@ -823,7 +854,7 @@ export class SpawnAgentWorker extends BaseTool {
             }
             await containerLifecycle?.resume();
             subState.metadata.delegatedRunActive = true;
-            subState.messages.push({ role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.', metadata: { source: 'auto_park_resume' } });
+            DeferredStallInput.appendActionable(subState, { role: 'user', content: 'You ended your turn without return_result. Continue your task; call return_result when done or agents/wait to wait.', metadata: { source: 'auto_park_resume' } });
             const turn = await runFreshTurn(finalState);
             finalState = turn.finalState;
             returned = turn.returned;

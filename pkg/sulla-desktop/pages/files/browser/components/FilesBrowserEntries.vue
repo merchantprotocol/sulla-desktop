@@ -10,7 +10,6 @@
     ref="listSurface"
     class="card files virtual-surface"
     :class="{ 'drop-background': dragging }"
-    @scroll="updateVirtualScroll"
     @pointerdown="startMarquee"
     @click.self="clearSelection"
     @contextmenu.self.prevent="openBackgroundActions"
@@ -51,7 +50,7 @@
               {{ group.label }}
             </td>
           </tr>
-          <tr v-if="listTopSpacer" class="virtual-spacer"><td colspan="7" :style="{ height: `${listTopSpacer}px` }" /></tr>
+          <tr v-if="listTopSpacer" class="virtual-spacer" aria-hidden="true"><td colspan="7" :style="{ height: `${listTopSpacer}px` }" /></tr>
           <tr
             v-for="entry in virtualListEntries"
             :key="entry.key"
@@ -189,7 +188,7 @@
             </td>
           </tr>
         </template>
-        <tr v-if="listBottomSpacer" class="virtual-spacer"><td colspan="7" :style="{ height: `${listBottomSpacer}px` }" /></tr>
+        <tr v-if="listBottomSpacer" class="virtual-spacer" aria-hidden="true"><td colspan="7" :style="{ height: `${listBottomSpacer}px` }" /></tr>
       </tbody>
     </table>
   </div>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { ModelCandidate } from '../agent/languagemodels/modelRouter';
+import type { ModelLaunchPreview } from './modelLaunchPreview';
 import type { RoutingProviderInfo } from '../agent/languagemodels/modelRoutingTypes';
 import type { AgentStateRow } from './agentState/AgentStateSnapshot';
 import type { AgentModelStatusValue } from './agentState/AgentModelStatus';
@@ -7,7 +8,7 @@ import type { AgentModelStatusValue } from './agentState/AgentModelStatus';
 export const PRODUCT_OWNER = 'account-manager';
 export const WORKFLOW_STEPS = [
   { id: 'lead', title: 'Scope & acceptance criteria', agent: PRODUCT_OWNER },
-  { id: 'mockup', title: 'Mockup', agent: 'mockup-designer' },
+  { id: 'mockup', title: 'Mockup', agent: 'designer' },
   { id: 'build', title: 'Build & review', agent: 'coding-manager' },
   { id: 'implementation', title: 'Implementation', agent: null },
   { id: 'review', title: 'Independent code review', agent: null },
@@ -28,16 +29,27 @@ export interface WorkflowChoice {
   independentReview?: boolean;
 }
 
+/** Composer selection that will be sent for the next typed message. */
+export type ChatModelPickerSelection = { chatThreadId?: string } & (
+  | { modelSelection: 'default'; agentId?: string; providerId?: string }
+  | { modelSelection: 'explicit'; agentId?: string; providerId: string; modelId: string }
+);
+
 export interface WorkflowPlan {
   canEdit: boolean;
   providers: RoutingProviderInfo[];
   agents: { slug: string; name: string }[];
-  steps: Partial<Record<ProductOwnerStep, { choice: WorkflowChoice; inherited: ModelCandidate[]; revision: string; allowedAgents: string[] }>>;
+  steps: Partial<Record<ProductOwnerStep, { choice: WorkflowChoice; preview?: ModelLaunchPreview; inherited: ModelCandidate[]; revision: string; allowedAgents: string[] }>>;
   leadModels: AgentModelStatusValue[];
 }
 
 export type WorkflowRunRow = Pick<AgentStateRow, 'key' | 'jobId' | 'taskIndex' | 'parentJobId' | 'parentTaskIndex' | 'rootThreadId' |
   'agentId' | 'label' | 'state' | 'startedAt' | 'endedAt' | 'stateReason' | 'responseModels' | 'modelStatus' | 'workflowStep' | 'followUpOf'>;
+
+export interface ChatOutcomeArchive {
+  history: WorkflowRunRow[];
+  reports: import('./agentResults/AgentResultCard').SavedOutcomeReport[];
+}
 
 export interface WorkflowSaveInput {
   threadId: string;

@@ -62,6 +62,7 @@
           />
         </div>
         <span class="track-status">{{ src.on ? src.status : 'off' }}</span>
+        <button v-if="src.on" class="track-mute" :aria-label="pausedSources[src.id] ? 'Resume source' : 'Pause source'" @click="$emit('toggle-pause', src.id)">{{ pausedSources[src.id] ? '▶' : 'Ⅱ' }}</button>
         <button
           class="track-mute"
           :class="{ muted: !src.on }"
@@ -70,7 +71,6 @@
           M
         </button>
         <button
-          v-if="!src.builtin"
           class="track-remove"
           @click="$emit('remove-source', src.id)"
         >
@@ -116,6 +116,7 @@ const props = defineProps<{
   colorMap:     Record<string, string>;
   iconMap:      Record<string, string>;
   diskDisplay:  string;
+  pausedSources: Record<string, boolean>;
 }>();
 
 const waveColorMap: Record<string, string> = {
@@ -145,5 +146,6 @@ function barOpacity(barIndex: number): number {
 defineEmits<{
   (e: 'toggle-src', src: Source): void;
   (e: 'remove-source', id: string): void;
+  (e: 'toggle-pause', id: string): void;
 }>();
 </script>

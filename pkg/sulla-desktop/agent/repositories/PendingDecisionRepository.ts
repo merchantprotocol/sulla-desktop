@@ -40,11 +40,12 @@ export class PendingDecisionRepository {
   }
 
   async ancestry(conversationId: string): Promise<string[]> {
-    const rows = await this.client.query<{ id: string }>(`WITH RECURSIVE ancestors(id) AS (
-      SELECT $1::text UNION SELECT job.parent_thread_id FROM agent_jobs job
+    const rows = await this.client.query<{ id: string }>(`WITH RECURSIVE ancestors(id,depth,path) AS (
+      SELECT $1::text,0,ARRAY[$1::text] UNION ALL
+      SELECT job.parent_thread_id,child.depth+1,child.path || job.parent_thread_id FROM agent_jobs job
       CROSS JOIN LATERAL jsonb_array_elements(job.tasks) task JOIN ancestors child ON task->>'threadId'=child.id
-      WHERE job.parent_thread_id IS NOT NULL
-    ) SELECT id FROM ancestors`, [conversationId]);
+      WHERE job.parent_thread_id IS NOT NULL AND NOT job.parent_thread_id=ANY(child.path)
+    ) SELECT id FROM (SELECT id,MAX(depth) AS depth FROM ancestors GROUP BY id) ordered ORDER BY depth,id`, [conversationId]);
     return rows.map(row => row.id);
   }
 
@@ -55,8 +56,11 @@ export class PendingDecisionRepository {
       SELECT task->>'threadId',parent.path || (task->>'threadId') FROM agent_jobs job JOIN family parent ON job.parent_thread_id=parent.id
       CROSS JOIN LATERAL jsonb_array_elements(job.tasks) task
       WHERE task->>'threadId' IS NOT NULL AND NOT (task->>'threadId')=ANY(parent.path)
-    ) UPDATE human_decisions decision SET record=jsonb_set(record,'{relatedConversationIds}',COALESCE(record->'relatedConversationIds','[]'::jsonb) || to_jsonb(family.path))
-      FROM family WHERE decision.record->>'conversationId'=family.id AND NOT COALESCE(record->'relatedConversationIds','[]'::jsonb) ? $1`, [conversationId]);
+    ) UPDATE human_decisions decision SET record=jsonb_set(
+        jsonb_set(record,'{relatedConversationIds}',COALESCE(record->'relatedConversationIds','[]'::jsonb) || to_jsonb(family.path)),
+        '{presentationConversationId}',to_jsonb($1::text))
+      FROM family WHERE decision.record->>'conversationId'=family.id
+        AND (NOT COALESCE(record->'relatedConversationIds','[]'::jsonb) ? $1 OR NOT record ? 'presentationConversationId')`, [conversationId]);
   }
 
   async findConversation(conversationId: string): Promise<{ id: string } | null> {
@@ -110,14 +114,25 @@ export class PendingDecisionRepository {
     ), scoped AS (
       SELECT id,record, (status NOT IN ('answered','approved','denied') AND COALESCE(record->>'attention','') NOT IN ('dismissed','answered') AND
         ((record->>'kind'='question' AND (record->>'attention'='active' OR status IN ('pending','deferred'))) OR
-         (record->>'kind'='approval' AND status IN ('pending','deferred') AND (record->>'expiresAt')::bigint > $5))) AS active
+         (record->>'kind'='approval' AND status IN ('pending','deferred') AND (record->>'expiresAt')::bigint > $5))) AS needs_attention,
+        COALESCE(NULLIF(record->>'presentationConversationId',''),NULLIF(record->'relatedConversationIds'->>-1,''),record->>'conversationId') AS presentation_id
       FROM human_decisions WHERE record->>'conversationId' IN (SELECT id FROM threads) OR COALESCE(record->'relatedConversationIds','[]'::jsonb) ? $1
+    ), projected AS (
+      SELECT id,record,(needs_attention AND presentation_id=$1) AS active FROM scoped
+      WHERE NOT needs_attention OR presentation_id=$1
     ), past AS (
-      SELECT id,record FROM scoped WHERE NOT COALESCE(active,false)
+      SELECT id,record FROM projected WHERE NOT COALESCE(active,false)
         AND ($2::bigint IS NULL OR ((record->>'createdAt')::bigint,id) < ($2::bigint,$3::text))
       ORDER BY (record->>'createdAt')::bigint DESC,id DESC LIMIT $4
-    ) SELECT record FROM scoped WHERE active AND $2::bigint IS NULL UNION ALL SELECT record FROM past`,
+    ) SELECT record FROM projected WHERE active AND $2::bigint IS NULL UNION ALL SELECT record FROM past`,
     [conversationId, before?.at ?? null, before?.id ?? '', Math.min(200, Math.max(1, limit)), Date.now()]);
+    return rows.map(row => row.record);
+  }
+
+  /** Transcript history can outlive the drawer's first page. Only read cards owned by this thread. */
+  async listTranscriptDecisions(conversationId: string, ids: string[]): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE id=ANY($2::text[]) AND record->>'conversationId'=$1`, [conversationId, ids]);
     return rows.map(row => row.record);
   }
 

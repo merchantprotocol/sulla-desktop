@@ -16,11 +16,13 @@
  * BaseNode delegates to this via `processPendingToolCalls()` and `executeToolCalls()`.
  */
 
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { createHash } from 'node:crypto';
 
 import { extensionHooks } from '../extensions/HookRegistry';
 import { throwIfAborted } from '../services/AbortService';
 import { RunActivity } from '../services/RunActivity';
+import { runTools } from '../services/RunToolTracker';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { BaseTool } from '../tools/base';
 import { toolRegistry } from '../tools/registry';
@@ -266,7 +268,13 @@ export class ToolExecutor {
           }
 
           const invokeStart = Date.now();
-          const result = await tool.invoke(args);
+          runTools.started(state.metadata, toolRunId, toolName);
+          let result: ToolResult;
+          try {
+            result = await tool.invoke(args);
+          } finally {
+            runTools.finished(state.metadata, toolRunId);
+          }
           const invokeMs = Date.now() - invokeStart;
           // Perf: how long this in-process tool actually took to run. node=
           // tells subconscious recall (SubconsciousAgentNode) apart from the
@@ -445,9 +453,10 @@ export class ToolExecutor {
         toolName,
         args,
         started,
-        outcome: Promise.resolve(tool.invoke(args))
+        outcome: (runTools.started(state.metadata, toolRunId, toolName), Promise.resolve().then(() => tool.invoke(args)))
           .then((result: ToolResult) => ({ result }))
-          .catch((err: any) => ({ error: err?.message || String(err) })),
+          .catch((err: any) => ({ error: err?.message || String(err) }))
+          .finally(() => runTools.finished(state.metadata, toolRunId)),
       });
     }
 
@@ -882,8 +891,9 @@ export class ToolExecutor {
 
     if (lastIsToolResult && prevAssistantHasOurToolUse) {
       (lastMsg.content as unknown as any[]).push(newToolResultBlock);
+      DeferredStallInput.markActionable(state, lastMsg);
     } else {
-      state.messages.push({
+      DeferredStallInput.appendActionable(state, {
         role:     'user',
         content:  [newToolResultBlock],
         metadata: {

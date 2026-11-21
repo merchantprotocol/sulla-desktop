@@ -136,6 +136,23 @@ describe('ContainerDriftReconciler', () => {
     expect(recreated).toEqual(['tools']);
   });
 
+  // risk: availability — a transient Compose failure must not suppress the Files env correction.
+  it('retries the same Files definition after a failed recreate', async() => {
+    const docker = new FakeDocker();
+    let attempts = 0;
+    const reconciler = new ContainerDriftReconciler(docker, COMPOSE, async() => {
+      if (++attempts === 1) throw new Error('transient compose failure');
+      docker.containers.set(FILES.container, { running: true, hash: 'canonical-env' });
+    });
+    docker.desired.set(FILES.service, 'canonical-env');
+    docker.containers.set(FILES.container, { running: true, hash: 'legacy-env' });
+
+    await expect(reconciler.reconcile(FILES)).rejects.toThrow('transient compose failure');
+    await expect(reconciler.reconcile(FILES)).resolves.toMatchObject({ kind: 'recreated' });
+    await expect(reconciler.reconcile(FILES)).resolves.toMatchObject({ kind: 'unchanged' });
+    expect(attempts).toBe(2);
+  });
+
   // risk: security — drift logs carry service names and hash prefixes only
   it('asks compose for the hash with the project compose args and logs only hash prefixes', async() => {
     const { docker, lines, reconciler } = setup();

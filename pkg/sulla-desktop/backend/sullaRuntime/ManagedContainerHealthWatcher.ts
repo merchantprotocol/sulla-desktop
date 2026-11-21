@@ -10,6 +10,7 @@ import {
 } from '../sullaContainerHealth';
 
 export interface ManagedServiceEntry { service: string; container: string }
+type FilesLifecycle = (target: ManagedServiceEntry, heal: (definitionDrifted: boolean) => Promise<void>, checkpoint: () => void) => Promise<void>;
 
 /**
  * Keep managed containers honest: every minute, heal any Sulla container that Docker
@@ -29,6 +30,7 @@ export class ManagedContainerHealthWatcher {
     private readonly healPlanner = new ContainerHealPlanner(),
     /** Securely re-unlock Files after its container loses the in-memory key. */
     private readonly onFilesRestarted: () => Promise<void> = async() => undefined,
+    private readonly withFilesLifecycle: FilesLifecycle = (_target, heal) => heal(false),
   ) {}
 
   watch(
@@ -79,7 +81,7 @@ export class ManagedContainerHealthWatcher {
       if (missing.length) onMissing(missing);
       for (const action of this.healPlanner.plan(rows.filter(row => !this.userStopped.has(row.container)))) {
         console.warn(describeHealAction(action));
-        await this.runHealAction(action, composeCommand)
+        await this.runHealAction(action, composeCommand, assertGeneration)
           .catch(error => console.warn(`[Sulla] Could not ${ action.kind } ${ action.container }:`, (error as Error).message?.split('\n')[0]));
       }
     };
@@ -102,11 +104,23 @@ export class ManagedContainerHealthWatcher {
   }
 
   /** Run one planned heal. The host relay is rebuilt by its launcher, never by compose. */
-  async runHealAction(action: HealAction, composeCommand: string[]): Promise<void> {
+  async runHealAction(action: HealAction, composeCommand: string[], checkpoint = () => {}): Promise<void> {
     if (action.kind === 'give-up') return;
+    if (action.container === 'sulla_files' || action.service === 'sulla_files') {
+      await this.withFilesLifecycle({ container: action.container, service: 'sulla_files' }, async(drifted) => {
+        if (action.kind === 'restart' && !drifted) {
+          await this.guest.execCommand({ root: true }, 'docker', 'restart', '--time', '10', action.container);
+        } else {
+          // A Docker restart cannot pick up a changed Compose environment.
+          await this.guest.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', 'sulla_files');
+        }
+        await this.onFilesRestarted();
+      }, checkpoint);
+
+      return;
+    }
     if (action.kind === 'restart') {
       await this.guest.execCommand({ root: true }, 'docker', 'restart', '--time', '10', action.container);
-      if (action.container === 'sulla_files' || action.service === 'sulla_files') await this.onFilesRestarted();
 
       return;
     }
@@ -116,6 +130,5 @@ export class ManagedContainerHealthWatcher {
       return;
     }
     await this.guest.execCommand({ root: true }, ...composeCommand, 'up', '-d', '--no-deps', '--force-recreate', action.service);
-    if (action.container === 'sulla_files' || action.service === 'sulla_files') await this.onFilesRestarted();
   }
 }

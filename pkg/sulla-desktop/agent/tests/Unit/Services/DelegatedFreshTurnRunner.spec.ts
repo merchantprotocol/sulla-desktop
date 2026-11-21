@@ -3,6 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
+import { DelegatedCompletionHandoff } from '../../../app/Services/DelegatedCompletionHandoff';
+import { injectSteer } from '../../../utils/steerChannel';
+import { DeferredStallInput } from '../../../app/Services/DeferredStallInput';
+import type { PendingCompletion } from '../../../services/AgentCompletionInbox';
 import { DelegatedFreshTurnRunner, type DelegatedFreshTurnPorts } from '../../../services/DelegatedFreshTurnRunner';
 import { TurnOutputCounter } from '../../../services/TurnOutputCounter';
 
@@ -22,6 +26,10 @@ class FakeDelegatedTask {
 
   constructor(messages: any[], private readonly effects: TurnEffect[]) {
     this.state = { messages, metadata: { lastActivityMs: 500 } };
+    const last = messages.at(-1);
+    const entries = DeferredStallInput.read(last)?.entries ?? last?.metadata?.completionEntries;
+    if (entries) DelegatedCompletionHandoff.recordWakeEntries(this.state, entries);
+    else if (last?.role === 'user') DeferredStallInput.markActionable(this.state, last);
   }
 
   /**
@@ -226,4 +234,60 @@ describe('DelegatedFreshTurnRunner', () => {
     await expect(new DelegatedFreshTurnRunner(task.ports()).run(task.state))
       .rejects.toThrow('wake=unknown_wake, unconsumedCompletionJobs=none');
   });
+  it('passes only a genuine completion with display notice to the delegated delivery callback', async() => {
+    // risk: stamping the running child's durable completion and losing its eventual return
+    const advisory: PendingCompletion = { jobId: 'running', taskIndex: 1, noticeKind: 'stall', results: [] };
+    const returned: PendingCompletion = { jobId: 'completed', taskIndex: 2, results: [], notice: '[re-delivery] result' };
+    const wake = completionWake();
+    wake.metadata.completionEntries = [advisory, returned];
+    const task = new FakeDelegatedTask([...history(), wake], [state => task.reply(state, 'reviewed')]);
+
+    await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
+
+    expect(task.acknowledged).toEqual([[returned]]);
+  });
+
+  it.each([0, 2])('does not fail, reroute, acknowledge or spend an empty wake on a stall-only turn at count %s', async(count) => {
+    // risk: an advisory falsely fails a parent or mutates child delivery bookkeeping
+    const stall: PendingCompletion = { jobId: 'running', taskIndex: 1, noticeKind: 'stall', results: [] };
+    const wake = { role: 'user', content: '', metadata: DeferredStallInput.metadata('manager', 'thread-e1', [stall]) };
+    const task = new FakeDelegatedTask([...history(), wake], []);
+    task.job.tasks[0].emptyWakeCount = count;
+    const result = await new DelegatedFreshTurnRunner(task.ports()).run(task.state);
+
+    expect(result.returned).toBeUndefined();
+    expect(task.rerouted).toEqual([]);
+    expect(task.acknowledged).toEqual([]);
+    expect(task.job.tasks[0].emptyWakeCount).toBe(count);
+  });
+
+  it.each(['terminal first', 'stall first'])('reroutes the terminal at the empty-wake bound after distinct handoffs (%s)', async(order) => {
+    // risk: the inbox already acknowledged a terminal result, but the last advisory hides it.
+    const terminal: PendingCompletion = { jobId: 'real-child', taskIndex: 0, results: [] };
+    const stall: PendingCompletion = { jobId: 'still-running', taskIndex: 1, noticeKind: 'stall', results: [] };
+    const oldTerminal = completionWake();
+    const task = new FakeDelegatedTask([...history(), oldTerminal, { role: 'tool', content: 'old tool result' }], [
+      state => { state.messages = DeferredStallInput.persistentMessages(state.messages) },
+    ]);
+    task.liveChildren = 1;
+    task.job.tasks[0].emptyWakeCount = 2;
+    const pending = order === 'terminal first' ? [terminal, stall] : [stall, terminal];
+    const injectedAcks: PendingCompletion[] = [];
+    const handoff = new DelegatedCompletionHandoff(
+      { take: () => pending.splice(0, 1), currentEntries: async(_channel, _thread, entries) => entries, format: () => 'child completed' },
+      { hasLiveWaiter: () => true, wake: () => true },
+      { firstDelivered: async() => {}, acknowledge: async(entry) => { injectedAcks.push(entry) } },
+      injectSteer, () => `wake-${ pending.length }`,
+    );
+    await handoff.deliver('manager', 'thread-e1', task.state);
+    await handoff.deliver('manager', 'thread-e1', task.state);
+    expect(injectedAcks).toHaveLength(2);
+    await expect(new DelegatedFreshTurnRunner(task.ports()).run(task.state))
+      .rejects.toThrow('unconsumedCompletionJobs=real-child');
+    expect(task.executions).toBe(2);
+    expect(task.rerouted).toEqual([{ reason: expect.any(String), entries: [terminal] }]);
+    expect(task.acknowledged).toEqual([]);
+    expect(task.calls).not.toContain('waitForWake');
+  });
+
 });

@@ -5,14 +5,17 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+const { vaultWarn } = vi.hoisted(() => ({ vaultWarn: vi.fn() }));
+
 vi.mock('electron', () => ({
   default: { session: { fromPartition: vi.fn() } },
   WebContentsView: class {},
 }));
 vi.mock('./vaultPermissionPolicy', () => ({ VaultPermissionPolicy: class { } }));
 vi.mock('@pkg/main/vaultTls', () => ({ configureVaultPinnedSession: vi.fn(), VAULT_HTTPS_ORIGIN: 'https://vault.test' }));
+vi.mock('@pkg/utils/logging', () => ({ default: { sulla: { info: vi.fn(), warn: vaultWarn } } }));
 
-import { VaultViewManager } from './vaultViewManager';
+import { VAULT_VIEW_KEEP_ALIVE_MS, VaultViewManager } from './vaultViewManager';
 import { VAULT_THEME_TOKENS } from '@pkg/shared/vaultTheme';
 
 const makeView = () => ({
@@ -23,6 +26,7 @@ const makeView = () => ({
     close: vi.fn(),
     on: vi.fn(),
     insertCSS: vi.fn().mockResolvedValue('theme-key'),
+    removeInsertedCSS: vi.fn().mockResolvedValue(undefined),
   },
 });
 
@@ -39,6 +43,9 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(window.contentView.addChildView).toHaveBeenCalledWith(view);
     expect(manager.hide('legacy-owner', window)).toBe(true);
     expect(window.contentView.removeChildView).toHaveBeenCalledWith(view);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    manager.destroy();
+    expect(view.webContents.close).toHaveBeenCalledOnce();
   });
 
   it('places the protected view above its tab and follows visibility and window bounds', async() => {
@@ -91,9 +98,52 @@ describe('VaultViewManager tab-host attachment', () => {
     expect(window.contentView.removeChildView).toHaveBeenCalledTimes(2);
     expect(stopLayout).toHaveBeenCalledOnce();
     expect(manager.hasOwnerView(window, 'tab-owner')).toBe(false);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(session.clearStorageData).not.toHaveBeenCalled();
+    expect(disposed).toBeDefined();
+
+    const reopened = manager.reserve(window, 'tab-owner');
+    await expect(manager.show(reopened, window, 'https://vault.test/vault/home?grant=next&csrf=next', bounds, host, theme)).resolves.toBe(true);
+    expect(manager.createView).toHaveBeenCalledOnce();
+    expect(view.webContents.loadURL).toHaveBeenCalledOnce();
+
+    const changedHint = manager.reserve(window, 'tab-owner');
+    await expect(manager.show(changedHint, window, 'https://vault.test/vault/home?grant=third&csrf=third#connect=different', bounds, host, theme)).resolves.toBe(true);
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(2);
+    manager.destroy();
     expect(view.webContents.close).toHaveBeenCalledOnce();
     expect(session.clearStorageData).toHaveBeenCalledOnce();
-    expect(disposed).toBeDefined();
+  });
+
+  it('destroys a hidden renderer after the five-minute grace period', async() => {
+    vi.useFakeTimers();
+    try {
+      const manager = new VaultViewManager() as any;
+      const view = makeView();
+      const session = { clearStorageData: vi.fn() };
+      manager.createView = vi.fn().mockResolvedValue({ view, session });
+      const window = { id: 5, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
+      const reservation = manager.reserve(window, 'expiry-owner');
+      await manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 300, height: 200 });
+      manager.hide('expiry-owner', window);
+      await vi.advanceTimersByTimeAsync(VAULT_VIEW_KEEP_ALIVE_MS);
+      expect(view.webContents.close).toHaveBeenCalledOnce();
+      expect(session.clearStorageData).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers() }
+  });
+
+  it('destroys the live renderer immediately when the vault locks', async() => {
+    const manager = new VaultViewManager() as any;
+    const view = makeView();
+    const session = { clearStorageData: vi.fn() };
+    manager.createView = vi.fn().mockResolvedValue({ view, session });
+    const window = { id: 6, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
+    const reservation = manager.reserve(window, 'locked-owner');
+    await manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 300, height: 200 });
+    manager.destroy();
+    expect(view.webContents.close).toHaveBeenCalledOnce();
+    expect(session.clearStorageData).toHaveBeenCalledOnce();
+    expect(manager.hasActiveOwner()).toBe(false);
   });
 
   it('keeps the loading pane visible until the initial Vault theme is applied', async() => {
@@ -126,15 +176,13 @@ describe('VaultViewManager tab-host attachment', () => {
     manager.createView = vi.fn().mockResolvedValue({ view, session: { clearStorageData: vi.fn() } });
     const window = { id: 4, isDestroyed: () => false, once: vi.fn(), setContentProtection: vi.fn(), contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } };
     const reservation = manager.reserve(window, 'invalid-theme-owner');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const theme = { dark: true, colors: Object.fromEntries(VAULT_THEME_TOKENS.map(token => [token, 'color(srgb 1 0 0)'])) };
 
     await expect(manager.show(reservation, window, 'https://vault.test/vault/home', { x: 0, y: 0, width: 400, height: 300 }, undefined, theme)).resolves.toBe(true);
     expect(manager.createView).toHaveBeenCalledOnce();
     expect(window.contentView.addChildView).toHaveBeenCalledWith(view);
     expect(view.webContents.loadURL).toHaveBeenCalledWith('https://vault.test/vault/home');
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Invalid vault theme during open'), expect.any(Error));
-    warn.mockRestore();
+    expect(vaultWarn).toHaveBeenCalledWith(expect.stringContaining('Invalid vault theme during open'), expect.any(Error));
   });
 
   it('releases the vault view when its tab host crashes or closes', async() => {

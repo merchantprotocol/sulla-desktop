@@ -17,7 +17,7 @@ export class SyntheticFilesStore {
   state:SyntheticState;
   fileShares:FileShare[];
 
-  constructor(readonly fixtures = new SyntheticFilesFixtures()) {
+  constructor(readonly fixtures = new SyntheticFilesFixtures(), private readonly storageSuffix = '') {
     this.fileShares = fixtures.fileShares();
     this.state = this.restoreState() ?? fixtures.initialState();
   }
@@ -29,14 +29,14 @@ export class SyntheticFilesStore {
 
   restoreState():SyntheticState | null {
     try {
-      const raw = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(SyntheticFilesStore.STORAGE_KEY);
+      const raw = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(SyntheticFilesStore.STORAGE_KEY + this.storageSuffix);
       const value = raw ? JSON.parse(raw) as SyntheticState : null;
 
       return value?.collections?.some(item => item.id === value.selectedCollectionId) && value.operations && value.idempotency && value.folderReceipts && Array.isArray(value.folderShares) && typeof value.staleReplaceAdvanced === 'boolean' ? value : null;
     } catch { return null }
   }
   persist() {
-    try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(SyntheticFilesStore.STORAGE_KEY, JSON.stringify(this.state)) }
+    try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(SyntheticFilesStore.STORAGE_KEY + this.storageSuffix, JSON.stringify(this.state)) }
     catch { /* In-memory behavior remains available if session storage is unavailable. */ }
   }
   collection(id:string) {

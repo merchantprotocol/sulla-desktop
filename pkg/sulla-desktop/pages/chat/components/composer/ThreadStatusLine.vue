@@ -73,7 +73,7 @@
         class="ta-cols"
         aria-hidden="true"
       >
-        <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Age</span><span />
+        <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Time</span><span />
       </div>
 
       <button
@@ -82,7 +82,7 @@
         class="ta-btn"
         @click="decisionStore.show()"
       >
-        Open For You · {{ decisionStore.openCount.value }}
+        Open Decide · {{ decisionStore.openCount.value }}
       </button>
 
       <!-- Agents launched from this thread. -->
@@ -113,7 +113,7 @@
             class="ta-last"
             :title="rowDetail(node.row)"
           >{{ shortShas(rowDetail(node.row)) }}</span>
-          <span class="ta-when">{{ age(Date.parse(node.row.lastActivityAt)) }}</span>
+          <span class="ta-when"><AgentActivityTime :row="node.row" /></span>
           <ThreadAgentActions
             :row="node.row"
             :stalled="rowState(node.row) === 'stalled'"
@@ -187,8 +187,9 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 import ThreadAgentActions from './ThreadAgentActions.vue';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
-import { chatActivityByTab } from '../../messages/chatActivityStore';
-import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
+import { publishChatActivity } from '../../messages/chatActivityStore';
+import { activityAge, blockedDetail, deriveThreadActivity, hasActiveChatWork, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
+import AgentActivityTime from '../chrome/AgentActivityTime.vue';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
@@ -233,13 +234,14 @@ const activity = computed(() => {
     messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),
     agents:           liveRows.value,
     heartbeatMinutes: heartbeatMinutes.value,
-  }); return decisionStore.openCount.value ? { ...base, state: 'you' as const, lead: 'Needs you', parts: [`${ decisionStore.openCount.value } ${ decisionStore.openCount.value === 1 ? 'request' : 'requests' } in For You`, ...(base.state === 'idle' ? [] : base.parts)] } : base;
+    now:              now.value,
+  }); return decisionStore.openCount.value ? { ...base, state: 'you' as const, lead: 'Needs you', parts: [`${ decisionStore.openCount.value } ${ decisionStore.openCount.value === 1 ? 'request' : 'requests' } in Decide`, ...(base.state === 'idle' ? [] : base.parts)] } : base;
 });
 const hasItems = computed(() => decisionStore.openCount.value + agentNodes.value.length > 0 || !!heartbeatMinutes.value);
 const stalledRows = computed(() => liveRows.value.filter(row => row.state === 'quiet' && row.canMessage));
 const ageText = computed(() => {
   if (activity.value.state === 'idle') return '';
-  const items = decisionStore.openCount.value + agentNodes.value.length;
+  const items = agentNodes.value.length;
   const last = activity.value.lastActivityAt;
   if (activity.value.state === 'working' && last) return `last activity ${ activityAge(now.value - last) } ago`;
   return items ? `${ items } item${ items === 1 ? '' : 's' }` : '';
@@ -268,7 +270,6 @@ function rowDetail(row: AgentStateRow): string {
   if (running) return running;
   return row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
-function age(at: number): string { return Number.isFinite(at) ? activityAge(now.value - at) : '' }
 function clock(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : `${ d.getHours() }:${ String(d.getMinutes()).padStart(2, '0') }`;
@@ -321,9 +322,9 @@ function jumpTo(messageId: string): void {
   window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId } }));
 }
 
-// Tab dots: tell the tab strip what this thread is doing.
-watch(() => activity.value.state, state => {
-  if (context.tabId) chatActivityByTab.set(context.tabId, state);
+// Preserve attention status even when workers are still active.
+watch([() => activity.value.state, () => hasActiveChatWork(controller.isRunning.value, liveRows.value, controller.messages.value, now.value)], ([state, active]) => {
+  if (context.tabId) publishChatActivity(context.tabId, { state, active });
 }, { immediate: true });
 watch(hasItems, has => { if (!has) open.value = false; });
 
@@ -336,7 +337,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   window.removeEventListener('click', clearConfirm);
-  if (context.tabId) chatActivityByTab.delete(context.tabId);
+  if (context.tabId) publishChatActivity(context.tabId, null);
 });
 </script>
 

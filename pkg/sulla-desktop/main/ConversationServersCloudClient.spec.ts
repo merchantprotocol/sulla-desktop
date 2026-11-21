@@ -6,6 +6,22 @@ import { describe, expect, it } from 'vitest';
 import { ConversationServersCloudClient } from './ConversationServersCloudClient';
 
 describe('ConversationServersCloudClient', () => {
+  it('creates public servers without org scope and organization servers with selected membership scope', async () => {
+    // risk: authorization/data isolation; public creation must omit orgId and organization creation must use the selected org only
+    const calls: { method: string; path: string; body?: string }[] = [];
+    const client = new ConversationServersCloudClient(async (method, path, init) => { calls.push({ method, path, body: init?.body as string | undefined }); return new Response('{"server":{"id":"s1"}}', { status: 201 }); });
+    await client.create({ name: ' Public room ', visibility: 'public' });
+    await client.create({ name: 'Team room', visibility: 'organization', orgId: 'org-1' });
+    expect(calls.map(({ method, path }) => [method, path])).toEqual([['POST', '/conversation-servers'], ['POST', '/conversation-servers']]);
+    expect(calls.map(({ body }) => JSON.parse(body ?? 'null'))).toEqual([
+      { name: 'Public room', visibility: 'public' },
+      { name: 'Team room', visibility: 'organization', orgId: 'org-1' },
+    ]);
+    expect(() => client.create({ name: '  ', visibility: 'public' })).toThrow('Server name');
+    expect(() => client.create({ name: 'bad', visibility: 'organization', orgId: '' })).toThrow('Select an organization');
+    expect(calls).toHaveLength(2);
+  });
+
   it('uses the documented per-member preference contract, including null to inherit', async () => {
     // risk: permissions and data accuracy; notification choices must be persisted only through the scoped API contract
     const calls: { method: string; path: string; body?: string }[] = [];

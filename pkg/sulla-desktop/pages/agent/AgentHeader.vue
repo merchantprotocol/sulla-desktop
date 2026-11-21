@@ -98,7 +98,7 @@
           </svg>
           <span class="tab-icon">
             <span
-              v-if="tab.activity === 'working'"
+              v-if="tab.working"
               class="tab-status tab-status-working tab-icon-meter"
               role="img"
               :aria-label="ACTIVITY_LABEL.working"
@@ -157,8 +157,8 @@
             @pointerdown.stop
             @click.stop.prevent
             @dblclick.stop
-            @keydown.enter.prevent="commitRename"
-            @keydown.esc.prevent="cancelRename"
+            @keydown.enter.stop.prevent="commitRename"
+            @keydown.esc.stop.prevent="cancelRename"
             @blur="onRenameBlur"
           >
           <span
@@ -322,7 +322,6 @@
         </button>
       </div>
       <div
-        v-if="canToggleMode !== false"
         class="relative z-10"
       >
         <label class="sr-only">Theme</label>
@@ -341,13 +340,6 @@
           </svg>
         </button>
       </div>
-      <!-- Engine status: one dot for the whole app (replaces the chat's ONLINE pill). -->
-      <span
-        class="engine-status-control"
-        role="status"
-        :title="`Sulla engine: ${engineStatus.label}`"
-        :aria-label="`Sulla engine: ${engineStatus.label}`"
-      ><span class="engine-status" :class="engineStatus.tone" /></span>
       <!-- Three-dot menu (rendered in a popup BrowserWindow via IPC — see moreMenuWindow.ts) -->
       <div class="relative hidden lg:flex">
         <button
@@ -467,6 +459,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
   working: 'Sulla is working',
   waiting: 'Waiting on agents or a schedule',
+  quiet:   'Agent activity is quiet',
   you:     'Needs you',
   stalled: 'No progress: an agent has gone quiet',
   idle:    'Idle',
@@ -565,7 +558,6 @@ const {
 defineProps<{
   isDark:         boolean;
   toggleTheme:    () => void;
-  canToggleMode?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -767,27 +759,7 @@ function onTabWheel(e: WheelEvent) {
   }
 }
 
-// ── Engine status dot ──
-const engineState = ref('STOPPED');
-const ENGINE_STATUS: Record<string, { label: string; tone: string }> = {
-  STARTED:  { label: 'Running', tone: 'ok' },
-  DISABLED: { label: 'Running', tone: 'ok' },
-  STARTING: { label: 'Starting…', tone: 'busy' },
-  STOPPING: { label: 'Shutting down…', tone: 'busy' },
-  ERROR:    { label: 'Error', tone: 'error' },
-  STOPPED:  { label: 'Stopped', tone: 'error' },
-};
-const engineStatus = computed(() => ENGINE_STATUS[engineState.value] ?? { label: engineState.value, tone: 'busy' });
-function onEngineState(_event: unknown, state: unknown): void {
-  engineState.value = String(state);
-}
-
 onMounted(() => {
-  ipcRenderer.on('k8s-check-state' as any, onEngineState);
-  try {
-    const initial = ipcRenderer.sendSync('k8s-state' as any) as string | undefined;
-    if (initial) engineState.value = initial;
-  } catch { /* main not ready; the next state event fills it in */ }
   window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -815,7 +787,6 @@ onMounted(() => {
 onActivated(() => nextTick(syncTabStrip));
 onUnmounted(() => {
   document.documentElement.classList.remove('tab-pointer-dragging');
-  ipcRenderer.removeListener('k8s-check-state' as any, onEngineState);
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -972,6 +943,7 @@ const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
   marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
   terminal:     'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
   usage:        'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
+  'capture-studio': 'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
 };
 
 /** Build the unordered set of all tabs from their sources */
@@ -1000,8 +972,9 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
-    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) ?? (working ? 'working' : undefined) : undefined;
+    const chatStatus = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
+    const working = chatStatus?.active ?? (bt.mode === 'chat' && workingTabIds.value.has(bt.id));
+    const activity = chatStatus?.state ?? (working ? 'working' : undefined);
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
@@ -1101,7 +1074,7 @@ watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
 
-function closeBrowserTab(id: string) {
+async function closeBrowserTab(id: string) {
   const isActive = route.path === `/Browser/${ id }`;
 
   // Snapshot visual position BEFORE closing so we can pick the adjacent tab
@@ -1114,7 +1087,8 @@ function closeBrowserTab(id: string) {
     nextTabRoute = candidate?.route ?? null;
   }
 
-  closeTab(id);
+  const closed = await closeTab(id);
+  if (!closed) return;
 
   if (isActive) {
     if (nextTabRoute) {
@@ -1127,9 +1101,9 @@ function closeBrowserTab(id: string) {
   }
 }
 
-function closeAnyTab(tab: HeaderTab) {
+async function closeAnyTab(tab: HeaderTab) {
   if (tab.browserId) {
-    closeBrowserTab(tab.browserId);
+    await closeBrowserTab(tab.browserId);
   }
 }
 
@@ -2067,7 +2041,18 @@ function handleTabContextMenuAction(
 }
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
+.app-titlebar .tab-activity-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  z-index: 2;
+  background: var(--text-muted);
+}
+.app-titlebar .tab-activity-you { background: var(--status-warning); }
+.app-titlebar .tab-activity-stalled { background: var(--status-error); }
 .app-titlebar .tab-active .tab-activity-dot,
 .app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-chrome-active); }
 .app-titlebar .tab-inactive .tab-activity-dot { box-shadow: none; }
@@ -2140,10 +2125,6 @@ function handleTabContextMenuAction(
 .app-titlebar .tab-new svg { width: 16px; height: 16px; }
 .app-titlebar .titlebar-controls { gap: 4px; height: 44px; padding: 0; }
 .app-titlebar .titlebar-controls button { width: 28px !important; height: 28px !important; flex: 0 0 28px; margin: 0; padding: 0; border: 0; border-radius: 7px; background: transparent; box-shadow: none; }
-.app-titlebar .engine-status-control { width: 28px; height: 28px; flex: 0 0 28px; display: grid; place-items: center; border-radius: 7px; }
-.app-titlebar .engine-status { width: 9px; height: 9px; display: block; flex: none; border-radius: 50%; background: var(--status-warning); box-shadow: none; }
-.app-titlebar .engine-status.ok { background: var(--status-success); }
-.app-titlebar .engine-status.error { background: var(--status-error); }
 .app-titlebar .tab-working .tab-icon::after { z-index: 0; }
 .app-titlebar .tab-item:not(.tab-working) .tab-icon::after { content: none; }
 .app-titlebar .titlebar-controls > .relative { display: flex; align-items: center; justify-content: center; }

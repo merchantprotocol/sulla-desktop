@@ -82,8 +82,8 @@ export class ShareLinkRepository {
     await client.query(`UPDATE file_share_links SET access_mode=$2,password_protected=$3,password_hash=$4,expires_at=$5,keep_available=$6,keep_until=$7,display_sharer_name=$8,served_from=$9,revoked_at=NULL,reconciliation_required=FALSE,reconciliation_action=NULL,reconciliation_updated_at=NULL,updated_at=NOW() WHERE id=$1`, values);
   }
 
-  async markRestored(client:ShareQueryable, id:string, publicUrl:unknown):Promise<void> {
-    await client.query('UPDATE file_share_links SET revoked_at=NULL,public_url=$2,served_from=$3,reconciliation_required=FALSE,reconciliation_action=NULL,reconciliation_updated_at=NULL,updated_at=NOW() WHERE id=$1', [id, publicUrl, 'desktop']);
+  async markRestored(client:ShareQueryable, id:string, publicUrl:unknown, deviceId:string):Promise<void> {
+    await client.query('UPDATE file_share_links SET revoked_at=NULL,public_url=$2,served_from=$3,device_id=$4,reconciliation_required=FALSE,reconciliation_action=NULL,reconciliation_updated_at=NULL,updated_at=NOW() WHERE id=$1', [id, publicUrl, 'desktop', deviceId]);
   }
 
   async activity(ownerUserId:string, id?:string):Promise<any[]> {

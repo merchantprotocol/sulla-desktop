@@ -16,7 +16,8 @@
 
 import { exec } from 'child_process';
 
-import { ipcMain, BrowserWindow, screen } from 'electron';
+import { ipcMain, screen } from 'electron';
+import { getCaptureStudioContents } from '@pkg/main/captureStudioRpc';
 
 let trackingActive = false;
 let focusPollInterval: ReturnType<typeof setInterval> | null = null;
@@ -70,11 +71,7 @@ function getFocusedWindowInfo(): Promise<{ app: string; title: string; bounds: {
 }
 
 function broadcast(channel: string, data: any): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send(channel, data);
-    }
-  }
+  getCaptureStudioContents()?.send(channel, data);
 }
 
 function startTracking(): void {

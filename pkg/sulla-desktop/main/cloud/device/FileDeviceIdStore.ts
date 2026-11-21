@@ -53,7 +53,9 @@ export class FileDeviceIdStore implements DeviceIdStore {
   /** Sync peek for callers that must not create an id or touch the database. Null on any problem. */
   readExisting(): string | null {
     try {
-      return this.file.read()?.trim() || null;
+      const value = this.file.read()?.trim();
+
+      return DeviceId.isValid(value) ? value : null;
     } catch {
       return null;
     }

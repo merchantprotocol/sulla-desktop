@@ -13,15 +13,16 @@
  */
 
 import { ref, onUnmounted } from 'vue';
+import paths from '@pkg/utils/paths';
 
 import { SpeakerCaptureIntegrity } from '../services/SpeakerCaptureIntegrity';
+import { RecorderChunkQueue } from '../services/RecorderChunkQueue';
 import type { QualityPreset } from './useMediaSources';
 
 const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const paths = require('@pkg/utils/paths').default;
 
 interface StreamEntry {
   id:           string;
@@ -32,6 +33,8 @@ interface StreamEntry {
   writeStream:  any; // fs.WriteStream
   startOffset:  number;
   bytesWritten: number;
+  chunkQueue: RecorderChunkQueue;
+  finalized: boolean;
 }
 
 interface ExternalStreamEntry {
@@ -49,6 +52,24 @@ const STREAM_FILENAMES: Record<StreamEntry['type'], string> = {
   mic:            'mic.webm',
   'system-audio': 'speaker.webm',
 };
+
+/** Keep historic primary filenames and give every additional video source its own file. */
+export function recordingFilename(type: StreamEntry['type'], id: string): string {
+  if ((type !== 'screen' || id === 'screen') && (type !== 'camera' || id === 'cam')) return STREAM_FILENAMES[type];
+  const safeId = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${ type }-${ safeId || 'extra' }.webm`;
+}
+
+export interface RecorderManifestStream {
+  id: string; type: string; filename: string; format: string; startOffset: number; bytes: number;
+}
+
+export function toRecorderManifestStream(entry: Pick<StreamEntry, 'id' | 'type' | 'filename' | 'startOffset' | 'bytesWritten'>): RecorderManifestStream {
+  return {
+    id: entry.id, type: entry.type, filename: entry.filename,
+    format: 'webm', startOffset: Math.round(entry.startOffset), bytes: entry.bytesWritten,
+  };
+}
 
 export interface CaptureEvent {
   type:    'click' | 'keystroke' | 'window-focus' | 'scroll';
@@ -95,7 +116,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function useRecorder(
-  optionsOrIntegrity: { manageUnmount?: boolean } | SpeakerCaptureIntegrity = {},
+  optionsOrIntegrity: { manageUnmount?: boolean; fileSystem?: any; capturesDir?: string } | SpeakerCaptureIntegrity = {},
   injectedIntegrity?: SpeakerCaptureIntegrity,
 ) {
   const options = optionsOrIntegrity instanceof SpeakerCaptureIntegrity ? {} : optionsOrIntegrity;
@@ -108,11 +129,14 @@ export function useRecorder(
   const bytesWritten = ref(0);
   const diskDisplay = ref('0 B');
   const error = ref<string | null>(null);
+  const recordingFs = options.fileSystem ?? fs;
+  const capturesRoot = options.capturesDir ?? getCapturesDir();
 
   let sessionDir = '';
   let entries: StreamEntry[] = [];
   let stopping: Promise<string> | undefined;
   let externalEntries: ExternalStreamEntry[] = [];
+  const sourceFinalizations = new Map<string, Promise<boolean>>();
   let captureEvents: CaptureEvent[] = [];
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let sessionStartTime = 0;
@@ -135,10 +159,10 @@ export function useRecorder(
     error.value = null;
     const id = randomUUID().slice(0, 13);
     sessionId.value = id;
-    sessionDir = path.join(getCapturesDir(), id);
+    sessionDir = path.join(capturesRoot, id);
 
     try {
-      fs.mkdirSync(sessionDir, { recursive: true });
+      recordingFs.mkdirSync(sessionDir, { recursive: true });
     } catch (e: any) {
       error.value = `Failed to create capture directory: ${ e.message }`;
       console.error('[useRecorder]', error.value);
@@ -156,12 +180,12 @@ export function useRecorder(
     for (const src of streams) {
       const hasVideo = src.stream.getVideoTracks().length > 0;
       const mimeType = pickMimeType(hasVideo ? 'video' : 'audio');
-      const filename = STREAM_FILENAMES[src.type];
+      const filename = recordingFilename(src.type, src.id);
       const filePath = path.join(sessionDir, filename);
 
       let ws: any;
       try {
-        ws = fs.createWriteStream(filePath);
+        ws = recordingFs.createWriteStream(filePath);
       } catch (e: any) {
         console.error(`[useRecorder] Failed to create write stream for ${ filename }:`, e.message);
         continue;
@@ -194,20 +218,25 @@ export function useRecorder(
         writeStream:  ws,
         startOffset:  0,
         bytesWritten: 0,
+        chunkQueue: new RecorderChunkQueue(),
+        finalized: false,
       };
 
-      recorder.ondataavailable = async(e: BlobEvent) => {
-        if (e.data.size > 0 && ws && !ws.destroyed) {
-          try {
+      recorder.ondataavailable = (e: BlobEvent) => {
+        if (e.data.size > 0) {
+          entry.chunkQueue.enqueue(async() => {
             const buffer = Buffer.from(await e.data.arrayBuffer());
-            if (ws.destroyed) return; // re-check after async
-            ws.write(buffer);
+            if (ws.destroyed || ws.errored) throw ws.errored || new Error(`Recording stream closed before chunk write: ${ filename }`);
+            await new Promise<void>((resolve, reject) => {
+              ws.write(buffer, (error: Error | null | undefined) => error ? reject(error) : resolve());
+            });
             entry.bytesWritten += buffer.length;
             bytesWritten.value = entries.reduce((sum, en) => sum + en.bytesWritten, 0);
             diskDisplay.value = formatBytes(bytesWritten.value);
-          } catch (err: any) {
-            console.error(`[useRecorder] Chunk write failed for ${ filename }:`, err.message);
-          }
+          });
+          void entry.chunkQueue.flush().catch(err => {
+            error.value = `Recording chunk write failed for ${ entry.type }: ${ err?.message || err }`;
+          });
         }
       };
 
@@ -269,6 +298,35 @@ export function useRecorder(
     });
   }
 
+  /** Finalize one video source and keep its completed file in the session manifest. */
+  function finalizeSource(id: string): Promise<boolean> {
+    const inFlight = sourceFinalizations.get(id);
+    if (inFlight) return inFlight;
+    const entry = entries.find(candidate => candidate.id === id && !candidate.finalized);
+    if (!entry) return Promise.resolve(false);
+    const operation = (async() => {
+      if (entry.recorder.state !== 'inactive') {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (error?: unknown) => { if (settled) return; settled = true; error ? reject(error) : resolve(); };
+          entry.recorder.onstop = () => { void entry.chunkQueue.flush().then(() => finish(), finish); };
+          try { entry.recorder.stop(); } catch (error) { finish(error); }
+        });
+      } else await entry.chunkQueue.flush();
+      await entry.chunkQueue.flush();
+      await new Promise<void>((resolve, reject) => {
+        const ws = entry.writeStream;
+        if (!ws || ws.closed || ws.destroyed) return ws?.errored ? reject(ws.errored) : resolve();
+        ws.once('error', reject); ws.end(resolve);
+      });
+      entry.finalized = true;
+      return true;
+    })();
+    sourceFinalizations.set(id, operation);
+    void operation.finally(() => { if (sourceFinalizations.get(id) === operation) sourceFinalizations.delete(id); }).catch(() => undefined);
+    return operation;
+  }
+
   /**
    * Log an interaction event with timestamp relative to session start.
    * Events are written to the manifest for post-production use.
@@ -293,7 +351,7 @@ export function useRecorder(
    */
   function stopSession(): Promise<string> {
     if (stopping) return stopping;
-    if (!isRecording.value) return Promise.resolve('');
+    if (!isRecording.value && entries.length === 0 && externalEntries.length === 0) return Promise.resolve('');
     const operation = flushSession();
     stopping = operation;
     void operation.finally(() => { if (stopping === operation) stopping = undefined; }).catch(() => undefined);
@@ -303,80 +361,80 @@ export function useRecorder(
   async function flushSession(): Promise<string> {
 
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null }
-    isRecording.value = false;
 
     // Stop all recorders and wait for their final ondataavailable to fire
-    const stopPromises = entries.map(entry => new Promise<void>((resolve) => {
+    const stopPromises = entries.map(entry => new Promise<void>((resolve, reject) => {
       if (entry.recorder.state === 'inactive') {
-        resolve();
+        void entry.chunkQueue.flush().then(resolve, reject);
         return;
       }
 
-      let resolved = false;
-      const safeResolve = () => { if (!resolved) { resolved = true; resolve() } };
+      let settled = false;
+      const safeResolve = () => { if (!settled) { settled = true; resolve() } };
+      const safeReject = (error: unknown) => { if (!settled) { settled = true; reject(error) } };
 
       const origHandler = entry.recorder.ondataavailable;
-      entry.recorder.ondataavailable = async(e: BlobEvent) => {
-        // Process the final chunk
-        try {
-          if (origHandler) await (origHandler as any)(e);
-        } catch (err: any) {
-          console.warn('[useRecorder] Final chunk handler error:', err.message);
-        }
-        safeResolve();
+      entry.recorder.ondataavailable = (e: BlobEvent) => {
+        try { origHandler?.call(entry.recorder, e); }
+        catch (error) { safeReject(error); return; }
+        void entry.chunkQueue.flush().then(safeResolve, safeReject);
       };
 
       entry.recorder.onstop = () => {
-        // Safety: resolve if ondataavailable never fires (empty final chunk)
-        setTimeout(safeResolve, 100);
+        // MediaRecorder dispatches the final dataavailable before stop. Drain
+        // that exact queue here; a timer can publish the manifest while a
+        // slow Blob.arrayBuffer() or filesystem write is still in flight.
+        void entry.chunkQueue.flush().then(safeResolve, safeReject);
       };
+      entry.recorder.onerror = (event: Event) => safeReject(new Error(`MediaRecorder failed while stopping ${ entry.type}: ${ (event as any).error?.message || 'unknown error' }`));
 
-      entry.recorder.stop();
+      try { entry.recorder.stop(); } catch (error) { safeReject(error); }
     }));
 
-    // Wait for stop promises with a 5-second timeout to prevent hanging forever
-    await Promise.race([
-      Promise.all(stopPromises),
-      new Promise<void>(resolve => setTimeout(resolve, 5000)),
-    ]);
+    let recorderTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all(stopPromises),
+        new Promise<void>((_resolve, reject) => { recorderTimeout = setTimeout(() => reject(new Error('Timed out waiting for recording chunks to flush.')), 5000); }),
+      ]);
+    } finally { if (recorderTimeout) clearTimeout(recorderTimeout); }
+    await Promise.all(entries.map(entry => entry.chunkQueue.flush()));
 
     // Close all write streams and wait until every final chunk is flushed to
     // disk. The editor may open the manifest immediately after recorder_stop,
     // so publishing it before `finish` can expose truncated WebM files.
-    await Promise.all(entries.map(entry => new Promise<void>((resolve) => {
+    await Promise.all(entries.map(entry => new Promise<void>((resolve, reject) => {
       const ws = entry.writeStream;
       if (!ws || ws.destroyed || ws.closed) {
-        resolve();
+        if (ws?.errored) reject(ws.errored);
+        else resolve();
         return;
       }
-      let resolved = false;
-      const done = () => {
-        if (resolved) return;
-        resolved = true;
-        resolve();
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const finish = (error?: unknown) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        ws.removeListener('finish', onFinish);
+        ws.removeListener('error', onError);
+        if (error) reject(error);
+        else resolve();
       };
-      ws.once('finish', done);
-      ws.once('close', done);
-      ws.once('error', done);
+      const onFinish = () => finish();
+      const onError = (error: Error) => finish(error);
+      ws.once('finish', onFinish);
+      ws.once('error', onError);
+      timeout = setTimeout(() => finish(new Error(`Timed out flushing recording stream ${ entry.filename }.`)), 5000);
       ws.end();
-      setTimeout(done, 5000);
     })));
 
     // Write manifest (includes both MediaRecorder and external streams)
     let allStreams = [
-      ...entries.map(e => ({
-        id:          e.id,
-        type:        e.type,
-        filename:    e.filename,
-        format:      'webm',
-        startOffset: Math.round(e.startOffset),
-        bytes:       e.bytesWritten,
-      })),
+      ...entries.map(toRecorderManifestStream),
       ...externalEntries.map(e => {
         let bytes = 0;
-        try { bytes = e.getBytesWritten() } catch (err: any) {
-          console.warn('[useRecorder] getBytesWritten failed for', e.id, err.message);
-        }
+        bytes = e.getBytesWritten();
         return {
           id:          e.id,
           type:        e.type,
@@ -392,11 +450,7 @@ export function useRecorder(
     // This includes container/header bytes and guarantees downstream editors
     // see the size of the exact file named by each manifest entry.
     for (const stream of allStreams) {
-      try {
-        stream.bytes = fs.statSync(path.join(sessionDir, stream.filename)).size;
-      } catch (err: any) {
-        console.warn('[useRecorder] Could not stat finalized stream', stream.filename, err.message);
-      }
+      stream.bytes = recordingFs.statSync(path.join(sessionDir, stream.filename)).size;
     }
 
     // A finalized 44-byte WAV contains only its header. Do not advertise it
@@ -416,17 +470,12 @@ export function useRecorder(
       events:    captureEvents,
     };
 
-    try {
-      fs.writeFileSync(
-        path.join(sessionDir, 'manifest.json'),
-        JSON.stringify(manifest, null, 2),
-      );
-    } catch (e: any) {
-      console.error('[useRecorder] Failed to write manifest:', e.message);
-    }
+    recordingFs.writeFileSync(path.join(sessionDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
     const returnId = sessionId.value;
     entries = [];
+    externalEntries = [];
+    isRecording.value = false;
 
     return returnId;
   }
@@ -446,6 +495,7 @@ export function useRecorder(
     startSession,
     stopSession,
     registerExternalStream,
+    finalizeSource,
     logEvent,
     getSessionDir,
   };

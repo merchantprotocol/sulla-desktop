@@ -19,8 +19,8 @@ const channels = {
 };
 
 function invokeResult(channel: string, arg?: unknown): unknown {
-  if (channel === 'org-conversations:organizations') return [];
-  if (channel === 'conversation-servers:list') return [publicServer, orgServer];
+  if (channel === 'org-conversations:organizations') return [{ orgId: 'org-id', name: 'Organization' }];
+  if (channel === 'conversation-servers:list') return (arg as string | undefined) === 'org-id' ? [orgServer] : [publicServer];
   if (channel === 'conversation-servers:channels') return (arg as string) === 'org' ? channels.org : channels.public;
   if (channel === 'conversation-servers:members') return [];
   if (channel === 'conversation-servers:channel-preference') return { preference: null, channelOverride: null };
@@ -41,6 +41,133 @@ describe('ConversationServersPanel composer events', () => {
     invoke.mockImplementation((channel: string, arg?: unknown) => Promise.resolve(invokeResult(channel, arg)));
   });
 
+  it('keeps DMs as the starting view and groups public servers before organization servers', async () => {
+    // risk: navigation; an organization server must not appear in the public group or replace DMs on entry
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] }, slots: { default: '<div data-test="dm-view">DM inbox</div>' } });
+    await flushPromises();
+    expect(wrapper.find('[data-test="dm-view"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="Direct messages and People"]').classes()).toContain('selected');
+    expect(wrapper.find('.cs-group').text()).toBe('Public');
+    expect(wrapper.findAll('.cs-server-icon.cs-public').map(button => button.attributes('aria-label'))).toEqual(['Public server']);
+    expect(wrapper.findAll('.cs-server-icon.cs-org').map(button => button.attributes('aria-label'))).toEqual(['Organization server']);
+    expect(wrapper.find('.cs-server-add[aria-label="Create server"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('opens an accessible, searchable public-only directory from the accessible compass control', async () => {
+    // risk: tenant isolation; directory results must never expose organization servers
+    invoke.mockImplementation((channel: string, arg?: unknown) => Promise.resolve(
+      channel === 'conversation-servers:list' && arg === undefined
+        ? [publicServer, { ...orgServer, id: 'leaked-org', name: 'Hidden organization' }]
+        : invokeResult(channel, arg),
+    ));
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    const compass = wrapper.get('button[aria-label="Discover public servers"]');
+    expect(compass.attributes('title')).toBe('Discover public servers');
+    expect((compass.element as HTMLElement).tagName).toBe('BUTTON');
+    await compass.trigger('click');
+    expect(wrapper.get('[role="dialog"][aria-label="Discover public servers"]').exists()).toBe(true);
+    expect(wrapper.findAll('.cs-discover-results li').map(row => row.text())).toEqual(['PU Public Open']);
+    await wrapper.get('input[type="search"]').setValue('hidden');
+    expect(wrapper.findAll('.cs-discover-results li')).toHaveLength(0);
+    await wrapper.get('input[type="search"]').setValue('public');
+    await wrapper.get('.cs-discover-results button').trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('[aria-label="general, notifications All messages"]').exists()).toBe(true));
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(wrapper.find('.cs-rail [aria-label="Direct messages and People"]').exists()).toBe(true);
+    expect(wrapper.find('.cs-rail [aria-label="Back"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('explains membership is required when a public directory result cannot be opened', async () => {
+    // risk: access control; directory discovery must not imply that private membership can be bypassed
+    invoke.mockImplementation((channel: string, arg?: unknown) => {
+      if (channel === 'conversation-servers:channels' && arg === 'public') return Promise.reject(new Error('Request failed (403)'));
+      return Promise.resolve(invokeResult(channel, arg));
+    });
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    // A native button exposes the same activation behavior to keyboard and pointer users.
+    await wrapper.get('[aria-label="Discover public servers"]').trigger('click');
+    await wrapper.get('.cs-discover-results button').trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('[role="alert"]').text()).toBe('Membership is required to open this public server.'));
+    expect(wrapper.find('button[aria-label*="Join"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('creates a public server without an orgId', async () => {
+    // risk: tenant isolation; public creation must not inherit or send an organization scope
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    invoke.mockImplementation((channel: string, arg?: unknown) => channel === 'conversation-servers:create'
+      ? Promise.resolve({ id: 'created-public', name: 'Open community', visibility: 'public', ownerUserId: 'user' })
+      : Promise.resolve(invokeResult(channel, arg)));
+    await wrapper.get('.cs-server-add').trigger('click');
+    expect(wrapper.get('form[aria-label="Create server"]').exists()).toBe(true);
+    await wrapper.get('input').setValue('  Open community  ');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).toHaveBeenCalledWith('conversation-servers:create', { name: 'Open community', visibility: 'public' });
+    wrapper.unmount();
+  });
+
+  it('creates an organization server using only a membership-backed organization option', async () => {
+    // risk: tenant isolation; organization creation must use an authorized membership and its exact orgId
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    invoke.mockImplementation((channel: string, arg?: unknown) => channel === 'org-conversations:organizations'
+      ? Promise.resolve([{ orgId: 'member-org', name: 'Member org', memberCount: 2 }])
+      : channel === 'conversation-servers:create'
+        ? Promise.resolve({ id: 'created-org', name: 'Team hub', visibility: 'organization', orgId: 'member-org', ownerUserId: 'user' })
+        : Promise.resolve(invokeResult(channel, arg)));
+    // Refresh membership-backed org options before opening the dialog.
+    await wrapper.setProps({ orgId: 'updated-org' });
+    await flushPromises();
+    await wrapper.get('.cs-server-add').trigger('click');
+    await wrapper.get('input').setValue('Team hub');
+    await wrapper.get('select').setValue('organization');
+    const orgSelect = wrapper.findAll('select')[1];
+    expect(orgSelect.findAll('option').map(option => option.text())).toEqual(['Member org']);
+    await orgSelect.setValue('member-org');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).toHaveBeenCalledWith('conversation-servers:create', {
+      name: 'Team hub', visibility: 'organization', orgId: 'member-org',
+    });
+    wrapper.unmount();
+  });
+
+  it('does not invoke IPC for a blank name or a missing organization selection', async () => {
+    // risk: invalid tenant-scoped writes; blank names and absent membership selections must be rejected
+    invoke.mockImplementation((channel: string, arg?: unknown) => Promise.resolve(
+      channel === 'org-conversations:organizations' ? [] : invokeResult(channel, arg),
+    ));
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'current-org', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    await wrapper.get('.cs-server-add').trigger('click');
+    await wrapper.get('input').setValue('   ');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).not.toHaveBeenCalledWith('conversation-servers:create', expect.anything());
+
+    await wrapper.get('input').setValue('No organization');
+    await wrapper.get('select').setValue('organization');
+    await wrapper.get('form[aria-label="Create server"]').trigger('submit');
+    expect(invoke).not.toHaveBeenCalledWith('conversation-servers:create', expect.anything());
+    wrapper.unmount();
+  });
+
+  it('opens the selected server channel view and pins Back to the bottom of the rail', async () => {
+    // risk: navigation; server selection must load that server's channels without losing the rail exit
+    const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
+    await flushPromises();
+    await wrapper.get('[aria-label="Organization server"]').trigger('click');
+    // The Channels container mounts immediately on selection, before async channels/preferences resolve.
+    await vi.waitFor(() => expect(wrapper.find('[aria-label="team, notifications All messages"]').exists()).toBe(true));
+    expect(wrapper.get('.cs-rail').element.lastElementChild?.getAttribute('aria-label')).toBe('Back');
+    await wrapper.get('[aria-label="Back"]').trigger('click');
+    expect(wrapper.emitted('exit')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it('sends Enter to the composer source channel even after selection changes', async () => {
     // risk: privacy; an async channel switch must not redirect a message to a different destination
     let finishSend!: () => void;
@@ -49,6 +176,7 @@ describe('ConversationServersPanel composer events', () => {
       : Promise.resolve(invokeResult(channel, arg)));
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
     await flushPromises();
+    await selectServer(wrapper, 'Public');
     const textarea = wrapper.get('textarea');
     await textarea.setValue('private message');
     await textarea.trigger('keydown', { key: 'Enter' });
@@ -69,6 +197,7 @@ describe('ConversationServersPanel composer events', () => {
     // risk: draft integrity; late input from a public composer must not overwrite an organization draft
     const wrapper = mount(ConversationServersPanel, { props: { orgId: 'org-id', currentUserId: 'user', people: [] } });
     await flushPromises();
+    await selectServer(wrapper, 'Public');
     const oldTextarea = wrapper.get('textarea').element as HTMLTextAreaElement;
     await selectServer(wrapper, 'Organization');
     const currentTextarea = wrapper.get('textarea');

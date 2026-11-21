@@ -30,16 +30,7 @@
       class="noir-avatar"
       aria-hidden="true"
     >S</span>Sulla · {{ timeLabel }}</span>
-    <IsolatedHtml
-      v-if="isHtmlDocument"
-      class="chat-body"
-      :html="msg.text"
-    />
-    <div
-      v-else
-      class="chat-body"
-      v-html="rendered"
-    />
+    <InlineReplyBody class="chat-body" :text="msg.text" agent-cards structured />
     <button
       v-if="hoverBlock"
       type="button"
@@ -79,25 +70,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 
-import IsolatedHtml from './IsolatedHtml.vue';
+import InlineReplyBody from './InlineReplyBody.vue';
 import TurnActions from './TurnActions.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
 import ChatFileCard from '../files/ChatFileCard.vue';
 import { useChatController } from '../../controller/useChatController';
-import { renderMarkdown } from '../../messages/markdown';
-import { A2aCardMarkup } from '../../messages/a2aCardMarkup';
-import { structureReply } from '../../messages/replyStructure';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { SullaMessage } from '../../models/Message';
-
-/**
- * Detect raw HTML-ish content. When the agent emits things like a bare
- * `<style>…</style>` block or an unwrapped `<html>` document, those need
- * Shadow DOM isolation so their CSS doesn't bleed into the host app.
- * Everything else keeps going through the normal marked/DOMPurify pipe.
- */
-const HTML_DOC_RE = /<style\b|<script\b|<!doctype|<html\b|<body\b|<head\b/i;
 
 const props = defineProps<{ msg: SullaMessage }>();
 // Kept for back-compat with any parents that still listen.
@@ -115,11 +95,6 @@ const timeLabel = computed(() => {
   return `${ d.getHours() % 12 || 12 }:${ String(d.getMinutes()).padStart(2, '0') }`;
 });
 
-const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
-
-// Long replies are regrouped into Summary / Issues / Next steps sections for scanning.
-const a2aCards = new A2aCardMarkup();
-const rendered = computed(() => structureReply(renderMarkdown(a2aCards.render(props.msg.text))));
 const fileReferences = computed(() => {
   const refs = [...(props.msg.fileReferences ?? [])].map(item => ({ ...item.fileRef!, name: item.name })).filter(item => item.fileId);
   refs.push(...parseDurableFileReferences(props.msg.text));

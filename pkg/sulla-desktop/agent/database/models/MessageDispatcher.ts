@@ -21,7 +21,7 @@
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
-import { stripProtocolTagsForUi } from '@pkg/agent/utils/stripProtocolTags';
+import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
@@ -210,7 +210,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── String payload (simple content) ──
   if (typeof msg.data === 'string') {
-    if (!msg.data.trim()) {
+    const text = msg.type !== 'system_message' && /^\s*<AGENT_DONE>/i.test(msg.data) ? stripProtocolTagsForUi(msg.data) : msg.data;
+    if (!text.trim()) {
       console.warn(`⚠️ [MessageDispatcher] EMPTY STRING assistant message dropped`, {
         msgType: msg.type, channel: agentId, threadId: msgThreadId,
       });
@@ -227,7 +228,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       channelId: agentId,
       threadId:  msgThreadId,
       role:      msg.type === 'system_message' ? 'system' : 'assistant',
-      content:   msg.data,
+      content:   text,
     };
     console.log(`[MessageDispatcher] messages.push (string ${ msg.type })`, { role: message.role, contentChars: message.content.length, content: message.content.slice(0, 120) });
     ctx.messages.push(message);
@@ -249,12 +250,17 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
-  const content = data?.content !== undefined ? contentToString(data.content) : '';
+  const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
+  const rawContent = data?.content !== undefined ? contentToString(data.content) : '';
+  const doneWrapper = msg.type !== 'system_message' && (!data.role || data.role === 'assistant')
+    && (!data.kind || data.kind === 'streaming' || data.kind === 'text') && /^\s*<AGENT_DONE>/i.test(rawContent);
+  const content = doneWrapper
+    ? (kindRaw === 'streaming' ? stripProtocolTagsStreaming(rawContent) : stripProtocolTagsForUi(rawContent))
+    : rawContent;
 
   // Segment-boundary sentinels: kind carries the meaning, content is empty
   // by design. Must be handled BEFORE the empty-content drop or the signal
   // gets swallowed and the streaming/thinking bubbles never close.
-  const kindRaw = typeof data?.kind === 'string' ? data.kind : undefined;
   if (kindRaw === 'streaming_complete' || kindRaw === 'thinking_complete') {
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
@@ -508,27 +514,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
-  let kind = (typeof data?.kind === 'string') ? data.kind : undefined;
-  let finalContent = content;
+  const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
+  const finalContent = content;
 
   if (kind === 'speak') {
     console.log(`[MessageDispatcher] SPEAK received → channel="${ agentId }", thread="${ msgThreadId }", content="${ content.slice(0, 80) }"`);
-  }
-
-  // Auto-detect HTML
-  if (!kind || kind === 'text' || kind === 'progress') {
-    const htmlMatch = /^\s*<html>([\s\S]*)<\/html>\s*$/i.exec(finalContent);
-    if (htmlMatch) {
-      kind = 'html';
-      finalContent = htmlMatch[1].trim();
-    }
-  }
-
-  if (!finalContent.trim()) {
-    console.warn(`⚠️ [MessageDispatcher] EMPTY after HTML strip — assistant message dropped`, {
-      msgType: msg.type, channel: agentId, kind,
-    });
-    return;
   }
 
   // Warn about suspicious content
@@ -683,6 +673,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         streamed.startsWith(incoming)
       );
       if (alreadyShown) {
+        // A final dump can carry the last part of a formatted block after
+        // a throttled stream update. Keep it in the existing bubble.
+        if (recentStreamIndexes.length === 1 && incoming.length > streamed.length && incoming.startsWith(streamed)) {
+          const index = recentStreamIndexes[0];
+          ctx.messages[index] = { ...ctx.messages[index], content: finalContent };
+        }
         // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
           const m = ctx.messages[i];

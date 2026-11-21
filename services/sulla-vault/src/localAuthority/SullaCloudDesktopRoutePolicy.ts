@@ -81,7 +81,7 @@ export class SullaCloudDesktopRoutePolicy {
     [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/contact-requests\/[A-Za-z0-9._~-]{1,200}\/resolve$/, ['POST']],
     [/^\/orgs\/[A-Za-z0-9._~-]{1,200}\/agent-host-lease$/, ['POST']],
     // Conversations server discovery and per-member notification controls used by the Desktop UI.
-    [/^\/conversation-servers$/, ['GET']],
+    [/^\/conversation-servers$/, ['GET', 'POST']],
     [/^\/conversation-servers\/[A-Za-z0-9._~-]{1,200}$/, ['GET']],
     [/^\/conversation-servers\/[A-Za-z0-9._~-]{1,200}\/channels$/, ['GET']],
     [/^\/conversation-servers\/[A-Za-z0-9._~-]{1,200}\/members$/, ['GET']],

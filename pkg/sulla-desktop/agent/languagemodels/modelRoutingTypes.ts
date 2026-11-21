@@ -33,7 +33,7 @@ export interface ClassModel {
 
 /** What changed in the providers' live model lists at the last Refresh models. */
 export interface ModelCatalogReport {
- checks?: { provider: string; status: 'refreshed' | 'unavailable' }[];
+ checks?: { provider: string; status: 'refreshed' | 'unavailable'; reason?: string }[];
  checkedAt: string | null;
  added: ClassModel[]; // models a provider lists now that it did not list at the previous check
  removed: ClassModel[]; // models a provider no longer lists
@@ -65,6 +65,8 @@ export interface NeverUsePair { provider: string; model: string; effort: string 
 
 /** One model in a provider's list, with what the provider says about it. */
 export interface RoutingModelInfo {
+ minimumClientVersion?: string;
+ capabilities?: import('./sharedModelCatalog').SharedCatalogModel['capabilities'];
  id: string;
  label: string;
  efforts?: { id: string; description?: string }[]; // effort levels the model accepts
@@ -77,6 +79,8 @@ export interface RoutingModelInfo {
 /** The part of the routing state the human edits (and Reset restores). */
 export interface EditableRoutingState {
  workerBindings?:     import('./workerModelBindings').WorkerModelBindings;
+ /** Owner choices to keep an agent on shared routing; guarded like workerBindings. */
+ workerInheritance?:  import('./workerModelBindings').WorkerInheritanceChoices;
  agentsList: RoutingRow[];
  subconsciousList: RoutingRow[];
  classes: Record<ModelClass, ClassModel[]>;
@@ -106,6 +110,8 @@ export const MODEL_ROUTING_IPC = {
  cliCheck: 'model-routing:cli-check',
  cliUpdate: 'model-routing:cli-update',
  workerSet: 'model-routing:worker-set',
+ preview: 'model-routing:preview',
+ changed: 'model-routing:changed',
  get: 'model-routing:get', // () => ModelRoutingState (with `recommended`)
  set: 'model-routing:set', // (patch: Partial<Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'|'neverUse'>>) => ModelRoutingState
   refresh:   'model-routing:refresh', // () => ModelRoutingState, after re-fetching every connected provider's model list

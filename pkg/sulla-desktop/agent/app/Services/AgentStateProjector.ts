@@ -75,10 +75,7 @@ export class AgentStateProjector {
         ? latestByJob[job.jobId]?.[taskIndex] ?? null
         : await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
-      const activity = this.activity.project(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null);
-      // Just after a restart the in-memory activity is empty; count silence from when this process began watching.
-      let state = activity.state as AgentViewStatus;
-      if (state === 'quiet' && now - Math.max(activity.lastActivityAt, this.observedSince) < this.config.quietAfterMs) state = 'working';
+      const { lastActivityAt, state, runtimeAlive } = this.taskActivity(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null, now);
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? waitingByThread.get(task.threadId) ?? 0 : 0;
@@ -88,7 +85,8 @@ export class AgentStateProjector {
         depth: lineage.depth, agentId: task.agentId || null, label: task.label || task.agentId,
         taskId:             task.taskId,
         workflowStep:       task.workflowStep,
-        responseModels:     task.responseModels ?? (!endedAt ? AgentModelStatusRegistry.responsesFor(task.threadId) : undefined),
+        responseModels:     (!endedAt ? AgentModelStatusRegistry.responsesFor(task.threadId) : undefined) ?? task.responseModels ?? undefined,
+        jobRestartResumeCount: job.restartResumeCount || undefined,
         modelStatus:        AgentModelStatusRegistry.get(task.threadId) ?? savedWorkerModelStatus(task.workerModelRoute) ?? (task.model ? { model: task.model, provider: task.provider, effort: task.effort ?? null, source: 'requested' } : undefined),
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,
         stateReason: this.reason(state, job, task, checkin),
@@ -98,13 +96,21 @@ export class AgentStateProjector {
         wakeAt: state === 'parked' && task.wakeAt !== undefined && task.wakeAt > now ? this.iso(task.wakeAt) : null,
         stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
-        lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
+        lastActivityAt: new Date(lastActivityAt).toISOString(),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         toolInFlight: this.toolView(state, this.activity.toolInFlight(job.jobId, taskIndex)),
-        runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null,
+        runtimeAlive,
         canMessage: live, canStop: live, canOpen: Boolean(task.threadId) });
     }
     return { version, generatedAt: new Date(now).toISOString(), rows };
+  }
+
+  taskActivity(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin: AgentTaskCheckin | null, answeredAt: number | null, now = this.clock()) {
+    const { state: projected, lastActivityAt } = this.activity.project(job, task, taskIndex, checkin, answeredAt);
+    // The same boot grace and probe freshness apply to the UI and parent notices.
+    const state = (projected === 'quiet' && now - Math.max(lastActivityAt, this.observedSince) < this.config.quietAfterMs
+      ? 'working' : projected) as AgentViewStatus;
+    return { state, lastActivityAt, runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null };
   }
 
   private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {

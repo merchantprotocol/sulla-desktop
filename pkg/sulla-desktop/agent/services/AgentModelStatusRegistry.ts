@@ -18,7 +18,7 @@ export class AgentModelStatusRegistry {
   private static readonly responses = new Map<string, AgentModelStatusValue[]>();
   static recordResponse(threadId: string, models: AgentModelStatusValue[]): void {
     const previous = this.responses.get(threadId);
-    if (previous?.length === models.length && previous.every((item, i) => item.model === models[i].model && item.provider === models[i].provider && item.effort === models[i].effort && JSON.stringify(item.fallbackFrom) === JSON.stringify(models[i].fallbackFrom))) return;
+    if (previous?.length === models.length && previous.every((item, i) => item.model === models[i].model && item.provider === models[i].provider && item.effort === models[i].effort && item.modelEvidence === models[i].modelEvidence && JSON.stringify(item.fallbackFrom) === JSON.stringify(models[i].fallbackFrom))) return;
     this.responses.delete(threadId);
     this.responses.set(threadId, models);
     if (this.responses.size > 1024) this.responses.delete(this.responses.keys().next().value!);

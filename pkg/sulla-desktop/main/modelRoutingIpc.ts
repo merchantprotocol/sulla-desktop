@@ -4,13 +4,14 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 import { randomUUID } from 'node:crypto';
 
+import { cleanAgentModelTiers, tierEntries, tiersFromCandidates, type AgentModelTiers } from '../agent/languagemodels/agentModelTiers';
 import { withWorkerBindingWrite } from '../agent/languagemodels/workerBindingAuthority';
 import { withConfirmedCliUpdate } from '../shared/providerCliUpdateAuthority';
 
 import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ModelClass, type ModelRoutingState } from '../agent/languagemodels/modelRoutingTypes';
 
 import { agentWindowFromSender } from '../window/agentWindowTrust';
-import type { WorkflowSaveInput } from '../shared/productOwnerWorkflow';
+import type { ChatModelPickerSelection, WorkflowSaveInput } from '../shared/productOwnerWorkflow';
 
 import type { IpcController, IpcMainRegistrar } from './ipc/IpcController';
 
@@ -20,7 +21,7 @@ export interface ModelRoutingRouter {
   providerInfo(): Promise<any>;
   catalogReport(): Promise<any>;
   set(patch: any): Promise<unknown>;
-  replaceWorkerBinding(slug: string, agentId: string, expected: { token: string; revision: number; entry?: { agentId: string; editToken?: string; revision: number } | null }, next: { editToken: string; connections: Record<string, string>; candidates: any[] } | null): Promise<unknown>;
+  replaceWorkerBinding(slug: string, agentId: string, expected: { token: string; revision: number; entry?: { agentId: string; editToken?: string; revision: number } | null }, next: { editToken: string; connections: Record<string, string>; candidates: any[]; modelTiers?: AgentModelTiers } | null, removeEditToken?: string): Promise<unknown>;
   reset(target: any): Promise<unknown>;
   refreshCatalog(): Promise<unknown>;
   onStatusChange(listener: () => void): unknown;
@@ -80,17 +81,27 @@ export class ModelRoutingIpcController implements IpcController {
       const url = new URL(event.sender.getURL());
       if (url.protocol !== 'app:' || url.host !== '.' || url.pathname !== '/agent.html') throw new Error('Untrusted Workflow caller.');
     };
+    this.ipc.removeHandler(MODEL_ROUTING_IPC.preview);
+    this.ipc.handle(MODEL_ROUTING_IPC.preview, async(event, input) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ModelLaunchPreview')).previewAgentModel(input);
+    });
     this.ipc.removeHandler('chat-workflow:get');
     this.ipc.removeHandler('chat-workflow:save');
     this.ipc.removeHandler('chat-workflow:execution');
     this.ipc.removeHandler('chat-workflow:history');
+    this.ipc.removeHandler('chat-workflow:outcomes');
+    this.ipc.handle('chat-workflow:outcomes', async(event, threadId: string, conversationId: string) => {
+      requireWorkflowOwner(event);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.readChatOutcomes(threadId, conversationId);
+    });
     this.ipc.handle('chat-workflow:history', async(event, threadId: string) => {
       requireWorkflowOwner(event);
       return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.readWorkflowHistory(threadId);
     });
-    this.ipc.handle('chat-workflow:get', async(event, threadId: string) => {
+    this.ipc.handle('chat-workflow:get', async(event, threadId: string, includePreviews?: boolean, picker?: ChatModelPickerSelection) => {
       requireWorkflowOwner(event);
-      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.getProductOwnerWorkflow(threadId);
+      return (await import('../agent/services/ProductOwnerWorkflow')).productOwnerWorkflow.getProductOwnerWorkflow(threadId, includePreviews !== false, picker);
     });
     this.ipc.handle('chat-workflow:save', async(event, input: WorkflowSaveInput) => {
       requireWorkflowOwner(event);
@@ -107,9 +118,10 @@ export class ModelRoutingIpcController implements IpcController {
     this.ipc.removeHandler(MODEL_ROUTING_IPC.refresh);
     this.ipc.handle(MODEL_ROUTING_IPC.get, () => this.state());
     this.ipc.handle(MODEL_ROUTING_IPC.set, async(_event, patch) => {
-      if (patch && Object.prototype.hasOwnProperty.call(patch, 'workerBindings')) throw new Error('Save an individual worker mapping through its dedicated control.');
+      if (patch && ['workerBindings', 'workerInheritance'].some(key => Object.hasOwn(patch, key))) throw new Error('Save an individual worker mapping through its dedicated control.');
       await this.deps.whenReady?.();
       await router.set(patch || {});
+      this.deps.broadcast(MODEL_ROUTING_IPC.changed, undefined);
 
       return this.state();
     });
@@ -117,6 +129,7 @@ export class ModelRoutingIpcController implements IpcController {
       if (!target || !['agents', 'subconscious', 'classes'].includes(target.section)) throw new Error('Invalid model routing reset target');
       await this.deps.whenReady?.();
       await router.reset(target);
+      this.deps.broadcast(MODEL_ROUTING_IPC.changed, undefined);
 
       return this.state();
     });
@@ -135,11 +148,17 @@ export class ModelRoutingIpcController implements IpcController {
       const agent = definitions.find(item => item.status !== 'archive' && item.slug === input?.slug && item.id === input?.agentId) as { id: string; slug: string } | undefined;
       if (!agent) throw new Error('This agent changed or is unavailable. Reload the agent page.');
       const expected = { token: typeof input?.expectedToken === 'string' ? input.expectedToken : '', revision: input?.expectedRevision, entry };
-      let next: { editToken: string; connections: Record<string, string>; candidates: any[] } | null = null;
+      let next: { editToken: string; connections: Record<string, string>; candidates: any[]; modelTiers?: AgentModelTiers } | null = null;
+      if (input.modelTiers !== undefined && input.candidates !== undefined) throw new Error('Supply model tiers or a flat model list, not both.');
       if (input.candidates !== null) {
+        if (!input.modelTiers && observed?.modelTiers && ((observed.modelTiers.allowLaunchOverride ?? 'listed') !== 'listed' || observed.modelTiers.crossCompanyFallback === false || observed.modelTiers.tiers.some((tier: any) => tier.candidates.length > 1))) {
+          throw new Error('This agent has custom tier policies. Save its full tiers to preserve them.');
+        }
+        if (!input.modelTiers && (!Array.isArray(input.candidates) || !input.candidates.length || input.candidates.length > 10)) throw new Error('Choose one to ten worker models.');
+        const modelTiers = cleanAgentModelTiers(input.modelTiers ?? tiersFromCandidates(input.candidates));
+        const candidates = tierEntries(modelTiers).map(entry => entry.candidate);
         const providers = await router.providerInfo();
-        if (!Array.isArray(input.candidates) || !input.candidates.length || input.candidates.length > 10) throw new Error('Choose one to ten worker models.');
-        for (const candidate of input.candidates) {
+        for (const candidate of candidates) {
           const provider = providers.find((item: any) => item.id === candidate.provider);
           if (!provider?.connected || !['codex', 'claude-code', 'grok'].includes(candidate.provider)) throw new Error('Choose an existing connected Claude Code, Codex, or Grok OAuth subscription. Grok API-key billing is not supported for worker mappings.');
           const model = provider.models.find((item: any) => item.id === candidate.model);
@@ -147,11 +166,12 @@ export class ModelRoutingIpcController implements IpcController {
           if (candidate.effort !== undefined && !model.efforts?.some((level: any) => level.id === candidate.effort)) throw new Error('Choose an effort supported by this model.');
         }
         const { workerModelRouting } = await import('../agent/services/WorkerModelRouting');
-        const connections = await workerModelRouting.subscriptionConnections(input.candidates);
-        next = { editToken: randomUUID(), connections, candidates: input.candidates.map((row: any) => ({ provider: row.provider, model: row.model, ...(row.effort !== undefined ? { effort: row.effort } : {}) })) };
+        const connections = await workerModelRouting.subscriptionConnections(candidates);
+        next = { editToken: randomUUID(), connections, candidates, modelTiers };
       }
       // Compare-and-set inside the router's write serializer; validation above may take seconds.
-      await withWorkerBindingWrite(() => router.replaceWorkerBinding(agent.slug, agent.id, expected, next));
+      await withWorkerBindingWrite(() => router.replaceWorkerBinding(agent.slug, agent.id, expected, next, next ? undefined : randomUUID()));
+      this.deps.broadcast(MODEL_ROUTING_IPC.changed, undefined);
       return this.state();
     });
     workerWrite = operation.then(() => undefined, () => undefined);
@@ -160,6 +180,7 @@ export class ModelRoutingIpcController implements IpcController {
     this.ipc.handle(MODEL_ROUTING_IPC.refresh, async() => {
       await this.deps.whenReady?.();
       await router.refreshCatalog();
+      this.deps.broadcast(MODEL_ROUTING_IPC.changed, undefined);
 
       return this.state();
     });

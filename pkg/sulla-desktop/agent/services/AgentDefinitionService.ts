@@ -19,6 +19,8 @@ import {
 } from '../database/models/AgentDefinitionModel';
 import { resolveAllAgentsDirs } from '../utils/sullaPaths';
 
+import type { PoolClient } from 'pg';
+
 export const AGENT_MANIFEST_API_VERSION = 'sulla/v3';
 
 export interface AgentMarketplaceManifest {
@@ -32,6 +34,7 @@ export interface AgentMarketplaceManifest {
     model?:      string;
     modelSlot?:  AgentModelSlot;
     modelChoice?: import('../languagemodels/modelRoutingTypes').AgentModelChoice;
+    models?: Omit<import('../languagemodels/agentModelTiers').AgentModelTiers, 'version'> & { version?: 1 };
     prompt:      string;
     soul?:       string;
     goals?:      string;
@@ -112,6 +115,7 @@ export class AgentDefinitionService {
             }
           }
           const existed = await this.findBySlug(entry.name);
+          if (existed) { skipped++; continue; }
           await AgentDefinitionModel.importIfMissing({
             slug:          entry.name,
             name:          String(config.name || entry.name),
@@ -131,7 +135,7 @@ export class AgentDefinitionService {
             status:        'production',
             sourceKind:    'filesystem-import',
           });
-          existed ? skipped++ : imported++;
+          imported++;
         } catch (error) {
           errors.push(`${ entry.name }: ${ error instanceof Error ? error.message : String(error) }`);
         }
@@ -184,7 +188,7 @@ export class AgentDefinitionService {
     return this.toManifest(agent);
   }
 
-  async importManifest(manifest: AgentMarketplaceManifest): Promise<AgentDefinition> {
+  async importManifest(manifest: AgentMarketplaceManifest, local?: { existing: AgentDefinition | null; transaction?: { client: PoolClient; id: string } }): Promise<AgentDefinition> {
     if (manifest.apiVersion !== AGENT_MANIFEST_API_VERSION || manifest.kind !== 'Agent' || manifest.manifestVersion !== 1) {
       throw new Error('Unsupported agent manifest. Expected sulla/v3 Agent manifestVersion 1.');
     }
@@ -192,7 +196,7 @@ export class AgentDefinitionService {
     if (!metadata?.slug || !metadata?.title || !spec || typeof spec.prompt !== 'string') {
       throw new Error('Invalid agent manifest: metadata.slug, metadata.title, and spec.prompt are required.');
     }
-    const existing = await this.findBySlug(metadata.slug);
+    const existing = local ? local.existing : await AgentDefinitionModel.findExactBySlug(metadata.slug);
     const input: AgentDefinitionInput = {
       slug:                  metadata.slug,
       name:                  metadata.title,
@@ -212,7 +216,7 @@ export class AgentDefinitionService {
       config:                spec.config ?? {},
       version:               metadata.version,
       status:                'production',
-      sourceKind:            'marketplace',
+      sourceKind:            local ? existing?.source_kind ?? 'local' : 'marketplace',
       marketplaceTemplateId: metadata.marketplaceTemplateId ?? null,
       marketplaceSlug:       metadata.slug,
       marketplaceVersion:    metadata.version,
@@ -229,8 +233,10 @@ export class AgentDefinitionService {
         }
         : {}),
     };
-    if (!existing) return this.create(input);
-    return (await this.update(existing.id, input))!;
+    if (!existing) return local?.transaction ? AgentDefinitionModel.create(input, undefined, local.transaction) : this.create(input);
+    const updated = await this.update(existing.id, input, local ? existing.updated_at : undefined);
+    if (!updated) throw new Error('This agent changed while it was being imported. Reload its profile and try again.');
+    return updated;
   }
 }
 

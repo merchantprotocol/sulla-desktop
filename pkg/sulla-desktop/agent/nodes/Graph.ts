@@ -101,7 +101,10 @@ export interface BaseThreadState {
      */
     agentId?:              string;
     /** Runtime-reported models that returned output in this conversation. */
+    inheritedResumeModel?: import('../languagemodels/modelRouter').ModelCandidate;
     workflowResponseModels?: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue[];
+    /** Whole-run liveness clocks inherited by delegated work and tool calls. */
+    activityKeys?: string[];
     /** Set by the canonical delegated launch path after the scope is validated. */
     productOwnerWorkflowStep?: import('../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
     /** Conversation logger ID — set by workflow agent handler or graph creator */

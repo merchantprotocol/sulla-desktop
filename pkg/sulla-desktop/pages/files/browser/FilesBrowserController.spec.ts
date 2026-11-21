@@ -12,6 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FilesOperationQueue } from '../composables/FilesOperationQueue';
 import { useFilesExplorerInteractions } from '../composables/useFilesExplorerInteractions';
 import { SyntheticFilesDataSource } from '../SyntheticFilesDataSource';
+import { SyntheticFilesFixtures } from '../synthetic/SyntheticFilesFixtures';
+import { SyntheticFilesStore } from '../synthetic/SyntheticFilesStore';
 import { FilesBrowserController } from './FilesBrowserController';
 import { FilesNameRules } from './FilesNameRules';
 
@@ -61,6 +63,46 @@ describe('FilesBrowserController', () => {
     expect(browser.state.snapshot.value?.collection.id).toBe('synthetic-collection');
     expect(browser.location.atRoots.value).toBe(true);
     expect(browser.listing.visibleEntries.value.map(entry => entry.rootCollectionId)).toEqual(['synthetic-collection', 'synthetic-stored-collection']);
+  });
+
+  // risk: navigation and data visibility. Distant rows must stay reachable without mounting the whole folder.
+  it('reveals the end of an expanded list through the page and releases its virtual height on collapse', async() => {
+    source = new SyntheticFilesDataSource(new SyntheticFilesStore(new SyntheticFilesFixtures(0, true), ':page-scroll-test'));
+    browser = new FilesBrowserController({ dataSource: source, tabId: 'tab' }, emit, useFilesExplorerInteractions('tab'), operationsFor(source));
+    browser.state.mounted = true;
+    await browser.refresher.refresh();
+    browser.navigation.openPath('Page Scroll');
+    browser.navigation.openParent();
+    browser.preferences.view.value = 'list';
+
+    // The node test environment supplies viewport geometry; listing and navigation use the real controller.
+    const page = { scrollTop: 0, clientHeight: 400, clientTop: 0, getBoundingClientRect: () => ({ top: 10 }) };
+    const header = { getBoundingClientRect: () => ({ bottom: 210 - page.scrollTop }) };
+    const list = { querySelector: () => header };
+    browser.state.mainSurface.value = page as unknown as HTMLElement;
+    browser.virtualScroll.listSurface.value = list as unknown as HTMLElement;
+
+    const folder = browser.listing.displayedEntries.value.find(entry => entry.path === 'Page Scroll')!;
+    const scroll = browser.virtualScroll;
+    scroll.measureListViewport();
+    expect(scroll.listBottomSpacer.value).toBe(0);
+    browser.listing.toggleFolderExpansion(folder);
+    expect(scroll.listBottomSpacer.value).toBeGreaterThan(0);
+    expect(scroll.virtualListEntries.value.some(entry => entry.path.startsWith('Page Scroll/Sample 80'))).toBe(false);
+
+    const index = browser.listing.displayedEntries.value.findIndex(entry => entry.path.startsWith('Page Scroll/Sample 80'));
+    expect(index).toBeGreaterThan(0);
+    scroll.scrollEntryIntoView(index);
+    expect(page.scrollTop).toBeGreaterThan(0);
+    expect(scroll.listTopSpacer.value).toBeGreaterThan(0);
+    expect(scroll.virtualListEntries.value).toContainEqual(browser.listing.displayedEntries.value[index]);
+
+    browser.listing.toggleFolderExpansion(folder);
+    expect(scroll.listTopSpacer.value + scroll.listBottomSpacer.value).toBe(0);
+    expect(scroll.virtualListEntries.value).toEqual(browser.listing.displayedEntries.value);
+
+    scroll.resetScroll();
+    expect(page.scrollTop).toBe(0);
   });
 
   it('records folder navigation in back/forward history and replays it', () => {

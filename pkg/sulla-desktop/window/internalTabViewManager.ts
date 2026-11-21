@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Electron, { WebContentsView } from 'electron';
+import { isChatTabActivity, type ChatTabActivity } from '@pkg/shared/chatTabActivity';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { agentWindowUrl } from './agentWindowUrl';
 import { STARTUP_BACKGROUND } from '@pkg/config/theme';
@@ -10,7 +11,7 @@ import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
 type HostLayoutListener = (bounds: Electron.Rectangle | null, raised: boolean) => void;
 
-interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; running?: boolean; descriptor?: unknown }
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; running?: boolean; activity?: ChatTabActivity; descriptor?: unknown }
 
 /** Owns one isolated Electron renderer for each mounted internal tab. */
 export class InternalTabViewManager {
@@ -30,7 +31,7 @@ export class InternalTabViewManager {
   activate(owner: Electron.BrowserWindow, tabId: string, windowKey: string, bounds: Electron.Rectangle, descriptor?: unknown): void {
     let tab = this.tabs.get(tabId);
     if (!tab) {
-      const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false } });
+      const view = new WebContentsView({ webPreferences: { devTools: !Electron.app.isPackaged, nodeIntegration: true, contextIsolation: false, webviewTag: true, webSecurity: false, backgroundThrottling: !(descriptor && typeof descriptor === 'object' && (descriptor as { mode?: unknown }).mode === 'capture-studio') } });
       view.setBackgroundColor(STARTUP_BACKGROUND);
       // The descriptor must be stored before the renderer loads: the host reads it synchronously at boot.
       tab = { view, owner, bounds, visible: true, crashed: false, transferring: false, descriptor };
@@ -48,6 +49,7 @@ export class InternalTabViewManager {
         tab!.visible = false;
         tab!.crashed = true;
         this.clearChatRunning(tabId, tab!);
+        this.clearChatActivity(tabId, tab!);
         try { tab!.owner.contentView.removeChildView(view); } catch { /* already detached */ }
         this.notifyHostDisposed(tabId);
         tab!.owner.webContents.send('internal-tab-view:crashed', tabId);
@@ -73,7 +75,11 @@ export class InternalTabViewManager {
     if (timer) clearTimeout(timer);
     this.chromeReadyTimers.delete(owner.id);
     owner.webContents.send('internal-tab-view:chrome-ready');
-    for (const tab of this.tabs.values()) if (tab.owner === owner && tab.visible && !tab.crashed) this.attach(tab);
+    for (const [tabId, tab] of this.tabs) {
+      if (tab.owner !== owner || tab.crashed) continue;
+      if (tab.activity !== undefined) owner.webContents.send('internal-tab-view:chat-activity', tabId, tab.activity);
+      if (tab.visible) this.attach(tab);
+    }
   }
 
   private armChromeReadyFallback(owner: Electron.BrowserWindow): void {
@@ -163,6 +169,24 @@ export class InternalTabViewManager {
     if (!tab.owner.isDestroyed()) tab.owner.webContents.send('internal-tab-view:chat-running', tabId, false);
   }
 
+  notifyChatActivity(sender: Electron.WebContents, tabId: string, state: unknown): void {
+    const tab = this.tabs.get(tabId);
+    if (tab?.view.webContents !== sender || tab.crashed || tab.owner.isDestroyed()) return;
+    if (state === null) {
+      this.clearChatActivity(tabId, tab);
+      return;
+    }
+    if (!isChatTabActivity(state) || (tab.activity?.state === state.state && tab.activity.active === state.active)) return;
+    tab.activity = { state: state.state, active: state.active };
+    tab.owner.webContents.send('internal-tab-view:chat-activity', tabId, tab.activity);
+  }
+
+  private clearChatActivity(tabId: string, tab: InternalTabView): void {
+    if (tab.activity === undefined) return;
+    tab.activity = undefined;
+    if (!tab.owner.isDestroyed()) tab.owner.webContents.send('internal-tab-view:chat-activity', tabId, null);
+  }
+
   /**
    * The tab a host renderer was created for, as its owner window last described it.
    * Only that tab's own renderer may read it.
@@ -187,6 +211,7 @@ export class InternalTabViewManager {
     const tab = this.tabs.get(tabId);
     if (tab?.owner === owner && !tab.view.webContents.isDestroyed()) {
       this.clearChatRunning(tabId, tab);
+      this.clearChatActivity(tabId, tab);
       tab.crashed = false;
       tab.visible = true;
       if (this.chromeReadyOwners.has(owner.id)) this.attach(tab);
@@ -200,15 +225,25 @@ export class InternalTabViewManager {
     if (tab.owner !== target) {
       this.notifyHostDisposed(tabId);
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
-      const running = tab.running;
+      const { activity, running } = tab;
       this.clearChatRunning(tabId, tab);
+      this.clearChatActivity(tabId, tab);
       tab.owner = target;
       this.trackOwner(target);
       if (running) this.notifyChatRunning(tab.view.webContents, tabId, true);
+      if (activity !== undefined) this.notifyChatActivity(tab.view.webContents, tabId, activity);
     }
     this.armChromeReadyFallback(target);
     if (tab.visible && this.chromeReadyOwners.has(target.id)) this.attach(tab);
     return true;
+  }
+
+  /** Find the live host window for a tab descriptor matching the predicate. */
+  ownerForDescriptor(predicate: (descriptor: unknown) => boolean): Electron.BrowserWindow | null {
+    for (const tab of this.tabs.values()) {
+      if (tab.descriptor !== undefined && predicate(tab.descriptor) && !tab.owner.isDestroyed()) return tab.owner;
+    }
+    return null;
   }
 
   resolveOwner(sender: Electron.WebContents): Electron.BrowserWindow | null {
@@ -278,6 +313,7 @@ export class InternalTabViewManager {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.owner !== owner || tab.transferring) return;
     this.clearChatRunning(tabId, tab);
+    this.clearChatActivity(tabId, tab);
     try { owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
     this.notifyHostDisposed(tabId);
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();

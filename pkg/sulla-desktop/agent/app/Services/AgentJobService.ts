@@ -133,7 +133,14 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
     if (current.status === 'stopped') return { ...current, results, tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() } : task) };
     const failed = results.find(result => result.status === 'error');
     return { ...current, status: failed ? 'failed' : 'completed', finishedAt: this.clock.now().getTime(), results, error: failed?.output,
-      tasks: current.tasks.map((task, index) => { const result = results[index]; return !result || task.status === 'stopped' ? task : { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() }; }) };
+      tasks: current.tasks.map((task, index) => {
+        const result = results[index];
+        if (!result || task.status === 'stopped') return task;
+        // Recovered workers can finish through completeJob directly, without an original runner.
+        const responseModels = task.responseModels?.length ? task.responseModels : AgentModelStatusRegistry.responsesFor(task.threadId || result.threadId);
+        return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime(),
+          ...(responseModels?.length ? { responseModels } : {}) };
+      }) };
   });
   if (job) void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 }

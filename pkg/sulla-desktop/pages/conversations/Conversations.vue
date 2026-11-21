@@ -36,7 +36,6 @@ const projection = new ConversationProjection();
 // The nav status card: the Settings → Sulla Cloud connection status and the browser's network state.
 const cloudStatus = ref<Record<string, any> | null>(null);
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
-const serversOpen = ref(false);
 let mounted = false, initializing = false, retryAttempt = 0, retryTimer: number | undefined;
 const retryDelays = [2_000, 5_000, 10_000, 20_000, 30_000];
 
@@ -196,6 +195,7 @@ function formatTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
+function exitConversations(): void { window.dispatchEvent(new CustomEvent('sulla:conversations-exit')); }
 const openSecretary = (event: Event): void => {
   const detail = (event as CustomEvent<{ tabId?: string; start?: boolean }>).detail;
   if (!detail?.tabId || detail.tabId === props.tabId) openSecretaryModal(detail?.start === true);
@@ -245,15 +245,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="cv-root">
-    <button class="cv-servers-toggle" aria-label="Open servers and channels" @click="serversOpen = true">Servers</button>
-    <ConversationServersPanel v-if="serversOpen" :org-id="activeOrg" :current-user-id="data.userId" :people="people" @close="serversOpen = false" />
-    <div class="app">
-      <ConvNav :loading="loading" />
-      <ConvList />
-      <ConvThread :error="error" />
-      <ConvSide />
-    </div>
+  <div class="cv-root cv-fullscreen">
+    <ConversationServersPanel :org-id="activeOrg" :current-user-id="data.userId" :people="people" @exit="exitConversations">
+      <div class="app">
+        <ConvNav :loading="loading" />
+        <ConvList />
+        <ConvThread :error="error" />
+        <ConvSide />
+      </div>
+    </ConversationServersPanel>
     <div v-show="secretaryOpen" class="cv-modal" role="dialog" aria-modal="true" aria-label="Secretary Mode">
       <header><b>Secretary Mode</b><button class="cv-icon-button" aria-label="Close Secretary Mode" @click="secretaryOpen = false">×</button></header>
       <div class="cv-secretary-body"><SecretaryMode :tab-id="tabId" :conversation-id="store.s.thread ?? undefined" @set-mode="$emit('set-mode', $event)" /></div>
@@ -263,6 +263,3 @@ onBeforeUnmount(() => {
 </template>
 
 <style src="./conversations.css"></style>
-<style scoped>
-.cv-servers-toggle { position: absolute; z-index: 4; top: 9px; left: 9px; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--surface-2, #2b2f36); color: var(--text, #eee); cursor: pointer; }
-</style>

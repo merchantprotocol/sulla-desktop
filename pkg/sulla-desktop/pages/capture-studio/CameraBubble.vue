@@ -16,8 +16,12 @@
       :class="{ recording, hidden: cameraShape === 'hidden' }"
       :style="{ borderRadius: bubbleRadius }"
       @dblclick="$emit('swap')"
-      @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event)"
+      @contextmenu.prevent="$emit(pipSource?.type === 'screen' ? 'show-screen-menu' : 'show-camera-menu', $event, pipSource?.id)"
     >
+      <div class="live-source-controls">
+        <button type="button" class="live-source-action" :aria-label="pausedSources[pipSource.id] ? `Resume ${pipSource.name || 'source'}` : `Pause ${pipSource.name || 'source'}`" @click.stop="$emit('toggle-pause', pipSource.id)">{{ pausedSources[pipSource.id] ? '▶' : 'Ⅱ' }}</button>
+        <button type="button" class="live-source-action close" :aria-label="`Remove ${pipSource.name || 'source'}`" @click.stop="$emit('remove-source', pipSource.id)">×</button>
+      </div>
       <video
         ref="camVideoEl"
         autoplay
@@ -66,13 +70,16 @@ const props = defineProps<{
   cameraShape:   string;
   currentLayout: string;
   pipSource:     any;
+  pausedSources: Record<string, boolean>;
 }>();
 
 defineEmits<{
   (e: 'update:cameraShape', shape: string): void;
   (e: 'swap'): void;
-  (e: 'show-camera-menu', event: MouseEvent): void;
-  (e: 'show-screen-menu', event: MouseEvent): void;
+  (e: 'show-camera-menu', event: MouseEvent, sourceId?: string): void;
+  (e: 'show-screen-menu', event: MouseEvent, sourceId?: string): void;
+  (e: 'toggle-pause', sourceId: string): void;
+  (e: 'remove-source', sourceId: string): void;
 }>();
 
 const shapes = [
@@ -116,7 +123,7 @@ let dragOrigX = 0;
 let dragOrigY = 0;
 
 function startDrag(e: MouseEvent) {
-  if ((e.target as HTMLElement).closest('.shape-btn')) return;
+  if ((e.target as HTMLElement).closest('.shape-btn, .live-source-action')) return;
   const el = camContainer.value;
   if (!el) return;
   dragging = true;
@@ -159,3 +166,29 @@ onUnmounted(() => {
   document.removeEventListener('mouseup', onMouseUp);
 });
 </script>
+
+<style>
+.cam-bubble { position: relative; }
+.cam-bubble .live-source-controls {
+  position: absolute;
+  z-index: 5;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.cam-bubble:hover .live-source-controls,
+.cam-bubble .live-source-controls:focus-within { opacity: 1; }
+.cam-bubble .live-source-action {
+  width: 25px;
+  height: 25px;
+  border: 1px solid rgba(255,255,255,.55);
+  border-radius: 6px;
+  color: white;
+  background: rgba(18, 22, 28, .86);
+  cursor: pointer;
+}
+.cam-bubble .live-source-action:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+</style>

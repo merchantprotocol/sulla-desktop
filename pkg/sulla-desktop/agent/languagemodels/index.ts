@@ -102,6 +102,19 @@ export class LLMRegistryImpl {
     if (!providerId.trim()) {
       throw new Error('No AI model is connected yet. Connect Claude, ChatGPT, Grok or an API key to start chatting.');
     }
+    if (modelOverride) {
+      const { getModelProviderService } = await import('../services/ModelProviderService');
+      const metadata = (await getModelProviderService().getModelsForProvider(providerId)).find(model => model.id === modelOverride);
+      if (!metadata) throw new Error(`Model ${ providerId }/${ modelOverride } is unavailable in the validated catalog; saved pin retained`);
+      const { ModelCompatibilityService, ProviderClientStatus } = await import('./ModelCompatibilityService');
+      const { getCliStatus } = await import('../tools/models/shared');
+      const { getWorkerImageCliVersion } = await import('@pkg/backend/providerCliUpdates');
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      const clients = new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), getWorkerImageCliVersion, getCliStatus);
+      await new ModelCompatibilityService(provider => clients.get(provider)).assertClient(providerId, metadata);
+      if (effort && !metadata.efforts?.some(level => level.id === effort)) throw new Error(`Unsupported effort ${ effort } for ${ providerId }/${ modelOverride }`);
+      if (metadata.selectionMode === 'automatic') modelOverride = undefined;
+    }
     // Effort only applies to the CLI providers that take it, and only with an explicit model.
     const runEffort = modelOverride && (providerId === 'claude-code' || providerId === 'codex') ? effort || '' : '';
     const key = modelOverride ? `provider:${ providerId }:${ modelOverride }${ runEffort ? `@${ runEffort }` : '' }` : `provider:${ providerId }`;
@@ -116,6 +129,10 @@ export class LLMRegistryImpl {
         // Same singleton concern as claude-code.
         const { createCodexService } = await import('./CodexService');
         svc = createCodexService(modelOverride, runEffort);
+      } else if (modelOverride && providerId === 'grok') {
+        // Keep explicit models separate from each other and the default singleton.
+        const { GrokService } = await import('./GrokService');
+        svc = await GrokService.create(modelOverride);
       } else if (modelOverride && providerId === 'opencode') {
         const { createOpenCodeService } = await import('./OpenCodeService');
         svc = createOpenCodeService(modelOverride);

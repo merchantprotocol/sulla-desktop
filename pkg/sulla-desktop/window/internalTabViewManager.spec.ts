@@ -8,6 +8,7 @@ vi.mock('electron', () => ({
   default: { app: { isPackaged: false } },
   app: { isPackaged: false },
   WebContentsView: class {
+    constructor(public options: any) {}
     webContents = {
       loadURL: vi.fn().mockResolvedValue(undefined),
       on: vi.fn((event: string, listener: (...args: any[]) => void) => { (this as any).webContents.listeners[event] = listener; }),
@@ -33,6 +34,42 @@ const ownerWindow = (id: number) => ({
 const manager = () => new (InternalTabViewManager as any)() as InternalTabViewManager;
 
 describe('InternalTabViewManager', () => {
+  it('finds the single Capture Studio host by descriptor and focuses its owner', () => {
+    // risk: duplicate studios could split media ownership and agent RPC state
+    const owner = ownerWindow(201);
+    const instance = manager() as any;
+    instance.activate(owner, 'capture-tab', 'main', { x: 0, y: 0, width: 20, height: 20 }, { id: 'capture-tab', mode: 'capture-studio' });
+    expect(instance.ownerForDescriptor((value: any) => value?.mode === 'capture-studio')).toBe(owner);
+    expect(instance.ownerForDescriptor((value: any) => value?.mode === 'files')).toBeNull();
+  });
+
+  it('keeps the Capture Studio renderer and its RPC target host discoverable after tear-off', () => {
+    // risk: a transfer must not restart live recording streams or strand RPC on the old window
+    const source = ownerWindow(202);
+    const target = ownerWindow(203);
+    const instance = manager() as any;
+    instance.activate(source, 'capture-tab', 'main', { x: 0, y: 0, width: 20, height: 20 }, { id: 'capture-tab', mode: 'capture-studio' });
+    expect(instance.tabs.get('capture-tab').view.options.webPreferences.backgroundThrottling).toBe(false);
+    const renderer = instance.tabs.get('capture-tab').view.webContents;
+    expect(instance.moveToWindow('capture-tab', target)).toBe(true);
+    expect(instance.tabs.get('capture-tab').view.webContents).toBe(renderer);
+    expect(instance.ownerForDescriptor((value: any) => value?.mode === 'capture-studio')).toBe(target);
+  });
+
+  it('disposes the Capture Studio host on tab close so its component cleanup can release capture', () => {
+    // risk: closing the tab must release camera, screen, microphone and recording resources
+    const owner = ownerWindow(204);
+    const instance = manager() as any;
+    instance.activate(owner, 'capture-tab', 'main', { x: 0, y: 0, width: 20, height: 20 }, { id: 'capture-tab', mode: 'capture-studio' });
+    const tab = instance.tabs.get('capture-tab');
+    const disposed = vi.fn();
+    instance.onHostDisposed(tab.view.webContents, disposed);
+    instance.destroy(owner, 'capture-tab');
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(tab.view.webContents.close).toHaveBeenCalledOnce();
+    expect(instance.ownerForDescriptor((value: any) => value?.mode === 'capture-studio')).toBeNull();
+  });
+
   it('creates lazily on activation and retains real bounds when hidden', () => {
     // risk: renderer resource use and tab visibility lifecycle
     const owner = ownerWindow(1);
@@ -296,6 +333,45 @@ describe('InternalTabViewManager', () => {
     expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', true);
     chat.listeners['render-process-gone']();
     expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-running', 'chat', false);
+  });
+
+  it('forwards the hosted chat status to its shell and replays it after shell startup', () => {
+    const owner = ownerWindow(17);
+    const other = ownerWindow(18);
+    const instance = manager() as any;
+    const bounds = { x: 0, y: 0, width: 20, height: 20 };
+    instance.activate(owner, 'one', 'main', bounds);
+    instance.activate(other, 'two', 'second', bounds);
+    const chat = instance.tabs.get('one').view.webContents;
+    const working = { state: 'working', active: true };
+    const waiting = { state: 'waiting', active: false };
+
+    instance.notifyChatActivity(chat, 'two', working);
+    instance.notifyChatActivity(owner.webContents, 'one', working);
+    instance.notifyChatActivity(chat, 'one', { state: 'unrecognized', active: true });
+    expect(owner.webContents.send).not.toHaveBeenCalled();
+    expect(other.webContents.send).not.toHaveBeenCalled();
+
+    instance.notifyChatActivity(chat, 'one', working);
+    instance.notifyChatActivity(chat, 'one', working);
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:chat-activity', 'one', working);
+
+    instance.setVisible(owner, 'one', false);
+    instance.markChromeReady(owner);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', working);
+
+    instance.moveToWindow('one', other);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', null);
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', working);
+
+    instance.notifyChatActivity(chat, 'one', waiting);
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', waiting);
+
+    instance.notifyChatActivity(chat, 'one', { ...waiting, active: true });
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', { ...waiting, active: true });
+
+    chat.listeners['render-process-gone']();
+    expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-activity', 'one', null);
   });
 
   it('hands a tab its descriptor only through its own renderer', () => {

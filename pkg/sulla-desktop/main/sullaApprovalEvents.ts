@@ -69,6 +69,7 @@ export function initSullaApprovalEvents(): void {
   };
   ipcMainProxy.handle('decisions:list', async(event) => { trusted(event); return decisionService.list(); });
   ipcMainProxy.handle('decisions:conversation', async(event, conversationId, before) => { trusted(event); return decisionService.listForConversation(conversationId, before); });
+  ipcMainProxy.handle('decisions:transcript', (event, conversationId, ids) => { trusted(event); return decisionService.listTranscriptDecisions(conversationId, ids); });
   ipcMainProxy.handle('decisions:dismiss', async(event, id, conversationId) => { trusted(event); return decisionService.dismiss(id, conversationId) });
   ipcMainProxy.handle('decisions:resolve', async(event, response) => { trusted(event); return decisionService.resolve(response) });
   ipcMainProxy.handle('decisions:policies', async(event) => {

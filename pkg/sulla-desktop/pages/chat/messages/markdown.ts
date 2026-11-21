@@ -14,7 +14,10 @@ import { marked } from 'marked';
 
 export function renderMarkdown(markdown: string): string {
   const raw = typeof markdown === 'string' ? markdown : String(markdown || '');
-  const html = (marked(raw) as string) || '';
+  return sanitizeMarkdownHtml((marked(raw) as string) || '');
+}
+
+export function sanitizeMarkdownHtml(html: string): string {
   const sanitized = DOMPurify.sanitize(html, {
     USE_PROFILES:       { html: true },
     ADD_TAGS:           ['audio', 'source'],

@@ -12,6 +12,7 @@ export interface LiveProviderState {
   accessMethod?: ProviderAccessMethod;
   accessLabel?: string;
   models: RoutingModelInfo[];
+  discoveryReason?: string;
 }
 
 export type LiveProviderMap = Map<string, LiveProviderState>;

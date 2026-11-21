@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { sharedModelCatalog } from '../../languagemodels/sharedModelCatalog';
 import { isChatModel, modelDiscoveryService } from '../../languagemodels/ModelDiscoveryService';
 import { openAICompatibleProvider, providerBaseUrl } from '../../languagemodels/openAICompatibleProviders';
 import { SelectBoxProvider, type SelectBoxContext, type SelectOption } from './SelectBoxProvider';
@@ -17,6 +18,10 @@ export class OpenAICompatibleModels extends SelectBoxProvider {
   }
 
   async getOptions(context: SelectBoxContext): Promise<SelectOption[]> {
+    if (this.providerId !== 'custom') {
+      if (context.formValues.base_url?.trim()) return [];
+      return (await sharedModelCatalog.listModels(this.providerId)).map(model => ({ value: model.id, label: model.name }));
+    }
     const definition = openAICompatibleProvider(this.providerId);
     const baseUrl = definition ? providerBaseUrl(definition, context.formValues) : context.formValues.base_url;
     const models = await modelDiscoveryService.fetchModelsForProvider(

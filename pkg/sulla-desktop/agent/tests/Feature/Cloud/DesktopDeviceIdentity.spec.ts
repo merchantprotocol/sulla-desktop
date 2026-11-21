@@ -139,6 +139,24 @@ describe('Desktop device identity on the domain DeviceIdentityService', () => {
     expect(Buffer.from((await keys.read()) as Uint8Array)).toEqual(Buffer.from(first));
   });
 
+  it('projects only the persisted canonical ID into early boot without running legacy migration', async() => {
+    // risk: Cloud shares must not use an invented identity while settings are unavailable.
+    let legacyReads = 0;
+    const legacyId = '11111111-1111-4111-8111-111111111111';
+    const ids = FileDeviceIdStore.in(() => dir, { read: async() => {
+      legacyReads++;
+      return legacyId;
+    } });
+
+    expect(ids.readExisting()).toBeNull();
+    expect(legacyReads).toBe(0);
+    expect(await ids.read()).toBe(legacyId);
+    expect(ids.readExisting()).toBe(legacyId);
+    fs.writeFileSync(idFile(), 'invalid identity!');
+    expect(ids.readExisting()).toBeNull();
+    expect(legacyReads).toBe(1);
+  });
+
   it('fails closed on a corrupt id file and leaves it untouched', async() => {
     // risk: regenerating on corruption mints a second device for the same machine.
     fs.mkdirSync(dir, { recursive: true });

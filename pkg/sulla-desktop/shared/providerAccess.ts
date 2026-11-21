@@ -53,9 +53,10 @@ const LABELS: Readonly<Record<ProviderAccessMethod, string>> = {
  * a CLI family alias whose version the CLI chooses (`alias`), or a literal
  * model id (`exact`).
  */
-export type ModelSelectionMode = 'automatic' | 'alias' | 'exact';
+export type ModelSelectionMode = 'automatic' | 'alias' | 'exact' | 'policy';
 
 export function modelSelectionModeLabel(mode: ModelSelectionMode | undefined, modelId: string): string {
+  if (mode === 'policy') return 'Policy · CLI plan/execution';
   if (mode === 'automatic') return 'Automatic · provider default';
   if (mode === 'alias') return `Automatic version · ${ modelId }`;
   return `Exact ID · ${ modelId }`;

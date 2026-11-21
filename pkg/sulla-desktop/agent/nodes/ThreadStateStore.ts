@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { threadStateProvider } from '../app/Providers/ThreadStateServiceProvider';
 import { redisClient } from '../database/RedisClient';
 import type { BaseThreadState } from './Graph';
@@ -10,7 +11,7 @@ import type { BaseThreadState } from './Graph';
 export async function saveThreadState(state: BaseThreadState): Promise<void> {
   // Process-local abort callbacks and run ownership cannot survive a restart.
   const metadata = { ...state.metadata, options: { ...state.metadata.options, abort: undefined } };
-  return threadStateProvider.repository.save({ ...state, metadata: Object.assign(metadata, { delegatedRunActive: false, runtimeRunnerActive: false, runtimeInterrupted: false }) });
+  return threadStateProvider.repository.save({ ...state, messages: DeferredStallInput.persistentMessages(state.messages), metadata: Object.assign(metadata, { delegatedRunActive: false, runtimeRunnerActive: false, runtimeInterrupted: false }) });
 }
 
 export async function loadThreadState(threadId: string): Promise<BaseThreadState | null> {

@@ -78,6 +78,7 @@ export interface SullaFileReference {
  */
 export interface IpcMainEvents {
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-activity': (tabId: string, state: import('@pkg/shared/chatTabActivity').ChatTabActivity | null) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -260,8 +261,9 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
-  'chat-workflow:get': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:get': (threadId: string, includePreviews?: boolean, picker?: import('@pkg/shared/productOwnerWorkflow').ChatModelPickerSelection) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
   'chat-workflow:save': (input: import('@pkg/shared/productOwnerWorkflow').WorkflowSaveInput) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:outcomes': (threadId: string, conversationId: string) => import('@pkg/shared/productOwnerWorkflow').ChatOutcomeArchive;
   'chat-workflow:history': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowRunRow[];
   'chat-workflow:execution': (threadId: string, reference: { jobId: string; taskIndex: number } | null) => import('@pkg/shared/agentState/AgentModelStatus').AgentModelStatusValue[];
 
@@ -276,6 +278,7 @@ export interface IpcMainInvokeEvents {
   'threat-proxy:clear-traffic-log': () => Promise<{ ok: boolean; error?: string }>;
 
   'conversation-servers:list': (orgId?: string) => import('@pkg/main/ConversationServersCloudClient').ConversationServerSummary[];
+  'conversation-servers:create': (input: import('@pkg/main/ConversationServersCloudClient').CreateConversationServerInput) => Record<string, unknown>;
   'conversation-servers:channels': (serverId: string) => import('@pkg/main/ConversationServersCloudClient').ConversationChannelSummary[];
   'conversation-servers:members': (serverId: string) => { userId: string; role: string }[];
   'conversation-servers:channel-preference': (input: { serverId: string; channelId: string }) => { level: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel; preference: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; channelOverride: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel | null; serverDefault: import('@pkg/main/ConversationServersCloudClient').ConversationServerNotificationLevel };
@@ -757,7 +760,7 @@ export interface IpcMainInvokeEvents {
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agent-definitions:list':        (options?: import('@pkg/main/agentsIpc').AgentDefinitionsListOptions) => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
-  'agent-definitions:create':      (input: import('@pkg/shared/agentEditor').AgentEditorCreateRequest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:create':      (input: import('@pkg/shared/agentEditor').AgentEditorCreateRequest) => import('@pkg/shared/agentEditor').AgentEditorCreateResponse;
   'agent-definitions:update':      (id: string, patch: import('@pkg/shared/agentEditor').AgentEditorPatch) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
@@ -770,6 +773,7 @@ export interface IpcMainInvokeEvents {
   'model-defaults:get': () => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
   'model-defaults:set': (patch: Partial<import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaults>) => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
   'model-defaults:reset': () => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
+  'model-routing:preview': (input: import('@pkg/shared/modelLaunchPreview').AgentPreviewRequest) => import('@pkg/shared/modelLaunchPreview').ModelLaunchPreview;
   'model-routing:get':   () => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'model-routing:set':   (patch: Partial<Pick<import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder'>>) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'model-routing:reset': (target: { section: 'agents' | 'subconscious' | 'classes'; class?: import('@pkg/agent/languagemodels/modelRoutingTypes').ModelClass }) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
@@ -802,6 +806,7 @@ export interface IpcMainInvokeEvents {
   // Approval gate — renderer resolves a pending user-approval request
   // that a backend tool parked via ApprovalService.
   'decisions:conversation': (conversationId: string, before?: { at: number; id: string }) => import('@pkg/shared/decisions').DecisionRecord[];
+  'decisions:transcript': (conversationId: string, ids: string[]) => import('@pkg/shared/decisions').DecisionRecord[];
   'decisions:dismiss':      (id: string, conversationId: string) => { settled: boolean };
   'decisions:list': () => import('@pkg/shared/decisions').DecisionRecord[];
   'decisions:resolve': (response: import('@pkg/shared/decisions').DecisionResponse) => { settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean };
@@ -1358,9 +1363,11 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'sulla:theme-changed': (theme: string) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-activity': (tabId: string, state: import('@pkg/shared/chatTabActivity').ChatTabActivity | null) => void;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:loaded': (tabId: string) => void;
@@ -1371,6 +1378,7 @@ export interface IpcRendererEvents {
   'tabs:activate': (transferId: string, tabId: string) => void;
   'threat-proxy:status-changed': (status: import('@pkg/main/threat-proxy').ThreatProxyStatus) => void;
 
+  'model-routing:changed': () => void;
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;

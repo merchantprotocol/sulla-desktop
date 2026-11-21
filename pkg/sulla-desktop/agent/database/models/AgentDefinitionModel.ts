@@ -3,12 +3,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { newerBuiltinAgentSlug } from '../../../shared/agentJobNames';
+
 import { randomUUID } from 'node:crypto';
 
 import { AgentModelCategoryPolicy } from '../../languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '../PostgresClient';
 import { JsonObjectParser } from './JsonObjectParser';
 import { RedisUseCaseChangePublisherFactory } from '../../useCases/RedisUseCaseChangePublisherFactory';
+import type { PoolClient } from 'pg';
+
 import type { UseCaseChangePublisher } from '../../useCases/UseCaseChangeBus';
 
 export type AgentDefinitionStatus = 'draft' | 'production' | 'archive';
@@ -174,7 +178,7 @@ function toAgentModelSlot(value: unknown): AgentModelSlot | null {
 function toIso(value: unknown): string {
   return value instanceof Date ? value.toISOString() : String(value ?? '');
 }
-function rowToDefinition(row: any): AgentDefinition {
+export function rowToDefinition(row: any): AgentDefinition {
   const policy = new AgentModelCategoryPolicy();
   const category = policy.resolve({ choice: row.model_choice, model: row.model, slot: row.model_slot, slug: row.slug });
   return {
@@ -262,9 +266,17 @@ export class AgentDefinitionModel {
     return row ? rowToDefinition(row) : null;
   }
 
-  static async findBySlug(slug: string): Promise<AgentDefinition | null> {
+  static async findExactBySlug(slug: string): Promise<AgentDefinition | null> {
     const row = await postgresClient.queryOne('SELECT * FROM agent_definitions WHERE slug = $1 LIMIT 1', [slug]);
     return row ? rowToDefinition(row) : null;
+  }
+
+  static async findBySlug(slug: string): Promise<AgentDefinition | null> {
+    const exact = await this.findExactBySlug(slug);
+    if (exact) return exact;
+    const alias = newerBuiltinAgentSlug(slug);
+    const replacement = alias ? await this.findExactBySlug(alias) : null;
+    return replacement?.is_builtin ? replacement : null;
   }
 
   static async list(status?: AgentDefinitionStatus): Promise<AgentDefinition[]> {
@@ -275,7 +287,7 @@ export class AgentDefinitionModel {
   }
 
   /** `useCaseChanges` hears the committed row (post-commit, never throws). */
-  static async create(input: AgentDefinitionInput, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create()): Promise<AgentDefinition> {
+  static async create(input: AgentDefinitionInput, useCaseChanges: UseCaseChangePublisher = new RedisUseCaseChangePublisherFactory().create(), transaction?: { client: PoolClient; id: string }): Promise<AgentDefinition> {
     const categoryPolicy = new AgentModelCategoryPolicy();
     const category = categoryPolicy.resolve({ choice: input.modelChoice, model: input.model, slot: input.modelSlot, slug: input.slug });
     input = { ...input, modelChoice: category, provider: null, model: null, modelSlot: null, modelPriority: [], config: categoryPolicy.config(input.config ?? {}, category) };
@@ -285,8 +297,12 @@ export class AgentDefinitionModel {
       if (marked) input = { ...input, config: marked };
     }
     const slug = required(input.slug, 'slug');
+    const replacement = newerBuiltinAgentSlug(slug);
+    if (replacement && !input.isBuiltin && (await this.findExactBySlug(replacement))?.is_builtin) {
+      throw new Error(`Choose another slug. "${ slug }" is a compatibility alias for "${ replacement }".`);
+    }
     const name = required(input.name, 'name');
-    const row = await postgresClient.queryOne(`
+    const sql = `
       INSERT INTO agent_definitions (
         id, slug, name, description, system_prompt, soul_content,
         allowed_tools, skill_refs, routine_refs, model_priority,
@@ -298,8 +314,9 @@ export class AgentDefinitionModel {
         $16::jsonb,$17,$18,$19::jsonb,$20,$21,$22,$23::jsonb,$24,$25,$26,$27,$28,
         $29,$30,$31,$32,$33,$34,$35,$36,$37,$38)
       RETURNING *
-    `, [
-      `agent-${ randomUUID() }`, slug, name, input.description ?? '', input.systemPrompt ?? '', input.soulContent ?? '',
+    `;
+    const params = [
+      transaction?.id ?? `agent-${ randomUUID() }`, slug, name, input.description ?? '', input.systemPrompt ?? '', input.soulContent ?? '',
       toStringArray(input.allowedTools), toStringArray(input.skillRefs), toStringArray(input.routineRefs),
       JSON.stringify(validateModelPriority(input.modelPriority)), input.version ?? null,
       input.status ?? 'draft', input.enabled !== false, input.sourceTemplateSlug ?? null, input.contentHash ?? null,
@@ -311,9 +328,10 @@ export class AgentDefinitionModel {
       toCostTier(input.costTier), toStringArray(input.canCall), input.isBuiltin === true, input.builtinHash ?? null,
       typeof input.frontDoor === 'boolean' ? input.frontDoor : null,
       input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
-    ]);
+    ];
+    const row = transaction ? (await transaction.client.query(sql, params)).rows[0] : await postgresClient.queryOne(sql, params);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
-    useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'updated' });
+    if (!transaction) useCaseChanges.announce({ type: 'agent', slug: String(row.slug), change: 'updated' });
     return rowToDefinition(row);
   }
 

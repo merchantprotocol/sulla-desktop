@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AgentStallClassification } from '@pkg/shared/agentState/AgentStallClassification';
+import { NO_RESPONSE_AFTER_MS, waitingOn } from './waitingStatus';
+
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
+import type { ThreadActivityState } from '@pkg/shared/chatTabActivity';
 
 import type { Message } from '../models/Message';
 
@@ -11,10 +15,9 @@ import type { Message } from '../models/Message';
  * What a chat thread is doing right now, so a thread never looks the same
  * whether Sulla is busy, waiting, blocked on the user or idle.
  * Priority: needs you > stalled > working > quiet > waiting > idle. Quiet is an
- * agent with no output lately whose container is still running; stalled is one
- * that stopped responding (or that we cannot see running).
+ * agent with no recent output; stalled means its runtime was confirmed gone.
  */
-export type ThreadActivityState = 'you' | 'stalled' | 'working' | 'quiet' | 'waiting' | 'idle';
+export type { ThreadActivityState } from '@pkg/shared/chatTabActivity';
 
 export interface ThreadActivityItem {
   state:  Exclude<ThreadActivityState, 'idle'>;
@@ -40,6 +43,8 @@ export interface ThreadActivityInput {
   messages:         readonly Message[];
   agents:           readonly AgentStateRow[];
   heartbeatMinutes: number | null;
+  /** Injectable for deterministic status tests and the one-second UI clock. */
+  now?:             number;
 }
 
 const LEAD: Record<ThreadActivityState, string> = {
@@ -112,7 +117,7 @@ function agentItem(row: AgentStateRow): ThreadActivityItem | null {
     return parked.state === 'waiting' ? { state: 'waiting', title: row.label, detail: parked.detail, at, ref } : null;
   }
   case 'quiet':
-    return { state: row.runtimeAlive ? 'quiet' : 'stalled', title: row.label, detail: quietDetail(row, Date.now()), at, ref };
+    return { state: row.runtimeAlive === false && AgentStallClassification.isStalled(row.state, row.runtimeAlive) ? 'stalled' : 'quiet', title: row.label, detail: quietDetail(row, Date.now()), at, ref };
   case 'blocked':
     return { state: 'waiting', title: row.label, detail: blockedDetail(row), at, ref };
   default:
@@ -133,11 +138,32 @@ function humanItems(messages: readonly Message[]): ThreadActivityItem[] {
   return items;
 }
 
+export function chatRunStalled(running: boolean, messages: readonly Message[], now = Date.now()): boolean {
+  const waiting = waitingOn(messages, running);
+  return !!waiting && now - waiting.since >= NO_RESPONSE_AFTER_MS;
+}
+
+export function hasActiveChatWork(running: boolean, agents: readonly AgentStateRow[], messages: readonly Message[] = [], now = Date.now()): boolean {
+  return (running && !chatRunStalled(running, messages, now)) || agents.some(row => row.state === 'working' || row.state === 'queued' ||
+    (row.state === 'quiet' && row.runtimeAlive === true));
+}
+
 export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity {
+  const now = input.now ?? Date.now();
   const items = [
     ...humanItems(input.messages),
     ...input.agents.map(agentItem).filter((item): item is ThreadActivityItem => item !== null),
   ];
+  const stalledRun = waitingOn(input.messages, input.running);
+  if (stalledRun && now - stalledRun.since >= NO_RESPONSE_AFTER_MS) {
+    items.push({
+      state:  'stalled',
+      title:  'Sulla',
+      detail: `no response for ${ activityAge(now - stalledRun.since) }`,
+      at:     stalledRun.since,
+      ref:    { kind: 'message', id: stalledRun.message.id },
+    });
+  }
   const has = (state: ThreadActivityState) => items.some(item => item.state === state);
   const count = (state: ThreadActivityState) => items.filter(item => item.state === state).length;
   if (input.heartbeatMinutes) {
@@ -156,7 +182,15 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
     // One silent agent must not hide the rest: say what else is still moving.
     const working = count('working');
     const waiting = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent').length;
-    parts = [`${ plural(count('stalled'), 'agent') } stopped responding`, ...(working ? [`${ plural(working, 'agent') } still working`] : []), ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : []), ...(count('quiet') ? [`${ plural(count('quiet'), 'agent') } quiet`] : [])];
+    const stalledAgents = items.filter(item => item.state === 'stalled' && item.ref.kind === 'agent').length;
+    const mainRunStalled = items.some(item => item.state === 'stalled' && item.ref.kind === 'message');
+    parts = [
+      ...(mainRunStalled ? ['Sulla has not responded'] : []),
+      ...(stalledAgents ? [`${ plural(stalledAgents, 'agent') } stopped responding`] : []),
+      ...(working ? [`${ plural(working, 'agent') } still working`] : []),
+      ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : []),
+      ...(count('quiet') ? [`${ plural(count('quiet'), 'agent') } quiet`] : []),
+    ];
   } else if (input.running || has('working')) {
     state = 'working';
     parts = [count('working') ? `${ plural(count('working'), 'agent') } running` : 'Sulla is replying'];
@@ -168,7 +202,8 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
   } else if (has('quiet')) {
     state = 'quiet';
     const waiting = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent').length;
-    parts = [`${ plural(count('quiet'), 'agent') } quiet`, 'still running', ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : [])];
+    const confirmed = input.agents.every(row => row.state !== 'quiet' || row.runtimeAlive === true);
+    parts = [`${ plural(count('quiet'), 'agent') } quiet`, ...(confirmed ? ['still running'] : []), ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : [])];
   } else if (has('waiting')) {
     state = 'waiting';
     const parked = input.agents.filter(row => row.state === 'parked' && parkedActivity(row).state === 'waiting');

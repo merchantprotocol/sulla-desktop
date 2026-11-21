@@ -13,7 +13,6 @@
       v-if="!isTabHost"
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
-      :can-toggle-mode="canToggleMode"
     />
 
     <div v-if="browserActionError" role="alert" class="mx-4 rounded border border-red-500 p-2 text-sm">
@@ -359,6 +358,12 @@
     </template>
 
     <!-- Labs: experimental features panel -->
+    <template v-else-if="tabMode === 'capture-studio'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <CaptureStudioTab :tab-id="props.tabId" />
+      </div>
+    </template>
+
     <template v-else-if="tabMode === 'labs'">
       <div class="flex-1 min-h-0 overflow-hidden">
         <LabsPage />
@@ -430,6 +435,7 @@ const FilesPage = lazyScreen(() => import('./FilesPage.vue'), 'FilesPage');
 const DocumentPage = lazyScreen(() => import('./DocumentPage.vue'), 'DocumentPage');
 const HistoryTab = lazyScreen(() => import('./HistoryTab.vue'), 'HistoryTab');
 const LabsPage = lazyScreen(() => import('./LabsPage.vue'), 'LabsPage');
+const CaptureStudioTab = lazyScreen(() => import('./capture-studio/CaptureStudioTab.vue'), 'CaptureStudioTab');
 const DecidePage = lazyScreen(() => import('./DecidePage.vue'), 'DecidePage');
 const RoutinesHome = lazyScreen(() => import('./RoutinesHome.vue'), 'RoutinesHome');
 const Conversations = lazyScreen(() => import('./conversations/Conversations.vue'), 'Conversations');
@@ -463,6 +469,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   preferences:   'Preferences',
   docker:        'Docker',
   'support-session': 'Support session',
+  'capture-studio': 'Capture Studio',
 };
 
 const isTabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
@@ -472,12 +479,8 @@ const props = defineProps<{
   isVisible: boolean;
 }>();
 
-const { isDark, toggleTheme, currentScheme, availableThemes } = useTheme();
+const { isDark, toggleTheme } = useTheme();
 
-const canToggleMode = computed(() => {
-  const schemeThemes = availableThemes.filter(t => t.scheme === currentScheme.value);
-  return schemeThemes.some(t => t.mode === 'light') && schemeThemes.some(t => t.mode === 'dark');
-});
 const { updateTab, getTab, createTab, promoteTab } = useBrowserTabs();
 const { findByUrl, addBookmark } = useBookmarks();
 const { showOverlay } = useStartupProgress();

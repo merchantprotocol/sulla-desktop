@@ -30,8 +30,8 @@ import { effectiveEffort, isAutoEntry, isBlocked, resolveRule } from '@pkg/agent
 import { MODEL_CLASSES, type ClassModel, type ModelClass, type ModelRoutingState, type ModelRule, type NeverUsePair } from '@pkg/agent/languagemodels/modelRoutingTypes';
 
 type Patch = Pick<ModelRoutingState, 'classes' | 'followProviderOrder' | 'neverUse'>;
-const props = defineProps<{ state: ModelRoutingState; now: number; refreshing: boolean }>();
-const emit = defineEmits<{ (e: 'save', patch: Patch): void; (e: 'refresh'): void }>();
+const props = defineProps<{ state: ModelRoutingState; now: number }>();
+const emit = defineEmits<{ (e: 'save', patch: Patch): void }>();
 
 type Lanes = Record<ModelClass, ClassModel[]>;
 function clone<T>(x: T): T { return JSON.parse(JSON.stringify(x)) }
@@ -202,15 +202,7 @@ function sourceText(c: ModelClass, i: number): string {
         <span
           class="ld-dim"
           aria-live="polite"
-        >{{ refreshing ? 'Checking lists…' : `Lists checked ${LedgerText.ago(now, state.catalog?.checkedAt)}` }}</span>
-        <button
-          type="button"
-          class="btn sm"
-          :disabled="refreshing"
-          @click="emit('refresh')"
-        >
-          Refresh models
-        </button>
+        >{{ `Lists checked ${LedgerText.ago(now, state.catalog?.checkedAt)}` }}</span>
       </div>
     </header>
 

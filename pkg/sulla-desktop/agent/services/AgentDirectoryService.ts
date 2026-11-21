@@ -1,3 +1,4 @@
+import { findAgentBySlug } from '../../shared/agentJobNames';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { modelRouter } from '../languagemodels/modelRouter';
 
@@ -141,7 +142,9 @@ export function scoreCard(card: AgentDirectoryCard, text: string): number {
 
 export async function listAgentDirectory(opts: AgentDirectoryQuery = {}): Promise<AgentDirectoryCard[]> {
   const agents = await agentDefinitionService.list();
-  const slugFilter = opts.slugs?.length && !opts.slugs.includes(CAN_CALL_WILDCARD) ? new Set(opts.slugs) : null;
+  const identities = agents.map(agent => ({ slug: agent.slug, isBuiltin: agent.is_builtin }));
+  const slugFilter = opts.slugs?.length && !opts.slugs.includes(CAN_CALL_WILDCARD)
+    ? new Set(opts.slugs.map(slug => findAgentBySlug(identities, slug)?.slug)) : null;
   let cards = agents
     .filter(agent => opts.includeInactive || isActiveAgent(agent))
     .filter(agent => !slugFilter || slugFilter.has(agent.slug))
@@ -194,7 +197,7 @@ export async function buildAgentTeamBlock(opts: AgentTeamBlockOptions = {}): Pro
   const scoped = self?.can_call.length ? self.can_call : undefined;
 
   let cards = await listAgentDirectory({ slugs: scoped });
-  cards = cards.filter(card => card.slug !== opts.forAgentSlug);
+  cards = cards.filter(card => card.slug !== (self?.slug ?? opts.forAgentSlug));
   if (opts.query?.trim()) {
     const ranked = cards.map(card => ({ card, score: scoreCard(card, opts.query!) }));
     cards = ranked.sort((a, b) => b.score - a.score || a.card.slug.localeCompare(b.card.slug)).map(entry => entry.card);

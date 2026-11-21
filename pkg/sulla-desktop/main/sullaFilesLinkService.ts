@@ -54,6 +54,9 @@ export interface LinkService {
 
 export class SharingUnavailableError extends Error {}
 
+/** Cloud created a share but did not accept its optional stored-copy content. */
+export class CloudShareContentNotFoundError extends Error {}
+
 function normalize(value:any):ShareLink {
   return {
     id:            String(value.id ?? value.token ?? ''),
@@ -114,7 +117,11 @@ export class SullaFilesLinkService implements LinkService {
     const response = await this.requestWithContractFallback(['/v1/links', '/v1/shares'], {
       method: 'POST', headers: { 'content-type': 'application/json' }, body,
     });
-    if (!response.ok) throw new Error((await response.json().catch(() => ({})))?.error ?? `Sharing failed (${ response.status })`);
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({})) as { code?:unknown; error?:unknown };
+      if (failure.code === 'SULLA_CLOUD_CONTENT_NOT_FOUND') throw new CloudShareContentNotFoundError('Sulla Cloud could not store the optional copy.');
+      throw new Error(typeof failure.error === 'string' ? failure.error : `Sharing failed (${ response.status })`);
+    }
     const share = normalize(await response.json());
     if (!share.url) throw new Error('Sharing service returned no public URL');
 

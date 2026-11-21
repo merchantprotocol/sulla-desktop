@@ -28,6 +28,7 @@ export const agentToolManifests: ToolManifest[] = [
             workflowStep: { type: 'enum', enum: ['mockup', 'build', 'implementation', 'review', 'acceptance'], optional: true,
               description: 'For a Product Owner feature handoff, label the step as mockup, build, or acceptance. The build lead labels coding jobs implementation and independent reviews review, with followUpOf pointing to the implementation. This applies any choices saved by the human for that step; omit for unrelated work.' },
             followUpOf:    { type: 'object', optional: true, description: 'Explicit original result this task continues. Use its exact jobId and taskIndex; never infer from a similar label or PR. Presentation only.', properties: { jobId: { type: 'string' }, taskIndex: { type: 'number' } } },
+            implementationSource: { type: 'object', optional: true, description: 'Product Owner acceptance only: pass the exact completed implementation jobId and taskIndex in this chat to attach its saved inline source. Put the acceptance checks in the prompt without copying the code. Omit for a repository or preview handoff.', properties: { jobId: { type: 'string' }, taskIndex: { type: 'number' } } },
             workspacePath: {
               type:        'string',
               optional:    true,
@@ -111,7 +112,7 @@ export const agentToolManifests: ToolManifest[] = [
       limit: { type: 'number', optional: true, description: 'Maximum finished jobs in the list (default 25, maximum 100). Active jobs are always included.' },
       includeFinished: { type: 'boolean', optional: true, description: 'Include recent finished jobs in the list. Defaults to true.' },
       scope: { type: 'enum', enum: ['mine', 'all'], optional: true, default: 'mine', description: 'mine returns only this calling chat’s children and descendants; all returns the fleet. Ignored for explicit jobId history lookups.' },
-      view: { type: 'enum', enum: ['list', 'tree'], optional: true, default: 'list', description: 'list returns full job projections (default); tree returns a compact depth-first task tree.' },
+      view: { type: 'enum', enum: ['list', 'tree', 'implementation_source'], optional: true, default: 'list', description: 'list returns full job projections (default); tree returns a compact depth-first task tree; implementation_source returns the exact saved implementation bytes assigned to the calling review or acceptance task. Omit jobId for implementation_source.' },
     },
     operationTypes: ['read'],
     loader:         () => import('./check_agent_jobs'),

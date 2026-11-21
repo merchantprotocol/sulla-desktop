@@ -283,7 +283,15 @@ async function verifyApiKey(providerId: ApiKeyProviderId, apiKey: string, values
       const modelsResponse = await fetch(provider.modelsUrl(values), { headers: provider.headers(apiKey, values), signal: AbortSignal.timeout(15_000) });
       if (modelsResponse.ok) models = verifiedChatModels(provider, await modelsResponse.json());
     }
-    if (!models.length && provider.staticModels) models = [...provider.staticModels];
+    if (providerId !== 'custom') {
+      const { sharedModelCatalog } = await import('@pkg/agent/languagemodels/sharedModelCatalog');
+      const catalog = await sharedModelCatalog.listModels(providerId);
+      if (!catalog.length) return { error: 'Validated Cloud model catalog unavailable. Your key has not been changed.', errorClass: 'catalog-unavailable' };
+      // Provider discovery is only a private credential/availability overlay.
+      // It cannot add model identities to the shared listing.
+      const accessible = new Set(models);
+      models = catalog.filter(model => accessible.has(model.id) || model.aliases?.some(alias => accessible.has(alias))).map(model => model.id);
+    }
     if (!models.length) return {
       error: `${ provider.name } accepted the key but returned no supported chat models.`,
       errorClass: 'no-chat-model',
@@ -382,7 +390,7 @@ export function initIntegrationOAuthEvents(): void {
           const body = response.ok ? await response.json() as { data?: { id?: string }[] } : null;
           const model = body?.data?.find(item => typeof item.id === 'string' && item.id)?.id;
           if (!model) throw new Error('Grok signed in, but the account could not access any models');
-          values.model = model;
+          // Authentication probe does not authorize a model selection.
         }
         await queuePendingCredential({
           integrationId: payload.integrationId, accountId: payload.accountId || 'oauth', values, activate: true,
@@ -474,7 +482,7 @@ export function initIntegrationOAuthEvents(): void {
       }
       const verification = await verifyApiKey(integrationId as ApiKeyProviderId, apiKey, values);
       if (verification.error) return { success: false, error: verification.error };
-      if (!values.model && verification.models?.[0]) values.model = verification.models[0];
+      // No implicit first-model selection. Preserve an explicit pin or leave unselected.
     }
 
     try {
@@ -525,13 +533,13 @@ export function initIntegrationOAuthEvents(): void {
       return { success: false, error: verification.error || `${ provider.name } accepted the key but returned no supported chat models.` };
     }
     const models = verification.models;
-    const model = models[0];
+    const probeModel = models[0];
 
     // First run currently offers these three providers. Keep its one-token
     // capability probe while sharing the same model-list verification table.
     if (providerId === 'anthropic' || providerId === 'openai' || providerId === 'grok') {
       try {
-        const probe = probeRequest(providerId, model);
+        const probe = probeRequest(providerId, probeModel);
         const probeResponse = await fetch(probe.url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...provider.headers(apiKey, values) },
@@ -554,12 +562,12 @@ export function initIntegrationOAuthEvents(): void {
     await queuePendingCredential({
       integrationId: providerId,
       accountId: 'default',
-      values: { api_key: apiKey, model, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
+      values: { api_key: apiKey, ...(workspaceId ? { workspace_id: workspaceId } : {}) },
       activate: true,
     });
     const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
     await getModelProviderService().reconcilePrimaryProvider(false, providerId);
-    firstRunTrace('api-key', 'verification succeeded', { provider: providerId, model });
+    firstRunTrace('api-key', 'verification succeeded', { provider: providerId });
     aiConnectionStatusCache.invalidate();
     return { success: true, models };
   });

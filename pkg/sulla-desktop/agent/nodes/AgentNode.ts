@@ -9,7 +9,7 @@ import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { isContainerLifecycleLost } from '../languagemodels/cliFaultRecovery';
-import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { stripProtocolTags, unwrapFormattedDoneReply } from '../utils/stripProtocolTags';
 import { requeuePendingSteers } from '../utils/steerChannel';
 import { logVoiceSpan } from '../utils/voiceTurn';
 import { TurnHopTiming } from '../utils/turnHopTiming';
@@ -564,6 +564,8 @@ export class AgentNode extends BaseNode {
       .trim();
 
     if (outcome.status === 'done') {
+      const formattedReply = unwrapFormattedDoneReply(rawResultText);
+      if (formattedReply !== null) return stripProtocolTags(formattedReply);
       return proseWithoutWrappers || outcome.summary || '';
     }
 

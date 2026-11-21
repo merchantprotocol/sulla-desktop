@@ -3,15 +3,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ModelCompatibilityService, ProviderClientStatus } from './ModelCompatibilityService';
+import { getCliStatus } from '../tools/models/shared';
 import { PROVIDER_FACTORIES } from './index';
+import { candidateKey, cleanAgentModelTiers, tierEntries, type AgentModelTiers } from './agentModelTiers';
 import { applyRules, compareCatalogs, effectiveEffort, isPairBlocked } from './modelCatalogRules';
 import { LiveProviderSnapshot, type LiveProviderMap } from './LiveProviderSnapshot';
 import { MODEL_CLASSES, type AgentModelChoice, type ClassModel, type EditableRoutingState, type ModelCatalogReport, type ModelClass, type RoutingModelInfo, type RoutingProviderInfo, type RoutingRow } from './modelRoutingTypes';
 import { classifyLLMFailure, redactLLMFailureMessage } from './providerRecovery';
-import { copyWorkerBindings } from './workerModelBindings';
-import type { WorkerModelBinding } from './workerModelBindings';
+import { copyWorkerBindings, fileOwnedBinding } from './workerModelBindings';
+import type { WorkerInheritanceChoices, WorkerModelBinding } from './workerModelBindings';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { isSubscriptionAccess, type ProviderAccessMethod } from '@pkg/shared/providerAccess';
+
+import type { PoolClient } from 'pg';
 
 export interface ModelCandidate { provider: string; model: string; effort?: string }
 export type EditableState = EditableRoutingState;
@@ -45,20 +50,9 @@ const providerOrder = Object.keys(PROVIDER_FACTORIES);
 /** True for a provider id in the AI Infrastructure catalog (connected or not). */
 export function isKnownProvider(id: string): boolean { return providerOrder.includes(id) }
 
-// Deliberately static: defaults must not change underneath an installation when a
-// provider changes its discovery endpoint. Unknown providers/models remain editable.
-export const DEFAULT_MODELS: Partial<Record<string, Partial<Record<ModelClass, string[]>>>> = {
-  'claude-code': { frontier: ['claude-opus-5-5'], standard: ['claude-sonnet-5-5'], fast: ['claude-haiku-5-5'], coding: ['claude-sonnet-5-5'] },
-  codex: { frontier: ['gpt-5.5'], standard: ['gpt-5.6-terra'], fast: ['gpt-5.6-luna'], coding: ['gpt-5.6-sol'] },
-  anthropic: { frontier: ['claude-opus-5-5'], standard: ['claude-sonnet-5-5'], fast: ['claude-haiku-5-5'], coding: ['claude-sonnet-5-5'] },
-  openai: { frontier: ['gpt-5.5'], standard: ['gpt-5.3'], fast: ['gpt-5-mini'], coding: ['gpt-5.3-codex'] },
-  grok: { frontier: ['grok-4.6'], standard: ['grok-4.1-fast'], fast: ['grok-4.1-fast'], coding: ['grok-code-fast-1'] },
-  deepseek: { frontier: ['deepseek-v4-pro'], standard: ['deepseek-chat'], fast: ['deepseek-chat'], coding: ['deepseek-coder'] },
-  google: { frontier: ['gemini-3-pro'], standard: ['gemini-3-flash'], fast: ['gemini-3-flash'], coding: ['gemini-3-pro'] },
-  kimi: { frontier: ['kimi-k2.5'], standard: ['kimi-k2.5'], fast: ['kimi-k2.5'], coding: ['kimi-k2.5'] },
-  alibaba: { frontier: ['qwen3-max'], standard: ['qwen3-plus'], fast: ['qwen3-turbo'], coding: ['qwen3-coder-plus'] },
-  ollama: { local: ['llama3.1:8b'], fast: ['llama3.1:8b'], standard: ['llama3.1:8b'], coding: ['qwen2.5-coder:7b'] },
-};
+// No client-maintained model defaults. Saved class assignments remain explicit;
+// a first-start installation must choose from validated Cloud metadata.
+export const DEFAULT_MODELS: Partial<Record<string, Partial<Record<ModelClass, string[]>>>> = {};
 
 function strongest(provider: string): ModelClass {
   const table = DEFAULT_MODELS[provider] || {};
@@ -107,10 +101,11 @@ export function reusableForPublication(existing: WorkerModelBinding, requested?:
   return !marker || (!!requested && marker.fileId === requested.fileId && marker.versionId === requested.versionId);
 }
 export const STALE_PUBLICATION_MAPPING = 'An unsettled package model mapping from another publication exists; it was preserved for the owner to resolve in AI Models.';
+export const STALE_FILE_PUBLICATION = 'This agent\'s model mapping changed while its file publication was applied; the newer mapping was preserved and the publication will be checked again.';
 
 export function canonicalProviderId(provider: string): string {
   const normalized = String(provider || '').trim().toLowerCase();
-  const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai' };
+  const aliases: Record<string, string> = { 'claude code': 'claude-code', 'open ai': 'openai', xai: 'grok', moonshot: 'kimi' };
   return aliases[normalized] || normalized.replace(/_/g, '-');
 }
 
@@ -128,6 +123,7 @@ function normalize(saved: Partial<EditableState>, defaults: EditableState): Edit
     classes,
     followProviderOrder: { ...defaults.followProviderOrder, ...(saved.followProviderOrder || {}) },
     workerBindings:      copyWorkerBindings(saved.workerBindings),
+    ...(saved.workerInheritance && Object.keys(saved.workerInheritance).length ? { workerInheritance: structuredClone(saved.workerInheritance) } : {}),
     neverUse: Array.isArray(saved.neverUse) ? saved.neverUse : legacyNeverUse(saved),
   };
 }
@@ -172,9 +168,9 @@ export class ModelRouter {
 
   onStatusChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   private emit(): void { for (const listener of this.listeners) listener() }
-  async getEditableState(): Promise<EditableState> {
+  async getEditableState(readOnly = false): Promise<EditableState> {
     // A missing key in the bootstrap file says nothing about the database.
-    const canMigrate = SullaSettingsModel.ready;
+    const canMigrate = !readOnly && SullaSettingsModel.ready;
     const saved = await SullaSettingsModel.get(SETTING, null);
     return saved && typeof saved === 'object' ? normalize(saved, recommendedState()) : migrateLegacy(canMigrate);
   }
@@ -199,7 +195,11 @@ export class ModelRouter {
       }
     }
     for (const [slug, binding] of Object.entries(patch.workerBindings ?? {})) {
-      if (!slug || !binding.agentId || !Number.isInteger(binding.revision) || binding.revision < 1 || !Array.isArray(binding.candidates) || !binding.candidates.length || binding.candidates.length > 10) throw new Error('Invalid worker model mapping');
+      if (!slug || !binding.agentId || !Number.isInteger(binding.revision) || binding.revision < 1 || !Array.isArray(binding.candidates) || !binding.candidates.length || binding.candidates.length > (binding.modelTiers ? 100 : 10)) throw new Error('Invalid worker model mapping');
+      if (binding.modelTiers) {
+        const rows = tierEntries(cleanAgentModelTiers(binding.modelTiers)).map(entry => entry.candidate);
+        if (rows.length !== binding.candidates.length || rows.some((row, index) => candidateKey(row) !== candidateKey(binding.candidates[index]))) throw new Error('Worker tier order and fallback list disagree.');
+      }
       for (const candidate of binding.candidates) {
         if (!providers.has(candidate.provider) || !candidate.model?.trim() || (candidate.effort !== undefined && !/^[a-z]{2,10}$/.test(candidate.effort))) throw new Error('Invalid worker model candidate');
       }
@@ -259,21 +259,30 @@ export class ModelRouter {
      * null when there was none. The write applies only if that exact entry is still stored.
      */
     expected: { token: string; revision: number; entry?: { agentId: string; editToken?: string; revision: number } | null },
-    next: { editToken: string; connections: Record<string, string>; candidates: ModelCandidate[] } | null,
+    next: { editToken: string; connections: Record<string, string>; candidates: ModelCandidate[]; modelTiers?: AgentModelTiers } | null,
+    removeEditToken?: string,
   ): Promise<EditableState> {
-    if (next) this.validatePatch({ workerBindings: { [slug]: { agentId, revision: 1, candidates: next.candidates } } });
+    if (next) this.validatePatch({ workerBindings: { [slug]: { agentId, revision: 1, candidates: next.candidates, modelTiers: next.modelTiers } } });
     return this.serializeWrite(async() => {
       const current = await this.getEditableState();
       const previous = current.workerBindings?.[slug];
       const own = previous?.agentId === agentId ? previous : undefined;
+      const inherited = current.workerInheritance?.[slug];
+      const identity = own ?? (inherited?.agentId === agentId ? inherited : undefined);
       const sameEntry = expected.entry === undefined || (expected.entry === null
         ? !previous
         : !!previous && previous.agentId === expected.entry.agentId && (previous.editToken ?? '') === (expected.entry.editToken ?? '') && previous.revision === expected.entry.revision);
-      if (!sameEntry || (own?.editToken ?? '') !== expected.token || (own?.revision ?? 0) !== expected.revision) throw new Error('These model settings changed elsewhere. Reload the agent page before saving.');
+      if (!sameEntry || (identity?.editToken ?? '') !== expected.token || (identity?.revision ?? 0) !== expected.revision) throw new Error('These model settings changed elsewhere. Reload the agent page before saving.');
       const workerBindings = { ...(current.workerBindings ?? {}) };
-      if (next) workerBindings[slug] = { editToken: next.editToken, agentId, revision: (own?.revision ?? 0) + 1, connections: { ...next.connections }, candidates: next.candidates.map(row => ({ ...row })) };
+      const workerInheritance: WorkerInheritanceChoices = { ...(current.workerInheritance ?? {}) };
+      // A carried file provenance keeps its old revision, so the edited mapping is no longer file-owned.
+      if (next) workerBindings[slug] = { editToken: next.editToken, agentId, revision: (identity?.revision ?? 0) + 1, connections: { ...next.connections }, ...(next.modelTiers ? { modelTiers: structuredClone(next.modelTiers) } : {}), candidates: next.candidates.map(row => ({ ...row })), ...(own?.filePublication ? { filePublication: { ...own.filePublication } } : {}) };
       else delete workerBindings[slug];
-      const state = normalize({ ...current, workerBindings }, recommendedState());
+      // An explicit return to shared routing is an owner decision a later file publication must not undo.
+      // Removing a still-unsettled registration's mapping only resolves that stale registration.
+      if (next) delete workerInheritance[slug];
+      else if (own && !own.pendingPublication) workerInheritance[slug] = { agentId, revision: own.revision + 1, ...(removeEditToken ? { editToken: removeEditToken } : {}) };
+      const state = normalize({ ...current, workerBindings, workerInheritance }, recommendedState());
       await SullaSettingsModel.set(SETTING, state, 'json');
       return state;
     });
@@ -307,6 +316,53 @@ export class ModelRouter {
       const next = normalize({ ...current, workerBindings: { ...current.workerBindings, [slug]: settled } }, recommendedState());
       await SullaSettingsModel.set(SETTING, next, 'json');
       return true;
+    });
+  }
+
+  /**
+   * An approved publication or local import's mapping write, compare-and-set against the exact entry the caller
+   * observed (null: none). It never writes over an owner's explicit return to shared routing. `next`
+   * null removes the observed file-owned entry. Returns the written entry's identity.
+   */
+  async writeFilePublishedBinding(
+    slug: string,
+    agentId: string,
+    expected: { editToken?: string; revision: number } | null,
+    next: { editToken: string; connections: Record<string, string>; candidates: ModelCandidate[]; modelTiers?: AgentModelTiers; filePublication?: { fileId: string; versionId: string }; pendingPublication?: { fileId: string; versionId: string } } | null,
+    options: { recheck?: () => Promise<void>; project?: (client: PoolClient) => Promise<void> } = {},
+  ): Promise<{ editToken: string; revision: number } | null> {
+    const revisionAfter = (expected?.revision ?? 0) + 1;
+    const binding: WorkerModelBinding | undefined = next ? {
+      editToken: next.editToken, agentId, revision: revisionAfter, connections: { ...next.connections },
+      ...(next.modelTiers ? { modelTiers: structuredClone(next.modelTiers) } : {}), candidates: next.candidates.map(row => ({ ...row })),
+      ...(next.pendingPublication ? { pendingPublication: { ...next.pendingPublication } } : {}),
+      ...(next.filePublication ? { filePublication: { ...next.filePublication, revision: revisionAfter } } : {}),
+    } : undefined;
+    if (binding) this.validatePatch({ workerBindings: { [slug]: binding } });
+    const update = (current: EditableState) => {
+      const existing = current.workerBindings?.[slug];
+      const same = expected === null ? !existing : !!existing && existing.agentId === agentId && (existing.editToken ?? '') === (expected.editToken ?? '') && existing.revision === expected.revision;
+      if (!same) throw new Error(existing?.agentId === agentId && !reusableForPublication(existing, next?.pendingPublication) ? STALE_PUBLICATION_MAPPING : STALE_FILE_PUBLICATION);
+      if (existing && (!fileOwnedBinding(existing, agentId) || !reusableForPublication(existing, next?.pendingPublication))) throw new Error(STALE_FILE_PUBLICATION);
+      if (binding && current.workerInheritance?.[slug]?.agentId === agentId) throw new Error(STALE_FILE_PUBLICATION);
+      const workerBindings = { ...(current.workerBindings ?? {}) };
+      if (binding) workerBindings[slug] = binding;
+      else delete workerBindings[slug];
+      return normalize({ ...current, workerBindings }, recommendedState());
+    };
+    return this.serializeWrite(async() => {
+      await options.recheck?.();
+      const current = await this.getEditableState();
+      if (options.project) {
+        await SullaSettingsModel.projectModelRouting(async(client, saved) => {
+          const state = update(normalize(saved, recommendedState()));
+          await options.project!(client);
+          return state;
+        });
+      } else {
+        await SullaSettingsModel.set(SETTING, update(current), 'json');
+      }
+      return binding ? { editToken: binding.editToken!, revision: binding.revision } : null;
     });
   }
 
@@ -408,32 +464,47 @@ export class ModelRouter {
       const connected = available.get(id)?.connected === true;
       const connectionUnknown = available.get(id)?.connectionUnknown === true;
       let models: RoutingModelInfo[] = [];
+      let discoveryReason: string | undefined;
       if (connected && mps?.getModelsForProvider) {
         try {
-          models = (await mps.getModelsForProvider(id, { liveOnly: true })).map((model: any) => ({
+          models = (await mps.getModelsForProvider(id)).map((model: any) => ({
             id:    String(model.id),
             label: String(model.name || model.label || model.id),
             ...(Array.isArray(model.efforts) && model.efforts.length ? { efforts: model.efforts } : {}),
             ...(model.defaultEffort ? { defaultEffort: String(model.defaultEffort) } : {}),
             ...(model.upgrade ? { upgrade: String(model.upgrade) } : {}),
             ...(model.unverified ? { unverified: true } : {}),
+            ...(model.minimumClientVersion ? { minimumClientVersion: model.minimumClientVersion } : {}),
+            ...(model.capabilities ? { capabilities: model.capabilities } : {}),
             ...(model.selectionMode ? { selectionMode: model.selectionMode } : {}),
           }));
-        } catch { /* discovery is best effort */ }
+          if (!models.length) discoveryReason = 'No validated Cloud catalog models available (or private endpoint unavailable)';
+        } catch { discoveryReason = 'model discovery failed'; }
       }
-      return [id, { connected, connectionUnknown, accessMethod: available.get(id)?.accessMethod, accessLabel: available.get(id)?.accessLabel, models }] as const;
+      return [id, { connected, connectionUnknown, accessMethod: available.get(id)?.accessMethod, accessLabel: available.get(id)?.accessLabel, models, discoveryReason }] as const;
     }));
     return new Map(entries);
   }
 
+  /** Reopen the inherited worker on its last selection using its original authentication path. */
+  async checkInheritedResume(candidate: ModelCandidate): Promise<ModelCandidate> {
+    const [settings, live] = await Promise.all([this.getEditableState(), this.liveProviders()]);
+    const provider = live.get(candidate.provider);
+    if ((!provider?.connected && !provider?.connectionUnknown) ||
+        isPairBlocked(settings.neverUse, candidate.provider, candidate.model, effectiveEffort(candidate, provider?.models ?? []))) {
+      throw new Error('The parked worker’s original model is unavailable or blocked: ' + candidate.provider + '/' + candidate.model);
+    }
+    return candidate;
+  }
+
   /** Snapshot soft health once at launch; a resumed selection never jumps backwards. */
-  async workerLaunchCandidates(candidates: ModelCandidate[]): Promise<ModelCandidate[]> {
-    await this.loadHealth();
+  async workerLaunchCandidates(candidates: ModelCandidate[], readOnly = false): Promise<ModelCandidate[]> {
+    if (!readOnly) await this.loadHealth();
     return [...candidates.filter(row => !this.backedOff(row.provider)), ...candidates.filter(row => this.backedOff(row.provider))];
   }
 
-  async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice = { mode: 'list' }): Promise<ModelCandidate[]> {
-    const state = await this.getEditableState();
+  async resolve(target: 'agents'|'subconscious', choice: AgentModelChoice = { mode: 'list' }, previewState?: EditableState): Promise<ModelCandidate[]> {
+    const state = previewState ?? await this.getEditableState();
     const live = await this.liveProviders();
     const pinned = choice.mode === 'pin'
       ? { provider: canonicalProviderId(choice.provider), model: choice.model, ...(choice.effort !== undefined ? { effort: choice.effort } : {}) }
@@ -441,31 +512,39 @@ export class ModelRouter {
     // A human's explicit selector choice is a hard route boundary. Recovery may retry this
     // exact route, but it must never substitute a configured alternate provider or model.
     if (pinned) {
+      const provider = live.get(pinned.provider);
+      if (!provider?.connected && !provider?.connectionUnknown) throw new Error(`Provider ${ pinned.provider } is not connected for the selected account`);
+      const advertised = provider?.models.find(model => model.id === pinned.model);
+      if (!advertised) throw new Error(`Model ${ pinned.provider }/${ pinned.model } is unavailable in the validated catalog; saved pin retained`);
+      await new ModelCompatibilityService(provider => new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), async provider => (await import('@pkg/backend/providerCliUpdates')).getWorkerImageCliVersion(provider), getCliStatus).get(provider)).assertClient(pinned.provider, advertised);
       if (pinned.effort !== undefined) {
         const levels = live.get(pinned.provider)?.models.find(model => model.id === pinned.model)?.efforts;
-        if (pinned.provider !== 'codex' || !levels?.some(level => level.id === pinned.effort)) {
-          throw new Error(`Requested effort "${ pinned.effort }" is not advertised for ${ pinned.provider }/${ pinned.model }. Refresh models and choose a supported effort, or omit effort for the default.`);
+        if (!levels?.some(level => level.id === pinned.effort)) {
+          throw new Error(`Requested effort "${ pinned.effort }" is not advertised for ${ pinned.provider }/${ pinned.model }. Choose an advertised effort, or omit effort for the default.`);
         }
       }
       return [pinned];
     }
     // Rules pick from the live lists; never-use models are skipped everywhere except an explicit pin above.
     const liveModels = new Map([...live].map(([id, p]) => [id, p.models] as const));
-    state.classes = applyRules(state.classes, liveModels, state.neverUse).classes;
+    const classes = applyRules(state.classes, liveModels, state.neverUse).classes;
     // A list row uses its provider's first model in the row's own class. If that class has no model for the
     // provider the row is skipped: it never silently changes class. Only an agent that asks for a class
     // directly walks the class fallback chain (approved mockup, Projects/sulla-desktop/mockups/model-routing).
     const source = choice.mode === 'class'
-      ? classWithFallback(state.classes, choice.class)
-      : (target === 'subconscious' ? state.subconsciousList : state.agentsList).filter(row => row.enabled).flatMap(row => state.classes[row.class].filter(item => item.provider === row.provider).slice(0, 1));
+      ? classWithFallback(classes, choice.class)
+      : (target === 'subconscious' ? state.subconsciousList : state.agentsList).filter(row => row.enabled).flatMap(row => classes[row.class].filter(item => item.provider === row.provider).slice(0, 1));
     // Every connected provider stays in the result. Backed-off providers keep their relative order but move
     // behind the healthy ones, so they are still tried as a last resort instead of producing "no provider".
-    await this.loadHealth();
+    if (!previewState) await this.loadHealth();
     const now = Date.now(); const healthy: ModelCandidate[] = []; const backedOff: ModelCandidate[] = [];
     for (let item of source) {
       const provider = live.get(item.provider);
       // Discovery is advisory; unknown status still enters authenticated execution.
       if (!provider?.connected && !provider?.connectionUnknown) continue;
+      const advertised = provider?.models.find(model => model.id === item.model);
+      if (!advertised) continue;
+      await new ModelCompatibilityService(provider => new ProviderClientStatus(() => SullaSettingsModel.get('approvedProviderCliVersions', {}), async provider => (await import('@pkg/backend/providerCliUpdates')).getWorkerImageCliVersion(provider), getCliStatus).get(provider)).assertClient(item.provider, advertised);
       // A never-use pair is skipped whole: that model is never run at that effort.
       if (isPairBlocked(state.neverUse, item.provider, item.model, effectiveEffort(item, provider?.models ?? []))) continue;
       item = { provider: item.provider, model: item.model, ...(item.effort ? { effort: item.effort } : {}) };
@@ -474,7 +553,7 @@ export class ModelRouter {
     }
     // If every connected candidate is backed off, health has stopped being useful. Reset it so the next
     // message starts from the configured top rather than preserving a de-facto lockout.
-    if (!healthy.length && backedOff.length) {
+    if (!previewState && !healthy.length && backedOff.length) {
       this.health.clear();
       this.expire();
       this.emit();
@@ -489,14 +568,8 @@ export class ModelRouter {
    * and record what changed since the previous check.
    */
   async refreshCatalog(): Promise<ModelCatalogReport> {
-    await Promise.allSettled([
-      import('./claudeModelCatalog').then(m => m.clearClaudeModelCatalogCache()),
-      import('./codexModelCatalog').then(m => m.clearCodexModelCatalogCache()),
-      import('./cursorModelCatalog').then(m => m.clearCursorModelCatalogCache()),
-      import('./openCodeModelCatalog').then(m => m.clearOpenCodeModelCatalogCache()),
-      import('../services/brokeredModelList').then(m => m.clearBrokeredModelListCache()),
-      import('./ModelDiscoveryService').then(m => m.modelDiscoveryService.clearCache()),
-    ]);
+    const { sharedModelCatalog } = await import('./sharedModelCatalog');
+    await sharedModelCatalog.refreshNow();
     this.invalidateLiveProviders();
     const live = await this.liveProviders();
     const lists: Record<string, string[]> = {};
@@ -504,7 +577,12 @@ export class ModelRouter {
     for (const [id, p] of live) {
       if (!p.connected) continue;
       const reported = p.models.filter(model => !model.unverified && !['claude-code', 'codex', 'cursor', 'opencode'].includes(model.id));
-      checks.push({ provider: id, status: reported.length ? 'refreshed' : 'unavailable' });
+      // Codex's Auto sentinel is a valid selectable CLI route; it is intentionally
+      // excluded from concrete catalog diffs, but must not turn a successful refresh
+      // into an unavailable-provider error. Auto-only after a failed live lookup is still a failure.
+      const autoAvailable = id === 'codex' && !p.discoveryReason && p.models.some(model => model.id === 'codex');
+      const reason = p.discoveryReason || (reported.length || autoAvailable ? undefined : 'provider returned no selectable models');
+      checks.push({ provider: id, status: reported.length || autoAvailable ? 'refreshed' : 'unavailable', ...(reason ? { reason } : {}) });
       if (reported.length) lists[id] = p.models.map(m => m.id);
     }
     const saved = await SullaSettingsModel.get(CATALOG_SETTING, null) as { lists?: Record<string, string[]> } | null;
@@ -522,8 +600,8 @@ export class ModelRouter {
     return saved?.report || { checkedAt: null, added: [], removed: [], moved: [] };
   }
 
-  async providerInfo(): Promise<RoutingProviderInfo[]> {
-    await this.loadHealth();
+  async providerInfo(readOnly = false): Promise<RoutingProviderInfo[]> {
+    if (!readOnly) await this.loadHealth();
     const live = await this.liveProviders(); const now = Date.now();
     return providerOrder.map(id => {
       const h = this.backedOff(id, now) ? this.health.get(id) : undefined;

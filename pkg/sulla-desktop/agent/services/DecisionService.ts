@@ -61,9 +61,10 @@ export class DecisionService {
       const existing = await this.pendingDecisions.findOpenQuestion(input);
       if (existing) return { record: existing, reused: true };
       const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
+      const presentationConversationId = relatedConversationIds.at(-1) ?? input.conversationId;
       if (signal?.aborted) throw new Error('Request cancelled');
       const now = Date.now();
-      const record: DecisionRecord = { ...input, relatedConversationIds, kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + 30 * 60_000, payload: { answerRoute: 'inbox' } };
+      const record: DecisionRecord = { ...input, relatedConversationIds, presentationConversationId, kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + 30 * 60_000, payload: { answerRoute: 'inbox' } };
       await this.decisions.insert(record, this.session);
       this.changed(record);
       return { record, reused: false };
@@ -77,7 +78,8 @@ export class DecisionService {
     if (!input.conversationId || !input.channel) throw new Error('Approval requires the original conversation. No action was executed.');
     const now = Date.now();
     const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
-    const record: DecisionRecord = { ...input, relatedConversationIds, id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs };
+    const presentationConversationId = relatedConversationIds.at(-1) ?? input.conversationId;
+    const record: DecisionRecord = { ...input, relatedConversationIds, presentationConversationId, id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs };
     await this.decisions.insert(record, this.session);
     let settle!: (value: DecisionOutcome) => void;
     const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
@@ -94,8 +96,17 @@ export class DecisionService {
   async listForConversation(conversationId: string, before?: { at: number; id: string }): Promise<DecisionRecord[]> {
     if (!conversationId || conversationId.length > 300) throw new Error('A conversation is required.');
     await this.reconcileExpired();
-    await this.pendingDecisions.preserveAncestry(conversationId);
+    const ancestry = await this.pendingDecisions.ancestry(conversationId);
+    await this.pendingDecisions.preserveAncestry(ancestry.at(-1) ?? conversationId);
     return this.pendingDecisions.listForConversation(conversationId, before);
+  }
+
+  async listTranscriptDecisions(conversationId: string, ids: string[]): Promise<DecisionRecord[]> {
+    if (typeof conversationId !== 'string' || !conversationId || conversationId.length > 300 ||
+        !Array.isArray(ids) || ids.length > 500 || ids.some(id => typeof id !== 'string' || !id || id.length > 300)) {
+      throw new Error('A conversation and valid request IDs are required.');
+    }
+    return this.pendingDecisions.listTranscriptDecisions(conversationId, ids);
   }
 
   async dismiss(id: string, conversationId: string): Promise<{ settled: boolean }> {

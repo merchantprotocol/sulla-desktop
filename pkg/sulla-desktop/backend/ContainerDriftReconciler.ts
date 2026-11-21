@@ -71,8 +71,8 @@ export class ContainerDriftReconciler {
     }
     await this.beforeRecreate(target);
     this.logger.log(`[Sulla] ${ target.service } config drifted (running ${ outcome.running.slice(0, 8) }, desired ${ outcome.desired.slice(0, 8) }); recreating it`);
-    this.recreatedTo.set(target.container, outcome.desired);
     await this.recreate(target.service);
+    this.recreatedTo.set(target.container, outcome.desired);
 
     return { kind: 'recreated', service: target.service };
   }

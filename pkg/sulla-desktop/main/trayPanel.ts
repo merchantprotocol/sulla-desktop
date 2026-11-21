@@ -12,12 +12,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { BrowserWindow, ipcMain, app, clipboard, globalShortcut, screen, shell } from 'electron';
+import { BrowserWindow, ipcMain, app, clipboard, dialog, globalShortcut, screen, shell } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import mainEvents from '@pkg/main/mainEvents';
-import { getSullaFilesCaptureService, openScreenshotMarkup, type CaptureResult, type ScreenshotMode } from '@pkg/main/sullaFilesCapture';
+import { getSullaFilesCaptureService, openScreenshotMarkup, SullaFilesCapturePathClipboardService, type CaptureResult, type ScreenshotMode, type TrayScreenshot } from '@pkg/main/sullaFilesCapture';
 import { getSullaFilesLinkService, SharingUnavailableError, type ShareMode } from '@pkg/main/sullaFilesLinkService';
 import { getSullaFilesWatcher } from '@pkg/main/sullaFilesWatcher';
 import { updateManager } from '@pkg/main/update/UpdateManager';
@@ -30,11 +31,19 @@ const console = Logging.background;
 
 let panelWindow: BrowserWindow | null = null;
 let preferencesWindow: BrowserWindow | null = null;
-let afterCaptureWindow: BrowserWindow | null = null;
+interface CapturePopup {
+  window:BrowserWindow;
+  url:string;
+  capture?:CaptureResult;
+  screenshot?:TrayScreenshot;
+  running:boolean;
+}
+let capturePopup:CapturePopup | undefined;
+const captureDestinations = new SullaFilesCapturePathClipboardService(() => getSullaFilesWatcher().folder, value => clipboard.writeText(value));
 const CAPTURE_SHORTCUTS = ['CommandOrControl+Shift+5', 'CommandOrControl+Shift+U', 'CommandOrControl+Shift+S'];
 
 function isTrustedTrayRenderer(event:Electron.IpcMainEvent | Electron.IpcMainInvokeEvent):boolean {
-  return [panelWindow, preferencesWindow, afterCaptureWindow]
+  return [panelWindow, preferencesWindow, capturePopup?.window]
     .some(window => window && !window.isDestroyed() && window.webContents.id === event.sender.id);
 }
 
@@ -106,22 +115,47 @@ function openFilesScreen(section?:string, filePath?:string):void {
   panelWindow?.hide();
 }
 
-function showCaptureResult(capture:CaptureResult):void {
-  if (afterCaptureWindow && !afterCaptureWindow.isDestroyed()) afterCaptureWindow.destroy();
+function showCaptureResult(capture?:CaptureResult, screenshot?:TrayScreenshot):void {
+  if (capturePopup && !capturePopup.window.isDestroyed()) capturePopup.window.destroy();
   // 360px card from the mockup plus a 12px margin for its shadow, top-right like a capture toast.
   const workArea = screen.getPrimaryDisplay().workArea;
-  afterCaptureWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 384, height: 307, x: workArea.x + workArea.width - 384 - 8, y: workArea.y + 8,
     show: false, frame: false, transparent: true, hasShadow: false, resizable: false, alwaysOnTop: true, skipTaskbar: true,
     title: 'Sulla Files — Capture',
     webPreferences: { contextIsolation: false, nodeIntegration: true },
   });
-  afterCaptureWindow.loadFile(path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'afterCapture.html'));
-  afterCaptureWindow.once('ready-to-show', () => {
-    afterCaptureWindow?.show();
-    afterCaptureWindow?.webContents.send('files-after-capture:show', capture);
+  const panelFile = path.join(app.getAppPath(), 'dist', 'app', 'trayPanel', 'afterCapture.html');
+  const popup = { window, capture, screenshot, url: pathToFileURL(panelFile).href, running: false };
+  capturePopup = popup;
+  window.webContents.on('will-navigate', event => event.preventDefault());
+  window.on('closed', () => {
+    if (capturePopup === popup) capturePopup = undefined;
   });
-  afterCaptureWindow.on('closed', () => { afterCaptureWindow = null });
+  window.once('ready-to-show', () => {
+    if (capturePopup !== popup) return;
+    window.show();
+    const display = capture ?? (screenshot && { name: screenshot.name, size: screenshot.bytes.length, kind: 'screenshot' });
+    window.webContents.send('files-after-capture:show', display);
+  });
+  void window.loadFile(panelFile).catch(error => {
+    if (!window.isDestroyed()) window.destroy();
+    console.warn('[SullaFiles] capture popup failed:', error);
+  });
+}
+
+function ownsCapturePopup(event:Electron.IpcMainInvokeEvent | Electron.IpcMainEvent, popup:CapturePopup):boolean {
+  return capturePopup === popup && !popup.window.isDestroyed() &&
+    event.sender === popup.window.webContents && event.senderFrame === event.sender.mainFrame &&
+    event.senderFrame?.url === popup.url;
+}
+
+async function withCapturePopup<T>(event:Electron.IpcMainInvokeEvent, action:(popup:CapturePopup, isCurrent:() => boolean) => Promise<T>):Promise<T> {
+  const popup = capturePopup;
+  if (!popup || !ownsCapturePopup(event, popup)) throw new Error('This window does not own the capture');
+  if (popup.running) throw new Error('Another capture action is already running');
+  popup.running = true;
+  try { return await action(popup, () => ownsCapturePopup(event, popup)) } finally { popup.running = false }
 }
 
 function openFilesPreferences(tab = 'capture'):void {
@@ -146,7 +180,7 @@ function openFilesPreferences(tab = 'capture'):void {
 
 function registerCaptureShortcuts():void {
   const registrations:Array<[string, () => void]> = [
-    [CAPTURE_SHORTCUTS[0], () => getSullaFilesCaptureService().screenshot('area').then(showCaptureResult).catch(error => { if (!(error as any)?.cancelled) console.warn('[SullaFiles] shortcut screenshot failed:', error) })],
+    [CAPTURE_SHORTCUTS[0], () => getSullaFilesCaptureService().trayScreenshot('area', captureDestinations).then(screenshot => showCaptureResult(screenshot.capture, screenshot)).catch(error => { if (!(error as any)?.cancelled) console.warn('[SullaFiles] shortcut screenshot failed:', error) })],
     [CAPTURE_SHORTCUTS[1], () => {
       if (!panelWindow || panelWindow.isDestroyed()) createTrayPanel();
       panelWindow?.show();
@@ -343,9 +377,9 @@ export function sendSettingsState(state: { autoStart: boolean; startInBackground
 export function destroyTrayPanel(): void {
   for (const accelerator of CAPTURE_SHORTCUTS) globalShortcut.unregister(accelerator);
   if (preferencesWindow && !preferencesWindow.isDestroyed()) preferencesWindow.destroy();
-  if (afterCaptureWindow && !afterCaptureWindow.isDestroyed()) afterCaptureWindow.destroy();
+  if (capturePopup && !capturePopup.window.isDestroyed()) capturePopup.window.destroy();
   preferencesWindow = null;
-  afterCaptureWindow = null;
+  capturePopup = undefined;
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.removeAllListeners('close');
     panelWindow.destroy();
@@ -430,10 +464,9 @@ function registerPanelIpc(): void {
     if (!['area', 'window', 'full'].includes(mode)) throw new Error('Unknown screenshot mode');
     panelWindow?.hide();
     try {
-      const capture = await getSullaFilesCaptureService().screenshot(mode);
+      const screenshot = await getSullaFilesCaptureService().trayScreenshot(mode, captureDestinations);
 
-      showCaptureResult(capture);
-      return capture;
+      showCaptureResult(screenshot.capture, screenshot);
     } catch (error) {
       panelWindow?.show();
       throw error;
@@ -454,15 +487,36 @@ function registerPanelIpc(): void {
     panelWindow?.hide();
     try { return await getSullaFilesCaptureService().upload() } finally { panelWindow?.show() }
   });
-  ipcMain.handle('tray-panel:share-capture', async(event, capture:CaptureResult, options:{ mode:ShareMode; keepAvailable:boolean }) => {
+  ipcMain.handle('tray-panel:share-capture', async(event, capture:CaptureResult, options:{ mode:ShareMode }) => {
     requireTrayRenderer(event);
     if (!options || !['view', 'download'].includes(options.mode)) throw new Error('Unknown share mode');
-    return getSullaFilesCaptureService().share(await trustedCapture(capture), { mode: options.mode, keepAvailable: options.keepAvailable === true });
+    return getSullaFilesCaptureService().share(await trustedCapture(capture), { mode: options.mode });
   });
-  ipcMain.on('files-after-capture:close', (event) => { if (!isTrustedTrayRenderer(event)) return; afterCaptureWindow?.close() });
+  ipcMain.handle('tray-panel:share-popup-capture', (event, options:{ mode:ShareMode }) => withCapturePopup(event, async(popup, isCurrent) => {
+    if (!options || !['view', 'download'].includes(options.mode)) throw new Error('Unknown share mode');
+    const service = getSullaFilesCaptureService();
+    const capture = popup.capture ?? (popup.screenshot && await service.importTrayScreenshot(popup.screenshot));
+    if (!capture || !isCurrent()) throw new Error('The capture is no longer available');
+    return service.share(capture, { mode: options.mode });
+  }));
+  ipcMain.handle('tray-panel:copy-capture-path', event => withCapturePopup(event, async(popup, isCurrent) => {
+    if (!popup.screenshot) {
+      if (!popup.capture) throw new Error('The capture is no longer available');
+      return captureDestinations.copy(popup.capture.relativePath, isCurrent);
+    }
+    const screenshot = popup.screenshot;
+    return captureDestinations.saveScreenshot(screenshot, async name => {
+      const selected = await dialog.showSaveDialog(popup.window, {
+        title: 'Save screenshot', defaultPath: name, filters: [{ name: 'PNG image', extensions: ['png'] }],
+      });
+      return selected.canceled ? undefined : selected.filePath;
+    }, isCurrent, () => getSullaFilesCaptureService().importTrayScreenshot(screenshot));
+  }));
+  ipcMain.on('files-after-capture:close', event => {
+    if (capturePopup && ownsCapturePopup(event, capturePopup)) capturePopup.window.close();
+  });
   ipcMain.on('files-after-capture:resize', (event, height:number) => {
-    if (!isTrustedTrayRenderer(event)) return;
-    if (afterCaptureWindow && !afterCaptureWindow.isDestroyed() && height > 0) afterCaptureWindow.setContentSize(384, Math.min(Math.round(height), 600));
+    if (capturePopup && ownsCapturePopup(event, capturePopup) && height > 0) capturePopup.window.setContentSize(384, Math.min(Math.round(height), 600));
   });
   ipcMain.handle('tray-panel:copy-share', (event, url:string) => {
     requireTrayRenderer(event);

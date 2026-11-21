@@ -8,13 +8,16 @@
  * model its CLI was launched with; a request for any other model is refused.
  * Claude Code's own aliases ("opus", "sonnet", "haiku") are resolved by the
  * CLI to a full id ("claude-opus-5-5") before it sends the request, so a pin
- * on an alias accepts that family and nothing else.
+ * on an alias accepts that family and nothing else. Fable is discovered and
+ * launched through the same alias mechanism, even though it is not one of
+ * Claude Code's older built-in aliases.
  */
 export class ProviderModelPin {
   private static readonly FAMILIES: Readonly<Record<string, RegExp>> = {
     opus:   /^claude-opus-[\w.-]+(\[[\w]+\])?$/,
     sonnet: /^claude-sonnet-[\w.-]+(\[[\w]+\])?$/,
     haiku:  /^claude-haiku-[\w.-]+(\[[\w]+\])?$/,
+    fable:  /^claude-fable-[\w.-]+(\[[\w]+\])?$/,
   };
 
   /** True when `model` is one of `pins`, or of the family a pinned alias names. No pins: anything goes. */

@@ -14,7 +14,10 @@ const mounted: any[] = [];
 beforeEach(() => {
   f.records = [question()]; f.listeners.clear(); f.invoke.mockReset(); f.invoke.mockImplementation(async(name:string, ...args:any[]) => {
     await Promise.resolve();
-    if (name === 'decisions:conversation') return structuredClone(f.records.filter(record => record.conversationId === args[0]));
+    if (name === 'decisions:conversation') return structuredClone(f.records.filter(record => {
+      const owner = record.presentationConversationId ?? record.relatedConversationIds?.at(-1) ?? record.conversationId;
+      return owner === args[0];
+    }));
     if (name === 'decisions:resolve') { const response = args[0]; f.records = f.records.map(record => record.id === response.id ? { ...record, attention: 'answered', answers: response.answers, answerDelivery: 'queued' } : record); return { settled: true, late: true } }
     if (name === 'decisions:dismiss') { f.records = f.records.map(record => record.id === args[0] ? { ...record, attention: 'dismissed' } : record); return { settled: true } }
     return [];
@@ -26,7 +29,18 @@ async function fixture() {
   const component = defineComponent({ setup() { store = ChatDecisions.provide(owner); return () => visible.value ? h(ForYouPanel) : h('div') } });
   const wrapper = mount(component, { global: { provide: { [ChatControllerKey as symbol]: { thread: ref({ id: 'ui-a' }), messages: ref([]) }, 'chat:activity-context': { backendThreadId: owner } } } }); mounted.push(wrapper); await flushPromises(); return { wrapper, store, owner, visible };
 }
-describe('For You requests', () => {
+describe('Decide requests', () => {
+  it('uses the same compact panel structure when there is no active content', async() => {
+    f.records = [];
+    const v = await fixture();
+    expect(v.wrapper.get('.fy-head h2').text()).toBe('Decide');
+    expect(v.wrapper.get('.fy').attributes('aria-label')).toBe('Decide');
+    expect(v.wrapper.get('.fy-count').text()).toBe('Questions and approvals for this chat');
+    expect(v.wrapper.get('.fy-empty h3').text()).toBe('Nothing needs you');
+    expect(v.wrapper.find('.fy-empty-mark').exists()).toBe(true);
+    expect(v.wrapper.find('.fy-past').exists()).toBe(true);
+  });
+
   it('loads saved requests when opening the panel after an update was missed', async() => {
     f.records = [];
     const v = await fixture();
@@ -40,6 +54,24 @@ describe('For You requests', () => {
 
     expect(v.store.openCount.value).toBe(1);
     expect(v.wrapper.get('.fy-request').attributes('data-decision-id')).toBe('recovered');
+  });
+  it('does not badge a child chat when its request is owned by the parent chat', async() => {
+    f.records = [];
+    const v = await fixture();
+    const delegated = question('delegated', {
+      conversationId: 'a',
+      relatedConversationIds: ['a', 'parent'],
+      presentationConversationId: 'parent',
+    });
+    f.records = [delegated];
+    f.listeners.get('decisions:changed')?.({}, structuredClone(delegated));
+    await flushPromises();
+    expect(v.store.openCount.value).toBe(0);
+    expect(v.wrapper.find('[data-decision-id="delegated"]').exists()).toBe(false);
+    v.owner.value = 'parent';
+    await flushPromises();
+    expect(v.store.openCount.value).toBe(1);
+    expect(v.wrapper.get('[data-decision-id="delegated"]').exists()).toBe(true);
   });
 
   it('does not ask again when submitting the newer copy of an expired duplicate', async() => {
