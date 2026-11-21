@@ -126,7 +126,8 @@ describe('formatted replies stay in the chat transcript', () => {
       ]);
       expect(Array.from(body.querySelectorAll('strong'), node => node.textContent)).toEqual(['First paragraph', 'Second paragraph']);
       expect(body.querySelector('p code')?.textContent).toBe(literal);
-      expect(body.querySelector('iframe, .iso-host, citations, agent_done')).toBeNull();
+      expect(root.querySelector('iframe, .iso-host, citations, agent_done')).toBeNull();
+      expect(body.textContent).not.toMatch(/AGENT_DONE|Synthetic citation|Needs user input/i);
     };
 
     expect(stripProtocolTagsStreaming(partial)).toBe(answer);
@@ -144,7 +145,15 @@ describe('formatted replies stay in the chat transcript', () => {
     expect(live.controller.messages.value).toMatchObject([{ id, kind: 'sulla', text: answer }]);
     expect(live.controller.artifacts.value).toEqual({ list: [], activeId: null });
 
-    const reopened = new SyntheticChat(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.controller.serialize())) }));
+    const snapshot = JSON.parse(JSON.stringify(live.controller.serialize()));
+    const cached = new SyntheticChat(new ChatController({ hydrateFrom: snapshot }));
+    const cachedTurn = cached.mount();
+    assertProse(cachedTurn.element as HTMLElement);
+    expect(cached.controller.messages.value).toHaveLength(1);
+    expect(cached.controller.artifacts.value).toEqual({ list: [], activeId: null });
+
+    // Reopen from the wire alone; a hydrated snapshot could mask a dropped history reply.
+    const reopened = new SyntheticChat();
     const reopenedTurn = reopened.mount();
     reopened.send('thread_restored', { messages: [{ id, role: 'assistant', content: wire }] });
     await nextTick();
@@ -153,6 +162,8 @@ describe('formatted replies stay in the chat transcript', () => {
     expect(reopened.controller.artifacts.value).toEqual({ list: [], activeId: null });
     turn.unmount();
     reopenedTurn.unmount();
+    cachedTurn.unmount();
+    cached.controller.dispose();
     live.controller.dispose();
     reopened.controller.dispose();
   });
@@ -164,6 +175,7 @@ describe('formatted replies stay in the chat transcript', () => {
     expect(stripProtocolTagsForUi(status)).toBe('');
     expect(stripProtocolTagsStreaming(status.replace('</AGENT_DONE>', ''))).toBe('');
     expect(stripProtocolTagsForUi(privateReply)).toBe('');
+    expect(stripProtocolTagsForUi(doneWrapped(wrappedProse('example') + '\n\nNeeds user input: no'))).toBe(wrappedProse('example'));
     expect(stripProtocolTagsForUi('Visible reply.\n\n' + doneWrapped(wrappedProse('example')))).toBe('Visible reply.');
     expect(stripProtocolTags(doneWrapped(wrappedProse('example')))).toBe('');
   });

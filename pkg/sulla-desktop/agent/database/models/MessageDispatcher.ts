@@ -250,17 +250,17 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
   const rawContent = data?.content !== undefined ? contentToString(data.content) : '';
   const doneWrapper = msg.type !== 'system_message' && (!data.role || data.role === 'assistant')
     && (!data.kind || data.kind === 'streaming' || data.kind === 'text') && /^\s*<AGENT_DONE>/i.test(rawContent);
   const content = doneWrapper
-    ? data.kind === 'streaming' ? stripProtocolTagsStreaming(rawContent) : stripProtocolTagsForUi(rawContent)
+    ? (kindRaw === 'streaming' ? stripProtocolTagsStreaming(rawContent) : stripProtocolTagsForUi(rawContent))
     : rawContent;
 
   // Segment-boundary sentinels: kind carries the meaning, content is empty
   // by design. Must be handled BEFORE the empty-content drop or the signal
   // gets swallowed and the streaming/thinking bubbles never close.
-  const kindRaw = typeof data?.kind === 'string' ? data.kind : undefined;
   if (kindRaw === 'streaming_complete' || kindRaw === 'thinking_complete') {
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
