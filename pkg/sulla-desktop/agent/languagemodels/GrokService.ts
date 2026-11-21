@@ -72,7 +72,7 @@ export function grokCliHeaders(modelId?: string): Record<string, string> {
 }
 
 export class GrokService extends OpenAICompatibleService {
-  static async create(): Promise<GrokService> {
+  static async create(modelOverride?: string): Promise<GrokService> {
     const integrationService = getIntegrationService();
     const values = await integrationService.getFormValues('grok');
     const valMap: Record<string, string> = {};
@@ -117,8 +117,8 @@ export class GrokService extends OpenAICompatibleService {
       } catch { /* not OAuth-connected — fall back to api_key */ }
     }
 
-    let model = valMap.model || '';
-    if (oauthMode) {
+    let model = modelOverride ?? (valMap.model || '');
+    if (oauthMode && !modelOverride) {
       // The proxy only serves the subscription catalog. A model saved while
       // on the metered lane (grok-2/grok-3 families) would 404/403 there —
       // choose the first model returned by the live subscription catalog.

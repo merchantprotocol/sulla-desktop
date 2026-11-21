@@ -129,6 +129,10 @@ export class LLMRegistryImpl {
         // Same singleton concern as claude-code.
         const { createCodexService } = await import('./CodexService');
         svc = createCodexService(modelOverride, runEffort);
+      } else if (modelOverride && providerId === 'grok') {
+        // Keep explicit models separate from each other and the default singleton.
+        const { GrokService } = await import('./GrokService');
+        svc = await GrokService.create(modelOverride);
       } else if (modelOverride && providerId === 'opencode') {
         const { createOpenCodeService } = await import('./OpenCodeService');
         svc = createOpenCodeService(modelOverride);
