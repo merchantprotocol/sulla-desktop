@@ -14,6 +14,9 @@ vi.mock('../../../../vault-broker', () => ({
   usesContainerVaultAuthority: () => false,
   configuredVaultBrokerProvider: {},
 }));
+// Tier resolution imports the Claude guest bridge, which pulls in Electron's
+// main-process MCP host. Grok routing does not use that bridge.
+vi.mock('../../../languagemodels/guestClaudeBridge', () => ({ createGuestClaudeAuth: vi.fn() }));
 vi.mock('../../../services/IntegrationService', () => ({
   getIntegrationService: () => ({
     getFormValues: async() => [
@@ -44,9 +47,14 @@ import { LLMRegistryImpl } from '../../../languagemodels/index';
 
 beforeEach(() => {
   fixture.defaultModel = 'grok-4.5';
-  fixture.fetch.mockReset().mockImplementation(async(url) => {
-    if (url !== 'https://cli-chat-proxy.grok.com/v1/responses') throw new Error('Unexpected Grok endpoint');
-    return Response.json({ output_text: 'ok', status: 'completed' });
+  fixture.fetch.mockReset().mockImplementation(async(url, request) => {
+    if (url === 'https://cli-chat-proxy.grok.com/v1/models' && (request.method ?? 'GET') === 'GET') {
+      return Response.json({ data: [{ id: 'grok-4.5' }] });
+    }
+    if (url === 'https://cli-chat-proxy.grok.com/v1/responses' && request.method === 'POST') {
+      return Response.json({ output_text: 'ok', status: 'completed' });
+    }
+    throw new Error(`Unexpected Grok request: ${ request.method ?? 'GET' } ${ url }`);
   });
   vi.stubGlobal('fetch', fixture.fetch);
   resetGrokService();
@@ -93,10 +101,12 @@ describe('Grok model instance isolation in the LLM registry', () => {
     expect(service.getModel()).toBe('grok-4.7');
     expect(fixture.fetch).not.toHaveBeenCalled();
 
-    fixture.fetch.mockResolvedValueOnce(Response.json({ data: [{ id: 'grok-4.5' }] }));
     const defaultService = await registry.getServiceByProvider('grok');
     expect(defaultService.getModel()).toBe('grok-4.5');
-    expect(fixture.fetch).toHaveBeenCalledWith('https://cli-chat-proxy.grok.com/v1/models', expect.anything());
+    expect(fixture.fetch).toHaveBeenCalledTimes(1);
+    expect(fixture.fetch).toHaveBeenCalledWith('https://cli-chat-proxy.grok.com/v1/models', expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer synthetic-oauth-token' }),
+    }));
   });
 
   it('rejects an unavailable explicit model rather than defaulting', async() => {
