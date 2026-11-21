@@ -92,6 +92,8 @@ export interface SullaMessage extends MessageBase {
   /** Keep the existing reply renderer for run-ending assistant posts. */
   terminalRunError?: boolean;
   fileReferences?: readonly AttachedFile[];
+  /** Only inline links were found; no structured attachments were recorded. */
+  fileReferencesInferred?: true;
 }
 
 export interface StreamingMessage extends MessageBase {

@@ -44,8 +44,9 @@ class ReportingFixture {
     });
   }
 
-  emit(type: 'progress' | 'assistant_message', data: object) {
-    this.dispatcher.dispatch(this.ctx as any, 'fixture-agent', 'fixture-thread', { type, data } as any);
+  emit(type: 'progress' | 'assistant_message', data: object, id?: string, timestamp?: number,
+    agentId = 'fixture-agent', threadId = 'fixture-thread') {
+    this.dispatcher.dispatch(this.ctx as any, agentId, threadId, { type, data, id, timestamp } as any);
     this.adapter.syncMessages();
   }
 
@@ -218,6 +219,40 @@ it('keeps decision-turn streams separate and honors explicit deliverable intent,
   expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id]);
   live.emit('assistant_message', { kind: 'text', content: 'Report ready', decisionFollowUpId: 'claimed-question', agentReporting: 'brief' });
   expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id, live.chat.messages.value.at(-1)?.id]);
+});
+
+// risk: an older decision-linked deliverable disappears at Brief, or prose overrides recorded intent.
+it('preserves structured legacy decision attachments at Brief without overriding explicit intent', () => {
+  const live = new ReportingFixture();
+  const fileReferences = [{ fileId: 'file-1', versionId: 'v1', path: 'report.md', name: 'report.md' }];
+  const emit = (content: string, fields: object = {}) => live.emit('assistant_message', {
+    kind: 'text', decisionFollowUpId: 'decision-1', content, ...fields,
+  });
+  emit('Legacy attachment', { fileReferences });
+  emit('Explicit routine update', { fileReferences, agentReporting: 'standard' });
+  emit('Explicit important reply', { agentReporting: 'brief' });
+  emit('Mere claim: report attached');
+  emit('Inline link only: sulla-file://file-1?version=v1');
+  live.emit('assistant_message', {
+    kind: 'streaming', decisionFollowUpId: 'decision-2', content: 'Streamed legacy attachment',
+  });
+  live.emit('assistant_message', { kind: 'streaming_complete', decisionFollowUpId: 'decision-2' });
+  live.emit('assistant_message', {
+    kind: 'text', decisionFollowUpId: 'decision-2', content: 'Streamed legacy attachment',
+    metadata: { fileReferences },
+  });
+
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  for (const fixture of [live, reopened]) {
+    const replies = (level: ReportingLevel) => fixture.entries(level)
+      .flatMap(row => row.kind === 'card' && row.message.kind === 'sulla' ? [row.message] : []);
+    expect(replies('fatal').map(message => message.text)).toEqual([
+      'Legacy attachment', 'Explicit important reply', 'Streamed legacy attachment',
+    ]);
+    expect(replies('info')).toHaveLength(6);
+    expect(replies('fatal')[0].fileReferences?.[0].fileRef?.fileId).toBe('file-1');
+    expect(replies('info')[4].fileReferences?.[0].fileRef?.fileId).toBe('file-1');
+  }
 });
 
 // risk: switching models/agents rewrites historical attribution; filtering
@@ -432,6 +467,47 @@ it('keeps safe thread-bound activities, patches and memory at their cumulative l
     'Hidden browser · list · Completed',
   ]);
   expect(JSON.stringify(live.ctx.messages)).not.toContain('PRIVATE_');
+});
+
+// risk: replay duplicates lifecycle rows, or deduplication swallows distinct operations or changes their order.
+it('deduplicates lifecycle envelope redelivery in scope without losing phases, operations or saved order', () => {
+  const live = new ReportingFixture();
+  const timestamp = Date.now();
+  const activity = (fixture: ReportingFixture, id: string, chatToolActivity: string,
+    agentId = 'fixture-agent', thread_id = 'fixture-thread') => fixture.emit('assistant_message', {
+    kind: 'chat_tool_activity', thread_id, chatToolActivity,
+  }, id, timestamp, agentId, thread_id);
+  activity(live, 'read-a-start', 'browser:read:Running');
+  live.emit('assistant_message', { kind: 'text', content: 'Interleaved reply' });
+  activity(live, 'read-a-end', 'browser:read:Completed');
+  activity(live, 'read-b-start', 'browser:read:Running');
+  activity(live, 'read-b-end', 'browser:read:Completed');
+  activity(live, 'read-a-start', 'browser:read:Running');
+  activity(live, 'read-a-end', 'browser:read:Completed');
+  activity(live, 'artifact-a', 'artifact-opened');
+  activity(live, 'artifact-a', 'artifact-opened');
+  activity(live, 'artifact-b', 'artifact-opened');
+
+  const expected = [
+    'Hidden browser · read · Running', 'Interleaved reply', 'Hidden browser · read · Completed',
+    'Hidden browser · read · Running', 'Hidden browser · read · Completed', 'Artifact opened', 'Artifact opened',
+  ];
+  const rows = (fixture: ReportingFixture) => fixture.entries('debug')
+    .map(row => row.kind === 'activity' ? row.text : row.message.kind === 'sulla' ? row.message.text : row.message.kind);
+  expect(rows(live)).toEqual(expected);
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  activity(reopened, 'read-a-start', 'browser:read:Running');
+  activity(reopened, 'artifact-a', 'artifact-opened');
+  expect(rows(reopened)).toEqual(expected);
+  expect(reopened.chat.messages.value.map(message => message.id)).toEqual(live.chat.messages.value.map(message => message.id));
+
+  activity(live, 'artifact-a', 'artifact-opened', 'another-agent');
+  activity(live, 'artifact-a', 'artifact-opened', 'fixture-agent', 'another-thread');
+  expect(live.ctx.messages.filter(message => message.chatToolActivity === 'artifact-opened')
+    .map(message => [message.channelId, message.threadId])).toEqual([
+    ['fixture-agent', 'fixture-thread'], ['fixture-agent', 'fixture-thread'],
+    ['another-agent', 'fixture-thread'], ['fixture-agent', 'another-thread'],
+  ]);
 });
 
 // risk: safe formatter descriptions vanish, or similarly prefixed private text and raw tool fields leak.

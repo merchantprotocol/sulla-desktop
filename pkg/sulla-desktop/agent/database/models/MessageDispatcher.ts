@@ -26,7 +26,6 @@ import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/u
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
-import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { Ref } from 'vue';
@@ -159,8 +158,15 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   if (activity?.kind === 'chat_tool_activity') {
     if (msg.type !== 'assistant_message' || !msgThreadId || activity.thread_id !== msgThreadId ||
       !ChatToolReporting.describe(activity.chatToolActivity)) return;
+    // IPC assigns an id and timestamp once per emitted event, not per
+    // dispatch. Keep that identity in the saved message id, scoped to the
+    // originating chat. Never collapse distinct events by their display text.
+    const id = msg.id
+      ? `${ msg.timestamp }_ws_chat_tool_activity_${ encodeURIComponent(JSON.stringify([agentId, msgThreadId, msg.id])) }`
+      : uniqueMessageId(ctx, `${ Date.now() }_ws_chat_tool_activity`);
+    if (ctx.messages.some(message => message.id === id)) return;
     const record: ChatMessage & { _completed: boolean } = {
-      id: uniqueMessageId(ctx, `${ Date.now() }_ws_chat_tool_activity`),
+      id,
       channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content: '',
       chatToolActivity: activity.chatToolActivity,
       _completed: true,
@@ -521,6 +527,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
   const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
   const finalContent = content;
+  // Inline links are parsed for rendering, not recorded as attachment intent.
+  const rawReferences: ChatMessage['fileReferences'] = Array.isArray(data?.fileReferences) ? data.fileReferences
+    : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : undefined;
+  const explicitReferences = rawReferences?.filter((item, index, values) =>
+    typeof item?.fileId === 'string' && !!item.fileId && values.findIndex(candidate => candidate?.fileId === item.fileId && candidate?.versionId === item.versionId) === index);
+  const referenceUpdate = explicitReferences?.length ? { fileReferences: explicitReferences } : {};
   const decisionFollowUpId = msg.type === 'assistant_message' && role === 'assistant' &&
     (kind === 'streaming' || kind === 'text' || !kind) && typeof data?.decisionFollowUpId === 'string'
     ? data.decisionFollowUpId : undefined;
@@ -576,7 +588,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       }
     }
     if (existingIdx !== -1) {
-      ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent };
+      ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent, ...referenceUpdate };
       return;
     }
 
@@ -602,7 +614,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
     if (resurrectedIdx !== -1) {
       const existing = ctx.messages[resurrectedIdx];
-      ctx.messages[resurrectedIdx] = { ...existing, content: finalContent };
+      ctx.messages[resurrectedIdx] = { ...existing, content: finalContent, ...referenceUpdate };
       (ctx.messages[resurrectedIdx] as any)._completed = false;
       return;
     }
@@ -629,6 +641,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
       ...(replyAttribution ? { replyAttribution } : {}),
       ...(replyStreamId ? { replyStreamId } : {}),
+      ...referenceUpdate,
     });
     return;
   }
@@ -706,10 +719,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (alreadyShown) {
         // A final dump can carry the last part of a formatted block after
         // a throttled stream update. Keep it in the existing bubble.
+        const lastSegment = recentStreamIndexes[0];
         if (recentStreamIndexes.length === 1 && incoming.length > streamed.length && incoming.startsWith(streamed)) {
-          const index = recentStreamIndexes[0];
-          ctx.messages[index] = { ...ctx.messages[index], content: finalContent };
+          ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: finalContent };
         }
+        if (explicitReferences?.length) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], ...referenceUpdate };
         // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
           const m = ctx.messages[i];
@@ -746,13 +760,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     ...(agentReporting ? { agentReporting } : {}),
     ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
     ...(replyAttribution ? { replyAttribution } : {}),
+    ...referenceUpdate,
   };
-  const explicitReferences = Array.isArray(data?.fileReferences) ? data.fileReferences : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
-  const parsedReferences = role === 'assistant' ? parseDurableFileReferences(finalContent) : [];
-  if (explicitReferences.length || parsedReferences.length) {
-    message.fileReferences = [...explicitReferences, ...parsedReferences].filter((item:any, index, values) =>
-      values.findIndex((candidate:any) => candidate.fileId === item.fileId && candidate.versionId === item.versionId) === index);
-  }
 
   if (kind === 'channel_message') {
     message.channelMeta = {

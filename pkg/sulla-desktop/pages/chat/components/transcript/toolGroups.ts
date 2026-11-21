@@ -145,8 +145,14 @@ export class TranscriptReporting {
     }
     if ((message.kind === 'sulla' || message.kind === 'streaming') && message.decisionFollowUpId &&
       message.agentReporting !== 'brief') {
-      yield { ...base, kind: 'card', label: 'Follow-up', level: 'info', message };
-      return;
+      // Older replies can carry a delivered file without an explicit level.
+      // Only recorded attachments qualify, never text or parsed inline links.
+      const legacyDeliverable = message.agentReporting === undefined && message.kind === 'sulla' &&
+        !message.fileReferencesInferred && !!message.fileReferences?.length;
+      if (!legacyDeliverable) {
+        yield { ...base, kind: 'card', label: 'Follow-up', level: 'info', message };
+        return;
+      }
     }
     if (message.kind === 'subagent_exchange' && returnCoveredByCard(message, messages)) return;
     const report = Object.hasOwn(cards, message.kind) ? cards[message.kind] : undefined;

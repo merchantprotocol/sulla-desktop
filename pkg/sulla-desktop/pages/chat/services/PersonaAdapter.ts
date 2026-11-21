@@ -1158,6 +1158,7 @@ export class PersonaAdapter {
           decisionFollowUpId: b.decisionFollowUpId,
           agentReporting: b.agentReporting,
           ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
+          fileReferencesInferred: fileReferences.length && !b.fileReferences?.length ? true : undefined,
           fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
         } satisfies SullaMessage;
       }
@@ -1201,6 +1202,7 @@ export class PersonaAdapter {
       agentReporting: b.agentReporting,
       ...(b.terminalRunError === true ? { terminalRunError: true } : {}),
       ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
+      fileReferencesInferred: fileReferences.length && !b.fileReferences?.length ? true : undefined,
       fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
     } satisfies SullaMessage;
   }
