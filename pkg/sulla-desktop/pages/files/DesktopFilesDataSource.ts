@@ -66,6 +66,7 @@ export class DesktopFilesDataSource extends DesktopFilesIpcCommands implements F
   private watchedCollectionId = '';
   private rootId = '';
   private capabilitiesGeneration = 0;
+  private remoteCapabilitiesReady?:Promise<void>;
   private capabilitiesListeners = new Set<() => void>();
   private nativeRuntimeGeneration = -1;
 
@@ -104,7 +105,7 @@ export class DesktopFilesDataSource extends DesktopFilesIpcCommands implements F
   }
 
   private refreshCapabilities(accessRole:string, generation:number, primaryRoot:boolean):void {
-    (this.ipc.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
+    this.remoteCapabilitiesReady = (this.ipc.invoke('files-ui:capabilities') as Promise<RemoteCapabilities>)
       .then((capabilities) => {
         if (generation !== this.capabilitiesGeneration) return;
         Object.assign(this.capabilities, capabilities, {
@@ -130,6 +131,11 @@ export class DesktopFilesDataSource extends DesktopFilesIpcCommands implements F
         this.onlineOnlyReason = 'Cloud and remote Files capabilities are unavailable.';
         this.capabilitiesListeners.forEach(listener => listener());
       });
+  }
+
+  async publicLinksAvailable():Promise<boolean> {
+    await this.remoteCapabilitiesReady;
+    return this.capabilities.publicLinks;
   }
 
   async load():Promise<FilesSnapshot> {

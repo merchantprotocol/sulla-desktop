@@ -28,7 +28,9 @@ export interface DurableFileReference {
  * - `sulla-file://<id>?version&name&path` (Desktop card, opens in the Desktop editor)
  * - `https://<host>/f/<id>` (private mobile link; same file, opens in the Desktop editor too)
  */
-const CARD_EXPRESSION = /sulla-file:\/\/([a-zA-Z0-9_-]+)(?:\?([^\s)]+))?|https:\/\/([a-zA-Z0-9.-]+(?::\d+)?)\/f\/([a-zA-Z0-9_-]+)/g;
+// Read the whole identity token, including malformed path/authority suffixes,
+// so a bad reference cannot be shortened into a different, valid file ID.
+const CARD_EXPRESSION = /sulla-file:\/\/([^\s?()[\]<>"'`,;.!]+)(?:\?([^\s)]+))?|https:\/\/([a-zA-Z0-9.-]+(?::\d+)?)\/f\/([a-zA-Z0-9_-]+)/g;
 
 export class DurableFileReferenceParser {
   private readonly allowedMobileHosts: Set<string>;

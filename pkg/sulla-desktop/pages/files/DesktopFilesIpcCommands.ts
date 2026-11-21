@@ -44,7 +44,7 @@ export abstract class DesktopFilesIpcCommands {
   async detail(fileId:string):Promise<FilesDetail> {
     const result = await this.ipc.invoke('sulla-files:metadata', { fileId }) as FilesApiRecord;
 
-    return filesDetail(result);
+    return { ...filesDetail(result), collectionId: result.collection_id };
   }
   mediaUrl(fileId:string, versionId?:string):Promise<string> { return this.ipc.invoke('files-ui:media-url', { fileId, versionId }) }
   openHtmlPreview(collectionId:string,fileId:string):Promise<{token:string;url:string}> { return this.ipc.invoke('files:preview:open', { collectionId,fileId }) }
