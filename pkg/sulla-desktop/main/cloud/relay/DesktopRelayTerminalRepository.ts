@@ -12,7 +12,7 @@ type Receipt = Parameters<ScopedRelayTerminalStore['acknowledge']>[0];
 
 interface TerminalDatabase {
   query<T>(sql: string, values: string[]): Promise<T[]>;
-  transaction<T>(work: (client: { query(sql: string, values: string[]): Promise<{ rowCount: number | null }> }) => Promise<T>): Promise<T>;
+  transaction<T>(work: (client: { query(sql: string, values: string[]): Promise<{ rows: unknown[] }> }) => Promise<T>): Promise<T>;
 }
 
 export class DesktopRelayTerminalRepository implements ScopedRelayTerminalStore {
@@ -40,17 +40,17 @@ export class DesktopRelayTerminalRepository implements ScopedRelayTerminalStore 
           AND c.deleted_at IS NULL AND accepted.id=$5 AND accepted.contractor_id=$2 AND accepted.role='user'
           AND accepted.status='sent' AND accepted.routed_to='desktop' AND accepted.deleted_at IS NULL
         FOR UPDATE OF c, accepted`, [thread, accountId, workspaceId, hostDeviceId, run]);
-      if (!parent.rowCount) return false;
+      if (!parent.rows.length) return false;
       const inserted = await client.query(`
         INSERT INTO claude_messages (id, contractor_id, conversation_id, role, content, status, routed_to, relay_terminal_pending)
         VALUES ($1,$2,$3,'tool',$4,'sent','desktop',$5::jsonb)
         ON CONFLICT (id) DO NOTHING RETURNING id`, [id, accountId, thread, content, JSON.stringify({ run, outcome, viewerId, viewerKey })]);
-      if (inserted.rowCount) return true;
+      if (inserted.rows.length) return true;
       const prior = await client.query(`
         SELECT id FROM claude_messages WHERE id=$1 AND contractor_id=$2 AND conversation_id=$3
           AND role='tool' AND routed_to='desktop' AND status='sent' AND content=$4 AND deleted_at IS NULL`,
       [id, accountId, thread, content]);
-      return Boolean(prior.rowCount);
+      return prior.rows.length > 0;
     });
   }
 

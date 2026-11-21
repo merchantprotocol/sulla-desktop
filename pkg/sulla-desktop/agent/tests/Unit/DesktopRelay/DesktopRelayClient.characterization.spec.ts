@@ -479,12 +479,17 @@ describe('DesktopRelayClient characterization', () => {
       // risk: claiming an uncommitted result or replaying agent side effects.
       const db = new PGlite();
       const ports = new DesktopRelayRuntimePorts().create();
+      const localWriteErrors: unknown[] = [];
       const terminalDb: ConstructorParameters<typeof DesktopRelayTerminalRepository>[0] = {
         query: async<T>(sql: string, values: string[]) => (await db.query<T>(sql, values)).rows,
         transaction: work => db.transaction(tx => work({
           query: async(sql, values) => {
-            const result = await tx.query(sql, values);
-            return { rowCount: result.affectedRows ?? result.rows.length };
+            try {
+              return await tx.query(sql, values);
+            } catch (error) {
+              localWriteErrors.push(error);
+              throw error;
+            }
           },
         })),
       };
@@ -505,8 +510,8 @@ describe('DesktopRelayClient characterization', () => {
         await db.exec(conversations + messages + scopedReceipts + terminalDelivery + `
           INSERT INTO claude_conversations (id, contractor_id, relay_workspace_id, relay_host_device_id)
             VALUES ('remote_fixture_1234','account-a','workspace-a','desk-1');
-          INSERT INTO claude_messages (id, contractor_id, conversation_id, content, routed_to)
-            VALUES ('run-a','account-a','remote_fixture_1234','local user text','desktop');
+          INSERT INTO claude_messages (id, contractor_id, conversation_id, role, content, status, routed_to)
+            VALUES ('run-a','account-a','remote_fixture_1234','user','local user text','sent','desktop');
           ALTER TABLE claude_messages ADD CONSTRAINT fixture_outage CHECK (role != 'tool');
         `);
         const first = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
@@ -519,17 +524,21 @@ describe('DesktopRelayClient characterization', () => {
         await flush();
         expect(fakes.agentChannel.send).toHaveBeenCalledTimes(1);
         await fakes.bridge.handler!({ type: 'relay_dispatch_complete', data: { thread_id: thread, relayRunId: 'run-a', outcome: 'stopped' } });
+        expect(localWriteErrors).toContainEqual(expect.objectContaining({ code: '23514', constraint: 'fixture_outage' }));
         expect(socket.frames()).toContainEqual(expect.objectContaining({ type: 'error', reason: 'relay_history_unavailable' }));
         expect(socket.frames().some(out => out.type === 'relay_terminal' || out.type === 'stopped')).toBe(false);
         expect((await rows()).rows).toEqual([]);
         socket.drop();
         await db.exec('ALTER TABLE claude_messages DROP CONSTRAINT fixture_outage');
-        await advance(16_000);
-        const durable = await rows();
-        expect(durable.rows).toEqual([expect.objectContaining({
+        // Let the outstanding drain and ensuing retry finish; the fake
+        // timer reaching a deadline does not imply PGlite committed.
+        await vi.waitFor(async() => expect((await rows()).rows).toEqual([expect.objectContaining({
           content: '{"sullaCard":{"version":1,"kind":"run_outcome","runId":"run-a","outcome":"stopped"}}',
           relay_terminal_pending: expect.objectContaining({ run: 'run-a' }),
-        })]);
+        })]), { timeout: 45_000, interval: 250 });
+        const durable = await rows();
+        // Restart only after the pending row commits. Power loss before
+        // any local status commit cannot recover the in-memory result.
         await first.setPairedUserId('');
 
         vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'off');
@@ -544,8 +553,8 @@ describe('DesktopRelayClient characterization', () => {
         expect((await rows()).rows).toEqual(durable.rows);
 
         fakes.approve.mockReturnValue(true);
-        await advance(30_000);
-        await vi.waitFor(() => expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(true));
+        await vi.waitFor(() => expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(true),
+          { timeout: 45_000, interval: 250 });
         const report = replacement.frames().find(out => out.type === 'relay_terminal');
         expect(report).toEqual({
           type: 'relay_terminal', relayScope: 'v1', conversationId: thread, accountId: 'account-a', workspaceId: 'workspace-a',
