@@ -33,7 +33,17 @@ export class RemoteChatHistory {
         const base = { id: asMessageId(row.id), text: row.content, createdAt };
         if (row.role === 'user') rows.set(row.id, { ...base, kind: 'user' });
         else if (row.role === 'assistant') rows.set(row.id, { ...base, kind: 'sulla', model: '' });
-        else continue; // Never render unrecognized remote tool/card payloads as trusted actions.
+        else if (row.role === 'tool' && /^relay_outcome_[a-f0-9]{64}$/.test(row.id)) {
+          // The shared endpoint allowlists this one non-actionable card.
+          let outcome: unknown;
+          try {
+            const card = JSON.parse(row.content)?.sullaCard;
+            if (card?.version !== 1 || card.kind !== 'run_outcome' || typeof card.runId !== 'string') continue;
+            outcome = card.outcome;
+          } catch { continue }
+          if (outcome !== 'completed' && outcome !== 'failed' && outcome !== 'stopped') continue;
+          rows.set(row.id, { id: base.id, createdAt, kind: 'notice', text: `Run ${ outcome }` });
+        } else continue; // Never render unapproved tool/card payloads as actions.
         removed.delete(row.id);
         revisions.set(row.id, revision);
       }

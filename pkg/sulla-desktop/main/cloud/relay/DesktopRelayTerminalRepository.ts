@@ -6,7 +6,7 @@
 
 import { createHash } from 'node:crypto';
 
-import type { ScopedRelayTerminal, ScopedRelayTerminalStore } from './DesktopRelayPorts';
+import type { ScopedRelayTerminal, ScopedRelayTerminalStore, ScopedRelayTextStore } from './DesktopRelayPorts';
 
 type Receipt = Parameters<ScopedRelayTerminalStore['acknowledge']>[0];
 
@@ -15,7 +15,7 @@ interface TerminalDatabase {
   transaction<T>(work: (client: { query(sql: string, values: string[]): Promise<{ rows: unknown[] }> }) => Promise<T>): Promise<T>;
 }
 
-export class DesktopRelayTerminalRepository implements ScopedRelayTerminalStore {
+export class DesktopRelayTerminalRepository implements ScopedRelayTerminalStore, ScopedRelayTextStore {
   constructor(private readonly db: TerminalDatabase) {}
 
   private id(status: Pick<ScopedRelayTerminal, 'thread' | 'run' | 'accountId' | 'workspaceId' | 'hostDeviceId'>): string {
@@ -68,6 +68,32 @@ export class DesktopRelayTerminalRepository implements ScopedRelayTerminalStore 
         AND m.relay_terminal_pending IS NOT NULL AND m.deleted_at IS NULL
         AND accepted.role='user' AND accepted.status='sent' AND accepted.routed_to='desktop' AND accepted.deleted_at IS NULL
       ORDER BY m.id LIMIT 32`, [account, host, after]);
+  }
+
+  pendingText(account: string, host: string, after: string): ReturnType<ScopedRelayTextStore['pendingText']> {
+    return this.db.query(`
+      SELECT m.id, m.role, m.content, m.created_at AS "createdAt", c.id AS thread,
+        c.contractor_id AS "accountId", c.relay_workspace_id AS "workspaceId", c.relay_host_device_id AS "hostDeviceId",
+        m.relay_history_pending->>'run' AS run, m.relay_history_pending->>'viewerId' AS "viewerId",
+        m.relay_history_pending->>'viewerKey' AS "viewerKey"
+      FROM claude_messages m JOIN claude_conversations c ON c.id=m.conversation_id AND c.contractor_id=m.contractor_id
+      JOIN claude_messages accepted ON accepted.id=m.relay_history_pending->>'run'
+        AND accepted.conversation_id=c.id AND accepted.contractor_id=c.contractor_id
+      WHERE m.contractor_id=$1 AND c.relay_host_device_id=$2 AND m.id>$3
+        AND c.relay_workspace_id IS NOT NULL AND c.deleted_at IS NULL
+        AND m.relay_history_pending IS NOT NULL AND m.deleted_at IS NULL
+        AND m.role IN ('user','assistant') AND m.status='sent' AND m.routed_to='desktop'
+        AND accepted.role='user' AND accepted.status='sent' AND accepted.routed_to='desktop' AND accepted.deleted_at IS NULL
+      ORDER BY m.id LIMIT 32`, [account, host, after]);
+  }
+
+  async acknowledgeText(receipt: Parameters<ScopedRelayTextStore['acknowledgeText']>[0]): Promise<void> {
+    await this.db.query(`
+      UPDATE claude_messages m SET relay_history_pending=NULL FROM claude_conversations c
+      WHERE m.id=$1 AND m.contractor_id=$2 AND c.id=$3 AND m.conversation_id=c.id
+        AND c.contractor_id=$2 AND c.relay_workspace_id=$4 AND c.relay_host_device_id=$5
+        AND m.relay_history_pending->>'run'=$6`,
+    [receipt.id, receipt.accountId, receipt.thread, receipt.workspaceId, receipt.hostDeviceId, receipt.run]);
   }
 
   async acknowledge(receipt: Receipt): Promise<void> {

@@ -59,6 +59,7 @@ class GlobalRelayTimers implements DesktopRelayTimers {
 export class DesktopRelayRuntimePorts {
   create(): DesktopRelayPortSet {
     const log: DesktopRelayLog = Logging.background;
+    const delivery = new DesktopRelayTerminalRepository(postgresClient);
     return {
       log,
       timers:  new GlobalRelayTimers(),
@@ -87,7 +88,8 @@ export class DesktopRelayRuntimePorts {
         acceptUserTurn:  turn => acceptRelayUserTurn(turn),
         deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
       },
-      terminal: new DesktopRelayTerminalRepository(postgresClient),
+      terminal: delivery,
+      scopedText: delivery,
       chat: {
         currentRelayAccount: getCurrentUserId,
         allowScopedHistory: async() => {

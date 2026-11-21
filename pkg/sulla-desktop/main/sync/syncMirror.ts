@@ -30,7 +30,7 @@
 import crypto from 'crypto';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
-import type { ScopedRelayBinding } from '@pkg/main/cloud/relay/DesktopRelayPorts';
+import type { ScopedRelayBinding, ScopedRelayRunBinding } from '@pkg/main/cloud/relay/DesktopRelayPorts';
 import { getActiveContractorId, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 
 import { enqueueSyncOp } from './syncQueue';
@@ -79,6 +79,7 @@ interface MirrorInput {
    * living under two different row ids. Omitted → derived content-hash id.
    */
   id?:            string;
+  delivery?: ScopedRelayRunBinding & { run: string };
 }
 
 // Mobile user turns relayed into a desktop thread, waiting for the logger
@@ -173,6 +174,7 @@ export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
  */
 export async function acceptRelayUserTurn(input: MirrorInput & { id: string; scope?: ScopedRelayBinding }): Promise<'accepted' | 'duplicate' | 'conflict'> {
   const { conversationId, content, ts, id, scope } = input;
+  const pending = input.delivery;
   const contractorId = await getActiveContractorId();
   if (!contractorId || !id || !conversationId || !content.trim()) throw new Error('relay_acceptance_unavailable');
   if (conversationId.startsWith('remote_') !== Boolean(scope)
@@ -203,12 +205,14 @@ export async function acceptRelayUserTurn(input: MirrorInput & { id: string; sco
       if (!owned.rowCount) return 'conflict';
     }
 
+    const queue = scope && pending?.run === id
+      ? JSON.stringify({ run: id, viewerId: pending.viewerId, viewerKey: pending.viewerKey }) : null;
     const inserted = await client.query(
       `INSERT INTO claude_messages
-         (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at)
-       VALUES ($1, $2, $3, 'user', $4, 'sent', 'desktop', $5, $5)
+         (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at${queue ? ', relay_history_pending' : ''})
+       VALUES ($1, $2, $3, 'user', $4, 'sent', 'desktop', $5, $5${queue ? ', $6::jsonb' : ''})
        ON CONFLICT (id) DO NOTHING RETURNING id`,
-      [id, contractorId, conversationId, content, ts],
+      [id, contractorId, conversationId, content, ts, ...(queue ? [queue] : [])],
     );
     if (!inserted.rowCount) {
       const receipt = await client.query(
@@ -277,11 +281,22 @@ class RelayCommitWriter {
         [conversationId, owner],
       );
       if (!thread.rowCount) throw new Error('relay_thread_unavailable');
+      const delivery = input.delivery;
+      let pending: string | null = null;
+      if (delivery && role === 'assistant' && owner === delivery.accountId && conversationId.startsWith('remote_')) {
+        const accepted = await client.query(`
+          SELECT m.id FROM claude_conversations c JOIN claude_messages m ON m.conversation_id=c.id AND m.contractor_id=c.contractor_id
+          WHERE c.id=$1 AND c.contractor_id=$2 AND c.relay_workspace_id=$3 AND c.relay_host_device_id=$4 AND c.deleted_at IS NULL
+            AND m.id=$5 AND m.role='user' AND m.routed_to='desktop' AND m.status='sent' AND m.deleted_at IS NULL
+        `, [conversationId, owner, delivery.workspaceId, delivery.hostDeviceId, delivery.run]);
+        if (!accepted.rows.length) throw new Error('relay_receipt_unavailable');
+        pending = JSON.stringify({ run: delivery.run, viewerId: delivery.viewerId, viewerKey: delivery.viewerKey });
+      }
       const inserted = await client.query(
         `INSERT INTO claude_messages
-          (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,'sent','desktop',$6,$6) ON CONFLICT (id) DO NOTHING RETURNING id`,
-        [id, owner, conversationId, role, content, ts],
+          (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at${pending ? ', relay_history_pending' : ''})
+         VALUES ($1,$2,$3,$4,$5,'sent','desktop',$6,$6${pending ? ', $7::jsonb' : ''}) ON CONFLICT (id) DO NOTHING RETURNING id`,
+        [id, owner, conversationId, role, content, ts, ...(pending ? [pending] : [])],
       );
       if (!inserted.rowCount) {
         const existing = await client.query(

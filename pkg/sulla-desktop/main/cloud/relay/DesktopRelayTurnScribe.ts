@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DesktopRelayHistoryPorts, DesktopRelayLog, ScopedRelayBinding } from './DesktopRelayPorts';
+import type { DesktopRelayHistoryPorts, DesktopRelayLog, ScopedRelayBinding, ScopedRelayRunBinding } from './DesktopRelayPorts';
 
 export type RelayTurnRole = 'user' | 'assistant' | 'tool';
 
@@ -20,10 +20,10 @@ export class DesktopRelayTurnScribe {
     _log: DesktopRelayLog,
   ) {}
 
-  async scribe(conversationId: string | undefined, role: RelayTurnRole, content: string, opts?: { id?: string, ts?: string }): Promise<void> {
+  async scribe(conversationId: string | undefined, role: RelayTurnRole, content: string, opts?: { id?: string, ts?: string, delivery?: ScopedRelayRunBinding & { run: string } }): Promise<void> {
     if (!conversationId || !content.trim()) return;
     await this.history.scribe({
-      conversationId, role, content, ts: opts?.ts ?? new Date().toISOString(), id: opts?.id,
+      conversationId, role, content, ts: opts?.ts ?? new Date().toISOString(), id: opts?.id, ...(opts?.delivery ? { delivery: opts.delivery } : {}),
     });
   }
 
@@ -39,7 +39,7 @@ export class DesktopRelayTurnScribe {
     return id;
   }
 
-  acceptUserTurn(conversationId: string, id: string, content: string, scope?: ScopedRelayBinding): ReturnType<DesktopRelayHistoryPorts['acceptUserTurn']> {
-    return this.history.acceptUserTurn({ conversationId, role: 'user', content, id, ts: new Date().toISOString(), ...(scope ? { scope } : {}) });
+  acceptUserTurn(conversationId: string, id: string, content: string, scope?: ScopedRelayBinding, delivery?: ScopedRelayRunBinding & { run: string }): ReturnType<DesktopRelayHistoryPorts['acceptUserTurn']> {
+    return this.history.acceptUserTurn({ conversationId, role: 'user', content, id, ts: new Date().toISOString(), ...(scope ? { scope } : {}), ...(delivery ? { delivery } : {}) });
   }
 }
