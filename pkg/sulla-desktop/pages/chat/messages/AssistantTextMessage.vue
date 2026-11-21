@@ -36,9 +36,9 @@
         <div class="sulla-name">
           {{ botName }}
         </div>
-        <div
+        <InlineReplyBody
           class="prose max-w-none"
-          v-html="renderMarkdown(message.content)"
+          :text="message.content"
         />
       </div>
     </div>
@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import { useChatDisplay } from './context';
-import { renderMarkdown } from './markdown';
+import InlineReplyBody from '../components/transcript/InlineReplyBody.vue';
 
 import type { ChatMessage } from '@pkg/pages/agent/ChatInterface';
 

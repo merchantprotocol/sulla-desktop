@@ -21,6 +21,9 @@
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
   />
+  <div v-else-if="msg.kind === 'html'" class="chat-turn sulla chat-fade-in">
+    <InlineReplyBody class="chat-body" :text="msg.html" legacy-html />
+  </div>
   <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" />
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
   <Thinking        v-else-if="msg.kind === 'thinking'"  :msg="msg" />
@@ -72,6 +75,7 @@
 import { computed, inject, ref } from 'vue';
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 import DecisionReference from './DecisionReference.vue';
+import InlineReplyBody from './InlineReplyBody.vue';
 import ErrorCard       from './ErrorCard.vue';
 import NoticeCard      from './NoticeCard.vue';
 import TtsIndicator    from './TtsIndicator.vue';

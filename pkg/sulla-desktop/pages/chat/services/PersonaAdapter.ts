@@ -35,7 +35,7 @@ import { A2aCardMarkup } from '../messages/a2aCardMarkup';
 
 import type { ChatController } from '../controller/ChatController';
 import type {
-  Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, WorkflowRuntimeState, HtmlPayload,
+  Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, WorkflowRuntimeState,
 } from '../models/Artifact';
 import { kindFromName, type Attachment } from '../models/Attachment';
 import type {
@@ -104,8 +104,6 @@ export class PersonaAdapter {
   private workflowArtifacts = new Map<string, ArtifactId>();
   /** workflowRunId → name used when the artifact was first opened (stable across updates). */
   private workflowNames = new Map<string, string>();
-  /** Backend id → artifactId for html messages we've surfaced as artifacts. */
-  private htmlArtifacts = new Map<string, ArtifactId>();
   /** Backend id → artifactId for <workflow-artifact> blocks in text responses. */
   private staticWorkflowArtifacts = new Map<string, ArtifactId>();
   /** IDs of DB-backed artifacts currently reconciled into the controller. */
@@ -566,7 +564,6 @@ export class PersonaAdapter {
     this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
     this.workflowNames.clear();
-    this.htmlArtifacts.clear();
     this.staticWorkflowArtifacts.clear();
   }
 
@@ -586,7 +583,6 @@ export class PersonaAdapter {
     this.lastRawSignature.clear();
     this.workflowArtifacts.clear();
     this.workflowNames.clear();
-    this.htmlArtifacts.clear();
     this.staticWorkflowArtifacts.clear();
     this.persistentArtifacts.clear();
     this.seen.clear();
@@ -1107,12 +1103,6 @@ export class PersonaAdapter {
     if (b.kind === 'streaming') {
       const completed = (b as any)._completed === true || !this.ci.graphRunning.value;
       if (completed) {
-        // Mirror MessageDispatcher's auto-detect: if the finalized reply
-        // is pure <html>...</html>, surface it as an artifact and suppress
-        // the inline markdown render. Without this the completed stream
-        // hits TurnSulla (marked + DOMPurify) and paints the full page
-        // into the transcript at the same time the html artifact appears
-        // in the sidebar — the user sees the same content twice.
         const raw = b.content ?? '';
 
         // <workflow-artifact id="slug" name="..."> or self-closing variant.
@@ -1151,14 +1141,6 @@ export class PersonaAdapter {
           }
         }
 
-        const htmlMatch = /^\s*<html\b[^>]*>([\s\S]*)<\/html>\s*$/i.exec(raw);
-
-        if (htmlMatch) {
-          const html = htmlMatch[1].trim();
-          const artifactId = this.ensureHtmlArtifact(b.id, html, createdAt);
-
-          return { id, kind: 'html', createdAt, html, artifactId } satisfies HtmlMessage;
-        }
         const fileReferences = [...(Array.isArray(b.fileReferences) ? b.fileReferences : []), ...parseDurableFileReferences(raw)];
         return {
           id,
@@ -1178,11 +1160,9 @@ export class PersonaAdapter {
       } satisfies StreamingMessage;
     }
 
-    // HTML reply — also surface as an artifact so the user can expand it.
+    // Old backend history may contain an HTML body without its original wrapper.
     if (b.kind === 'html') {
-      const html = b.content ?? '';
-      const artifactId = this.ensureHtmlArtifact(b.id, html, createdAt);
-      return { id, kind: 'html', createdAt, html, artifactId } satisfies HtmlMessage;
+      return { id, kind: 'html', createdAt, html: b.content ?? '' } satisfies HtmlMessage;
     }
 
     // Speak messages are audio-only — skip in transcript.
@@ -1434,24 +1414,6 @@ export class PersonaAdapter {
       status: 'done',
     });
     this.staticWorkflowArtifacts.set(backendId, artifactId);
-    return artifactId;
-  }
-
-  // ─── HTML artifact driver ─────────────────────────────────────────
-  private ensureHtmlArtifact(backendId: string, html: string, createdAt: number): ArtifactId {
-    const existing = this.htmlArtifacts.get(backendId);
-    const name = `HTML Reply — ${ shortStamp(createdAt) }`;
-    const payload: HtmlPayload = { html };
-    if (existing) {
-      this.controller.updateArtifact(existing, { payload, status: 'done' });
-      return existing;
-    }
-    const artifactId = this.controller.openArtifact('html', {
-      name,
-      payload,
-      status: 'done',
-    });
-    this.htmlArtifacts.set(backendId, artifactId);
     return artifactId;
   }
 

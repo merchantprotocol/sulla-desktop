@@ -133,9 +133,9 @@
                   S
                 </div>
                 <div class="min-w-0">
-                  <div
+                  <InlineReplyBody
                     class="prose prose-sm max-w-none"
-                    v-html="renderMarkdown(m.content)"
+                    :text="m.content"
                   /><span
                     v-if="!(m as any)._completed"
                     class="streaming-cursor"
@@ -156,9 +156,9 @@
                   S
                 </div>
                 <div class="flex-1 min-w-0">
-                  <HtmlMessageRenderer
-                    :content="m.content"
-                    :is-dark="isDark"
+                  <InlineReplyBody
+                    :text="m.content"
+                    legacy-html
                   />
                 </div>
               </div>
@@ -189,9 +189,9 @@
                   S
                 </div>
                 <div class="min-w-0">
-                  <div
+                  <InlineReplyBody
                     class="prose prose-sm max-w-none"
-                    v-html="renderMarkdown(m.content)"
+                    :text="m.content"
                   />
                 </div>
               </div>
@@ -257,7 +257,7 @@ import { AgentModelSelectorController } from './agent/AgentModelSelectorControll
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 
 import ChatToolCard from '@pkg/components/ChatToolCard.vue';
-import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import InlineReplyBody from './chat/components/transcript/InlineReplyBody.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
