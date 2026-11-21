@@ -17,7 +17,7 @@ images:
   - { name: sulla-accounts, source: ghcr.io/merchantprotocol/sulla-accounts:sha-59f2d06f4e152b9feb87cbe9dbe4325c43a59785 }
   - { name: sulla-vault, source: ghcr.io/merchantprotocol/sulla-vault:sha-b3ef1b71276172d30a4822938144762f511737e6 }
   - { name: sulla-relay, source: ghcr.io/merchantprotocol/sulla-relay:sha-f71d5e7a6567641778ca6ec89e38dc74a43aa630 }
-  - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-9a57e62e0f068a66fcb90923082d15cb00a9ad7a }
+  - { name: sulla-files, source: ghcr.io/merchantprotocol/sulla-files:sha-33fa98cf59f580c141438ed81e1b25f59e4a4f65 }
   - { name: sulla-files-fuse, source: ghcr.io/merchantprotocol/sulla-files-fuse:sha-3678da58ca7ba424711cb75956cf04109e84e42b }
   - { name: sulla-tools, source: ghcr.io/merchantprotocol/sulla-tools:sha-31412203a31dc0b5d2c4af5e8bee550fe4259eb0 }
   - { name: sulla-workflows, source: ghcr.io/merchantprotocol/sulla-workflows:latest }
