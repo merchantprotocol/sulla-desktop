@@ -85,6 +85,18 @@ export class DesktopRelayRequestHandlers {
     }
   }
 
+  async handleInventory(msg: RelayIncomingFrame): Promise<void> {
+    if (!msg.relayRequest || !msg.viewerId || !msg.viewerKey || !this.validId(msg.workspaceId)
+        || msg.accountId !== await this.chat.currentRelayAccount?.()
+        || !msg.targetDeviceId || msg.targetDeviceId !== await this.resolveDeviceId()) return;
+    const allowed = await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey) === true;
+    const models = allowed ? await this.chat.modelCapabilities?.().catch(() => []) ?? [] : [];
+    const current = allowed && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey) === true
+      && msg.accountId === await this.chat.currentRelayAccount?.();
+    this.outbox.send({ type: 'relay_inventory_result', relayScope: 'v1', relayRequest: msg.relayRequest,
+      allowed: current, models: current ? models : [] });
+  }
+
   async handleScopedCommand(msg: RelayIncomingFrame): Promise<void> {
     const thread = msg.conversationId;
     if (!thread || !/^remote_[A-Za-z0-9_-]{12,180}$/.test(thread)

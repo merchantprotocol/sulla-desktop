@@ -95,6 +95,14 @@ export class DesktopRelayRuntimePorts {
           return prefs.enabled && prefs.conversations && prefs.remoteAccess;
         },
         approveViewer: async(id, key) => (await getCloudPreferences()).remoteAccess && ApprovedClients.get(id)?.publicKey === key,
+        modelCapabilities: async() => {
+          const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+          const service = getModelProviderService();
+          const providers = (await service.getAvailableProviders()).filter(provider => provider.connected);
+          const models = await Promise.all(providers.map(async provider =>
+            (await service.getModelsForProvider(provider.id).catch(() => [])).map(model => ({ providerId: provider.id, modelId: model.id }))));
+          return models.flat().slice(0, 256);
+        },
         relayApprovals: () => ApprovedClients.list().map(client => [client.clientId, client.publicKey] as const),
         admitRelayThread,
         validateSelection:  message => validateChatSelection(message),

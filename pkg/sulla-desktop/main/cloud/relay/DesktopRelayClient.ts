@@ -65,7 +65,9 @@ export class DesktopRelayClient {
       scoped:           async(message, socket) => {
         if (!this.transport.canAcceptScoped(socket)) return;
         if (message.type === 'relay_terminal_committed') await terminal?.acknowledge(message as RelayIncomingFrame);
-        else if (message.type === 'relay_history_check' || ports.session.sharedRelayEnabled?.() === true) {
+        else if (message.type === 'relay_inventory_check' && ports.session.sharedRelayEnabled?.() === true) {
+          await this.handlers.handleInventory(message as RelayIncomingFrame);
+        } else if (message.type === 'relay_history_check' || ports.session.sharedRelayEnabled?.() === true) {
           await this.handlers.handleScopedCommand(message as RelayIncomingFrame);
         }
       },
