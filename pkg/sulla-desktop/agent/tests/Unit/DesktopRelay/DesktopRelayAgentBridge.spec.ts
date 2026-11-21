@@ -23,7 +23,7 @@ class BridgeHarness {
 
   readonly history: DesktopRelayHistoryPorts = {
     scribe:          vi.fn(async(turn) => { this.scribed.push(turn) }),
-    messageExists:   vi.fn().mockResolvedValue(false),
+    acceptUserTurn:  vi.fn().mockResolvedValue('accepted'),
     deriveMessageId: (conversationId, role, content) => `id:${ role }:${ content }`,
   };
 

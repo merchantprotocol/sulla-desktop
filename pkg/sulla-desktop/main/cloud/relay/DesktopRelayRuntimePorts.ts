@@ -15,7 +15,7 @@ import { persistMobileAttachments } from '@pkg/main/mobileRelayContent';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
-import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { acceptRelayUserTurn, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
 import type { DesktopRelayLog, DesktopRelayPortSet, DesktopRelaySignInNotifier, DesktopRelayTimers } from './DesktopRelayPorts';
@@ -76,7 +76,7 @@ export class DesktopRelayRuntimePorts {
       agent:   () => getWebSocketClientService(),
       history: {
         scribe:          turn => scribeRelayTurn(turn),
-        messageExists:   id => claudeMessageExists(id),
+        acceptUserTurn:  turn => acceptRelayUserTurn(turn),
         deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
       },
       chat: {

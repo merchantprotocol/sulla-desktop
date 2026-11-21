@@ -128,7 +128,7 @@ export interface DesktopRelayAgentChannel {
 
 export interface DesktopRelayHistoryPorts {
   scribe(turn: { conversationId: string; role: 'user' | 'assistant' | 'tool'; content: string; ts: string; id?: string }): Promise<void>;
-  messageExists(id: string): Promise<boolean>;
+  acceptUserTurn(turn: { conversationId: string; role: 'user'; content: string; ts: string; id: string }): Promise<'accepted' | 'duplicate' | 'conflict'>;
   deriveMessageId(conversationId: string, role: string, content: string, ts: string): string;
 }
 

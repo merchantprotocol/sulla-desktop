@@ -52,7 +52,7 @@ const fakes = vi.hoisted(() => {
     deviceId:       vi.fn(),
     usesVault:      vi.fn(),
     scribe:         vi.fn(),
-    exists:         vi.fn(),
+    accept:         vi.fn(),
     selection:      vi.fn(),
     filesFetch:     vi.fn(),
     acquire:        vi.fn(),
@@ -75,7 +75,7 @@ vi.mock('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: fakes.deviceId 
 vi.mock('@pkg/main/cloudRelayTransport', () => ({ cloudRelayUsesVault: fakes.usesVault, VaultRelaySocket: fakes.FakeVaultSocket }));
 vi.mock('@pkg/main/sync/syncMirror', () => ({
   scribeRelayTurn:    fakes.scribe,
-  claudeMessageExists: fakes.exists,
+  acceptRelayUserTurn: fakes.accept,
   deriveMessageId:    (conversationId: string, role: string, content: string) => `id:${ conversationId }:${ role }:${ content }`,
 }));
 vi.mock('@pkg/main/chatSelection', () => ({ validateChatSelection: fakes.selection }));
@@ -117,7 +117,7 @@ describe('DesktopRelayClient characterization', () => {
     fakes.deviceId.mockResolvedValue('desk-1');
     fakes.usesVault.mockReturnValue(false);
     fakes.scribe.mockResolvedValue(undefined);
-    fakes.exists.mockResolvedValue(false);
+    fakes.accept.mockResolvedValue('accepted');
     fakes.selection.mockResolvedValue({});
   });
 
@@ -285,7 +285,7 @@ describe('DesktopRelayClient characterization', () => {
 
     it('acks a duplicate chat without dispatching it again', async() => {
       // risk: irreversible side effects — a retried turn must not run the agent twice.
-      fakes.exists.mockResolvedValue(true);
+      fakes.accept.mockResolvedValue('duplicate');
       await pairedClient();
       const socket = FakeSocket.instances[0];
       socket.open();
@@ -299,6 +299,50 @@ describe('DesktopRelayClient characterization', () => {
   });
 
   describe('request dispatch', () => {
+    it('does not ACK or dispatch until acceptance commits, then dispatches only the winner', async() => {
+      // risk: irreversible side effects — concurrent delivery must not start two turns.
+      let commit!: (value: 'accepted' | 'duplicate') => void;
+      let retry!: (value: 'accepted' | 'duplicate') => void;
+      fakes.accept
+        .mockImplementationOnce(() => new Promise(resolve => { commit = resolve }))
+        .mockImplementationOnce(() => new Promise(resolve => { retry = resolve }));
+      await pairedClient();
+      const socket = FakeSocket.instances[0];
+      socket.open();
+      const frame = { type: 'chat', conversationId: 'thread_1', userMessageId: 'u1', clientRunId: 'run1', messages: [{ role: 'user', content: 'hello' }] };
+      socket.deliver(frame);
+      socket.deliver(frame);
+      await flush();
+      expect(socket.frames()).toEqual([]);
+      expect(fakes.agentChannel.send).not.toHaveBeenCalled();
+      commit('accepted');
+      retry('duplicate');
+      await flush();
+      expect(fakes.agentChannel.send).toHaveBeenCalledTimes(1);
+      expect(socket.frames()).toEqual([
+        expect.objectContaining({ type: 'ack', userMessageId: 'u1', clientRunId: 'run1' }),
+        expect.objectContaining({ type: 'ack', userMessageId: 'u1', clientRunId: 'run1', duplicate: true }),
+      ]);
+    });
+
+    it('fails without ACK or dispatch if durable acceptance throws or rejects the identity', async() => {
+      // risk: data loss and cross-thread replay — neither outcome may clear the outbox or run.
+      fakes.accept.mockRejectedValueOnce(new Error('commit outcome unknown')).mockResolvedValueOnce('conflict');
+      await pairedClient();
+      const socket = FakeSocket.instances[0];
+      socket.open();
+      const frame = { type: 'chat', conversationId: 'c1', userMessageId: 'u1', messages: [{ role: 'user', content: 'hello' }] };
+      socket.deliver(frame);
+      await flush();
+      socket.deliver(frame);
+      await flush();
+      expect(fakes.agentChannel.send).not.toHaveBeenCalled();
+      expect(socket.frames()).toEqual([
+        expect.objectContaining({ type: 'error', reason: 'acceptance_unavailable', userMessageId: 'u1' }),
+        expect.objectContaining({ type: 'error', reason: 'message_identity_conflict', userMessageId: 'u1' }),
+      ]);
+    });
+
     it('scribes, acks and dispatches a mobile chat, then relays streaming and done', async() => {
       // risk: data loss — the user turn is scribed before the ack, and the final reply is scribed and delivered once.
       await pairedClient();
@@ -307,7 +351,7 @@ describe('DesktopRelayClient characterization', () => {
       socket.deliver({ type: 'chat', conversationId: 'c1', userMessageId: 'u1', messages: [{ role: 'user', content: ' hello ' }] });
       await flush();
 
-      expect(fakes.scribe).toHaveBeenCalledWith({ conversationId: 'c1', role: 'user', content: 'hello', ts: expect.any(String), id: 'u1' });
+      expect(fakes.accept).toHaveBeenCalledWith({ conversationId: 'c1', role: 'user', content: 'hello', ts: expect.any(String), id: 'u1' });
       expect(socket.sent[0]).toBe('{"type":"ack","userMessageId":"u1","clientRunId":"u1","conversationId":"c1","deviceId":"desk-1"}');
       expect(fakes.agentChannel.connect).toHaveBeenCalledWith('mobile-relay');
       expect(fakes.agentChannel.send).toHaveBeenCalledWith('mobile-relay', {

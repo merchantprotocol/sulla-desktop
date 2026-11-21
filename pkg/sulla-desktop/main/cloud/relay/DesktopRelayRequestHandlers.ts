@@ -145,7 +145,7 @@ export class DesktopRelayRequestHandlers {
       this.outbox.sendChatFrame(conversationId, { type: 'error', reason: 'missing_user_message_id' });
       return;
     }
-    this.outbox.registerRun(conversationId, msg.clientRunId || msg.userMessageId);
+    const clientRunId = msg.clientRunId || msg.userMessageId;
 
     // The agent keeps its own thread state; only the fresh (last) user turn is needed.
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
@@ -155,13 +155,6 @@ export class DesktopRelayRequestHandlers {
       this.outbox.sendChatFrame(conversationId, { type: 'error', reason: 'empty_user_message', userMessageId: msg.userMessageId });
       return;
     }
-    if (await this.scribe.messageExists(msg.userMessageId)) {
-      this.log.log(`[DesktopRelay] Duplicate mobile chat ignored — conversationId=${ conversationId }, userMessageId=${ msg.userMessageId }`);
-      this.outbox.sendChatFrame(conversationId, { type: 'ack', userMessageId: msg.userMessageId, duplicate: true });
-      return;
-    }
-    this.bridge.ensureBridged();
-
     // Spoken turns run on the voice agent and its own fast model; only typed
     // turns honour the phone's agent/model picker.
     const voiceRoute = voiceTurnRoute(msg);
@@ -169,10 +162,29 @@ export class DesktopRelayRequestHandlers {
     const savedPaths = await this.saveAttachments(conversationId, msg.userMessageId, turn);
     const selection = voiceRoute ?? await this.chat.validateSelection(msg);
 
-    // Scribe the user turn FIRST — the sync log is the authoritative record —
-    // then ACK so mobile can clear its outbox without a socket-only acknowledgement.
-    await this.scribe.scribe(conversationId, 'user', transcriptText(turn), { id: msg.userMessageId });
-    this.outbox.sendChatFrame(conversationId, { type: 'ack', userMessageId: msg.userMessageId });
+    // Only the transaction that creates the receipt can dispatch. ACKs for
+    // retries retain the input identity even while another turn is active.
+    const identity = { userMessageId: msg.userMessageId, clientRunId };
+    let acceptance: Awaited<ReturnType<DesktopRelayTurnScribe['acceptUserTurn']>>;
+    try {
+      acceptance = await this.scribe.acceptUserTurn(conversationId, msg.userMessageId, transcriptText(turn));
+    } catch (error) {
+      this.log.warn('[DesktopRelay] Could not commit relay acceptance:', error);
+      this.outbox.sendChatFrame(conversationId, { type: 'error', reason: 'acceptance_unavailable', ...identity });
+      return;
+    }
+    if (acceptance === 'conflict') {
+      this.outbox.sendChatFrame(conversationId, { type: 'error', reason: 'message_identity_conflict', ...identity });
+      return;
+    }
+    if (acceptance === 'duplicate') {
+      this.outbox.sendChatFrame(conversationId, { type: 'ack', userMessageId: msg.userMessageId, duplicate: true, clientRunId });
+      return;
+    }
+
+    this.bridge.ensureBridged();
+    this.outbox.registerRun(conversationId, clientRunId);
+    this.outbox.sendChatFrame(conversationId, { type: 'ack', ...identity });
 
     this.channel().send(MOBILE_RELAY_CHANNEL, {
       type: 'user_message',

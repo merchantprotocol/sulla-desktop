@@ -43,7 +43,7 @@ export class DesktopRelayTurnScribe {
     return id;
   }
 
-  messageExists(id: string): Promise<boolean> {
-    return this.history.messageExists(id);
+  acceptUserTurn(conversationId: string, id: string, content: string): ReturnType<DesktopRelayHistoryPorts['acceptUserTurn']> {
+    return this.history.acceptUserTurn({ conversationId, role: 'user', content, id, ts: new Date().toISOString() });
   }
 }

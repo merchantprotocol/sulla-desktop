@@ -57,7 +57,7 @@ export class DesktopRelayConversationOutbox {
     const runId = typeof payload.clientRunId === 'string'
       ? payload.clientRunId
       : this.relayRuns.get(conversationId)?.[0];
-    const stamped = runId ? { ...payload, clientRunId: runId, userMessageId: runId } : payload;
+    const stamped = runId ? { ...payload, clientRunId: runId, userMessageId: payload.userMessageId ?? runId } : payload;
     const secure = this.secureRoutes.get(conversationId);
     if (secure) {
       try {

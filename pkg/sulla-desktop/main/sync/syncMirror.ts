@@ -137,15 +137,86 @@ export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
   await writeTurnToSyncLog(input);
 }
 
-export async function claudeMessageExists(id: string): Promise<boolean> {
-  if (!id) return false;
-  const rows = await postgresClient.query(
-    'SELECT 1 FROM claude_messages WHERE id = $1 LIMIT 1',
-    [id],
-  );
+/**
+ * The existing message row is the acceptance receipt. Never dispatch based
+ * on a read-before-write check: only the transaction that inserts this row
+ * may start execution. A lost commit response is deliberately ambiguous;
+ * retrying reads the receipt but does not run again.
+ */
+export async function acceptRelayUserTurn(input: MirrorInput & { id: string }): Promise<'accepted' | 'duplicate' | 'conflict'> {
+  const { conversationId, content, ts, id } = input;
+  const contractorId = await getActiveContractorId();
+  if (!contractorId || !id || !conversationId || !content.trim()) throw new Error('relay_acceptance_unavailable');
+  const sync = await conversationSyncEnabled();
+  const result = await postgresClient.transaction(async(client): Promise<'accepted' | 'duplicate' | 'conflict'> => {
+    const conversation = await client.query(
+      `INSERT INTO claude_conversations
+         (id, contractor_id, title, status, last_message_at, last_message_preview, unread_count, created_at, updated_at)
+       VALUES ($1, $2, $3, 'active', $4, $5, 0, $4, $4)
+       ON CONFLICT (id) DO NOTHING RETURNING id`,
+      [conversationId, contractorId, truncate(content, 60), ts, truncate(content, 100)],
+    );
+    if (!conversation.rowCount) {
+      const owned = await client.query(
+        `SELECT id FROM claude_conversations WHERE id = $1 AND contractor_id = $2 AND deleted_at IS NULL FOR UPDATE`,
+        [conversationId, contractorId],
+      );
+      if (!owned.rowCount) return 'conflict';
+    }
 
-  return rows.length > 0;
+    const inserted = await client.query(
+      `INSERT INTO claude_messages
+         (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at)
+       VALUES ($1, $2, $3, 'user', $4, 'sent', 'desktop', $5, $5)
+       ON CONFLICT (id) DO NOTHING RETURNING id`,
+      [id, contractorId, conversationId, content, ts],
+    );
+    if (!inserted.rowCount) {
+      const receipt = await client.query(
+        `SELECT id FROM claude_messages
+          WHERE id = $1 AND contractor_id = $2 AND conversation_id = $3 AND role = 'user'
+            AND content = $4 AND deleted_at IS NULL`,
+        [id, contractorId, conversationId, content],
+      );
+      // Roll back any conversation row created while handling a foreign id.
+      if (!receipt.rowCount) throw new RelayMessageConflict();
+      return 'duplicate';
+    }
+
+    await client.query(
+      `UPDATE claude_conversations SET last_message_at = $2, last_message_preview = $3, updated_at = $2 WHERE id = $1`,
+      [conversationId, ts, truncate(content, 100)],
+    );
+    if (sync) {
+      for (const [table, key] of [['claude_conversation', conversationId], ['claude_message', id]]) {
+        await client.query(
+          `INSERT INTO sync_queue (id, table_name, record_key, operation)
+           VALUES ($1, $2, $3, 'upsert')
+           ON CONFLICT (table_name, record_key) DO UPDATE SET
+             operation = EXCLUDED.operation, created_at = CURRENT_TIMESTAMP`,
+          [crypto.randomUUID(), table, JSON.stringify({ id: key })],
+        );
+      }
+    }
+    return 'accepted';
+  }).catch((err: unknown) => {
+    if (err instanceof RelayMessageConflict) return 'conflict' as const;
+    throw err;
+  });
+
+  if (result === 'accepted' && isPrimaryChatConversation(conversationId)) {
+    // Let the graph's normal user-turn mirror reuse the row just committed.
+    const pending = pendingRelayUserIds.get(conversationId) ?? [];
+    pending.push({ content: content.trim(), id, at: Date.now() });
+    pendingRelayUserIds.set(conversationId, pending);
+  }
+  if (result === 'accepted' && sync) {
+    void import('./SullaSyncService').then(({ SullaSync }) => SullaSync.pushSoon()).catch(() => undefined);
+  }
+  return result;
 }
+
+class RelayMessageConflict extends Error {}
 
 async function writeTurnToSyncLog(input: MirrorInput): Promise<void> {
   const { conversationId, role, content, ts } = input;
