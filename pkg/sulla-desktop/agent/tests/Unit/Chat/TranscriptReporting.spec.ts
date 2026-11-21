@@ -433,3 +433,40 @@ it('keeps safe thread-bound activities, patches and memory at their cumulative l
   ]);
   expect(JSON.stringify(live.ctx.messages)).not.toContain('PRIVATE_');
 });
+
+// risk: safe formatter descriptions vanish, or similarly prefixed private text and raw tool fields leak.
+it('preserves exact payload-free descriptions from the formatter through projection and reload', async() => {
+  const live = new ReportingFixture();
+  const calls = [
+    ['git_status', { absolutePath: 'PRIVATE_PATH' }],
+    ['get_page_text', { tabId: 'PRIVATE_TAB' }],
+    ['calendar_list', { calendar: 'PRIVATE_CALENDAR' }],
+    ['browser_tab', { action: 'close', title: 'PRIVATE_TITLE' }],
+    ['calendar_update', { title: 'PRIVATE_EVENT' }],
+  ] as const;
+  calls.forEach(([toolName, args], index) => {
+    const toolRunId = `format-${ index }`;
+    live.emit('progress', { phase: 'tool_call', toolRunId, toolName, args });
+    live.emit('progress', { phase: 'tool_result', toolRunId, success: true, result: 'PRIVATE_RESULT' });
+  });
+  const snapshot = JSON.parse(JSON.stringify(live.chat.serialize()));
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: snapshot }));
+  const activity = (fixture: ReportingFixture, level: ReportingLevel) =>
+    fixture.entries(level).flatMap(row => row.kind === 'activity' ? [row.text] : []);
+  expect(activity(live, 'debug')).toEqual([
+    'Git · ok · Checking status · Details withheld',
+    'Browser · ok · Reading page text · Details withheld',
+    'Calendar · ok · Listing events · Details withheld',
+    'Browser · ok · Details withheld',
+    'Calendar · ok · Details withheld',
+  ]);
+  expect(activity(reopened, 'debug')).toEqual(activity(live, 'debug'));
+  expect(activity(reopened, 'info')).toEqual([
+    'Git · Completed', 'Browser · Completed', 'Calendar · Completed', 'Browser · Completed', 'Calendar · Completed',
+  ]);
+  const rendered = reopened.mount('debug');
+  expect(rendered.text()).toContain('Git · ok · Checking status');
+  expect(rendered.text()).not.toContain('PRIVATE_');
+  await rendered.setProps({ reportingLevel: 'info' });
+  expect(rendered.text()).not.toContain('Checking status');
+});

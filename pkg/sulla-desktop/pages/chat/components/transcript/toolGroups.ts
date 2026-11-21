@@ -60,10 +60,25 @@ const safeCliActivity = new Set([
   'WebFetch request', 'WebSearch request', 'Spawning sub-task', 'Calling a tool',
 ]);
 
-// Literal fallback summaries from the named tool formatters. Arbitrary
-// descriptions and arguments must not pass a prefix or shape-based check.
-const safeToolSummaries = new Map([
-  ['Bash', 'Running command'], ['Host', 'Running on host'],
+// Audited literal summaries from toolCardStrategies, keyed by formatter label.
+// Match the entire recorded value; never admit a prefix, a template argument,
+// a fallback derived from an arbitrary tool name, or a formatter input/output.
+const safeToolSummaries: ReadonlyMap<string, readonly string[]> = new Map([
+  ['Agents', ['Listing available agents', 'Listing agent directory']],
+  ['Bash', ['Running command']],
+  ['Bridge', ['Notifying human', 'Sending rich message', 'Updating presence', 'Checking presence']],
+  ['Browser', ['Capturing page snapshot', 'Reading page text', 'Reading form values', 'Closing tab']],
+  ['Calendar', ['Listing events', 'Getting event details', 'Updating event', 'Cancelling event', 'Deleting event']],
+  ['Database', ['Running transaction']],
+  ['Docker', ['Building image', 'Listing containers', 'Listing all containers', 'Listing images', 'Listing all images',
+    'Reading container resource statistics', 'Inspecting container health', 'Reading Docker disk usage', 'Reading VM resource snapshot']],
+  ['Extensions', ['Listing installed extensions', 'Browsing extension catalog']],
+  ['Git', ['Checking status', 'Diffing staged changes', 'Comparing changes', 'Listing merge conflicts', 'Initializing repository']],
+  ['Host', ['Running on host']],
+  ['Integrations', ['Listing integrations']],
+  ['Memory', ['Remembering observation']],
+  ['Slack', ['Looking up user', 'Checking Slack connection']],
+  ['Vault', ['Rotating vault password']],
 ]);
 
 // Fixed formatter labels for structured Sulla tool cards. Do not use the
@@ -158,7 +173,7 @@ export class TranscriptReporting {
     const status = toolStatuses.get(message.status);
     if (level !== 'debug') return label && status ? `${ label } · ${ status }` : undefined;
 
-    const safeSummary = label && safeToolSummaries.get(message.tool) === message.desc ? message.desc : undefined;
+    const safeSummary = label && safeToolSummaries.get(message.tool)?.includes(message.desc) ? message.desc : undefined;
     const withheld = (message.desc && !safeSummary) || message.input || message.output || message.error || message.meta;
     return [
       isMemory ? 'Memory' : label ? message.tool : 'Tool name withheld',
