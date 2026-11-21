@@ -109,8 +109,7 @@ export class SullaFilesCaptureService {
 
   async prepareTrayScreenshot(name:string, bytes:Buffer, destinations:SullaFilesCapturePathClipboardService, source?:string):Promise<TrayScreenshot> {
     const screenshot:TrayScreenshot = { name, bytes };
-    const root = await destinations.filesRoot();
-    if (root) await destinations.importIntoFiles(root, () => this.importTrayScreenshot(screenshot, source));
+    await destinations.importIntoFiles(() => this.importTrayScreenshot(screenshot, source));
     return screenshot;
   }
 
@@ -239,25 +238,11 @@ export class SullaFilesCapturePathClipboardService {
     return this.existingDirectory(await this.resolveFilesRoot());
   }
 
-  async importIntoFiles(root:string, operation:() => Promise<CaptureResult>, isCurrent:() => boolean = () => true):Promise<CaptureResult | undefined> {
+  async importIntoFiles(operation:() => Promise<CaptureResult>, isCurrent:() => boolean = () => true):Promise<CaptureResult | undefined> {
     if (!await this.filesRoot() || !isCurrent()) return undefined;
-    try {
-      return await operation();
-    } catch (error) {
-      // ChatFilesImporter reports API failures as plain Errors and source failures
-      // refer to the private temp file. Neither is evidence of a missing mount.
-      // Only a filesystem ENOENT naming this destination may be downgraded.
-      const failure = error as NodeJS.ErrnoException;
-      if (failure?.code !== 'ENOENT' || typeof failure.path !== 'string') throw error;
-      const failedPath = path.resolve(failure.path);
-      const configured = path.resolve(await this.resolveFilesRoot());
-      const belongsToRoot = [root, configured].some(directory => {
-        const relative = path.relative(directory, failedPath);
-        return relative !== '..' && !relative.startsWith(`..${ path.sep }`) && !path.isAbsolute(relative);
-      });
-      if (!belongsToRoot || await this.filesRoot()) throw error;
-      return undefined;
-    }
+    // The import API commits to its own store, not the Desktop directory. A
+    // missing local copy is checked separately; every import failure propagates.
+    return operation();
   }
 
   private async resolveFile(root:string, relativePath:string):Promise<string> {
@@ -290,7 +275,7 @@ export class SullaFilesCapturePathClipboardService {
     const root = await this.filesRoot();
     if (!isCurrent()) return undefined;
     if (root) {
-      const capture = screenshot.capture ?? (importScreenshot && await this.importIntoFiles(root, importScreenshot, isCurrent));
+      const capture = screenshot.capture ?? (importScreenshot && await this.importIntoFiles(importScreenshot, isCurrent));
       if (!capture && !importScreenshot) throw new Error('The screenshot has not been imported into Sulla Files');
       let absolute:string | undefined;
       try {
