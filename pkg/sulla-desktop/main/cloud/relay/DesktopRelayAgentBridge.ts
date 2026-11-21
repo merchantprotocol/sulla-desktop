@@ -54,7 +54,7 @@ export class DesktopRelayAgentBridge {
     private readonly channel: () => DesktopRelayAgentChannel,
     private readonly outbox: DesktopRelayConversationOutbox,
     private readonly scribe: DesktopRelayTurnScribe,
-    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard' | 'allowScopedHistory'>,
+    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard' | 'allowScopedHistory' | 'currentRelayAccount'>,
     private readonly deviceId: () => Promise<string>,
     private readonly log: DesktopRelayLog,
   ) {}
@@ -245,8 +245,9 @@ export class DesktopRelayAgentBridge {
     this.lastCommittedIdByThread.delete(threadId);
     this.graphOutcome.delete(threadId);
     this.commitFailed.delete(threadId);
-    if (threadId.startsWith('remote_') && terminal.eventId
-        && await this.cards.allowScopedHistory?.().catch(() => false)) {
+    const binding = this.outbox.scopedBinding(threadId, runId);
+    if (binding && terminal.eventId && await this.cards.allowScopedHistory?.().catch(() => false)
+        && await this.cards.currentRelayAccount?.().catch(() => '') === binding.accountId) {
       terminal.syncTerminal = true;
     }
     this.outbox.completeRun(threadId, terminal);

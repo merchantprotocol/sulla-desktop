@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DesktopRelayLog, DesktopRelayTimers, RelayFrame, RelayFrameSink, RelayInterval } from './DesktopRelayPorts';
+import type { DesktopRelayLog, DesktopRelayTimers, RelayFrame, RelayFrameSink, RelayInterval, ScopedRelayBinding } from './DesktopRelayPorts';
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 // Safety valve: clear a keepalive after 10 min regardless — prevents leaks if
@@ -39,6 +39,7 @@ export class DesktopRelayConversationOutbox {
   // Keeping the ids in graph-event order prevents that stale completion from
   // being stamped as (and therefore ending) the replacement run.
   private readonly relayRuns = new Map<string, string[]>();
+  private readonly scopedRuns = new Map<string, { id: string; scope: ScopedRelayBinding }>();
   private mobilePeerOnline = true;
 
   constructor(
@@ -113,10 +114,16 @@ export class DesktopRelayConversationOutbox {
   }
 
   /** Record a run id in submission order. */
-  registerRun(conversationId: string, runId: string): void {
+  registerRun(conversationId: string, runId: string, scope?: ScopedRelayBinding): void {
+    if (scope) this.scopedRuns.set(conversationId, { id: runId, scope });
     const runs = this.relayRuns.get(conversationId) ?? [];
     if (!runs.includes(runId)) runs.push(runId);
     this.relayRuns.set(conversationId, runs);
+  }
+
+  scopedBinding(conversationId: string, runId: string): ScopedRelayBinding | undefined {
+    const binding = this.scopedRuns.get(conversationId);
+    return binding?.id === runId ? binding.scope : undefined;
   }
 
   oldestRun(conversationId: string): string | undefined {
@@ -146,6 +153,7 @@ export class DesktopRelayConversationOutbox {
       this.activeConversations.delete(conversationId);
     }
     this.sendChatFrame(conversationId, done);
+    this.scopedRuns.delete(conversationId);
     if (runs?.length) runs.shift();
     if (!runs?.length) this.relayRuns.delete(conversationId);
   }
@@ -178,6 +186,7 @@ export class DesktopRelayConversationOutbox {
     this.keepaliveTimers.clear();
     this.activeConversations.clear();
     this.relayRuns.clear();
+    this.scopedRuns.clear();
     this.mobilePeerOnline = true;
   }
 
