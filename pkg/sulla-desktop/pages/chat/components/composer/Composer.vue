@@ -780,13 +780,14 @@ function stopVoice(commit: boolean): void {
 }
 
 const refreshRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh() };
+const resumeRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh(true) };
 let remoteRefreshTimer: ReturnType<typeof setInterval>;
-watch(() => tabActive?.value, refreshRemote);
+watch(() => tabActive?.value, resumeRemote);
 onBeforeUnmount(() => {
   remoteChat.dispose();
   clearInterval(remoteRefreshTimer);
-  window.removeEventListener('online', refreshRemote);
-  window.removeEventListener('focus', refreshRemote);
+  window.removeEventListener('online', resumeRemote);
+  window.removeEventListener('focus', resumeRemote);
   voiceAdapter.dispose();
   window.removeEventListener('chat:reply', onReplyFromTurn as EventListener);
   window.removeEventListener('chat:draft', onDraftFromCard as EventListener);
@@ -858,8 +859,8 @@ onMounted(() => {
   }
   refreshRemote();
   remoteRefreshTimer = setInterval(refreshRemote, 12000);
-  window.addEventListener('online', refreshRemote);
-  window.addEventListener('focus', refreshRemote);
+  window.addEventListener('online', resumeRemote);
+  window.addEventListener('focus', resumeRemote);
   ipcRenderer.on('capture-studio:recording-state', onScreenRecordingState);
   window.addEventListener('chat:reply', onReplyFromTurn as EventListener);
   window.addEventListener('chat:draft', onDraftFromCard as EventListener);
