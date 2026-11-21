@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DesktopRelayLog, DesktopRelayTimers, RelayFrame, RelayFrameSink, RelayInterval } from './DesktopRelayPorts';
+import type { DesktopRelayLog, DesktopRelayTimers, RelayFrame, RelayFrameSink, RelayInterval, ScopedRelayRunBinding } from './DesktopRelayPorts';
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 // Safety valve: clear a keepalive after 10 min regardless — prevents leaks if
@@ -39,12 +39,14 @@ export class DesktopRelayConversationOutbox {
   // Keeping the ids in graph-event order prevents that stale completion from
   // being stamped as (and therefore ending) the replacement run.
   private readonly relayRuns = new Map<string, string[]>();
+  private readonly scopedRuns = new Map<string, { id: string; scope: ScopedRelayRunBinding }>();
   private mobilePeerOnline = true;
 
   constructor(
     private readonly transport: DesktopRelayFrameTransport,
     private readonly timers: DesktopRelayTimers,
     private readonly log: DesktopRelayLog,
+    private readonly approvals: () => readonly (readonly [string, string])[] = () => [],
   ) {}
 
   /** Send a conversation frame, stamped with its run id, to its secure route or the relay room. */
@@ -57,7 +59,11 @@ export class DesktopRelayConversationOutbox {
     const runId = typeof payload.clientRunId === 'string'
       ? payload.clientRunId
       : this.relayRuns.get(conversationId)?.[0];
-    const stamped = runId ? { ...payload, clientRunId: runId, userMessageId: runId } : payload;
+    const stamped = runId ? { ...payload, clientRunId: runId, userMessageId: payload.userMessageId ?? runId } : payload;
+    if (conversationId.startsWith('remote_')) {
+      this.sendScoped(conversationId, stamped);
+      return;
+    }
     const secure = this.secureRoutes.get(conversationId);
     if (secure) {
       try {
@@ -68,6 +74,16 @@ export class DesktopRelayConversationOutbox {
       return;
     }
     this.send({ ...stamped, conversationId, deviceId: this.transport.deviceId });
+  }
+
+  sendScoped(conversationId: string, payload: RelayFrame, request?: string): void {
+    // Scope metadata is rebuilt by the host, never copied from viewer input.
+    this.send({ ...payload, conversationId, deviceId: this.transport.deviceId, relayScope: 'v1',
+      relayApprovals: this.approvals(), ...(request ? { relayRequest: request } : {}) });
+  }
+
+  activeRun(conversationId: string): string | undefined {
+    return this.activeConversations.has(conversationId) ? this.oldestRun(conversationId) : undefined;
   }
 
   /** Relay-room send that refuses conversation frames missing their conversationId. */
@@ -98,10 +114,16 @@ export class DesktopRelayConversationOutbox {
   }
 
   /** Record a run id in submission order. */
-  registerRun(conversationId: string, runId: string): void {
+  registerRun(conversationId: string, runId: string, scope?: ScopedRelayRunBinding): void {
+    if (scope) this.scopedRuns.set(conversationId, { id: runId, scope });
     const runs = this.relayRuns.get(conversationId) ?? [];
     if (!runs.includes(runId)) runs.push(runId);
     this.relayRuns.set(conversationId, runs);
+  }
+
+  scopedBinding(conversationId: string, runId: string): ScopedRelayRunBinding | undefined {
+    const binding = this.scopedRuns.get(conversationId);
+    return binding?.id === runId ? binding.scope : undefined;
   }
 
   oldestRun(conversationId: string): string | undefined {
@@ -131,6 +153,7 @@ export class DesktopRelayConversationOutbox {
       this.activeConversations.delete(conversationId);
     }
     this.sendChatFrame(conversationId, done);
+    this.scopedRuns.delete(conversationId);
     if (runs?.length) runs.shift();
     if (!runs?.length) this.relayRuns.delete(conversationId);
   }
@@ -163,6 +186,7 @@ export class DesktopRelayConversationOutbox {
     this.keepaliveTimers.clear();
     this.activeConversations.clear();
     this.relayRuns.clear();
+    this.scopedRuns.clear();
     this.mobilePeerOnline = true;
   }
 

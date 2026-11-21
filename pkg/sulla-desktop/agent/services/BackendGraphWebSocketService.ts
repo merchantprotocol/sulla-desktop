@@ -133,6 +133,7 @@ export class BackendGraphWebSocketService {
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private suspendedRuns = new Set<string>();
+  private readonly relayRuns = new Map<string, { id: string; controller: AbortController }>();
   private readonly readinessWaits = new Map<string, Set<AbortController>>();
   private readonly dispatchedRuns = new Set<Promise<unknown>>();
   private readonly recoveryAbort = new AbortController();
@@ -967,6 +968,9 @@ export class BackendGraphWebSocketService {
     _triggerType: 'sulla-desktop' | 'heartbeat',
     msg: WebSocketMessage,
   ): Promise<void> {
+    const candidateThread = (msg.data as { threadId?: unknown } | null)?.threadId;
+    if (channelId !== MOBILE_RELAY_CHANNEL_ID && typeof candidateThread === 'string' && candidateThread.startsWith('remote_')
+        && ['user_message', 'inject_message', 'stop_run'].includes(msg.type)) return;
     if ((msg.type === 'user_message' || msg.type === 'inject_message') && msg.data && typeof msg.data === 'object') {
       const data = msg.data as any;
       msg = { ...msg, data: { ...data, metadata: DecisionAnswerDelivery.publicMetadata(data.metadata) } };
@@ -983,6 +987,11 @@ export class BackendGraphWebSocketService {
       if (!stopThreadId) {
         console.warn(`[BackendGraphWS:stop_run] ignored unscoped stop for channelId=${ channelId }, tabId=${ stopTabId || '(none)' }`);
         return;
+      }
+      if (channelId === MOBILE_RELAY_CHANNEL_ID) {
+        const run = this.relayRuns.get(stopThreadId);
+        if (!run || run.id !== data?.relayRunId) return;
+        run.controller.abort();
       }
       for (const wait of this.readinessWaits?.get(this.abortKey(channelId, stopThreadId)) ?? []) wait.abort();
       this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
@@ -1092,6 +1101,10 @@ export class BackendGraphWebSocketService {
       const content = (data?.content ?? '').trim();
       const threadId = data?.threadId as string | undefined;
       if (!content || !threadId) return;
+      if (channelId === MOBILE_RELAY_CHANNEL_ID) {
+        const run = this.relayRuns.get(threadId);
+        if (!run || run.id !== data?.relayRunId || run.controller.signal.aborted) return;
+      }
 
       // Only a thread with a run in flight can absorb a steer. A registered
       // but idle graph would just hold the message with nobody to read it.
@@ -1122,6 +1135,8 @@ export class BackendGraphWebSocketService {
         console.log(`[BackendGraphWS] Steered running thread ${ threadId }: ${ content.slice(0, 50) }...`);
         return;
       }
+
+      if (channelId === MOBILE_RELAY_CHANNEL_ID) return;
 
       // Graph not found — fall through to full dispatch (triggers execution)
       console.log(`[BackendGraphWS] inject_message: no running state for thread ${ threadId }, falling back to full dispatch`);
@@ -1174,6 +1189,25 @@ export class BackendGraphWebSocketService {
     const overrideAgentId = metadata?.agentId as string | undefined;
     const inputSource = metadata?.inputSource as string | undefined;
 
+    if (channelId === MOBILE_RELAY_CHANNEL_ID) {
+      if (msg.type !== 'user_message' || !threadIdFromMsg || typeof data?.relayRunId !== 'string'
+          || this.relayRuns.has(threadIdFromMsg)) return;
+      const run = { id: data.relayRunId as string, controller: new AbortController() };
+      this.relayRuns.set(threadIdFromMsg, run);
+      let status: string = 'failed';
+      try {
+        status = await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId,
+          overrideAgentId, inputSource, metadata, undefined, run.controller);
+      } finally {
+        this.relayRuns.delete(threadIdFromMsg);
+        this.emitMessage(channelId, 'relay_dispatch_complete', {
+          thread_id: threadIdFromMsg, relayRunId: run.id,
+          outcome: run.controller.signal.aborted ? 'stopped' : status,
+        });
+      }
+      return;
+    }
+
     await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, { ...metadata, workerMappingNewHumanTurn: isWorkerMappingHumanTurn(msg.type, channelId, metadata) });
   }
 
@@ -1194,10 +1228,10 @@ export class BackendGraphWebSocketService {
     }
   }
 
-  private dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[]): Promise<AgentInboxDeliveryReceipt> {
+  private dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[], relayController?: AbortController): Promise<AgentInboxDeliveryReceipt> {
     const threadId = threadIdFromMsg || nextThreadId();
     const key = this.abortKey(channelId, threadId);
-    const controller = new AbortController();
+    const controller = relayController ?? new AbortController();
     const waiters = this.readinessWaits.get(key) ?? new Set<AbortController>();
     waiters.add(controller);
     this.readinessWaits.set(key, waiters);
@@ -1212,7 +1246,7 @@ export class BackendGraphWebSocketService {
         });
         if (controller.signal.aborted || agentExecutionReadiness.draining) return 'deferred';
         // The guard ends here. Normal dispatch still replaces/steers active turns as before.
-        return await this.executeReadyTurn(channelId, triggerType, message, threadIdFromMsg ?? threadId, scopedWorkflowId, overrideAgentId, inputSource, metadata, decisionInputs);
+        return await this.executeReadyTurn(channelId, triggerType, message, threadIdFromMsg ?? threadId, scopedWorkflowId, overrideAgentId, inputSource, metadata, decisionInputs, relayController?.signal);
       } catch (error: any) {
         if (error?.name === 'AbortError') return 'deferred';
         throw error;
@@ -1227,7 +1261,7 @@ export class BackendGraphWebSocketService {
     return run;
   }
 
-  private async executeReadyTurn(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[]): Promise<AgentInboxDeliveryReceipt> {
+  private async executeReadyTurn(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[], relaySignal?: AbortSignal): Promise<AgentInboxDeliveryReceipt> {
     const answerInputs = decisionInputs ?? [];
     const decisionTurn = answerInputs.length > 0;
     if (decisionTurn && threadIdFromMsg && this.decisionThreadOwned(channelId, threadIdFromMsg)) return 'deferred';
@@ -1297,7 +1331,7 @@ export class BackendGraphWebSocketService {
 
     const isCurrentRun = () => (!decisionTurn || !!runAbort) && this.activeAborts.get(abortKey) === runAbort;
     const assertDecisionOwner = () => {
-      if (decisionTurn && (!isCurrentRun() || runAbort?.signal.aborted)) {
+      if (relaySignal?.aborted || (decisionTurn && (!isCurrentRun() || runAbort?.signal.aborted))) {
         const interrupted = new Error('Answer delivery interrupted'); interrupted.name = 'AbortError'; throw interrupted;
       }
     };

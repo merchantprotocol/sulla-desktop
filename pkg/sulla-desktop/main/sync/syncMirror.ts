@@ -30,7 +30,8 @@
 import crypto from 'crypto';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
-import { getActiveContractorId } from '@pkg/main/sullaCloudAuth';
+import type { ScopedRelayBinding } from '@pkg/main/cloud/relay/DesktopRelayPorts';
+import { getActiveContractorId, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 
 import { enqueueSyncOp } from './syncQueue';
 
@@ -123,6 +124,33 @@ export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise
  * lines persisted so mobile's history view can show tool calls alongside
  * the chat turns.
  */
+export async function admitRelayThread(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean> {
+  const contractor = await getActiveContractorId();
+  if (!contractor || (thread.startsWith('remote_') !== Boolean(scope))
+      || (scope && (contractor !== scope.accountId || await getCurrentUserId() !== scope.accountId))) return false;
+  const local = await postgresClient.query(
+    `SELECT 1 FROM conversation_history WHERE (thread_id = $1 OR id = $1)
+       AND channel_id IS DISTINCT FROM 'mobile-relay' LIMIT 1`,
+    [thread],
+  );
+  if (local.length) return false;
+  if (scope) {
+    const [row] = await postgresClient.query<{
+      contractor_id: string; relay_workspace_id: string | null; relay_host_device_id: string | null; deleted_at: string | null;
+    }>('SELECT contractor_id, relay_workspace_id, relay_host_device_id, deleted_at FROM claude_conversations WHERE id=$1', [thread]);
+    if (!row) return !existing;
+    if (row.deleted_at || row.contractor_id !== scope.accountId || row.relay_workspace_id !== scope.workspaceId
+        || row.relay_host_device_id !== scope.hostDeviceId) return false;
+  }
+  if (!existing) return true;
+  const receipt = await postgresClient.query(
+    `SELECT 1 FROM claude_messages WHERE conversation_id = $1 AND contractor_id = $2
+       AND role = 'user' AND status = 'sent' AND routed_to = 'desktop' AND deleted_at IS NULL LIMIT 1`,
+    [thread, contractor],
+  );
+  return receipt.length > 0;
+}
+
 export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
   if (isPrimaryChatConversation(input.conversationId)) {
     // The logger mirror writes thread turns; hand it the phone's id.
@@ -134,17 +162,156 @@ export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
     }
     return;
   }
-  await writeTurnToSyncLog(input);
+  await new RelayCommitWriter(postgresClient, getActiveContractorId, conversationSyncEnabled).write(input);
 }
 
-export async function claudeMessageExists(id: string): Promise<boolean> {
-  if (!id) return false;
-  const rows = await postgresClient.query(
-    'SELECT 1 FROM claude_messages WHERE id = $1 LIMIT 1',
-    [id],
-  );
+/**
+ * The existing message row is the acceptance receipt. Never dispatch based
+ * on a read-before-write check: only the transaction that inserts this row
+ * may start execution. A lost commit response is deliberately ambiguous;
+ * retrying reads the receipt but does not run again.
+ */
+export async function acceptRelayUserTurn(input: MirrorInput & { id: string; scope?: ScopedRelayBinding }): Promise<'accepted' | 'duplicate' | 'conflict'> {
+  const { conversationId, content, ts, id, scope } = input;
+  const contractorId = await getActiveContractorId();
+  if (!contractorId || !id || !conversationId || !content.trim()) throw new Error('relay_acceptance_unavailable');
+  if (conversationId.startsWith('remote_') !== Boolean(scope)
+      || (scope && (contractorId !== scope.accountId || await getCurrentUserId() !== scope.accountId))) return 'conflict';
+  // Keep scoped content on the accepting host until the shared writer can
+  // authenticate the immutable workspace/host and current consent.
+  const sync = !scope && await conversationSyncEnabled();
+  const result = await postgresClient.transaction(async(client): Promise<'accepted' | 'duplicate' | 'conflict'> => {
+    const native = await client.query(
+      `SELECT 1 FROM conversation_history WHERE (thread_id = $1 OR id = $1)
+         AND channel_id IS DISTINCT FROM 'mobile-relay' LIMIT 1`,
+      [conversationId],
+    );
+    if (native.rows.length) return 'conflict';
+    const conversation = await client.query(
+      `INSERT INTO claude_conversations
+         (id, contractor_id, title, status, last_message_at, last_message_preview, unread_count, created_at, updated_at, relay_workspace_id, relay_host_device_id)
+       VALUES ($1, $2, $3, 'active', $4, $5, 0, $4, $4, $6, $7)
+       ON CONFLICT (id) DO NOTHING RETURNING id`,
+      [conversationId, contractorId, truncate(content, 60), ts, truncate(content, 100), scope?.workspaceId ?? null, scope?.hostDeviceId ?? null],
+    );
+    if (!conversation.rowCount) {
+      const owned = await client.query(
+        `SELECT id FROM claude_conversations WHERE id = $1 AND contractor_id = $2 AND deleted_at IS NULL
+           AND relay_workspace_id IS NOT DISTINCT FROM $3 AND relay_host_device_id IS NOT DISTINCT FROM $4 FOR UPDATE`,
+        [conversationId, contractorId, scope?.workspaceId ?? null, scope?.hostDeviceId ?? null],
+      );
+      if (!owned.rowCount) return 'conflict';
+    }
 
-  return rows.length > 0;
+    const inserted = await client.query(
+      `INSERT INTO claude_messages
+         (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at)
+       VALUES ($1, $2, $3, 'user', $4, 'sent', 'desktop', $5, $5)
+       ON CONFLICT (id) DO NOTHING RETURNING id`,
+      [id, contractorId, conversationId, content, ts],
+    );
+    if (!inserted.rowCount) {
+      const receipt = await client.query(
+        `SELECT id FROM claude_messages
+          WHERE id = $1 AND contractor_id = $2 AND conversation_id = $3 AND role = 'user'
+            AND content = $4 AND status = 'sent' AND routed_to = 'desktop' AND deleted_at IS NULL`,
+        [id, contractorId, conversationId, content],
+      );
+      // A queued/synced or foreign row does not prove acceptance. Fail closed
+      // instead of acknowledging it or attempting a potentially ambiguous repeat.
+      if (!receipt.rowCount) throw new RelayMessageConflict();
+      return 'duplicate';
+    }
+
+    await client.query(
+      `UPDATE claude_conversations SET last_message_at = $2, last_message_preview = $3, updated_at = $2 WHERE id = $1`,
+      [conversationId, ts, truncate(content, 100)],
+    );
+    if (sync) {
+      for (const [table, key] of [['claude_conversation', conversationId], ['claude_message', id]]) {
+        await client.query(
+          `INSERT INTO sync_queue (id, table_name, record_key, operation)
+           VALUES ($1, $2, $3, 'upsert')
+           ON CONFLICT (table_name, record_key) DO UPDATE SET
+             operation = EXCLUDED.operation, created_at = CURRENT_TIMESTAMP`,
+          [crypto.randomUUID(), table, JSON.stringify({ id: key })],
+        );
+      }
+    }
+    return 'accepted';
+  }).catch((err: unknown) => {
+    if (err instanceof RelayMessageConflict) return 'conflict' as const;
+    throw err;
+  });
+
+  if (result === 'accepted' && isPrimaryChatConversation(conversationId)) {
+    // Let the graph's normal user-turn mirror reuse the row just committed.
+    const pending = pendingRelayUserIds.get(conversationId) ?? [];
+    pending.push({ content: content.trim(), id, at: Date.now() });
+    pendingRelayUserIds.set(conversationId, pending);
+  }
+  if (result === 'accepted' && sync) {
+    void import('./SullaSyncService').then(({ SullaSync }) => SullaSync.pushSoon()).catch(() => undefined);
+  }
+  return result;
+}
+
+class RelayMessageConflict extends Error {}
+
+class RelayCommitWriter {
+  constructor(
+    private readonly db: typeof postgresClient,
+    private readonly owner: typeof getActiveContractorId,
+    private readonly syncEnabled: () => Promise<boolean>,
+  ) {}
+
+  async write(input: MirrorInput): Promise<void> {
+    const { conversationId, role, content, ts } = input;
+    const owner = await this.owner();
+    if (!owner) throw new Error('relay_history_unavailable');
+    const id = input.id ?? deriveMessageId(conversationId, role, content, ts);
+    const sync = !conversationId.startsWith('remote_') && await this.syncEnabled();
+    await this.db.transaction(async client => {
+      const thread = await client.query(
+        `SELECT id FROM claude_conversations WHERE id=$1 AND contractor_id=$2 AND deleted_at IS NULL FOR UPDATE`,
+        [conversationId, owner],
+      );
+      if (!thread.rowCount) throw new Error('relay_thread_unavailable');
+      const inserted = await client.query(
+        `INSERT INTO claude_messages
+          (id, contractor_id, conversation_id, role, content, status, routed_to, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,'sent','desktop',$6,$6) ON CONFLICT (id) DO NOTHING RETURNING id`,
+        [id, owner, conversationId, role, content, ts],
+      );
+      if (!inserted.rowCount) {
+        const existing = await client.query(
+          `SELECT id FROM claude_messages WHERE id=$1 AND contractor_id=$2 AND conversation_id=$3
+            AND role=$4 AND content=$5 AND deleted_at IS NULL`,
+          [id, owner, conversationId, role, content],
+        );
+        if (!existing.rowCount) throw new RelayMessageConflict();
+        return;
+      }
+      if (role !== 'tool') {
+        await client.query(
+          `UPDATE claude_conversations SET last_message_at=$2,last_message_preview=$3,updated_at=$2 WHERE id=$1`,
+          [conversationId, ts, truncate(content, 100)],
+        );
+      }
+      if (sync) {
+        const records = [['claude_message', id]];
+        if (role !== 'tool') records.push(['claude_conversation', conversationId]);
+        for (const [table, record] of records) {
+          await client.query(
+            `INSERT INTO sync_queue (id,table_name,record_key,operation) VALUES ($1,$2,$3,'upsert')
+              ON CONFLICT (table_name,record_key) DO UPDATE SET operation=EXCLUDED.operation,created_at=CURRENT_TIMESTAMP`,
+            [crypto.randomUUID(), table, JSON.stringify({ id: record })],
+          );
+        }
+      }
+    });
+    if (sync) void import('./SullaSyncService').then(({ SullaSync }) => SullaSync.pushSoon()).catch(() => undefined);
+  }
 }
 
 async function writeTurnToSyncLog(input: MirrorInput): Promise<void> {

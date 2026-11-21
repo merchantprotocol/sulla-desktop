@@ -19,13 +19,41 @@ export const RELAY_SOCKET_CONNECTING = 0;
 export const RELAY_SOCKET_OPEN = 1;
 
 /** Frames that must survive a reconnect: they are queued and flushed on the next `open`. */
-export const DURABLE_RELAY_FRAME_TYPES: readonly string[] = ['done', 'stopped', 'error', 'message', 'ack'];
+export const DURABLE_RELAY_FRAME_TYPES: readonly string[] = ['done', 'stopped', 'error', 'message', 'card', 'ack'];
 
 export type RelayFrame = Record<string, unknown>;
 export type RelayFrameSink = (frame: RelayFrame) => void;
 
+export interface ScopedRelayBinding {
+  accountId: string;
+  workspaceId: string;
+  hostDeviceId: string;
+}
+
+export interface ScopedRelayRunBinding extends ScopedRelayBinding {
+  viewerId: string;
+  viewerKey: string;
+}
+
+export interface ScopedRelayTerminal extends ScopedRelayRunBinding {
+  thread: string;
+  run: string;
+  outcome: 'completed' | 'stopped' | 'failed';
+}
+
+export interface ScopedRelayTerminalStore {
+  commit(status: ScopedRelayTerminal): Promise<boolean>;
+  pending(account: string, host: string, after: string): Promise<(ScopedRelayTerminal & { id: string })[]>;
+  acknowledge(receipt: { thread: string; run: string; accountId: string; workspaceId: string; hostDeviceId: string; outcome: unknown }): Promise<void>;
+}
+
 export interface RelayIncomingFrame {
   type:            string;
+  relayScope?: 'v1';
+  relayRequest?: string;
+  viewerId?: string;
+  viewerKey?: string;
+  nonce?: string;
   requestId?:      string;
   linkId?:         string;
   path?:           string;
@@ -49,6 +77,8 @@ export interface RelayIncomingFrame {
    * match silently drop the message.
    */
   targetDeviceId?: string;
+  accountId?: string;
+  workspaceId?: string;
   /**
    * Row id the mobile client already inserted its user turn under (chat and
    * inject frames). Scribing under the SAME id makes the desktop's copy and
@@ -56,6 +86,7 @@ export interface RelayIncomingFrame {
    */
   userMessageId?:  string;
   clientRunId?:    string;
+  outcome?:        string;
   role?:           'desktop' | 'mobile';
   reason?:         string;
   code?:           string;
@@ -106,6 +137,8 @@ export interface DesktopRelaySocketPorts {
 }
 
 export interface DesktopRelaySessionPorts {
+  sharedRelayEnabled?(): boolean;
+  proveRelayDevice?(room: string, deviceId: string, nonce: string): Promise<string>;
   accessToken(): Promise<string | null | undefined>;
   deviceId(): Promise<string>;
   acquireLiveness(holder: string): void;
@@ -128,11 +161,16 @@ export interface DesktopRelayAgentChannel {
 
 export interface DesktopRelayHistoryPorts {
   scribe(turn: { conversationId: string; role: 'user' | 'assistant' | 'tool'; content: string; ts: string; id?: string }): Promise<void>;
-  messageExists(id: string): Promise<boolean>;
+  acceptUserTurn(turn: { conversationId: string; role: 'user'; content: string; ts: string; id: string; scope?: ScopedRelayBinding }): Promise<'accepted' | 'duplicate' | 'conflict'>;
   deriveMessageId(conversationId: string, role: string, content: string, ts: string): string;
 }
 
 export interface DesktopRelayChatPorts {
+  currentRelayAccount?(): Promise<string>;
+  allowScopedHistory?(): Promise<boolean>;
+  approveViewer?(id: string, key: string): Promise<boolean>;
+  relayApprovals?(): readonly (readonly [string, string])[];
+  admitRelayThread?(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean>;
   validateSelection(message: RelayIncomingFrame): Promise<ChatSelection>;
   persistAttachments(conversationId: string, messageId: string, turn: NormalizedMobileTurn): Promise<string[]>;
   companionRequest(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -157,6 +195,7 @@ export interface DesktopRelayPortSet {
   pairing:   DesktopRelayPairingStore;
   agent:     () => DesktopRelayAgentChannel;
   history:   DesktopRelayHistoryPorts;
+  terminal?: ScopedRelayTerminalStore;
   chat:      DesktopRelayChatPorts;
   files:     DesktopRelayFilesPorts;
   signIn:    DesktopRelaySignInNotifier;

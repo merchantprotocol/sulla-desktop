@@ -3,8 +3,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { ApprovedClients } from '../approvedClients';
+import { getCloudPreferences } from '../cloudSettings';
+import { signDeviceMessageExact } from '../deviceKey';
+
 import path from 'node:path';
 
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
@@ -13,12 +18,13 @@ import { cloudRelayUsesVault, VaultRelaySocket } from '@pkg/main/cloudRelayTrans
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { persistMobileAttachments } from '@pkg/main/mobileRelayContent';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { getCurrentAccessToken, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
-import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { acceptRelayUserTurn, admitRelayThread, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
 import type { DesktopRelayLog, DesktopRelayPortSet, DesktopRelaySignInNotifier, DesktopRelayTimers } from './DesktopRelayPorts';
+import { DesktopRelayTerminalRepository } from './DesktopRelayTerminalRepository';
 
 /** Surfaces another device's sign-in approval code as a notification and a renderer event. */
 class ElectronSignInNotifier implements DesktopRelaySignInNotifier {
@@ -63,6 +69,8 @@ export class DesktopRelayRuntimePorts {
         vaultView:  socket => socket instanceof VaultRelaySocket ? socket : null,
       },
       session: {
+        sharedRelayEnabled: () => process.env.SULLA_SHARED_LIVE_RELAY === 'on',
+        proveRelayDevice: (room, deviceId, nonce) => signDeviceMessageExact('shared-live-relay-v1', [room, 'desktop', deviceId, nonce]),
         accessToken:     () => getCurrentAccessToken(),
         deviceId:        () => getDesktopDeviceId(),
         acquireLiveness: holder => acquireRelayLiveness(holder),
@@ -76,10 +84,19 @@ export class DesktopRelayRuntimePorts {
       agent:   () => getWebSocketClientService(),
       history: {
         scribe:          turn => scribeRelayTurn(turn),
-        messageExists:   id => claudeMessageExists(id),
+        acceptUserTurn:  turn => acceptRelayUserTurn(turn),
         deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
       },
+      terminal: new DesktopRelayTerminalRepository(postgresClient),
       chat: {
+        currentRelayAccount: getCurrentUserId,
+        allowScopedHistory: async() => {
+          const prefs = await getCloudPreferences();
+          return prefs.enabled && prefs.conversations && prefs.remoteAccess;
+        },
+        approveViewer: async(id, key) => (await getCloudPreferences()).remoteAccess && ApprovedClients.get(id)?.publicKey === key,
+        relayApprovals: () => ApprovedClients.list().map(client => [client.clientId, client.publicKey] as const),
+        admitRelayThread,
         validateSelection:  message => validateChatSelection(message),
         persistAttachments: (conversationId, messageId, turn) => persistMobileAttachments(path.join(resolveSullaHomeDir(), 'uploads', 'mobile'), conversationId, messageId, turn.files),
         companionRequest:   async(method, params) => (await import('@pkg/main/mobileCompanion')).mobileCompanionRequest(method, params),
