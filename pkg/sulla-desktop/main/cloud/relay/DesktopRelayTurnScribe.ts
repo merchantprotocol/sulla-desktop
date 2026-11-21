@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DesktopRelayHistoryPorts, DesktopRelayLog } from './DesktopRelayPorts';
+import type { DesktopRelayHistoryPorts, DesktopRelayLog, ScopedRelayBinding } from './DesktopRelayPorts';
 
 export type RelayTurnRole = 'user' | 'assistant' | 'tool';
 
@@ -39,7 +39,7 @@ export class DesktopRelayTurnScribe {
     return id;
   }
 
-  acceptUserTurn(conversationId: string, id: string, content: string): ReturnType<DesktopRelayHistoryPorts['acceptUserTurn']> {
-    return this.history.acceptUserTurn({ conversationId, role: 'user', content, id, ts: new Date().toISOString() });
+  acceptUserTurn(conversationId: string, id: string, content: string, scope?: ScopedRelayBinding): ReturnType<DesktopRelayHistoryPorts['acceptUserTurn']> {
+    return this.history.acceptUserTurn({ conversationId, role: 'user', content, id, ts: new Date().toISOString(), ...(scope ? { scope } : {}) });
   }
 }

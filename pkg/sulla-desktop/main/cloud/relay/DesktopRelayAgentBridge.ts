@@ -86,7 +86,13 @@ export class DesktopRelayAgentBridge {
     if (msg.type === 'relay_dispatch_complete') {
       const data = msg.data as { relayRunId?: string; outcome?: string };
       if (data.relayRunId !== this.outbox.activeRun(threadId)) return;
-      return this.finish(threadId, data.outcome === 'accepted' ? this.graphOutcome.get(threadId) || 'completed' : data.outcome || 'failed');
+      if (!threadId.startsWith('remote_')) {
+        return this.finish(threadId, data.outcome === 'accepted' ? this.graphOutcome.get(threadId) || 'completed' : data.outcome || 'failed');
+      }
+      const observed = data.outcome === 'accepted' ? this.graphOutcome.get(threadId) : data.outcome;
+      const outcome = observed === 'stopped' || observed === 'completed' ? observed
+        : ['error', 'failed', 'max_loops', 'max_iterations'].includes(observed ?? '') ? 'failed' : 'unknown';
+      return this.finish(threadId, outcome);
     }
     if (msg.type === 'speak_dispatch') return this.handleSpeak(msg.data);
     if (msg.type === 'progress') return this.handleToolProgress(msg.data);
@@ -207,7 +213,8 @@ export class DesktopRelayAgentBridge {
       this.log.warn('[DesktopRelay] Dropping done frame without thread_id/conversationId');
       return;
     }
-    this.graphOutcome.set(threadId, typeof data.stopReason === 'string' ? data.stopReason : 'completed');
+    const reason = typeof data.stopReason === 'string' ? data.stopReason : 'completed';
+    this.graphOutcome.set(threadId, threadId.startsWith('remote_') && data.waitingForUser && reason === 'completed' ? 'unknown' : reason);
   }
 
   private async finish(threadId: string, outcome: string): Promise<void> {
@@ -222,9 +229,10 @@ export class DesktopRelayAgentBridge {
       if (outcome !== 'stopped' && trailing) await this.commitAssistantText(threadId, trailing);
       const finalText = this.finalTextByThread.get(threadId) ?? '';
       const id = this.lastCommittedIdByThread.get(threadId);
-      const eventId = await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
-        sullaCard: { version: 1, kind: 'run_outcome', runId, outcome },
-      }));
+      const eventId = outcome === 'unknown' && threadId.startsWith('remote_') ? undefined
+        : await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
+          sullaCard: { version: 1, kind: 'run_outcome', runId, outcome },
+        }));
       terminal = outcome === 'stopped'
         ? { type: 'stopped', outcome, eventId }
         : { type: 'done', content: finalText, id, outcome, eventId };

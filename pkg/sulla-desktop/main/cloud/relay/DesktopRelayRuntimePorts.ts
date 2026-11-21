@@ -17,7 +17,7 @@ import { cloudRelayUsesVault, VaultRelaySocket } from '@pkg/main/cloudRelayTrans
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { persistMobileAttachments } from '@pkg/main/mobileRelayContent';
 import { acquireRelayLiveness, releaseRelayLiveness } from '@pkg/main/SleepPreventionService';
-import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { getCurrentAccessToken, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 import { desktopFilesFetch, FILES_HTTPS_ORIGIN } from '@pkg/main/sullaFilesTls';
 import { acceptRelayUserTurn, admitRelayThread, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
@@ -86,6 +86,7 @@ export class DesktopRelayRuntimePorts {
         deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
       },
       chat: {
+        currentRelayAccount: getCurrentUserId,
         approveViewer: async(id, key) => (await getCloudPreferences()).remoteAccess && ApprovedClients.get(id)?.publicKey === key,
         relayApprovals: () => ApprovedClients.list().map(client => [client.clientId, client.publicKey] as const),
         admitRelayThread,

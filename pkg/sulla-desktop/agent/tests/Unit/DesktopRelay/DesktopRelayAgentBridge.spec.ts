@@ -60,6 +60,25 @@ function bridged(): BridgeHarness {
 }
 
 describe('DesktopRelayAgentBridge', () => {
+  it('records only a recognized host outcome for scoped runs; missing completion evidence stays unknown', async() => {
+    // risk: a reconnect presents an unknown execution as successfully completed.
+    const h = new BridgeHarness();
+    const thread = 'remote_fixture_1234';
+    h.outbox.registerRun(thread, 'r1');
+    h.outbox.beginRun(thread);
+    h.bridge.ensureBridged();
+    await h.done(thread);
+    expect(h.framesOf('done')[0]).toMatchObject({ outcome: 'unknown', clientRunId: 'r1' });
+    expect(h.scribed).toEqual([]);
+
+    h.outbox.registerRun(thread, 'r2');
+    h.outbox.beginRun(thread);
+    await h.emit('transfer_data', { content: 'graph_execution_complete', stopReason: 'error', thread_id: thread });
+    await h.emit('relay_dispatch_complete', { relayRunId: 'r2', outcome: 'accepted', thread_id: thread });
+    expect(JSON.parse(h.scribed[0].content)).toEqual({ sullaCard: { version: 1, kind: 'run_outcome', runId: 'r2', outcome: 'failed' } });
+    expect(h.framesOf('done')[1]).toMatchObject({ outcome: 'failed', clientRunId: 'r2' });
+  });
+
   it('commits each streamed segment at its boundary and reuses the last id for done', async() => {
     // risk: data loss — multi-segment runs used to reach mobile with only their last segment.
     const h = bridged();

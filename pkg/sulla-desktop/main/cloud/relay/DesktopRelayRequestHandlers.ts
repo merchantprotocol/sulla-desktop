@@ -8,7 +8,7 @@ import { describeTurnForAgent, normalizeMobileContent, transcriptText, type Norm
 
 import { MOBILE_RELAY_CHANNEL, type DesktopRelayAgentBridge } from './DesktopRelayAgentBridge';
 import type { DesktopRelayConversationOutbox } from './DesktopRelayConversationOutbox';
-import type { DesktopRelayAgentChannel, DesktopRelayChatPorts, DesktopRelayLog, RelayFrameSink, RelayIncomingFrame } from './DesktopRelayPorts';
+import type { DesktopRelayAgentChannel, DesktopRelayChatPorts, DesktopRelayLog, RelayFrameSink, RelayIncomingFrame, ScopedRelayBinding } from './DesktopRelayPorts';
 import type { DesktopRelayTurnScribe } from './DesktopRelayTurnScribe';
 
 /** The desktop identity the handlers stamp on cards; resolved lazily for secure-channel commands. */
@@ -90,18 +90,23 @@ export class DesktopRelayRequestHandlers {
     if (!thread || !/^remote_[A-Za-z0-9_-]{12,180}$/.test(thread)
         || !msg.relayRequest || !msg.viewerId || !msg.viewerKey) return;
     const respond: RelayFrameSink = frame => this.outbox.sendScoped(thread, frame, msg.relayRequest);
-    if (!await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)) {
-      respond({ type: 'error', reason: 'thread_not_authorized' });
+    const accountId = await this.chat.currentRelayAccount?.();
+    const hostDeviceId = await this.resolveDeviceId();
+    if (!accountId || msg.accountId !== accountId || !this.validId(msg.workspaceId)
+        || !hostDeviceId || msg.targetDeviceId !== hostDeviceId
+        || !await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)) {
+      respond({ type: 'error', reason: 'thread_not_authorized', definitelyNotAccepted: true });
       return;
     }
+    const scope = { accountId, workspaceId: msg.workspaceId, hostDeviceId };
     if (msg.type === 'relay_admit') {
-      if (await this.chat.admitRelayThread?.(thread, false)) respond({ type: 'relay_admitted' });
+      if (await this.chat.admitRelayThread?.(thread, false, scope)) respond({ type: 'relay_admitted' });
       else respond({ type: 'error', reason: 'thread_not_authorized' });
     }
-    if (msg.type === 'chat') await this.handleChat(msg, respond);
-    if (msg.type === 'cancel') this.handleCancel(msg, respond);
+    if (msg.type === 'chat') await this.handleChat(msg, respond, scope);
+    if (msg.type === 'cancel' && await this.chat.admitRelayThread?.(thread, true, scope)) this.handleCancel(msg, respond);
     if (msg.type === 'relay_subscribe') {
-      if (await this.chat.admitRelayThread?.(thread, true)) respond({ type: 'relay_subscribed' });
+      if (await this.chat.admitRelayThread?.(thread, true, scope)) respond({ type: 'relay_subscribed' });
       else respond({ type: 'error', reason: 'thread_not_authorized' });
     }
   }
@@ -161,7 +166,7 @@ export class DesktopRelayRequestHandlers {
   }
 
   /** Bridge a mobile chat request onto the local agent channel. */
-  async handleChat(msg: RelayIncomingFrame, origin?: RelayFrameSink): Promise<void> {
+  async handleChat(msg: RelayIncomingFrame, origin?: RelayFrameSink, scope?: ScopedRelayBinding): Promise<void> {
     const conversationId = msg.conversationId;
     if (!this.validId(conversationId)) {
       this.outbox.sendMissingConversationError(msg.userMessageId);
@@ -170,13 +175,16 @@ export class DesktopRelayRequestHandlers {
     const respond = origin ?? (frame => this.outbox.sendChatFrame(conversationId, frame));
     const id = msg.userMessageId;
     if (!this.validId(id)) {
-      respond({ type: 'error', reason: 'missing_user_message_id' });
+      respond({ type: 'error', reason: 'missing_user_message_id', ...(scope ? { definitelyNotAccepted: true } : {}) });
       return;
     }
     // Mobile already uses the persisted message ID as its clientRunId. Use
     // that canonical identity even if a retry supplies a different hint.
     const identity = { userMessageId: id, clientRunId: id };
-    const error = (reason: string) => respond({ type: 'error', reason, ...identity });
+    let enteredCommit = false;
+    const error = (reason: string) => respond({
+      type: 'error', reason, ...identity, ...(scope && !enteredCommit ? { definitelyNotAccepted: true } : {}),
+    });
     const messages = Array.isArray(msg.messages) ? msg.messages : [];
     const turn = normalizeMobileContent([...messages].reverse().find(m => m?.role === 'user')?.content);
     if (!turn.text && !turn.files.length) return error('empty_user_message');
@@ -190,7 +198,7 @@ export class DesktopRelayRequestHandlers {
     const settled = new Promise<void>(resolve => { settle = resolve });
     this.claims.set(conversationId, { id, settled });
     try {
-      if (this.chat.admitRelayThread && !await this.chat.admitRelayThread(conversationId, false)) return error('thread_not_authorized');
+      if (this.chat.admitRelayThread && !await this.chat.admitRelayThread(conversationId, false, scope)) return error('thread_not_authorized');
       const voiceRoute = voiceTurnRoute(msg);
       const selection = voiceRoute ?? await this.chat.validateSelection(msg);
       if (msg.relayScope && (['providerId', 'modelId', 'agentId'] as const).some(key =>
@@ -201,7 +209,8 @@ export class DesktopRelayRequestHandlers {
       }
       const active = this.outbox.activeRun(conversationId);
       if (active && active !== id) return error('thread_busy');
-      const acceptance = await this.scribe.acceptUserTurn(conversationId, id, transcriptText(turn));
+      enteredCommit = true;
+      const acceptance = await this.scribe.acceptUserTurn(conversationId, id, transcriptText(turn), scope);
       if (acceptance === 'conflict') return error('message_identity_conflict');
       if (acceptance === 'duplicate') {
         respond({ type: 'ack', duplicate: true, ...identity });

@@ -30,7 +30,8 @@
 import crypto from 'crypto';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
-import { getActiveContractorId } from '@pkg/main/sullaCloudAuth';
+import type { ScopedRelayBinding } from '@pkg/main/cloud/relay/DesktopRelayPorts';
+import { getActiveContractorId, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 
 import { enqueueSyncOp } from './syncQueue';
 
@@ -123,22 +124,31 @@ export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise
  * lines persisted so mobile's history view can show tool calls alongside
  * the chat turns.
  */
-export async function admitRelayThread(thread: string, existing: boolean): Promise<boolean> {
+export async function admitRelayThread(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean> {
   const contractor = await getActiveContractorId();
-  if (!contractor) return false;
+  if (!contractor || (thread.startsWith('remote_') !== Boolean(scope))
+      || (scope && (contractor !== scope.accountId || await getCurrentUserId() !== scope.accountId))) return false;
   const local = await postgresClient.query(
     `SELECT 1 FROM conversation_history WHERE (thread_id = $1 OR id = $1)
        AND channel_id IS DISTINCT FROM 'mobile-relay' LIMIT 1`,
     [thread],
   );
-  if (local.rows.length) return false;
+  if (local.length) return false;
+  if (scope) {
+    const [row] = await postgresClient.query<{
+      contractor_id: string; relay_workspace_id: string | null; relay_host_device_id: string | null; deleted_at: string | null;
+    }>('SELECT contractor_id, relay_workspace_id, relay_host_device_id, deleted_at FROM claude_conversations WHERE id=$1', [thread]);
+    if (!row) return !existing;
+    if (row.deleted_at || row.contractor_id !== scope.accountId || row.relay_workspace_id !== scope.workspaceId
+        || row.relay_host_device_id !== scope.hostDeviceId) return false;
+  }
   if (!existing) return true;
   const receipt = await postgresClient.query(
     `SELECT 1 FROM claude_messages WHERE conversation_id = $1 AND contractor_id = $2
        AND role = 'user' AND status = 'sent' AND routed_to = 'desktop' AND deleted_at IS NULL LIMIT 1`,
     [thread, contractor],
   );
-  return receipt.rows.length > 0;
+  return receipt.length > 0;
 }
 
 export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
@@ -161,11 +171,15 @@ export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
  * may start execution. A lost commit response is deliberately ambiguous;
  * retrying reads the receipt but does not run again.
  */
-export async function acceptRelayUserTurn(input: MirrorInput & { id: string }): Promise<'accepted' | 'duplicate' | 'conflict'> {
-  const { conversationId, content, ts, id } = input;
+export async function acceptRelayUserTurn(input: MirrorInput & { id: string; scope?: ScopedRelayBinding }): Promise<'accepted' | 'duplicate' | 'conflict'> {
+  const { conversationId, content, ts, id, scope } = input;
   const contractorId = await getActiveContractorId();
   if (!contractorId || !id || !conversationId || !content.trim()) throw new Error('relay_acceptance_unavailable');
-  const sync = await conversationSyncEnabled();
+  if (conversationId.startsWith('remote_') !== Boolean(scope)
+      || (scope && (contractorId !== scope.accountId || await getCurrentUserId() !== scope.accountId))) return 'conflict';
+  // Keep scoped content on the accepting host until the shared writer can
+  // authenticate the immutable workspace/host and current consent.
+  const sync = !scope && await conversationSyncEnabled();
   const result = await postgresClient.transaction(async(client): Promise<'accepted' | 'duplicate' | 'conflict'> => {
     const native = await client.query(
       `SELECT 1 FROM conversation_history WHERE (thread_id = $1 OR id = $1)
@@ -175,15 +189,16 @@ export async function acceptRelayUserTurn(input: MirrorInput & { id: string }): 
     if (native.rows.length) return 'conflict';
     const conversation = await client.query(
       `INSERT INTO claude_conversations
-         (id, contractor_id, title, status, last_message_at, last_message_preview, unread_count, created_at, updated_at)
-       VALUES ($1, $2, $3, 'active', $4, $5, 0, $4, $4)
+         (id, contractor_id, title, status, last_message_at, last_message_preview, unread_count, created_at, updated_at, relay_workspace_id, relay_host_device_id)
+       VALUES ($1, $2, $3, 'active', $4, $5, 0, $4, $4, $6, $7)
        ON CONFLICT (id) DO NOTHING RETURNING id`,
-      [conversationId, contractorId, truncate(content, 60), ts, truncate(content, 100)],
+      [conversationId, contractorId, truncate(content, 60), ts, truncate(content, 100), scope?.workspaceId ?? null, scope?.hostDeviceId ?? null],
     );
     if (!conversation.rowCount) {
       const owned = await client.query(
-        `SELECT id FROM claude_conversations WHERE id = $1 AND contractor_id = $2 AND deleted_at IS NULL FOR UPDATE`,
-        [conversationId, contractorId],
+        `SELECT id FROM claude_conversations WHERE id = $1 AND contractor_id = $2 AND deleted_at IS NULL
+           AND relay_workspace_id IS NOT DISTINCT FROM $3 AND relay_host_device_id IS NOT DISTINCT FROM $4 FOR UPDATE`,
+        [conversationId, contractorId, scope?.workspaceId ?? null, scope?.hostDeviceId ?? null],
       );
       if (!owned.rowCount) return 'conflict';
     }
@@ -255,7 +270,7 @@ class RelayCommitWriter {
     const owner = await this.owner();
     if (!owner) throw new Error('relay_history_unavailable');
     const id = input.id ?? deriveMessageId(conversationId, role, content, ts);
-    const sync = await this.syncEnabled();
+    const sync = !conversationId.startsWith('remote_') && await this.syncEnabled();
     await this.db.transaction(async client => {
       const thread = await client.query(
         `SELECT id FROM claude_conversations WHERE id=$1 AND contractor_id=$2 AND deleted_at IS NULL FOR UPDATE`,

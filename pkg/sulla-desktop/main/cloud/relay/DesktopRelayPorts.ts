@@ -24,6 +24,12 @@ export const DURABLE_RELAY_FRAME_TYPES: readonly string[] = ['done', 'stopped', 
 export type RelayFrame = Record<string, unknown>;
 export type RelayFrameSink = (frame: RelayFrame) => void;
 
+export interface ScopedRelayBinding {
+  accountId: string;
+  workspaceId: string;
+  hostDeviceId: string;
+}
+
 export interface RelayIncomingFrame {
   type:            string;
   relayScope?: 'v1';
@@ -54,6 +60,8 @@ export interface RelayIncomingFrame {
    * match silently drop the message.
    */
   targetDeviceId?: string;
+  accountId?: string;
+  workspaceId?: string;
   /**
    * Row id the mobile client already inserted its user turn under (chat and
    * inject frames). Scribing under the SAME id makes the desktop's copy and
@@ -135,14 +143,15 @@ export interface DesktopRelayAgentChannel {
 
 export interface DesktopRelayHistoryPorts {
   scribe(turn: { conversationId: string; role: 'user' | 'assistant' | 'tool'; content: string; ts: string; id?: string }): Promise<void>;
-  acceptUserTurn(turn: { conversationId: string; role: 'user'; content: string; ts: string; id: string }): Promise<'accepted' | 'duplicate' | 'conflict'>;
+  acceptUserTurn(turn: { conversationId: string; role: 'user'; content: string; ts: string; id: string; scope?: ScopedRelayBinding }): Promise<'accepted' | 'duplicate' | 'conflict'>;
   deriveMessageId(conversationId: string, role: string, content: string, ts: string): string;
 }
 
 export interface DesktopRelayChatPorts {
+  currentRelayAccount?(): Promise<string>;
   approveViewer?(id: string, key: string): Promise<boolean>;
   relayApprovals?(): readonly (readonly [string, string])[];
-  admitRelayThread?(thread: string, existing: boolean): Promise<boolean>;
+  admitRelayThread?(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean>;
   validateSelection(message: RelayIncomingFrame): Promise<ChatSelection>;
   persistAttachments(conversationId: string, messageId: string, turn: NormalizedMobileTurn): Promise<string[]>;
   companionRequest(method: string, params: Record<string, unknown>): Promise<unknown>;

@@ -73,7 +73,7 @@ vi.mock('@pkg/utils/logging', () => ({ default: { background: fakes.log } }));
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: fakes.settings }));
 vi.mock('@pkg/agent/services/WebSocketClientService', () => ({ getWebSocketClientService: () => fakes.agentChannel }));
 vi.mock('@pkg/main/ipcMain', () => ({ getIpcMainProxy: () => ({ handle: vi.fn() }) }));
-vi.mock('@pkg/main/sullaCloudAuth', () => ({ getCurrentAccessToken: fakes.token }));
+vi.mock('@pkg/main/sullaCloudAuth', () => ({ getCurrentAccessToken: fakes.token, getCurrentUserId: async() => 'account-a' }));
 vi.mock('@pkg/main/deviceIdentity', () => ({ getDesktopDeviceId: fakes.deviceId }));
 vi.mock('@pkg/main/cloudRelayTransport', () => ({ cloudRelayUsesVault: fakes.usesVault, VaultRelaySocket: fakes.FakeVaultSocket }));
 vi.mock('@pkg/main/sync/syncMirror', () => ({
@@ -442,7 +442,7 @@ describe('DesktopRelayClient characterization', () => {
       const socket = FakeSocket.instances[0];
       socket.open();
       const frame = { type: 'chat', conversationId: 'remote_fixture_1234', targetDeviceId: 'desk-1',
-        relayScope: 'v1', viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key', relayRequest: 'request-a',
+        relayScope: 'v1', accountId: 'account-a', workspaceId: 'workspace-a', viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key', relayRequest: 'request-a',
         userMessageId: 'msg-unique', clientRunId: 'unstable-retry', messages: [{ role: 'user', content: [
           { type: 'text', text: 'Review' },
           { type: 'document', source: { type: 'base64', media_type: 'text/plain', data: 'eA==' }, title: 'fixture.txt' },
@@ -453,6 +453,10 @@ describe('DesktopRelayClient characterization', () => {
       socket.deliver({ type: 'relay_device_challenge', nonce: '12345678-1234-1234-1234-123456789abc' });
       await flush();
       socket.deliver({ type: 'relay_device_ready' });
+      socket.deliver({ ...frame, accountId: 'different-account' });
+      socket.deliver({ ...frame, targetDeviceId: 'different-host' });
+      await flush();
+      expect(fakes.accept).not.toHaveBeenCalled();
       fakes.admit.mockResolvedValueOnce(false);
       socket.deliver(frame);
       await flush();
@@ -463,6 +467,9 @@ describe('DesktopRelayClient characterization', () => {
         type: 'ack', relayRequest: 'request-b', clientRunId: 'msg-unique', duplicate: true,
       }));
       expect(fakes.persist).not.toHaveBeenCalled();
+      expect(fakes.accept).toHaveBeenCalledWith(expect.objectContaining({
+        scope: { accountId: 'account-a', workspaceId: 'workspace-a', hostDeviceId: 'desk-1' },
+      }));
       socket.deliver({ ...frame, relayRequest: 'request-c' });
       await flush();
       expect(fakes.persist).toHaveBeenCalledOnce();
