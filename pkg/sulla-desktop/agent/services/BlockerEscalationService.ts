@@ -14,11 +14,11 @@ export interface ParentNoticeInbox {
     jobId: string;
     taskIndex: number;
     results: [];
-    notice: string;
-    noticeKind?: PendingCompletion['noticeKind'];
-    stall?: PendingCompletion['stall'];
     dedupeKey: string;
-  }): boolean;
+  } & (
+    | { notice: string; noticeKind?: never; stall?: never }
+    | Required<Pick<PendingCompletion, 'noticeKind' | 'stall'>> & { notice?: never }
+  )): boolean;
 }
 
 /** Records worker telemetry and routes new blockers through the parent's turn-safe inbox. */
