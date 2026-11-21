@@ -8,7 +8,7 @@
   <div class="share-backdrop" @mousedown.self="emit('close')">
     <section class="share-sheet" role="dialog" aria-modal="true" :aria-label="`Share ${target.name}`">
       <header>
-        <div class="title"><span class="share-glyph">↗</span><div><h2>Share {{ target.name }}</h2><p>{{ target.folder ? 'Manage member and group access.' : 'Manage access and a public Sulla Cloud link.' }}</p></div></div>
+        <div class="title"><span class="share-glyph">↗</span><div><h2>Share {{ target.name }}</h2><p>{{ target.folder ? 'Manage member and group access.' : 'Manage access and a public Sulla Cloud link for the file, not a specific version.' }}</p></div></div>
         <button class="icon-button" type="button" aria-label="Close" @click="emit('close')">×</button>
       </header>
 

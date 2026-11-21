@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { DURABLE_FILE_ID_PATTERN } from '@pkg/shared/filesReferences';
+
 import { supportsDocumentEditor } from '../editor/editorTypes';
 import { FilesBrowserState } from './FilesBrowserState';
 
@@ -13,6 +15,9 @@ import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
 
 /** Moving between collections, sections and folders, back/forward history and opening an entry. */
 export class FilesBrowserNavigation {
+  private requestGeneration = 0;
+  private consumedNavigation?:FilesNavigationPayload;
+
   constructor(private readonly browser:FilesBrowserController) {}
 
   private get state():FilesBrowserState { return this.browser.state }
@@ -83,6 +88,7 @@ export class FilesBrowserNavigation {
     if (state.busy.value || state.loading.value) return;
     this.browser.gestures.stopPointerGesture?.(); this.browser.rename.cancelRename();
     if (entry.folder) { this.openPath(entry.path); return }
+    state.detailVersion.value = undefined;
     state.selected.value = entry; state.detailTab.value = this.browser.presenter.entrySync(entry) === 'conflict' ? 'versions' : 'details';
   };
 
@@ -95,7 +101,17 @@ export class FilesBrowserNavigation {
   readonly onDetailRestored = ():void => { this.state.selected.value = null; void this.browser.refresher.refresh(true) };
 
   /** FileDetail's "Open" button. */
-  readonly openDetail = ():void => { if (this.state.selected.value) this.openDisplayEntry(this.state.selected.value) };
+  readonly openDetail = async():Promise<void> => {
+    const { selected, detailVersion, navigationError } = this.state;
+    if (!selected.value) return;
+    if (!detailVersion.value) { this.openDisplayEntry(selected.value); return }
+    navigationError.value = '';
+    try {
+      await this.state.props.dataSource.openFile(selected.value.id, detailVersion.value.id);
+    } catch {
+      navigationError.value = 'Couldn’t open that file version. Check your Files access and try again.';
+    }
+  };
 
   readonly openLinked = async(fileId:string, path:string):Promise<void> => {
     const state = this.state; const source = state.props.dataSource;
@@ -113,25 +129,97 @@ export class FilesBrowserNavigation {
   async navigateTo(detail:FilesNavigationPayload):Promise<void> {
     const state = this.state; const browser = this.browser;
 
-    state.collectionsRoot.value = false;
-    if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) { await this.selectCollection(detail.collectionId) }
-    if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return }
-    let file = state.snapshot.value?.files.find(item => item.id === detail.fileId) ?? state.snapshot.value?.files.find(item => item.path === detail.path);
+    const generation = ++this.requestGeneration;
+    const source = state.props.dataSource;
+    const isCurrent = () => state.mounted && generation === this.requestGeneration && source === state.props.dataSource;
+    const fail = (message:string) => { if (isCurrent()) state.navigationError.value = message };
+    state.navigationError.value = '';
+    browser.sharing.closeShare();
 
-    // A linked file outside the open folder is resolved by id; it must not be mistaken for a folder path.
-    if (!file && detail.fileId && state.props.dataSource.filesByIds) file = (await state.props.dataSource.filesByIds([detail.fileId]).catch(() => []))[0];
-    // A path without a fileId is a folder ("" = My Files root), e.g. Paper's back button.
-    if (!file && (detail.path || (!detail.fileId && detail.path !== undefined))) {
-      this.openPath(detail.path ?? '');
+    if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return }
+    if (detail.fileId === undefined && detail.versionId === undefined) {
+      if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) await this.selectCollection(detail.collectionId);
+      if (!isCurrent()) return;
+      if (detail.path === undefined) { fail('This Files destination is missing. Open Files and try again.'); return }
+      this.openPath(detail.path);
       if (detail.section === 'share-review') browser.sharing.shareCurrentFolder();
       return;
     }
-    if (!file) { state.error.value = 'That file is no longer available in this collection.'; return }
-    if (!detail.section && supportsDocumentEditor(file.path)) { state.emit('open-editor', browser.factory.toDisplay(file), state.snapshot.value?.collection.id); return }
-    this.selectEntry(browser.factory.toDisplay(file));
-    if (detail.section === 'versions') state.detailTab.value = 'versions';
-    if (detail.section === 'share-review') browser.sharing.shareEntry(browser.factory.toDisplay(file));
+
+    const { fileId, versionId } = detail;
+    if (!fileId || !DURABLE_FILE_ID_PATTERN.test(fileId) || (versionId !== undefined && !DURABLE_FILE_ID_PATTERN.test(versionId))) {
+      fail('This Files reference is invalid. Ask for a fresh reference.');
+      return;
+    }
+    try {
+      // Always ask the authorized metadata endpoint: path and cached folder rows
+      // aren't proof of identity or of the current user's visible version.
+      const metadata = await source.detail(fileId);
+      if (!isCurrent()) return;
+      const file = metadata.item;
+      if (!file || file.id !== fileId || file.deletedAt || !file.currentVersionId
+          || (detail.collectionId && metadata.collectionId && detail.collectionId !== metadata.collectionId)) {
+        fail('This file is no longer available. Ask for a fresh reference or check your Files access.');
+        return;
+      }
+      const collectionId = metadata.collectionId ?? detail.collectionId;
+      if (collectionId && collectionId !== state.snapshot.value?.collection.id) {
+        await this.selectCollection(collectionId);
+        if (!isCurrent()) return;
+        if (collectionId !== state.snapshot.value?.collection.id) {
+          fail('This Files collection could not be opened. Check your access and try again.');
+          return;
+        }
+      }
+      const version = versionId
+        ? (await source.history(fileId, file.currentVersionId)).find(entry => entry.id === versionId && !entry.deleted
+          && (entry.publicationStatus !== 'draft' || metadata.capabilities?.canViewDraft || entry.id === file.currentVersionId))
+        : undefined;
+      if (!isCurrent()) return;
+      if (versionId && !version) {
+        fail('This file version is no longer available or you don’t have access. Ask for a fresh reference.');
+        return;
+      }
+
+      if (detail.section === 'share-review') {
+        const available = await (source.publicLinksAvailable?.() ?? source.capabilities.publicLinks);
+        if (!isCurrent()) return;
+        if (!available || !source.createPublicLink || !state.snapshot.value) {
+          fail('Link review is unavailable. Check your Files sharing access and Sulla Cloud connection, then try again.');
+          return;
+        }
+      }
+      if (state.busy.value || state.loading.value) {
+        fail('Files is busy. Wait for it to finish, then try the reference again.');
+        return;
+      }
+
+      state.collectionsRoot.value = false;
+      const entry = browser.factory.toDisplay(file);
+      if (!detail.section && !version && supportsDocumentEditor(file.path)) { state.emit('open-editor', entry, collectionId); return }
+      this.selectEntry(entry);
+      state.detailTab.value = detail.section === 'versions' ? 'versions' : 'details';
+      if (detail.section === 'detail' || (!detail.section && version)) state.detailVersion.value = version;
+      if (detail.section === 'share-review') browser.sharing.shareEntry(entry);
+    } catch {
+      fail('Couldn’t read this Files reference. Check your connection and access, then try again or ask for a fresh reference.');
+    }
   }
 
-  readonly consumeNavigation = ():void => { const state = this.state; if (!state.mounted || state.busy.value || state.loading.value || !state.props.navigation || !state.snapshot.value) return; void this.navigateTo(state.props.navigation); state.emit('navigation-consumed') };
+  readonly consumeNavigation = ():void => {
+    const state = this.state;
+    const request = state.props.navigation;
+    if (!request) { this.consumedNavigation = undefined; return }
+    if (!state.mounted || state.busy.value || state.loading.value || this.consumedNavigation === request) return;
+    if (!state.snapshot.value) {
+      if (state.error.value && (request.fileId !== undefined || request.versionId !== undefined)) {
+        state.navigationError.value = 'Couldn’t open this file reference because Files didn’t load. Check your connection and access, then select Try again in Files.';
+      }
+      // Keep the request pending so the Files retry can replay it after a successful load.
+      return;
+    }
+    this.consumedNavigation = request;
+    void this.navigateTo(request);
+    state.emit('navigation-consumed');
+  };
 }

@@ -14,6 +14,10 @@
     @drop.prevent="onDrop"
   >
     <FilesBrowserSidebar />
+    <div v-if="navigationError" class="navigation-error" role="alert">
+      {{ navigationError }}
+      <button class="btn sm ghost" type="button" @click="navigationError = ''">Dismiss</button>
+    </div>
 
     <main
       v-if="!selected"
@@ -89,8 +93,9 @@
 
     <FileDetail
       v-else-if="snapshot"
-      :key="`${selected.id}:${selected.currentVersionId}`"
+      :key="`${selected.id}:${selected.currentVersionId}:${detailVersion?.id ?? ''}`"
       :item="selected"
+      :view-version="detailVersion"
       :trash-item="selected.trashItem?.kind === 'file' ? selected.trashItem : undefined"
       :collection="snapshot.collection"
       :data-source="dataSource"
@@ -131,7 +136,7 @@ const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:Files
 const browser = useFilesBrowser(props, emit);
 const { icons } = browser;
 const dataSource = computed(() => props.dataSource);
-const { snapshot, loading, error, section, selected, detailTab, browserSurface, mainSurface } = browser.state;
+const { snapshot, loading, error, section, selected, detailTab, detailVersion, navigationError, browserSurface, mainSurface } = browser.state;
 const { readOnlyArea, emptyTitle, emptyCopy } = browser.location;
 const { visibleEntries } = browser.listing;
 const { refresh } = browser.refresher;
@@ -144,4 +149,7 @@ const { shareEntry } = browser.sharing;
 const { onTrashDetailOutcome } = browser.trash;
 </script>
 
+<style scoped>
+.navigation-error{position:absolute;z-index:45;top:8px;right:16px;max-width:calc(100% - 32px);padding:8px 12px;border:1px solid var(--border-default);border-radius:8px;background:var(--bg-surface);color:var(--status-error)}
+</style>
 <style scoped src="./browser/components/FilesBrowser.css"></style>
