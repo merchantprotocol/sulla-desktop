@@ -137,6 +137,50 @@ describe('tray screenshot Save to Files', () => {
     expect(clipboard.mock.calls).toEqual([[absolute], [selected]]);
   }));
 
+  // risk: data loss — the root can disappear while either import is underway.
+  it('retains the original across capture- and save-time destination ENOENT races', async() => fixture(async directory => {
+    const files = path.join(directory, 'Files');
+    const downloads = path.join(directory, 'Downloads');
+    await fs.mkdir(files);
+    await fs.mkdir(downloads);
+    const clipboard = vi.fn();
+    const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard, () => downloads);
+    const loseFiles = vi.fn(async() => {
+      await fs.rmdir(files);
+      await fs.stat(path.join(files, name)); // Native ENOENT naming the missing destination.
+      throw new Error('Expected the root to be gone');
+    });
+    const service = new SullaFilesCaptureService(undefined, undefined, clipboard, loseFiles);
+
+    const pending = await service.prepareTrayScreenshot(name, bytes, destinations);
+    expect(pending.capture).toBeUndefined();
+    expect(clipboard).not.toHaveBeenCalled();
+    await fs.mkdir(files);
+
+    const destination = path.join(downloads, name);
+    await expect(destinations.saveScreenshot(pending, vi.fn(), () => true, () => service.importTrayScreenshot(pending))).resolves.toBe(destination);
+    expect(loseFiles).toHaveBeenCalledTimes(2);
+    expect(await fs.readFile(destination)).toEqual(bytes);
+    expect(clipboard.mock.calls).toEqual([[destination]]);
+  }));
+
+  // risk: masking a real import failure — an unrelated API or source error is not a missing Files mount.
+  it.each(['api', 'source'])('propagates a %s error even if Files also disappears', async(kind) => fixture(async directory => {
+    const files = path.join(directory, 'Files');
+    await fs.mkdir(files);
+    const clipboard = vi.fn();
+    const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard);
+    const failure = kind === 'api' ? new Error('Files import failed (500)') :
+      Object.assign(new Error('capture source missing'), { code: 'ENOENT', path: path.join(directory, 'capture.png') });
+    const service = new SullaFilesCaptureService(undefined, undefined, clipboard, async() => {
+      await fs.rmdir(files);
+      throw failure;
+    });
+
+    await expect(service.prepareTrayScreenshot(name, bytes, destinations)).rejects.toBe(failure);
+    expect(clipboard).not.toHaveBeenCalled();
+  }));
+
   // risk: unintended file writes — a missing item under an available root or stale ownership must not create a copy elsewhere.
   it('does not fall back for a missing Files item or write after a native dialog loses its capture', async() => fixture(async directory => {
     const files = path.join(directory, 'Files');

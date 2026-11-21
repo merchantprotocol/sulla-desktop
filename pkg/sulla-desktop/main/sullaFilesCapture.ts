@@ -109,7 +109,8 @@ export class SullaFilesCaptureService {
 
   async prepareTrayScreenshot(name:string, bytes:Buffer, destinations:SullaFilesCapturePathClipboardService, source?:string):Promise<TrayScreenshot> {
     const screenshot:TrayScreenshot = { name, bytes };
-    if (await destinations.filesRoot()) await this.importTrayScreenshot(screenshot, source);
+    const root = await destinations.filesRoot();
+    if (root) await destinations.importIntoFiles(root, () => this.importTrayScreenshot(screenshot, source));
     return screenshot;
   }
 
@@ -238,6 +239,27 @@ export class SullaFilesCapturePathClipboardService {
     return this.existingDirectory(await this.resolveFilesRoot());
   }
 
+  async importIntoFiles(root:string, operation:() => Promise<CaptureResult>, isCurrent:() => boolean = () => true):Promise<CaptureResult | undefined> {
+    if (!await this.filesRoot() || !isCurrent()) return undefined;
+    try {
+      return await operation();
+    } catch (error) {
+      // ChatFilesImporter reports API failures as plain Errors and source failures
+      // refer to the private temp file. Neither is evidence of a missing mount.
+      // Only a filesystem ENOENT naming this destination may be downgraded.
+      const failure = error as NodeJS.ErrnoException;
+      if (failure?.code !== 'ENOENT' || typeof failure.path !== 'string') throw error;
+      const failedPath = path.resolve(failure.path);
+      const configured = path.resolve(await this.resolveFilesRoot());
+      const belongsToRoot = [root, configured].some(directory => {
+        const relative = path.relative(directory, failedPath);
+        return relative !== '..' && !relative.startsWith(`..${ path.sep }`) && !path.isAbsolute(relative);
+      });
+      if (!belongsToRoot || await this.filesRoot()) throw error;
+      return undefined;
+    }
+  }
+
   private async resolveFile(root:string, relativePath:string):Promise<string> {
     if (typeof relativePath !== 'string' || !relativePath) throw new Error('A Files path is required');
     const requested = path.resolve(root, relativePath);
@@ -268,11 +290,11 @@ export class SullaFilesCapturePathClipboardService {
     const root = await this.filesRoot();
     if (!isCurrent()) return undefined;
     if (root) {
-      const capture = screenshot.capture ?? await importScreenshot?.();
-      if (!capture) throw new Error('The screenshot has not been imported into Sulla Files');
+      const capture = screenshot.capture ?? (importScreenshot && await this.importIntoFiles(root, importScreenshot, isCurrent));
+      if (!capture && !importScreenshot) throw new Error('The screenshot has not been imported into Sulla Files');
       let absolute:string | undefined;
       try {
-        absolute = await this.resolveFile(root, capture.relativePath);
+        if (capture) absolute = await this.resolveFile(root, capture.relativePath);
       } catch (error) {
         // A missing item in an existing root is not permission to save elsewhere.
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || await this.filesRoot()) throw error;
