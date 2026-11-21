@@ -84,6 +84,8 @@ export interface SullaMessage extends MessageBase {
   text:            string;        // markdown-ish; rendered by prose component
   model:           string;        // e.g. "opus-4.7"
   tokens?:         number;
+  /** Keep the existing reply renderer for run-ending assistant posts. */
+  terminalRunError?: boolean;
   fileReferences?: readonly AttachedFile[];
 }
 

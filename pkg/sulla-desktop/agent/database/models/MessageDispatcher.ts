@@ -49,69 +49,25 @@ function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
 }
 
-function isUserTurnBoundary(m: ChatMessage, msgThreadId: string): boolean {
-  if (m.role !== 'user') return false;
-  if (m.threadId && msgThreadId && m.threadId !== msgThreadId) return false;
-
-  // Real user turns are inserted locally by AgentPersonaService with a
-  // `user_…` id before the backend responds. Other user-role records can be
-  // restored/context frames from the orchestration path; those should not split
-  // one visible thinking lifecycle into several bubbles.
-  return m.id.startsWith('user_');
-}
-
-function isAssistantOutputBoundary(m: ChatMessage, msgThreadId: string): boolean {
-  if (m.role !== 'assistant') return false;
-  if (m.threadId && msgThreadId && m.threadId !== msgThreadId) return false;
-
-  // Visible assistant output ends one thinking lifecycle. The final full reply
-  // dump is often dropped when streaming segments already showed it, so the
-  // completed streaming segment itself has to serve as the boundary.
-  if (!m.kind || m.kind === 'text' || m.kind === 'streaming' || m.kind === 'html') {
-    return true;
-  }
-
-  return false;
-}
-
 function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string): void {
-  let existingIdx = -1;
-
-  for (let i = ctx.messages.length - 1; i >= 0; i--) {
-    const m = ctx.messages[i];
-    if (isUserTurnBoundary(m, msgThreadId)) break;
-    if (isAssistantOutputBoundary(m, msgThreadId)) break;
-    // A tool is an ordered work-log entry. Thinking emitted after it must
-    // start a new backend message so renderer grouping keeps thought → tool
-    // → thought chronology instead of mutating the earlier thought in place.
-    if (m.kind === 'tool') break;
-    if (m.kind === 'thinking' && m.role === 'assistant') {
-      existingIdx = i;
-      break;
-    }
-  }
-
-  if (existingIdx !== -1) {
-    const existing = ctx.messages[existingIdx];
-    ctx.messages[existingIdx] = {
-      ...existing,
-      content:    capText(existing.content + '\n\n' + content, MAX_THINKING_CHARS),
-      _completed: false,
-    } as ChatMessage;
+  const last = ctx.messages[ctx.messages.length - 1] as (ChatMessage & { _completed?: boolean }) | undefined;
+  // Only adjacent events in the same open segment may share a source
+  // record. Otherwise a later status can jump ahead of a decision or evidence.
+  if (last?.kind === 'thinking' && last.role === 'assistant' && last.channelId === agentId
+    && last.threadId === msgThreadId && !last._completed) {
+    ctx.messages[ctx.messages.length - 1] = {
+      ...last,
+      content: capText(last.content + '\n\n' + content, MAX_THINKING_CHARS),
+    };
     return;
   }
 
-  ctx.messages.push({
-    id:        `${ Date.now() }_ws_thinking`,
-    channelId: agentId,
-    threadId:  msgThreadId,
-    role:      'assistant',
-    kind:      'thinking',
-    content,
-  });
+  const baseId = `${ Date.now() }_ws_thinking`;
+  let id = baseId;
+  for (let n = 1; ctx.messages.some(message => message.id === id); n++) id = `${ baseId }_${ n }`;
+  ctx.messages.push({ id, channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function contentToString(content: any): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return String(content ?? '');
@@ -200,8 +156,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   // param) — those still flow through this handler for bubble rendering
   // but must not flip graphRunning, otherwise stop button visibility
   // gets driven by background activity instead of the user's own loop.
+  const terminalRunError = isTerminalRunError(msg);
   if (msg.type !== 'subconscious_message') {
-    ctx.graphRunning.value = !isTerminalRunError(msg);
+    ctx.graphRunning.value = !terminalRunError;
     if (!ctx.graphRunning.value) ctx.registry.setLoading(agentId, false);
   }
 
@@ -229,6 +186,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       threadId:  msgThreadId,
       role:      msg.type === 'system_message' ? 'system' : 'assistant',
       content:   text,
+      ...(terminalRunError ? { terminalRunError } : {}),
     };
     console.log(`[MessageDispatcher] messages.push (string ${ msg.type })`, { role: message.role, contentChars: message.content.length, content: message.content.slice(0, 120) });
     ctx.messages.push(message);
@@ -648,7 +606,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (m.kind === 'streaming') recentStreamIndexes.push(i);
     }
 
-    if (recentStreamIndexes.length > 0) {
+    if (!terminalRunError && recentStreamIndexes.length > 0) {
       // The user has already seen the streaming segments. NEVER wipe them
       // here — abort messages, error notices, and other status pings would
       // erase the actual response content (this is the bug where hitting
@@ -711,6 +669,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     role,
     kind,
     content:   finalContent,
+    ...(terminalRunError ? { terminalRunError } : {}),
   };
   const explicitReferences = Array.isArray(data?.fileReferences) ? data.fileReferences : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
   const parsedReferences = role === 'assistant' ? parseDurableFileReferences(finalContent) : [];

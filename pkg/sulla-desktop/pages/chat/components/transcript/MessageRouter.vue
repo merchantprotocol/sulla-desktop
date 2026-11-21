@@ -26,8 +26,6 @@
   </div>
   <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" />
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
-  <Thinking        v-else-if="msg.kind === 'thinking'"  :msg="msg" />
-  <ToolCall        v-else-if="msg.kind === 'tool'"      :msg="msg" />
   <div v-else-if="mainDecisionTranscript && decisionId && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
       v-if="msg.kind === 'tool_approval'"
@@ -94,14 +92,13 @@ import PatchBlock      from '../patch/PatchBlock.vue';
 import ProactiveCard   from '../proactive/ProactiveCard.vue';
 import SubAgentBubble  from '../subagent/SubAgentBubble.vue';
 import SubAgentExchange from '../subagent/SubAgentExchange.vue';
-import Thinking        from '../thinking/Thinking.vue';
 import ToolApproval    from '../tool/ToolApproval.vue';
-import ToolCall        from '../tool/ToolCall.vue';
 import ToolQuestion    from '../tool/ToolQuestion.vue';
 import ToolTask        from '../tool/ToolTask.vue';
-import type { Message, ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
+import type { CardMessage } from './toolGroups';
+import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: Message }>();
+const props = defineProps<{ msg: CardMessage }>();
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();
 const mainDecisionTranscript = inject('chat:main-decision-transcript', ref(false));

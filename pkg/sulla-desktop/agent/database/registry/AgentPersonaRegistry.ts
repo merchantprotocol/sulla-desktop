@@ -16,6 +16,7 @@ export interface ChatMessage {
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
   readinessCleared?: boolean;
+  terminalRunError?: boolean;
   modelStatus?:      import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   fileReferences?: Array<Record<string, unknown>>;

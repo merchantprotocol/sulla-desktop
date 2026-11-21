@@ -56,7 +56,7 @@ import { useChatController } from '../../controller/useChatController';
 
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
-const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { required: true });
+const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { default: 'info' });
 const controller = useChatController();
 /** Set when this chat is an agent's own tab: who launched it, and a way back. */
 const origin = inject<Ref<{ name: string; back: () => void } | null>>('chat:agent-origin', ref(null));

@@ -792,7 +792,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -979,7 +979,8 @@ export class PersonaAdapter {
     }
 
     // Tool card
-    if (b.kind === 'tool' && b.toolCard) {
+    if (b.kind === 'tool') {
+      if (!b.toolCard || !['running', 'success', 'failed'].includes(b.toolCard.status)) return null;
       const status: ToolMessage['status'] =
         b.toolCard.status === 'success'
           ? 'ok'
@@ -1185,6 +1186,7 @@ export class PersonaAdapter {
       kind:  'sulla',
       createdAt,
       text:  b.content ?? '',
+      ...(b.terminalRunError === true ? { terminalRunError: true } : {}),
       model: this.controller.model.value.name,
       fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
     } satisfies SullaMessage;
