@@ -104,6 +104,7 @@ vi.mock('@pkg/main/mobileRelayContent', async importOriginal => ({
 }));
 
 import { DesktopRelayClient } from '@pkg/main/desktopRelay';
+import type { DesktopRelayTimers, RelayInterval, RelayTimeout } from '@pkg/main/cloud/relay/DesktopRelayPorts';
 import { DesktopRelayRuntimePorts } from '@pkg/main/cloud/relay/DesktopRelayRuntimePorts';
 import { DesktopRelayTerminalRepository } from '@pkg/main/cloud/relay/DesktopRelayTerminalRepository';
 
@@ -121,6 +122,46 @@ async function flush(): Promise<void> {
 async function advance(ms: number): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
   await flush();
+}
+
+// Keep virtual relay time separate from PGlite and Vitest's real I/O clock.
+class RelayTestClock implements DesktopRelayTimers {
+  private time = 0;
+  private nextId = 0;
+  private readonly jobs = new Map<number, { at: number; callback: () => void; interval?: number }>();
+
+  now(): number { return this.time }
+  setTimeout(callback: () => void, delay: number): RelayTimeout {
+    return this.schedule(callback, delay) as unknown as RelayTimeout;
+  }
+
+  clearTimeout(handle: RelayTimeout): void { this.jobs.delete(handle as unknown as number) }
+  setInterval(callback: () => void, delay: number): RelayInterval {
+    return this.schedule(callback, delay, delay) as unknown as RelayInterval;
+  }
+
+  clearInterval(handle: RelayInterval): void { this.jobs.delete(handle as unknown as number) }
+
+  private schedule(callback: () => void, delay: number, interval?: number): number {
+    const id = ++this.nextId;
+    this.jobs.set(id, { at: this.time + delay, callback, interval });
+    return id;
+  }
+
+  async advance(ms: number): Promise<void> {
+    const deadline = this.time + ms;
+    for (;;) {
+      const due = [...this.jobs].filter(([, job]) => job.at <= deadline).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      const [id, job] = due;
+      this.time = job.at;
+      if (job.interval === undefined) this.jobs.delete(id);
+      else job.at += job.interval;
+      job.callback();
+      await flush();
+    }
+    this.time = deadline;
+  }
 }
 
 async function pairedClient(room = 'room-1'): Promise<DesktopRelayClient> {
@@ -477,8 +518,12 @@ describe('DesktopRelayClient characterization', () => {
 
     it('retries a real local status failure, then resends the committed status after process reconnect without dispatch', async() => {
       // risk: claiming an uncommitted result or replaying agent side effects.
+      vi.useRealTimers();
       const db = new PGlite();
-      const ports = new DesktopRelayRuntimePorts().create();
+      const clock = new RelayTestClock();
+      const ports = { ...new DesktopRelayRuntimePorts().create(), timers: clock };
+      let first: DesktopRelayClient | undefined;
+      let restarted: DesktopRelayClient | undefined;
       const localWriteErrors: unknown[] = [];
       const terminalDb: ConstructorParameters<typeof DesktopRelayTerminalRepository>[0] = {
         query: async<T>(sql: string, values: string[]) => (await db.query<T>(sql, values)).rows,
@@ -501,7 +546,7 @@ describe('DesktopRelayClient characterization', () => {
         socket.deliver({ type: 'relay_device_challenge', nonce: '12345678-1234-1234-1234-123456789abc' });
         await flush();
         socket.deliver({ type: 'relay_device_ready' });
-        await advance(0);
+        await flush();
       };
       const rows = () => db.query("SELECT content, relay_terminal_pending FROM claude_messages WHERE role='tool'");
       try {
@@ -514,7 +559,7 @@ describe('DesktopRelayClient characterization', () => {
             VALUES ('run-a','account-a','remote_fixture_1234','user','local user text','sent','desktop');
           ALTER TABLE claude_messages ADD CONSTRAINT fixture_outage CHECK (role != 'tool');
         `);
-        const first = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
+        first = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
         await first.setPairedUserId('account-a');
         await flush();
         const socket = FakeSocket.instances[0];
@@ -530,12 +575,15 @@ describe('DesktopRelayClient characterization', () => {
         expect((await rows()).rows).toEqual([]);
         socket.drop();
         await db.exec('ALTER TABLE claude_messages DROP CONSTRAINT fixture_outage');
-        // Let the outstanding drain and ensuing retry finish; the fake
-        // timer reaching a deadline does not imply PGlite committed.
-        await vi.waitFor(async() => expect((await rows()).rows).toEqual([expect.objectContaining({
-          content: '{"sullaCard":{"version":1,"kind":"run_outcome","runId":"run-a","outcome":"stopped"}}',
-          relay_terminal_pending: expect.objectContaining({ run: 'run-a' }),
-        })]), { timeout: 45_000, interval: 250 });
+        // waitFor's interval is wall time even under fake timers. Drive relay
+        // deadlines separately, and query committed state on the real clock.
+        await vi.waitFor(async() => {
+          await clock.advance(15_000);
+          expect((await rows()).rows).toEqual([expect.objectContaining({
+            content: '{"sullaCard":{"version":1,"kind":"run_outcome","runId":"run-a","outcome":"stopped"}}',
+            relay_terminal_pending: expect.objectContaining({ run: 'run-a' }),
+          })]);
+        }, { timeout: 3_000 });
         const durable = await rows();
         // Restart only after the pending row commits. Power loss before
         // any local status commit cannot recover the in-memory result.
@@ -543,33 +591,46 @@ describe('DesktopRelayClient characterization', () => {
 
         vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'off');
         fakes.approve.mockReturnValue(false);
-        const restarted = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
+        restarted = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
         await restarted.setPairedUserId('account-a');
         await flush();
         const replacement = FakeSocket.instances.at(-1)!;
+        fakes.approve.mockClear();
         await prove(replacement);
-        await advance(15_000);
+        await vi.waitFor(() => expect(fakes.approve).toHaveBeenCalledWith('viewer-a'));
         expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(false);
         expect((await rows()).rows).toEqual(durable.rows);
 
         fakes.approve.mockReturnValue(true);
-        await vi.waitFor(() => expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(true),
-          { timeout: 45_000, interval: 250 });
+        await vi.waitFor(async() => {
+          replacement.deliver({ type: 'pong' });
+          await clock.advance(15_000);
+          expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(true);
+        }, { timeout: 3_000 });
         const report = replacement.frames().find(out => out.type === 'relay_terminal');
         expect(report).toEqual({
           type: 'relay_terminal', relayScope: 'v1', conversationId: thread, accountId: 'account-a', workspaceId: 'workspace-a',
           viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key', clientRunId: 'run-a', outcome: 'stopped',
         });
         replacement.deliver({ ...frame, type: 'relay_terminal_committed', clientRunId: 'run-a', outcome: 'stopped' });
-        await advance(0);
         await vi.waitFor(async() => expect((await rows()).rows).toEqual([expect.objectContaining({ relay_terminal_pending: null })]));
         const attempts = replacement.frames().filter(out => out.type === 'relay_terminal').length;
-        await advance(30_000);
+        // Give each retry a real DB round trip before advancing again.
+        for (let retry = 0; retry < 2; retry++) {
+          replacement.deliver({ type: 'pong' });
+          await clock.advance(15_000);
+          expect((await rows()).rows).toEqual([expect.objectContaining({ relay_terminal_pending: null })]);
+          await flush();
+        }
+        expect(replacement.readyState).toBe(FakeSocket.OPEN);
         expect(replacement.frames().filter(out => out.type === 'relay_terminal')).toHaveLength(attempts);
         expect(fakes.agentChannel.send).toHaveBeenCalledTimes(1);
         expect(fakes.scribe).not.toHaveBeenCalled(); // No transcript resend.
-        await restarted.setPairedUserId('');
-      } finally { await db.close() }
+      } finally {
+        await first?.setPairedUserId('');
+        await restarted?.setPairedUserId('');
+        await db.close();
+      }
     });
 
     it('never stages attachments for denied or duplicate claims, and keeps a retry canonical', async() => {
