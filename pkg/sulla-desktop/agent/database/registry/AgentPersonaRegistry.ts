@@ -16,6 +16,13 @@ export interface ChatMessage {
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
   readinessCleared?: boolean;
+  terminalRunError?: boolean;
+  decisionFollowUpId?: string;
+  chatToolActivity?: import('../../tools/ChatToolReporting').ChatToolActivity;
+  agentReporting?: 'brief' | 'standard';
+  reportingActivity?: 'status' | 'tool';
+  replyStreamId?: string;
+  replyAttribution?: { agent?: string; model?: string };
   modelStatus?:      import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   fileReferences?: Array<Record<string, unknown>>;

@@ -844,7 +844,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const markPhase = (name: string) => { const now = Date.now(); runPhaseMarks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
     // Signal immediately, before credential/config/file setup starts.
-    try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
+    try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     // A process still held open for this conversation's background tasks
     // ends here: the new turn's `--resume` must be the only live copy of the
     // session. Wait until it is really gone; firing the stop and spawning at
@@ -852,7 +852,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const heldStop = backgroundHolds.get(convId);
     if (heldStop) {
       turn.handedOff = true;
-      try { callbacks.onActivity?.('Wrapping up the previous background task…') } catch { /* renderer unavailable */ }
+      try { callbacks.onActivity?.('Wrapping up the previous background task…', 'status') } catch { /* renderer unavailable */ }
       const handoff = await awaitBackgroundHandoff(heldStop(), options.signal);
       if (handoff !== 'stopped') {
         // The old CLI may still be alive on this session: resuming it now
@@ -1078,7 +1078,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const heartbeatStart = Date.now();
         const directActivity = (msg: string) => {
           if (!msg) return;
-          try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+          try { callbacks.onActivity?.(msg, 'status') } catch { /* ignore */ }
         };
         const stopHeartbeat = () => {
           if (heartbeatTimer) {
@@ -1351,9 +1351,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
         };
 
-        const emitActivity = (msg: string) => {
+        const reportedToolIds = new Set<string>();
+        const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
           if (!msg) return;
-          try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+          try { callbacks.onActivity?.(msg, reportingActivity) } catch { /* ignore */ }
+        };
+
+        const emitToolActivity = (id: string | undefined, name: string, input: unknown) => {
+          if (id && reportedToolIds.has(id)) return;
+          if (id) reportedToolIds.add(id);
+          emitActivity(activityForToolUse(name, input), 'tool');
         };
 
         // Extended-thinking passthrough. thinking_delta events used to be
@@ -1463,7 +1470,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           steersInFlight.push({ content, message });
           lastStreamActivityAt = Date.now();
-          emitActivity('Steering Claude with your message…');
+          emitActivity('Steering Claude with your message…', 'status');
           log.log(`[ClaudeCodeService] steer written to running turn convId=${ convId } chars=${ content.length }`);
           return true;
         });
@@ -1516,7 +1523,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             if (idx >= 0) {
               steersInFlight.splice(idx, 1);
               if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null }
-              emitActivity('Claude picked up your message');
+              emitActivity('Claude picked up your message', 'status');
             }
             return;
           }
@@ -1540,7 +1547,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // call itself can still add 20–60s.
           if (parsed.type === 'system' && parsed.subtype === 'init') {
             if (!initAt) initAt = Date.now();
-            emitActivity('Tools connected — calling model');
+            emitActivity('Tools connected — calling model', 'status');
             return;
           }
 
@@ -1579,7 +1586,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               if (!firstContentAt) firstContentAt = Date.now();
               const name = ev.content_block.name ?? 'tool';
               noteIfNativeAsk(name);
-              emitActivity(activityForToolUse(name, ev.content_block.input));
+              emitToolActivity(ev.content_block.id, name, ev.content_block.input);
               return;
             }
 
@@ -1591,7 +1598,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               // Input is fully streamed → the CLI is about to RUN the tool. Start
               // the clock here so input-generation time isn't counted as tool time.
               noteToolStart(ev.content_block.id, name, ev.content_block.input);
-              emitActivity(activityForToolUse(name, ev.content_block.input));
+              emitToolActivity(ev.content_block.id, name, ev.content_block.input);
               emitFilePatch(name, ev.content_block.input);
               return;
             }
@@ -1623,7 +1630,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
                 // message instead of emitting streamed content_block_stop events.
                 // Idempotent — won't override an earlier stream-path start.
                 noteToolStart(b.id, b.name, b.input);
-                emitActivity(activityForToolUse(b.name, b.input));
+                emitToolActivity(b.id, b.name, b.input);
                 emitFilePatch(b.name, b.input);
               }
             }

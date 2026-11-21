@@ -77,12 +77,13 @@ function sendAgentCommand(payload: Record<string, unknown>): boolean {
   return true;
 }
 
-function emitProactive(channel: string, threadId: string, headline: string, body: string): void {
+function emitProactive(channel: string, threadId: string, headline: string, body: string, agentReporting: 'brief' | 'standard'): void {
   getWebSocketClientService().send(channel, {
     type: 'chat_message',
     data: {
       threadId,
       kind: 'proactive',
+      agentReporting,
       role: 'assistant',
       headline,
       body,
@@ -150,7 +151,7 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
   // desktop-channel adapter subscribes. If the renderer is slow, dispatch
   // after the timeout; the tab hydrates from the saved thread when it mounts.
   await rendererReady;
-  emitProactive(SULLA_DESKTOP_CHANNEL_ID, input.childThreadId, `Launched by ${ input.parentAgentName }`, input.prompt);
+  emitProactive(SULLA_DESKTOP_CHANNEL_ID, input.childThreadId, `Launched by ${ input.parentAgentName }`, input.prompt, 'standard');
   await getWebSocketClientService().send(SULLA_DESKTOP_CHANNEL_ID, {
     type: 'user_message',
     data: {
@@ -227,10 +228,10 @@ export async function messageAgentTab(threadId: string, agentId: string, message
 export async function stopAgentTab(threadId: string, reason: string): Promise<void> {
   const ws = getWebSocketClientService();
   await ws.send(SULLA_DESKTOP_CHANNEL_ID, { type: 'stop_run', data: { threadId } });
-  emitProactive(SULLA_DESKTOP_CHANNEL_ID, threadId, 'Stopped by the parent agent', reason);
+  emitProactive(SULLA_DESKTOP_CHANNEL_ID, threadId, 'Stopped by the parent agent', reason, 'brief');
 }
 
 /** Tell a tab child its return landed. */
 export function confirmAgentTabReturn(threadId: string, contractName: string): void {
-  emitProactive(SULLA_DESKTOP_CHANNEL_ID, threadId, 'Contract returned', `Returned ${ contractName } to the parent chat.`);
+  emitProactive(SULLA_DESKTOP_CHANNEL_ID, threadId, 'Contract returned', `Returned ${ contractName } to the parent chat.`, 'brief');
 }

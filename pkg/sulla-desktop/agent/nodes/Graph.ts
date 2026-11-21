@@ -105,6 +105,10 @@ export interface BaseThreadState {
     /** Parent conversation ID (e.g. the workflow execution that spawned this graph) */
     parentConversationId?: string;
 
+    /** Attribution from a claimed answer dispatch or an awaited live approval. */
+    reportingDecisionFollowUp?: { id: string; threadId: string };
+    reportingSteerRevision?: number;
+
     reasoning?: string;
 
     llmModel: string;

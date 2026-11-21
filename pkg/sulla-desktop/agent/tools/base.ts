@@ -9,6 +9,7 @@ import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
 import { toolDecisionPort } from './toolDecisionPort';
 
+import type { ChatToolActivity } from './ChatToolReporting';
 import type { ToolExecutionContext } from './executionContext';
 
 export type ToolOperation = 'read' | 'create' | 'update' | 'delete' | 'execute';
@@ -272,6 +273,7 @@ export abstract class BaseTool<TState = any> {
       const sideEffect = (metadata?.sideEffect as ToolSideEffect | undefined) ?? (operations.length && operations.every(operation => operation === 'read') ? 'read' : undefined);
       const relayedWrite = metadata?.relayed === true && requiresToolApproval(sideEffect, { relayed: true });
       if (this.name !== 'ask_user_question' && (relayedWrite || await decisions.requiresApproval(this.name))) {
+        const initialSteerRevision = metadata?.reportingSteerRevision;
         const { record, result } = await decisions.request({
           kind:           'approval',
           title:          `Allow ${ this.metadata.category } / ${ this.name }?`,
@@ -286,6 +288,12 @@ export abstract class BaseTool<TState = any> {
           });
         } catch { /* The durable Decide inbox remains available. */ }
         const answer = await result;
+        // The result belongs to this invocation's live graph, not to the
+        // next text that happened to arrive after a card changed state.
+        if (metadata?.threadId && !signal?.aborted && metadata.reportingSteerRevision === initialSteerRevision &&
+          (answer.status === 'approved' || answer.status === 'denied')) {
+          metadata.reportingDecisionFollowUp = { id: record.id, threadId: metadata.threadId };
+        }
         if (answer.status !== 'approved') return { toolName: this.name, success: false, error: `Action ${ answer.status }; nothing was executed.` };
       }
       if (signal?.aborted) throw new Error('Action cancelled; nothing was executed.');
@@ -318,6 +326,30 @@ export abstract class BaseTool<TState = any> {
   // ─────────────────────────────────────────────────────────────
   // Existing helpers
   // ─────────────────────────────────────────────────────────────
+
+  /** Bind activity to the invocation's trusted originating thread, never a selected chat or tool argument. */
+  protected bindChatToolActivity(): (activity: ChatToolActivity) => Promise<void> {
+    const metadata = this.state?.metadata;
+    const threadId = metadata?.threadId;
+    const channel = metadata?.wsChannel;
+    const send = this.sendChatMessage;
+    const authorized = threadId && (!this.executionContext?.thread_id || this.executionContext.thread_id === threadId)
+      && !metadata?._muteWsChat && !metadata?.subconsciousSilent;
+    return async(activity) => {
+      if (!authorized) return;
+      try {
+        if (send) {
+          await send('', 'chat_tool_activity', { chatToolActivity: activity });
+        } else if (channel) {
+          const { getWebSocketClientService } = await import('../services/WebSocketClientService');
+          await getWebSocketClientService().send(channel, {
+            type: 'assistant_message',
+            data: { role: 'assistant', kind: 'chat_tool_activity', thread_id: threadId, chatToolActivity: activity },
+          });
+        }
+      } catch { /* Reporting must not change the actual tool result. */ }
+    };
+  }
 
   public sendChatMessage?: (content: string, kind?: string, extras?: Record<string, unknown>) => Promise<boolean>;
   public emitProgress?:    (data: any) => Promise<void>;

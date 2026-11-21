@@ -54,7 +54,7 @@
           bottom edge looks the same).
         -->
         <div class="composer-backdrop" aria-hidden="true" />
-        <ChatHeader />
+        <ChatHeader v-model:reporting-level="reportingLevel" />
         <SearchBar />
 
         <EmptyState
@@ -62,7 +62,7 @@
           :suggestions="suggestions"
           @pick="onSuggestion"
         />
-        <Transcript v-else />
+        <Transcript v-else :reporting-level="reportingLevel" />
         <Composer />
       </main>
 
@@ -162,6 +162,7 @@ import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
 import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
+import type { ReportingLevel } from './models/ReportingLevel';
 import type { Thread }   from './models/Thread';
 import { asThreadId, type ThreadId } from './types/chat';
 
@@ -404,6 +405,7 @@ watch(
 );
 
 // Provide so every descendant can call `useChatController()`.
+const reportingLevel = ref<ReportingLevel>('info');
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);

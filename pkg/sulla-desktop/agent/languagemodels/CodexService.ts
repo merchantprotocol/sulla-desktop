@@ -651,7 +651,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // activity to this container without letting unrelated agents keep us alive.
     const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
-    try { callbacks.onActivity?.('Preparing your turn…') } catch { /* renderer unavailable */ }
+    try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
     mark('session');
     const transport = getProviderExecutionTransport();
@@ -841,14 +841,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.stdin.end();
       } catch { /* stdin already closed */ }
 
-      const emitActivity = (msg: string) => {
+      const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
         if (!msg) return;
-        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+        try { callbacks.onActivity?.(msg, reportingActivity) } catch { /* ignore */ }
       };
 
       proc.once('spawn', () => {
         spawnedAt = Date.now();
-        emitActivity('Booting isolated environment…');
+        emitActivity('Booting isolated environment…', 'status');
       });
 
       let stdoutBuffer = '';
@@ -1003,7 +1003,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (interruptSent || !steers.length || !capturedSessionId || !codexPid) return;
         interruptSent = true;
         log.log(`[CodexService] steering: interrupting codex pid=${ codexPid } thread=${ capturedSessionId } to deliver ${ steers.length } message(s) (convId=${ convId })`);
-        emitActivity('Steering Codex with your message…');
+        emitActivity('Steering Codex with your message…', 'status');
         signalCodex('INT');
         interruptEscalation = setTimeout(() => {
           if (proc.exitCode === null) {
@@ -1106,7 +1106,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (parsed.type === 'thread.started' && parsed.thread_id) {
             if (!initAt) initAt = Date.now();
             capturedSessionId = parsed.thread_id;
-            emitActivity('Session started — calling model');
+            emitActivity('Session started — calling model', 'status');
             maybeInterruptForSteer();
             return;
           }
@@ -1132,7 +1132,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             }
             if (parsed.type === 'item.started') {
               const activity = activityForItem(item);
-              if (activity) emitActivity(activity);
+              if (activity) emitActivity(activity, 'tool');
             }
             emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
@@ -1175,7 +1175,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         switch (msg.type) {
         case 'session_configured':
           if (msg.session_id) capturedSessionId = msg.session_id;
-          emitActivity('Session started — calling model');
+          emitActivity('Session started — calling model', 'status');
           maybeInterruptForSteer();
           break;
         case 'agent_message_delta':
@@ -1192,7 +1192,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           break;
         case 'exec_command_begin': {
           const cmd = Array.isArray(msg.command) ? msg.command.join(' ') : String(msg.command ?? '');
-          emitActivity(cmd ? `$ ${ pretty(cmd) }` : 'Running a shell command');
+          emitActivity(cmd ? `$ ${ pretty(cmd) }` : 'Running a shell command', 'tool');
           break;
         }
         case 'token_count':

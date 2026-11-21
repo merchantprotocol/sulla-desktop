@@ -19,13 +19,13 @@
  */
 
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
+import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
-import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { Ref } from 'vue';
@@ -49,69 +49,29 @@ function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
 }
 
-function isUserTurnBoundary(m: ChatMessage, msgThreadId: string): boolean {
-  if (m.role !== 'user') return false;
-  if (m.threadId && msgThreadId && m.threadId !== msgThreadId) return false;
-
-  // Real user turns are inserted locally by AgentPersonaService with a
-  // `user_…` id before the backend responds. Other user-role records can be
-  // restored/context frames from the orchestration path; those should not split
-  // one visible thinking lifecycle into several bubbles.
-  return m.id.startsWith('user_');
+function uniqueMessageId(ctx: DispatchContext, baseId: string): string {
+  let id = baseId;
+  for (let n = 1; ctx.messages.some(message => message.id === id); n++) id = `${ baseId }_${ n }`;
+  return id;
 }
 
-function isAssistantOutputBoundary(m: ChatMessage, msgThreadId: string): boolean {
-  if (m.role !== 'assistant') return false;
-  if (m.threadId && msgThreadId && m.threadId !== msgThreadId) return false;
-
-  // Visible assistant output ends one thinking lifecycle. The final full reply
-  // dump is often dropped when streaming segments already showed it, so the
-  // completed streaming segment itself has to serve as the boundary.
-  if (!m.kind || m.kind === 'text' || m.kind === 'streaming' || m.kind === 'html') {
-    return true;
-  }
-
-  return false;
-}
-
-function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string): void {
-  let existingIdx = -1;
-
-  for (let i = ctx.messages.length - 1; i >= 0; i--) {
-    const m = ctx.messages[i];
-    if (isUserTurnBoundary(m, msgThreadId)) break;
-    if (isAssistantOutputBoundary(m, msgThreadId)) break;
-    // A tool is an ordered work-log entry. Thinking emitted after it must
-    // start a new backend message so renderer grouping keeps thought → tool
-    // → thought chronology instead of mutating the earlier thought in place.
-    if (m.kind === 'tool') break;
-    if (m.kind === 'thinking' && m.role === 'assistant') {
-      existingIdx = i;
-      break;
-    }
-  }
-
-  if (existingIdx !== -1) {
-    const existing = ctx.messages[existingIdx];
-    ctx.messages[existingIdx] = {
-      ...existing,
-      content:    capText(existing.content + '\n\n' + content, MAX_THINKING_CHARS),
-      _completed: false,
-    } as ChatMessage;
+function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string, reportingActivity?: 'status' | 'tool'): void {
+  const last = ctx.messages[ctx.messages.length - 1] as (ChatMessage & { _completed?: boolean }) | undefined;
+  // Only adjacent events in the same open segment may share a source
+  // record. Otherwise a later status can jump ahead of a decision or evidence.
+  if (!reportingActivity && !last?.reportingActivity && !last?.chatToolActivity && last?.kind === 'thinking' && last.role === 'assistant' && last.channelId === agentId
+    && last.threadId === msgThreadId && !last._completed) {
+    ctx.messages[ctx.messages.length - 1] = {
+      ...last,
+      content: capText(last.content + '\n\n' + content, MAX_THINKING_CHARS),
+    };
     return;
   }
 
-  ctx.messages.push({
-    id:        `${ Date.now() }_ws_thinking`,
-    channelId: agentId,
-    threadId:  msgThreadId,
-    role:      'assistant',
-    kind:      'thinking',
-    content,
-  });
+  const id = uniqueMessageId(ctx, `${ Date.now() }_ws_thinking`);
+  ctx.messages.push({ id, channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content, reportingActivity });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function contentToString(content: any): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return String(content ?? '');
@@ -194,14 +154,35 @@ export class MessageDispatcher {
 
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
   if (msg.data && typeof msg.data === 'object' && AgentReadinessStatus.apply(ctx.messages, agentId, msgThreadId, msg.data as Record<string, unknown>)) return;
+  const activity = msg.data as { kind?: string; thread_id?: string; chatToolActivity?: ChatMessage['chatToolActivity'] } | null;
+  if (activity?.kind === 'chat_tool_activity') {
+    if (msg.type !== 'assistant_message' || !msgThreadId || activity.thread_id !== msgThreadId ||
+      !ChatToolReporting.describe(activity.chatToolActivity)) return;
+    // IPC assigns an id and timestamp once per emitted event, not per
+    // dispatch. Keep that identity in the saved message id, scoped to the
+    // originating chat. Never collapse distinct events by their display text.
+    const id = msg.id
+      ? `${ msg.timestamp }_ws_chat_tool_activity_${ encodeURIComponent(JSON.stringify([agentId, msgThreadId, msg.id])) }`
+      : uniqueMessageId(ctx, `${ Date.now() }_ws_chat_tool_activity`);
+    if (ctx.messages.some(message => message.id === id)) return;
+    const record: ChatMessage & { _completed: boolean } = {
+      id,
+      channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content: '',
+      chatToolActivity: activity.chatToolActivity,
+      _completed: true,
+    };
+    ctx.messages.push(record);
+    return;
+  }
   // Only the primary orchestration loop's emissions affect run-state.
   // Subconscious agents emit on the `subconscious_message` wire type
   // (see SubconsciousAgentNode + BaseNode.wsChatMessage's messageType
   // param) — those still flow through this handler for bubble rendering
   // but must not flip graphRunning, otherwise stop button visibility
   // gets driven by background activity instead of the user's own loop.
-  if (msg.type !== 'subconscious_message') {
-    ctx.graphRunning.value = !isTerminalRunError(msg);
+  const terminalRunError = isTerminalRunError(msg);
+  if (msg.type !== 'subconscious_message' && (msg.data as { kind?: string } | null)?.kind !== 'citation') {
+    ctx.graphRunning.value = !terminalRunError;
     if (!ctx.graphRunning.value) ctx.registry.setLoading(agentId, false);
   }
 
@@ -224,11 +205,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       return;
     }
     const message: ChatMessage = {
-      id:        `${ Date.now() }_ws_${ msg.type }`,
+      id:        uniqueMessageId(ctx, `${ Date.now() }_ws_${ msg.type }`),
       channelId: agentId,
       threadId:  msgThreadId,
       role:      msg.type === 'system_message' ? 'system' : 'assistant',
       content:   text,
+      ...(terminalRunError ? { terminalRunError } : {}),
     };
     console.log(`[MessageDispatcher] messages.push (string ${ msg.type })`, { role: message.role, contentChars: message.content.length, content: message.content.slice(0, 120) });
     ctx.messages.push(message);
@@ -251,6 +233,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
+  const replyStreamId = msg.type === 'assistant_message' && typeof data.replyStreamId === 'string'
+    ? data.replyStreamId : undefined;
+  const agentReporting = (msg.type === 'assistant_message' || msg.type === 'subconscious_message' || msg.type === 'chat_message') &&
+    (data.role === undefined || data.role === 'assistant') &&
+    (data.agentReporting === 'brief' || data.agentReporting === 'standard')
+    ? data.agentReporting as ChatMessage['agentReporting'] : undefined;
   const rawContent = data?.content !== undefined ? contentToString(data.content) : '';
   const doneWrapper = msg.type !== 'system_message' && (!data.role || data.role === 'assistant')
     && (!data.kind || data.kind === 'streaming' || data.kind === 'text') && /^\s*<AGENT_DONE>/i.test(rawContent);
@@ -263,9 +251,26 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   // gets swallowed and the streaming/thinking bubbles never close.
   if (kindRaw === 'streaming_complete' || kindRaw === 'thinking_complete') {
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
+    if (target === 'streaming' && replyStreamId) {
+      const reportedModel = typeof data.reportedModel === 'string' ? data.reportedModel.trim() : '';
+      // Only the segment being closed gets the producer's intent. Model attribution still
+      // updates all segments of this stream without reclassifying earlier narration.
+      const closing = agentReporting ? ctx.messages.findLast(message =>
+        message.kind === 'streaming' && message.channelId === agentId && message.threadId === msgThreadId &&
+        message.replyStreamId === replyStreamId && !(message as ChatMessage & { _completed?: boolean })._completed) : undefined;
+      if (closing) closing.agentReporting = agentReporting;
+      for (const message of ctx.messages) {
+        if (message.kind !== 'streaming' || message.channelId !== agentId || message.threadId !== msgThreadId ||
+          message.replyStreamId !== replyStreamId) continue;
+        (message as ChatMessage & { _completed?: boolean })._completed = true;
+        if (reportedModel) message.replyAttribution = { ...message.replyAttribution, model: reportedModel };
+      }
+      return;
+    }
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.kind === target && m.role === 'assistant' && !(m as any)._completed) {
+      if (m.kind === target && m.role === 'assistant' && m.threadId === msgThreadId && !(m as any)._completed &&
+        (target !== 'streaming' || m.decisionFollowUpId === data?.decisionFollowUpId)) {
         if (target === 'thinking') {
           console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=sentinel:${ kindRaw } (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
         }
@@ -299,8 +304,13 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
     if (citations.length === 0) return;
 
+    // Replays of the same structured event keep its original message ID.
+    // Distinct replies are allowed to cite the same documents again.
+    const id = typeof data.citationId === 'string' && /^\d{13}_ws_citation_[a-f0-9-]{36}$/.test(data.citationId)
+      ? data.citationId : uniqueMessageId(ctx, `${ Date.now() }_ws_citation`);
+    if (ctx.messages.some(message => message.id === id)) return;
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_citation`,
+      id,
       channelId: agentId,
       threadId:  msgThreadId,
       role:      'assistant',
@@ -391,12 +401,13 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const result = readAgentResultCard(data?.result);
 
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_proactive`,
+      id:        uniqueMessageId(ctx, `${ Date.now() }_ws_proactive`),
       channelId: agentId,
       threadId:  msgThreadId,
       role:      'assistant',
       kind:      'proactive',
       content:   body,
+      ...(agentReporting ? { agentReporting } : {}),
       proactive: { headline: headline || 'Sulla', body, ...(result ? { result } : {}) },
     });
     return;
@@ -516,6 +527,27 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
   const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
   const finalContent = content;
+  // Inline links are parsed for rendering, not recorded as attachment intent.
+  const rawReferences: ChatMessage['fileReferences'] = Array.isArray(data?.fileReferences) ? data.fileReferences
+    : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : undefined;
+  const explicitReferences = rawReferences?.filter((item, index, values) =>
+    typeof item?.fileId === 'string' && !!item.fileId && values.findIndex(candidate => candidate?.fileId === item.fileId && candidate?.versionId === item.versionId) === index);
+  const referenceUpdate = explicitReferences?.length ? { fileReferences: explicitReferences } : {};
+  const decisionFollowUpId = msg.type === 'assistant_message' && role === 'assistant' &&
+    (kind === 'streaming' || kind === 'text' || !kind) && typeof data?.decisionFollowUpId === 'string'
+    ? data.decisionFollowUpId : undefined;
+
+  const attribution = data?.replyAttribution;
+  const agent = typeof attribution?.agent === 'string' ? attribution.agent.trim() : '';
+  const model = typeof attribution?.model === 'string' ? attribution.model.trim() : '';
+  const replyAttribution = msg.type === 'assistant_message' && role === 'assistant' &&
+    (kind === 'streaming' || kind === 'text' || !kind) && (agent || model)
+    ? { agent: agent || undefined, model: model || undefined } : undefined;
+  const belongsToReply = (message: ChatMessage) => message.channelId === agentId &&
+    message.decisionFollowUpId === decisionFollowUpId &&
+    message.agentReporting === agentReporting &&
+    (kind !== 'streaming' || message.replyStreamId === replyStreamId) &&
+    message.replyAttribution?.agent === replyAttribution?.agent && message.replyAttribution?.model === replyAttribution?.model;
 
   if (kind === 'speak') {
     console.log(`[MessageDispatcher] SPEAK received → channel="${ agentId }", thread="${ msgThreadId }", content="${ content.slice(0, 80) }"`);
@@ -539,6 +571,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     });
   }
 
+  const replyBoundary = (message: ChatMessage) => message.role === 'user' || message.kind === 'tool_approval' ||
+    message.kind === 'tool_question' || (message.threadId && message.threadId !== msgThreadId);
+
   // ── Streaming: update in-place, but respect segment boundaries ──
   if (kind === 'streaming' && role === 'assistant') {
     // Streaming chunks carry the FULL accumulated text-so-far, not deltas.
@@ -546,13 +581,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     let existingIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.kind === 'streaming' && m.role === 'assistant' && !(m as any)._completed) {
+      if (replyBoundary(m)) break;
+      if (m.kind === 'streaming' && m.role === 'assistant' && m.threadId === msgThreadId && belongsToReply(m) && !(m as any)._completed) {
         existingIdx = i;
         break;
       }
     }
     if (existingIdx !== -1) {
-      ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent };
+      ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent, ...referenceUpdate };
       return;
     }
 
@@ -566,9 +602,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     let resurrectedIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.role === 'user') break;
+      if (replyBoundary(m)) break;
       if (m.role !== 'assistant') continue;
-      if (m.kind !== 'streaming') continue;
+      if (m.kind !== 'streaming' || m.threadId !== msgThreadId || !belongsToReply(m)) continue;
       const prev = (m.content || '').trim();
       if (!prev) continue;
       if (trimmedIncoming.startsWith(prev) || prev.startsWith(trimmedIncoming)) {
@@ -578,7 +614,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
     if (resurrectedIdx !== -1) {
       const existing = ctx.messages[resurrectedIdx];
-      ctx.messages[resurrectedIdx] = { ...existing, content: finalContent };
+      ctx.messages[resurrectedIdx] = { ...existing, content: finalContent, ...referenceUpdate };
       (ctx.messages[resurrectedIdx] as any)._completed = false;
       return;
     }
@@ -593,13 +629,19 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         break;
       }
     }
+    const id = uniqueMessageId(ctx, `${ Date.now() }_ws_streaming`);
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_streaming`,
+      id,
       channelId: agentId,
       threadId:  msgThreadId,
       role,
       kind,
       content:   finalContent,
+      ...(agentReporting ? { agentReporting } : {}),
+      ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
+      ...(replyAttribution ? { replyAttribution } : {}),
+      ...(replyStreamId ? { replyStreamId } : {}),
+      ...referenceUpdate,
     });
     return;
   }
@@ -633,7 +675,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── Thinking: accumulate into a single growing bubble ──
   if (kind === 'thinking' && role === 'assistant') {
-    appendThinkingMessage(ctx, agentId, msgThreadId, finalContent);
+    appendThinkingMessage(ctx, agentId, msgThreadId, finalContent,
+      msg.type === 'assistant_message' && (data?.reportingActivity === 'tool' || data?.reportingActivity === 'status')
+        ? data.reportingActivity : undefined);
     return;
   }
 
@@ -644,11 +688,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const recentStreamIndexes: number[] = [];
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.role !== 'assistant') break;
-      if (m.kind === 'streaming') recentStreamIndexes.push(i);
+      if (replyBoundary(m) || m.role !== 'assistant') break;
+      if (m.kind === 'streaming' && m.threadId === msgThreadId && belongsToReply(m)) recentStreamIndexes.push(i);
     }
 
-    if (recentStreamIndexes.length > 0) {
+    if (!terminalRunError && recentStreamIndexes.length > 0) {
       // The user has already seen the streaming segments. NEVER wipe them
       // here — abort messages, error notices, and other status pings would
       // erase the actual response content (this is the bug where hitting
@@ -675,10 +719,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (alreadyShown) {
         // A final dump can carry the last part of a formatted block after
         // a throttled stream update. Keep it in the existing bubble.
+        const lastSegment = recentStreamIndexes[0];
         if (recentStreamIndexes.length === 1 && incoming.length > streamed.length && incoming.startsWith(streamed)) {
-          const index = recentStreamIndexes[0];
-          ctx.messages[index] = { ...ctx.messages[index], content: finalContent };
+          ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: finalContent };
         }
+        if (explicitReferences?.length) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], ...referenceUpdate };
         // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
           const m = ctx.messages[i];
@@ -705,19 +750,18 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const message: ChatMessage = {
-    id:        `${ Date.now() }_ws_${ msg.type }`,
+    id:        uniqueMessageId(ctx, `${ Date.now() }_ws_${ msg.type }`),
     channelId: agentId,
     threadId:  msgThreadId,
     role,
     kind,
     content:   finalContent,
+    ...(terminalRunError ? { terminalRunError } : {}),
+    ...(agentReporting ? { agentReporting } : {}),
+    ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
+    ...(replyAttribution ? { replyAttribution } : {}),
+    ...referenceUpdate,
   };
-  const explicitReferences = Array.isArray(data?.fileReferences) ? data.fileReferences : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
-  const parsedReferences = role === 'assistant' ? parseDurableFileReferences(finalContent) : [];
-  if (explicitReferences.length || parsedReferences.length) {
-    message.fileReferences = [...explicitReferences, ...parsedReferences].filter((item:any, index, values) =>
-      values.findIndex((candidate:any) => candidate.fileId === item.fileId && candidate.versionId === item.versionId) === index);
-  }
 
   if (kind === 'channel_message') {
     message.channelMeta = {
@@ -803,8 +847,8 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       }
     }
 
-    // Skip chat-only tools
-    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
+    // Hidden browser publishes its own payload-free lifecycle in the originating thread.
+    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image' || ChatToolReporting.isBackgroundBrowse(toolName)) {
       return;
     }
 
@@ -814,6 +858,8 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     // as separate transcript cards.
 
     if (toolRunId) {
+      const existingId = ctx.toolRunIdToMessageId.get(toolRunId);
+      if (existingId && ctx.messages.some(message => message.id === existingId && message.threadId === msgThreadId)) return;
       const messageId = `${ Date.now() }_tool_${ toolRunId }`;
       const safeArgs = redactToolArgs(toolName, args) as Record<string, unknown>;
       const description = typeof safeArgs?.description === 'string' ? safeArgs.description : undefined;
