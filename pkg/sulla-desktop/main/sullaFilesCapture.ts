@@ -11,6 +11,7 @@ import path from 'node:path';
 import { BrowserWindow, app, clipboard, desktopCapturer, dialog, screen } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { ChatFilesImportHttpError } from '@pkg/main/ChatFilesImporter';
 import { callCaptureStudio, getCaptureStudioRecordingState, isCaptureStudioReady } from '@pkg/main/captureStudioRpc';
 import { importChatFiles, type ChatFilesReference } from '@pkg/main/sullaFilesChatImport';
 import { getSullaFilesLinkService, SharingUnavailableError, type CreateShareInput, type ShareLink, type ShareMode } from '@pkg/main/sullaFilesLinkService';
@@ -240,9 +241,14 @@ export class SullaFilesCapturePathClipboardService {
 
   async importIntoFiles(operation:() => Promise<CaptureResult>, isCurrent:() => boolean = () => true):Promise<CaptureResult | undefined> {
     if (!await this.filesRoot() || !isCurrent()) return undefined;
-    // The import API commits to its own store, not the Desktop directory. A
-    // missing local copy is checked separately; every import failure propagates.
-    return operation();
+    try {
+      return await operation();
+    } catch (error) {
+      // HTTP 503 does not establish why Files is unavailable. Preserve the
+      // private original only if the local destination independently vanished.
+      if (!(error instanceof ChatFilesImportHttpError) || error.status !== 503 || await this.filesRoot()) throw error;
+      return undefined;
+    }
   }
 
   private async resolveFile(root:string, relativePath:string):Promise<string> {

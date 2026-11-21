@@ -17,7 +17,7 @@ vi.mock('electron', () => ({
   screen: { getPrimaryDisplay: vi.fn() },
 }));
 
-import { ChatFilesImporter } from './ChatFilesImporter';
+import { ChatFilesImportHttpError, ChatFilesImporter } from './ChatFilesImporter';
 import { ChatFilesSourceGuard } from './ChatFilesSourceGuard';
 import { CloudShareContentNotFoundError, type ShareLink } from './sullaFilesLinkService';
 import { SullaFilesCapturePathClipboardService, SullaFilesCaptureService } from './sullaFilesCapture';
@@ -143,7 +143,8 @@ describe('tray screenshot Save to Files', () => {
 
   // Only the HTTP boundary is synthetic. The host directory disappears independently
   // of the response, after the real importer has opened and streamed the source.
-  function racingImporter(files:string, response:() => Response) {
+  function racingImporter(files:string, response:() => Response, detach = true) {
+    let attempt = 0;
     const stream = vi.fn(async(endpoint:string, init:RequestInit = {}) => {
       expect(init.method).toBe('PUT');
       const url = new URL(endpoint, 'https://files.example');
@@ -152,7 +153,7 @@ describe('tray screenshot Save to Files', () => {
       const chunks:Buffer[] = [];
       for await (const chunk of init.body as unknown as AsyncIterable<Buffer>) chunks.push(Buffer.from(chunk));
       expect(Buffer.concat(chunks)).toEqual(bytes);
-      await fs.rmdir(files);
+      if (detach) await fs.rename(files, `${ files }-detached-${ attempt++ }`);
       return response();
     });
     const importer = new ChatFilesImporter({
@@ -196,26 +197,56 @@ describe('tray screenshot Save to Files', () => {
     expect(choose).not.toHaveBeenCalled();
   }));
 
-  // risk: masking an import failure — no path copy or local write may hide a real API rejection.
-  it.each([
-    { status: 401, error: 'unauthorized', body: { error: 'unauthorized' } },
-    { status: 503, error: 'Files is locked; secure bootstrap is required', body: { code: 'FILES_LOCKED', error: 'Files is locked; secure bootstrap is required' } },
-    { status: 500, error: "ENOENT: no such file or directory, open '/var/lib/sulla-files/chunks/synthetic'", body: { error: "ENOENT: no such file or directory, open '/var/lib/sulla-files/chunks/synthetic'" } },
-  ])('keeps HTTP $status visible in capture and save even when the local root disappears', async({ status, error, body }) => fixture(async directory => {
+  // risk: data loss — a 503 after the root vanishes must retain the in-memory
+  // capture and only write the private fallback on an explicit save.
+  it('retains the original across capture and save when import returns 503 and the root disappears', async() => fixture(async directory => {
     const files = path.join(directory, 'Files');
     const downloads = path.join(directory, 'Downloads');
     await fs.mkdir(files);
     await fs.mkdir(downloads);
-    const { importFiles, stream } = racingImporter(files, () => Response.json(body, { status }));
+    const { importFiles, stream } = racingImporter(files, () => Response.json({ error: 'Files service unavailable' }, { status: 503 }));
     const clipboard = vi.fn();
     const choose = vi.fn();
     const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard, () => downloads);
     const service = new SullaFilesCaptureService(undefined, undefined, clipboard, importFiles);
 
-    await expect(service.prepareTrayScreenshot(name, bytes, destinations)).rejects.toThrow(error);
     const pending = await service.prepareTrayScreenshot(name, bytes, destinations);
+    expect(pending.capture).toBeUndefined();
+    expect(await fs.readdir(downloads)).toEqual([]);
+    expect(clipboard).not.toHaveBeenCalled();
+
     await fs.mkdir(files);
-    await expect(destinations.saveScreenshot(pending, choose, () => true, () => service.importTrayScreenshot(pending))).rejects.toThrow(error);
+    const saved = path.join(downloads, name);
+    await expect(destinations.saveScreenshot(pending, choose, () => true, () => service.importTrayScreenshot(pending))).resolves.toBe(saved);
+    expect(stream).toHaveBeenCalledTimes(2);
+    expect(pending.capture).toBeUndefined();
+    expect(await fs.readFile(saved)).toEqual(bytes);
+    expect(clipboard.mock.calls).toEqual([[saved]]);
+    expect(choose).not.toHaveBeenCalled();
+  }));
+
+  // risk: masking an import failure — no path copy or local write may hide a real API rejection.
+  it.each([
+    { status: 401, error: 'unauthorized', detach: true },
+    { status: 403, error: 'access denied', detach: true },
+    { status: 503, error: 'Files service unavailable', detach: false },
+    { status: 500, error: "ENOENT: no such file or directory, open '/var/lib/sulla-files/chunks/synthetic'", detach: true },
+  ])('keeps HTTP $status visible in capture and save (root disappears: $detach)', async({ status, error, detach }) => fixture(async directory => {
+    const files = path.join(directory, 'Files');
+    const downloads = path.join(directory, 'Downloads');
+    await fs.mkdir(files);
+    await fs.mkdir(downloads);
+    const { importFiles, stream } = racingImporter(files, () => Response.json({ error }, { status }), detach);
+    const clipboard = vi.fn();
+    const choose = vi.fn();
+    const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard, () => downloads);
+    const service = new SullaFilesCaptureService(undefined, undefined, clipboard, importFiles);
+
+    const expected = { constructor: ChatFilesImportHttpError, status, message: error };
+    await expect(service.prepareTrayScreenshot(name, bytes, destinations)).rejects.toMatchObject(expected);
+    const pending = { bytes, name };
+    if (detach) await fs.mkdir(files);
+    await expect(destinations.saveScreenshot(pending, choose, () => true, () => service.importTrayScreenshot(pending))).rejects.toMatchObject(expected);
     expect(stream).toHaveBeenCalledTimes(2);
     expect(await fs.readdir(downloads)).toEqual([]);
     expect(clipboard).not.toHaveBeenCalled();
