@@ -47,7 +47,7 @@ export class LateDecisionAnswerHandler {
     if (!queued) {
       const existing = await this.decisions.findById(record.id);
       if (existing && ['queued', 'processing', 'delivered'].includes(existing.answerDelivery ?? '')) return { settled: true, conversationId: record.conversationId, late: true, reason: 'Answer queued in the original chat.' };
-      return { settled: false, conversationId: record.conversationId, late: true, reason: 'This request changed. Refresh For You before answering.' };
+      return { settled: false, conversationId: record.conversationId, late: true, reason: 'This request changed. Refresh Decide before answering.' };
     }
     // Wake is best effort: the existing durable inbox also replays after restart.
     await this.sender.send(record.channel, { type: 'decision_answer_queued', data: { decisionId: record.id } }).catch(() => false);

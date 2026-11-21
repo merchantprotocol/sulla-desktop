@@ -192,7 +192,8 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
     return read(false, 0, true);
   };
   function onChanged(_event: unknown, record: DecisionRecord): void {
-    if (decisions.value.some(item => item.id === record.id) || record.conversationId === threadId.value) {
+    const presentationOwner = record.presentationConversationId ?? record.relatedConversationIds?.at(-1) ?? record.conversationId;
+    if (decisions.value.some(item => item.id === record.id) || presentationOwner === threadId.value) {
       put(record);
       checking.delete(record.id);
       unverified.delete(record.id);
@@ -254,7 +255,7 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
       return run(record, async() => {
         const owner = threadId.value; const version = generation; const started = eventVersion;
         const result = await ipcRenderer.invoke('decisions:dismiss', record.id, record.conversationId);
-        if (!result?.settled) throw new Error('This request changed. Refresh For You before dismissing it.');
+        if (!result?.settled) throw new Error('This request changed. Refresh Decide before dismissing it.');
         if (owner !== threadId.value || version !== generation) return;
         if ((changedAt.get(record.id) ?? 0) <= started) put({ ...record, attention: 'dismissed' });
         await read(false);

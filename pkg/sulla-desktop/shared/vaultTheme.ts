@@ -70,6 +70,7 @@ export function vaultThemeCss(value: unknown): string {
     'ok-soft':     'bg-success',
     'warn-soft':   'bg-warning',
     'bad-soft':    'bg-error',
+    'content-bg': 'bg-page',
     'nav-bg':      'bg-surface',
     'top-bg':      'bg-header',
     'ink-05':      'border-subtle',

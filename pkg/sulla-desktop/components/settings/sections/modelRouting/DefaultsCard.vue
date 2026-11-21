@@ -14,6 +14,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 import RoutingIcon from './RoutingIcon.vue';
+import ConfigurationLoadState from '../../ConfigurationLoadState.vue';
+import { useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 import { CLASS_LABELS, defaultResolution, modelName, providerName, providerOrder, type DefaultResolution } from './routingLogic';
 import {
   MODEL_DEFAULTS_IPC, sameModelDefaults, type DefaultAgentOption, type ModelDefaultChoice, type ModelDefaultKey, type ModelDefaultsState,
@@ -69,15 +71,11 @@ function remember(next: ModelDefaultsState) {
 }
 function adopt(next: ModelDefaultsState) { ds.value = next; snapshot = JSON.stringify(next); remember(next); }
 
-async function load() {
-  try {
-    const next: ModelDefaultsState = await ipcRenderer.invoke(MODEL_DEFAULTS_IPC.get);
-    for (const { key } of ROWS) { const r = next.recommended[key]; if (r.kind === 'agent') remembered[key].agentId = r.agentId; }
-    adopt(next);
-  } catch {
-    ds.value = null; // An older backend without Defaults: the card stays hidden.
-  }
-}
+const { error: loadError, start: load } = useConfigurationLoad(async() => {
+  const next: ModelDefaultsState = await ipcRenderer.invoke(MODEL_DEFAULTS_IPC.get);
+  for (const { key } of ROWS) { const r = next.recommended[key]; if (r.kind === 'agent') remembered[key].agentId = r.agentId; }
+  adopt(next);
+});
 
 /** Changes show at once; the main process validates them, and a rejected save puts the last saved value back. */
 async function save(key: ModelDefaultKey, value: ModelDefaultChoice) {
@@ -209,8 +207,14 @@ onBeforeUnmount(() => closeMenu());
 </script>
 
 <template>
+  <ConfigurationLoadState
+    v-if="!ds"
+    label="Loading model defaults…"
+    :error="loadError ? 'Couldn’t load model defaults.' : ''"
+    @retry="load"
+  />
   <section
-    v-if="ds"
+    v-else
     ref="root"
     class="card mr-card mr-def"
     :class="{ picking: !!openKey }"

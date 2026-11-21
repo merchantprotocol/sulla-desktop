@@ -44,10 +44,10 @@ export async function resolveRoutableAgent(agentId: string): Promise<RoutableAge
  * New chats default (Preferences → AI models → Defaults). An agent default routes to that agent (Sulla
  * if it's gone or turned off); a model default routes to Sulla carrying that model choice for the thread.
  */
-export async function resolveDefaultRouteAgent(): Promise<RoutableAgent> {
+export async function resolveDefaultRouteAgent(readOnly = false): Promise<RoutableAgent> {
   try {
     const { getModelDefaults, resolveDefaultChoice } = await import('../languagemodels/modelDefaults');
-    const resolved = await resolveDefaultChoice((await getModelDefaults()).chat);
+    const resolved = await resolveDefaultChoice((await getModelDefaults(readOnly)).chat);
     return { ...resolved.agent, ...(resolved.modelChoice ? { modelChoice: resolved.modelChoice } : {}) };
   } catch (err) {
     console.warn('[ChatAgentRouting] New chats default unavailable; using Sulla:', err);

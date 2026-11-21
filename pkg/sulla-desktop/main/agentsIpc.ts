@@ -34,6 +34,7 @@ import { StrandedManagerLifecycle } from '@pkg/agent/app/Services/StrandedManage
 
 import { readConversationLog, readConversationPreview, type AgentConversationEntry, type AgentConversationLogIdentity } from './agentConversationLog';
 
+import { tierEntries } from '@pkg/agent/languagemodels/agentModelTiers';
 import { DEFAULT_AGENT_RUN_LOCATION } from '@pkg/agent/database/models/AgentDefinitionModel';
 import type { ActiveAgent } from '@pkg/agent/services/ActiveAgentsRegistry';
 import { getDatabaseReadGuard } from './DatabaseReadGuard';
@@ -326,7 +327,7 @@ export function initAgentsIpc(): void {
     if (await agentDefinitionService.findBySlug(input.slug)) {
       throw new Error(`An agent with slug "${ input.slug }" already exists.`);
     }
-    const candidates = input.modelChoice?.mode === 'pin'
+    const candidates = input.modelTiers ? tierEntries(input.modelTiers).map(row => row.candidate) : input.modelChoice?.mode === 'pin'
       ? [
         {
           provider: input.modelChoice.provider,
@@ -363,19 +364,27 @@ export function initAgentsIpc(): void {
     if (candidates.length) {
       const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
       // Reject unrepresentable or unavailable pins before either the profile or owner mapping is written.
-      await workerModelRouting.validateSubscriptionCandidates(candidates);
+      await workerModelRouting.validateSubscriptionCandidates(candidates, input.modelTiers ? 100 : 10);
       const created = await agentDefinitionService.create({
         ...profile,
         enabled:       false,
       });
+      let binding: { editToken: string; revision: number } | undefined;
       try {
-        await workerModelRouting.initializeBindingForDefinition(input.slug, created.id, candidates);
-        const enabled = await agentDefinitionService.update(created.id, { enabled: input.enabled });
+        binding = await workerModelRouting.initializeNewBindingForDefinition(input.slug, created.id, candidates, input.modelTiers);
+        const enabled = await agentDefinitionService.update(created.id, { enabled: input.enabled }, created.updated_at);
         if (!enabled) throw new Error('The saved agent disappeared before activation.');
-        return enabled;
+        return { ...enabled, modelBindingReceipt: binding };
       } catch (error) {
-        const mappingRemoved = await workerModelRouting.removeBindingForDefinition(input.slug, created.id).then(() => true, () => false);
-        const profileRemoved = await agentDefinitionService.delete(created.id).catch(() => false);
+        const unchangedProfile = await agentDefinitionService.get(created.id).then(current => current?.updated_at === created.updated_at, () => false);
+        const mappingRemoved = unchangedProfile && (binding
+          ? await workerModelRouting.removeBindingForDefinition(input.slug, created.id, binding).catch(() => false)
+          : await import('@pkg/agent/languagemodels/modelRouter').then(async({ modelRouter }) => {
+            const existing = (await modelRouter.getEditableState()).workerBindings?.[input.slug];
+
+            return existing?.agentId !== created.id;
+          }).catch(() => false));
+        const profileRemoved = mappingRemoved && await agentDefinitionService.delete(created.id).catch(() => false);
         if (!mappingRemoved || !profileRemoved) {
           throw new Error(`The agent was not activated. Its exact profile remains disabled for recovery (${ created.id }); the requested model route could not be saved safely.`);
         }
@@ -399,19 +408,28 @@ export function initAgentsIpc(): void {
     return agentDefinitionService.update(id, definitionPatch, expectedUpdatedAt);
   });
 
-  ipcMain.handle('agent-definitions:delete', async(_event, id: string) => {
+  ipcMain.handle('agent-definitions:delete', async(_event, rawId: string) => {
+    const id = validateAgentDefinitionId(rawId);
     const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.delete(id);
+    const removed = await agentDefinitionService.removeFromEditor(id);
+    if (!removed) return false;
+    if (!removed.archived) {
+      const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+      await workerModelRouting.removeBindingForDefinition(removed.slug, id).catch(error => {
+        console.warn('[AgentsIPC] Could not clean up removed agent model settings:', error);
+      });
+    }
+    return true;
   });
 
   ipcMain.handle('agent-definitions:export', async(_event, slug: string) => {
-    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.exportManifest(slug);
+    const { exportLocalAgentPackage } = await import('./marketplace/localAgentPackages');
+    return exportLocalAgentPackage(slug);
   });
 
   ipcMain.handle('agent-definitions:import', async(_event, manifest: import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest) => {
-    const { agentDefinitionService } = await import('@pkg/agent/services/AgentDefinitionService');
-    return agentDefinitionService.importManifest(manifest);
+    const { importLocalAgentPackage } = await import('./marketplace/localAgentPackages');
+    return importLocalAgentPackage(manifest);
   });
 
   ipcMain.handle('agent-definitions:publish-check', async(_event, slug: string) => {

@@ -36,6 +36,16 @@ describe('persistent questions', () => {
     expect(afterRestart.reused).toBe(true);
     expect(f.decisions.insert).toHaveBeenCalledOnce();
   });
+  it('records one presentation owner without changing the exact answer target', async() => {
+    const f = fixture();
+    f.pending.ancestry.mockResolvedValueOnce(['thread-a', 'parent-root']);
+    const receipt = await f.service.requestQuestion(input);
+    expect(receipt.record).toMatchObject({
+      conversationId: 'thread-a',
+      relatedConversationIds: ['thread-a', 'parent-root'],
+      presentationConversationId: 'parent-root',
+    });
+  });
   it('serializes concurrent exact repeats into one card', async() => {
     const f = fixture();
     const receipts = await Promise.all(Array.from({ length: 10 }, () => f.service.requestQuestion(input)));

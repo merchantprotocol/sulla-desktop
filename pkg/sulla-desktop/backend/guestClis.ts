@@ -20,8 +20,8 @@ import { sullaRuntimeDirectory } from './sullaRuntime/artifacts';
 const log = Logging.background;
 
 export const GUEST_CLI_PACKAGES = {
-  claude: '@anthropic-ai/claude-code@2.1.329',
-  codex:  '@openai/codex@0.170.0',
+  claude: '@anthropic-ai/claude-code@2.1.330',
+  codex:  '@openai/codex@0.171.0',
 } as const;
 
 export type GuestCli = keyof typeof GUEST_CLI_PACKAGES;

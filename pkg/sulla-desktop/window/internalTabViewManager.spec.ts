@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
       reload: vi.fn(),
     };
     setBounds = vi.fn();
+    setBackgroundColor = vi.fn();
   },
 }));
 
@@ -77,6 +78,7 @@ describe('InternalTabViewManager', () => {
     expect(instance.tabs.size).toBe(0);
     instance.activate(owner, 'one', 'main', bounds);
     const tab = instance.tabs.get('one');
+    expect(tab.view.setBackgroundColor).toHaveBeenCalledWith('#0d1117');
     expect(tab.view.webContents.loadURL).toHaveBeenCalledWith(expect.stringMatching(/^app:\/\/\.\/agent\.html\?tabHost=1&tabId=one&windowKey=main&startupId=/));
     expect(owner.contentView.addChildView).not.toHaveBeenCalled();
     instance.markChromeReady(owner);
@@ -154,7 +156,7 @@ describe('InternalTabViewManager', () => {
     expect(owner.contentView.addChildView).not.toHaveBeenCalled();
   });
 
-  it('keeps child views with a background tab and notifies only when its host is disposed', () => {
+  it('reports native layout and tab switches without disposing the host', () => {
     // risk: switching tabs must hide a vault child without leaving it on top of the next tab
     const owner = ownerWindow(10);
     const instance = manager() as any;
@@ -165,9 +167,20 @@ describe('InternalTabViewManager', () => {
     const disposed = vi.fn();
     expect(instance.hostViewForSender(sender)).toBe(host);
     expect(instance.onHostDisposed(sender, disposed)).toEqual(expect.any(Function));
+    const layout = vi.fn();
+    const stop = instance.observeHostLayout(sender, layout);
+    expect(layout).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 20, height: 20 }, false);
     instance.setVisible(owner, 'vault-tab', false);
+    expect(layout).toHaveBeenLastCalledWith(null, false);
+    const moved = { x: 200, y: 60, width: 450, height: 340 };
+    instance.setBounds(owner, 'vault-tab', moved);
+    expect(layout).toHaveBeenLastCalledWith(null, false);
     expect(disposed).not.toHaveBeenCalled();
     instance.setVisible(owner, 'vault-tab', true);
+    expect(layout).toHaveBeenLastCalledWith(moved, true);
+    instance.beginShutdown();
+    expect(layout).toHaveBeenLastCalledWith(null, false);
+    stop();
     expect(disposed).not.toHaveBeenCalled();
     instance.destroy(owner, 'vault-tab');
     expect(disposed).toHaveBeenCalledOnce();
@@ -284,6 +297,26 @@ describe('InternalTabViewManager', () => {
     expect(() => instance.openWorkspaceTab(chat, { mode: 'browser', url: 'file:///private/report.md' })).toThrow('Invalid workspace tab request');
   });
 
+  it('routes the Files home, exact attachment version and approved detail actions to the owning shell', () => {
+    const owner = ownerWindow(12);
+    const instance = manager() as any;
+    instance.activate(owner, 'chat', 'main', { x: 0, y: 0, width: 20, height: 20 });
+    const sender = instance.tabs.get('chat').view.webContents;
+    const home = { mode: 'files', title: 'File Manager' };
+    const details = {
+      ...home,
+      filesNavigation: { fileId: 'screenshot', path: 'files/screenshot.jpeg', collectionId: 'my-files', versionId: 'attached', section: 'detail' },
+    };
+    const history = { ...details, filesNavigation: { ...details.filesNavigation, section: 'versions' } };
+    instance.openWorkspaceTab(sender, home);
+    instance.openWorkspaceTab(sender, details);
+    instance.openWorkspaceTab(sender, history);
+    expect(owner.webContents.send.mock.calls).toEqual([home, details, history].map(request => ['internal-tab-view:open-workspace-tab', request]));
+    expect(() => instance.openWorkspaceTab(sender, {
+      ...details, filesNavigation: { ...details.filesNavigation, section: 'trash' },
+    })).toThrow('Invalid workspace tab request');
+  });
+
   it('keeps hosted chat activity with its current owner and clears it on renderer loss', () => {
     const owner = ownerWindow(14);
     const other = ownerWindow(15);
@@ -300,6 +333,45 @@ describe('InternalTabViewManager', () => {
     expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', true);
     chat.listeners['render-process-gone']();
     expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-running', 'chat', false);
+  });
+
+  it('forwards the hosted chat status to its shell and replays it after shell startup', () => {
+    const owner = ownerWindow(17);
+    const other = ownerWindow(18);
+    const instance = manager() as any;
+    const bounds = { x: 0, y: 0, width: 20, height: 20 };
+    instance.activate(owner, 'one', 'main', bounds);
+    instance.activate(other, 'two', 'second', bounds);
+    const chat = instance.tabs.get('one').view.webContents;
+    const working = { state: 'working', active: true };
+    const waiting = { state: 'waiting', active: false };
+
+    instance.notifyChatActivity(chat, 'two', working);
+    instance.notifyChatActivity(owner.webContents, 'one', working);
+    instance.notifyChatActivity(chat, 'one', { state: 'unrecognized', active: true });
+    expect(owner.webContents.send).not.toHaveBeenCalled();
+    expect(other.webContents.send).not.toHaveBeenCalled();
+
+    instance.notifyChatActivity(chat, 'one', working);
+    instance.notifyChatActivity(chat, 'one', working);
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:chat-activity', 'one', working);
+
+    instance.setVisible(owner, 'one', false);
+    instance.markChromeReady(owner);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', working);
+
+    instance.moveToWindow('one', other);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', null);
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', working);
+
+    instance.notifyChatActivity(chat, 'one', waiting);
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', waiting);
+
+    instance.notifyChatActivity(chat, 'one', { ...waiting, active: true });
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'one', { ...waiting, active: true });
+
+    chat.listeners['render-process-gone']();
+    expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-activity', 'one', null);
   });
 
   it('hands a tab its descriptor only through its own renderer', () => {

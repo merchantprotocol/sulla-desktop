@@ -43,7 +43,7 @@ describe('persistent questions over MCP', () => {
   });
   it('keeps the durable receipt when the transient transcript notification is unavailable', async() => {
     f.emit.mockResolvedValue(false);
-    expect((await tool().handler(input, {})).content[0].text).toContain('For You');
+    expect((await tool().handler(input, {})).content[0].text).toContain('Decide');
   });
   it('reports an already-saved queued answer without asking for another selection', async() => {
     f.requestQuestion.mockResolvedValue({ record: { id: 'q-1', answerDelivery: 'queued', answers: [{ question: 'Color?', selected: ['Blue'] }] }, reused: true });

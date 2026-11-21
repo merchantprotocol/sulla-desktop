@@ -2,6 +2,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+import { cleanAgentModelTiers } from '../agent/languagemodels/agentModelTiers';
+
 import type {
   AgentCostTier,
   AgentModelSlot,
@@ -45,6 +47,7 @@ const CREATE_KEYS = new Set([
   'modelSlot',
   'modelChoice',
   'modelFallbacks',
+  'modelTiers',
   'enabled',
   'whenToCall',
   'whenNotToCall',
@@ -60,7 +63,7 @@ const CREATE_KEYS = new Set([
 
 const PATCH_KEYS = new Set(
   [...CREATE_KEYS]
-    .filter((key) => key !== 'slug' && key !== 'modelFallbacks')
+    .filter((key) => key !== 'slug' && key !== 'modelFallbacks' && key !== 'modelTiers')
     .concat('expectedUpdatedAt'),
 );
 
@@ -383,6 +386,17 @@ export function validateAgentEditorCreateInput(
 
   const common = readCommonFields(record, true);
   const modelFallbacks = readModelFallbacks(record) ?? [];
+  let modelTiers;
+  if (has(record, 'modelTiers')) {
+    if (has(record, 'modelFallbacks') || common.modelChoice?.mode === 'pin') {
+      throw new AgentEditorValidationError('modelTiers cannot be combined with modelFallbacks or a pinned modelChoice.');
+    }
+    try {
+      modelTiers = cleanAgentModelTiers(record.modelTiers);
+    } catch (cause) {
+      throw new AgentEditorValidationError(`modelTiers: ${ cause instanceof Error ? cause.message : String(cause) }`);
+    }
+  }
   if (!common.name) throw new AgentEditorValidationError('name is required.');
   if (modelFallbacks.length && common.modelChoice?.mode !== 'pin') {
     throw new AgentEditorValidationError(
@@ -413,6 +427,7 @@ export function validateAgentEditorCreateInput(
     modelSlot:   common.modelSlot ?? 'secondary',
     modelChoice: common.modelChoice ?? { mode: 'list' },
     modelFallbacks,
+    ...(modelTiers ? { modelTiers } : {}),
     ...(common.provider === undefined ? {} : { provider: common.provider }),
     ...(common.runLocation === undefined
       ? {}

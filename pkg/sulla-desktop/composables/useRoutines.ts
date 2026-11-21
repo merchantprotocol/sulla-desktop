@@ -23,6 +23,7 @@
  */
 
 import { computed, ref } from 'vue';
+import { useConfigurationLoad } from './useConfigurationLoad';
 
 import type {
   RoutineCategory,
@@ -155,7 +156,7 @@ function rowToSummary(row: DbListRow): RoutineSummary {
 }
 
 async function fetchRoutines(): Promise<RoutineSummary[]> {
-  const rows = await ipcRenderer.invoke('workflow-db-list');
+  const rows = await ipcRenderer.invoke('workflow-db-list', { strict: true });
 
   return rows.map(rowToSummary);
 }
@@ -182,27 +183,22 @@ function computeStats(routines: RoutineSummary[]): RoutinesStats {
 
 export function useRoutines() {
   const routines = ref<RoutineSummary[]>([]);
-  const isLoading = ref(false);
-  const error = ref<string | null>(null);
+  const actionError = ref<string | null>(null);
+  const { loading: isLoading, error: loadError, start: startLoad } = useConfigurationLoad(async() => {
+    routines.value = await fetchRoutines();
+  });
+  const error = computed({ get: () => loadError.value || actionError.value, set: value => { actionError.value = value } });
 
   async function load(): Promise<void> {
-    isLoading.value = true;
-    error.value = null;
-    try {
-      routines.value = await fetchRoutines();
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
-      routines.value = [];
-    } finally {
-      isLoading.value = false;
-    }
+    actionError.value = null;
+    await startLoad();
   }
 
   async function refresh(): Promise<void> {
     return load();
   }
 
-  // workflow-db-list returns [] while the database is starting; refill when it is up.
+  // Strict reads wait for the boot gate. A brief database outage rejoins on database:available.
   useDatabaseAvailableReload(load, 'useRoutines');
 
   /**
@@ -267,7 +263,7 @@ export function useRoutines() {
 
       // load() deliberately captures IPC failures rather than throwing.
       // Do not announce success when the refreshed list could not be read.
-      return error.value === null;
+      return !isLoading.value && error.value === null;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
 

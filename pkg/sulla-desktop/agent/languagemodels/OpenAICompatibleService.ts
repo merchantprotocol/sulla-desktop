@@ -284,6 +284,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
     let content = '';
     let finishReason: string | undefined;
+    let reportedModel: string | undefined;
     let reasoning = '';
     const toolCallDeltas = new Map<number, { id?: string; name: string; arguments: string }>();
     let promptTokens = 0;
@@ -303,6 +304,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       }
 
       const choice = parsed.choices?.[0];
+      if (choice && typeof parsed.model === 'string') reportedModel = parsed.model;
 
       if (!choice) {
         // Usage-only chunk (some providers send usage in a separate final chunk)
@@ -404,6 +406,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         prompt_tokens:      promptTokens,
         completion_tokens:  completionTokens,
         model:              this.model,
+        reportedModel,
         tool_calls:         toolCalls.length > 0 ? toolCalls : undefined,
         finish_reason:      this.normalizeFinishReason(finishReason),
         reasoning:          reasoning.trim() || undefined,
@@ -533,6 +536,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     let content = '';
     let reasoning = '';
     let finishReason: string | undefined;
+    let reportedModel: string | undefined;
     const toolCalls: { id?: string; name: string; args: any }[] = [];
     let promptTokens = 0;
     let completionTokens = 0;
@@ -585,6 +589,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
 
       case 'response.completed':
       case 'response.incomplete': {
+        if (typeof parsed.response?.model === 'string') reportedModel = parsed.response.model;
         const usage = parsed.response?.usage;
 
         if (usage) {
@@ -631,6 +636,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         prompt_tokens:     promptTokens,
         completion_tokens: completionTokens,
         model:             this.model,
+        reportedModel,
         tool_calls:        toolCalls.length > 0 ? toolCalls : undefined,
         finish_reason:     this.normalizeFinishReason(finishReason),
         reasoning:         reasoning.trim() || undefined,

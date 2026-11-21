@@ -16,13 +16,12 @@
     autocomplete="off"
     autocorrect="off"
     spellcheck="false"
-    @input="autogrow"
     @keydown="onKeydown"
   />
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 
 import { useFocusGuard } from '@pkg/composables/useFocusGuard';
 
@@ -41,29 +40,8 @@ const taRef = ref<HTMLTextAreaElement | null>(null);
 useFocusGuard(taRef);
 const model = ref(props.modelValue);
 
-// Defer autogrow to the next frame so the textarea has actually been
-// painted with the new value before we measure scrollHeight. Without
-// this, clearing the draft (after send) measures the pre-clear height
-// and leaves the textarea oversized.
-watch(() => props.modelValue, v => {
-  if (v !== model.value) {
-    model.value = v;
-    void nextTick(autogrow);
-  }
-});
-watch(model, v => emit('update:modelValue', v));
-
-onMounted(autogrow);
-
-function autogrow(): void {
-  const el = taRef.value; if (!el) return;
-  el.style.overflowY = 'hidden';
-  el.style.height = 'auto';
-  // scrollHeight includes padding, but a border-box height also needs the border.
-  const borderHeight = el.offsetHeight - el.clientHeight;
-  el.style.height = Math.min(160, el.scrollHeight + borderHeight) + 'px';
-  el.style.overflowY = el.scrollHeight > el.clientHeight ? 'auto' : 'hidden';
-}
+watch(() => props.modelValue, value => { model.value = value });
+watch(model, value => emit('update:modelValue', value));
 
 function onKeydown(e: KeyboardEvent): void {
   emit('keydown', e);
@@ -99,7 +77,8 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   font-size: 18px !important;
 }
 .input {
-  flex: 0 0 100%;
+  flex: 0 0 100%; align-self: flex-start;
+  field-sizing: content; overflow-y: auto;
   width: 100%; min-height: 54px; max-height: 160px;
   margin: 0 !important; padding: 15px 18px 10px !important;
   border: 0 !important; border-radius: 0 !important; outline: 0 !important;
@@ -108,6 +87,8 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   font-style: normal !important; line-height: 1.45; letter-spacing: -0.005em;
   caret-color: var(--text-primary);
 }
+/* A long placeholder can wrap when the composer is narrow. */
+.input:placeholder-shown { height: 54px; overflow-y: hidden; }
 .input::placeholder {
   color: var(--text-dim) !important; opacity: 1;
   font-family: var(--font-body) !important; font-size: 15.5px !important; font-style: normal !important;

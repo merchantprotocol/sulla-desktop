@@ -21,6 +21,8 @@ export interface DecisionRecord {
   supersededBy?:           string;
   /** Exact durable ancestry; kept after completed worker jobs are pruned. */
   relatedConversationIds?: string[];
+  /** The one chat allowed to present this request as actionable. Answer delivery still targets conversationId. */
+  presentationConversationId?: string;
   questions?:              { question: string; header?: string; multiSelect?: boolean; task?: boolean; command?: string; options: { label: string; description?: string }[] }[];
   /** What the user chose, kept so an answer survives even if delivering it fails. */
   answers?:                { question: string; selected: string[] }[];

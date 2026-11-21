@@ -274,7 +274,9 @@ dbDescribe('AgentJobRepository', () => {
   it('projects completion status separately from a stale task error status', async() => {
     // risk: a successfully completed task is rolled up as failed after compact projection
     const input = job('projection-completion-status');
-    input.tasks[0] = { ...input.tasks[0], status: 'error', completion: {
+    const responseModels = [{ model: 'gpt-6.2-sol', provider: 'codex', effort: 'high', source: 'resolved' as const }];
+    const decisionIds = ['decision-one'];
+    input.tasks[0] = { ...input.tasks[0], status: 'error', responseModels, decisionIds, completion: {
       label: 'lane', status: 'completed', output: 'synthetic success', threadId: 'projection-completion-thread',
     } };
     await repository.insertJob(input);
@@ -282,7 +284,7 @@ dbDescribe('AgentJobRepository', () => {
 
     const [projected] = await repository.jobsForProjection(120_000);
     expect(projected.tasks[0]).toMatchObject({
-      status: 'error', completion: { status: 'completed' },
+      status: 'error', completion: { status: 'completed' }, responseModels, decisionIds,
     });
   });
 

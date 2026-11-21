@@ -108,4 +108,20 @@ describe('the finished-agent card', () => {
 
     expect(item).toMatchObject({ verdict: 'Blocked', tone: 'warn', outcome: 'Need the QA account password.' });
   });
+
+  it('projects legacy receipts when persisted task and result arrays contain empty slots', () => {
+    const legacyJob = {
+      ...job,
+      tasks:   [null, job.tasks[0]],
+      results: [null, result],
+    } as any;
+
+    const item = new AgentResultCardBuilder(undefined).recorded(legacyJob, 1);
+
+    expect(item).toMatchObject({
+      label:    'Merge train',
+      threadId: 'spawn-merge',
+      report,
+    });
+  });
 });

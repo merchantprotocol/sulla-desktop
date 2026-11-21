@@ -14,6 +14,7 @@ async function fixture() {
   service.readinessWaits = new Map();
   service.dispatchedRuns = new Set();
   service.activeAborts = new Map();
+  service.restartResumeCheckin = vi.fn(() => Promise.resolve(null));
   service.emitMessage = vi.fn();
   service.executeReadyTurn = vi.fn(() => Promise.resolve('accepted'));
   return service;
@@ -83,13 +84,29 @@ describe('startup-only dispatch guard', () => {
   it('starts another recovered worker without waiting for the first to finish', async() => {
     runtime.ready = true;
     const service = await fixture(); service.recoveryAbort = new AbortController();
+    service.hasActiveRun = vi.fn((_channel: string, threadId: string) =>
+      service.executeReadyTurn.mock.calls.some((args: any[]) => args[3] === threadId));
     let finish!: () => void;
     service.executeReadyTurn.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve('accepted') }));
     const job = { jobId: 'old', parentChannel: 'desktop', tasks: [{ threadId: 'one', agentId: 'luna' }, { threadId: 'two', agentId: 'luna' }] };
-    service.resumeInterruptedTask(job, 0); service.resumeInterruptedTask(job, 1);
+    const firstLaunch = service.resumeInterruptedTask(job, 0); const secondLaunch = service.resumeInterruptedTask(job, 1);
     await vi.waitFor(() => expect(service.executeReadyTurn).toHaveBeenCalledTimes(2));
+    await Promise.all([firstLaunch, secondLaunch]);
     expect(service.executeReadyTurn.mock.calls.map((args: any[]) => args[3])).toEqual(['one', 'two']);
     finish(); await Promise.all([...service.dispatchedRuns]);
+  });
+
+  it('reports an early recovered-worker dispatch failure to the startup retry loop', async() => {
+    vi.useFakeTimers(); runtime.ready = true;
+    const service = await fixture(); service.recoveryAbort = new AbortController();
+    service.dispatchToAgent = vi.fn(() => Promise.reject(new Error('temporary dispatch failure')));
+    const job = { jobId: 'old', parentChannel: 'desktop', tasks: [{ threadId: 'one', agentId: 'quick-fixer' }] };
+
+    const launch = service.resumeInterruptedTask(job, 0);
+    const rejected = expect(launch).rejects.toThrow('temporary dispatch failure');
+    await vi.runAllTimersAsync();
+
+    await rejected;
   });
 
   it('rechecks skipped startup jobs, excludes new work and never reclaims an already resumed job', async() => {
@@ -97,6 +114,7 @@ describe('startup-only dispatch guard', () => {
     const service = await fixture(); service.recoveryAbort = new AbortController();
     service.recoveryCutoff = Date.now(); service.agentInbox = { replayPending: vi.fn() };
     service.subscribeToAgentChannels = vi.fn(); service.hasPendingDecision = vi.fn().mockResolvedValue(true);
+    service.hasActiveRun = vi.fn((_channel: string, threadId: string) => threadId === 'busy-sibling');
     const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
     const { agentWaitProvider } = await import('../../../services/AgentWaitServices');
     const completion = await import('../../../services/AgentCompletionRecoveryService');
@@ -108,7 +126,10 @@ describe('startup-only dispatch guard', () => {
     vi.spyOn(agentWaitProvider.scheduler, 'start').mockResolvedValue(undefined);
     vi.spyOn(completion, 'recoverPendingAgentCompletions').mockResolvedValue(undefined);
     vi.spyOn(lifecycle.returnedTaskSettlement, 'settleStranded').mockResolvedValue(0);
-    const old = { jobId: 'old', createdAt: service.recoveryCutoff - 1000, status: 'running', visibility: 'hidden', parentChannel: 'desktop', tasks: [{ status: 'running', threadId: 'old-thread', agentId: 'luna' }] } as any;
+    const old = { jobId: 'old', createdAt: service.recoveryCutoff - 1000, status: 'running', visibility: 'hidden', parentChannel: 'desktop', tasks: [
+      { status: 'running', threadId: 'busy-sibling', agentId: 'luna' },
+      { status: 'running', threadId: 'old-thread', agentId: 'luna' },
+    ] } as any;
     const newer = { ...old, jobId: 'new', createdAt: service.recoveryCutoff + 1000 };
     vi.spyOn(agentJobProvider.jobs, 'jobsForList').mockResolvedValue([old, newer]);
     const claim = vi.spyOn(agentJobProvider.states, 'claimInterruptedJob').mockImplementation(async(_id, _max, eligible) =>
@@ -121,5 +142,6 @@ describe('startup-only dispatch guard', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(claim.mock.calls.map(call => call[0])).toEqual(['old', 'old']);
     expect(service.executeReadyTurn).toHaveBeenCalledTimes(1);
+    expect(service.executeReadyTurn.mock.calls[0][3]).toBe('old-thread');
   });
 });

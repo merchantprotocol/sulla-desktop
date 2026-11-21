@@ -26,7 +26,6 @@
     class="composer-wrap"
   >
     <div class="composer-inner">
-      <RunControls />
       <CommandPopover @choose="choosePopoverItem" />
       <ShelfPanel
         v-if="shelfRequest"
@@ -194,6 +193,7 @@
               <span>{{ usagePercent }}%</span>
             </button>
             <ComposerMic :live="isRecording" @toggle="toggleVoice" />
+            <RunControls />
             <ComposerSend
               :running="controller.isRunning.value"
               :can-send="canSendDraft"
@@ -238,6 +238,11 @@
             <span><kbd>↓</kbd> suggestions</span>
             <span><kbd>{{ modKey }}1–5</kbd> pick</span>
             <span><kbd>esc</kbd> hide</span>
+          </template>
+          <template v-else-if="controller.isRunning.value">
+            <span v-if="draft.trim()"><kbd>⏎</kbd> queue</span>
+            <span v-else>messages queue while Sulla works</span>
+            <span><kbd>⇧⏎</kbd> new line</span>
           </template>
           <template v-else-if="draft.trim()">
             <span><kbd>⏎</kbd> send</span>
@@ -322,7 +327,7 @@ const filesImportError = ref('');
 // ─── Placeholder + keyboard hints ──────────────────────────────────
 const placeholder = computed(() => {
   return controller.isRunning.value
-    ? 'send while Sulla is working — queued'
+    ? 'Add a message to the queue…'
     : 'Ask Sulla anything…';
 });
 
@@ -369,7 +374,7 @@ const intentSendHint = computed(() => {
   return `send + run ${ picked.title }`;
 });
 /** The hint row says something beyond the placeholder: recording, a menu, a draft or a use case. */
-const contextualHints = computed(() => isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
+const contextualHints = computed(() => controller.isRunning.value || isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
 function pickUseCase(item: SuggestedUseCase): void {
   useCases.pick(item);
   inputRef.value?.focus();

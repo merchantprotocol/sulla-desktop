@@ -20,6 +20,10 @@ export class AgentLineageIndex {
   constructor(private readonly jobs: AgentJob[]) {
     for (const job of [...jobs].sort((left, right) => left.createdAt - right.createdAt)) {
       job.tasks.forEach((task, taskIndex) => {
+        // Older interrupted jobs can retain a null JSON array slot. Preserve
+        // task indexes, but do not let one malformed historical slot hide the
+        // rest of the chat's lineage.
+        if (!task) return;
         if (task.threadId && !this.taskByThreadId.has(task.threadId)) this.taskByThreadId.set(task.threadId, { job, taskIndex });
       });
     }
@@ -57,7 +61,7 @@ export class AgentLineageIndex {
       for (const job of this.jobs) {
         if (includedJobs.has(job.jobId) || !job.parentThreadId || !includedThreads.has(job.parentThreadId)) continue;
         includedJobs.add(job.jobId);
-        for (const task of job.tasks) if (task.threadId) includedThreads.add(task.threadId);
+        for (const task of job.tasks) if (task?.threadId) includedThreads.add(task.threadId);
         changed = true;
       }
     }

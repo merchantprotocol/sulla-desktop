@@ -389,7 +389,7 @@ export class MCPServerHost {
       'ask_user_question',
       {
         description: [
-          'Save one or more persistent multiple-choice questions in For You. Returns a saved-question receipt immediately; the user answers later in the original chat.',
+          'Save one or more persistent multiple-choice questions in Decide. Returns a saved-question receipt immediately; the user answers later in the original chat.',
           'The card stays until answered or dismissed. The saved answer arrives through the durable chat mailbox. End the current turn; do not infer a choice or repeat the question.',
           'Use this whenever the next step requires the user to choose. Continue decision-dependent work only after their saved answer arrives; independent work can continue separately.',
         ].join(' '),

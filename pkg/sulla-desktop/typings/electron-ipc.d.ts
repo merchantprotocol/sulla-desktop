@@ -78,6 +78,7 @@ export interface SullaFileReference {
  */
 export interface IpcMainEvents {
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-activity': (tabId: string, state: import('@pkg/shared/chatTabActivity').ChatTabActivity | null) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -260,6 +261,12 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'chat-workflow:get': (threadId: string, includePreviews?: boolean, picker?: import('@pkg/shared/productOwnerWorkflow').ChatModelPickerSelection) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:save': (input: import('@pkg/shared/productOwnerWorkflow').WorkflowSaveInput) => import('@pkg/shared/productOwnerWorkflow').WorkflowPlan;
+  'chat-workflow:outcomes': (threadId: string, conversationId: string) => import('@pkg/shared/productOwnerWorkflow').ChatOutcomeArchive;
+  'chat-workflow:history': (threadId: string) => import('@pkg/shared/productOwnerWorkflow').WorkflowRunRow[];
+  'chat-workflow:execution': (threadId: string, reference: { jobId: string; taskIndex: number } | null) => import('@pkg/shared/agentState/AgentModelStatus').AgentModelStatusValue[];
+
   'chat:run-state': (channelId: string, threadId: string) => boolean;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
@@ -500,6 +507,8 @@ export interface IpcMainInvokeEvents {
   'sulla-cloud:email-code-verify':     (email: string, code: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; needsPassword?: boolean; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:email-continue':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; isNewUser?: boolean; accountExists?: boolean; retryAfter?: number; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-settings:wait-for-backends': (payload: { startupId: string; windowKey: string }) => void;
+  'vault:view-owned': (ownerId: string) => boolean;
+  'vault:view-open': (bounds: Electron.Rectangle, hint?: Record<string, unknown>) => { state: 'opened'; expiresAt: number } | { state: 'cancelled' };
   'sulla-startup:stage': (payload: { startupId: string; windowKey: string; event: string; status: 'start' | 'end' | 'failure'; elapsedMs: number }) => boolean;
 
   // Settings → Sulla Cloud (see main/cloud/cloudLifecycle.ts). Status shape: CloudConnectionStatus.
@@ -751,7 +760,7 @@ export interface IpcMainInvokeEvents {
   'agents:conversations':          (channel: string, limit?: number, offset?: number) => import('@pkg/main/agentsIpc').AgentConversationSummary[];
   'agents:conversation':           (id: string) => import('@pkg/main/agentsIpc').AgentConversationDetail | null;
   'agent-definitions:list':        (options?: import('@pkg/main/agentsIpc').AgentDefinitionsListOptions) => import('@pkg/main/agentsIpc').AgentDefinitionResponse[];
-  'agent-definitions:create':      (input: import('@pkg/shared/agentEditor').AgentEditorCreateRequest) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition;
+  'agent-definitions:create':      (input: import('@pkg/shared/agentEditor').AgentEditorCreateRequest) => import('@pkg/shared/agentEditor').AgentEditorCreateResponse;
   'agent-definitions:update':      (id: string, patch: import('@pkg/shared/agentEditor').AgentEditorPatch) => import('@pkg/agent/database/models/AgentDefinitionModel').AgentDefinition | null;
   'agent-definitions:delete':      (id: string) => boolean;
   'agent-definitions:export':      (slug: string) => import('@pkg/agent/services/AgentDefinitionService').AgentMarketplaceManifest;
@@ -764,6 +773,7 @@ export interface IpcMainInvokeEvents {
   'model-defaults:get': () => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
   'model-defaults:set': (patch: Partial<import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaults>) => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
   'model-defaults:reset': () => import('@pkg/agent/languagemodels/modelDefaultsTypes').ModelDefaultsState;
+  'model-routing:preview': (input: import('@pkg/shared/modelLaunchPreview').AgentPreviewRequest) => import('@pkg/shared/modelLaunchPreview').ModelLaunchPreview;
   'model-routing:get':   () => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'model-routing:set':   (patch: Partial<Pick<import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder'>>) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
   'model-routing:reset': (target: { section: 'agents' | 'subconscious' | 'classes'; class?: import('@pkg/agent/languagemodels/modelRoutingTypes').ModelClass }) => import('@pkg/agent/languagemodels/modelRoutingTypes').ModelRoutingState;
@@ -785,8 +795,8 @@ export interface IpcMainInvokeEvents {
   'workflow-check-updated': (workflowId: string, editorUpdatedAt: string) => { changed: boolean; diskUpdatedAt: string };
 
   // DB-backed workflow reads (Phase 1 verification path for the Postgres cutover)
-  'workflow-db-list':     () => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
-  'workflow-db-get':      (workflowId: string) => any;
+  'workflow-db-list':     (options?: { strict?: boolean }) => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
+  'workflow-db-get':      (workflowId: string, options?: { strict?: boolean }) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
   'workflow-run-summaries': () => import('@pkg/main/workflowRunSummaries').WorkflowRunSummaries;
   'workflow-run-detail':    (executionId: string) => import('@pkg/main/workflowRunSummaries').WorkflowRunDetail | null;
@@ -1357,6 +1367,7 @@ export interface IpcRendererEvents {
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-activity': (tabId: string, state: import('@pkg/shared/chatTabActivity').ChatTabActivity | null) => void;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:loaded': (tabId: string) => void;
@@ -1367,6 +1378,7 @@ export interface IpcRendererEvents {
   'tabs:activate': (transferId: string, tabId: string) => void;
   'threat-proxy:status-changed': (status: import('@pkg/main/threat-proxy').ThreatProxyStatus) => void;
 
+  'model-routing:changed': () => void;
   'model-routing:status': (providers: import('@pkg/agent/languagemodels/modelRoutingTypes').RoutingProviderInfo[]) => void;
   'extension-permission-needed': (event: import('@pkg/agent/extensions/HookRegistry').HookAuditEvent) => void;
   [channel:`sulla-files:live:${string}`]:(event:import('@pkg/pages/files/liveTypes').FilesLiveEvent)=>void;

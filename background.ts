@@ -10,6 +10,8 @@
 // a handler, so web content in browser tabs can't reach privileged IPC.
 // eslint-disable-next-line import-x/order
 import '@pkg/main/ipcGuestGuard';
+// Keep Electron and child processes off removable or unavailable inherited temp paths.
+import '@pkg/main/startup/installTempDirectoryGuard';
 // Side effect: registers the pinned-TLS Files transport so agent-side Files calls resolve it in Desktop main. Keep it early.
 import '@pkg/main/sullaFilesTls';
 // Side effect: registers the first-run timeline as the trace sink agent and main code record through. Keep it early.

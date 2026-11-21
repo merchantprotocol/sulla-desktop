@@ -5,7 +5,14 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
+  <ConfigurationLoadState
+    v-if="props.workflowId && !hasHydrated"
+    label="Loading saved workflow…"
+    :error="workflowLoadError ? 'Couldn’t load this workflow.' : ''"
+    @retry="loadWorkflow"
+  />
   <div
+    v-else
     ref="frameRef"
     class="routines-frame"
     @dragover.prevent="onDragOver"
@@ -895,6 +902,8 @@ import {
 
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import WorkflowLocTag from '@pkg/components/routines/WorkflowLocTag.vue';
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
+import { useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 import {
   OUTCOME_LABEL, durationMs, formatDuration, formatNext, formatWhen,
 } from '@pkg/components/routines/runFormat';
@@ -2951,6 +2960,7 @@ function onDocClick(e: MouseEvent) {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  if (props.workflowId && !hasHydrated.value) return;
   // ⌘K / Ctrl+K — toggle the command prompt overlay
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
     e.preventDefault();
@@ -3019,48 +3029,41 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(async() => {
+let workflowDisposed = false;
+const { error: workflowLoadError, start: loadWorkflow } = useConfigurationLoad(async() => {
+  const id = props.workflowId;
+  if (!id) { hasHydrated.value = true; return }
+  const def = await persistence.load(id, { strict: true });
+  if (workflowDisposed) return;
+  if (!def) throw new Error('Saved workflow was not found.');
+  applyDefinition(def);
+  await nextTick();
+  if (workflowDisposed) return;
+  hasHydrated.value = true;
+  await nextTick();
+  if (workflowDisposed) return;
+  fitView();
+  void history.load(id);
+
+  if (props.initialRunId && mode.value === 'run') void openPastRun(props.initialRunId);
+  try {
+    ipcRenderer.send('app-state:set-routine-context' as any, {
+      mode: 'routine',
+      id,
+      name: title.value || 'Workflow',
+    });
+  } catch { /* Non-fatal: the editor is already hydrated. */ }
+});
+
+onMounted(() => {
   document.addEventListener('click', onDocClick, true);
   document.addEventListener('keydown', onKeydown);
-
-  // Subscribe before the first hydrate finishes so we don't race any
-  // very-fast execution events (unlikely, but cheap to guarantee).
   subscribeToExecutionEvents();
-
-  // Hydrate from the store when the parent handed us a workflow id.
-  // Without an id the canvas stays empty.
-  if (props.workflowId) {
-    const [def] = await Promise.all([
-      persistence.load(props.workflowId),
-      history.load(props.workflowId),
-    ]);
-    if (def) applyDefinition(def);
-    // Wait a tick so the watch registered below sees the post-hydration
-    // state as its baseline rather than firing on the initial assignments.
-    await nextTick();
-    // Snap the viewport to the freshly-loaded graph. fit-view-on-init
-    // fired against an empty canvas, so without this the user lands on
-    // whatever the default viewport was instead of their nodes.
-    fitView();
-  }
-  hasHydrated.value = true;
-
-  if (props.workflowId && props.initialRunId && mode.value === 'run') {
-    void openPastRun(props.initialRunId);
-  }
-
-  if (props.workflowId) {
-    try {
-      ipcRenderer.send('app-state:set-routine-context' as any, {
-        mode: 'routine',
-        id:   props.workflowId,
-        name: title.value || 'Workflow',
-      });
-    } catch { /* non-fatal */ }
-  }
+  void loadWorkflow();
 });
 
 onBeforeUnmount(() => {
+  workflowDisposed = true;
   document.removeEventListener('click', onDocClick, true);
   document.removeEventListener('keydown', onKeydown);
   unsubscribeFromExecutionEvents();
