@@ -74,8 +74,10 @@ import { returnCoveredByCard } from '../../messages/handoffCover';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
 import { TranscriptJump } from '../../messages/transcriptJump';
 import { waitingOn } from '../../messages/waitingStatus';
+import type { ReportingLevel } from '../../models/ReportingLevel';
 import ThinkingGroup from '../thinking/ThinkingGroup.vue';
 
+defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 
