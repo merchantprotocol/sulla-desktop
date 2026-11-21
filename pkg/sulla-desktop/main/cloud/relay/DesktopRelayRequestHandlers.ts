@@ -126,8 +126,16 @@ export class DesktopRelayRequestHandlers {
         && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey);
       respond({ type: allowed ? 'relay_history_allowed' : 'error', reason: allowed ? undefined : 'thread_not_authorized' });
     }
+    if (msg.type === 'relay_receipt' && this.validId(msg.userMessageId)) {
+      const accepted = await this.chat.hasScopedReceipt?.(thread, msg.userMessageId, scope) === true;
+      if (await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)) {
+        respond({ type: 'relay_receipt', accepted, userMessageId: msg.userMessageId, clientRunId: msg.userMessageId });
+      }
+    }
     if (msg.type === 'relay_subscribe') {
-      if (await this.chat.admitRelayThread?.(thread, true, scope)) respond({ type: 'relay_subscribed' });
+      if (await this.chat.admitRelayThread?.(thread, true, scope) && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)) {
+        respond({ type: 'relay_subscribed', clientRunId: this.outbox.activeRun(thread) });
+      }
       else respond({ type: 'error', reason: 'thread_not_authorized' });
     }
   }

@@ -228,7 +228,12 @@ export class ChatController {
   }
 
   // ─── Send / queue ────────────────────────────────────────────────
+  remoteDraftSelected = false;
+  remoteStop?: () => void;
+
   send(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): void {
+    // Voice, queue, and other non-composer entry points must not reach the local graph.
+    if (this.remoteDraftSelected || this.thread.value.remote) return;
     if (isRunning(this.runState.value)) { this.queueMessage(text, attachments, opts); return }
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
@@ -314,7 +319,7 @@ export class ChatController {
     // send (which starts a fresh run if the graph is idle, or — if
     // something raced into running between the click and here — the
     // send path will just re-queue it cleanly).
-    if (this.injectHandler && isRunning(this.runState.value)) {
+    if (!this.remoteDraftSelected && !this.thread.value.remote && this.injectHandler && isRunning(this.runState.value)) {
       this.autoTitleFromFirstUserMessage(q.text);
       this.injectHandler(q.text, [...q.attachments]);
       return;
@@ -370,11 +375,14 @@ export class ChatController {
 
   // ─── Run control ────────────────────────────────────────────────
   stop(): void {
+    if (this.thread.value.remote) { this.remoteStop?.(); return }
+    if (this.remoteDraftSelected) return;
     this.stopHandler?.();
     this.transitionRun({ type: 'stop' });
   }
 
   continueRun(): void {
+    if (this.remoteDraftSelected || this.thread.value.remote) return;
     this.continueHandler?.();
     this.transitionRun({ type: 'continue' });
   }
@@ -488,6 +496,7 @@ export class ChatController {
   }
 
   removeMessage(id: MessageId): void {
+    if (this.thread.value.remote) return;
     void this.deleteMessagesDurably([id]);
     this.thread.value = {
       ...this.thread.value,
@@ -498,6 +507,7 @@ export class ChatController {
   }
 
   editMessage(id: MessageId, text: string): void {
+    if (this.thread.value.remote) return;
     const msg = this.thread.value.messages.find(m => m.id === id);
     if (msg?.kind !== 'user') return;
     this.updateMessage<UserMessage>(id, { text });
@@ -505,6 +515,7 @@ export class ChatController {
   }
 
   regenerate(fromId: MessageId): void {
+    if (this.remoteDraftSelected || this.thread.value.remote) return;
     // Find the last user message at-or-before fromId and re-send from there.
     const msgs = this.thread.value.messages;
     const idx = msgs.findIndex(m => m.id === fromId);
@@ -882,8 +893,9 @@ export class ChatController {
 
   // ─── Serialization / hydration ──────────────────────────────────
   serialize(): ThreadState {
+    const thread = this.thread.value;
     const state: ThreadState = {
-      thread:           this.thread.value,
+      thread:           thread.remote ? { ...thread, messages: thread.messages.filter(message => message.kind !== 'streaming') } : thread,
       runState:         this.runState.value,
       queue:            [...this.queue.value],
       staged:           [...this.staged.value],

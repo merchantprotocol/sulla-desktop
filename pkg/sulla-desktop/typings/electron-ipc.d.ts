@@ -260,6 +260,9 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'remote-chat:connect': () => { accountId: string; workspaceId: string } | null;
+  'remote-chat:send': (frame: unknown) => boolean;
+  'remote-chat:history': (thread: string, cursor: string, ids: string[], reconcileOnly: boolean) => unknown;
   'chat:run-state': (channelId: string, threadId: string) => boolean;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
@@ -1353,6 +1356,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'remote-chat:frame': (frame: Record<string, unknown>) => void;
   'sulla:theme-changed': (theme: string) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
