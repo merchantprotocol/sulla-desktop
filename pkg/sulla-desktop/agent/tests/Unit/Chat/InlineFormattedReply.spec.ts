@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // @vitest-environment jsdom
 
+import '../../Support/TestHomeEnv';
+
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defineComponent, h, nextTick, ref } from 'vue';
 
 import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispatcher';
@@ -37,8 +39,13 @@ class SyntheticChat {
   readonly ctx = { messages: ref<any[]>([]).value, graphRunning: ref(false), registry: { setLoading() {} } };
   private readonly dispatcher = createMessageDispatcher();
   private readonly adapter = Object.create(PersonaAdapter.prototype);
+  private mounted?: ReturnType<typeof mount>;
 
   constructor(readonly controller = new ChatController()) {
+    onTestFinished(() => {
+      this.mounted?.unmount();
+      controller.dispose();
+    });
     Object.assign(this.adapter, {
       controller, ci: { messages: ref(this.ctx.messages), graphRunning: this.ctx.graphRunning },
       seen: new Set(), seenRunning: new Set(), optimisticUserMessages: new Map(), pendingA2aStatuses: new Map(),
@@ -58,13 +65,34 @@ class SyntheticChat {
 
   mount() {
     const controller = this.controller;
-    return mount(defineComponent({
+    return this.mounted = mount(defineComponent({
       setup: () => () => h('div', controller.messages.value.map(msg => h(MessageRouter, { key: msg.id, msg }))),
     }), { global: { provide: { [ChatControllerKey as symbol]: controller } } });
   }
 }
 
 describe('formatted replies stay in the chat transcript', () => {
+  let restoreReplaceSync: (() => void) | undefined;
+
+  beforeAll(() => {
+    // jsdom supports real shadow trees but not constructable stylesheet replacement.
+    // Skip stylesheet application only; keep DOMPurify and the real shadow renderer.
+    if (typeof CSSStyleSheet.prototype.replaceSync === 'function') return;
+    const prototype = CSSStyleSheet.prototype;
+    const original = Object.getOwnPropertyDescriptor(prototype, 'replaceSync');
+    Object.defineProperty(prototype, 'replaceSync', {
+      configurable: true,
+      value: () => {},
+    });
+    restoreReplaceSync = () => {
+      if (original) Object.defineProperty(prototype, 'replaceSync', original);
+      else Reflect.deleteProperty(prototype, 'replaceSync');
+    };
+  });
+
+  afterAll(() => {
+    restoreReplaceSync?.();
+  });
   // risk: one reply may duplicate or disappear as it moves from stream to final to reopened history.
   it.each(examples)('keeps $name inline on stream, final and history replay', async(example) => {
     const live = new SyntheticChat();
@@ -101,10 +129,6 @@ describe('formatted replies stay in the chat transcript', () => {
     assertReply(reopenedTurn.element as HTMLElement);
     expect(reopened.controller.messages.value).toHaveLength(1);
     expect(reopened.controller.artifacts.value).toEqual({ list: [], activeId: null });
-    turn.unmount();
-    reopenedTurn.unmount();
-    live.controller.dispose();
-    reopened.controller.dispose();
   });
 
   it.each([
@@ -160,12 +184,6 @@ describe('formatted replies stay in the chat transcript', () => {
     assertProse(reopenedTurn.element as HTMLElement);
     expect(reopened.controller.messages.value).toHaveLength(1);
     expect(reopened.controller.artifacts.value).toEqual({ list: [], activeId: null });
-    turn.unmount();
-    reopenedTurn.unmount();
-    cachedTurn.unmount();
-    cached.controller.dispose();
-    live.controller.dispose();
-    reopened.controller.dispose();
   });
 
   it('keeps terminal status-only and private wrappers out of the visible reply', () => {
@@ -189,8 +207,6 @@ describe('formatted replies stay in the chat transcript', () => {
     expect(turn.find('pre code').element.textContent?.trimEnd()).toBe(htmlSource);
     expect(turn.find('.iso-host').exists()).toBe(false);
     expect(turn.find('style, script').exists()).toBe(false);
-    turn.unmount();
-    chat.controller.dispose();
   });
 
   it('keeps a late closing fence in the same reply when only the final dump carries it', () => {
@@ -204,7 +220,6 @@ describe('formatted replies stay in the chat transcript', () => {
     chat.send('assistant_message', { kind: 'text', content: full });
     expect(chat.controller.messages.value).toMatchObject([{ id, kind: 'sulla', text: full }]);
     expect(chat.controller.artifacts.value.list).toEqual([]);
-    chat.controller.dispose();
   });
 
   it('preserves a non-streaming HTML reply verbatim through dispatch', () => {
@@ -213,7 +228,6 @@ describe('formatted replies stay in the chat transcript', () => {
     chat.send('assistant_message', { kind: 'text', content: documentReply });
     expect(chat.controller.messages.value).toMatchObject([{ kind: 'sulla', text: documentReply }]);
     expect(chat.controller.artifacts.value).toEqual({ list: [], activeId: null });
-    chat.controller.dispose();
   });
 
   it('opens legacy HTML history inline once, not an old drawer copy', async() => {
@@ -226,24 +240,26 @@ describe('formatted replies stay in the chat transcript', () => {
     const snapshot = chat.controller.serialize();
     const reopened = new SyntheticChat(new ChatController({ hydrateFrom: snapshot }));
     const turn = reopened.mount();
-    const assertLegacy = () => {
-      expect(reopened.controller.artifacts.value).toEqual({ list: [], activeId: null });
-      expect(reopened.controller.messages.value).toHaveLength(1);
-      const markup = turn.find('.iso-host').element.shadowRoot!;
-      expect(markup.querySelectorAll('table td')).toHaveLength(1);
-      expect(markup.querySelector('td')?.textContent).toBe('legacy row');
-      expect(markup.querySelector('iframe, [onclick]')).toBeNull();
+    const assertLegacy = (fixture: SyntheticChat, root: Element) => {
+      expect(fixture.controller.artifacts.value).toEqual({ list: [], activeId: null });
+      expect(fixture.controller.messages.value).toHaveLength(1);
+      const markup = root.querySelector('.iso-host')?.shadowRoot;
+      expect(markup).toBeInstanceOf(ShadowRoot);
+      expect(markup!.querySelectorAll('table td')).toHaveLength(1);
+      expect(markup!.querySelector('td')?.textContent).toBe('legacy row');
+      expect(markup!.querySelector('iframe, [onclick]')).toBeNull();
     };
-    assertLegacy();
-    reopened.send('thread_restored', { messages: [{ id, role: 'assistant', kind: 'html', content: legacy }] });
     await nextTick();
-    assertLegacy();
+    assertLegacy(reopened, turn.element);
     reopened.controller.hydrate(snapshot);
     await nextTick();
-    assertLegacy();
-    turn.unmount();
-    chat.controller.dispose();
-    reopened.controller.dispose();
+    assertLegacy(reopened, turn.element);
+
+    const replayed = new SyntheticChat();
+    const replayTurn = replayed.mount();
+    replayed.send('thread_restored', { messages: [{ id, role: 'assistant', kind: 'html', content: legacy }] });
+    await nextTick();
+    assertLegacy(replayed, replayTurn.element);
   });
 
   it('preserves explicit artifact focus when ordinary formatted replies arrive', () => {
@@ -255,11 +271,10 @@ describe('formatted replies stay in the chat transcript', () => {
       threadId: 'fixture-thread', version: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01',
     });
     chat.send('assistant_message', { kind: 'text', content: documentReply });
-    const reopened = new ChatController({ hydrateFrom: chat.controller.serialize() });
-    for (const controller of [chat.controller, reopened]) {
+    const reopened = new SyntheticChat(new ChatController({ hydrateFrom: chat.controller.serialize() }));
+    for (const controller of [chat.controller, reopened.controller]) {
       expect(controller.artifacts.value.list).toMatchObject([{ id: 'explicit-code', kind: 'code', persistent: true }]);
       expect(controller.activeArtifact.value?.id).toBe('explicit-code');
-      controller.dispose();
     }
   });
 });
