@@ -23,6 +23,7 @@ export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'inte
 
 export interface FilesNavigationPayload {
   fileId?:  string;
+  versionId?: string;
   path?:    string;
   section?: string;
   collectionId?: string;

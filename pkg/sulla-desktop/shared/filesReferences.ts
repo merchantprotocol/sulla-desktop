@@ -25,10 +25,12 @@ export interface DurableFileReference {
 
 /**
  * Matches the two chat file-card forms:
- * - `sulla-file://<id>?version&name&path` (Desktop card, opens in the Desktop editor)
- * - `https://<host>/f/<id>` (private mobile link; same file, opens in the Desktop editor too)
+ * - `sulla-file://<id>?version&name&path` (Desktop card, opens in Files)
+ * - `https://<host>/f/<id>` (private mobile link; same file)
  */
-const CARD_EXPRESSION = /sulla-file:\/\/([a-zA-Z0-9_-]+)(?:\?([^\s)]+))?|https:\/\/([a-zA-Z0-9.-]+(?::\d+)?)\/f\/([a-zA-Z0-9_-]+)/g;
+// Read the whole identity token, including malformed path/authority suffixes,
+// so a bad reference cannot be shortened into a different, valid file ID.
+const CARD_EXPRESSION = /sulla-file:\/\/([^\s?()[\]<>"'`,;]+)(?:\?([^\s)]+))?|https:\/\/([a-zA-Z0-9.-]+(?::\d+)?)\/f\/([a-zA-Z0-9_-]+)/g;
 
 export class DurableFileReferenceParser {
   private readonly allowedMobileHosts: Set<string>;
@@ -42,7 +44,7 @@ export class DurableFileReferenceParser {
     const references:DurableFileReference[] = [];
     for (const match of content.matchAll(CARD_EXPRESSION)) {
       if (match[1]) {
-        references.push(this.fromCardLink(match[1], match[2] ?? ''));
+        references.push(this.fromCardLink(match[2] === undefined ? match[1].replace(/[.!]+$/, '') : match[1], match[2] ?? ''));
       } else if (match[3] && match[4] && this.allowedMobileHosts.has(match[3])) {
         references.push(this.fromMobileLink(match[4]));
       }

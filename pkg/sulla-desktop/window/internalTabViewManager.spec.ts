@@ -284,6 +284,26 @@ describe('InternalTabViewManager', () => {
     expect(() => instance.openWorkspaceTab(chat, { mode: 'browser', url: 'file:///private/report.md' })).toThrow('Invalid workspace tab request');
   });
 
+  // risk: the owner gets the wrong action, loses the requested version, or accepts an invalid reference.
+  it.each(['detail', 'versions', 'share-review'])('forwards a hosted Files %s request only to its owner', section => {
+    const owner = ownerWindow(12);
+    const other = ownerWindow(13);
+    const instance = manager() as any;
+    const bounds = { x: 0, y: 0, width: 20, height: 20 };
+    instance.activate(owner, 'chat', 'main', bounds);
+    instance.activate(other, 'other-chat', 'other', bounds);
+    const chat = instance.tabs.get('chat').view.webContents;
+    const request = { mode: 'files', title: 'Files', filesNavigation: { fileId: 'fixture-file', path: 'Fixtures/note.pdf', section, versionId: 'fixture-v1' } };
+    instance.openWorkspaceTab(chat, request);
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:open-workspace-tab', {
+      ...request, filesNavigation: { ...request.filesNavigation, collectionId: undefined },
+    });
+    expect(other.webContents.send).not.toHaveBeenCalled();
+    expect(() => instance.openWorkspaceTab(chat, { ...request, filesNavigation: { ...request.filesNavigation, section: 'publish' } })).toThrow('Invalid Files reference');
+    expect(() => instance.openWorkspaceTab(chat, { ...request, filesNavigation: { ...request.filesNavigation, versionId: '../wrong' } })).toThrow('Invalid Files reference');
+    expect(owner.webContents.send).toHaveBeenCalledOnce();
+  });
+
   it('keeps hosted chat activity with its current owner and clears it on renderer loss', () => {
     const owner = ownerWindow(14);
     const other = ownerWindow(15);
