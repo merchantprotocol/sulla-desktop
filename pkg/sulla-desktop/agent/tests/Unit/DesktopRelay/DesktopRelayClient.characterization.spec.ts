@@ -56,6 +56,7 @@ const fakes = vi.hoisted(() => {
     admit:          vi.fn(),
     persist:        vi.fn(),
     approve:        vi.fn(),
+    historySync:    vi.fn(),
     selection:      vi.fn(),
     filesFetch:     vi.fn(),
     acquire:        vi.fn(),
@@ -88,7 +89,7 @@ vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireRelayLiveness: fakes
 vi.mock('@pkg/agent/utils/sullaPaths', () => ({ resolveSullaHomeDir: () => '/tmp/sulla-relay-spec' }));
 vi.mock('@pkg/main/mobileCompanion', () => ({ mobileCompanionRequest: vi.fn(), registerMobileCard: vi.fn() }));
 
-vi.mock('../../../../main/cloud/cloudSettings', () => ({ getCloudPreferences: async() => ({ remoteAccess: true }) }));
+vi.mock('../../../../main/cloud/cloudSettings', () => ({ getCloudPreferences: async() => ({ remoteAccess: true, enabled: true, conversations: fakes.historySync() }) }));
 vi.mock('../../../../main/cloud/deviceKey', () => ({ signDeviceMessageExact: async() => 'fixture-proof' }));
 vi.mock('../../../../main/cloud/approvedClients', () => ({
   ApprovedClients: {
@@ -138,6 +139,7 @@ describe('DesktopRelayClient characterization', () => {
     fakes.admit.mockResolvedValue(true);
     fakes.persist.mockResolvedValue([]);
     fakes.approve.mockReturnValue(true);
+    fakes.historySync.mockReturnValue(false);
     fakes.selection.mockResolvedValue({});
   });
 
@@ -432,6 +434,36 @@ describe('DesktopRelayClient characterization', () => {
 
       await client.handleRemoteCommand({ type: 'chat', userMessageId: 'u3' }, reply, respond);
       expect(respond).toHaveBeenCalledWith({ type: 'error', reason: 'missing_conversation_id', userMessageId: 'u3' });
+    });
+
+    it('answers scoped denial without dispatch and grants history only with current pairing and consent', async() => {
+      // risk: silently dropped cancellations and history disclosure outside current consent.
+      vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'on');
+      await pairedClient();
+      const socket = FakeSocket.instances[0];
+      socket.open();
+      socket.deliver({ type: 'relay_device_challenge', nonce: '12345678-1234-1234-1234-123456789abc' });
+      await flush();
+      socket.deliver({ type: 'relay_device_ready' });
+      const frame = { conversationId: 'remote_fixture_1234', targetDeviceId: 'desk-1',
+        relayScope: 'v1', accountId: 'account-a', workspaceId: 'workspace-a',
+        viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key', relayRequest: 'request-a' };
+      fakes.admit.mockResolvedValueOnce(false);
+      socket.deliver({ ...frame, type: 'cancel' });
+      await flush();
+      expect(socket.frames().at(-1)).toMatchObject({ type: 'error', reason: 'thread_not_authorized', relayRequest: 'request-a' });
+      expect(fakes.agentChannel.send).not.toHaveBeenCalled();
+      socket.deliver({ ...frame, type: 'relay_history_check', relayRequest: 'request-b' });
+      await flush();
+      expect(socket.frames().at(-1)).toMatchObject({ type: 'error', relayRequest: 'request-b' });
+      fakes.historySync.mockReturnValue(true);
+      socket.deliver({ ...frame, type: 'relay_history_check', relayRequest: 'request-c' });
+      await flush();
+      expect(socket.frames().at(-1)).toMatchObject({ type: 'relay_history_allowed', relayRequest: 'request-c' });
+      fakes.approve.mockReturnValue(false);
+      socket.deliver({ ...frame, type: 'relay_history_check', relayRequest: 'request-d' });
+      await flush();
+      expect(socket.frames().at(-1)).toMatchObject({ type: 'error', relayRequest: 'request-d' });
     });
 
     it('never stages attachments for denied or duplicate claims, and keeps a retry canonical', async() => {

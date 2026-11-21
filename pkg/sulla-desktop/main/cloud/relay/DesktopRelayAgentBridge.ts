@@ -54,7 +54,7 @@ export class DesktopRelayAgentBridge {
     private readonly channel: () => DesktopRelayAgentChannel,
     private readonly outbox: DesktopRelayConversationOutbox,
     private readonly scribe: DesktopRelayTurnScribe,
-    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard'>,
+    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard' | 'allowScopedHistory'>,
     private readonly deviceId: () => Promise<string>,
     private readonly log: DesktopRelayLog,
   ) {}
@@ -213,7 +213,7 @@ export class DesktopRelayAgentBridge {
       this.log.warn('[DesktopRelay] Dropping done frame without thread_id/conversationId');
       return;
     }
-    const reason = typeof data.stopReason === 'string' ? data.stopReason : 'completed';
+    const reason = typeof data.stopReason === 'string' ? data.stopReason : threadId.startsWith('remote_') ? 'unknown' : 'completed';
     this.graphOutcome.set(threadId, threadId.startsWith('remote_') && data.waitingForUser && reason === 'completed' ? 'unknown' : reason);
   }
 
@@ -245,6 +245,10 @@ export class DesktopRelayAgentBridge {
     this.lastCommittedIdByThread.delete(threadId);
     this.graphOutcome.delete(threadId);
     this.commitFailed.delete(threadId);
+    if (threadId.startsWith('remote_') && terminal.eventId
+        && await this.cards.allowScopedHistory?.().catch(() => false)) {
+      terminal.syncTerminal = true;
+    }
     this.outbox.completeRun(threadId, terminal);
   }
 }

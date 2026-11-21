@@ -104,7 +104,16 @@ export class DesktopRelayRequestHandlers {
       else respond({ type: 'error', reason: 'thread_not_authorized' });
     }
     if (msg.type === 'chat') await this.handleChat(msg, respond, scope);
-    if (msg.type === 'cancel' && await this.chat.admitRelayThread?.(thread, true, scope)) this.handleCancel(msg, respond);
+    if (msg.type === 'cancel') {
+      if (await this.chat.admitRelayThread?.(thread, true, scope)) this.handleCancel(msg, respond);
+      else respond({ type: 'error', reason: 'thread_not_authorized' });
+    }
+    if (msg.type === 'relay_history_check') {
+      const allowed = await this.chat.admitRelayThread?.(thread, true, scope)
+        && await this.chat.allowScopedHistory?.()
+        && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey);
+      respond({ type: allowed ? 'relay_history_allowed' : 'error', reason: allowed ? undefined : 'thread_not_authorized' });
+    }
     if (msg.type === 'relay_subscribe') {
       if (await this.chat.admitRelayThread?.(thread, true, scope)) respond({ type: 'relay_subscribed' });
       else respond({ type: 'error', reason: 'thread_not_authorized' });
