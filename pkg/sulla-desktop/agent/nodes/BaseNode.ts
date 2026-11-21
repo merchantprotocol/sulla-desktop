@@ -33,6 +33,7 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { markSteerDelivered, pendingSteers } from '../utils/steerChannel';
 import { a2aMarkersToText, isOverheardProtocolTurn, stripProtocolTags, stripProtocolTagsForUi, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, resolveSullaHomeDir, resolveMemorySeedDir } from '../utils/sullaPaths';
@@ -1100,7 +1101,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const promptMeta = new Set(messages.map(m => (m as any).metadata).filter(Boolean));
     TurnHopTiming.mark(state, 'steerHandling.start');
     for (const steer of pendingSteers(state)) {
-      if (promptMeta.has((steer as any).metadata)) markSteerDelivered(steer);
+      if (!DeferredStallInput.read(steer) && promptMeta.has(steer.metadata)) markSteerDelivered(steer);
     }
     TurnHopTiming.mark(state, 'steerHandling.end');
 
@@ -1280,6 +1281,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       TurnHopTiming.mark(state, 'callLLMStreaming.end');
 
 
+      if (reply?.metadata.reusedAssistantMessage) return reply;
       if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) {
         throw new Error(`LLM returned empty response (model=${ this.llm.getModel() }, provider=${ this.llm.getProviderName() })`);
       }
@@ -1321,6 +1323,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           throwIfAborted(abortSignal);
           throw replayError;
         }
+        if (replay?.metadata.reusedAssistantMessage) return replay;
         if (!replay || (!replay.content?.trim() && !replay.metadata.tool_calls?.length)) {
           throw new Error(`LLM returned empty response (provider=${ this.llm.getProviderName() }, model=${ this.llm.getModel() })`);
         }
@@ -1385,6 +1388,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
               signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
               profileId: (state.metadata as any).profileId,
             }, nodeRunContext, service);
+            if (reply?.metadata.reusedAssistantMessage) return reply;
             if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) throw new Error(`LLM returned empty response (provider=${ candidate.provider }, model=${ candidate.model })`);
             if (index > 0) {
               (reply.metadata as any).fallback_used = true;
@@ -1802,6 +1806,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         ? await issueProviderExecutionContext(state, providerId, accountId)
         : undefined;
       TurnHopTiming.mark(state, 'issueProviderExecutionContext.end');
+      if (messages.some(message => DeferredStallInput.read(message))) {
+        const { completionInboxStore, formatCompletionBatch } = await import('../services/AgentCompletionInbox');
+        const input = new DeferredStallInput({ currentEntries: completionInboxStore.currentEntries, format: formatCompletionBatch });
+        const { prompt, consumed } = await input.prepare(state.metadata.threadId, messages);
+        throwIfAborted(state, 'Chat operation aborted');
+        DeferredStallInput.consume(state, consumed);
+        const last = prompt.filter(message => message.role !== 'system').pop();
+        if (!last || last.role === 'assistant') {
+          state.metadata.cycleComplete = true;
+          return { content: '', metadata: { tokens_used: 0, time_spent: 0, finish_reason: FinishReason.Stop, reusedAssistantMessage: true } };
+        }
+        messages = prompt;
+      }
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');

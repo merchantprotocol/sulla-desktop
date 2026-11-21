@@ -4,6 +4,9 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { DeferredStallInput } from '../../../app/Services/DeferredStallInput';
+import { completionInboxStore } from '../../../services/AgentCompletionInbox';
+import { injectSteer } from '../../../utils/steerChannel';
 import { BaseNode } from '../../../nodes/BaseNode';
 import { AbortService } from '../../../services/AbortService';
 import { agentDefinitionService } from '../../../services/AgentDefinitionService';
@@ -41,5 +44,38 @@ describe('graph model resolution Stop propagation for worker routes', () => {
     await vi.waitFor(() => expect(received).toBe(run.signal));
     run.stop();
     await expect(resolving).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('deferred stall input at the model boundary', () => {
+  it('does not send a stall that expires during provider setup, and leaves a newer steer pending', async() => {
+    // risk: false stall reaches the parent after the child settled; unrelated input is lost.
+    const node = new RouteProbeNode();
+    const state = stateWith(undefined);
+    state.messages.push({ role: 'assistant', content: 'waiting for the child' });
+    injectSteer(state, {
+      role: 'user', content: '', metadata: DeferredStallInput.metadata('parent', 't', [{
+        jobId: 'running', taskIndex: 0, results: [], noticeKind: 'stall', stall: { childThread: 'child', baseline: 'old' },
+      }]),
+    });
+    const snapshot = [...state.messages];
+    let current = true;
+    const validation = vi.spyOn(completionInboxStore, 'currentEntries')
+      .mockImplementation(async(_channel, _threadId, entries) => current ? entries : []);
+    const chatStream = vi.fn();
+    const provider = {
+      getModel: () => 'test', chatStream,
+      getAccountId: async() => {
+        current = false; // The child settles while the provider/container is being prepared.
+        injectSteer(state, { role: 'user', content: 'unrelated new steer' });
+        return undefined;
+      },
+    };
+    const reply = await (node as any).callLLMStreaming(state, snapshot, {}, {}, provider);
+    expect(validation).toHaveBeenCalledOnce();
+    expect(chatStream).not.toHaveBeenCalled();
+    expect(reply.metadata.reusedAssistantMessage).toBe(true);
+    expect(state.messages.map(message => message.content)).toEqual(['waiting for the child', 'unrelated new steer']);
+    expect(state.messages[1].metadata?.steerPending).toBe(true);
   });
 });

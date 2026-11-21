@@ -77,9 +77,8 @@ export class ParentStallNoticeService {
         taskIndex: index,
         results: [],
         noticeKind: 'stall',
-        notice: `[No progress from ${ candidate.label } (job ${ candidate.jobId } task ${ index })] No recent activity and the runtime is not confirmed alive. This does not mean the task has failed or stopped. Check its status before deciding what to do.`,
         dedupeKey,
-        stall: { childThread: candidate.childThread, baseline: candidate.baseline },
+        stall: { childThread: candidate.childThread, baseline: candidate.baseline, label: candidate.label },
       });
     }
     if (lifecycle !== this.lifecycle) return;

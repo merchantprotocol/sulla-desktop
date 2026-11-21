@@ -2,6 +2,9 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { CompletionKey } from '../app/Services/CompletionKey';
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
+import type { PendingCompletion } from './AgentCompletionInbox';
 import { DelegatedTurnProgressProbe } from './DelegatedTurnProgressProbe';
 import { DelegatedWakeSettlementPolicy } from './DelegatedWakeSettlementPolicy';
 
@@ -23,7 +26,7 @@ export interface DelegatedFreshTurnPorts {
   waitForWake(threadId: string, signal?: AbortSignal): Promise<unknown>;
   resume(jobId: string, taskIndex: number): Promise<unknown>;
   rerouteCompletions(manager: any, taskIndex: number, reason: string, entries: any[]): Promise<unknown>;
-  acknowledgeCompletions(wakeInput: any): Promise<unknown>;
+  acknowledgeCompletions(entries: PendingCompletion[]): Promise<unknown>;
 }
 
 export interface DelegatedFreshTurnResult { finalState: any; returned: any }
@@ -59,7 +62,8 @@ export class DelegatedFreshTurnRunner {
       const completionUpdate = currentTask && this.policy.completionUpdate(currentTask);
       if (completionUpdate) await ports.updateJobTask(jobId, taskIndex, completionUpdate);
     }
-    await ports.acknowledgeCompletions(wakeInput);
+    const entries = this.completionEntries(wakeInput).filter(entry => CompletionKey.isTaskCompletion(entry));
+    if (entries.length) await ports.acknowledgeCompletions(entries);
     return { finalState: currentState, returned };
   }
 
@@ -68,10 +72,18 @@ export class DelegatedFreshTurnRunner {
     return await this.ports.execute();
   }
 
+  private completionEntries(wakeInput: any): PendingCompletion[] {
+    const entries = wakeInput?.metadata?.completionEntries;
+    return Array.isArray(entries) ? entries : [];
+  }
+
   private async settleEmptyTurn(currentState: any, wakeInput: any): Promise<DelegatedFreshTurnResult> {
     const { ports } = this;
     const { jobId, taskIndex, threadId } = ports;
-    const completionEntries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
+    const entries = this.completionEntries(wakeInput);
+    const completionEntries = entries.filter(entry => !CompletionKey.isStall(entry));
+    const advisoryOnly = Boolean(DeferredStallInput.read(wakeInput))
+      || (entries.length > 0 && completionEntries.length === 0);
     if (!jobId) {
       // No agent job row (direct/legacy run): nothing can park it, count its
       // empty turns or own child completions, so hand the turn back to the
@@ -79,6 +91,7 @@ export class DelegatedFreshTurnRunner {
       // own bound. Completions stay unacknowledged for that loop to retry.
       return { finalState: currentState, returned: undefined };
     }
+    if (advisoryOnly) return { finalState: currentState, returned: undefined };
     const job = await ports.getJob(jobId);
     const liveChildren = await ports.openChildren(threadId);
     const pendingWait = Boolean(await ports.pendingWait(jobId, taskIndex));

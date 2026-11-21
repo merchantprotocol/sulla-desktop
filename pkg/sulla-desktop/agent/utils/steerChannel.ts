@@ -20,6 +20,7 @@
  * Anything still pending when a turn finishes was never seen, so AgentNode
  * loops the graph once more instead of ending the run on top of it.
  */
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 
 /** Return true when the listener took ownership of delivering the steer. */
@@ -68,6 +69,8 @@ export function injectSteer(state: { messages: ChatMessage[] }, message: ChatMes
 }
 
 function offerSteer(state: object, message: ChatMessage): boolean {
+  // A synchronous CLI steer cannot validate a process-local stall episode.
+  if (DeferredStallInput.read(message)) return false;
   for (const listener of listeners.get(state) ?? []) {
     let taken = false;
     try { taken = listener(message) } catch { /* a broken listener must not drop the steer */ }

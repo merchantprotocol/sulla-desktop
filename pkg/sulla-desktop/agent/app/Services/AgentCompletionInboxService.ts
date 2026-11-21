@@ -25,7 +25,7 @@ export interface PendingCompletion {
   terminal?: AgentTerminalNotice;
   notice?: string;
   noticeKind?: 'stall';
-  stall?: { childThread: string; baseline: string };
+  stall?: { childThread: string; baseline: string; label?: string };
   dedupeKey?: string;
 }
 

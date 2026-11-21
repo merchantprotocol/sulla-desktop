@@ -719,12 +719,6 @@ export class SpawnAgentWorker extends BaseTool {
           if ((agentExecutionReadiness.draining || subState.metadata.runtimeInterrupted) && !await returnedTask()) throw Object.assign(executionAbort(), { runtimeInterrupted: true });
           return result;
         };
-        const acknowledgeCompletionInput = async(wakeInput: any) => {
-          const entries = Array.isArray(wakeInput?.metadata?.completionEntries) ? wakeInput.metadata.completionEntries : [];
-          await Promise.all(entries.map((entry: any) => markTaskCompletionDelivered(
-            String(entry.jobId), Number.isInteger(entry?.taskIndex) ? Number(entry.taskIndex) : 0,
-          )));
-        };
         const failedManagerCompletionRerouter = new FailedManagerCompletionRerouter();
         const freshTurnRunner = new DelegatedFreshTurnRunner({
           jobId:                  activityJobId,
@@ -743,7 +737,8 @@ export class SpawnAgentWorker extends BaseTool {
           waitForWake:            (wakeThreadId, signal) => agentJobLifecycle.waitForWake(wakeThreadId, signal),
           resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
           rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
-          acknowledgeCompletions: acknowledgeCompletionInput,
+          acknowledgeCompletions: entries => Promise.all(entries.map(entry =>
+            markTaskCompletionDelivered(entry.jobId, entry.taskIndex))),
         });
         const runFreshTurn = (currentState: any) => freshTurnRunner.run(currentState);
 

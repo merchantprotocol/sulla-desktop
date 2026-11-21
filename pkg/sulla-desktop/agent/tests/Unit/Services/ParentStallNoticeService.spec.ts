@@ -12,6 +12,9 @@ import { CompletionAcknowledgementService } from '../../../app/Services/Completi
 import { CompletionFormatter } from '../../../app/Services/CompletionFormatter';
 import { CompletionIdleDispatcher } from '../../../app/Services/CompletionIdleDispatcher';
 import { CompletionKey } from '../../../app/Services/CompletionKey';
+import { DeferredStallInput } from '../../../app/Services/DeferredStallInput';
+import { injectSteer, onSteer } from '../../../utils/steerChannel';
+import type { ChatMessage } from '../../../languagemodels/BaseLanguageModel';
 import { DelegatedCompletionHandoff } from '../../../app/Services/DelegatedCompletionHandoff';
 import { ParentStallNoticeService } from '../../../app/Services/ParentStallNoticeService';
 import type { AgentStateService } from '../../../app/Services/AgentStateService';
@@ -138,7 +141,7 @@ describe('immediate-parent stall delivery', () => {
     await h.scanner.scan();
     const terminal: PendingCompletion = { jobId: 'other-child', taskIndex: 0, results: [], failureReason: 'failed' };
     h.inbox.enqueue('manager-channel', 'middle-task-1', terminal);
-    const state = { messages: [] as { metadata: { completionEntries: PendingCompletion[] } }[],
+    const state = { messages: [] as ChatMessage[],
       metadata: { delegatedRunActive: parentState === 'busy' } };
     const wakes: string[] = [];
     const handoff = new DelegatedCompletionHandoff(h.inbox, {
@@ -147,15 +150,53 @@ describe('immediate-parent stall delivery', () => {
     }, {
       firstDelivered: async entry => { h.marks.push(`first:${ entry.jobId }:${ entry.taskIndex }`) },
       acknowledge: entry => h.acknowledgements.acknowledge(entry),
-    }, (target, message) => { target.messages.push(message) }, () => 'steer');
+    }, (target, message) => { injectSteer(target, message) }, () => 'steer');
+    const liveInput: ChatMessage[] = [];
+    const unsubscribe = onSteer(state, message => { liveInput.push(message); return true });
     expect(await handoff.deliver('manager-channel', 'middle-task-1', state)).toBe(true);
     expect(wakes).toEqual(['middle-task-1']);
-    const [notice, actualTerminal] = state.messages[0].metadata.completionEntries;
+    const [placeholder, terminalSteer] = state.messages;
+    const [notice] = DeferredStallInput.read(placeholder)!.entries;
+    const [actualTerminal] = terminalSteer.metadata!.completionEntries;
+    expect(placeholder.content).toBe('');
+    expect(liveInput).toEqual([terminalSteer]); // no CLI stdin fast path for staleable input
+    expect(placeholder.metadata?.steerPending).toBe(true);
+    unsubscribe();
     expect(notice.noticeKind).toBe('stall');
     expect(actualTerminal).toEqual(terminal);
     await h.acknowledgements.release(notice);
     h.inbox.requeueQuietly('manager-channel', 'middle-task-1', notice);
     expect(await h.current(h.take())).toEqual([notice]);
     expect(h.marks).toEqual(['first:other-child:0', 'delivered:other-child:0']);
+
+    const input = new DeferredStallInput(h.inbox);
+    const replay = JSON.parse(JSON.stringify(DeferredStallInput.persistentMessages(state.messages)));
+    expect(replay).toEqual([terminalSteer]);
+    const snapshot = [...state.messages];
+    // Parked lifecycle / busy graph work occurs after handoff, before BaseNode sends.
+    h.child.tasks[0].status = 'completed';
+    const prepared = await input.prepare('middle-task-1', snapshot);
+    expect(prepared.prompt).toEqual([terminalSteer]);
+    DeferredStallInput.consume(state, prepared.consumed);
+    expect(state.messages).toEqual([terminalSteer]);
   });
+  it('renders a current stall only into the right model snapshot and does not consume a newer pending steer', async() => {
+    // risk: lost pending user input or process-local advisory leaking across threads/restarts
+    const h = new StallHarness();
+    await h.scanner.scan();
+    const first = { role: 'user' as const, content: '', metadata: DeferredStallInput.metadata('manager-channel', 'middle-task-1', h.take()) };
+    const state = { messages: [first] as ChatMessage[] };
+    const input = new DeferredStallInput(h.inbox);
+    const other = await input.prepare('not-the-parent', state.messages);
+    expect(other.prompt).toEqual([]);
+    const pending = input.prepare('middle-task-1', [...state.messages]);
+    const arrivedDuringLookup = { role: 'user' as const, content: 'do not lose me' };
+    injectSteer(state, arrivedDuringLookup);
+    const prepared = await pending;
+    expect(prepared.prompt[0].content).toContain('No progress from child-0');
+    expect(first.content).toBe('');
+    DeferredStallInput.consume(state, prepared.consumed);
+    expect(state.messages).toEqual([arrivedDuringLookup]);
+  });
+
 });

@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { DeferredStallInput } from './DeferredStallInput';
+import { CompletionKey } from './CompletionKey';
 import type { PendingCompletion } from './AgentCompletionInboxService';
 
 export interface DelegatedThreadState { messages: any[]; metadata?: Record<string, any> }
@@ -57,15 +59,21 @@ export class DelegatedCompletionHandoff {
       ? await this.inbox.currentEntries?.(channel, threadId, claimed) ?? claimed.filter(entry => entry.noticeKind !== 'stall')
       : claimed;
     if (!entries.length) return true;
-    this.inject(state, {
+    const stalls = entries.filter(entry => CompletionKey.isStall(entry));
+    const regular = entries.filter(entry => !CompletionKey.isStall(entry));
+    if (stalls.length) this.inject(state, {
+      id: this.nextId(), role: 'user', content: '', timestamp: this.clock(),
+      metadata: DeferredStallInput.metadata(channel, threadId, stalls),
+    });
+    if (regular.length) this.inject(state, {
       id:        this.nextId(),
       role:      'user',
-      content:   this.inbox.format(entries),
+      content:   this.inbox.format(regular),
       timestamp: this.clock(),
-      metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
+      metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: regular },
     });
     for (const entry of entries) {
-      if (!entry.notice && !entry.noticeKind) await this.marks.firstDelivered(entry);
+      if (CompletionKey.isTaskCompletion(entry)) await this.marks.firstDelivered(entry);
       await this.marks.acknowledge(entry);
     }
     this.lifecycle.wake(threadId);
