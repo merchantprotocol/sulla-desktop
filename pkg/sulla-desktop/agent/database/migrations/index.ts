@@ -28,6 +28,7 @@ import { up as up_0163, down as down_0163 } from './0163_org_messaging_failures_
 import { up as up_0164, down as down_0164 } from './0164_org_scoped_messaging_outbox';
 import { up as up_0165, down as down_0165 } from './0165_create_channel_bindings';
 import { up as up_0167, down as down_0167 } from './0167_scoped_relay_receipts';
+import { up as up_0168, down as down_0168 } from './0168_scoped_terminal_delivery';
 import { up as up_0166, down as down_0166 } from './0166_agent_job_custody';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
@@ -310,4 +311,5 @@ export const migrationsRegistry = [
   { name: '0165_create_channel_bindings', up: up_0165, down: down_0165 },
   { name: '0166_agent_job_custody', up: up_0166, down: down_0166 },
   { name: '0167_scoped_relay_receipts', up: up_0167, down: down_0167 },
+  { name: '0168_scoped_terminal_delivery', up: up_0168, down: down_0168 },
 ] as const;

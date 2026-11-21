@@ -34,6 +34,7 @@ export interface DesktopRelayTransportEvents {
   sessionReset(): void;
   /** A frame reached an open socket. */
   frameDelivered(): void;
+  scopedReady?(): void;
 }
 
 function describeFailure(kind: RelayFailureKind): string {
@@ -91,8 +92,10 @@ export class DesktopRelayTransport {
   private readonly scopedProof = new WeakSet<RelaySocketLike>();
   private readonly scopedReady = new WeakSet<RelaySocketLike>();
 
+  get isScopedReady(): boolean { return this.canAcceptScoped(this.ws ?? undefined) }
+
   canAcceptScoped(socket?: RelaySocketLike): boolean {
-    return !!socket && socket === this.ws && this.scopedReady.has(socket) && this.session.sharedRelayEnabled?.() === true;
+    return !!socket && socket === this.ws && this.scopedReady.has(socket);
   }
 
   get deviceId(): string { return this.currentDeviceId }
@@ -292,14 +295,17 @@ export class DesktopRelayTransport {
         let challenge: { type?: string; nonce?: string } | undefined;
         try { challenge = JSON.parse(event.data) } catch {}
         if (challenge?.type === 'relay_device_ready') {
-          if (this.scopedProof.has(ws)) this.scopedReady.add(ws);
+          if (this.scopedProof.has(ws)) {
+            this.scopedReady.add(ws);
+            this.events.scopedReady?.();
+          }
           return;
         }
         if (challenge?.type === 'relay_device_challenge') {
           const nonce = challenge.nonce;
-          if (this.session.sharedRelayEnabled?.() && !this.scopedProof.has(ws) && typeof nonce === 'string' && /^[a-f0-9-]{36}$/.test(nonce)) {
+          if (!this.scopedProof.has(ws) && typeof nonce === 'string' && /^[a-f0-9-]{36}$/.test(nonce)) {
             void this.session.proveRelayDevice(room, this.currentDeviceId, nonce).then(signature => {
-              if (this.ws === ws && this.session.sharedRelayEnabled?.() && !this.scopedProof.has(ws)) {
+              if (this.ws === ws && !this.scopedProof.has(ws)) {
                 this.scopedProof.add(ws);
                 ws.send(JSON.stringify({ type: 'relay_device_proof', signature }));
               }

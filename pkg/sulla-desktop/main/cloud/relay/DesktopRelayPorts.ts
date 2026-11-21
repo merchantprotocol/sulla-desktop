@@ -30,6 +30,23 @@ export interface ScopedRelayBinding {
   hostDeviceId: string;
 }
 
+export interface ScopedRelayRunBinding extends ScopedRelayBinding {
+  viewerId: string;
+  viewerKey: string;
+}
+
+export interface ScopedRelayTerminal extends ScopedRelayRunBinding {
+  thread: string;
+  run: string;
+  outcome: 'completed' | 'stopped' | 'failed';
+}
+
+export interface ScopedRelayTerminalStore {
+  commit(status: ScopedRelayTerminal): Promise<boolean>;
+  pending(account: string, host: string, after: string): Promise<(ScopedRelayTerminal & { id: string })[]>;
+  acknowledge(receipt: { thread: string; run: string; accountId: string; workspaceId: string; hostDeviceId: string; outcome: unknown }): Promise<void>;
+}
+
 export interface RelayIncomingFrame {
   type:            string;
   relayScope?: 'v1';
@@ -69,6 +86,7 @@ export interface RelayIncomingFrame {
    */
   userMessageId?:  string;
   clientRunId?:    string;
+  outcome?:        string;
   role?:           'desktop' | 'mobile';
   reason?:         string;
   code?:           string;
@@ -177,6 +195,7 @@ export interface DesktopRelayPortSet {
   pairing:   DesktopRelayPairingStore;
   agent:     () => DesktopRelayAgentChannel;
   history:   DesktopRelayHistoryPorts;
+  terminal?: ScopedRelayTerminalStore;
   chat:      DesktopRelayChatPorts;
   files:     DesktopRelayFilesPorts;
   signIn:    DesktopRelaySignInNotifier;

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DesktopRelayLog, DesktopRelayTimers, RelayFrame, RelayFrameSink, RelayInterval, ScopedRelayBinding } from './DesktopRelayPorts';
+import type { DesktopRelayLog, DesktopRelayTimers, RelayFrame, RelayFrameSink, RelayInterval, ScopedRelayRunBinding } from './DesktopRelayPorts';
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 // Safety valve: clear a keepalive after 10 min regardless — prevents leaks if
@@ -39,7 +39,7 @@ export class DesktopRelayConversationOutbox {
   // Keeping the ids in graph-event order prevents that stale completion from
   // being stamped as (and therefore ending) the replacement run.
   private readonly relayRuns = new Map<string, string[]>();
-  private readonly scopedRuns = new Map<string, { id: string; scope: ScopedRelayBinding }>();
+  private readonly scopedRuns = new Map<string, { id: string; scope: ScopedRelayRunBinding }>();
   private mobilePeerOnline = true;
 
   constructor(
@@ -114,14 +114,14 @@ export class DesktopRelayConversationOutbox {
   }
 
   /** Record a run id in submission order. */
-  registerRun(conversationId: string, runId: string, scope?: ScopedRelayBinding): void {
+  registerRun(conversationId: string, runId: string, scope?: ScopedRelayRunBinding): void {
     if (scope) this.scopedRuns.set(conversationId, { id: runId, scope });
     const runs = this.relayRuns.get(conversationId) ?? [];
     if (!runs.includes(runId)) runs.push(runId);
     this.relayRuns.set(conversationId, runs);
   }
 
-  scopedBinding(conversationId: string, runId: string): ScopedRelayBinding | undefined {
+  scopedBinding(conversationId: string, runId: string): ScopedRelayRunBinding | undefined {
     const binding = this.scopedRuns.get(conversationId);
     return binding?.id === runId ? binding.scope : undefined;
   }

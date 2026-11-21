@@ -9,6 +9,7 @@ import { signDeviceMessageExact } from '../deviceKey';
 
 import path from 'node:path';
 
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
@@ -23,6 +24,7 @@ import { acceptRelayUserTurn, admitRelayThread, deriveMessageId, scribeRelayTurn
 import Logging from '@pkg/utils/logging';
 
 import type { DesktopRelayLog, DesktopRelayPortSet, DesktopRelaySignInNotifier, DesktopRelayTimers } from './DesktopRelayPorts';
+import { DesktopRelayTerminalRepository } from './DesktopRelayTerminalRepository';
 
 /** Surfaces another device's sign-in approval code as a notification and a renderer event. */
 class ElectronSignInNotifier implements DesktopRelaySignInNotifier {
@@ -85,6 +87,7 @@ export class DesktopRelayRuntimePorts {
         acceptUserTurn:  turn => acceptRelayUserTurn(turn),
         deriveMessageId: (conversationId, role, content, ts) => deriveMessageId(conversationId, role, content, ts),
       },
+      terminal: new DesktopRelayTerminalRepository(postgresClient),
       chat: {
         currentRelayAccount: getCurrentUserId,
         allowScopedHistory: async() => {

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { DesktopRelayTerminalDelivery } from './DesktopRelayTerminalDelivery';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import { logVoiceSpan } from '@pkg/agent/utils/voiceTurn';
 
@@ -54,9 +55,10 @@ export class DesktopRelayAgentBridge {
     private readonly channel: () => DesktopRelayAgentChannel,
     private readonly outbox: DesktopRelayConversationOutbox,
     private readonly scribe: DesktopRelayTurnScribe,
-    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard' | 'allowScopedHistory' | 'currentRelayAccount'>,
+    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard'>,
     private readonly deviceId: () => Promise<string>,
     private readonly log: DesktopRelayLog,
+    private readonly terminalDelivery?: Pick<DesktopRelayTerminalDelivery, 'record'>,
   ) {}
 
   /** Install the one-time subscription to the mobile-relay channel. Idempotent. */
@@ -220,7 +222,13 @@ export class DesktopRelayAgentBridge {
   private async finish(threadId: string, outcome: string): Promise<void> {
     const runId = this.outbox.activeRun(threadId);
     if (!runId) return;
+    const binding = this.outbox.scopedBinding(threadId, runId);
     let terminal: Record<string, unknown>;
+    // A graph outcome is independent of transcript persistence. Retry only
+    // this status, never assistant text or another execution.
+    const statusCommitted = binding && (outcome === 'completed' || outcome === 'failed' || outcome === 'stopped')
+      ? await this.terminalDelivery?.record({ ...binding, thread: threadId, run: runId, outcome })
+      : undefined;
     try {
       // A failed turn write is not completed live. The existing history
       // store remains the only source for recovery.
@@ -229,7 +237,8 @@ export class DesktopRelayAgentBridge {
       if (outcome !== 'stopped' && trailing) await this.commitAssistantText(threadId, trailing);
       const finalText = this.finalTextByThread.get(threadId) ?? '';
       const id = this.lastCommittedIdByThread.get(threadId);
-      const eventId = outcome === 'unknown' && threadId.startsWith('remote_') ? undefined
+      if (threadId.startsWith('remote_') && outcome !== 'unknown' && !statusCommitted) throw new Error('relay_history_unavailable');
+      const eventId = threadId.startsWith('remote_') ? undefined
         : await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
           sullaCard: { version: 1, kind: 'run_outcome', runId, outcome },
         }));
@@ -245,11 +254,6 @@ export class DesktopRelayAgentBridge {
     this.lastCommittedIdByThread.delete(threadId);
     this.graphOutcome.delete(threadId);
     this.commitFailed.delete(threadId);
-    const binding = this.outbox.scopedBinding(threadId, runId);
-    if (binding && terminal.eventId && await this.cards.allowScopedHistory?.().catch(() => false)
-        && await this.cards.currentRelayAccount?.().catch(() => '') === binding.accountId) {
-      terminal.syncTerminal = true;
-    }
     this.outbox.completeRun(threadId, terminal);
   }
 }

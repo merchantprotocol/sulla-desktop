@@ -7,6 +7,7 @@
 // drive the public client surface with a fake WebSocket and fake timers and
 // pin reconnect/backoff timing, frame formats, pairing and request dispatch.
 
+import { PGlite } from '@electric-sql/pglite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fakes = vi.hoisted(() => {
@@ -103,6 +104,13 @@ vi.mock('@pkg/main/mobileRelayContent', async importOriginal => ({
 }));
 
 import { DesktopRelayClient } from '@pkg/main/desktopRelay';
+import { DesktopRelayRuntimePorts } from '@pkg/main/cloud/relay/DesktopRelayRuntimePorts';
+import { DesktopRelayTerminalRepository } from '@pkg/main/cloud/relay/DesktopRelayTerminalRepository';
+
+import { up as conversations } from '../../../database/migrations/0020_create_claude_conversations_table';
+import { up as messages } from '../../../database/migrations/0021_create_claude_messages_table';
+import { up as scopedReceipts } from '../../../database/migrations/0167_scoped_relay_receipts';
+import { up as terminalDelivery } from '../../../database/migrations/0168_scoped_terminal_delivery';
 
 const { FakeSocket } = fakes;
 
@@ -457,6 +465,7 @@ describe('DesktopRelayClient characterization', () => {
       await flush();
       expect(socket.frames().at(-1)).toMatchObject({ type: 'error', relayRequest: 'request-b' });
       fakes.historySync.mockReturnValue(true);
+      vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'off');
       socket.deliver({ ...frame, type: 'relay_history_check', relayRequest: 'request-c' });
       await flush();
       expect(socket.frames().at(-1)).toMatchObject({ type: 'relay_history_allowed', relayRequest: 'request-c' });
@@ -464,6 +473,94 @@ describe('DesktopRelayClient characterization', () => {
       socket.deliver({ ...frame, type: 'relay_history_check', relayRequest: 'request-d' });
       await flush();
       expect(socket.frames().at(-1)).toMatchObject({ type: 'error', relayRequest: 'request-d' });
+    });
+
+    it('retries a real local status failure, then resends the committed status after process reconnect without dispatch', async() => {
+      // risk: claiming an uncommitted result or replaying agent side effects.
+      const db = new PGlite();
+      const ports = new DesktopRelayRuntimePorts().create();
+      const terminalDb: ConstructorParameters<typeof DesktopRelayTerminalRepository>[0] = {
+        query: async<T>(sql: string, values: string[]) => (await db.query<T>(sql, values)).rows,
+        transaction: work => db.transaction(tx => work({
+          query: async(sql, values) => {
+            const result = await tx.query(sql, values);
+            return { rowCount: result.affectedRows ?? result.rows.length };
+          },
+        })),
+      };
+      const thread = 'remote_fixture_1234';
+      const frame = { conversationId: thread, targetDeviceId: 'desk-1', relayScope: 'v1',
+        accountId: 'account-a', workspaceId: 'workspace-a', viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key' };
+      const prove = async(socket: InstanceType<typeof FakeSocket>) => {
+        socket.open();
+        socket.deliver({ type: 'relay_device_challenge', nonce: '12345678-1234-1234-1234-123456789abc' });
+        await flush();
+        socket.deliver({ type: 'relay_device_ready' });
+        await advance(0);
+      };
+      const rows = () => db.query("SELECT content, relay_terminal_pending FROM claude_messages WHERE role='tool'");
+      try {
+        vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'on');
+        fakes.historySync.mockReturnValue(true);
+        await db.exec(conversations + messages + scopedReceipts + terminalDelivery + `
+          INSERT INTO claude_conversations (id, contractor_id, relay_workspace_id, relay_host_device_id)
+            VALUES ('remote_fixture_1234','account-a','workspace-a','desk-1');
+          INSERT INTO claude_messages (id, contractor_id, conversation_id, content, routed_to)
+            VALUES ('run-a','account-a','remote_fixture_1234','local user text','desktop');
+          ALTER TABLE claude_messages ADD CONSTRAINT fixture_outage CHECK (role != 'tool');
+        `);
+        const first = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
+        await first.setPairedUserId('account-a');
+        await flush();
+        const socket = FakeSocket.instances[0];
+        await prove(socket);
+        socket.deliver({ ...frame, type: 'chat', relayRequest: 'req', userMessageId: 'run-a',
+          messages: [{ role: 'user', content: 'local user text' }] });
+        await flush();
+        expect(fakes.agentChannel.send).toHaveBeenCalledTimes(1);
+        await fakes.bridge.handler!({ type: 'relay_dispatch_complete', data: { thread_id: thread, relayRunId: 'run-a', outcome: 'stopped' } });
+        expect(socket.frames()).toContainEqual(expect.objectContaining({ type: 'error', reason: 'relay_history_unavailable' }));
+        expect(socket.frames().some(out => out.type === 'relay_terminal' || out.type === 'stopped')).toBe(false);
+        expect((await rows()).rows).toEqual([]);
+        socket.drop();
+        await db.exec('ALTER TABLE claude_messages DROP CONSTRAINT fixture_outage');
+        await advance(16_000);
+        const durable = await rows();
+        expect(durable.rows).toEqual([expect.objectContaining({
+          content: '{"sullaCard":{"version":1,"kind":"run_outcome","runId":"run-a","outcome":"stopped"}}',
+          relay_terminal_pending: expect.objectContaining({ run: 'run-a' }),
+        })]);
+        await first.setPairedUserId('');
+
+        vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'off');
+        fakes.approve.mockReturnValue(false);
+        const restarted = new DesktopRelayClient({ ...ports, terminal: new DesktopRelayTerminalRepository(terminalDb) });
+        await restarted.setPairedUserId('account-a');
+        await flush();
+        const replacement = FakeSocket.instances.at(-1)!;
+        await prove(replacement);
+        await advance(15_000);
+        expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(false);
+        expect((await rows()).rows).toEqual(durable.rows);
+
+        fakes.approve.mockReturnValue(true);
+        await advance(30_000);
+        await vi.waitFor(() => expect(replacement.frames().some(out => out.type === 'relay_terminal')).toBe(true));
+        const report = replacement.frames().find(out => out.type === 'relay_terminal');
+        expect(report).toEqual({
+          type: 'relay_terminal', relayScope: 'v1', conversationId: thread, accountId: 'account-a', workspaceId: 'workspace-a',
+          viewerId: 'viewer-a', viewerKey: 'fixture-viewer-key', clientRunId: 'run-a', outcome: 'stopped',
+        });
+        replacement.deliver({ ...frame, type: 'relay_terminal_committed', clientRunId: 'run-a', outcome: 'stopped' });
+        await advance(0);
+        await vi.waitFor(async() => expect((await rows()).rows).toEqual([expect.objectContaining({ relay_terminal_pending: null })]));
+        const attempts = replacement.frames().filter(out => out.type === 'relay_terminal').length;
+        await advance(30_000);
+        expect(replacement.frames().filter(out => out.type === 'relay_terminal')).toHaveLength(attempts);
+        expect(fakes.agentChannel.send).toHaveBeenCalledTimes(1);
+        expect(fakes.scribe).not.toHaveBeenCalled(); // No transcript resend.
+        await restarted.setPairedUserId('');
+      } finally { await db.close() }
     });
 
     it('never stages attachments for denied or duplicate claims, and keeps a retry canonical', async() => {

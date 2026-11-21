@@ -31,7 +31,8 @@ class BridgeHarness {
   readonly timers = { now: () => 0, setTimeout: vi.fn(), clearTimeout: vi.fn(), setInterval: vi.fn(), clearInterval: vi.fn() } as unknown as DesktopRelayTimers;
   readonly outbox = new DesktopRelayConversationOutbox({ deviceId: 'desk-1', send: frame => this.frames.push(frame), sendUnchecked: vi.fn() }, this.timers, this.log);
   readonly cards = { registerMobileCard: vi.fn().mockResolvedValue(undefined) };
-  readonly bridge = new DesktopRelayAgentBridge(() => this.channel, this.outbox, new DesktopRelayTurnScribe(this.history, this.log), this.cards, async() => 'desk-1', this.log);
+  readonly terminal = { record: vi.fn().mockResolvedValue(true) };
+  readonly bridge = new DesktopRelayAgentBridge(() => this.channel, this.outbox, new DesktopRelayTurnScribe(this.history, this.log), this.cards, async() => 'desk-1', this.log, this.terminal);
 
   emit(type: string, data: Record<string, unknown>): Promise<void> {
     return this.handler!({ type, data }) as Promise<void>;
@@ -64,18 +65,22 @@ describe('DesktopRelayAgentBridge', () => {
     // risk: a reconnect presents an unknown execution as successfully completed.
     const h = new BridgeHarness();
     const thread = 'remote_fixture_1234';
-    h.outbox.registerRun(thread, 'r1');
+    const binding = { accountId: 'account', workspaceId: 'workspace', hostDeviceId: 'desk-1', viewerId: 'viewer', viewerKey: 'fixture-key' };
+    h.outbox.registerRun(thread, 'r1', binding);
     h.outbox.beginRun(thread);
     h.bridge.ensureBridged();
     await h.done(thread);
     expect(h.framesOf('done')[0]).toMatchObject({ outcome: 'unknown', clientRunId: 'r1' });
     expect(h.scribed).toEqual([]);
 
-    h.outbox.registerRun(thread, 'r2');
+    expect(h.terminal.record).not.toHaveBeenCalled();
+    h.outbox.registerRun(thread, 'r2', binding);
     h.outbox.beginRun(thread);
     await h.emit('transfer_data', { content: 'graph_execution_complete', stopReason: 'error', thread_id: thread });
     await h.emit('relay_dispatch_complete', { relayRunId: 'r2', outcome: 'accepted', thread_id: thread });
-    expect(JSON.parse(h.scribed[0].content)).toEqual({ sullaCard: { version: 1, kind: 'run_outcome', runId: 'r2', outcome: 'failed' } });
+    expect(h.terminal.record).toHaveBeenCalledOnce();
+    expect(h.terminal.record).toHaveBeenCalledWith({ ...binding, thread, run: 'r2', outcome: 'failed' });
+    expect(h.scribed).toEqual([]);
     expect(h.framesOf('done')[1]).toMatchObject({ outcome: 'failed', clientRunId: 'r2' });
   });
 

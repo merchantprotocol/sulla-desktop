@@ -229,7 +229,8 @@ export class DesktopRelayRequestHandlers {
       const preparation = { id, stopped: false };
       this.preparing.set(conversationId, preparation);
       this.bridge.ensureBridged();
-      this.outbox.registerRun(conversationId, id, scope);
+      this.outbox.registerRun(conversationId, id, scope && msg.viewerId && msg.viewerKey
+        ? { ...scope, viewerId: msg.viewerId, viewerKey: msg.viewerKey } : undefined);
       this.outbox.beginRun(conversationId);
       respond({ type: 'ack', ...identity });
       // Attachment writes are effects of the durable claim winner only.
