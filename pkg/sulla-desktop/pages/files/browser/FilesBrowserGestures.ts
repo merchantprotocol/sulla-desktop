@@ -69,10 +69,12 @@ export class FilesBrowserGestures {
       this.marquee.value = { left, top, width: right - left, height: bottom - top, additive };
       const surface = scroll.surface();
       const surfaceRect = surface?.getBoundingClientRect();
+      const listRowsTop = list() ? scroll.listRowsTop() : undefined;
       const { LIST_ROW_HEIGHT, GRID_ROW_HEIGHT } = FilesBrowserVirtualScroll;
       const hits = surface && surfaceRect ? this.browser.listing.displayedEntries.value.filter((entry, index) => {
         if (list()) {
-          const entryTop = surfaceRect.top + 62 + index * LIST_ROW_HEIGHT - surface.scrollTop;
+          if (listRowsTop === undefined) return false;
+          const entryTop = listRowsTop + index * LIST_ROW_HEIGHT;
 
           return surfaceRect.right >= left && surfaceRect.left <= right && entryTop + LIST_ROW_HEIGHT >= top && entryTop <= bottom;
         }

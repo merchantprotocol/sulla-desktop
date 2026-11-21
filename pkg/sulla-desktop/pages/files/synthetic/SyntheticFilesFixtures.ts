@@ -8,7 +8,7 @@ import type { FileShare, FilesTrashTombstone, ShareLink } from '../types';
 
 /** Builds the deterministic preview fixtures: collections, trash receipts and share rows. */
 export class SyntheticFilesFixtures {
-  constructor(private readonly now = Date.now()) {}
+  constructor(private readonly now = Date.now(), private readonly pageScroll = false) {}
 
   /** ISO time `days` from when the fixtures were created (negative is the past). */
   iso(days = 0):string { return new Date(this.now + days * 86_400_000).toISOString() }
@@ -65,6 +65,15 @@ export class SyntheticFilesFixtures {
         { folderId: 'synthetic-stored-stale', path: 'Projects/Alpha/Stale subtree', revision: '37' },
       ],
     };
+
+    if (this.pageScroll) {
+      primary.folders.push({ folderId: 'synthetic-page-scroll', path: 'Page Scroll', revision: '1' });
+      for (let index = 1; index <= 80; index++) {
+        const number = String(index).padStart(2, '0');
+        const name = index === 80 ? `Sample ${number} with a deliberately long filename for a narrow viewport` : `Sample ${number}`;
+        primary.files.push(this.file(`synthetic-scroll-${number}`, `Page Scroll/${name}.md`, 'text/markdown', 320, `version-scroll-${number}`, '1'));
+      }
+    }
 
     const sulla:SyntheticCollection = { id: 'synthetic-sulla', name: 'Sulla', home: 'sulla', systemArea: 'sulla', files: [], folders: [] };
 
