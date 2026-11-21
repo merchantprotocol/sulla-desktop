@@ -52,7 +52,9 @@ describe('chat Files card workspace handoff', () => {
     const [reference] = parseDurableFileReferences(link);
     card = shallowMount(ChatFileCard, { props: { reference } });
     // Browsers dispatch click with detail=0 for native keyboard button activation.
-    await card.findAll('button').find(button => button.text() === label)!.trigger('click', { detail: 0 });
+    const button = card.findAll('button').find(button => button.text() === label)!;
+    button.element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true, detail: 0 }));
+    await flushPromises();
     expect(ipcRenderer.invoke).toHaveBeenCalledExactlyOnceWith('internal-tab-view:open-workspace-tab', {
       mode: 'files', title: 'File Manager',
       filesNavigation: { fileId, path, section, ...(versionId ? { versionId } : {}) },
