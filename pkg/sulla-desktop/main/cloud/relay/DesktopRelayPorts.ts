@@ -111,6 +111,7 @@ export interface DesktopRelaySocketPorts {
 }
 
 export interface DesktopRelaySessionPorts {
+  sharedRelayEnabled?(): boolean;
   proveRelayDevice?(room: string, deviceId: string, nonce: string): Promise<string>;
   accessToken(): Promise<string | null | undefined>;
   deviceId(): Promise<string>;

@@ -27,7 +27,7 @@ export interface RelayMessageRouteDependencies {
   companion(message: RelayIncomingMessage): Promise<void>;
   shareFetch(message: RelayIncomingMessage, socket: RelaySocketLike, generation: number): Promise<void>;
   shareFetchCancel(message: RelayIncomingMessage, socket: RelaySocketLike | undefined, generation: number): void;
-  scoped?(message: RelayIncomingMessage): Promise<void>;
+  scoped?(message: RelayIncomingMessage, socket?: RelaySocketLike): Promise<void>;
   chat(message: RelayIncomingMessage): Promise<void>;
   cancel(message: RelayIncomingMessage): void;
   inject(message: RelayIncomingMessage): Promise<void>;
@@ -55,7 +55,7 @@ export class DesktopRelayInboundMessageRouter {
 
     if (!message || typeof message !== 'object') return;
     if (message.relayScope === 'v1') {
-      if (message.targetDeviceId === await this.dependencies.deviceId()) await this.dependencies.scoped?.(message);
+      if (message.targetDeviceId === await this.dependencies.deviceId()) await this.dependencies.scoped?.(message, sourceSocket);
       return;
     }
     if ((typeof message.conversationId === 'string' && message.conversationId.startsWith('remote_'))

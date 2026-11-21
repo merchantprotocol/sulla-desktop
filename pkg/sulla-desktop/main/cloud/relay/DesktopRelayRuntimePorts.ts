@@ -67,6 +67,7 @@ export class DesktopRelayRuntimePorts {
         vaultView:  socket => socket instanceof VaultRelaySocket ? socket : null,
       },
       session: {
+        sharedRelayEnabled: () => process.env.SULLA_SHARED_LIVE_RELAY === 'on',
         proveRelayDevice: (room, deviceId, nonce) => signDeviceMessageExact('shared-live-relay-v1', [room, 'desktop', deviceId, nonce]),
         accessToken:     () => getCurrentAccessToken(),
         deviceId:        () => getDesktopDeviceId(),

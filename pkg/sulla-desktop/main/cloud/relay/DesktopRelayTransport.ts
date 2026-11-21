@@ -88,6 +88,13 @@ export class DesktopRelayTransport {
     this.heartbeat = new DesktopRelayHeartbeat(() => this.ws, reason => this.forceReconnect(reason), timers, log);
   }
 
+  private readonly scopedProof = new WeakSet<RelaySocketLike>();
+  private readonly scopedReady = new WeakSet<RelaySocketLike>();
+
+  canAcceptScoped(socket?: RelaySocketLike): boolean {
+    return !!socket && socket === this.ws && this.scopedReady.has(socket) && this.session.sharedRelayEnabled?.() === true;
+  }
+
   get deviceId(): string { return this.currentDeviceId }
   set deviceId(value: string) { this.currentDeviceId = value }
   get socket(): RelaySocketLike | null { return this.ws }
@@ -165,6 +172,7 @@ export class DesktopRelayTransport {
 
   /** Send a frame, queueing durable ones while the socket is down. */
   send(payload: RelayFrame, type: string | undefined): void {
+    if (payload.relayScope === 'v1' && !this.canAcceptScoped(this.ws ?? undefined)) return;
     const json = JSON.stringify(payload);
     if (!this.ws || this.ws.readyState !== RELAY_SOCKET_OPEN) {
       // Streaming/activity frames are ephemeral — dropping them is acceptable.
@@ -283,11 +291,18 @@ export class DesktopRelayTransport {
       if (typeof event.data === 'string' && this.session.proveRelayDevice) {
         let challenge: { type?: string; nonce?: string } | undefined;
         try { challenge = JSON.parse(event.data) } catch {}
+        if (challenge?.type === 'relay_device_ready') {
+          if (this.scopedProof.has(ws)) this.scopedReady.add(ws);
+          return;
+        }
         if (challenge?.type === 'relay_device_challenge') {
           const nonce = challenge.nonce;
-          if (typeof nonce === 'string' && /^[a-f0-9-]{36}$/.test(nonce)) {
+          if (this.session.sharedRelayEnabled?.() && !this.scopedProof.has(ws) && typeof nonce === 'string' && /^[a-f0-9-]{36}$/.test(nonce)) {
             void this.session.proveRelayDevice(room, this.currentDeviceId, nonce).then(signature => {
-              if (this.ws === ws) ws.send(JSON.stringify({ type: 'relay_device_proof', signature }));
+              if (this.ws === ws && this.session.sharedRelayEnabled?.() && !this.scopedProof.has(ws)) {
+                this.scopedProof.add(ws);
+                ws.send(JSON.stringify({ type: 'relay_device_proof', signature }));
+              }
             }).catch(() => this.log.warn('[DesktopRelay] Device proof unavailable'));
           }
           return;
@@ -371,8 +386,8 @@ export class DesktopRelayTransport {
     if (!view) return;
     for (const frame of view.takePendingOutbound()) {
       try {
-        const type = JSON.parse(frame)?.type;
-        if (DURABLE_RELAY_FRAME_TYPES.includes(type)) {
+        const payload = JSON.parse(frame);
+        if (payload?.relayScope !== 'v1' && DURABLE_RELAY_FRAME_TYPES.includes(payload?.type)) {
           if (!this.pendingFrames.includes(frame)) this.pendingFrames.push(frame);
         }
       } catch { /* malformed frames were never durable */ }

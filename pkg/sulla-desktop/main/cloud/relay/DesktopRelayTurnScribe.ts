@@ -11,8 +11,8 @@ export type RelayTurnRole = 'user' | 'assistant' | 'tool';
  * Writes committed relay turns to the sync log (local claude_messages +
  * sync_queue push). The desktop is the system of record for relay
  * conversations: turns are scribed independently of WebSocket delivery, so a
- * phone that was asleep recovers them from history. A failed commit is propagated so no committed live frame can advertise unsaved data. Turns without a
- * conversationId are skipped (the SullaLogger mirror scribes those).
+ * phone that was asleep recovers them from history. Propagate commit errors
+ * so committed live frames never advertise unsaved data.
  */
 export class DesktopRelayTurnScribe {
   constructor(

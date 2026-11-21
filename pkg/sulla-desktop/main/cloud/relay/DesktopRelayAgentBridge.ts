@@ -222,12 +222,12 @@ export class DesktopRelayAgentBridge {
       if (outcome !== 'stopped' && trailing) await this.commitAssistantText(threadId, trailing);
       const finalText = this.finalTextByThread.get(threadId) ?? '';
       const id = this.lastCommittedIdByThread.get(threadId);
-      await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
+      const eventId = await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
         sullaCard: { version: 1, kind: 'run_outcome', runId, outcome },
       }));
       terminal = outcome === 'stopped'
-        ? { type: 'stopped', outcome }
-        : { type: 'done', content: finalText, id, outcome };
+        ? { type: 'stopped', outcome, eventId }
+        : { type: 'done', content: finalText, id, outcome, eventId };
     } catch {
       terminal = { type: 'error', reason: 'relay_history_unavailable' };
     }

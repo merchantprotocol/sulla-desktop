@@ -89,6 +89,7 @@ vi.mock('@pkg/agent/utils/sullaPaths', () => ({ resolveSullaHomeDir: () => '/tmp
 vi.mock('@pkg/main/mobileCompanion', () => ({ mobileCompanionRequest: vi.fn(), registerMobileCard: vi.fn() }));
 
 vi.mock('../../../../main/cloud/cloudSettings', () => ({ getCloudPreferences: async() => ({ remoteAccess: true }) }));
+vi.mock('../../../../main/cloud/deviceKey', () => ({ signDeviceMessageExact: async() => 'fixture-proof' }));
 vi.mock('../../../../main/cloud/approvedClients', () => ({
   ApprovedClients: {
     get: (id: string) => fakes.approve(id) ? { publicKey: 'fixture-viewer-key' } : undefined,
@@ -142,6 +143,7 @@ describe('DesktopRelayClient characterization', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -394,7 +396,7 @@ describe('DesktopRelayClient characterization', () => {
       await fakes.bridge.handler!({ type: 'relay_dispatch_complete', data: { thread_id: 'c1', relayRunId: 'u1', outcome: 'accepted' } });
       const frames = socket.frames();
       expect(frames).toContainEqual({ type: 'chunk', delta: 'Hi there', clientRunId: 'u1', userMessageId: 'u1', conversationId: 'c1', deviceId: 'desk-1' });
-      expect(frames[frames.length - 1]).toEqual({ type: 'done', outcome: 'completed', content: 'Hi there', id: 'id:c1:assistant:Hi there', clientRunId: 'u1', userMessageId: 'u1', conversationId: 'c1', deviceId: 'desk-1' });
+      expect(frames[frames.length - 1]).toMatchObject({ type: 'done', outcome: 'completed', content: 'Hi there', id: 'id:c1:assistant:Hi there', clientRunId: 'u1', userMessageId: 'u1', conversationId: 'c1', deviceId: 'desk-1' });
       expect(fakes.scribe).toHaveBeenCalledWith({ conversationId: 'c1', role: 'assistant', content: 'Hi there', ts: expect.any(String), id: 'id:c1:assistant:Hi there' });
 
       const sentBefore = socket.sent.length;
@@ -434,6 +436,7 @@ describe('DesktopRelayClient characterization', () => {
 
     it('never stages attachments for denied or duplicate claims, and keeps a retry canonical', async() => {
       // risk: filesystem mutations and duplicate execution.
+      vi.stubEnv('SULLA_SHARED_LIVE_RELAY', 'on');
       fakes.accept.mockResolvedValueOnce('duplicate').mockResolvedValueOnce('accepted');
       await pairedClient();
       const socket = FakeSocket.instances[0];
@@ -444,6 +447,12 @@ describe('DesktopRelayClient characterization', () => {
           { type: 'text', text: 'Review' },
           { type: 'document', source: { type: 'base64', media_type: 'text/plain', data: 'eA==' }, title: 'fixture.txt' },
         ] }] };
+      socket.deliver(frame);
+      await flush();
+      expect(fakes.accept).not.toHaveBeenCalled();
+      socket.deliver({ type: 'relay_device_challenge', nonce: '12345678-1234-1234-1234-123456789abc' });
+      await flush();
+      socket.deliver({ type: 'relay_device_ready' });
       fakes.admit.mockResolvedValueOnce(false);
       socket.deliver(frame);
       await flush();

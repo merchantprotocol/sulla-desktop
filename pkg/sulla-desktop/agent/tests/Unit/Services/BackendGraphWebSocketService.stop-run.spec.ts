@@ -30,4 +30,17 @@ describe('BackendGraphWebSocketService stop_run scope', () => {
     expect(parentAbort.signal.aborted).toBe(true);
     expect(abortJob).not.toHaveBeenCalled();
   });
+
+  it('ignores a stale relay stop at the execution boundary', async() => {
+    // risk: a delayed remote command must never abort the next run.
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const current = new AbortController();
+    const service = Object.create(BackendGraphWebSocketService.prototype) as any;
+    service.relayRuns = new Map([['relay-thread', { id: 'next', controller: new AbortController() }]]);
+    service.activeAborts = new Map([['mobile-relay|relay-thread', { abort: () => current.abort() }]]);
+    await service.handleChannelMessage('mobile-relay', 'sulla-desktop', { type: 'stop_run', data: { threadId: 'relay-thread', relayRunId: 'stale' } });
+    expect(current.signal.aborted).toBe(false);
+    await service.handleChannelMessage('mobile-relay', 'sulla-desktop', { type: 'stop_run', data: { threadId: 'relay-thread', relayRunId: 'next' } });
+    expect(current.signal.aborted).toBe(true);
+  });
 });

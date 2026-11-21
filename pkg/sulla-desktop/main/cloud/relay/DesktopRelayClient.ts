@@ -58,7 +58,7 @@ export class DesktopRelayClient {
       companion:        async message => this.handlers.companion(message as RelayIncomingFrame, frame => this.outbox.send(frame)),
       shareFetch:       (message, socket, generation) => this.shares.serve(message as RelayIncomingFrame, socket, generation),
       shareFetchCancel: (message, socket, generation) => this.shares.cancel(message as RelayIncomingFrame, socket, generation),
-      scoped:           message => this.handlers.handleScopedCommand(message as RelayIncomingFrame),
+      scoped:           async(message, socket) => { if (this.transport.canAcceptScoped(socket)) await this.handlers.handleScopedCommand(message as RelayIncomingFrame) },
       chat:             message => this.handlers.handleChat(message as RelayIncomingFrame),
       cancel:           message => this.handlers.handleCancel(message as RelayIncomingFrame),
       inject:           message => this.handlers.handleInject(message as RelayIncomingFrame),
