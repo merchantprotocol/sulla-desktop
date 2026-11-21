@@ -54,7 +54,16 @@ export interface ToolRegistration {
   operationTypes?: ToolOperation[];
 }
 
-export abstract class BaseTool<TState = any> {
+interface ChatToolReportingState {
+  metadata?: {
+    threadId?:           string;
+    wsChannel?:           string;
+    _muteWsChat?:          boolean;
+    subconsciousSilent?:  boolean;
+  };
+}
+
+export abstract class BaseTool<TState extends ChatToolReportingState = any> {
   abstract name: string;
   abstract description: string;
   schemaDef: InputSchemaDef = {};
