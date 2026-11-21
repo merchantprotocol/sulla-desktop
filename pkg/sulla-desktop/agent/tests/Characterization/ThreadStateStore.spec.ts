@@ -9,6 +9,8 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { DeferredStallInput } from '../../app/Services/DeferredStallInput';
+import { injectSteer } from '../../utils/steerChannel';
 import type { BaseThreadState } from '../../nodes/Graph';
 
 const boundary = vi.hoisted(() => {
@@ -112,4 +114,26 @@ describe('ThreadStateStore characterization', () => {
     expect(restored?.metadata.threadId).toBe('thread-log');
     fs.rmSync(directory, { recursive: true, force: true });
   });
+  it('never restores a pending stall steer, but restores unrelated and terminal input', async() => {
+    // risk: a process restart can never validate the previous process's stall episode.
+    const store = await import('../../nodes/ThreadStateStore');
+    const state = makeState('thread-stall-restart', 'keep this history');
+    injectSteer(state, {
+      role: 'user', content: '', metadata: DeferredStallInput.metadata('parent', 'thread-stall-restart', [{
+        jobId: 'running', taskIndex: 0, results: [], noticeKind: 'stall',
+        stall: { childThread: 'child', baseline: 'previous-process' },
+      }]),
+    });
+    injectSteer(state, {
+      role: 'user', content: 'child returned normally',
+      metadata: { source: 'sub_agent_completion', completionEntries: [{ jobId: 'completed', taskIndex: 0, results: [] }] },
+    });
+    await store.saveThreadState(state);
+    expect(state.messages).toHaveLength(3);
+    const restored = await store.loadThreadState('thread-stall-restart');
+    expect(restored?.messages.map(message => message.content)).toEqual(['keep this history', 'child returned normally']);
+    expect(restored?.messages[1].metadata?.steerPending).toBe(true);
+    await store.deleteThreadState('thread-stall-restart');
+  });
+
 });

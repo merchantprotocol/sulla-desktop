@@ -12,7 +12,9 @@ export class CompletionFormatter extends Service {
 
   format(entries: PendingCompletion[]): string {
     return entries.map(entry => {
-      const content = entry.notice ?? this.buildWakeContent(entry);
+      const content = entry.noticeKind === 'stall' && entry.stall
+        ? `[No progress from ${ entry.stall.label ?? entry.stall.childThread } (job ${ entry.jobId } task ${ entry.taskIndex })] No recent activity and the runtime is not confirmed alive. This does not mean the task has failed or stopped. Check its status before deciding what to do.`
+        : entry.notice ?? this.buildWakeContent(entry);
       if (content.length <= this.resultLimit) return content;
       return `${ content.slice(0, this.resultLimit) }\n\n[Result truncated. Use agents/check_agent_jobs for the full text of ${ entry.jobId }.]`;
     }).join('\n\n==========\n\n');
