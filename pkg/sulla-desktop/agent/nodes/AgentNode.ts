@@ -395,7 +395,9 @@ export class AgentNode extends BaseNode {
           lastAssistantText === userVisibleText.trim();
         const alreadyStreamed = !!reply.metadata.streamingEmitted;
         if (!isDuplicate && !alreadyStreamed) {
-          await this.wsChatMessage(state, userVisibleText, 'assistant');
+          await this.wsChatMessage(state, userVisibleText, 'assistant', 'text', {
+            replyAttribution: this.recordedReplyAttribution(state, reply.metadata.model),
+          });
         } else if (!isDuplicate) {
           // UI already has this text from streaming chunks (which are
           // excluded from conversation logging as noise) — still persist

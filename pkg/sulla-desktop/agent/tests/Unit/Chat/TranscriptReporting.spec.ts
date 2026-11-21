@@ -7,6 +7,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { ref } from 'vue';
 
+import { CitationExtractor } from '@pkg/agent/controllers/CitationExtractor';
 import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispatcher';
 import type { ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import Transcript from '@pkg/pages/chat/components/transcript/Transcript.vue';
@@ -84,15 +85,15 @@ it('projects safe individual events in source order before and after tool settle
   expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
     'Preparing your turn…', 'citation', 'Running a shell command', 'Shell · Running', 'Tools connected — calling model',
   ]);
-  expect(live.entries('info').map(row => row.id)).toEqual([debug[1].id]);
-  expect(live.entries('fatal').map(row => row.id)).toEqual([debug[1].id]);
+  expect(live.entries('info')).toEqual([]);
+  expect(live.entries('fatal')).toEqual([]);
   expect(JSON.stringify(debug)).not.toContain('PRIVATE_');
 
   live.emit('progress', { phase: 'tool_result', toolRunId: 'fixture-call', success: false, error: 'PRIVATE_ERROR', result: 'PRIVATE_OUTPUT' });
   const settled = live.entries('debug');
   expect(settled.map(row => row.id)).toEqual(debug.map(row => row.id));
   expect(live.entries('info')).toContainEqual({ ...debug[3], level: 'info', text: 'Shell · Failed' });
-  expect(live.entries('fatal').map(row => row.id)).toEqual([debug[1].id]);
+  expect(live.entries('fatal')).toEqual([]);
   expect(JSON.stringify(settled)).not.toContain('PRIVATE_');
 
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
@@ -215,4 +216,110 @@ it('keeps explicit decision-turn streams separate from ordinary output and prese
   expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id]);
   live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in decision follow-up <html><body>Report</body></html>', decisionFollowUpId: 'claimed-question' });
   expect(live.entries('fatal').map(row => row.id)).toEqual(rows.map(row => row.id));
+});
+
+// risk: switching models/agents rewrites historical attribution; filtering
+// hides the visible reply's controls; completion credits a different attempt.
+it('keeps recorded reply attribution and its actions together across levels and reload', async() => {
+  const live = new ReportingFixture();
+  const legacyAt = Date.UTC(2026, 10, 14, 17, 41);
+  live.chat.appendMessage({
+    id: asMessageId('legacy-reply'), kind: 'sulla', text: 'Legacy answer', createdAt: legacyAt,
+    model: 'Former picker label', by: { agent: 'Former picker agent', model: 'Former picker label' },
+  });
+  live.emit('assistant_message', {
+    kind: 'streaming', content: 'Recorded answer', replyStreamId: 'run-a',
+    replyAttribution: { agent: 'Research Agent', model: 'selected-model' },
+  });
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'run-b', reportedModel: 'wrong-model' });
+  expect(live.chat.messages.value.at(-1)?.kind).toBe('streaming');
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'run-a', reportedModel: 'reported-model' });
+  live.emit('assistant_message', {
+    kind: 'text', content: 'Decision follow-up', decisionFollowUpId: 'decision-1',
+    replyAttribution: { agent: 'Approvals Agent', model: 'follow-up-model' },
+  });
+
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  reopened.chat.model.value = { ...reopened.chat.model.value, name: 'Current picker label' };
+  const wrapper = reopened.mount('info');
+  const actionRows = () => wrapper.findAll('.tact-sulla');
+  expect(actionRows()).toHaveLength(3);
+  const [legacy, recorded, followUp] = actionRows();
+  expect(legacy.text()).toContain('Agent not recorded');
+  expect(legacy.text()).toContain('Model not recorded');
+  expect(legacy.get('time').attributes('datetime')).toBe(new Date(legacyAt).toISOString());
+  expect(recorded.text()).toContain('Research Agent');
+  expect(recorded.text()).toContain('reported-model');
+  expect(wrapper.text()).not.toMatch(/picker label|picker agent|selected-model|wrong-model/);
+  expect(wrapper.findAll('.chat-turn.sulla .chat-role, .chat-turn.sulla .noir-avatar')).toHaveLength(0);
+  expect(recorded.classes()).not.toContain('tact-latest');
+  expect(followUp.classes()).toContain('tact-latest');
+
+  await wrapper.setProps({ reportingLevel: 'fatal' });
+  const newestVisible = wrapper.get('.tact-sulla.tact-latest');
+  expect(newestVisible.text()).toContain('Research Agent');
+  expect(newestVisible.findAll('button')).toHaveLength(5);
+
+  // Preserve the existing Reply, Regenerate and Pin dispatches; Copy and Fork
+  // remain on the same row (Fork is still the existing visual placeholder).
+  const recordedId = live.chat.messages.value.find(message => message.kind === 'sulla' && message.text === 'Recorded answer')!.id;
+  const regenerate = vi.spyOn(reopened.chat, 'regenerate').mockImplementation(() => {});
+  const pin = vi.spyOn(reopened.chat, 'togglePin');
+  const reply = vi.fn();
+  window.addEventListener('chat:reply', reply, { once: true });
+  onTestFinished(() => window.removeEventListener('chat:reply', reply));
+  await newestVisible.get('button[title="Reply to this message"]').trigger('click');
+  expect(reply.mock.calls[0][0].detail.excerpt).toBe('Recorded answer');
+  await newestVisible.get('button[aria-label="Regenerate"]').trigger('click');
+  expect(regenerate).toHaveBeenCalledWith(recordedId);
+  await newestVisible.get('button[aria-label="Pin"]').trigger('click');
+  expect(pin).toHaveBeenCalledWith(recordedId);
+  expect(newestVisible.get('button[aria-label="Unpin"]').attributes('aria-pressed')).toBe('true');
+});
+
+// risk: losing evidence or rendering it twice on streaming replay / rehydrate;
+// non-Detailed mode must not reveal reference titles or URLs.
+it('renders ordered citation links inline only in Detailed on stream, replay and reload', async() => {
+  const live = new ReportingFixture();
+  const wrapper = live.mount('info');
+  live.emit('assistant_message', { kind: 'streaming', content: 'Streamed answer' });
+  const deliver = vi.fn();
+  const extractor = new CitationExtractor(deliver);
+  const raw = { content: 'Streamed answer\n<citations>' +
+    '<source num="3" title="First external source" origin="example.com" url="https://example.com/a" />' +
+    '<source num="1" title="Saved report" origin="Projects/qa/audit.md" />' +
+    '<source num="1" title="Saved report" origin="Projects/qa/audit.md" />' +
+    '<source num="3" title="Last external source" origin="example.com" url="https://example.com/b" />' +
+    '</citations>', metadata: { tokens_used: 1, time_spent: 1 } };
+  expect(extractor.processComplete(raw, { state: {} } as any)).toBe('Streamed answer');
+  expect(deliver).toHaveBeenCalledTimes(1);
+  const evidence = deliver.mock.calls[0][4] as { citationId: string; citations: unknown[] };
+  live.emit('assistant_message', { kind: 'citation', ...evidence });
+  await wrapper.setProps({ reportingLevel: 'debug' });
+  expect(live.chat.messages.value[0].kind).toBe('streaming');
+  expect(wrapper.findAll('ul.supporting-reports')).toHaveLength(1);
+  live.emit('assistant_message', { kind: 'streaming_complete' });
+  live.emit('assistant_message', { kind: 'citation', ...evidence });
+
+  const titles = ['First external source', 'Saved report', 'Last external source'];
+  await wrapper.setProps({ reportingLevel: 'fatal' });
+  expect(wrapper.find('.supporting-reports').exists()).toBe(false);
+  await wrapper.setProps({ reportingLevel: 'info' });
+  expect(wrapper.find('.supporting-reports').exists()).toBe(false);
+  await wrapper.setProps({ reportingLevel: 'debug' });
+  expect(wrapper.findAll('ul.supporting-reports')).toHaveLength(1);
+  expect(wrapper.findAll('.report-row b').map(row => row.text())).toEqual(titles);
+  expect(wrapper.findAll('.report-row a').map(link => link.attributes('href'))).toEqual([
+    'https://example.com/a', 'https://example.com/b',
+  ]);
+  expect(wrapper.get('.report-row button').text()).toContain('Read report');
+
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  reopened.emit('assistant_message', { kind: 'citation', ...evidence });
+  const hydrated = reopened.mount('debug');
+  expect(hydrated.findAll('.report-row b').map(row => row.text())).toEqual(titles);
+  reopened.emit('assistant_message', { kind: 'citation', ...evidence, citationId: evidence.citationId.replace(/.$/, c => c === 'f' ? '0' : 'f') });
+  await flushPromises();
+  // An independent reply may legitimately cite the same source again.
+  expect(hydrated.findAll('.report-row b').map(row => row.text())).toEqual([...titles, ...titles]);
 });

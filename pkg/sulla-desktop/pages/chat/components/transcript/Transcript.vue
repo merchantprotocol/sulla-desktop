@@ -31,7 +31,7 @@
             class="report-label"
             :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
           >{{ entry.label }}</span>
-          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" />
+          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" />
           <div v-else class="report-activity">{{ entry.text }}</div>
         </div>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
@@ -79,6 +79,8 @@ const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
+  entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
 // A compact activity line doesn't render a minute stamp; let the next

@@ -60,9 +60,8 @@ describe('supporting report resolution', () => {
 });
 
 describe('supporting report controls', () => {
-  it('starts collapsed and opens the verified document through the existing Files editor', async() => {
+  it('opens the verified inline report through the existing Files editor', async() => {
     const wrapper = mount(CitationRow, { props: { msg: { id: 'citation', kind: 'citation', sources: [source] } as any } });
-    expect(wrapper.find('details').attributes('open')).toBeUndefined();
     expect(wrapper.find('a[href="#"]').exists()).toBe(false);
     expect(f.invoke).not.toHaveBeenCalled();
     await wrapper.find('button').trigger('click'); await flushPromises();

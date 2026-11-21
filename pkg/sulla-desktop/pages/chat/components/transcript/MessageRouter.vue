@@ -17,7 +17,7 @@
 -->
 <template>
   <TurnUser        v-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
-  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg"
+  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="latestReply"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
   />
@@ -98,7 +98,7 @@ import ToolTask        from '../tool/ToolTask.vue';
 import type { CardMessage } from './toolGroups';
 import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CardMessage }>();
+const props = defineProps<{ msg: CardMessage; latestReply?: boolean }>();
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();
 const mainDecisionTranscript = inject('chat:main-decision-transcript', ref(false));

@@ -83,7 +83,10 @@ export interface SullaMessage extends MessageBase {
   decisionFollowUpId?: string;
   kind:            'sulla';
   text:            string;        // markdown-ish; rendered by prose component
-  model:           string;        // e.g. "opus-4.7"
+  /** Legacy snapshots may contain a selector value, not the model that ran. */
+  model?:          string;
+  /** Recorded on this reply's backend event, never inferred from the thread picker. */
+  replyAttribution?: { agent?: string; model?: string };
   tokens?:         number;
   /** Keep the existing reply renderer for run-ending assistant posts. */
   terminalRunError?: boolean;

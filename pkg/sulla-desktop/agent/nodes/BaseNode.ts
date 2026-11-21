@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { randomUUID } from 'node:crypto';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
 
 import { prepareProviderMessages } from './contextBudget';
@@ -576,6 +577,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     (state.metadata as any).resolvedProvider = modelStatus.provider;
     (state.metadata as any).resolvedModelStatus = modelStatus;
     AgentModelStatusRegistry.record(state.metadata.threadId, modelStatus);
+  }
+
+  protected recordedReplyAttribution(state: BaseThreadState, model?: string): { agent?: string; model?: string } {
+    const agentId = state.metadata.agentId;
+    const concrete = model?.trim();
+    return {
+      agent: agentId ? state.metadata.agent?.name?.trim() || agentId : undefined,
+      // Transport names, route tiers and CLI aliases do not identify a concrete model.
+      model: concrete && !/^(auto|default|codex|claude-code|fast|balanced|powerful|opus|sonnet|haiku)$/i.test(concrete)
+        ? concrete : undefined,
+    };
   }
 
   /** Lazy-init ToolExecutor. Passes a context that bridges back to this node. */
@@ -1662,10 +1674,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let suppressedDeltaCount = 0;
     let wsStreamingSendCount = 0;
     let lastWsStreamingSendAt = 0;
+    const replyStreamId = randomUUID();
+    const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
-      this.wsChatMessage(state, content, 'assistant', 'streaming');
+      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
       streamingOpen = true;
     };
 
@@ -1738,7 +1752,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
         streamingOpen = false;
         contentBuffer = '';
         displayBuffer = '';
@@ -1778,7 +1792,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           sendStreamingUpdate(stripped);
           streamingWsSent = true;
         }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
         streamingOpen = false;
         contentBuffer = '';
         displayBuffer = '';
@@ -1869,7 +1883,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           contentBuffer = '';
           displayBuffer = '';
         }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        const reportedModel = this.recordedReplyAttribution(state, reply?.metadata.model).model;
+        if (streamingOpen || (streamingWsSent && reportedModel && reportedModel !== replyAttribution.model)) {
+          this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId, reportedModel });
+        }
         if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }
       const endedAt = Date.now();

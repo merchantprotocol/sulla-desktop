@@ -161,7 +161,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   // but must not flip graphRunning, otherwise stop button visibility
   // gets driven by background activity instead of the user's own loop.
   const terminalRunError = isTerminalRunError(msg);
-  if (msg.type !== 'subconscious_message') {
+  if (msg.type !== 'subconscious_message' && (msg.data as { kind?: string } | null)?.kind !== 'citation') {
     ctx.graphRunning.value = !terminalRunError;
     if (!ctx.graphRunning.value) ctx.registry.setLoading(agentId, false);
   }
@@ -213,6 +213,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
+  const replyStreamId = msg.type === 'assistant_message' && typeof data.replyStreamId === 'string'
+    ? data.replyStreamId : undefined;
   const rawContent = data?.content !== undefined ? contentToString(data.content) : '';
   const doneWrapper = msg.type !== 'system_message' && (!data.role || data.role === 'assistant')
     && (!data.kind || data.kind === 'streaming' || data.kind === 'text') && /^\s*<AGENT_DONE>/i.test(rawContent);
@@ -225,6 +227,16 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   // gets swallowed and the streaming/thinking bubbles never close.
   if (kindRaw === 'streaming_complete' || kindRaw === 'thinking_complete') {
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
+    if (target === 'streaming' && replyStreamId) {
+      const reportedModel = typeof data.reportedModel === 'string' ? data.reportedModel.trim() : '';
+      for (const message of ctx.messages) {
+        if (message.kind !== 'streaming' || message.channelId !== agentId || message.threadId !== msgThreadId ||
+          message.replyStreamId !== replyStreamId) continue;
+        (message as ChatMessage & { _completed?: boolean })._completed = true;
+        if (reportedModel) message.replyAttribution = { ...message.replyAttribution, model: reportedModel };
+      }
+      return;
+    }
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (m.kind === target && m.role === 'assistant' && m.threadId === msgThreadId && !(m as any)._completed &&
@@ -262,8 +274,13 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
     if (citations.length === 0) return;
 
+    // Replays of the same structured event keep its original message ID.
+    // Distinct replies are allowed to cite the same documents again.
+    const id = typeof data.citationId === 'string' && /^\d{13}_ws_citation_[a-f0-9-]{36}$/.test(data.citationId)
+      ? data.citationId : uniqueMessageId(ctx, `${ Date.now() }_ws_citation`);
+    if (ctx.messages.some(message => message.id === id)) return;
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_citation`,
+      id,
       channelId: agentId,
       threadId:  msgThreadId,
       role:      'assistant',
@@ -483,6 +500,17 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     (kind === 'streaming' || kind === 'text' || !kind) && typeof data?.decisionFollowUpId === 'string'
     ? data.decisionFollowUpId : undefined;
 
+  const attribution = data?.replyAttribution;
+  const agent = typeof attribution?.agent === 'string' ? attribution.agent.trim() : '';
+  const model = typeof attribution?.model === 'string' ? attribution.model.trim() : '';
+  const replyAttribution = msg.type === 'assistant_message' && role === 'assistant' &&
+    (kind === 'streaming' || kind === 'text' || !kind) && (agent || model)
+    ? { agent: agent || undefined, model: model || undefined } : undefined;
+  const belongsToReply = (message: ChatMessage) => message.channelId === agentId &&
+    message.decisionFollowUpId === decisionFollowUpId &&
+    (kind !== 'streaming' || message.replyStreamId === replyStreamId) &&
+    message.replyAttribution?.agent === replyAttribution?.agent && message.replyAttribution?.model === replyAttribution?.model;
+
   if (kind === 'speak') {
     console.log(`[MessageDispatcher] SPEAK received → channel="${ agentId }", thread="${ msgThreadId }", content="${ content.slice(0, 80) }"`);
   }
@@ -516,7 +544,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (replyBoundary(m)) break;
-      if (m.kind === 'streaming' && m.role === 'assistant' && m.threadId === msgThreadId && m.decisionFollowUpId === decisionFollowUpId && !(m as any)._completed) {
+      if (m.kind === 'streaming' && m.role === 'assistant' && m.threadId === msgThreadId && belongsToReply(m) && !(m as any)._completed) {
         existingIdx = i;
         break;
       }
@@ -538,7 +566,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       const m = ctx.messages[i];
       if (replyBoundary(m)) break;
       if (m.role !== 'assistant') continue;
-      if (m.kind !== 'streaming' || m.threadId !== msgThreadId || m.decisionFollowUpId !== decisionFollowUpId) continue;
+      if (m.kind !== 'streaming' || m.threadId !== msgThreadId || !belongsToReply(m)) continue;
       const prev = (m.content || '').trim();
       if (!prev) continue;
       if (trimmedIncoming.startsWith(prev) || prev.startsWith(trimmedIncoming)) {
@@ -572,6 +600,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       kind,
       content:   finalContent,
       ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
+      ...(replyAttribution ? { replyAttribution } : {}),
+      ...(replyStreamId ? { replyStreamId } : {}),
     });
     return;
   }
@@ -619,7 +649,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (replyBoundary(m) || m.role !== 'assistant') break;
-      if (m.kind === 'streaming' && m.threadId === msgThreadId && m.decisionFollowUpId === decisionFollowUpId) recentStreamIndexes.push(i);
+      if (m.kind === 'streaming' && m.threadId === msgThreadId && belongsToReply(m)) recentStreamIndexes.push(i);
     }
 
     if (!terminalRunError && recentStreamIndexes.length > 0) {
@@ -687,6 +717,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     content:   finalContent,
     ...(terminalRunError ? { terminalRunError } : {}),
     ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
+    ...(replyAttribution ? { replyAttribution } : {}),
   };
   const explicitReferences = Array.isArray(data?.fileReferences) ? data.fileReferences : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
   const parsedReferences = role === 'assistant' ? parseDurableFileReferences(finalContent) : [];

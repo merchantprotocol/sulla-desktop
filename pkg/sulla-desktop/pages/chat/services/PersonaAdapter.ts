@@ -692,7 +692,7 @@ export class PersonaAdapter {
       this.lastRawSignature.set(b.id, rawSig);
 
       const mapped = this.mapBackendMessage(b);
-      if (mapped && b.modelStatus) mapped.by = { agent: this.controller.thread.value.agentId ?? undefined, model: b.modelStatus.model, modelStatus: b.modelStatus };
+      if (mapped && mapped.kind !== 'sulla' && mapped.kind !== 'streaming' && b.modelStatus) mapped.by = { agent: this.controller.thread.value.agentId ?? undefined, model: b.modelStatus.model, modelStatus: b.modelStatus };
       // A null mapping means the message is represented elsewhere (e.g. in the
       // artifact sidebar) and should not produce a transcript entry.
       if (!mapped) {
@@ -757,7 +757,6 @@ export class PersonaAdapter {
             kind,
             text,
             createdAt,
-            model: this.controller.model.value.name,
           } satisfies SullaMessage);
         }
         appended = true;
@@ -795,7 +794,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -1153,7 +1152,7 @@ export class PersonaAdapter {
           createdAt,
           text:  raw,
           decisionFollowUpId: b.decisionFollowUpId,
-          model: this.controller.model.value.name,
+          ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
           fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
         } satisfies SullaMessage;
       }
@@ -1194,7 +1193,7 @@ export class PersonaAdapter {
       text:  b.content ?? '',
       decisionFollowUpId: b.decisionFollowUpId,
       ...(b.terminalRunError === true ? { terminalRunError: true } : {}),
-      model: this.controller.model.value.name,
+      ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
       fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
     } satisfies SullaMessage;
   }

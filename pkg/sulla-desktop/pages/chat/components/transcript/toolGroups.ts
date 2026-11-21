@@ -29,7 +29,7 @@ const cards: Record<CardMessage['kind'], Classification> = {
   channel:           { label: 'Agent message', level: 'info', essential: true },
   subagent:          { label: 'Agent status', level: 'info' },
   subagent_exchange: { label: 'Handoff', level: 'info' },
-  citation:          { label: 'Evidence', level: 'info', essential: true },
+  citation:          { label: 'Evidence', level: 'debug' },
   memory:            { label: 'Memory', level: 'info' },
   proactive:         { label: 'Update', level: 'info', essential: true },
   heartbeat:         { label: 'Heartbeat', level: 'debug' },
