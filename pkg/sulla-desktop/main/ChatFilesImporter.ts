@@ -30,6 +30,11 @@ export interface PartialChatFilesImport {
   error:      string;
 }
 
+/** A non-success response from the streamed Files import endpoint. */
+export class ChatFilesImportHttpError extends Error {
+  constructor(message:string, readonly status:number) { super(message) }
+}
+
 /** The slice of SullaFilesClient the importer talks to. */
 export interface ChatFilesClientPort {
   request(endpoint:string, init?:RequestInit):Promise<Response>;
@@ -187,7 +192,7 @@ export class ChatFilesImporter {
       }
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(body.error || `Files import failed (${ response.status })`);
+        throw new ChatFilesImportHttpError(body?.error || `Files import failed (${ response.status })`, response.status);
       }
       const file = await response.json() as FilesRecord;
       return { reference: this.durableReference(file, collection, targetPath, source.size), sourceChanged };

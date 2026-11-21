@@ -31,7 +31,7 @@ function close() { clearTimeout(closeTimer); ipcRenderer.send('files-after-captu
 function paintPreview(node) {
   node.className = 'th'; node.innerHTML = '';
   if (capture.kind === 'recording') { node.classList.add('dark'); return }
-  if (!/\.(png|jpe?g|gif|webp)$/i.test(capture.name)) return;
+  if (!capture.path || !/\.(png|jpe?g|gif|webp)$/i.test(capture.name)) return;
   const image = new window.Image();
   image.onload = () => { node.classList.add('img'); node.appendChild(image) };
   image.src = `file://${ encodeURI(capture.path) }`;
@@ -48,22 +48,23 @@ async function share() {
   if (!capture || working || done) return;
   working = true; $('countdown').classList.remove('err'); $('countdown').textContent = 'creating link…';
   try {
-    const result = await ipcRenderer.invoke('tray-panel:share-capture', capture, { mode: preferences.visitorMode || 'view' });
-    if (!result.url) throw new Error(result.message || 'Sharing failed. The capture is saved in Files.');
+    const result = await ipcRenderer.invoke('tray-panel:share-popup-capture', { mode: preferences.visitorMode || 'view' });
+    if (!result.url) throw new Error(result.message || 'Sharing failed.');
     finishAction($('share'));
   } catch (error) {
-    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Sharing failed. The capture is saved in Files.'; fitWindow();
+    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Sharing failed.'; fitWindow();
   } finally { working = false }
 }
 
 async function saveToFiles() {
   if (!capture || working || done) return;
-  working = true; $('countdown').classList.remove('err'); $('countdown').textContent = 'copying Files path…';
+  working = true; $('countdown').classList.remove('err'); $('countdown').textContent = 'saving capture…';
   try {
-    await ipcRenderer.invoke('tray-panel:copy-capture-path', capture);
-    finishAction($('save'));
+    const savedPath = await ipcRenderer.invoke('tray-panel:copy-capture-path');
+    if (savedPath) finishAction($('save'));
+    else $('countdown').textContent = 'select an action to continue';
   } catch (error) {
-    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Could not copy the Files path.'; fitWindow();
+    $('countdown').classList.add('err'); $('countdown').textContent = error.message || 'Could not save the capture.'; fitWindow();
   } finally { working = false }
 }
 
@@ -74,7 +75,7 @@ ipcRenderer.on('files-after-capture:show', async(_event, value) => {
   try { preferences = await ipcRenderer.invoke('tray-panel:files-preferences-get') } catch { preferences = {} }
   const folders = String(capture.relativePath || '').split('/').slice(0, -1);
   $('capture-title').textContent = capture.kind === 'recording' ? 'Recording captured' : capture.kind === 'upload' ? 'File added to Files' : 'Screenshot captured';
-  $('capture-detail').textContent = [capture.name, formatBytes(capture.size), ['Files', ...folders].join(' › ')].join(' · ');
+  $('capture-detail').textContent = [capture.name, formatBytes(capture.size), capture.relativePath ? ['Files', ...folders].join(' › ') : undefined].filter(Boolean).join(' · ');
   paintPreview($('preview'));
   const expiryDays = Number(preferences.expiryDays ?? 30);
   $('share-detail').textContent = ['Public link', preferences.visitorMode === 'download' ? 'download' : 'view only', expiryDays > 0 ? `expires in ${ expiryDays } days` : 'never expires'].join(' · ');

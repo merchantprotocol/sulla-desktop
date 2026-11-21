@@ -45,6 +45,7 @@ function createHarness(preferences:Record<string, unknown>, responses:Record<str
       ipcInvocations.push([name, ...args]);
       if (name === 'tray-panel:files-preferences-get') return preferences;
       const response = responses[name];
+      if (typeof response === 'function') return response();
       if (response instanceof Error) throw response;
       return response;
     }),
@@ -83,12 +84,12 @@ describe('after-capture tray actions', () => {
   // risk: capture sharing — Share online must invoke public Files sharing without a Cloud-copy/residency toggle and close after the active selection flash.
   it('shares online, copies through the main service, flashes the selected action, then closes', async() => {
     vi.useFakeTimers();
-    const harness = createHarness({ defaultAction: 'ask', visitorMode: 'view' }, { 'tray-panel:share-capture': { url: 'https://share.example/1', message: 'Link copied' } });
+    const harness = createHarness({ defaultAction: 'ask', visitorMode: 'view' }, { 'tray-panel:share-popup-capture': { url: 'https://share.example/1', message: 'Link copied' } });
     await harness.ipcHandlers.get('files-after-capture:show')!({}, capture);
 
     await harness.elements.get('share')!.click();
 
-    expect(harness.ipcInvocations).toContainEqual(['tray-panel:share-capture', capture, { mode: 'view' }]);
+    expect(harness.ipcInvocations).toContainEqual(['tray-panel:share-popup-capture', { mode: 'view' }]);
     expect(harness.elements.get('share')!.classList.contains('selected')).toBe(true);
     expect(harness.ipcMessages).not.toContainEqual(['files-after-capture:close']);
     await vi.advanceTimersByTimeAsync(450);
@@ -103,9 +104,26 @@ describe('after-capture tray actions', () => {
 
     await harness.elements.get('save')!.click();
 
-    expect(harness.ipcInvocations).toContainEqual(['tray-panel:copy-capture-path', capture]);
+    expect(harness.ipcInvocations).toContainEqual(['tray-panel:copy-capture-path']);
     expect(harness.elements.get('save')!.classList.contains('selected')).toBe(true);
     await vi.advanceTimersByTimeAsync(450);
+    expect(harness.ipcMessages).toContainEqual(['files-after-capture:close']);
+  });
+
+  // risk: data loss — cancelling the dialog must not dismiss the only copy of a pending screenshot.
+  it('keeps the same popup usable after save cancellation', async() => {
+    vi.useFakeTimers();
+    const save = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce('/chosen/shot.png');
+    const harness = createHarness({ defaultAction: 'ask' }, { 'tray-panel:copy-capture-path': save });
+    await harness.ipcHandlers.get('files-after-capture:show')!({}, { name: 'shot.png', kind: 'screenshot', size: 12 });
+
+    await harness.elements.get('save')!.click();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.ipcMessages).not.toContainEqual(['files-after-capture:close']);
+
+    await harness.elements.get('save')!.click();
+    await vi.advanceTimersByTimeAsync(450);
+    expect(save).toHaveBeenCalledTimes(2);
     expect(harness.ipcMessages).toContainEqual(['files-after-capture:close']);
   });
 
@@ -116,7 +134,7 @@ describe('after-capture tray actions', () => {
 
     await harness.documentListeners.get('keydown')!({ key: 'Enter' });
 
-    expect(harness.ipcInvocations).toContainEqual(['tray-panel:copy-capture-path', capture]);
-    expect(harness.ipcInvocations.some(([name]) => name === 'tray-panel:share-capture')).toBe(false);
+    expect(harness.ipcInvocations).toContainEqual(['tray-panel:copy-capture-path']);
+    expect(harness.ipcInvocations.some(([name]) => name === 'tray-panel:share-popup-capture')).toBe(false);
   });
 });
