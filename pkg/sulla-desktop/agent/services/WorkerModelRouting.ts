@@ -7,12 +7,13 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { getIntegrationService } from './IntegrationService';
 import { claudeCredentialResolver } from '../languagemodels/credentials/ClaudeCredentialResolver';
 import { withWorkerBindingWrite } from '../languagemodels/workerBindingAuthority';
-import { candidateKey, cleanAgentModelTiers, exactTierRequest, formatModelCandidate, orderTierEntries, tiersFromCandidates, type AgentModelTiers } from '../languagemodels/agentModelTiers';
+import { cleanAgentModelTiers, exactTierRequest, formatModelCandidate, orderTierEntries, tiersFromCandidates, type AgentModelTiers } from '../languagemodels/agentModelTiers';
 import { providerForModelId } from '../languagemodels/threadModelChoice';
 import { modelRouter } from '../languagemodels/modelRouter';
 import { InfrastructureFailure, redactLLMFailureMessage } from '../languagemodels/providerRecovery';
 import { WorkerCatalogUnavailable, captureWorkerRoute, fileOwnedBinding, selectWorkerCandidate, workerRouteCandidates, type WorkerModelBinding, type WorkerModelRoute } from '../languagemodels/workerModelBindings';
 import { saveThreadState } from '../nodes/ThreadStateStore';
+import { WorkerModelBindingComparison } from './WorkerModelBindingComparison';
 
 import type { PoolClient } from 'pg';
 import type { EditableRoutingState, RoutingProviderInfo } from '../languagemodels/modelRoutingTypes';
@@ -25,10 +26,6 @@ export interface WorkerCatalogWait { budgetMs: number; pollMs: number }
  * Same rule modelRouter.addWorkerBindingIfAbsent enforces inside its serialized write: an unmarked
  * same-agent mapping is the owner's and is reused; a marked one is reused only for its own publication.
  */
-function reusableForPublication(existing: { pendingPublication?: { fileId: string; versionId: string } }, requested?: { fileId: string; versionId: string }): boolean {
-  const marker = existing.pendingPublication;
-  return !marker || (!!requested && marker.fileId === requested.fileId && marker.versionId === requested.versionId);
-}
 const STALE_PUBLICATION_MAPPING = 'An unsettled package model mapping from another publication exists; it was preserved for the owner to resolve in AI Models.';
 
 export type PublishedBindingOutcome =
@@ -36,20 +33,6 @@ export type PublishedBindingOutcome =
   | { outcome: 'conflict'; message: string }
   | { outcome: 'written'; written: { editToken: string; revision: number } | null };
 
-/** The exact stored representation a file wrote: flat legacy list vs tiers, and every policy. */
-function sameStoredModels(binding: WorkerModelBinding, declared: { candidates: ModelCandidate[]; modelTiers?: AgentModelTiers }): boolean {
-  return JSON.stringify(binding.candidates.map(candidateKey)) === JSON.stringify(declared.candidates.map(candidateKey)) &&
-    JSON.stringify(binding.modelTiers ?? null) === JSON.stringify(declared.modelTiers ?? null);
-}
-
-/** The same models and policies, however they are represented; the editor's preset label is ignored. */
-function sameEffectiveModels(binding: WorkerModelBinding, declared: { candidates: ModelCandidate[]; modelTiers?: AgentModelTiers }): boolean {
-  const effective = (value: { candidates: ModelCandidate[]; modelTiers?: AgentModelTiers }) => {
-    const { preset: _preset, ...tiers } = cleanAgentModelTiers(value.modelTiers ?? tiersFromCandidates(value.candidates));
-    return JSON.stringify(tiers);
-  };
-  return effective(binding) === effective(declared);
-}
 const DEFAULT_CATALOG_WAIT: WorkerCatalogWait = { budgetMs: 5 * 60_000, pollMs: 15_000 };
 
 /** Same shape as throwIfAborted, so each caller's existing clean-Stop handling applies. */
@@ -199,7 +182,7 @@ export class WorkerModelRoutingService {
     const state = await modelRouter.getEditableState();
     const binding = state.workerBindings?.[slug];
     if (!project) {
-      if (binding?.agentId === agentId && !binding.pendingPublication && sameEffectiveModels(binding, declared)) return;
+      if (binding?.agentId === agentId && !binding.pendingPublication && WorkerModelBindingComparison.sameEffective(binding, declared)) return;
       throw new InfrastructureFailure('The imported model settings differ from this agent’s saved selection. Use the agent’s Model settings to make that change, or import under another slug.');
     }
     if (binding) throw new InfrastructureFailure('An existing model mapping uses this slug. Choose a different slug to import.');
@@ -235,11 +218,11 @@ export class WorkerModelRoutingService {
       if (!declared) return { outcome: 'unchanged' };
       throw new InfrastructureFailure('A different agent already owns this worker mapping; it was preserved.');
     }
-    if (declared && existing && !reusableForPublication(existing, options.pending ? publication : undefined)) throw new InfrastructureFailure(STALE_PUBLICATION_MAPPING);
+    if (declared && existing && !WorkerModelBindingComparison.reusableForPublication(existing, options.pending ? publication : undefined)) throw new InfrastructureFailure(STALE_PUBLICATION_MAPPING);
     const fileOwned = fileOwnedBinding(existing, agentId);
     if (!existing && !declared) return { outcome: 'unchanged' };
     const sameVersion = existing?.filePublication?.fileId === publication.fileId && existing.filePublication.versionId === publication.versionId;
-    if (existing && declared && (fileOwned ? sameVersion && sameStoredModels(existing, declared) : sameEffectiveModels(existing, declared))) return { outcome: 'unchanged' };
+    if (existing && declared && (fileOwned ? sameVersion && WorkerModelBindingComparison.sameStored(existing, declared) : WorkerModelBindingComparison.sameEffective(existing, declared))) return { outcome: 'unchanged' };
     if (!fileOwned) {
       if (existing && !declared && !existing.filePublication) return { outcome: 'unchanged' };
       const owner = existing
@@ -253,7 +236,7 @@ export class WorkerModelRoutingService {
     let next: Parameters<typeof modelRouter.writeFilePublishedBinding>[3] = null;
     if (declared) {
       // A revision that keeps the same representation only updates provenance; reuse its account approvals.
-      const sameModels = existing && sameStoredModels(existing, declared) && existing.connections;
+      const sameModels = existing && WorkerModelBindingComparison.sameStored(existing, declared) && existing.connections;
       const connections = sameModels || await this.validateSubscriptionCandidates(declared.candidates, declared.modelTiers ? 100 : 10);
       for (const [provider, accountId] of Object.entries(connections)) {
         const approved = existing?.connections?.[provider];
@@ -264,7 +247,7 @@ export class WorkerModelRoutingService {
     const expected = existing ? { editToken: existing.editToken, revision: existing.revision } : null;
     try {
       const recheck = async() => {
-        if (declared && next && !(existing && sameStoredModels(existing, declared) && existing.connections)) {
+        if (declared && next && !(existing && WorkerModelBindingComparison.sameStored(existing, declared) && existing.connections)) {
           await this.verifySubscriptionConnections(declared.candidates, next.connections);
         }
         await options.verifyVersion?.();
@@ -279,7 +262,7 @@ export class WorkerModelRoutingService {
   /** Before any pending registration, with or without a package pin: never register over another publication's marked mapping. */
   async assertReusablePublicationMapping(slug: string, agentId: string, pendingPublication: { fileId: string; versionId: string }): Promise<void> {
     const existing = (await modelRouter.getEditableState()).workerBindings?.[slug];
-    if (existing && existing.agentId === agentId && !reusableForPublication(existing, pendingPublication)) throw new InfrastructureFailure(STALE_PUBLICATION_MAPPING);
+    if (existing && existing.agentId === agentId && !WorkerModelBindingComparison.reusableForPublication(existing, pendingPublication)) throw new InfrastructureFailure(STALE_PUBLICATION_MAPPING);
   }
 
   /** Package mappings whose pending-migration registration has not been settled yet. */
@@ -300,7 +283,7 @@ export class WorkerModelRoutingService {
     const existing = current.workerBindings?.[slug];
     if (existing) {
       if (existing.agentId !== agentId) throw new InfrastructureFailure('A different agent already owns this worker mapping; it was preserved.');
-      if (!reusableForPublication(existing)) throw new InfrastructureFailure(STALE_PUBLICATION_MAPPING);
+      if (!WorkerModelBindingComparison.reusableForPublication(existing)) throw new InfrastructureFailure(STALE_PUBLICATION_MAPPING);
       return undefined;
     }
     const connections = await this.validateSubscriptionCandidates(candidates, modelTiers ? 100 : 10);
@@ -411,27 +394,4 @@ export class WorkerModelRoutingService {
 }
 
 export const workerModelRouting = new WorkerModelRoutingService();
-
-export function installWorkerRoute(state: BaseThreadState, route: WorkerModelRoute | undefined, task?: { jobId: string; taskIndex: number; generation?: number }): void {
-  const meta = state.metadata as any;
-  if (route) meta.workerModelRoute = JSON.parse(JSON.stringify(route));
-  else delete meta.workerModelRoute;
-  if (route && task) meta.workerModelTask = { ...task, generation: task.generation ?? 1 };
-  else delete meta.workerModelTask;
-}
-
-/** Clear delegation bookkeeping for an independent human follow-up, never mutate the job. */
-export function detachTerminalWorkerChat(state: BaseThreadState): void {
-  const meta = state.metadata as any;
-  for (const key of ['delegatedJobId', 'inheritedResumeModel', 'savedInheritedModel', 'delegatedGeneration', 'productOwnerWorkflowStep', 'workerModelTask', 'workerModelRoute', 'delegatedTaskIndex', 'managerAgentId', 'managerThreadId', 'workflowParentChannel', 'parentWsChannel', 'activityKeys']) delete meta[key];
-  if (!meta.workerModelChatOverride && meta.agent) {
-    delete meta.agent.provider;
-    delete meta.agent.model;
-    delete meta.agent.effort;
-  }
-}
-
-/** Automatic workflow/scheduler messages use the chat envelope too. */
-export function isWorkerMappingHumanTurn(type: string, channel: string, metadata?: Record<string, any>): boolean {
-  return type === 'user_message' && metadata?.inputSource !== 'system' && !metadata?.origin && !channel.toLowerCase().includes('heartbeat');
-}
+export { detachTerminalWorkerChat, installWorkerRoute, isWorkerMappingHumanTurn } from './WorkerModelThreadState';

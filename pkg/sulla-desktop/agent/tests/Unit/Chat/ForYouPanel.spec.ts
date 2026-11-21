@@ -67,11 +67,11 @@ describe('Decide requests', () => {
     f.listeners.get('decisions:changed')?.({}, structuredClone(delegated));
     await flushPromises();
     expect(v.store.openCount.value).toBe(0);
-    expect(v.wrapper.find('[data-decision-id="delegated"]').exists()).toBe(false);
+    expect(v.wrapper.findAll('[data-decision-id="delegated"]')).toHaveLength(0);
     v.owner.value = 'parent';
     await flushPromises();
     expect(v.store.openCount.value).toBe(1);
-    expect(v.wrapper.get('[data-decision-id="delegated"]').exists()).toBe(true);
+    expect(v.wrapper.get('[data-decision-id="delegated"]').attributes('data-decision-id')).toBe('delegated');
   });
 
   it('does not ask again when submitting the newer copy of an expired duplicate', async() => {

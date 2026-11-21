@@ -19,21 +19,26 @@ interface SavedFile {
 }
 
 /** Open the saved Files identity in the shell even when the chat has its own renderer. */
-export async function openChatFile(reference: ChatFileIdentity, section?: WorkspaceFileSection): Promise<void> {
-  const saved = await ipcRenderer.invoke('sulla-files:metadata', { fileId: reference.fileId }) as SavedFile;
-  if (saved?.id !== reference.fileId || !saved.path || saved.deleted_at) {
-    throw new Error('This file is no longer available in Files.');
-  }
+export class ChatFileOpeningService {
+  async open(reference: ChatFileIdentity, section?: WorkspaceFileSection): Promise<void> {
+    const saved = await ipcRenderer.invoke('sulla-files:metadata', { fileId: reference.fileId }) as SavedFile;
+    if (saved?.id !== reference.fileId || !saved.path || saved.deleted_at) {
+      throw new Error('This file is no longer available in Files.');
+    }
 
-  const file = { fileId: saved.id, path: saved.path, collectionId: saved.collection_id ?? saved.collectionId };
-  if (!section && supportsDocumentEditor(file.path)) {
-    await openWorkspaceTab({ mode: 'paper', documentFile: file });
-    return;
-  }
+    const file = { fileId: saved.id, path: saved.path, collectionId: saved.collection_id ?? saved.collectionId };
+    if (!section && supportsDocumentEditor(file.path)) {
+      await openWorkspaceTab({ mode: 'paper', documentFile: file });
+      return;
+    }
 
-  await openWorkspaceTab({
-    mode: 'files',
-    title: 'File Manager',
-    filesNavigation: { ...file, section: section ?? 'detail', versionId: reference.versionId || undefined },
-  });
+    await openWorkspaceTab({
+      mode: 'files',
+      title: 'File Manager',
+      filesNavigation: { ...file, section: section ?? 'detail', versionId: reference.versionId || undefined },
+    });
+  }
 }
+
+const chatFileOpeningService = new ChatFileOpeningService();
+export const openChatFile = (reference: ChatFileIdentity, section?: WorkspaceFileSection) => chatFileOpeningService.open(reference, section);

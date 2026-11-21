@@ -75,7 +75,7 @@ afterEach(() => { for (const wrapper of mounted) wrapper.unmount(); mounted.clea
 
 function fixture(main = true, includeLegacy = false) {
   const thread = ref<string | undefined>(owner);
-  const messages = [
+  const messages: Array<ToolQuestionMessage | ToolApprovalMessage> = [
     ...[question, task].map(record => ({
       id: asMessageId(`original-${ record.id }`), kind: 'tool_question', createdAt: record.createdAt, status: 'pending',
       questions: record.questions!, questionId: record.id,

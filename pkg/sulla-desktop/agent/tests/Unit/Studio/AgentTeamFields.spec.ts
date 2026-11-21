@@ -5,7 +5,8 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 
-import AgentTeamFields, { type AgentTeamMember, type AgentTeamModelDraft } from '@pkg/components/studio/AgentTeamFields.vue';
+import AgentTeamFields from '@pkg/components/studio/AgentTeamFields.vue';
+import type { AgentTeamMember, AgentTeamModelDraft } from '@pkg/components/studio/AgentTeamFields.types';
 
 const candidate = { provider: 'codex', model: 'gpt-6.2-sol', effort: 'medium' };
 const tiers = { version: 1 as const, tiers: [{ candidates: [candidate] }], crossCompanyFallback: true, allowLaunchOverride: 'listed' as const };

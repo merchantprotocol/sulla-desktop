@@ -6,8 +6,9 @@ import { rowToDefinition } from '../models/AgentDefinitionModel';
 
 import type { PoolClient } from 'pg';
 
-/** Preserve row IDs and captured job state. DatabaseManager runs this in a transaction. */
-export async function up(client: PoolClient): Promise<void> {
+export class BuiltinAgentIdentityMigration {
+  /** Preserve row IDs and captured job state. DatabaseManager runs this in a transaction. */
+  async run(client: PoolClient): Promise<void> {
   const rows = (await client.query('SELECT * FROM agent_definitions FOR UPDATE')).rows.map(rowToDefinition);
   const bySlug = new Map(rows.map(row => [row.slug, row]));
   const renames = new Map<string, string>();
@@ -68,4 +69,7 @@ export async function up(client: PoolClient): Promise<void> {
       await client.query('UPDATE sulla_settings SET value = $2 WHERE property = $1', [property, JSON.stringify(state)]);
     }
   }
+  }
 }
+
+export const up = (client: PoolClient) => new BuiltinAgentIdentityMigration().run(client);

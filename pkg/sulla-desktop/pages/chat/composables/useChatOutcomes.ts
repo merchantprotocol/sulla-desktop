@@ -9,6 +9,29 @@ import type { SavedOutcomeReport } from '@pkg/shared/agentResults/AgentResultCar
 import type { ChatOutcomeArchive } from '@pkg/shared/productOwnerWorkflow';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
+export class ChatOutcomesLoader {
+  private wait(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  async load(
+    threadId: string,
+    conversationId: string,
+    isCurrent: () => boolean,
+  ): Promise<ChatOutcomeArchive | undefined> {
+    for (const delay of [0, 1_500, 5_000]) {
+      if (delay) await this.wait(delay);
+      if (!isCurrent()) return undefined;
+      try {
+        const archive = await ipcRenderer.invoke('chat-workflow:outcomes', threadId, conversationId);
+        if (!Array.isArray(archive?.reports) || !Array.isArray(archive.history)) throw new Error('Reports are unavailable.');
+        return archive;
+      } catch {
+        // Short database or VM stalls are common enough to retry locally.
+      }
+    }
+    return undefined;
+  }
+}
+
 export function useChatOutcomes(threadId: Ref<string | undefined>) {
   const controller = useChatController();
   const client = inject(AGENT_STATE_CLIENT_KEY, null);
@@ -20,9 +43,8 @@ export function useChatOutcomes(threadId: Ref<string | undefined>) {
   const error = ref(false);
   const loading = ref(false);
   const retry = ref(0);
+  const loader = new ChatOutcomesLoader();
   let loadSequence = 0;
-
-  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   watch([threadId, conversationId], () => {
     loadSequence++;
@@ -39,22 +61,10 @@ export function useChatOutcomes(threadId: Ref<string | undefined>) {
       loading.value = true;
       error.value = false;
       try {
-        for (const delay of [0, 1_500, 5_000]) {
-          if (delay) await wait(delay);
-          if (!current || sequence !== loadSequence) return;
-          try {
-            const archive = await ipcRenderer.invoke('chat-workflow:outcomes', thread, chat);
-            if (!Array.isArray(archive?.reports) || !Array.isArray(archive.history)) throw new Error('Reports are unavailable.');
-            if (current && sequence === loadSequence) {
-              stored.value = archive;
-              error.value = false;
-            }
-            return;
-          } catch {
-            // Short database or VM stalls are common enough to retry locally.
-          }
-        }
-        if (current && sequence === loadSequence) error.value = true;
+        const archive = await loader.load(thread, chat, () => current && sequence === loadSequence);
+        if (!current || sequence !== loadSequence) return;
+        if (archive) stored.value = archive;
+        error.value = !archive;
       } finally {
         if (current && sequence === loadSequence) loading.value = false;
       }

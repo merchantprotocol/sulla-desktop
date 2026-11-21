@@ -9,6 +9,7 @@ import Logging from '@pkg/utils/logging';
 import Electron, { WebContentsView } from 'electron';
 
 import { VaultPermissionPolicy } from './vaultPermissionPolicy';
+import type { CreatedVaultView, VaultOpenTimings, VaultTabHost, VaultViewReservation, VaultWindowState } from './vaultViewTypes';
 
 import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
 import { vaultThemeCss } from '@pkg/shared/vaultTheme';
@@ -25,51 +26,7 @@ const DESKTOP_CONNECTED_PATH = '/vault/desktop/connected';
 const SAFE_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const permissionPolicy = new VaultPermissionPolicy(VAULT_ORIGIN);
 
-export interface VaultViewReservation {
-  ownerId:    string;
-  windowId:   number;
-  generation: number;
-}
-
-interface VaultTabHost {
-  observeLayout(listener: (bounds: Electron.Rectangle | null, raised: boolean) => void): () => void;
-  onDisposed(listener: () => void): (() => void) | null;
-}
-
-interface VaultWindowState {
-  view: WebContentsView | null;
-  bounds: Electron.Rectangle | null;
-  hostBounds: Electron.Rectangle | null | undefined;
-  hostCleanup: (() => void) | null;
-  attached: boolean;
-  ready: boolean;
-  isolatedSession: Electron.Session | null;
-  ownerId: string | null;
-  attachedOwnerId: string | null;
-  generation: number;
-  themeCss: string;
-  themeKey: string | null;
-  themeUpdate: Promise<void>;
-  keepAliveTimer: ReturnType<typeof setTimeout> | null;
-  expiryTimer: ReturnType<typeof setTimeout> | null;
-  sessionExpiresAt: number | null;
-  targetUrl: string | null;
-  window: Electron.BrowserWindow;
-}
-
-interface CreatedVaultView {
-  view:    WebContentsView;
-  session: Electron.Session;
-}
-
-interface VaultOpenTimings {
-  requestedAt: number;
-  waitUntilStartedMs: number;
-  createHumanSessionMs: number;
-  createViewMs: number;
-  onLoadURLComplete?: (durationMs: number) => void;
-}
-
+export type { VaultViewReservation } from './vaultViewTypes';
 /** Dedicated human-only vault view. It is never registered as a browser tab. */
 export class VaultViewManager {
   private readonly windows = new Map<number, VaultWindowState>();

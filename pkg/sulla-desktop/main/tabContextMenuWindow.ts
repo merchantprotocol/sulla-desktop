@@ -46,8 +46,7 @@ async function getTheme(): Promise<string> {
 let pendingTabData: Record<string, unknown> | null = null;
 
 /** The agent window that opened this popup; the selected action goes back to it. */
-let openerWindow: BrowserWindow | null = null;
-let openerContents: Electron.WebContents | null = null;
+let opener: { window: BrowserWindow; contents: Electron.WebContents } | null = null;
 
 const MENU_WIDTH = 260;
 const MENU_ITEM_HEIGHT = 31;   // 7px padding top+bottom + ~17px content
@@ -75,8 +74,7 @@ async function onShow(
   if (!owner) return;
 
   pendingTabData = tabData;
-  openerWindow = owner;
-  openerContents = _event.sender;
+  opener = { window: owner, contents: _event.sender };
 
   // Detect theme for proper styling
   const themeId = await getTheme();
@@ -157,7 +155,7 @@ function showPopup(popup: BrowserWindow): void {
 
 /** Window the popup should reply to: its opener if still alive, else the active agent window. */
 function openerTarget(): BrowserWindow | null {
-  if (openerWindow && !openerWindow.isDestroyed()) return openerWindow;
+  if (opener?.window && !opener.window.isDestroyed()) return opener.window;
   return getActiveAgentWindow();
 }
 
@@ -166,8 +164,8 @@ function onAction(event: Electron.IpcMainEvent, action: string): void {
   console.log(`[TabContextMenu] Action: ${ action }`);
 
   if (action === 'rename') {
-    const owner = openerWindow;
-    const editor = openerContents;
+    const owner = opener?.window;
+    const editor = opener?.contents;
     const tabData = pendingTabData;
 
     _close();
@@ -201,6 +199,5 @@ function _close(): void {
     win.hide();
   }
   pendingTabData = null;
-  openerWindow = null;
-  openerContents = null;
+  opener = null;
 }

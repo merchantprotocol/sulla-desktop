@@ -41,12 +41,12 @@ export type AgentPackageModels =
   | { kind: 'pin'; candidates: [ModelCandidate] }
   | { kind: 'tiers'; candidates: ModelCandidate[]; modelTiers: AgentModelTiers };
 
-const MODELS_KEYS = new Set(['version', 'tiers', 'crossCompanyFallback', 'allowLaunchOverride', 'preset']);
-const TIER_KEYS = new Set(['candidates', 'pick']);
-const CANDIDATE_KEYS = new Set(['provider', 'model', 'effort']);
+const MODELS_KEYS = ['version', 'tiers', 'crossCompanyFallback', 'allowLaunchOverride', 'preset'] as const;
+const TIER_KEYS = ['candidates', 'pick'] as const;
+const CANDIDATE_KEYS = ['provider', 'model', 'effort'] as const;
 
-function unknownKey(value: Record<string, unknown>, allowed: Set<string>, field: string): void {
-  const extra = Object.keys(value).find(key => !allowed.has(key));
+function unknownKey(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
+  const extra = Object.keys(value).find(key => !allowed.includes(key));
   if (extra) throw new Error(`${ field }.${ extra } is not a supported agent model setting`);
 }
 

@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { BUILTIN_AGENT_RENAMES } from '../../shared/agentJobNames';
-import { createHash } from 'node:crypto';
-
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
-import { AgentLineageIndex } from '../app/Services/AgentLineageIndex';
 import { SpawnKeyMutex } from '../app/Services/SpawnDedupeGuard';
 import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
@@ -20,18 +17,16 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { isActiveAgent } from './AgentDirectoryService';
 import { resolveDefaultRouteAgent, SULLA_DESKTOP_CHANNEL_ID, SULLA_ROUTE_AGENT_ID } from './ChatAgentRouting';
 import { ThreadModelOverridePolicy } from './ThreadModelOverridePolicy';
-import { AgentResultCardBuilder } from './agentResults/AgentResultCardBuilder';
 import { AgentModelStatusRegistry } from './AgentModelStatusRegistry';
 import { GraphRegistry } from './GraphRegistry';
 import { JobLineageRootChatThreadFinder } from './TabVisibilityResolver';
 import { WORKFLOW_SETTINGS_PREFIX, withWorkflowWrite } from './WorkflowWriteAuthority';
 import { workerModelRouting } from './WorkerModelRouting';
+import { productOwnerWorkflowHistory } from './ProductOwnerWorkflowHistory';
 import { isProductOwnerStep, PRODUCT_OWNER, WORKFLOW_STEPS, workflowCompany } from '../../shared/productOwnerWorkflow';
-
 import type { ChatModelPickerSelection, DelegatedWorkflowStep, ProductOwnerStep, WorkflowChoice, WorkflowPlan, WorkflowSaveInput } from '../../shared/productOwnerWorkflow';
 import type { ChatOutcomeArchive, WorkflowRunRow } from '../../shared/productOwnerWorkflow';
-import type { AgentRowState } from '../../shared/agentState/AgentStateSnapshot';
-import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
+import type { AgentJob } from '../tools/agents/jobRegistry';
 import type { ModelCandidate } from '../languagemodels/modelRouter';
 import type { ResultReference } from '../../shared/agentResults/AgentResultCard';
 
@@ -43,7 +38,6 @@ interface LeadSelectionMetadata {
   modelChoice?: unknown;
   agent?: { model?: string; provider?: string; effort?: string };
 }
-
 interface StoredChoice extends WorkflowChoice {
   revision: string;
   binding?: WorkerModelBinding;
@@ -162,17 +156,11 @@ async function completedImplementation(ref: ResultReference | undefined, root: s
   return { task, inline: savedInlineImplementation(job, task.threadId) };
 }
 
-const workflowStates: Record<AgentJobTask['status'], AgentRowState> = {
-  queued: 'queued', running: 'working', parked: 'parked', lost: 'lost',
-  completed: 'done', blocked: 'blocked', error: 'failed', stopped: 'stopped',
-};
-
 interface WorkflowDelegationScope {
   caller: string;
   root: string;
   lead: boolean;
 }
-
 export class ProductOwnerWorkflowService {
   private readonly writes = new SpawnKeyMutex();
 
@@ -400,50 +388,11 @@ export class ProductOwnerWorkflowService {
 
   /** The existing bounded lineage query preserves recent terminal work beyond Live Agents' display window. */
   async readWorkflowHistory(threadId: string): Promise<WorkflowRunRow[]> {
-    if (!isWorkflowThreadId(threadId)) throw new Error('Invalid chat.');
-    const jobs = await agentJobProvider.jobs.lineageForParentThread(threadId);
-    return this.workflowRows(threadId, jobs);
+    return productOwnerWorkflowHistory.history(threadId);
   }
 
   async readChatOutcomes(threadId: string, conversationId: string): Promise<ChatOutcomeArchive> {
-    if (!isWorkflowThreadId(threadId) || !isWorkflowThreadId(conversationId)) throw new Error('Invalid chat.');
-    const [jobs, transcript] = await Promise.all([
-      agentJobProvider.jobs.lineageForParentThread(threadId, 100, true),
-      ConversationThreadStore.loadReportMessages(conversationId),
-    ]);
-    const history = this.workflowRows(threadId, jobs);
-    const included = new Set(history.map(row => row.key));
-    const builder = new AgentResultCardBuilder(undefined);
-    const reports = jobs.flatMap(job => job.tasks.flatMap((_, index) => {
-      if (!included.has(`${job.jobId}:${index}`)) return [];
-      const item = builder.recorded(job, index);
-      return item ? [{ item }] : [];
-    }));
-    return { history, reports: [...reports, ...transcript] };
-  }
-
-  private workflowRows(threadId: string, jobs: AgentJob[]): WorkflowRunRow[] {
-    const index = new AgentLineageIndex(jobs);
-    return jobs.flatMap(job => {
-      const parent = index.lineage(job);
-      if (parent.rootThreadId !== threadId && !job.parentJobId) return [];
-      return job.tasks.flatMap((task, taskIndex) => {
-        if (!task) return [];
-        return [{
-          key: `${ job.jobId }:${ taskIndex }`,
-          jobId: job.jobId, taskIndex, rootThreadId: threadId,
-          parentJobId: job.parentJobId ?? parent.parentJobId,
-          parentTaskIndex: job.parentTaskIndex ?? parent.parentTaskIndex,
-          agentId: task.agentId, label: task.label,
-          state: workflowStates[task.status],
-          startedAt: new Date(task.startedAt ?? job.createdAt).toISOString(),
-          endedAt: task.finishedAt ? new Date(task.finishedAt).toISOString() : null,
-          stateReason: task.waitReason ?? null,
-          responseModels: task.responseModels,
-          workflowStep: task.workflowStep, followUpOf: task.followUpOf,
-        }];
-      });
-    });
+    return productOwnerWorkflowHistory.outcomes(threadId, conversationId);
   }
 }
 

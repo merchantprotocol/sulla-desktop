@@ -93,7 +93,8 @@ import AgentDirectoryTab from './AgentDirectoryTab.vue';
 import AgentCapabilitiesFields from './AgentCapabilitiesFields.vue';
 import AgentRoutingFields from './AgentRoutingFields.vue';
 import AgentSetupSummary from './AgentSetupSummary.vue';
-import AgentTeamFields, { type AgentTeamModelDraft } from './AgentTeamFields.vue';
+import AgentTeamFields from './AgentTeamFields.vue';
+import type { AgentTeamModelDraft } from './AgentTeamFields.types';
 import { AgentModelConfiguration, copyModelTiers } from './AgentModelConfiguration';
 import AgentModelControls from './AgentModelControls.vue';
 import {

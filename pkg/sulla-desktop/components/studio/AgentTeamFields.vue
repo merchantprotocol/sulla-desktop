@@ -5,29 +5,12 @@
 import { computed, ref, watch } from 'vue';
 
 import AgentModelControls from './AgentModelControls.vue';
+import type { AgentTeamMember, AgentTeamModelDraft } from './AgentTeamFields.types';
 
 import type { AgentModelTiers } from '@pkg/agent/languagemodels/agentModelTiers';
-import type { AgentModelChoice, ModelRoutingState } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import type { ModelRoutingState } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { choiceLabel } from '@pkg/components/settings/sections/modelRouting/routingLogic';
 import { PRODUCT_OWNER } from '@pkg/shared/productOwnerWorkflow';
-
-export interface AgentTeamMember {
-  id:           string;
-  slug:         string;
-  name:         string;
-  description?: string;
-  enabled:      boolean;
-  status:       string;
-  canCall:      string[];
-  modelChoice?: AgentModelChoice;
-  type?:        string | null;
-}
-
-export interface AgentTeamModelDraft {
-  choice:     AgentModelChoice;
-  savedTiers: AgentModelTiers | null;
-  tiers:      AgentModelTiers | null;
-}
 
 const props = defineProps<{
   owner:   AgentTeamMember;

@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { SULLA_CLOUD_HOST } from '../../../../services/sulla-vault/src/sullaCloudRelay';
+import { SULLA_CLOUD_HOST } from '../../../../services/sulla-vault/src/sullaCloudRelay.js';
 
 export interface SharedCatalogModel {
   id: string; name: string; contextWindow?: number;
