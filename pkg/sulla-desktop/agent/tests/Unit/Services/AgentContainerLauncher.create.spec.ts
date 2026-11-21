@@ -36,6 +36,20 @@ describe('createAgentContainer', () => {
     expect(runtime.remove).not.toHaveBeenCalled();
   });
 
+  it('never replaces an untracked container whose durable task identity differs', async() => {
+    const runtime = {
+      create:  vi.fn().mockRejectedValueOnce(new Error('Conflict. name already in use')),
+      inspect: vi.fn().mockResolvedValue({ Id: 'other-id', State: { Running: true }, Config: { Labels: {
+        'com.sulla.workload': 'agent', 'com.sulla.job-id': 'other-job', 'com.sulla.task-index': '0', 'com.sulla.thread-id': 'other-thread',
+      } } }),
+      remove: vi.fn(),
+    } as any;
+    await expect(createAgentContainer(runtime, { ...spec, name: 'sulla-agent-chat-other-task-0', labels: {
+      'com.sulla.workload': 'agent', 'com.sulla.job-id': 'job-1', 'com.sulla.task-index': '0', 'com.sulla.thread-id': 'thread-1',
+    } })).rejects.toMatchObject({ name: 'AgentLaunchError', message: expect.stringMatching(/safely replace/) });
+    expect(runtime.remove).not.toHaveBeenCalled();
+  });
+
   it('replaces a tracked container that is exited instead of treating it as live', async() => {
     // risk: a dead container permanently blocks new turns for its thread
     const name = 'sulla-agent-chat-exited-test-0';

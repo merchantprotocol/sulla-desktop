@@ -12,6 +12,7 @@ import { InfrastructureFailure } from '../languagemodels/providerRecovery';
 
 import { AgentContainerCleanupOwner } from './AgentContainerCleanup';
 import { agentEgressLabels, prepareAgentEgress as prepareAgentEgressWith, type AgentEgress } from './agentEgress';
+import { bindAgentWorkspace } from './AgentWorkspaceBinding';
 import { probeAgentMcpHost, retryIdempotent, STARTUP_RETRY_DELAYS_MS } from './AgentContainerStartupRetry';
 import { registerAgentContainerRuntime, requireAgentContainerRuntime, withAgentContainerRuntime, type AgentContainerRuntimeBinding, type AgentContainerRuntimeSupervisor } from './AgentContainerRuntimeRegistry';
 import { assertWorkspacePath, ContainerProviderFileTransport } from './ContainerProviderFileTransport';
@@ -24,12 +25,14 @@ import {
   GUEST_PROVIDER_FILES_ROOT,
   GUEST_RUNTIME_ROOT,
   ensureGuestRuntimeDirectories,
+  ensureGuestWorktreeDirectories,
   getGuestRuntimeIdentity,
   inspectGuestWorkspaceForCleanup,
   removeGuestPathAtomic,
   seedContentAddressedDirectoryIntoGuest,
   seedDirectoryIntoGuest,
   seedGitWorktreeIntoGuest,
+  seedGitWorktreeIntoStableGuest,
   type GuestRuntimeIdentity,
 } from './GuestRuntimeTransport';
 import { claimGuestWorkspace, type GuestWorkspaceClaim } from './GuestWorkspaceClaim';
@@ -401,7 +404,8 @@ export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRunti
       if (!subject || !deviceId) continue;
       bindings.push({ podId: details.Name?.replace(/^\//, '') ?? container.Names, subject,
         orgId: labels['com.sulla.org-id'] || legacy?.orgId, agentId: labels['com.sulla.agent-id'] || legacy?.agentId,
-        jobId, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' });
+        jobId, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId,
+        workspacePath: details?.Config?.WorkingDir ?? '', origin: 'inventory' });
     }
     return bindings;
   }
@@ -446,6 +450,14 @@ export async function createAgentContainer(runtime: ContainerRuntimeDriver, spec
     }
     if (existing && existing.Config?.Labels?.['com.sulla.workload'] !== 'agent') {
       throw new AgentLaunchError('Sulla could not safely replace the conflicting assistant container.', false, 'container name is owned by another workload');
+    }
+    if (existing && spec.labels) {
+      const expected = spec.labels;
+      const actual = existing.Config?.Labels ?? {};
+      const identityLabels = ['com.sulla.job-id', 'com.sulla.task-index', 'com.sulla.thread-id'] as const;
+      if (identityLabels.some(label => expected[label] !== undefined && actual[label] !== expected[label])) {
+        throw new AgentLaunchError('Sulla could not safely replace the conflicting assistant container.', false, 'container name belongs to another agent task');
+      }
     }
     try {
       if (existing) await runtime.remove(existing.Id ?? spec.name, true);
@@ -997,6 +1009,12 @@ async function prepareCheckout(source: string | undefined, jobKey: string): Prom
   return await seedGitWorktreeIntoGuest(source, jobKey);
 }
 
+async function prepareRequiredCheckout(source: string, jobKey: string): Promise<string> {
+  const workspace = await prepareCheckout(source, jobKey);
+  if (!workspace) throw new Error('The requested agent worktree could not be prepared');
+  return workspace;
+}
+
 interface ContainerProviderTransportOptions {
   containerName: string;
   workspacePath: string;
@@ -1332,10 +1350,15 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       ? crypto.createHash('sha256').update(run.persistenceKey).digest('hex').slice(0, 32)
       : undefined;
     const dirsTask = phase('dirs', async() => {
-      const checkout = await prepareCheckout(run.workspacePath, jobKey);
+      await ensureGuestWorktreeDirectories(identity);
       if (!stableKey) {
+        const workspace = await bindAgentWorkspace({ jobKey, source: run.workspacePath }, {
+          createEphemeral: key => createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ key }-`),
+          seedEphemeral:   prepareRequiredCheckout,
+          seedStable:      seedGitWorktreeIntoStableGuest,
+        });
         const dirs = {
-          workspace: checkout ?? await createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ jobKey }-`),
+          workspace,
           claudeHome: undefined,
           codexHome: undefined,
           persistentRoot: undefined,
@@ -1347,7 +1370,12 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         GUEST_CONVERSATIONS_ROOT,
         [stableKey, `${ stableKey }/workspace`, `${ stableKey }/home`, `${ stableKey }/home/claude`, `${ stableKey }/home/codex`],
       );
-      const dirs = { workspace: checkout ?? persistentWorkspace, claudeHome, codexHome, persistentRoot };
+      const workspace = await bindAgentWorkspace({ jobKey, source: run.workspacePath, stableWorkspace: persistentWorkspace }, {
+        createEphemeral: key => createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ key }-`),
+        seedEphemeral:   prepareRequiredCheckout,
+        seedStable:      seedGitWorktreeIntoStableGuest,
+      });
+      const dirs = { workspace, claudeHome, codexHome, persistentRoot };
       workspaceClaim = await claimGuestWorkspace(dirs.workspace, containerName);
       return dirs;
     });
@@ -1383,6 +1411,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     providerFiles = providerFilesResult.value;
     secretDir = secretsResult.value;
     workspacePath = dirs.workspace;
+    toolBinding.workspacePath = workspacePath;
+    getMCPServerHost().rebindSession(toolSession.id, run.state, IDLE_MS + 5 * 60_000, toolBinding);
     const providerWorkspace = workspacePath;
     for (const pin of cliSettings.pinned) {
       const executable = pin.provider === 'claude-code' ? 'claude' : 'codex';

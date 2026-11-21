@@ -36,6 +36,7 @@ import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { cleanVoiceTurnId } from '../utils/voiceTurn';
 import { cliPinnedModelId } from '../languagemodels/ModelTierResolver';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { agentRestartResumePacket } from './AgentRestartResumePacket';
 import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { AgentInbox, type AgentInboxDeliveryReceipt, type AgentInboxEntry, type AgentInboxRepository, type AgentInboxTarget } from './AgentInbox';
 import { PostgresAgentInboxRepository } from '../app/Repositories/PostgresAgentInboxRepository';
@@ -655,6 +656,9 @@ export class BackendGraphWebSocketService {
     // carry the agent it was built for (AgentContainerLauncher), so it is
     // never handed to a different agent, not even mid-turn.
     const agentId = String((state.metadata as any).agentId ?? state.metadata.wsChannel ?? '');
+    const delegatedTaskIndex = Number.isInteger(metadata.delegatedTaskIndex)
+      ? metadata.delegatedTaskIndex
+      : Number(metadata.workerModelTask?.taskIndex ?? 0);
     // A lifecycle that aborted or closed (container died, secrets were wiped, capability renewal
     // failed) is dead for good. Reusing it failed every later message in the thread; rebuild it.
     // The conversation itself survives: its workspace and provider homes live on the data disk.
@@ -688,7 +692,9 @@ export class BackendGraphWebSocketService {
     }
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
     const lifecycle = await createAgentContainerLifecycle({
-      jobId: `chat-${ threadId }`, taskIndex: 0, provider,
+      jobId: delegatedJobId ? String(delegatedJobId) : `chat-${ threadId }`,
+      taskIndex: delegatedJobId ? delegatedTaskIndex : 0,
+      provider,
       model, state, providerCliSnapshot,
       persistenceKey: conversationPersistenceKey(channelId, threadId, state),
     });
@@ -821,14 +827,19 @@ export class BackendGraphWebSocketService {
     await recoverPendingAgentCompletions();
     await this.agentInbox.replayPending();
     this.retryDecisionAnswers();
+    const eligibleTask = async(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): Promise<boolean> => {
+      const task = job.tasks[taskIndex];
+      if (!task || task.status !== 'running' || !task.threadId || task.returnedAt || this.recoveryAbort.signal.aborted) return false;
+      if (this.hasActiveRun(job.parentChannel ?? 'sulla-desktop', task.threadId) ||
+        (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
+        probeAgentContainerRuntime(undefined, task.threadId) !== false) return false;
+      return !await this.hasPendingDecision(task.threadId);
+    };
     const eligible = async(job: import('../tools/agents/jobRegistry').AgentJob): Promise<boolean> => {
-      for (const task of job.tasks) {
-        if (task.status !== 'running' || !task.threadId || task.returnedAt) continue;
-        if (this.recoveryAbort.signal.aborted || this.hasActiveRun(job.parentChannel ?? 'sulla-desktop', task.threadId) ||
-          (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
-          probeAgentContainerRuntime(undefined, task.threadId) !== false || await this.hasPendingDecision(task.threadId)) return false;
+      for (let taskIndex = 0; taskIndex < job.tasks.length; taskIndex++) {
+        if (await eligibleTask(job, taskIndex)) return true;
       }
-      return true;
+      return false;
     };
     // Only startup's interrupted working set is eligible. Normal work created
     // later must never be restarted by this reconciliation loop.
@@ -852,11 +863,11 @@ export class BackendGraphWebSocketService {
     }, (job, taskIndex) => {
       // Dispatch owns/records the running turn. Do not wait for a possibly
       // hours-long worker before admitting its siblings or the next job.
-      this.resumeInterruptedTask(job, taskIndex);
+      this.resumeInterruptedTask(job, taskIndex, () => pending.add(job.jobId));
       return Promise.resolve();
     }, (job, reason) => {
       if (job.parentChannel && job.parentThreadId) enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
-    });
+    }, 2, undefined, eligibleTask);
     await returnedTaskSettlement.settleStranded();
     if ((process as any).type === 'browser') {
       this.orgMessagingAbort?.abort();
@@ -870,19 +881,30 @@ export class BackendGraphWebSocketService {
     }
   }
 
-  private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): void {
+  private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number, onDispatchFailure?: () => void): void {
     const run = (async() => {
       await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
       const task = job.tasks[taskIndex];
       const channel = job.parentChannel || 'sulla-desktop';
+      const checkin = await this.restartResumeCheckin(job.jobId, taskIndex);
       await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-        `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
+        agentRestartResumePacket(job, task, taskIndex, checkin),
         task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
     })();
     this.dispatchedRuns.add(run);
     run.catch(error => {
+      onDispatchFailure?.();
       if (error?.name !== 'AbortError') console.error('[BackendGraphWS] Interrupted worker dispatch failed:', error);
     }).finally(() => this.dispatchedRuns.delete(run));
+  }
+
+  private async restartResumeCheckin(jobId: string, taskIndex: number): Promise<import('../database/models/AgentJobMessagingModel').AgentJobCheckin | null> {
+    try {
+      return (await agentJobProvider.messaging.telemetryForJob(jobId))[taskIndex]?.latestCheckin ?? null;
+    } catch (error) {
+      console.warn('[BackendGraphWS] Resume check-in unavailable; continuing with durable workspace:', error);
+      return null;
+    }
   }
 
   private waitForRecoveryRecheck(): Promise<void> {
@@ -1336,7 +1358,9 @@ export class BackendGraphWebSocketService {
       if (currentDefinition) {
         state.metadata.agent = {
           ...(state.metadata.agent ?? {}),
-          runLocation: currentDefinition.run_location,
+          // A restarted delegated task resumes the execution policy it was
+          // created with. Later profile edits apply only to new work.
+          runLocation: parkedIdentity?.task.runLocation ?? currentDefinition.run_location,
         };
       }
 
