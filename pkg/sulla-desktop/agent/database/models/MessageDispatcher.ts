@@ -49,6 +49,12 @@ function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
 }
 
+function uniqueMessageId(ctx: DispatchContext, baseId: string): string {
+  let id = baseId;
+  for (let n = 1; ctx.messages.some(message => message.id === id); n++) id = `${ baseId }_${ n }`;
+  return id;
+}
+
 function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string): void {
   const last = ctx.messages[ctx.messages.length - 1] as (ChatMessage & { _completed?: boolean }) | undefined;
   // Only adjacent events in the same open segment may share a source
@@ -62,9 +68,7 @@ function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadI
     return;
   }
 
-  const baseId = `${ Date.now() }_ws_thinking`;
-  let id = baseId;
-  for (let n = 1; ctx.messages.some(message => message.id === id); n++) id = `${ baseId }_${ n }`;
+  const id = uniqueMessageId(ctx, `${ Date.now() }_ws_thinking`);
   ctx.messages.push({ id, channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content });
 }
 
@@ -181,7 +185,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       return;
     }
     const message: ChatMessage = {
-      id:        `${ Date.now() }_ws_${ msg.type }`,
+      id:        uniqueMessageId(ctx, `${ Date.now() }_ws_${ msg.type }`),
       channelId: agentId,
       threadId:  msgThreadId,
       role:      msg.type === 'system_message' ? 'system' : 'assistant',
@@ -474,6 +478,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
   const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
   const finalContent = content;
+  const decisionFollowUpId = msg.type === 'assistant_message' && role === 'assistant' &&
+    (kind === 'streaming' || kind === 'text' || !kind) && typeof data.decisionFollowUpId === 'string'
+    ? data.decisionFollowUpId : undefined;
 
   if (kind === 'speak') {
     console.log(`[MessageDispatcher] SPEAK received → channel="${ agentId }", thread="${ msgThreadId }", content="${ content.slice(0, 80) }"`);
@@ -497,6 +504,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     });
   }
 
+  const replyBoundary = (message: ChatMessage) => message.role === 'user' || message.kind === 'tool_approval' ||
+    message.kind === 'tool_question' || (message.threadId && message.threadId !== msgThreadId);
+
   // ── Streaming: update in-place, but respect segment boundaries ──
   if (kind === 'streaming' && role === 'assistant') {
     // Streaming chunks carry the FULL accumulated text-so-far, not deltas.
@@ -504,7 +514,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     let existingIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.kind === 'streaming' && m.role === 'assistant' && !(m as any)._completed) {
+      if (replyBoundary(m)) break;
+      if (m.kind === 'streaming' && m.role === 'assistant' && m.decisionFollowUpId === decisionFollowUpId && !(m as any)._completed) {
         existingIdx = i;
         break;
       }
@@ -524,9 +535,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     let resurrectedIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.role === 'user') break;
+      if (replyBoundary(m)) break;
       if (m.role !== 'assistant') continue;
-      if (m.kind !== 'streaming') continue;
+      if (m.kind !== 'streaming' || m.decisionFollowUpId !== decisionFollowUpId) continue;
       const prev = (m.content || '').trim();
       if (!prev) continue;
       if (trimmedIncoming.startsWith(prev) || prev.startsWith(trimmedIncoming)) {
@@ -551,13 +562,15 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         break;
       }
     }
+    const id = uniqueMessageId(ctx, `${ Date.now() }_ws_streaming`);
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_streaming`,
+      id,
       channelId: agentId,
       threadId:  msgThreadId,
       role,
       kind,
       content:   finalContent,
+      ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
     });
     return;
   }
@@ -602,8 +615,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const recentStreamIndexes: number[] = [];
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.role !== 'assistant') break;
-      if (m.kind === 'streaming') recentStreamIndexes.push(i);
+      if (replyBoundary(m) || m.role !== 'assistant') break;
+      if (m.kind === 'streaming' && m.decisionFollowUpId === decisionFollowUpId) recentStreamIndexes.push(i);
     }
 
     if (!terminalRunError && recentStreamIndexes.length > 0) {
@@ -663,13 +676,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const message: ChatMessage = {
-    id:        `${ Date.now() }_ws_${ msg.type }`,
+    id:        uniqueMessageId(ctx, `${ Date.now() }_ws_${ msg.type }`),
     channelId: agentId,
     threadId:  msgThreadId,
     role,
     kind,
     content:   finalContent,
     ...(terminalRunError ? { terminalRunError } : {}),
+    ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
   };
   const explicitReferences = Array.isArray(data?.fileReferences) ? data.fileReferences : Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
   const parsedReferences = role === 'assistant' ? parseDurableFileReferences(finalContent) : [];

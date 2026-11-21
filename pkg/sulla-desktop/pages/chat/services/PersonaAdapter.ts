@@ -198,6 +198,7 @@ export class PersonaAdapter {
           if (message.kind === 'streaming' || message.kind === 'thinking') this.lastRawSignature.delete(message.id);
         }
         this.messageSyncScheduler.flush();
+        if (!running) this.decisionResume = undefined;
         if (opts.tabId) {
           window.dispatchEvent(new CustomEvent('sulla:chat-running', {
             detail: { tabId: opts.tabId, running },
@@ -237,12 +238,22 @@ export class PersonaAdapter {
             resolutionError: undefined,
           });
         } else if (message.kind === 'tool_question' && message.questionId === record.id) {
-          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'timed_out', resolutionError: undefined });
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, {
+            status: record.status === 'answered' ? 'answered' : 'timed_out',
+            ...(record.answers?.length ? { answers: record.answers } : {}),
+            resolutionError: undefined,
+          });
         }
       }
     };
-    ipcRenderer.on('decisions:changed', applyDecision);
-    this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', applyDecision));
+    const liveDecision = (event: unknown, record: import('@pkg/shared/decisions').DecisionRecord) => {
+      if (!record.answerDelivery && ['approved', 'denied', 'answered'].includes(record.status)) {
+        this.armDecisionResume(record.id, record.conversationId);
+      }
+      applyDecision(event, record);
+    };
+    ipcRenderer.on('decisions:changed', liveDecision);
+    this.stopWatchers.push(() => ipcRenderer.removeListener('decisions:changed', liveDecision));
     // Question and approval cards are rebuilt from history as "pending"; their real
     // outcome lives in the decisions store. Without this, every answered card from
     // an earlier session reopens after a restart and invites a second answer.
@@ -284,6 +295,7 @@ export class PersonaAdapter {
         note:       ev.note,
       }).then(receipt => {
         if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
+        this.armDecisionResume(ev.approvalId, this.ci.threadId.value);
         this.controller.updateMessage(ev.messageId, { decision: ev.decision, resolutionError: undefined } as any);
         this.controller.transitionRun({ type: 'approvalResolved' });
       }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
@@ -300,6 +312,7 @@ export class PersonaAdapter {
         answers:    ev.answers,
       }).then(receipt => {
         if (!receipt.settled) throw new Error(receipt.reason || 'Request expired.');
+        if (!receipt.late) this.armDecisionResume(ev.questionId, this.ci.threadId.value);
         this.controller.updateMessage(ev.messageId, { status: 'answered', answers: ev.answers, resolutionError: undefined, resolutionNote: receipt.late ? receipt.reason : undefined } as any);
         this.controller.transitionRun({ type: 'approvalResolved' });
       }).catch(err => this.controller.updateMessage(ev.messageId, { resolutionError: String(err.message || err) } as any));
@@ -367,6 +380,7 @@ export class PersonaAdapter {
   }
 
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
+    this.decisionResume = undefined;
     // Optimistically render the user turn and thinking state before awaiting readiness IPC.
     const adapterStart = performance.now();
     const hopOrigin = this.lastSendHopKeydownAt ?? this.lastSendHopControllerAt ?? adapterStart;
@@ -540,6 +554,7 @@ export class PersonaAdapter {
    * the user's click and this call).
    */
   async inject(text: string, attachments: Attachment[]): Promise<void> {
+    this.decisionResume = undefined;
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
@@ -552,6 +567,7 @@ export class PersonaAdapter {
   stop(): void { this.ci.stop(); this.flushPendingSendHop() }
   continueRun(): void { this.ci.continueRun() }
   newChat(): void {
+    this.decisionResume = undefined;
     this.ci.newChat();
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
     this.loadPersistentArtifacts(this.ci.threadId.value ?? '').catch(err =>
@@ -614,6 +630,39 @@ export class PersonaAdapter {
   /** Known outcome of each decision by id, so re-mapped cards keep their resolved state. */
   private readonly decisionStatus = new Map<string, import('@pkg/shared/decisions').DecisionRecord['status']>();
   private readonly decisionExpiry = new Map<string, number>();
+  private decisionResume?: { id: string; threadId: string; after: number; known: Set<string> };
+
+  /** Arm at a live resolution of the newest waiting gate, never on hydration. */
+  private armDecisionResume(id: string, conversationId: string | undefined): void {
+    if (!conversationId || this.ci.threadId.value !== conversationId || !this.ci.graphRunning.value) return;
+    const gate = this.controller.messages.value.findLast(message =>
+      message.kind === 'user' || message.kind === 'tool_approval' || message.kind === 'tool_question');
+    if (!gate || !(gate.kind === 'tool_approval' && gate.approvalId === id && gate.decision === 'pending' ||
+      gate.kind === 'tool_question' && gate.questionId === id && gate.status === 'pending')) return;
+    this.decisionResume = { id, threadId: conversationId, after: Date.now(), known: new Set(this.ci.messages.value.map(message => message.id)) };
+  }
+
+  private decisionLink(b: BackendMessage, mapped: Message): string | undefined {
+    const reply = mapped.kind === 'sulla' || mapped.kind === 'streaming';
+    if (reply && b.decisionFollowUpId) {
+      if (!this.decisionResume?.known.has(b.id)) this.decisionResume = undefined;
+      return b.decisionFollowUpId;
+    }
+    const resume = this.decisionResume;
+    if (!resume || resume.known.has(b.id)) return undefined;
+    if (resume.threadId !== b.threadId || (this.ci.threadId.value !== resume.threadId) ||
+      mapped.kind === 'user' || mapped.kind === 'tool_approval' || mapped.kind === 'tool_question' ||
+      mapped.kind === 'error' || mapped.kind === 'sulla' && mapped.terminalRunError) {
+      this.decisionResume = undefined;
+      return undefined;
+    }
+    if (!reply || (b.kind && !['text', 'streaming'].includes(b.kind)) || b.role !== 'assistant') return undefined;
+    // Only the first new reply of this resume window can consume the link;
+    // an earlier/in-place stream and subsequent independent replies stay put.
+    if (mapped.createdAt < resume.after) return undefined;
+    this.decisionResume = undefined;
+    return resume.id;
+  }
 
   private settleKnownDecisions(): void {
     this.controller.removeDuplicateMessages();
@@ -689,6 +738,10 @@ export class PersonaAdapter {
       this.lastRawSignature.set(b.id, rawSig);
 
       const mapped = this.mapBackendMessage(b);
+      if (mapped) {
+        const link = this.decisionLink(b, mapped);
+        if (link && (mapped.kind === 'sulla' || mapped.kind === 'streaming')) mapped.decisionFollowUpId = link;
+      }
       if (mapped && b.modelStatus) mapped.by = { agent: this.controller.thread.value.agentId ?? undefined, model: b.modelStatus.model, modelStatus: b.modelStatus };
       // A null mapping means the message is represented elsewhere (e.g. in the
       // artifact sidebar) and should not produce a transcript entry.
@@ -792,7 +845,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
   }
 
   private syncRunState(running: boolean): void {

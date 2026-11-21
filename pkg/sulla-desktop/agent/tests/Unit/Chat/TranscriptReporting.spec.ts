@@ -36,7 +36,7 @@ class ReportingFixture {
   constructor(readonly chat = new ChatController()) {
     onTestFinished(() => chat.dispose());
     Object.assign(this.adapter, {
-      controller: chat, ci: { messages: ref(this.ctx.messages), graphRunning: this.ctx.graphRunning },
+      controller: chat, ci: { messages: ref(this.ctx.messages), graphRunning: this.ctx.graphRunning, threadId: ref('fixture-thread') },
       seen: new Set(), seenRunning: new Set(), optimisticUserMessages: new Map(), pendingA2aStatuses: new Map(),
       firstSeenAt: new Map(), firstCompletedAt: new Map(), lastMappedHash: new Map(), lastRawSignature: new Map(),
       persistentArtifacts: new Set(),
@@ -46,6 +46,10 @@ class ReportingFixture {
   emit(type: 'progress' | 'assistant_message', data: object) {
     this.dispatcher.dispatch(this.ctx as any, 'fixture-agent', 'fixture-thread', { type, data } as any);
     this.adapter.syncMessages();
+  }
+
+  resolveWaitingGate(id: string) {
+    this.adapter.armDecisionResume(id, 'fixture-thread');
   }
 
   entries(level: ReportingLevel) {
@@ -155,4 +159,53 @@ it('ignores an old page if the active thread changes while loading', async() => 
   await flushPromises();
   expect(live.chat.messages.value).toEqual([]);
   expect(wrapper.text()).not.toContain('Private past chat');
+});
+
+
+// risk: adjacent but unrelated replies can disappear if attribution relies
+// on message proximity alone, or the first follow-up can duplicate on replay.
+it('links just the first new reply of a resolved active gate and keeps neighboring replies after reload', () => {
+  const live = new ReportingFixture();
+  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply' });
+  const question = {
+    id: asMessageId('question-line'), createdAt: Date.now(), kind: 'tool_question', status: 'pending',
+    questionId: 'question-1', questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }] }],
+  } satisfies Message;
+  live.chat.appendMessage(question);
+  live.resolveWaitingGate('question-1');
+  live.chat.updateMessage(question.id, {
+    status: 'answered', answers: [{ question: 'Proceed?', selected: ['Yes'] }],
+  });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply, updated' });
+  live.emit('assistant_message', { kind: 'streaming_complete' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up' });
+  live.emit('assistant_message', { kind: 'streaming_complete' });
+  live.emit('assistant_message', { kind: 'text', content: 'Separate neighboring reply' });
+  live.ctx.graphRunning.value = false;
+  live.emit('assistant_message', { kind: 'text', content: 'Later ordinary reply' });
+
+  const texts = (fx: ReportingFixture, level: ReportingLevel) => fx.entries(level).flatMap(row =>
+    row.kind === 'card' && (row.message.kind === 'sulla' || row.message.kind === 'streaming') ? [row.message.text] : []);
+  const brief = ['Earlier unrelated reply, updated', 'Separate neighboring reply', 'Later ordinary reply'];
+  expect(texts(live, 'fatal')).toEqual(brief);
+  expect(texts(live, 'info')).toEqual([brief[0], 'Decision follow-up', ...brief.slice(1)]);
+  expect(live.entries('fatal').find(row => row.id === question.id)).toMatchObject({
+    message: { status: 'answered', answers: [{ question: 'Proceed?', selected: ['Yes'] }] },
+  });
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  expect(texts(reopened, 'fatal')).toEqual(brief);
+  expect(texts(reopened, 'debug')).toEqual(texts(live, 'info'));
+});
+
+// risk: a resumed answer's tagged stream can overwrite an unlinked stream,
+// or hide a deliverable, even though only follow-up prose should be filtered.
+it('keeps explicit decision-turn streams separate from ordinary output and preserves embedded deliverables', () => {
+  const live = new ReportingFixture();
+  live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in ordinary output' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in decision follow-up', decisionFollowUpId: 'claimed-question' });
+  const rows = live.entries('info').filter(row => row.kind === 'card');
+  expect(rows.map(row => row.label)).toEqual(['Reply', 'Follow-up']);
+  expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id]);
+  live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in decision follow-up <html><body>Report</body></html>', decisionFollowUpId: 'claimed-question' });
+  expect(live.entries('fatal').map(row => row.id)).toEqual(rows.map(row => row.id));
 });

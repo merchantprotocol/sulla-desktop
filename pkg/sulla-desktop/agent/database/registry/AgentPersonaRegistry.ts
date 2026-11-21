@@ -17,6 +17,7 @@ export interface ChatMessage {
   content:   string;
   readinessCleared?: boolean;
   terminalRunError?: boolean;
+  decisionFollowUpId?: string;
   modelStatus?:      import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   fileReferences?: Array<Record<string, unknown>>;

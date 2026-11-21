@@ -1533,6 +1533,9 @@ export class BackendGraphWebSocketService {
       const runLocation = this.resolveRunLocation(state, channelId);
       const tracedProvider = String(state.metadata.agent?.provider || '').trim();
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
+      // Only the claim-owned late-answer dispatch may attribute its reply.
+      // Do not source this from client-provided chat metadata.
+      (state.metadata as any)._reportingDecisionFollowUpId = decisionTurn ? answerInputs[0]?.id : undefined;
       if (runLocation === 'container') {
         await this.runInConversationContainer(state, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
           content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
@@ -1588,6 +1591,7 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
+      if (state && isCurrentRun()) delete (state.metadata as any)._reportingDecisionFollowUpId;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
       }

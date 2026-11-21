@@ -80,6 +80,7 @@ export interface AttachedFile {
 
 // ─── Sulla (complete) + Streaming (in-flight) ────────────────────
 export interface SullaMessage extends MessageBase {
+  decisionFollowUpId?: string;
   kind:            'sulla';
   text:            string;        // markdown-ish; rendered by prose component
   model:           string;        // e.g. "opus-4.7"
@@ -90,6 +91,7 @@ export interface SullaMessage extends MessageBase {
 }
 
 export interface StreamingMessage extends MessageBase {
+  decisionFollowUpId?: string;
   kind:      'streaming';
   text:      string;        // grows over time
   startedAt: number;

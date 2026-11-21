@@ -42,9 +42,9 @@
     </div>
 
     <select v-model="reportingLevel" class="ch-reporting" aria-label="Reporting" title="Reporting">
-      <option value="fatal">Fatal only</option>
-      <option value="info">Info</option>
-      <option value="debug">Debug</option>
+      <option value="fatal">Brief</option>
+      <option value="info">Standard</option>
+      <option value="debug">Detailed</option>
     </select>
   </header>
 </template>

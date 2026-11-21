@@ -2091,6 +2091,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         timestamp:   Date.now(),
         modelStatus: (state.metadata as any).resolvedModelStatus,
         ...(extras ?? {}),
+        ...(role === 'assistant' && (kind === 'streaming' || kind === 'text' || !kind)
+          ? { decisionFollowUpId: (state.metadata as any)._reportingDecisionFollowUpId } : {}),
       },
     });
 

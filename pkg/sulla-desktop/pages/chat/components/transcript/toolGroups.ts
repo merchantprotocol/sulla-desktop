@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
+
 import { returnCoveredByCard } from '../../messages/handoffCover';
 import type { Message, ToolMessage } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
@@ -121,6 +123,11 @@ export class TranscriptReporting {
       yield { ...base, kind: 'card', label: 'Error', level: 'fatal', message };
       return;
     }
+    if ((message.kind === 'sulla' || message.kind === 'streaming') && message.decisionFollowUpId &&
+      !this.hasDeliverable(message)) {
+      yield { ...base, kind: 'card', label: 'Follow-up', level: 'info', message };
+      return;
+    }
     if (message.kind === 'subagent_exchange' && returnCoveredByCard(message, messages)) return;
     const report = Object.hasOwn(cards, message.kind) ? cards[message.kind] : undefined;
     if (!report) return;
@@ -128,6 +135,14 @@ export class TranscriptReporting {
       message.kind === 'user' && message.voiceIdentity ? 'Voice' : report.label;
     yield { ...base, ...report, label, kind: 'card', message,
       ...(message.kind === 'notice' && message.action ? { essential: true } : {}) };
+  }
+
+  private hasDeliverable(message: Extract<CardMessage, { kind: 'sulla' | 'streaming' }>): boolean {
+    // File references and inline document/agent cards are essential even if
+    // the surrounding text was emitted during a decision continuation.
+    return (message.kind === 'sulla' && !!message.fileReferences?.length) ||
+      !!parseDurableFileReferences(message.text).length ||
+      /⟦SULLA_A2A:|<(?:html|body|head|style|iframe|table)\b|<!doctype\b/i.test(message.text);
   }
 
   private toolText(message: ToolMessage): string | undefined {
