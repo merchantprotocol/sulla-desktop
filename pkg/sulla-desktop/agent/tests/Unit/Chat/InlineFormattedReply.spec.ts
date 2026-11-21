@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, nextTick, ref } from 'vue';
 
 import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispatcher';
+import { stripProtocolTags, stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import MessageRouter from '@pkg/pages/chat/components/transcript/MessageRouter.vue';
 import { ChatController } from '@pkg/pages/chat/controller/ChatController';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
@@ -27,6 +28,10 @@ const examples = [
   { name: 'mixed prose and fenced HTML', text: '**Before** the example.\n\n```html\n' + htmlSource + '\n```\n\n**After** the example.', check: 'pre code', visible: htmlSource, mixed: true },
   { name: 'mixed prose and raw HTML', text: '**Before** the example.\n\n' + documentReply + '\n\n**After** the example.', check: 'table td', visible: 'orchid row', isolated: true, mixed: true },
 ];
+
+const wrappedProse = (literal: string) => '**First paragraph** contains `' + literal + '`.\n\n**Second paragraph** stays separate.';
+const citations = '<citations><source num="1" title="Synthetic citation" origin="fixture" /></citations>';
+const doneWrapped = (answer: string) => '<AGENT_DONE>\n' + answer + '\n\n' + citations + '\n</AGENT_DONE>';
 
 class SyntheticChat {
   readonly ctx = { messages: ref<any[]>([]).value, graphRunning: ref(false), registry: { setLoading() {} } };
@@ -100,6 +105,67 @@ describe('formatted replies stay in the chat transcript', () => {
     reopenedTurn.unmount();
     live.controller.dispose();
     reopened.controller.dispose();
+  });
+
+  it.each([
+    { title: 'wrapper with literal HTML', literal: '<html>…</html>', wrap: doneWrapped, wrapped: true },
+    { title: 'wrapper with no HTML tag', literal: 'sample text', wrap: doneWrapped, wrapped: true },
+    { title: 'literal HTML with no wrapper', literal: '<html>…</html>', wrap: (answer: string) => answer + '\n\n' + citations, wrapped: false },
+  ])('keeps two formatted paragraphs for $title through stream, final and reopen', async({ literal, wrap, wrapped }) => {
+    // risk: wrapper stripping and HTML detection must not flatten or hide Markdown.
+    const answer = wrappedProse(literal);
+    const wire = wrap(answer);
+    const partial = wire.replace('</AGENT_DONE>', '</AGENT_DO');
+    const live = new SyntheticChat();
+    const turn = live.mount();
+    const assertProse = (root: HTMLElement) => {
+      const body = root.querySelector('.chat-body')!;
+      expect(Array.from(body.querySelectorAll('p'), node => node.textContent)).toEqual([
+        'First paragraph contains ' + literal + '.',
+        'Second paragraph stays separate.',
+      ]);
+      expect(Array.from(body.querySelectorAll('strong'), node => node.textContent)).toEqual(['First paragraph', 'Second paragraph']);
+      expect(body.querySelector('p code')?.textContent).toBe(literal);
+      expect(body.querySelector('iframe, .iso-host, citations, agent_done')).toBeNull();
+    };
+
+    expect(stripProtocolTagsStreaming(partial)).toBe(answer);
+    expect(stripProtocolTagsForUi(wire)).toBe(answer);
+    live.send('assistant_message', { kind: 'streaming', content: wrapped ? partial : stripProtocolTagsStreaming(partial) });
+    await nextTick();
+    assertProse(turn.element as HTMLElement);
+    expect(live.controller.artifacts.value).toEqual({ list: [], activeId: null });
+
+    const id = live.controller.messages.value[0].id;
+    live.send('assistant_message', { kind: 'streaming_complete' });
+    live.send('assistant_message', { kind: 'text', content: wrapped ? wire : stripProtocolTagsForUi(wire) });
+    await nextTick();
+    assertProse(turn.element as HTMLElement);
+    expect(live.controller.messages.value).toMatchObject([{ id, kind: 'sulla', text: answer }]);
+    expect(live.controller.artifacts.value).toEqual({ list: [], activeId: null });
+
+    const reopened = new SyntheticChat(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.controller.serialize())) }));
+    const reopenedTurn = reopened.mount();
+    reopened.send('thread_restored', { messages: [{ id, role: 'assistant', content: wire }] });
+    await nextTick();
+    assertProse(reopenedTurn.element as HTMLElement);
+    expect(reopened.controller.messages.value).toHaveLength(1);
+    expect(reopened.controller.artifacts.value).toEqual({ list: [], activeId: null });
+    turn.unmount();
+    reopenedTurn.unmount();
+    live.controller.dispose();
+    reopened.controller.dispose();
+  });
+
+  it('keeps terminal status-only and private wrappers out of the visible reply', () => {
+    // risk: formatted-reply compatibility must not expose private protocol metadata.
+    const status = '<AGENT_DONE>Status only.</AGENT_DONE>';
+    const privateReply = doneWrapped(wrappedProse('example') + '\n\n<overheard>private note</overheard>');
+    expect(stripProtocolTagsForUi(status)).toBe('');
+    expect(stripProtocolTagsStreaming(status.replace('</AGENT_DONE>', ''))).toBe('');
+    expect(stripProtocolTagsForUi(privateReply)).toBe('');
+    expect(stripProtocolTagsForUi('Visible reply.\n\n' + doneWrapped(wrappedProse('example')))).toBe('Visible reply.');
+    expect(stripProtocolTags(doneWrapped(wrappedProse('example')))).toBe('');
   });
 
   it('keeps an unfinished streaming HTML fence inert', async() => {

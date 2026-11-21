@@ -21,7 +21,7 @@
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
-import { stripProtocolTagsForUi } from '@pkg/agent/utils/stripProtocolTags';
+import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
@@ -210,7 +210,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── String payload (simple content) ──
   if (typeof msg.data === 'string') {
-    if (!msg.data.trim()) {
+    const text = msg.type !== 'system_message' && /^\s*<AGENT_DONE>/i.test(msg.data) ? stripProtocolTagsForUi(msg.data) : msg.data;
+    if (!text.trim()) {
       console.warn(`⚠️ [MessageDispatcher] EMPTY STRING assistant message dropped`, {
         msgType: msg.type, channel: agentId, threadId: msgThreadId,
       });
@@ -227,7 +228,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       channelId: agentId,
       threadId:  msgThreadId,
       role:      msg.type === 'system_message' ? 'system' : 'assistant',
-      content:   msg.data,
+      content:   text,
     };
     console.log(`[MessageDispatcher] messages.push (string ${ msg.type })`, { role: message.role, contentChars: message.content.length, content: message.content.slice(0, 120) });
     ctx.messages.push(message);
@@ -249,7 +250,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
-  const content = data?.content !== undefined ? contentToString(data.content) : '';
+  const rawContent = data?.content !== undefined ? contentToString(data.content) : '';
+  const doneWrapper = msg.type !== 'system_message' && (!data.role || data.role === 'assistant')
+    && (!data.kind || data.kind === 'streaming' || data.kind === 'text') && /^\s*<AGENT_DONE>/i.test(rawContent);
+  const content = doneWrapper
+    ? data.kind === 'streaming' ? stripProtocolTagsStreaming(rawContent) : stripProtocolTagsForUi(rawContent)
+    : rawContent;
 
   // Segment-boundary sentinels: kind carries the meaning, content is empty
   // by design. Must be handled BEFORE the empty-content drop or the signal

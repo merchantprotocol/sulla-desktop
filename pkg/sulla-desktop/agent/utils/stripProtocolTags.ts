@@ -50,11 +50,33 @@ export function a2aMarkersToText(text: string | null | undefined): string {
   });
 }
 
+/**
+ * Some replies put the whole formatted answer inside a leading completion
+ * wrapper. Keep that answer on display, not conventional trailing completion
+ * metadata or short status-only wrappers. The strict control parser is unchanged.
+ */
+function unwrapFormattedDoneReply(text: string, streaming = false): string {
+  const leading = /^\s*<AGENT_DONE>/i.exec(text);
+  if (!leading) return text;
+  const tail = text.slice(leading[0].length);
+  const close = /<\/AGENT_DONE>/i.exec(tail);
+  if (!streaming && !close) return text;
+  let body = close ? tail.slice(0, close.index) : tail;
+  if (!close) {
+    const lastTag = body.lastIndexOf('</');
+    if (lastTag >= 0 && '</agent_done>'.startsWith(body.slice(lastTag).toLowerCase())) body = body.slice(0, lastTag);
+  }
+  if (/<(?:overheard|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak)\b/i.test(body)) return text;
+  const prose = body.split(/<citations\b/i, 1)[0].trim();
+  if (!/\r?\n[\t ]*\r?\n/.test(prose) || !/\*\*[^*\r\n]+\*\*/.test(prose) || !/`[^`\r\n]+`/.test(prose)) return text;
+  return close ? body + tail.slice(close.index + close[0].length) : body;
+}
+
 /** Strip protocol wrappers for durable UI history without flattening A2A cards. */
 export function stripProtocolTagsForUi(text: string | null | undefined): string {
   if (!text) return '';
   const markers: string[] = [];
-  const preserved = text.replace(A2A_MARKER_RE, marker => `\u0000A2A${markers.push(marker) - 1}\u0000`);
+  const preserved = unwrapFormattedDoneReply(text).replace(A2A_MARKER_RE, marker => `\u0000A2A${markers.push(marker) - 1}\u0000`);
   return stripProtocolTags(preserved).replace(/\u0000A2A(\d+)\u0000/g, (_placeholder, index: string) => markers[Number(index)] ?? '');
 }
 
@@ -109,7 +131,7 @@ const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABOR
  */
 export function stripProtocolTagsStreaming(text: string | null | undefined): string {
   if (!text) return '';
-  const cleaned = stripProtocolTags(text);
+  const cleaned = stripProtocolTags(unwrapFormattedDoneReply(text, true));
   const match = cleaned.match(PARTIAL_WRAPPER_START_RE);
   if (match) return cleaned.slice(0, match.index).trim();
   return holdBackPartialOpener(cleaned);

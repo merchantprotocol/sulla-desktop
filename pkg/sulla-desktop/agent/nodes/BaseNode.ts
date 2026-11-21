@@ -1535,7 +1535,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      */
   protected appendResponse(state: BaseThreadState, content: string, rawProviderContent?: any): void {
     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
-    const normalizedContent = stripProtocolTags(contentStr);
+    const normalizedContent = stripProtocolTagsForUi(contentStr);
     const keepPrivateOverheardContext = isOverheardProtocolTurn(contentStr);
 
     // Determine if the raw provider content has tool_use blocks
@@ -1988,7 +1988,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     // Defence-in-depth: strip agent protocol XML before any user-visible output
-    content = stripProtocolTags(content);
+    content = role === 'assistant' && (kind === 'text' || !kind) ? stripProtocolTagsForUi(content) : stripProtocolTags(content);
     // Segment-boundary sentinels (streaming_complete, thinking_complete)
     // and structured-payload kinds (citation) carry meaning in `kind`/
     // `extras` with intentionally empty content. Don't drop them here —
