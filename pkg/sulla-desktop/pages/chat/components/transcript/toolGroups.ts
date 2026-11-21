@@ -42,31 +42,29 @@ const cards: Record<CardMessage['kind'], Classification> = {
 // These are fixed, public progress strings emitted by the provider adapters.
 // Never read ThinkingMessage.summary: older adapters derived it from the
 // first line of an untyped reasoning/activity buffer.
-const statuses = new Map([
-  ['Preparing your turn…', 'Preparing your turn…'],
-  ['Wrapping up the previous background task…', 'Wrapping up the previous background task…'],
-  ['Booting isolated environment…', 'Booting isolated environment…'],
-  ['Tools connected — calling model', 'Tools connected — calling model'],
-  ['Session started — calling model', 'Session started — calling model'],
-  ['Steering Claude with your message…', 'Steering with your message…'],
-  ['Steering Codex with your message…', 'Steering with your message…'],
-  ['Claude picked up your message', 'Your message was picked up'],
-  ['Asking you a question…', 'Asking you a question…'],
+const statuses = new Set([
+  'Preparing your turn…',
+  'Wrapping up the previous background task…',
+  'Booting isolated environment…',
+  'Tools connected — calling model',
+  'Session started — calling model',
+  'Steering Claude with your message…',
+  'Steering Codex with your message…',
+  'Claude picked up your message',
+  'Asking you a question…',
 ]);
 
-// Recognized CLI activity formats. Only literal, argument-free descriptions
-// leave this boundary — never paths, commands, searches, URLs or tool names
-// extracted from the source. Unknown text, including reasoning, is omitted.
-const cliTools: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^(?:\$ .+|Running a shell command)$/, 'Running a shell command'],
-  [/^Reading .+/, 'Reading a file'],
-  [/^Editing .+/, 'Editing a file'],
-  [/^Writing .+/, 'Writing a file'],
-  [/^(?:Searching for .+|Searching files|Grepping(?: .+)?)$/, 'Searching files'],
-  [/^(?:Searching web: .+|Searching the web|Fetching .+|Web(?:Fetch|Search) request)$/, 'Searching the web'],
-  [/^(?:Task: .+|Spawning sub-task)$/, 'Starting a sub-task'],
-  [/^Calling a tool$/, 'Calling a tool'],
-];
+// Exact, payload-free messages from the provider adapters only.
+const safeCliActivity = new Set([
+  'Running a shell command', 'Searching files', 'Searching the web',
+  'WebFetch request', 'WebSearch request', 'Spawning sub-task', 'Calling a tool',
+]);
+
+// Literal fallback summaries from the named tool formatters. Arbitrary
+// descriptions and arguments must not pass a prefix or shape-based check.
+const safeToolSummaries = new Map([
+  ['Bash', 'Running command'], ['Host', 'Running on host'],
+]);
 
 // Fixed formatter labels for structured Sulla tool cards. Do not use the
 // original tool name, description, input, output, error or metadata.
@@ -87,32 +85,33 @@ export class TranscriptReporting {
     for (const message of messages) {
       if (seen.has(message.id)) continue;
       seen.add(message.id);
-      for (const entry of this.project(message, messages)) {
+      for (const entry of this.project(message, messages, level)) {
         if (entry.essential || rank[entry.level] <= rank[level]) entries.push(entry);
       }
     }
     return entries;
   }
 
-  private *project(message: Message, messages: readonly Message[]): Iterable<TranscriptEntry> {
+  private *project(message: Message, messages: readonly Message[], level: ReportingLevel): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {
       if (!Array.isArray(message.thoughts)) return;
       // Old untyped buffers can mix reasoning and activity. Only an exact,
       // standalone public status survives; never pattern-match individual lines.
       const line = message.thoughts.length === 1 ? message.thoughts[0] : undefined;
-      const status = typeof line === 'string' ? statuses.get(line) : undefined;
-      const tool = message.reportingActivity === 'tool';
-      const text = status ?? (tool ? cliTools.find(([pattern]) => typeof line === 'string' && pattern.test(line))?.[1] ?? 'Calling a tool' : undefined);
-      if (text) {
+      const type = message.reportingActivity;
+      const verifiedStatus = typeof line === 'string' && statuses.has(line);
+      if (verifiedStatus || type === 'status' || type === 'tool') {
+        const safe = verifiedStatus || (type === 'tool' && typeof line === 'string' && safeCliActivity.has(line));
         yield { ...base, id: `activity:${ message.id }:0`, kind: 'activity',
-          label: tool && !status ? 'Tool' : 'Status', level: 'debug', text };
+          label: type === 'tool' && !verifiedStatus ? 'Tool' : 'Status', level: 'debug',
+          text: safe && line !== undefined ? line : 'Details withheld' };
       }
       return;
     }
 
     if (message.kind === 'tool') {
-      const text = this.toolText(message);
+      const text = this.toolText(message, level);
       if (text) yield { ...base, kind: 'activity', label: 'Tool', level: message.status === 'running' ? 'debug' : 'info', text };
       return;
     }
@@ -144,12 +143,21 @@ export class TranscriptReporting {
       /⟦SULLA_A2A:|<(?:html|body|head|style|iframe|table)\b|<!doctype\b/i.test(message.text);
   }
 
-  private toolText(message: ToolMessage): string | undefined {
+  private toolText(message: ToolMessage, level: ReportingLevel): string | undefined {
     // Match the existing MessageDispatcher envelope on live and saved paths.
     // Untyped legacy/demo cards and unsupported formatter labels fail closed.
     if (!/^\d+_tool_[\w.-]+$/.test(message.id)) return undefined;
     const label = toolLabels.get(message.tool);
     const status = toolStatuses.get(message.status);
-    return label && status ? `${ label } · ${ status }` : undefined;
+    if (level !== 'debug') return label && status ? `${ label } · ${ status }` : undefined;
+
+    const safeSummary = label && safeToolSummaries.get(message.tool) === message.desc ? message.desc : undefined;
+    const withheld = (message.desc && !safeSummary) || message.input || message.output || message.error || message.meta;
+    return [
+      label ? message.tool : 'Tool name withheld',
+      status ? message.status : 'Status unavailable',
+      safeSummary,
+      withheld ? 'Details withheld' : undefined,
+    ].filter(Boolean).join(' · ');
   }
 }

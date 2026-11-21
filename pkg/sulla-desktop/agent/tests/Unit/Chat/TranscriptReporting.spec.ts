@@ -83,7 +83,7 @@ it('projects safe individual events in source order before and after tool settle
 
   const debug = live.entries('debug');
   expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
-    'Preparing your turn…', 'citation', 'Running a shell command', 'Shell · Running', 'Tools connected — calling model',
+    'Preparing your turn…', 'citation', 'Details withheld', 'Bash · running · Details withheld', 'Tools connected — calling model',
   ]);
   expect(live.entries('info')).toEqual([]);
   expect(live.entries('fatal')).toEqual([]);
@@ -128,7 +128,7 @@ it('keeps the original actionable cards and terminal failure at every level', as
     expect(approvalCard.props('msg')).toMatchObject(approval);
     expect(wrapper.text()).toContain(deliverable.text);
     expect(wrapper.text()).toContain('The execution environment stopped.');
-    expect(wrapper.text().includes('Running a shell command')).toBe(level === 'debug');
+    expect(wrapper.text().includes('Details withheld')).toBe(level === 'debug');
     expect(live.entries(level).at(-1)).toMatchObject({ kind: 'card', level: 'fatal' });
   }
   await wrapper.setProps({ reportingLevel: 'fatal' });
@@ -322,4 +322,31 @@ it('renders ordered citation links inline only in Detailed on stream, replay and
   await flushPromises();
   // An independent reply may legitimately cite the same source again.
   expect(hydrated.findAll('.report-row b').map(row => row.text())).toEqual([...titles, ...titles]);
+});
+
+// risk: Detailed paraphrases authorized visible fields, leaks free-form
+// values, reorders events, or changes the records carried into history.
+it('projects benign visible tool fields verbatim live and from unchanged saved records', async() => {
+  const live = new ReportingFixture();
+  live.emit('assistant_message', { kind: 'thinking', content: 'Steering Claude with your message…', reportingActivity: 'status' });
+  live.emit('progress', { phase: 'tool_call', toolRunId: 'benign-run', toolName: 'exec', args: {} });
+  live.emit('progress', { phase: 'tool_result', toolRunId: 'benign-run', success: true, result: 'PRIVATE_OUTPUT' });
+  live.emit('assistant_message', { kind: 'thinking', content: 'PRIVATE_HIDDEN_REASONING' });
+  live.emit('assistant_message', { kind: 'thinking', content: 'Claude picked up your message', reportingActivity: 'status' });
+  const saved = JSON.stringify(live.chat.serialize());
+  const originalRecords = JSON.stringify(live.chat.messages.value);
+  const tool = live.chat.messages.value.find(message => message.kind === 'tool')!;
+  expect(tool).toMatchObject({ tool: 'Bash', status: 'ok', desc: 'Running command' });
+  const expected = ['Steering Claude with your message…', 'Bash · ok · Running command · Details withheld', 'Claude picked up your message'];
+  const wrapper = live.mount('info');
+  expect(wrapper.findAll('.report-activity').map(row => row.text())).toEqual(['Shell · Completed']);
+  await wrapper.setProps({ reportingLevel: 'debug' });
+  expect(wrapper.findAll('.report-activity').map(row => row.text())).toEqual(expected);
+  expect(wrapper.text()).not.toContain('PRIVATE_');
+  expect(JSON.stringify(live.chat.messages.value)).toBe(originalRecords);
+
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(saved) }));
+  const hydrated = reopened.mount('debug');
+  expect(hydrated.findAll('.report-activity').map(row => row.text())).toEqual(expected);
+  expect(JSON.stringify(reopened.chat.messages.value)).toBe(originalRecords);
 });
