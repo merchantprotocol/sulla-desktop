@@ -19,6 +19,10 @@ import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
 import { AgentRuntimeLiveness } from '@pkg/agent/app/Services/AgentRuntimeLiveness';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
+import { ParentStallNoticeService } from '@pkg/agent/app/Services/ParentStallNoticeService';
+import { completionInboxStore } from '@pkg/agent/services/AgentCompletionInbox';
+import { PendingDecisionRepository } from '@pkg/agent/repositories/PendingDecisionRepository';
+import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { AgentLivenessReconciler } from '@pkg/agent/app/Services/AgentLivenessReconciler';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { configureAgentContainerRuntimeSupervisor, probeAgentContainerRuntime, rehydrateAgentContainerRuntimes } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
@@ -234,6 +238,14 @@ const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
       [jobId, Object.fromEntries(Object.entries(tasks).map(([index, item]) => [index, item.lastMessageDeliveredAt ?? null]))]));
   },
 }, Date.now, {}, agentJobProvider.activity, agentRuntimeLiveness);
+const stallDecisions = new PendingDecisionRepository(postgresClient);
+const parentStallNotices = new ParentStallNoticeService({
+  jobs: () => agentJobProvider.jobs.liveJobs(),
+  job: jobId => agentJobProvider.jobs.job(jobId),
+  telemetry: jobIds => agentJobProvider.messaging.latestTelemetryForJobs(jobIds),
+  waitingForDecision: async threadId => await stallDecisions.hasPendingForConversation(threadId)
+    || GraphRegistry.get(threadId)?.state.metadata.waitingForUser === true,
+}, agentStateProjector, completionInboxStore);
 const agentLivenessReconciler = new AgentLivenessReconciler(agentJobProvider.states, {
   graph: task => Boolean(task.threadId && GraphRegistry.get(task.threadId)),
   container: (task) => {
@@ -301,6 +313,9 @@ export function initAgentsIpc(): void {
   runtimeRehydration.start();
   agentLivenessReconciler.start();
   strandedManagerLifecycle.start();
+  completionInboxStore.registerStallValidator((channel, threadId, entry) => parentStallNotices.canDeliver(channel, threadId, entry));
+  parentStallNotices.start();
+  app.once('before-quit', () => parentStallNotices.stop());
   new AgentShutdownController(runtimeRehydration, agentLivenessReconciler).register(app);
   agentStatePublisher.register();
   ipcMain.handle('agent-definitions:list', (_event, options?: AgentDefinitionsListOptions) => listAgentDefinitions(options));

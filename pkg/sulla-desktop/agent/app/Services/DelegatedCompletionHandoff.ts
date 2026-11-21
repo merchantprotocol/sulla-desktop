@@ -7,6 +7,7 @@ import type { PendingCompletion } from './AgentCompletionInboxService';
 export interface DelegatedThreadState { messages: any[]; metadata?: Record<string, any> }
 export interface DelegatedCompletionInbox {
   take(channel: string, threadId: string): PendingCompletion[];
+  currentEntries?(channel: string, threadId: string, entries: PendingCompletion[]): Promise<PendingCompletion[]>;
   format(entries: PendingCompletion[]): string;
 }
 export interface DelegatedRunLifecycle {
@@ -51,7 +52,10 @@ export class DelegatedCompletionHandoff {
       this.lifecycle.wake(threadId);
       return true;
     }
-    const entries = this.inbox.take(channel, threadId);
+    const claimed = this.inbox.take(channel, threadId);
+    const entries = claimed.some(entry => entry.noticeKind === 'stall')
+      ? await this.inbox.currentEntries?.(channel, threadId, claimed) ?? claimed.filter(entry => entry.noticeKind !== 'stall')
+      : claimed;
     if (!entries.length) return true;
     this.inject(state, {
       id:        this.nextId(),
@@ -61,7 +65,7 @@ export class DelegatedCompletionHandoff {
       metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: entries },
     });
     for (const entry of entries) {
-      await this.marks.firstDelivered(entry);
+      if (!entry.notice && !entry.noticeKind) await this.marks.firstDelivered(entry);
       await this.marks.acknowledge(entry);
     }
     this.lifecycle.wake(threadId);

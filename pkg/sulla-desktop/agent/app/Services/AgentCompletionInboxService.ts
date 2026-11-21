@@ -24,6 +24,8 @@ export interface PendingCompletion {
   failureReason?: string;
   terminal?: AgentTerminalNotice;
   notice?: string;
+  noticeKind?: 'stall';
+  stall?: { childThread: string; baseline: string };
   dedupeKey?: string;
 }
 
@@ -35,6 +37,7 @@ interface CompletionInbox {
 /** Owns the per-thread, per-task completion queue with no fixed delivery delay. */
 export class AgentCompletionInboxService extends Service {
   private static readonly ACKNOWLEDGED_KEY_LIMIT = 2048;
+  private validateStall?: (channel: string, threadId: string, entry: PendingCompletion) => Promise<boolean>;
   private readonly inboxes = new Map<string, CompletionInbox>();
   private readonly claimedKeys = new Set<string>();
   private readonly acknowledgedKeys = new Set<string>();
@@ -49,6 +52,20 @@ export class AgentCompletionInboxService extends Service {
 
   registerIdleDispatcher(dispatcher: CompletionDispatch): void {
     this.idleDispatcher.register(dispatcher);
+  }
+
+  registerStallValidator(validate: NonNullable<AgentCompletionInboxService['validateStall']>): void {
+    this.validateStall = validate;
+  }
+
+  async currentEntries(channel: string, threadId: string, entries: PendingCompletion[]): Promise<PendingCompletion[]> {
+    const keep = await Promise.all(entries.map(async entry => {
+      if (entry.noticeKind !== 'stall') return true;
+      if (await this.validateStall?.(channel, threadId, entry)) return true;
+      this.releaseClaim(entry);
+      return false;
+    }));
+    return entries.filter((_entry, index) => keep[index]);
   }
 
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {

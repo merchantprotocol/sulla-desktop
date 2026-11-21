@@ -7,12 +7,16 @@ import { Service } from '@sulla/foundation';
 import type { AgentJobMessagingRepository } from '../app/Repositories/AgentJobMessagingRepository';
 import type { AgentJobCheckinReceipt } from '../database/models/AgentJobMessagingModel';
 
+import type { PendingCompletion } from '../app/Services/AgentCompletionInboxService';
+
 export interface ParentNoticeInbox {
   enqueue(channel: string, threadId: string, notice: {
     jobId: string;
     taskIndex: number;
     results: [];
     notice: string;
+    noticeKind?: PendingCompletion['noticeKind'];
+    stall?: PendingCompletion['stall'];
     dedupeKey: string;
   }): boolean;
 }

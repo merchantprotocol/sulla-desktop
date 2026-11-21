@@ -18,12 +18,12 @@ export class CompletionAcknowledgementService {
 
   async acknowledge(entry: PendingCompletion): Promise<void> {
     if (entry.dedupeKey?.startsWith('stranded:')) await this.episodes.markDelivered(entry.dedupeKey);
-    else await this.tasks.markTaskCompletionDelivered(entry.jobId, entry.taskIndex);
+    else if (!entry.notice && !entry.noticeKind) await this.tasks.markTaskCompletionDelivered(entry.jobId, entry.taskIndex);
     this.claims.acknowledge(entry);
   }
 
   async release(entry: PendingCompletion): Promise<void> {
     if (entry.dedupeKey?.startsWith('stranded:')) await this.episodes.reopen(entry.dedupeKey);
-    else await this.tasks.releaseTaskCompletion(entry.jobId, entry.taskIndex);
+    else if (!entry.notice && !entry.noticeKind) await this.tasks.releaseTaskCompletion(entry.jobId, entry.taskIndex);
   }
 }
