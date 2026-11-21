@@ -43,6 +43,7 @@ export interface MessageBase {
   readonly createdAt: number;
   readonly turnId?:   string;  // groups messages that belong to one logical turn
   /** For pinning/bookmarking */
+  agentReporting?: 'brief' | 'standard';
   pinned?:            boolean;
   /** The agent and model that were running when this block arrived (work blocks only). */
   by?:                { agent?: string; model?: string; modelStatus?: import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue };
@@ -103,6 +104,7 @@ export interface StreamingMessage extends MessageBase {
 // ─── Thinking (live / settled / expanded rendered by Thinking.vue) ─
 export interface ThinkingMessage extends MessageBase {
   kind:         'thinking';
+  chatToolActivity?: import('../../../agent/tools/ChatToolReporting').ChatToolActivity;
   reportingActivity?: 'status' | 'tool';
   thoughts:     readonly string[];  // appended to while live
   startedAt:    number;
@@ -114,6 +116,7 @@ export interface ThinkingMessage extends MessageBase {
 // ─── Tool call ────────────────────────────────────────────────────
 export interface ToolMessage extends MessageBase {
   kind:          'tool';
+  recordedToolName?: string;
   tool:          string;        // "Grep" | "Read" | "Bash" | …
   desc:          string;        // short human description
   status:        'running' | 'ok' | 'error';

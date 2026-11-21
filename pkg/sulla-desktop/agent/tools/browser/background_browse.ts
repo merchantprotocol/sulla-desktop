@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseTool, ToolResponse } from '../base';
+import { ChatToolReporting } from '../ChatToolReporting';
 import { saveScreenshot } from './screenshot_store';
 
 import { getChromeApi } from '@pkg/main/chromeApi';
@@ -20,10 +21,18 @@ export class BackgroundBrowseWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const chrome = getChromeApi();
-    const action = input.action as string;
+    const action = ChatToolReporting.hiddenOperation(input.action);
+    if (!action) return { successBoolean: false, responseString: 'Unknown hidden browser action.' };
+    const report = this.bindChatToolActivity();
+    await report(`browser:${ action }:Running`);
+    const result = await this.browse(action, input);
+    await report(`browser:${ action }:${ result.successBoolean ? 'Completed' : 'Failed' }`);
+    return result;
+  }
 
+  private async browse(action: string, input: any): Promise<ToolResponse> {
     try {
+      const chrome = getChromeApi();
       switch (action) {
       case 'open': {
         if (!input.url) {

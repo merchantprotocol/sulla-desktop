@@ -85,7 +85,7 @@ it('projects safe individual events in source order before and after tool settle
   expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
     'Preparing your turn…', 'citation', 'Details withheld', 'Bash · running · Details withheld', 'Tools connected — calling model',
   ]);
-  expect(live.entries('info')).toEqual([]);
+  expect(live.entries('info')).toEqual([debug[1]]);
   expect(live.entries('fatal')).toEqual([]);
   expect(JSON.stringify(debug)).not.toContain('PRIVATE_');
 
@@ -206,8 +206,8 @@ it.each(['Yes', 'No'])('attributes only the explicit %s answer reply live and af
 });
 
 // risk: a resumed answer's tagged stream can overwrite an unlinked stream,
-// or hide a deliverable, even though only follow-up prose should be filtered.
-it('keeps explicit decision-turn streams separate from ordinary output and preserves embedded deliverables', () => {
+// or promote narration to Brief merely because the text resembles a deliverable.
+it('keeps decision-turn streams separate and honors explicit deliverable intent, not markup', () => {
   const live = new ReportingFixture();
   live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in ordinary output' });
   live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in decision follow-up', decisionFollowUpId: 'claimed-question' });
@@ -215,7 +215,9 @@ it('keeps explicit decision-turn streams separate from ordinary output and prese
   expect(rows.map(row => row.label)).toEqual(['Reply', 'Follow-up']);
   expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id]);
   live.emit('assistant_message', { kind: 'streaming', content: 'Same prefix in decision follow-up <html><body>Report</body></html>', decisionFollowUpId: 'claimed-question' });
-  expect(live.entries('fatal').map(row => row.id)).toEqual(rows.map(row => row.id));
+  expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id]);
+  live.emit('assistant_message', { kind: 'text', content: 'Report ready', decisionFollowUpId: 'claimed-question', agentReporting: 'brief' });
+  expect(live.entries('fatal').map(row => row.id)).toEqual([rows[0].id, live.chat.messages.value.at(-1)?.id]);
 });
 
 // risk: switching models/agents rewrites historical attribution; filtering
@@ -278,8 +280,8 @@ it('keeps recorded reply attribution and its actions together across levels and 
 });
 
 // risk: losing evidence or rendering it twice on streaming replay / rehydrate;
-// non-Detailed mode must not reveal reference titles or URLs.
-it('renders ordered citation links inline only in Detailed on stream, replay and reload', async() => {
+// Brief must not reveal reference titles or URLs.
+it('renders ordered citation and report links directly at Standard and Detailed on stream, replay and reload', async() => {
   const live = new ReportingFixture();
   const wrapper = live.mount('info');
   live.emit('assistant_message', { kind: 'streaming', content: 'Streamed answer' });
@@ -305,7 +307,7 @@ it('renders ordered citation links inline only in Detailed on stream, replay and
   await wrapper.setProps({ reportingLevel: 'fatal' });
   expect(wrapper.find('.supporting-reports').exists()).toBe(false);
   await wrapper.setProps({ reportingLevel: 'info' });
-  expect(wrapper.find('.supporting-reports').exists()).toBe(false);
+  expect(wrapper.findAll('.report-row b').map(row => row.text())).toEqual(titles);
   await wrapper.setProps({ reportingLevel: 'debug' });
   expect(wrapper.findAll('ul.supporting-reports')).toHaveLength(1);
   expect(wrapper.findAll('.report-row b').map(row => row.text())).toEqual(titles);
@@ -376,4 +378,58 @@ it('projects benign visible tool fields and recorded time from unchanged live an
   await hydrated.setProps({ reportingLevel: 'fatal' });
   expect(hydrated.find('.report-activity').exists()).toBe(false);
   expect(JSON.stringify(reopened.chat.messages.value)).toBe(originalRecords);
+});
+
+
+// risk: Brief loses a deliverable or picks up structured narration by reading its prose;
+// a final stream classification must not change earlier segments or another stream.
+it('keeps producer-classified narration and deliverables apart across streaming and save/restore', () => {
+  const live = new ReportingFixture();
+  live.emit('assistant_message', { kind: 'text', content: 'Legacy report-looking sentence' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Report ready', replyStreamId: 'producer-turn' });
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'producer-turn', agentReporting: 'standard' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Opening it now', replyStreamId: 'producer-turn' });
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'unrelated-turn', agentReporting: 'standard' });
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'producer-turn', agentReporting: 'brief', reportedModel: 'actual-model' });
+  live.emit('assistant_message', { kind: 'proactive', headline: 'Action needed', body: 'Review fixture', agentReporting: 'brief' });
+  live.emit('assistant_message', { kind: 'proactive', headline: 'Progress', body: 'Routine update', agentReporting: 'standard' });
+
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  const briefs = live.chat.messages.value.filter(message => message.agentReporting === 'brief' || !message.agentReporting).map(message => message.id);
+  expect(briefs).toHaveLength(3);
+  expect(reopened.entries('fatal').map(row => row.id)).toEqual(briefs);
+  expect(reopened.entries('info').map(row => row.id)).toEqual(live.chat.messages.value.map(message => message.id));
+  expect(reopened.entries('fatal')[1]).toMatchObject({ message: {
+    text: 'Opening it now', agentReporting: 'brief', replyAttribution: { model: 'actual-model' },
+  } });
+});
+
+// risk: a hidden operation leaks across threads or exposes private arguments/results;
+// visibility filtering must not reorder or discard authorized retained activity.
+it('keeps safe thread-bound activities, patches and memory at their cumulative levels', () => {
+  const live = new ReportingFixture();
+  live.chat.appendMessage({ id: asMessageId('patch-fixture'), kind: 'patch', createdAt: 1,
+    path: 'synthetic.txt', stat: { added: 1, removed: 0 }, state: 'applied', hunks: [] });
+  live.chat.appendMessage({ id: asMessageId('memory-fixture'), kind: 'memory', createdAt: 2,
+    memId: 'synthetic-memory', action: 'saved' });
+  const activity = (chatToolActivity: string, thread_id = 'fixture-thread') =>
+    live.emit('assistant_message', { kind: 'chat_tool_activity', thread_id, chatToolActivity, content: 'PRIVATE_RAW' });
+  activity('artifact-opened', 'another-thread');
+  activity('browser:PRIVATE_URL:Failed');
+  activity('artifact-opened');
+  expect(live.ctx.graphRunning.value).toBe(false);
+  live.emit('progress', { phase: 'tool_call', toolRunId: 'hidden-run', toolName: 'background_browse', args: { action: 'read', url: 'PRIVATE_URL' } });
+  activity('browser:read:Running');
+  activity('browser:read:Failed');
+  live.emit('progress', { phase: 'tool_result', toolRunId: 'hidden-run', success: false, error: 'PRIVATE_RESULT' });
+  activity('browser:list:Completed');
+
+  expect(live.entries('fatal')).toEqual([]);
+  expect(live.entries('info').map(row => row.id)).toEqual(['patch-fixture']);
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  expect(reopened.entries('debug').map(row => row.kind === 'card' ? row.message.kind : row.text)).toEqual([
+    'patch', 'memory', 'Artifact opened', 'Hidden browser · read · Running', 'Hidden browser · read · Failed',
+    'Hidden browser · list · Completed',
+  ]);
+  expect(JSON.stringify(live.ctx.messages)).not.toContain('PRIVATE_');
 });

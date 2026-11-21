@@ -19,6 +19,7 @@
  */
 
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
+import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
@@ -59,7 +60,7 @@ function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadI
   const last = ctx.messages[ctx.messages.length - 1] as (ChatMessage & { _completed?: boolean }) | undefined;
   // Only adjacent events in the same open segment may share a source
   // record. Otherwise a later status can jump ahead of a decision or evidence.
-  if (!reportingActivity && !last?.reportingActivity && last?.kind === 'thinking' && last.role === 'assistant' && last.channelId === agentId
+  if (!reportingActivity && !last?.reportingActivity && !last?.chatToolActivity && last?.kind === 'thinking' && last.role === 'assistant' && last.channelId === agentId
     && last.threadId === msgThreadId && !last._completed) {
     ctx.messages[ctx.messages.length - 1] = {
       ...last,
@@ -154,6 +155,19 @@ export class MessageDispatcher {
 
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
   if (msg.data && typeof msg.data === 'object' && AgentReadinessStatus.apply(ctx.messages, agentId, msgThreadId, msg.data as Record<string, unknown>)) return;
+  const activity = msg.data as { kind?: string; thread_id?: string; chatToolActivity?: ChatMessage['chatToolActivity'] } | null;
+  if (activity?.kind === 'chat_tool_activity') {
+    if (msg.type !== 'assistant_message' || !msgThreadId || activity.thread_id !== msgThreadId ||
+      !ChatToolReporting.describe(activity.chatToolActivity)) return;
+    const record: ChatMessage & { _completed: boolean } = {
+      id: uniqueMessageId(ctx, `${ Date.now() }_ws_chat_tool_activity`),
+      channelId: agentId, threadId: msgThreadId, role: 'assistant', kind: 'thinking', content: '',
+      chatToolActivity: activity.chatToolActivity,
+      _completed: true,
+    };
+    ctx.messages.push(record);
+    return;
+  }
   // Only the primary orchestration loop's emissions affect run-state.
   // Subconscious agents emit on the `subconscious_message` wire type
   // (see SubconsciousAgentNode + BaseNode.wsChatMessage's messageType
@@ -215,6 +229,10 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
   const replyStreamId = msg.type === 'assistant_message' && typeof data.replyStreamId === 'string'
     ? data.replyStreamId : undefined;
+  const agentReporting = (msg.type === 'assistant_message' || msg.type === 'subconscious_message' || msg.type === 'chat_message') &&
+    (data.role === undefined || data.role === 'assistant') &&
+    (data.agentReporting === 'brief' || data.agentReporting === 'standard')
+    ? data.agentReporting as ChatMessage['agentReporting'] : undefined;
   const rawContent = data?.content !== undefined ? contentToString(data.content) : '';
   const doneWrapper = msg.type !== 'system_message' && (!data.role || data.role === 'assistant')
     && (!data.kind || data.kind === 'streaming' || data.kind === 'text') && /^\s*<AGENT_DONE>/i.test(rawContent);
@@ -229,6 +247,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
     if (target === 'streaming' && replyStreamId) {
       const reportedModel = typeof data.reportedModel === 'string' ? data.reportedModel.trim() : '';
+      // Only the segment being closed gets the producer's intent. Model attribution still
+      // updates all segments of this stream without reclassifying earlier narration.
+      const closing = agentReporting ? ctx.messages.findLast(message =>
+        message.kind === 'streaming' && message.channelId === agentId && message.threadId === msgThreadId &&
+        message.replyStreamId === replyStreamId && !(message as ChatMessage & { _completed?: boolean })._completed) : undefined;
+      if (closing) closing.agentReporting = agentReporting;
       for (const message of ctx.messages) {
         if (message.kind !== 'streaming' || message.channelId !== agentId || message.threadId !== msgThreadId ||
           message.replyStreamId !== replyStreamId) continue;
@@ -371,12 +395,13 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const result = readAgentResultCard(data?.result);
 
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_proactive`,
+      id:        uniqueMessageId(ctx, `${ Date.now() }_ws_proactive`),
       channelId: agentId,
       threadId:  msgThreadId,
       role:      'assistant',
       kind:      'proactive',
       content:   body,
+      ...(agentReporting ? { agentReporting } : {}),
       proactive: { headline: headline || 'Sulla', body, ...(result ? { result } : {}) },
     });
     return;
@@ -508,6 +533,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     ? { agent: agent || undefined, model: model || undefined } : undefined;
   const belongsToReply = (message: ChatMessage) => message.channelId === agentId &&
     message.decisionFollowUpId === decisionFollowUpId &&
+    message.agentReporting === agentReporting &&
     (kind !== 'streaming' || message.replyStreamId === replyStreamId) &&
     message.replyAttribution?.agent === replyAttribution?.agent && message.replyAttribution?.model === replyAttribution?.model;
 
@@ -599,6 +625,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       role,
       kind,
       content:   finalContent,
+      ...(agentReporting ? { agentReporting } : {}),
       ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
       ...(replyAttribution ? { replyAttribution } : {}),
       ...(replyStreamId ? { replyStreamId } : {}),
@@ -716,6 +743,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     kind,
     content:   finalContent,
     ...(terminalRunError ? { terminalRunError } : {}),
+    ...(agentReporting ? { agentReporting } : {}),
     ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
     ...(replyAttribution ? { replyAttribution } : {}),
   };
@@ -810,8 +838,8 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       }
     }
 
-    // Skip chat-only tools
-    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
+    // Hidden browser publishes its own payload-free lifecycle in the originating thread.
+    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image' || ChatToolReporting.isBackgroundBrowse(toolName)) {
       return;
     }
 

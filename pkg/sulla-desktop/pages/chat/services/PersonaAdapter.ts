@@ -794,7 +794,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ b.chatToolActivity ?? '' }|${ b.agentReporting ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -885,6 +885,7 @@ export class PersonaAdapter {
         createdAt,
         thoughts,
         ...(b.reportingActivity ? { reportingActivity: b.reportingActivity } : {}),
+        ...(b.chatToolActivity ? { chatToolActivity: b.chatToolActivity } : {}),
         startedAt: createdAt,
         completed,
         ...(completedAt !== undefined ? { completedAt } : {}),
@@ -994,6 +995,7 @@ export class PersonaAdapter {
         id,
         kind: 'tool',
         createdAt,
+        recordedToolName: b.toolCard.toolName,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,
@@ -1029,6 +1031,7 @@ export class PersonaAdapter {
         senderLabel: b.channelMeta?.senderLabel,
         senderThreadId: b.channelMeta?.fromThreadId,
         senderJobId: b.channelMeta?.senderJobId,
+        agentReporting: b.agentReporting,
       } satisfies ChannelMessage;
     }
 
@@ -1094,6 +1097,7 @@ export class PersonaAdapter {
         createdAt,
         headline: b.proactive.headline,
         body:     b.proactive.body,
+        agentReporting: b.agentReporting,
         ...(b.proactive.result ? { result: b.proactive.result } : {}),
       } satisfies ProactiveMessage;
     }
@@ -1152,6 +1156,7 @@ export class PersonaAdapter {
           createdAt,
           text:  raw,
           decisionFollowUpId: b.decisionFollowUpId,
+          agentReporting: b.agentReporting,
           ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
           fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
         } satisfies SullaMessage;
@@ -1163,12 +1168,13 @@ export class PersonaAdapter {
         text:      b.content ?? '',
         startedAt: createdAt,
         decisionFollowUpId: b.decisionFollowUpId,
+        agentReporting: b.agentReporting,
       } satisfies StreamingMessage;
     }
 
     // Old backend history may contain an HTML body without its original wrapper.
     if (b.kind === 'html') {
-      return { id, kind: 'html', createdAt, html: b.content ?? '' } satisfies HtmlMessage;
+      return { id, kind: 'html', createdAt, html: b.content ?? '', agentReporting: b.agentReporting } satisfies HtmlMessage;
     }
 
     // Speak messages are audio-only — skip in transcript.
@@ -1192,6 +1198,7 @@ export class PersonaAdapter {
       createdAt,
       text:  b.content ?? '',
       decisionFollowUpId: b.decisionFollowUpId,
+      agentReporting: b.agentReporting,
       ...(b.terminalRunError === true ? { terminalRunError: true } : {}),
       ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
       fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,

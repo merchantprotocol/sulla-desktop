@@ -9,6 +9,7 @@ import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
 import { toolDecisionPort } from './toolDecisionPort';
 
+import type { ChatToolActivity } from './ChatToolReporting';
 import type { ToolExecutionContext } from './executionContext';
 
 export type ToolOperation = 'read' | 'create' | 'update' | 'delete' | 'execute';
@@ -325,6 +326,30 @@ export abstract class BaseTool<TState = any> {
   // ─────────────────────────────────────────────────────────────
   // Existing helpers
   // ─────────────────────────────────────────────────────────────
+
+  /** Bind activity to the invocation's trusted originating thread, never a selected chat or tool argument. */
+  protected bindChatToolActivity(): (activity: ChatToolActivity) => Promise<void> {
+    const metadata = this.state?.metadata;
+    const threadId = metadata?.threadId;
+    const channel = metadata?.wsChannel;
+    const send = this.sendChatMessage;
+    const authorized = threadId && (!this.executionContext?.thread_id || this.executionContext.thread_id === threadId)
+      && !metadata?._muteWsChat && !metadata?.subconsciousSilent;
+    return async(activity) => {
+      if (!authorized) return;
+      try {
+        if (send) {
+          await send('', 'chat_tool_activity', { chatToolActivity: activity });
+        } else if (channel) {
+          const { getWebSocketClientService } = await import('../services/WebSocketClientService');
+          await getWebSocketClientService().send(channel, {
+            type: 'assistant_message',
+            data: { role: 'assistant', kind: 'chat_tool_activity', thread_id: threadId, chatToolActivity: activity },
+          });
+        }
+      } catch { /* Reporting must not change the actual tool result. */ }
+    };
+  }
 
   public sendChatMessage?: (content: string, kind?: string, extras?: Record<string, unknown>) => Promise<boolean>;
   public emitProgress?:    (data: any) => Promise<void>;

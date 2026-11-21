@@ -397,6 +397,7 @@ export class AgentNode extends BaseNode {
         if (!isDuplicate && !alreadyStreamed) {
           await this.wsChatMessage(state, userVisibleText, 'assistant', 'text', {
             replyAttribution: this.recordedReplyAttribution(state, reply.metadata.model),
+            agentReporting: this.replyReporting(reply.content),
           });
         } else if (!isDuplicate) {
           // UI already has this text from streaming chunks (which are
@@ -543,6 +544,14 @@ export class AgentNode extends BaseNode {
       blockerReason:       null,
       unblockRequirements: null,
     };
+  }
+
+  protected override replyReporting(content: string): 'brief' | 'standard' | undefined {
+    // The explicit agent outcome protocol, not reply prose, determines intent.
+    const status = this.extractAgentOutcome(content).status;
+    if (status === 'done' || status === 'blocked') return 'brief';
+    if (status === 'continue') return 'standard';
+    return undefined;
   }
 
   private toUserVisibleAgentMessage(

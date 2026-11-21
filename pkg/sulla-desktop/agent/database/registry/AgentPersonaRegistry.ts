@@ -18,6 +18,8 @@ export interface ChatMessage {
   readinessCleared?: boolean;
   terminalRunError?: boolean;
   decisionFollowUpId?: string;
+  chatToolActivity?: import('../../tools/ChatToolReporting').ChatToolActivity;
+  agentReporting?: 'brief' | 'standard';
   reportingActivity?: 'status' | 'tool';
   replyStreamId?: string;
   replyAttribution?: { agent?: string; model?: string };

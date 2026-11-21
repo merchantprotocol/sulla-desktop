@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
+import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 
 import { returnCoveredByCard } from '../../messages/handoffCover';
 import type { Message, ToolMessage } from '../../models/Message';
@@ -25,12 +25,12 @@ const cards: Record<CardMessage['kind'], Classification> = {
   streaming:         { label: 'Reply', level: 'info', essential: true },
   tool_approval:     { label: 'Approval', level: 'info', essential: true },
   tool_question:     { label: 'Question', level: 'info', essential: true },
-  patch:             { label: 'Change', level: 'info', essential: true },
+  patch:             { label: 'Change', level: 'info' },
   channel:           { label: 'Agent message', level: 'info', essential: true },
   subagent:          { label: 'Agent status', level: 'info' },
   subagent_exchange: { label: 'Handoff', level: 'info' },
-  citation:          { label: 'Evidence', level: 'debug' },
-  memory:            { label: 'Memory', level: 'info' },
+  citation:          { label: 'Evidence', level: 'info' },
+  memory:            { label: 'Memory', level: 'debug' },
   proactive:         { label: 'Update', level: 'info', essential: true },
   heartbeat:         { label: 'Heartbeat', level: 'debug' },
   tts:               { label: 'Voice', level: 'info', essential: true },
@@ -71,7 +71,7 @@ const safeToolSummaries = new Map([
 const toolLabels = new Map([
   ['Agents', 'Agents'], ['Bash', 'Shell'], ['Bridge', 'Bridge'], ['Browser', 'Browser'],
   ['Calendar', 'Calendar'], ['Database', 'Database'], ['Docker', 'Docker'], ['Extensions', 'Extensions'],
-  ['File', 'File'], ['Git', 'Git'], ['GitHub', 'GitHub'], ['Host', 'Host'],
+  ['File', 'File'], ['Git', 'Git'], ['GitHub', 'GitHub'], ['Host', 'Host'], ['Memory', 'Memory'],
   ['Integrations', 'Integrations'], ['Redis', 'Redis'], ['Search', 'Search'], ['Skills', 'Skills'],
   ['Slack', 'Slack'], ['Vault', 'Vault'], ['Workflow', 'Workflow'], ['Workspace', 'Workspace'],
 ]);
@@ -95,6 +95,11 @@ export class TranscriptReporting {
   private *project(message: Message, messages: readonly Message[], level: ReportingLevel): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {
+      if (message.chatToolActivity) {
+        const activity = ChatToolReporting.describe(message.chatToolActivity);
+        if (activity) yield { ...base, ...activity, kind: 'activity', level: 'debug' };
+        return;
+      }
       if (!Array.isArray(message.thoughts)) return;
       // Old untyped buffers can mix reasoning and activity. Only an exact,
       // standalone public status survives; never pattern-match individual lines.
@@ -111,8 +116,10 @@ export class TranscriptReporting {
     }
 
     if (message.kind === 'tool') {
+      if (ChatToolReporting.isBackgroundBrowse(message.recordedToolName ?? message.tool)) return;
       const text = this.toolText(message, level);
-      if (text) yield { ...base, kind: 'activity', label: 'Tool', level: message.status === 'running' ? 'debug' : 'info', text };
+      if (text) yield { ...base, kind: 'activity', label: 'Tool',
+        level: message.status === 'running' || message.tool === 'Memory' || ChatToolReporting.isMemoryTool(message.recordedToolName) ? 'debug' : 'info', text };
       return;
     }
 
@@ -122,7 +129,7 @@ export class TranscriptReporting {
       return;
     }
     if ((message.kind === 'sulla' || message.kind === 'streaming') && message.decisionFollowUpId &&
-      !this.hasDeliverable(message)) {
+      message.agentReporting !== 'brief') {
       yield { ...base, kind: 'card', label: 'Follow-up', level: 'info', message };
       return;
     }
@@ -131,30 +138,30 @@ export class TranscriptReporting {
     if (!report) return;
     const label = message.kind === 'proactive' && message.result ? 'Result' :
       message.kind === 'user' && message.voiceIdentity ? 'Voice' : report.label;
+    const classification = message.kind === 'sulla' || message.kind === 'streaming' ||
+      message.kind === 'html' || message.kind === 'channel' || message.kind === 'proactive'
+      ? message.agentReporting : undefined;
+    if (classification === 'brief' || classification === 'standard') {
+      yield { ...base, label, kind: 'card', message, level: classification === 'brief' ? 'fatal' : 'info' };
+      return;
+    }
     yield { ...base, ...report, label, kind: 'card', message,
       ...(message.kind === 'notice' && message.action ? { essential: true } : {}) };
-  }
-
-  private hasDeliverable(message: Extract<CardMessage, { kind: 'sulla' | 'streaming' }>): boolean {
-    // File references and inline document/agent cards are essential even if
-    // the surrounding text was emitted during a decision continuation.
-    return (message.kind === 'sulla' && !!message.fileReferences?.length) ||
-      !!parseDurableFileReferences(message.text).length ||
-      /⟦SULLA_A2A:|<(?:html|body|head|style|iframe|table)\b|<!doctype\b/i.test(message.text);
   }
 
   private toolText(message: ToolMessage, level: ReportingLevel): string | undefined {
     // Match the existing MessageDispatcher envelope on live and saved paths.
     // Untyped legacy/demo cards and unsupported formatter labels fail closed.
     if (!/^\d+_tool_[\w.-]+$/.test(message.id)) return undefined;
-    const label = toolLabels.get(message.tool);
+    const isMemory = ChatToolReporting.isMemoryTool(message.recordedToolName);
+    const label = isMemory ? 'Memory' : toolLabels.get(message.tool);
     const status = toolStatuses.get(message.status);
     if (level !== 'debug') return label && status ? `${ label } · ${ status }` : undefined;
 
     const safeSummary = label && safeToolSummaries.get(message.tool) === message.desc ? message.desc : undefined;
     const withheld = (message.desc && !safeSummary) || message.input || message.output || message.error || message.meta;
     return [
-      label ? message.tool : 'Tool name withheld',
+      isMemory ? 'Memory' : label ? message.tool : 'Tool name withheld',
       status ? message.status : 'Status unavailable',
       safeSummary,
       withheld ? 'Details withheld' : undefined,

@@ -148,6 +148,7 @@ export async function emitProactiveCompletion(
       data: {
         ...(parentThreadId ? { threadId: parentThreadId } : {}),
         kind: 'proactive',
+        agentReporting: 'brief',
         role: 'assistant',
         headline,
         body,

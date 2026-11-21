@@ -1045,6 +1045,8 @@ export class BackendGraphWebSocketService {
       }
       this.emitMessage(channelId, 'subconscious_message', {
         content: envelope.body, role: 'assistant', kind: 'channel_message',
+        // The sender's structured blocker/contract intent is authoritative.
+        agentReporting: envelope.kind === 'blocker' || envelope.kind === 'contract' ? 'brief' : undefined,
         thread_id: target.threadId,
         senderId: envelope.from,
         senderChannel: envelope.senderChannel,

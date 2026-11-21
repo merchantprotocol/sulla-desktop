@@ -1885,7 +1885,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         }
         const reportedModel = this.recordedReplyAttribution(state, reply?.metadata.model).model;
         if (streamingOpen || (streamingWsSent && reportedModel && reportedModel !== replyAttribution.model)) {
-          this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId, reportedModel });
+          this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
+            replyStreamId, reportedModel,
+            agentReporting: streamingOpen && reply ? this.replyReporting(reply.content) : undefined,
+          });
         }
         if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }
@@ -2000,6 +2003,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
   }
 
+  protected replyReporting(_content: string): 'brief' | 'standard' | undefined { return undefined }
+
   /**
      * Sends a chat message to the frontend via WebSocket as an
      * 'assistant_message' event. Used for progress updates, streaming tokens,
@@ -2048,7 +2053,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
+    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'chat_tool_activity' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }
