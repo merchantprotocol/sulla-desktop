@@ -291,8 +291,8 @@ export interface NoticeMessage extends MessageBase {
 // ─── HTML reply ───────────────────────────────────────────────────
 export interface HtmlMessage extends MessageBase {
   kind:        'html';
-  html:        string;         // sanitized
-  artifactId?: ArtifactId;  // if rendered as a separate artifact
+  html:        string;      // sanitized by the inline renderer
+  artifactId?: ArtifactId;  // legacy snapshot link, never assigned to new replies
 }
 
 // ─── The union ────────────────────────────────────────────────────

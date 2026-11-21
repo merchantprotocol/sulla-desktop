@@ -508,27 +508,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   const roleRaw = data?.role !== undefined ? String(data.role) : (msg.type === 'system_message' ? 'system' : 'assistant');
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system' || roleRaw === 'error') ? roleRaw : 'assistant';
-  let kind = (typeof data?.kind === 'string') ? data.kind : undefined;
-  let finalContent = content;
+  const kind = (typeof data?.kind === 'string') ? data.kind : undefined;
+  const finalContent = content;
 
   if (kind === 'speak') {
     console.log(`[MessageDispatcher] SPEAK received → channel="${ agentId }", thread="${ msgThreadId }", content="${ content.slice(0, 80) }"`);
-  }
-
-  // Auto-detect HTML
-  if (!kind || kind === 'text' || kind === 'progress') {
-    const htmlMatch = /^\s*<html>([\s\S]*)<\/html>\s*$/i.exec(finalContent);
-    if (htmlMatch) {
-      kind = 'html';
-      finalContent = htmlMatch[1].trim();
-    }
-  }
-
-  if (!finalContent.trim()) {
-    console.warn(`⚠️ [MessageDispatcher] EMPTY after HTML strip — assistant message dropped`, {
-      msgType: msg.type, channel: agentId, kind,
-    });
-    return;
   }
 
   // Warn about suspicious content
@@ -683,6 +667,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         streamed.startsWith(incoming)
       );
       if (alreadyShown) {
+        // A final dump can carry the last part of a formatted block after
+        // a throttled stream update. Keep it in the existing bubble.
+        if (recentStreamIndexes.length === 1 && incoming.length > streamed.length && incoming.startsWith(streamed)) {
+          const index = recentStreamIndexes[0];
+          ctx.messages[index] = { ...ctx.messages[index], content: finalContent };
+        }
         // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
           const m = ctx.messages[i];

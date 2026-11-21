@@ -17,9 +17,9 @@
         <div class="sulla-name">
           {{ botName }}
         </div>
-        <div
+        <InlineReplyBody
           class="prose max-w-none"
-          v-html="renderMarkdown(message.content)"
+          :text="message.content"
         /><span
           v-if="!(message as any)._completed"
           class="streaming-cursor"
@@ -31,7 +31,7 @@
 
 <script setup lang="ts">
 import { useChatDisplay } from './context';
-import { renderMarkdown } from './markdown';
+import InlineReplyBody from '../components/transcript/InlineReplyBody.vue';
 
 import type { ChatMessage } from '@pkg/pages/agent/ChatInterface';
 

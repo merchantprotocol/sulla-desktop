@@ -17,9 +17,9 @@
         <div class="sulla-name">
           {{ botName }}
         </div>
-        <HtmlMessageRenderer
-          :content="message.content"
-          :is-dark="isDark"
+        <InlineReplyBody
+          :text="message.content"
+          legacy-html
         />
       </div>
     </div>
@@ -29,11 +29,11 @@
 <script setup lang="ts">
 import { useChatDisplay } from './context';
 
-import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import InlineReplyBody from '../components/transcript/InlineReplyBody.vue';
 
 import type { ChatMessage } from '@pkg/pages/agent/ChatInterface';
 
 defineProps<{ message: ChatMessage }>();
 
-const { botName, botLogoUrl, isDark } = useChatDisplay();
+const { botName, botLogoUrl } = useChatDisplay();
 </script>

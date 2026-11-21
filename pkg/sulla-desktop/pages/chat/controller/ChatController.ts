@@ -39,7 +39,7 @@ import type {
   Attachment,
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage, ToolMessage,
   ToolApprovalMessage, ToolQuestionMessage, ToolQuestionAnswerItem, PatchMessage, PatchRevertMeta, ChannelMessage, SubAgentMessage,
-  CitationMessage, MemoryMessage, ProactiveMessage, HtmlMessage, ErrorMessage,
+  CitationMessage, MemoryMessage, ProactiveMessage, ErrorMessage,
   ModalState, ModelDescriptor, SidebarState, ConnectionState,
   PopoverState, SlashCommand, MentionTarget,
   QueuedMessage,
@@ -176,7 +176,7 @@ export class ChatController {
     this.queue = ref([...initial.queue]);
     this.staged = ref([...initial.staged]);
     this.voice = ref(initial.voice);
-    this.artifacts = ref({ list: [...initial.artifacts], activeId: initial.activeArtifactId });
+    this.artifacts = ref(this.restoreArtifacts(initial));
     this.popover = ref(initial.popover);
     this.modals = ref(initial.modals);
     this.sidebar = ref(initial.sidebar);
@@ -781,7 +781,7 @@ export class ChatController {
     };
   }
 
-  /** Replace only DB-backed tabs; transient HTML/workflow reply tabs are untouched. */
+  /** Replace only DB-backed tabs; transient workflow/patch tabs are untouched. */
   syncPersistentArtifacts(artifacts: Artifact[]): void {
     const transient = this.artifacts.value.list.filter(item => !item.persistent);
     const list = [...transient, ...artifacts];
@@ -935,7 +935,7 @@ export class ChatController {
     this.queue.value = [...state.queue];
     this.staged.value = [...state.staged];
     this.voice.value = state.voice;
-    this.artifacts.value = { list: [...state.artifacts], activeId: state.activeArtifactId };
+    this.artifacts.value = this.restoreArtifacts(state);
     this.popover.value = popoverClosed();
     this.modals.value = { which: null };
     this.sidebar.value = state.sidebar;
@@ -944,6 +944,19 @@ export class ChatController {
     this.partialHistory = state.partialHistory === true;
     this.heartbeat.value = state.heartbeat ?? defaultChatHeartbeatConfig();
     this.bus.emit({ kind: 'threadHydrated', threadId: state.thread.id });
+  }
+
+  private restoreArtifacts(state: ThreadState): { list: Artifact[]; activeId: ArtifactId | null } {
+    // Older builds persisted the promoted copy alongside the transcript message.
+    const promotedIds = new Set(state.thread.messages.flatMap(message =>
+      message.kind === 'html' && message.artifactId ? [message.artifactId] : [],
+    ));
+    const list = state.artifacts.filter(artifact =>
+      artifact.persistent || artifact.kind !== 'html' || !promotedIds.has(artifact.id),
+    );
+    const removedActive = state.activeArtifactId && promotedIds.has(state.activeArtifactId)
+      && !list.some(artifact => artifact.id === state.activeArtifactId);
+    return { list, activeId: removedActive ? null : state.activeArtifactId };
   }
 
   // ─── Helpers ────────────────────────────────────────────────────
