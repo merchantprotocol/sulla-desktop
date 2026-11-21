@@ -48,7 +48,7 @@ export class DesktopRelayClient {
     this.shares = new DesktopRelayShareServer(this.transport, ports.files, timers, log);
     const scribe = new DesktopRelayTurnScribe(ports.history, log);
     const deviceId = () => ports.session.deviceId();
-    if (ports.terminal) terminal = new DesktopRelayTerminalDelivery(ports.terminal, ports.chat, this.transport, timers);
+    if (ports.terminal) terminal = new DesktopRelayTerminalDelivery(ports.terminal, ports.chat, this.transport, timers, ports.scopedText);
     const bridge = new DesktopRelayAgentBridge(ports.agent, this.outbox, scribe, ports.chat, deviceId, log, terminal);
     this.handlers = new DesktopRelayRequestHandlers(this.transport, deviceId, this.outbox, bridge, scribe, ports.agent, ports.chat, log);
     this.router = new DesktopRelayInboundMessageRouter({
@@ -64,7 +64,8 @@ export class DesktopRelayClient {
       shareFetchCancel: (message, socket, generation) => this.shares.cancel(message as RelayIncomingFrame, socket, generation),
       scoped:           async(message, socket) => {
         if (!this.transport.canAcceptScoped(socket)) return;
-        if (message.type === 'relay_terminal_committed') await terminal?.acknowledge(message as RelayIncomingFrame);
+        if (message.type === 'relay_history_committed') await terminal?.acknowledgeText(message as RelayIncomingFrame);
+        else if (message.type === 'relay_terminal_committed') await terminal?.acknowledge(message as RelayIncomingFrame);
         else if (message.type === 'relay_inventory_check' && ports.session.sharedRelayEnabled?.() === true) {
           await this.handlers.handleInventory(message as RelayIncomingFrame);
         } else if (message.type === 'relay_history_check' || ports.session.sharedRelayEnabled?.() === true) {

@@ -48,6 +48,7 @@ export class RemoteChatSession {
   private sendTimer?: ReturnType<typeof setTimeout>;
   private subscribeTimer?: ReturnType<typeof setTimeout>;
   private buffer?: Map<string, Message>;
+  private historyDirty = false;
   private history: RemoteChatHistory;
   private cleanup?: () => void;
   private disposed = false;
@@ -190,6 +191,7 @@ export class RemoteChatSession {
     this.routing = false;
     this.running.value = false;
     this.buffer = undefined;
+    this.historyDirty = false;
     this.revision++;
     clearTimeout(this.sendTimer);
     clearTimeout(this.subscribeTimer);
@@ -250,6 +252,7 @@ export class RemoteChatSession {
   }
 
   private async catchUp(binding: RemoteThreadBinding): Promise<void> {
+    this.historyDirty = false;
     const ticket = ++this.revision;
     const alive = () => !this.disposed && this.revision === ticket && this.bound.value?.threadId === binding.threadId && this.subscribed === binding.threadId;
     const live = this.buffer = new Map<string, Message>();
@@ -260,6 +263,7 @@ export class RemoteChatSession {
     if (!result) {
       this.status.value = 'Connected · History unavailable';
       for (const message of live.values()) this.committed(message);
+      if (this.historyDirty) void this.catchUp(binding);
       return;
     }
     const merged = new Map(result.messages.map(message => [String(message.id), message]));
@@ -273,6 +277,7 @@ export class RemoteChatSession {
     this.chat.persistThread();
     this.chat.thread.value = { ...this.chat.thread.value, remote: { ...this.bound.value!, removedFromCache: undefined } };
     this.status.value = 'Connected';
+    if (this.historyDirty) void this.catchUp(this.bound.value!);
   }
 
   private async receive(frame: Frame): Promise<void> {
@@ -342,6 +347,11 @@ export class RemoteChatSession {
       } else if (frame.type === 'error') {
         this.status.value = frame.reason === 'peer_offline' ? 'Offline' : 'Access unavailable';
       }
+      return;
+    }
+    if (frame.type === 'relay_history_changed' && this.subscribed === b.threadId) {
+      if (this.buffer) this.historyDirty = true;
+      else void this.catchUp(b);
       return;
     }
     if (this.subscribed !== b.threadId || !this.liveRun || frame.clientRunId !== this.liveRun) return;

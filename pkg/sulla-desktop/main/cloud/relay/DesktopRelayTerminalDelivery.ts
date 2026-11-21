@@ -4,25 +4,27 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 
-import type { DesktopRelayChatPorts, DesktopRelayTimers, RelayIncomingFrame, RelayTimeout, ScopedRelayTerminal, ScopedRelayTerminalStore } from './DesktopRelayPorts';
+import type { DesktopRelayChatPorts, DesktopRelayTimers, RelayIncomingFrame, RelayTimeout, ScopedRelayTerminal, ScopedRelayTerminalStore, ScopedRelayText, ScopedRelayTextStore } from './DesktopRelayPorts';
 import type { DesktopRelayTransport } from './DesktopRelayTransport';
 
 const RETRY_MS = 15_000;
 
-/** Status-only outbox. The committed local row is the source of retries until
- * the verified relay confirms the exact Cloud commit. Nothing dispatches here. */
+/** History delivery only: committed local rows retry until the verified relay
+ * acknowledges Cloud storage. This queue never dispatches another run. */
 export class DesktopRelayTerminalDelivery {
   private readonly uncommitted = new Map<string, ScopedRelayTerminal>();
   private timer?: RelayTimeout;
   private draining = false;
   private after = '';
+  private textAfter = '';
   private scope = '';
 
   constructor(
     private readonly store: ScopedRelayTerminalStore,
-    private readonly chat: Pick<DesktopRelayChatPorts, 'currentRelayAccount' | 'approveViewer' | 'allowScopedHistory' | 'admitRelayThread'>,
+    private readonly chat: Pick<DesktopRelayChatPorts, 'currentRelayAccount' | 'approveViewer' | 'allowScopedHistory' | 'admitRelayThread' | 'relayApprovals'>,
     private readonly transport: DesktopRelayTransport,
     private readonly timers: DesktopRelayTimers,
+    private readonly textStore?: ScopedRelayTextStore,
   ) {}
 
   async record(status: ScopedRelayTerminal): Promise<boolean> {
@@ -41,7 +43,7 @@ export class DesktopRelayTerminalDelivery {
   wake(): void {
     if (this.timer) this.timers.clearTimeout(this.timer);
     this.timer = undefined;
-    this.after = '';
+    this.after = this.textAfter = '';
     void this.drain();
   }
 
@@ -53,7 +55,15 @@ export class DesktopRelayTerminalDelivery {
       workspaceId: frame.workspaceId, hostDeviceId: this.transport.deviceId, outcome: frame.outcome });
   }
 
-  private async permitted(status: ScopedRelayTerminal): Promise<boolean> {
+  async acknowledgeText(frame: RelayIncomingFrame): Promise<void> {
+    if (!this.textStore || typeof frame.conversationId !== 'string' || typeof frame.clientRunId !== 'string'
+        || typeof frame.id !== 'string' || typeof frame.accountId !== 'string' || typeof frame.workspaceId !== 'string'
+        || frame.accountId !== await this.chat.currentRelayAccount?.()) return;
+    await this.textStore.acknowledgeText({ thread: frame.conversationId, run: frame.clientRunId, id: frame.id,
+      accountId: frame.accountId, workspaceId: frame.workspaceId, hostDeviceId: this.transport.deviceId });
+  }
+
+  private async permitted(status: ScopedRelayTerminal | ScopedRelayText): Promise<boolean> {
     try {
       return await this.chat.admitRelayThread?.(status.thread, true, status) === true
         && await this.chat.allowScopedHistory?.() === true
@@ -76,14 +86,24 @@ export class DesktopRelayTerminalDelivery {
       const host = this.transport.deviceId;
       if (!account || !host) return;
       const scope = JSON.stringify([account, host]);
-      if (scope !== this.scope) { this.scope = scope; this.after = '' }
+      if (scope !== this.scope) { this.scope = scope; this.after = this.textAfter = '' }
+      const text = await this.textStore?.pendingText(account, host, this.textAfter) ?? [];
+      this.textAfter = text.at(-1)?.id ?? '';
+      for (const row of text) {
+        const createdAt = new Date(row.createdAt instanceof Date ? row.createdAt.getTime() : row.createdAt);
+        if (!Number.isFinite(createdAt.getTime()) || this.transport.deviceId !== row.hostDeviceId || !await this.permitted(row)) continue;
+        this.transport.send({ type: 'relay_history_commit', relayScope: 'v1', conversationId: row.thread,
+          clientRunId: row.run, id: row.id, role: row.role, content: row.content, createdAt: createdAt.toISOString(),
+          accountId: row.accountId, workspaceId: row.workspaceId, viewerId: row.viewerId, viewerKey: row.viewerKey,
+          relayApprovals: this.chat.relayApprovals?.() }, 'relay_history_commit');
+      }
       const pending = await this.store.pending(account, host, this.after);
       this.after = pending.at(-1)?.id ?? '';
       for (const status of pending) {
         if (this.transport.deviceId !== status.hostDeviceId || !await this.permitted(status)) continue;
         this.transport.send({ type: 'relay_terminal', relayScope: 'v1', conversationId: status.thread,
           clientRunId: status.run, outcome: status.outcome, accountId: status.accountId, workspaceId: status.workspaceId,
-          viewerId: status.viewerId, viewerKey: status.viewerKey }, 'relay_terminal');
+          viewerId: status.viewerId, viewerKey: status.viewerKey, relayApprovals: this.chat.relayApprovals?.() }, 'relay_terminal');
       }
     } catch { /* durable pending rows remain retryable, without logging their contents */ } finally {
       this.draining = false;
