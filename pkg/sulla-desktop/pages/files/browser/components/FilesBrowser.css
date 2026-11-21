@@ -241,8 +241,9 @@
 
 /* List view */
 .card { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
-.files { overflow: auto; max-height: min(70vh, 760px); }
+.files { min-width: 0; overflow-x: auto; overflow-y: hidden; }
 .virtual-surface { overscroll-behavior:contain; }
+.files.virtual-surface { overscroll-behavior-y: auto; }
 .virtual-spacer td { padding:0!important; border:0!important; }
 .files tr.row { height:63px; }
 .tbl { width: 100%; border-collapse: collapse; }
